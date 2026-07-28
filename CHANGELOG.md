@@ -17,4 +17,4 @@ release. Before 1.0, minor releases may contain public API changes.
   event callbacks, focus traversal, retained scrolling, accessibility output,
   and an interactive C consumer test.
 - Automatic ARC test discovery and release-oriented example checks.
-- Release licensing and third-party dependency notices.
+- Apache License 2.0 project licensing and third-party dependency notices.

@@ -1,7 +1,7 @@
 # Third-Party Notices
 
-CBSS is distributed under the MIT license in [LICENSE](LICENSE). The project
-also contains or links the following third-party software.
+CBSS is distributed under the Apache License 2.0 in [LICENSE](LICENSE). The
+project also contains or links the following third-party software.
 
 ## SDL3
 
@@ -48,7 +48,7 @@ license texts in `licenses/`; `unicode-ident` additionally uses the
 - License text: [licenses/image-rs.txt](licenses/image-rs.txt)
 
 The bridge code itself is part of CBSS and is distributed under the repository
-MIT license. Its complete, locked Rust dependency graph is recorded in
+Apache License 2.0. Its complete, locked Rust dependency graph is recorded in
 `native/image_bridge/Cargo.lock`.
 
 ## Generated SDL3 Nim Bindings

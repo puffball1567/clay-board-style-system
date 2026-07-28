@@ -1,7 +1,7 @@
 version       = "0.1.0"
 author        = "Clay Board Style System contributors"
 description   = "CSS-like primitive style and layout foundation for native GUI libraries"
-license       = "MIT"
+license       = "Apache-2.0"
 srcDir        = "src"
 bin           = @["cbss_configure"]
 installDirs   = @["include", "native", "licenses", "docs"]

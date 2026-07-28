@@ -25,6 +25,13 @@ Before writing code, skim:
 - Create the version tag from `main` only after that merge. Direct development
   commits and feature merges do not land on `main`.
 
+## Contribution License
+
+Unless you explicitly state otherwise, a contribution intentionally submitted
+for inclusion in CBSS is provided under the
+[Apache License 2.0](LICENSE), including its contributor patent grant. Submit
+only work that you have the right to license under those terms.
+
 ## Quickstart
 
 ```sh

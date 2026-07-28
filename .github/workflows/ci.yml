@@ -96,7 +96,9 @@ jobs:
           test -f THIRD_PARTY_NOTICES.md
           test -f SECURITY.md
           test -f CHANGELOG.md
-          test -f licenses/CBSS-MIT.txt
+          grep -q 'license.*=.*"Apache-2.0"' clay_box_style_system.nimble
+          grep -q 'Apache License' LICENSE
+          test -f licenses/Apache-2.0.txt
           test -L vendor/sdl3/linux-x86_64/libSDL3.so
           test -L vendor/sdl3/linux-x86_64/libSDL3.so.0
           test -L vendor/sdl3/linux-x86_64/libcbss_image_bridge.so

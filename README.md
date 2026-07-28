@@ -570,6 +570,6 @@ platform-specific integration tests, sanitizers, or API ownership review.
 
 ## License
 
-CBSS is licensed under the [MIT License](LICENSE). Vendored and dynamically
-linked dependency notices are recorded in
+CBSS is licensed under the [Apache License 2.0](LICENSE). Vendored and
+dynamically linked dependency notices are recorded in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

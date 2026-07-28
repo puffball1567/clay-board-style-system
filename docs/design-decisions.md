@@ -192,8 +192,10 @@ or reduced to the documented generator input — one binding copy only
   three SDL3 link modes, and locked Cargo bridge tests/builds. Release hygiene
   checks verify required notices, SDL3 symlinks, and the absence of unrelated
   native binaries.
-- A root `LICENSE` (MIT) is added, plus SDL3/cosmic-text third-party notices
-  alongside the existing image-rs notice.
+- A root `LICENSE` (Apache-2.0) is added, plus SDL3/cosmic-text third-party
+  notices alongside the existing image-rs notice. The explicit contributor
+  patent grant is appropriate for a shared native UI foundation intended for
+  commercial and cross-language use.
 - Unexplained native binaries are removed; maintained bridges have source,
   locked dependencies, and license notices. The three full copies of
   `libSDL3.so*` become symlinks or a fetch step.
