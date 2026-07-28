@@ -1,7 +1,24 @@
-# Clay Board Style System (CBSS)
+# Clay Board Style System
 
-Clay Board Style System (CBSS) is a CSS-inspired primitive style and layout
-foundation for native GUI libraries.
+Clay Board Style System is a CSS-inspired primitive style and layout foundation
+for native GUI libraries. This document uses `CBSS` only as a short form where
+repeating the full project name would reduce readability.
+
+**CSS compatibility boundary:** Clay Board Style System is not CSS and is not a
+fully compatible CSS implementation. It provides CSS-like authoring syntax,
+property names, typed values, and familiar layout concepts for native UI
+development. Browser stylesheet syntax, DOM behavior, the complete CSS cascade,
+and bug-for-bug browser compatibility are not part of its compatibility
+contract.
+
+Unlike CSS, CBSS also provides native UI behavior APIs. Elements can expose
+familiar event-handler slots such as `onClick`, `onChange`, `onInput`,
+`onKeyDown`, and `onPointerMove`, backed by CBSS-owned event dispatch rather
+than browser events or JavaScript. Applications may also use the exported,
+typed `StateRuntime[State, Action]` to apply actions through an
+application-supplied update procedure and mark affected work dirty. This small
+state runtime is optional infrastructure, not React hooks, Redux, a virtual
+DOM, persistence, or an application business-logic framework.
 
 The first implementation target is Nim. The Nim package/import name should be
 `clay_box_style_system`. A versioned C ABI exposes the same native UI foundation

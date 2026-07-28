@@ -6,7 +6,7 @@ are complete.
 
 ## Version 0.1 - Linux Developer Preview
 
-Status: `In progress`
+Status: `Released 2026-07-28`
 
 Version 0.1 establishes the primitive native UI foundation: style resolution,
 layout, text, paint commands, SDL3 rendering, hit testing, input, focus,
