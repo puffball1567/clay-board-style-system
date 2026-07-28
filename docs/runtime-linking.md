@@ -15,7 +15,7 @@ the same CBSS installation may therefore choose different runtime layouts.
 ## Bundled Setup
 
 ```sh
-nimble install clay_box_style_system
+nimble install https://github.com/puffball1567/clay-board-style-system
 cbss_configure bundled /path/to/cbss-runtime
 ```
 
@@ -66,7 +66,7 @@ into `cbss-libs/` when packaging an application.
 ## System Dynamic-Link Setup
 
 ```sh
-nimble install clay_box_style_system
+nimble install https://github.com/puffball1567/clay-board-style-system
 cbss_configure system
 ```
 
@@ -88,7 +88,7 @@ Unlike bundled mode, SDL3 is dynamically linked in this setup.
 Select a private runtime prefix when an application owns its native SDK:
 
 ```sh
-nimble install clay_box_style_system
+nimble install https://github.com/puffball1567/clay-board-style-system
 cbss_configure custom /opt/my-runtime /path/to/application
 ```
 

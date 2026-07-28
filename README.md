@@ -20,9 +20,11 @@ application-supplied update procedure and mark affected work dirty. This small
 state runtime is optional infrastructure, not React hooks, Redux, a virtual
 DOM, persistence, or an application business-logic framework.
 
-The first implementation target is Nim. The Nim package/import name should be
-`clay_box_style_system`. A versioned C ABI exposes the same native UI foundation
-to C, C++, Rust, Zig, Swift, and other languages with C interoperability.
+The first implementation target is Nim. The Nimble package name is
+`clay_board_style_system`; the stable Nim import path is
+`clay_box_style_system`. A versioned C ABI exposes the same native UI
+foundation to C, C++, Rust, Zig, Swift, and other languages with C
+interoperability.
 
 The initial runtime target is Linux x86_64 with SDL3. Windows and macOS support
 are planned, but they are contributor-validated and not release-blocking during
@@ -59,7 +61,7 @@ nimble sdl3Demo
 For an installed package, install CBSS once:
 
 ```sh
-nimble install clay_box_style_system
+nimble install https://github.com/puffball1567/clay-board-style-system
 ```
 
 Prepare a runtime directory using the layout in

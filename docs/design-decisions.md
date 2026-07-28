@@ -214,17 +214,20 @@ and the unused font binary was removed. See
 
 ## D13 — Naming: "Clay Board" vs `clay_box` (Adopted)
 
-The repo, README title, and metaphor say Clay **Board** Style System; the
-package, imports, and all code say `clay_box_style_system`. Both are "CBSS",
-but they identify different layers deliberately:
+The repo, README title, Nimble package, and metaphor say Clay **Board** Style
+System. The Nim import path and internal source tree retain
+`clay_box_style_system`. Both are "CBSS", but they identify different layers
+deliberately:
 
 - Product and repository name: **Clay Board Style System**. The board is the
   primitive foundation on which component libraries are built.
-- Nim package and import name: `clay_box_style_system`. Box identifies the
-  primary layout primitive exposed to Nim code.
+- Nimble package name: `clay_board_style_system`, matching the public product
+  and repository name.
+- Nim import name: `clay_box_style_system`. Box identifies the primary layout
+  primitive exposed to Nim code. Retaining it avoids a breaking source change
+  for existing users.
 
 The README must state this distinction near the first import-name mention.
-`clay_board_style_system` is not introduced as a second package or alias.
 
 ## D14 — Documentation restructure (Adopted)
 
