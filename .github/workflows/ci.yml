@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cbss-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nim:
+    name: Nim ARC suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nim
+        run: |
+          curl https://nim-lang.org/choosenim/init.sh -sSf | sh -s -- -y 2.2.10
+          echo "$HOME/.nimble/bin" >> "$GITHUB_PATH"
+
+      - name: Toolchain versions
+        run: |
+          nim --version
+          nimble --version
+
+      - name: Check package metadata
+        run: nimble check
+
+      - name: Run discovered ARC tests
+        run: nimble test -y
+
+      - name: Check examples and link profiles
+        run: nimble checkExamples -y
+
+      - name: Test shared and static C ABI
+        run: nimble testCAbi -y
+
+      - name: Verify source-only package with external bundled runtime
+        run: |
+          runtime_root="$GITHUB_WORKSPACE/vendor/sdl3"
+          nimble install -y
+          test -x "$HOME/.nimble/bin/cbss_configure"
+          test ! -e "$(nimble path clay_box_style_system)/vendor/sdl3/linux-x86_64/libSDL3.a"
+          mkdir -p /tmp/cbss-consumer
+          printf '%s\n' \
+            'import std/options' \
+            'import clay_box_style_system/backends/sdl3/[image_loader, renderer]' \
+            'delay(0)' \
+            'doAssert loadRgbaImage("").isNone' \
+            > /tmp/cbss-consumer/main.nim
+          cd /tmp/cbss-consumer
+          cbss_configure bundled "$runtime_root"
+          nim c --mm:arc main.nim
+          readelf -d main | grep -q 'libcbss_image_bridge.so'
+          ! readelf -d main | grep -q 'libSDL3.so'
+          ./main
+
+  rust-bridge:
+    name: Native Rust bridges
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test locked Rust bridge
+        run: cargo test --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml
+
+      - name: Build locked Rust bridge
+        run: cargo build --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml
+
+      - name: Test locked image bridge
+        run: cargo test --locked --release --manifest-path native/image_bridge/Cargo.toml
+
+      - name: Build locked image bridge
+        run: cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml
+
+  release-hygiene:
+    name: Release hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify release metadata
+        run: |
+          test -f LICENSE
+          test -f THIRD_PARTY_NOTICES.md
+          test -f SECURITY.md
+          test -f CHANGELOG.md
+          test -f licenses/CBSS-MIT.txt
+          test -L vendor/sdl3/linux-x86_64/libSDL3.so
+          test -L vendor/sdl3/linux-x86_64/libSDL3.so.0
+          test -L vendor/sdl3/linux-x86_64/libcbss_image_bridge.so

@@ -1,0 +1,15 @@
+[package]
+name = "cbss_cosmic_text_bridge"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Clay Board Style System contributors"]
+description = "C ABI bridge between Clay Board Style System and cosmic-text"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+cosmic-text = "0.19.0"
+unicode-segmentation = "1.12.0"

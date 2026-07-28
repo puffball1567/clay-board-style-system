@@ -1,0 +1,27 @@
+[package]
+name = "cbss_image_bridge"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Clay Board Style System contributors"]
+description = "C ABI image decoding bridge for Clay Board Style System"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+image = { version = "0.25.9", default-features = false, features = [
+  "bmp",
+  "gif",
+  "jpeg",
+  "png",
+  "pnm",
+  "tiff",
+  "webp",
+] }
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = "symbols"

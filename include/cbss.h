@@ -1,0 +1,598 @@
+#ifndef CBSS_H
+#define CBSS_H
+
+#include <stdint.h>
+
+#if defined(_WIN32) && defined(CBSS_SHARED)
+#  if defined(CBSS_BUILD)
+#    define CBSS_API __declspec(dllexport)
+#  else
+#    define CBSS_API __declspec(dllimport)
+#  endif
+#else
+#  define CBSS_API
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define CBSS_ABI_VERSION 0x00010000u
+#define CBSS_NODE_NONE UINT32_MAX
+
+typedef struct CbssContext CbssContext;
+typedef struct CbssStyle CbssStyle;
+
+typedef int32_t CbssStatus;
+enum {
+  CBSS_OK = 0,
+  CBSS_INVALID_ARGUMENT = 1,
+  CBSS_INVALID_HANDLE = 2,
+  CBSS_OUT_OF_RANGE = 3,
+  CBSS_STYLE_ERROR = 4,
+  CBSS_INTERNAL_ERROR = 5
+};
+
+typedef enum CbssUnit {
+  CBSS_UNIT_PX = 0,
+  CBSS_UNIT_PERCENT = 1,
+  CBSS_UNIT_EM = 2,
+  CBSS_UNIT_REM = 3,
+  CBSS_UNIT_FILL = 4,
+  CBSS_UNIT_CONTENT = 5,
+  CBSS_UNIT_MIN_CONTENT = 6,
+  CBSS_UNIT_MAX_CONTENT = 7,
+  CBSS_UNIT_FIT_CONTENT = 8,
+  CBSS_UNIT_AUTO = 9,
+  CBSS_UNIT_NONE = 10
+} CbssUnit;
+
+typedef enum CbssNodeState {
+  CBSS_STATE_HOVER = 0,
+  CBSS_STATE_ACTIVE = 1,
+  CBSS_STATE_FOCUS = 2,
+  CBSS_STATE_FOCUS_VISIBLE = 3,
+  CBSS_STATE_DISABLED = 4,
+  CBSS_STATE_CHECKED = 5,
+  CBSS_STATE_SELECTED = 6,
+  CBSS_STATE_OPEN = 7
+} CbssNodeState;
+
+typedef enum CbssNodeKind {
+  CBSS_NODE_BOX = 0,
+  CBSS_NODE_TEXT = 1,
+  CBSS_NODE_IMAGE = 2
+} CbssNodeKind;
+
+typedef enum CbssEventKind {
+  CBSS_EVENT_ABORT = 0,
+  CBSS_EVENT_ANIMATION_END = 1,
+  CBSS_EVENT_ANIMATION_ITERATION = 2,
+  CBSS_EVENT_ANIMATION_START = 3,
+  CBSS_EVENT_AUX_CLICK = 4,
+  CBSS_EVENT_BEFORE_INPUT = 5,
+  CBSS_EVENT_BLUR = 6,
+  CBSS_EVENT_CANCEL = 7,
+  CBSS_EVENT_CAN_PLAY = 8,
+  CBSS_EVENT_CAN_PLAY_THROUGH = 9,
+  CBSS_EVENT_CHANGE = 10,
+  CBSS_EVENT_CLOSE = 11,
+  CBSS_EVENT_POINTER_MOVE = 12,
+  CBSS_EVENT_POINTER_DOWN = 13,
+  CBSS_EVENT_POINTER_UP = 14,
+  CBSS_EVENT_POINTER_CANCEL = 15,
+  CBSS_EVENT_POINTER_ENTER = 16,
+  CBSS_EVENT_POINTER_LEAVE = 17,
+  CBSS_EVENT_POINTER_OVER = 18,
+  CBSS_EVENT_POINTER_OUT = 19,
+  CBSS_EVENT_CLICK = 20,
+  CBSS_EVENT_CONTEXT_MENU = 21,
+  CBSS_EVENT_CUE_CHANGE = 22,
+  CBSS_EVENT_DOUBLE_CLICK = 23,
+  CBSS_EVENT_COPY = 24,
+  CBSS_EVENT_CUT = 25,
+  CBSS_EVENT_PASTE = 26,
+  CBSS_EVENT_COMPOSITION_END = 27,
+  CBSS_EVENT_COMPOSITION_START = 28,
+  CBSS_EVENT_COMPOSITION_UPDATE = 29,
+  CBSS_EVENT_DRAG = 30,
+  CBSS_EVENT_DRAG_END = 31,
+  CBSS_EVENT_DRAG_ENTER = 32,
+  CBSS_EVENT_DRAG_EXIT = 33,
+  CBSS_EVENT_DRAG_LEAVE = 34,
+  CBSS_EVENT_DRAG_OVER = 35,
+  CBSS_EVENT_DRAG_START = 36,
+  CBSS_EVENT_DROP = 37,
+  CBSS_EVENT_DURATION_CHANGE = 38,
+  CBSS_EVENT_EMPTIED = 39,
+  CBSS_EVENT_ENCRYPTED = 40,
+  CBSS_EVENT_ENDED = 41,
+  CBSS_EVENT_ERROR = 42,
+  CBSS_EVENT_FOCUS = 43,
+  CBSS_EVENT_FULLSCREEN_CHANGE = 44,
+  CBSS_EVENT_FULLSCREEN_ERROR = 45,
+  CBSS_EVENT_GOT_POINTER_CAPTURE = 46,
+  CBSS_EVENT_INPUT = 47,
+  CBSS_EVENT_INVALID = 48,
+  CBSS_EVENT_KEY_DOWN = 49,
+  CBSS_EVENT_KEY_UP = 50,
+  CBSS_EVENT_LOAD = 51,
+  CBSS_EVENT_LOAD_END = 52,
+  CBSS_EVENT_LOADED_DATA = 53,
+  CBSS_EVENT_LOADED_METADATA = 54,
+  CBSS_EVENT_LOAD_START = 55,
+  CBSS_EVENT_LOST_POINTER_CAPTURE = 56,
+  CBSS_EVENT_MOUSE_DOWN = 57,
+  CBSS_EVENT_MOUSE_ENTER = 58,
+  CBSS_EVENT_MOUSE_LEAVE = 59,
+  CBSS_EVENT_MOUSE_MOVE = 60,
+  CBSS_EVENT_MOUSE_OUT = 61,
+  CBSS_EVENT_MOUSE_OVER = 62,
+  CBSS_EVENT_MOUSE_UP = 63,
+  CBSS_EVENT_PAUSE = 64,
+  CBSS_EVENT_PLAY = 65,
+  CBSS_EVENT_PLAYING = 66,
+  CBSS_EVENT_PROGRESS = 67,
+  CBSS_EVENT_RATE_CHANGE = 68,
+  CBSS_EVENT_RESET = 69,
+  CBSS_EVENT_RESIZE = 70,
+  CBSS_EVENT_SCROLL = 71,
+  CBSS_EVENT_SCROLL_END = 72,
+  CBSS_EVENT_SEEKED = 73,
+  CBSS_EVENT_SEEKING = 74,
+  CBSS_EVENT_SELECT = 75,
+  CBSS_EVENT_SHOW = 76,
+  CBSS_EVENT_STALLED = 77,
+  CBSS_EVENT_SUBMIT = 78,
+  CBSS_EVENT_SUSPEND = 79,
+  CBSS_EVENT_TEXT_INPUT = 80,
+  CBSS_EVENT_TIME_UPDATE = 81,
+  CBSS_EVENT_TOGGLE = 82,
+  CBSS_EVENT_TOUCH_CANCEL = 83,
+  CBSS_EVENT_TOUCH_END = 84,
+  CBSS_EVENT_TOUCH_MOVE = 85,
+  CBSS_EVENT_TOUCH_START = 86,
+  CBSS_EVENT_TRANSITION_END = 87,
+  CBSS_EVENT_VOLUME_CHANGE = 88,
+  CBSS_EVENT_WAITING = 89,
+  CBSS_EVENT_WHEEL = 90
+} CbssEventKind;
+
+enum {
+  CBSS_INPUT_HAS_POSITION = 1u << 0,
+  CBSS_INPUT_HAS_DELTA = 1u << 1,
+  CBSS_INPUT_HAS_BUTTON = 1u << 2,
+  CBSS_INPUT_HAS_KEY = 1u << 3,
+  CBSS_INPUT_HAS_TEXT = 1u << 4
+};
+
+enum {
+  CBSS_MODIFIER_CTRL = 1u << 0,
+  CBSS_MODIFIER_ALT = 1u << 1,
+  CBSS_MODIFIER_SHIFT = 1u << 2,
+  CBSS_MODIFIER_META = 1u << 3
+};
+
+enum {
+  CBSS_EVENT_HAS_LOCAL = 1u << 0,
+  CBSS_EVENT_HAS_POSITION = 1u << 1,
+  CBSS_EVENT_HAS_DELTA = 1u << 2,
+  CBSS_EVENT_HAS_BUTTON = 1u << 3,
+  CBSS_EVENT_HAS_KEY = 1u << 4,
+  CBSS_EVENT_HAS_TEXT = 1u << 5
+};
+
+enum {
+  CBSS_BORDER_HAS_WIDTH = 1u << 0,
+  CBSS_BORDER_HAS_STYLE = 1u << 1,
+  CBSS_BORDER_HAS_COLOR = 1u << 2
+};
+
+enum {
+  CBSS_SHADOW_HAS_BLUR = 1u << 0,
+  CBSS_SHADOW_HAS_SPREAD = 1u << 1,
+  CBSS_SHADOW_HAS_COLOR = 1u << 2
+};
+
+typedef enum CbssTransformKind {
+  CBSS_TRANSFORM_TRANSLATE = 0,
+  CBSS_TRANSFORM_SCALE = 1,
+  CBSS_TRANSFORM_ROTATE = 2
+} CbssTransformKind;
+
+enum {
+  CBSS_TRANSFORM_HAS_X = 1u << 0,
+  CBSS_TRANSFORM_HAS_Y = 1u << 1,
+  CBSS_TRANSFORM_HAS_Z = 1u << 2
+};
+
+enum {
+  CBSS_ACCESSIBLE_HAS_VALUE_NOW = 1u << 0,
+  CBSS_ACCESSIBLE_HAS_VALUE_MIN = 1u << 1,
+  CBSS_ACCESSIBLE_HAS_VALUE_MAX = 1u << 2
+};
+
+typedef enum CbssAccessibleRole {
+  CBSS_ROLE_NONE = 0,
+  CBSS_ROLE_APPLICATION = 1,
+  CBSS_ROLE_GENERIC = 2,
+  CBSS_ROLE_BUTTON = 3,
+  CBSS_ROLE_CHECK_BOX = 4,
+  CBSS_ROLE_RADIO = 5,
+  CBSS_ROLE_TEXT_BOX = 6,
+  CBSS_ROLE_TEXT_AREA = 7,
+  CBSS_ROLE_COMBO_BOX = 8,
+  CBSS_ROLE_OPTION = 9,
+  CBSS_ROLE_SLIDER = 10,
+  CBSS_ROLE_DISCLOSURE = 11,
+  CBSS_ROLE_PROGRESS_BAR = 12,
+  CBSS_ROLE_LIST_BOX = 13,
+  CBSS_ROLE_LIST_ITEM = 14,
+  CBSS_ROLE_TAB_LIST = 15,
+  CBSS_ROLE_TAB = 16,
+  CBSS_ROLE_DIALOG = 17,
+  CBSS_ROLE_GROUP = 18,
+  CBSS_ROLE_IMAGE = 19,
+  CBSS_ROLE_STATIC_TEXT = 20
+} CbssAccessibleRole;
+
+typedef enum CbssHitKind {
+  CBSS_HIT_CONTENT = 0,
+  CBSS_HIT_SCROLLBAR_TRACK_X = 1,
+  CBSS_HIT_SCROLLBAR_THUMB_X = 2,
+  CBSS_HIT_SCROLLBAR_TRACK_Y = 3,
+  CBSS_HIT_SCROLLBAR_THUMB_Y = 4
+} CbssHitKind;
+
+typedef enum CbssCursor {
+  CBSS_CURSOR_AUTO = 0,
+  CBSS_CURSOR_DEFAULT = 1,
+  CBSS_CURSOR_POINTER = 2,
+  CBSS_CURSOR_TEXT = 3,
+  CBSS_CURSOR_MOVE = 4,
+  CBSS_CURSOR_NOT_ALLOWED = 5
+} CbssCursor;
+
+typedef enum CbssPaintKind {
+  CBSS_PAINT_PUSH_CLIP = 0,
+  CBSS_PAINT_POP_CLIP = 1,
+  CBSS_PAINT_BOX_SHADOW = 2,
+  CBSS_PAINT_FILL_RECT = 3,
+  CBSS_PAINT_FILL_LINEAR_GRADIENT = 4,
+  CBSS_PAINT_STROKE_RECT = 5,
+  CBSS_PAINT_DRAW_TEXT = 6,
+  CBSS_PAINT_DRAW_IMAGE = 7
+} CbssPaintKind;
+
+typedef struct CbssRect {
+  float x;
+  float y;
+  float w;
+  float h;
+} CbssRect;
+
+typedef struct CbssColor {
+  float r;
+  float g;
+  float b;
+  float a;
+} CbssColor;
+
+typedef struct CbssLayoutBox {
+  uint32_t node;
+  CbssRect rect;
+  int32_t z_index;
+} CbssLayoutBox;
+
+typedef struct CbssHitResult {
+  uint32_t node;
+  float local_x;
+  float local_y;
+  uint32_t kind;
+  uint32_t cursor;
+  uint8_t has_cursor;
+} CbssHitResult;
+
+/*
+ * value fields depend on kind:
+ * BOX_SHADOW: offset_x, offset_y, blur, spread
+ * LINEAR_GRADIENT: angle, stop_count
+ * STROKE_RECT: width
+ * DRAW_IMAGE: opacity
+ */
+typedef struct CbssPaintCommand {
+  uint32_t kind;
+  uint32_t owner;
+  CbssRect rect;
+  CbssColor color;
+  float radius;
+  float value0;
+  float value1;
+  float value2;
+  float value3;
+  uint32_t string_bytes;
+} CbssPaintCommand;
+
+enum {
+  CBSS_TEXT_HAS_FONT_SIZE = 1u << 0,
+  CBSS_TEXT_HAS_LINE_HEIGHT = 1u << 1,
+  CBSS_TEXT_HAS_FONT_WEIGHT = 1u << 2,
+  CBSS_TEXT_HAS_LETTER_SPACING = 1u << 3,
+  CBSS_TEXT_HAS_FONT_STYLE = 1u << 4
+};
+
+typedef struct CbssTextStyle {
+  uint32_t flags;
+  float font_size;
+  float line_height;
+  float font_weight;
+  float letter_spacing;
+  uint32_t font_style;
+} CbssTextStyle;
+
+typedef struct CbssGradientStop {
+  CbssColor color;
+  float offset;
+} CbssGradientStop;
+
+typedef struct CbssTransformOperation {
+  uint32_t kind;
+  uint32_t flags;
+  uint32_t x_unit;
+  uint32_t y_unit;
+  uint32_t z_unit;
+  float x;
+  float y;
+  float z;
+  float angle;
+} CbssTransformOperation;
+
+typedef struct CbssInputEvent {
+  uint32_t kind;
+  uint32_t flags;
+  uint32_t modifiers;
+  int32_t button;
+  float x;
+  float y;
+  float delta_x;
+  float delta_y;
+  const char *key;
+  const char *text;
+} CbssInputEvent;
+
+/*
+ * key and text point to CBSS-owned temporary memory. They are valid only
+ * during the callback and must be copied if the host retains them.
+ */
+typedef struct CbssEvent {
+  uint32_t kind;
+  uint32_t target;
+  uint32_t current_target;
+  uint32_t flags;
+  float local_x;
+  float local_y;
+  float x;
+  float y;
+  float delta_x;
+  float delta_y;
+  int32_t button;
+  uint32_t modifiers;
+  const char *key;
+  const char *text;
+} CbssEvent;
+
+typedef struct CbssDispatchSummary {
+  uint32_t target;
+  uint32_t dispatch_count;
+  uint8_t handled;
+  uint8_t needs_compute;
+  uint8_t paint_changed;
+  uint8_t focus_changed;
+} CbssDispatchSummary;
+
+typedef struct CbssScrollMetrics {
+  float offset_x;
+  float offset_y;
+  float viewport_width;
+  float viewport_height;
+  float content_width;
+  float content_height;
+  float max_offset_x;
+  float max_offset_y;
+  uint8_t enabled_x;
+  uint8_t enabled_y;
+  uint8_t scrolling;
+} CbssScrollMetrics;
+
+typedef struct CbssAccessibility {
+  uint32_t role;
+  uint32_t flags;
+  float value_now;
+  float value_min;
+  float value_max;
+  uint32_t labelled_by;
+  uint32_t described_by;
+  uint8_t hidden;
+} CbssAccessibility;
+
+typedef uint8_t (*CbssEventCallback)(
+    CbssContext *context, const CbssEvent *event, void *user_data);
+
+CBSS_API uint32_t cbss_abi_version(void);
+
+CBSS_API CbssContext *cbss_context_create(void);
+CBSS_API void cbss_context_destroy(CbssContext *context);
+CBSS_API CbssStatus cbss_context_reset(CbssContext *context);
+CBSS_API uint32_t cbss_context_last_error(
+    CbssContext *context, char *buffer, uint32_t capacity);
+CBSS_API uint32_t cbss_context_node_count(CbssContext *context);
+CBSS_API uint32_t cbss_node_kind(
+    CbssContext *context, uint32_t node);
+CBSS_API uint32_t cbss_node_parent(
+    CbssContext *context, uint32_t node);
+CBSS_API uint32_t cbss_node_child_count(
+    CbssContext *context, uint32_t node);
+CBSS_API uint32_t cbss_node_child(
+    CbssContext *context, uint32_t node, uint32_t index);
+CBSS_API uint32_t cbss_node_identifier(
+    CbssContext *context, uint32_t node, char *buffer, uint32_t capacity);
+CBSS_API uint32_t cbss_node_text(
+    CbssContext *context, uint32_t node, char *buffer, uint32_t capacity);
+CBSS_API uint32_t cbss_node_image_source(
+    CbssContext *context, uint32_t node, char *buffer, uint32_t capacity);
+
+CBSS_API uint32_t cbss_context_add_box(
+    CbssContext *context, uint32_t parent, const char *identifier);
+CBSS_API uint32_t cbss_context_add_text(
+    CbssContext *context, uint32_t parent, const char *text,
+    const char *identifier);
+CBSS_API uint32_t cbss_context_add_image(
+    CbssContext *context, uint32_t parent, const char *source,
+    float width, float height, const char *identifier);
+
+CBSS_API CbssStatus cbss_node_set_text(
+    CbssContext *context, uint32_t node, const char *text);
+CBSS_API CbssStatus cbss_node_set_image(
+    CbssContext *context, uint32_t node, const char *source,
+    float width, float height);
+CBSS_API CbssStatus cbss_node_add_group(
+    CbssContext *context, uint32_t node, const char *group);
+CBSS_API CbssStatus cbss_node_set_attribute(
+    CbssContext *context, uint32_t node, const char *name, const char *value);
+CBSS_API CbssStatus cbss_node_set_state(
+    CbssContext *context, uint32_t node, uint32_t state, uint8_t enabled);
+CBSS_API CbssStatus cbss_node_set_accessibility(
+    CbssContext *context, uint32_t node, uint32_t role,
+    const char *name, const char *description);
+CBSS_API CbssStatus cbss_node_set_accessible_value(
+    CbssContext *context, uint32_t node, const char *value);
+CBSS_API CbssStatus cbss_node_set_accessible_range(
+    CbssContext *context, uint32_t node, uint32_t flags,
+    float value_now, float value_min, float value_max);
+CBSS_API CbssStatus cbss_node_set_accessible_relations(
+    CbssContext *context, uint32_t node,
+    uint32_t labelled_by, uint32_t described_by);
+CBSS_API CbssStatus cbss_node_set_accessible_hidden(
+    CbssContext *context, uint32_t node, uint8_t hidden);
+CBSS_API CbssStatus cbss_node_accessibility(
+    CbssContext *context, uint32_t node, CbssAccessibility *output);
+CBSS_API uint32_t cbss_node_accessible_name(
+    CbssContext *context, uint32_t node, char *buffer, uint32_t capacity);
+CBSS_API uint32_t cbss_node_accessible_description(
+    CbssContext *context, uint32_t node, char *buffer, uint32_t capacity);
+CBSS_API uint32_t cbss_node_accessible_value(
+    CbssContext *context, uint32_t node, char *buffer, uint32_t capacity);
+CBSS_API CbssStatus cbss_node_set_focusable(
+    CbssContext *context, uint32_t node, uint8_t focusable,
+    int32_t tab_index);
+CBSS_API CbssStatus cbss_node_set_event_handler(
+    CbssContext *context, uint32_t node, uint32_t kind,
+    CbssEventCallback callback, void *user_data);
+
+CBSS_API CbssStyle *cbss_style_create(void);
+CBSS_API void cbss_style_destroy(CbssStyle *style);
+CBSS_API CbssStatus cbss_style_clear(CbssStyle *style);
+CBSS_API CbssStatus cbss_style_set_length(
+    CbssStyle *style, const char *property, uint32_t unit, float value);
+CBSS_API CbssStatus cbss_style_set_number(
+    CbssStyle *style, const char *property, float value);
+CBSS_API CbssStatus cbss_style_set_keyword(
+    CbssStyle *style, const char *property, const char *value);
+CBSS_API CbssStatus cbss_style_set_color(
+    CbssStyle *style, const char *property, CbssColor color);
+CBSS_API CbssStatus cbss_style_set_color_pair(
+    CbssStyle *style, const char *property,
+    CbssColor first, CbssColor second);
+CBSS_API CbssStatus cbss_style_set_border(
+    CbssStyle *style, const char *property, uint32_t flags,
+    uint32_t width_unit, float width, const char *line_style,
+    CbssColor color);
+CBSS_API CbssStatus cbss_style_set_shadow(
+    CbssStyle *style, const char *property,
+    uint32_t offset_x_unit, float offset_x,
+    uint32_t offset_y_unit, float offset_y,
+    uint32_t flags, uint32_t blur_unit, float blur,
+    uint32_t spread_unit, float spread, CbssColor color);
+CBSS_API CbssStatus cbss_style_set_linear_gradient(
+    CbssStyle *style, const char *property, float angle,
+    const CbssGradientStop *stops, uint32_t stop_count);
+CBSS_API CbssStatus cbss_style_set_transform_operation(
+    CbssStyle *style, const char *property,
+    CbssTransformOperation operation);
+CBSS_API CbssStatus cbss_style_set_transform(
+    CbssStyle *style, const char *property,
+    const CbssTransformOperation *operations, uint32_t operation_count);
+CBSS_API CbssStatus cbss_node_apply_style(
+    CbssContext *context, uint32_t node, CbssStyle *style,
+    uint32_t state_mask, int32_t priority);
+CBSS_API CbssStatus cbss_node_clear_style(
+    CbssContext *context, uint32_t node, uint32_t state_mask,
+    int32_t priority);
+
+CBSS_API CbssStatus cbss_context_compute(
+    CbssContext *context, float width, float height);
+CBSS_API uint8_t cbss_context_needs_compute(CbssContext *context);
+CBSS_API CbssStatus cbss_context_recompute(CbssContext *context);
+CBSS_API uint32_t cbss_context_layout_box_count(CbssContext *context);
+CBSS_API CbssStatus cbss_context_layout_box(
+    CbssContext *context, uint32_t index, CbssLayoutBox *output);
+CBSS_API CbssStatus cbss_node_layout_rect(
+    CbssContext *context, uint32_t node, CbssRect *output);
+
+CBSS_API uint32_t cbss_context_paint_command_count(CbssContext *context);
+CBSS_API CbssStatus cbss_context_paint_command(
+    CbssContext *context, uint32_t index, CbssPaintCommand *output);
+CBSS_API uint32_t cbss_paint_command_string(
+    CbssContext *context, uint32_t index, char *buffer, uint32_t capacity);
+CBSS_API CbssStatus cbss_paint_command_text_style(
+    CbssContext *context, uint32_t index, CbssTextStyle *output);
+CBSS_API uint32_t cbss_paint_command_font_family(
+    CbssContext *context, uint32_t index, char *buffer, uint32_t capacity);
+CBSS_API uint32_t cbss_paint_command_gradient_stop_count(
+    CbssContext *context, uint32_t index);
+CBSS_API CbssStatus cbss_paint_command_gradient_stop(
+    CbssContext *context, uint32_t command_index, uint32_t stop_index,
+    CbssGradientStop *output);
+
+CBSS_API CbssStatus cbss_context_hit_test(
+    CbssContext *context, float x, float y, CbssHitResult *output);
+
+CBSS_API CbssStatus cbss_context_dispatch_input(
+    CbssContext *context, const CbssInputEvent *input,
+    CbssDispatchSummary *output);
+CBSS_API CbssStatus cbss_context_emit_event(
+    CbssContext *context, uint32_t node, const CbssInputEvent *event,
+    CbssDispatchSummary *output);
+CBSS_API uint32_t cbss_context_focused_node(CbssContext *context);
+CBSS_API CbssStatus cbss_context_set_focus(
+    CbssContext *context, uint32_t node, uint8_t focus_visible);
+CBSS_API CbssStatus cbss_context_move_focus(
+    CbssContext *context, int32_t direction);
+CBSS_API CbssStatus cbss_context_set_focus_scope(
+    CbssContext *context, uint32_t node);
+CBSS_API CbssStatus cbss_context_capture_pointer(
+    CbssContext *context, uint32_t node);
+CBSS_API CbssStatus cbss_context_release_pointer(CbssContext *context);
+
+CBSS_API CbssStatus cbss_node_scroll_metrics(
+    CbssContext *context, uint32_t node, CbssScrollMetrics *output);
+CBSS_API CbssStatus cbss_node_scroll_to(
+    CbssContext *context, uint32_t node, float x, float y);
+CBSS_API CbssStatus cbss_node_scroll_by(
+    CbssContext *context, uint32_t node, float delta_x, float delta_y);
+CBSS_API CbssStatus cbss_node_set_scrolling(
+    CbssContext *context, uint32_t node, uint8_t scrolling);
+
+CBSS_API uint32_t cbss_context_diagnostic_count(CbssContext *context);
+CBSS_API uint32_t cbss_context_diagnostic_severity(
+    CbssContext *context, uint32_t index);
+CBSS_API uint32_t cbss_context_diagnostic_property(
+    CbssContext *context, uint32_t index, char *buffer, uint32_t capacity);
+CBSS_API uint32_t cbss_context_diagnostic_message(
+    CbssContext *context, uint32_t index, char *buffer, uint32_t capacity);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
