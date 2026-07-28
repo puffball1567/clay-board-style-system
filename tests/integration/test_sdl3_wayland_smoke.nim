@@ -1,8 +1,8 @@
 import std/[math, options, os, strutils, times, unittest]
 
-import clay_box_style_system
-import clay_box_style_system/testing/test_driver
-import clay_box_style_system/testing/integration/sdl3_wayland_driver
+import clay_board_style_system
+import clay_board_style_system/testing/test_driver
+import clay_board_style_system/testing/integration/sdl3_wayland_driver
 import ../../examples/sdl3_demo
 
 proc buildSmokeUi(): UiRoot =

@@ -56,7 +56,7 @@ Requirements: Nim ≥ 2.2.0; for the SDL3 demo and text tests, a Rust toolchain
 (cargo) and Linux x86_64. The checkout's SDL3 development runtime under
 `vendor/sdl3/` is not installed as part of the published Nimble package.
 
-C ABI changes touch `src/clay_box_style_system/c_api.nim`, `include/cbss.h`,
+C ABI changes touch `src/clay_board_style_system/c_api.nim`, `include/cbss.h`,
 and `tests/c_api/c_consumer.c` together. Never expose a Nim-managed type or
 change an existing C struct/function signature without an ABI-version decision.
 Use `nimble setupSystem` when the application supplies SDL3, the image bridge,
@@ -66,17 +66,17 @@ and the cosmic-text bridge through its own dynamic-library installation.
 
 | Contribution | Implementation | Tests | Docs |
 | --- | --- | --- | --- |
-| Style property | `src/clay_box_style_system/properties/<group>.nim` (grouped modules — e.g. sizing, margin, padding, border, text, visual, transform); register in `src/clay_box_style_system/generated/default_properties.nim` | `tests/properties/` | update status in `docs/css-property-support.md` |
-| Selector capability | `src/clay_box_style_system/core/selector.nim` | `tests/properties/test_style_resolver.nim` or new focused test | `docs/architecture.md` selector section if policy changes |
-| Layout behavior | `src/clay_box_style_system/layout/layout.nim` | `tests/layout/` | support matrix row if a property's status changes |
-| Paint behavior | `src/clay_box_style_system/paint/` | `tests/paint/` | — |
-| Hit testing | `src/clay_box_style_system/hit/hit_test.nim` | `tests/hit/` | — |
-| Input/events | `src/clay_box_style_system/input/events.nim` | `tests/input/` | event policy lives in `docs/architecture.md` |
-| Runtime control / widget | `src/clay_box_style_system/runtime/<name>.nim` (widgets under `runtime/widgets/`) | `tests/runtime/test_<name>.nim` | behavior notes in `docs/runtime-components.md`; follow conventions in design-decisions D15 |
-| SDL3 backend | `src/clay_box_style_system/backends/sdl3/` (paths/link flags only in `config.nim`) | `tests/backends/`, opt-in Wayland smoke test | `docs/platform-support.md` |
-| Text engine / bridge | `src/clay_box_style_system/text/`, `native/cosmic_text_bridge/src/lib.rs` | `tests/text/` | `docs/architecture.md` text section |
-| Design-source import | `src/clay_box_style_system/design_source/` | `tests/design_source/` | — |
-| Public API surface | `src/clay_box_style_system.nim` (umbrella) | `tests/testing/test_public_import_boundary.nim` | — |
+| Style property | `src/clay_board_style_system/properties/<group>.nim` (grouped modules — e.g. sizing, margin, padding, border, text, visual, transform); register in `src/clay_board_style_system/generated/default_properties.nim` | `tests/properties/` | update status in `docs/css-property-support.md` |
+| Selector capability | `src/clay_board_style_system/core/selector.nim` | `tests/properties/test_style_resolver.nim` or new focused test | `docs/architecture.md` selector section if policy changes |
+| Layout behavior | `src/clay_board_style_system/layout/layout.nim` | `tests/layout/` | support matrix row if a property's status changes |
+| Paint behavior | `src/clay_board_style_system/paint/` | `tests/paint/` | — |
+| Hit testing | `src/clay_board_style_system/hit/hit_test.nim` | `tests/hit/` | — |
+| Input/events | `src/clay_board_style_system/input/events.nim` | `tests/input/` | event policy lives in `docs/architecture.md` |
+| Runtime control / widget | `src/clay_board_style_system/runtime/<name>.nim` (widgets under `runtime/widgets/`) | `tests/runtime/test_<name>.nim` | behavior notes in `docs/runtime-components.md`; follow conventions in design-decisions D15 |
+| SDL3 backend | `src/clay_board_style_system/backends/sdl3/` (paths/link flags only in `config.nim`) | `tests/backends/`, opt-in Wayland smoke test | `docs/platform-support.md` |
+| Text engine / bridge | `src/clay_board_style_system/text/`, `native/cosmic_text_bridge/src/lib.rs` | `tests/text/` | `docs/architecture.md` text section |
+| Design-source import | `src/clay_board_style_system/design_source/` | `tests/design_source/` | — |
+| Public API surface | `src/clay_board_style_system.nim` (umbrella) | `tests/testing/test_public_import_boundary.nim` | — |
 
 If your change needs to edit more than one registry/central file, that is a
 signal to discuss first — the architecture prefers registration tables and

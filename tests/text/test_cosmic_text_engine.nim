@@ -1,7 +1,7 @@
 import std/[options, strutils, unittest]
 
-import clay_box_style_system
-import clay_box_style_system/text/cosmic_text_engine
+import clay_board_style_system
+import clay_board_style_system/text/cosmic_text_engine
 
 suite "cosmic text engine":
   test "measures text through cosmic-text bridge":

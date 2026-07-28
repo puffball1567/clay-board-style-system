@@ -1,6 +1,6 @@
 import std/[options, unittest]
 
-import clay_box_style_system
+import clay_board_style_system
 
 suite "dialog component":
   test "dialog initializes closed and can show":

@@ -19,7 +19,7 @@ as supported release targets.
 
 SDL3 is the primary runtime backend. The core style, layout, paint command, hit
 test, and input-state code should remain independent from SDL3 types. SDL3
-integration belongs under `src/clay_box_style_system/backends/sdl3/`.
+integration belongs under `src/clay_board_style_system/backends/sdl3/`.
 
 The development checkout keeps Linux x86_64 SDL3 binaries and headers under:
 
@@ -36,7 +36,7 @@ use system libraries.
 The SDL3 backend reads its paths from:
 
 ```text
-src/clay_box_style_system/backends/sdl3/config.nim
+src/clay_board_style_system/backends/sdl3/config.nim
 ```
 
 When embedding CBSS into another project that already vendors SDL3, adjust that

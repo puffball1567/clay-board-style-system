@@ -22,7 +22,7 @@ DOM, persistence, or an application business-logic framework.
 
 The first implementation target is Nim. The Nimble package name is
 `clay_board_style_system`; the stable Nim import path is
-`clay_box_style_system`. A versioned C ABI exposes the same native UI
+`clay_board_style_system`. A versioned C ABI exposes the same native UI
 foundation to C, C++, Rust, Zig, Swift, and other languages with C
 interoperability.
 
@@ -560,11 +560,11 @@ After `nimble testCAbi`, the checks can be reproduced with:
 ```sh
 valgrind --vgdb=no --leak-check=full --show-leak-kinds=definite \
   --errors-for-leak-kinds=definite --error-exitcode=99 \
-  /tmp/clay_box_style_system_c_consumer_shared
+  /tmp/clay_board_style_system_c_consumer_shared
 
 valgrind --vgdb=no --leak-check=full --show-leak-kinds=definite \
   --errors-for-leak-kinds=definite --error-exitcode=99 \
-  /tmp/clay_box_style_system_c_consumer_static
+  /tmp/clay_board_style_system_c_consumer_static
 ```
 
 Valgrind is one release check, not a substitute for the ARC test suite,

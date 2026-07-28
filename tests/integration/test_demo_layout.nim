@@ -1,7 +1,7 @@
 import std/[options, unittest]
 
-import clay_box_style_system
-import clay_box_style_system/testing/test_driver
+import clay_board_style_system
+import clay_board_style_system/testing/test_driver
 import ../../examples/sdl3_demo
 
 proc containsRect(outerRect, innerRect: Rect; tolerance = 0.5'f32): bool =

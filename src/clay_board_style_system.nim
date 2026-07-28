@@ -1,5 +1,5 @@
-import clay_box_style_system/assets/asset_resolver
-import clay_box_style_system/core/[
+import clay_board_style_system/assets/asset_resolver
+import clay_board_style_system/core/[
   color,
   computed_style,
   declaration,
@@ -14,19 +14,19 @@ import clay_box_style_system/core/[
   style_context,
   style_value
 ]
-import clay_box_style_system/layout/layout
-import clay_box_style_system/layout/overflow_geometry
-import clay_box_style_system/layout/scroll_state
-import clay_box_style_system/layout/scrollbar_geometry
-import clay_box_style_system/hit/hit_test
-import clay_box_style_system/input/events
-import clay_box_style_system/input/pointer
-import clay_box_style_system/paint/[paint, paint_command]
-import clay_box_style_system/runtime/[accessibility, button, checkbox, details, dialog, fieldset, focus, form, frame_scheduler, image, invalidation, label, progress, providers, radio, select_box, slider, state_runtime, text_input, textarea, ui_root]
-import clay_box_style_system/runtime/widgets/[command_menu, list_box, tabs]
-import clay_box_style_system/text/[cosmic_text_engine, font_registry, text_engine]
-import clay_box_style_system/design_source/model
-import clay_box_style_system/backends/atspi/adapter
+import clay_board_style_system/layout/layout
+import clay_board_style_system/layout/overflow_geometry
+import clay_board_style_system/layout/scroll_state
+import clay_board_style_system/layout/scrollbar_geometry
+import clay_board_style_system/hit/hit_test
+import clay_board_style_system/input/events
+import clay_board_style_system/input/pointer
+import clay_board_style_system/paint/[paint, paint_command]
+import clay_board_style_system/runtime/[accessibility, button, checkbox, details, dialog, fieldset, focus, form, frame_scheduler, image, invalidation, label, progress, providers, radio, select_box, slider, state_runtime, text_input, textarea, ui_root]
+import clay_board_style_system/runtime/widgets/[command_menu, list_box, tabs]
+import clay_board_style_system/text/[cosmic_text_engine, font_registry, text_engine]
+import clay_board_style_system/design_source/model
+import clay_board_style_system/backends/atspi/adapter
 
 export asset_resolver
 export color

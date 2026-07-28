@@ -53,7 +53,7 @@ Apache License 2.0. Its complete, locked Rust dependency graph is recorded in
 
 ## Generated SDL3 Nim Bindings
 
-`src/clay_box_style_system/vendor/sdl3.nim` is generated from the vendored SDL3
+`src/clay_board_style_system/vendor/sdl3.nim` is generated from the vendored SDL3
 headers. It describes the SDL3 C API and is used under the same SDL3 license
 identified above.
 

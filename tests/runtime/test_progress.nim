@@ -1,7 +1,7 @@
 import std/[math, unittest]
 
-import clay_box_style_system
-import clay_box_style_system/generated/default_properties
+import clay_board_style_system
+import clay_board_style_system/generated/default_properties
 
 suite "progress component":
   test "progress initializes value percent and visible labels":

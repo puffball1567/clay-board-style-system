@@ -1,6 +1,6 @@
 import std/[options, sequtils, strutils, unittest]
 
-import clay_box_style_system
+import clay_board_style_system
 
 suite "input events":
   test "dispatchInput targets the hit node with local coordinates":
