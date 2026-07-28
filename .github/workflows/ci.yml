@@ -51,7 +51,7 @@ jobs:
           mkdir -p /tmp/cbss-consumer
           printf '%s\n' \
             'import std/options' \
-            'import clay_box_style_system/backends/sdl3/[image_loader, renderer]' \
+            'import clay_board_style_system/backends/sdl3/[image_loader, renderer]' \
             'delay(0)' \
             'doAssert loadRgbaImage("").isNone' \
             > /tmp/cbss-consumer/main.nim
