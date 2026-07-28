@@ -146,6 +146,16 @@ suite "text input component":
 
     check input.value() == "a"
 
+  test "shifted punctuation waits for layout-aware text input":
+    let ui = initUiRoot()
+    let input = ui.textInput(TextInputParams(value: ""))
+
+    discard input.container.emit(keyDownEvent(";", shiftKey = true))
+    check input.value() == ""
+
+    discard input.container.emit(textInputEvent("+"))
+    check input.value() == "+"
+
   test "long focused text keeps a bounded render surface and scrolls horizontally":
     let ui = initUiRoot()
     let input = ui.textInput(

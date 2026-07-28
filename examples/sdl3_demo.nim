@@ -2674,8 +2674,14 @@ proc shouldYieldForInteractiveFrame(
     true
   of sekPointerMove:
     processedEvents >= 8
-  of sekKeyDown, sekKeyUp, sekTextInput, sekCompositionStart, sekCompositionUpdate, sekCompositionEnd, sekCompositionCandidates:
-    processedEvents >= 4
+  of sekKeyDown:
+    # A printable keydown is only ownership metadata. Keep draining until
+    # SDL delivers the layout-aware text event, but paint editing keys now.
+    paintOnlyDirty or frameDirty
+  of sekTextInput, sekCompositionStart, sekCompositionUpdate, sekCompositionEnd:
+    true
+  of sekKeyUp, sekCompositionCandidates:
+    false
   else:
     false
 
@@ -2774,8 +2780,7 @@ proc textEventTarget(
         inputState.focusedTarget.get == target and
         pending.focusSerial == currentFocusSerial and
         (pending.keyTimestamp == 0'u64 or textTimestamp == 0'u64 or textTimestamp >= pending.keyTimestamp) and
-        ui.isValidTextInputTarget(target) and
-        pending.text == text:
+        ui.isValidTextInputTarget(target):
       ui.traceInput("deliver textInput to pending target " & ui.nodeTraceLabel(some(target)))
       return some(target)
     ui.traceInput(
@@ -2794,6 +2799,12 @@ proc textEventTarget(
       ui.isValidTextInputTarget(compositionTarget.get.target):
     let target = compositionTarget.get.target
     ui.traceInput("deliver textInput to composition target " & ui.nodeTraceLabel(some(target)))
+    return some(target)
+
+  if inputState.focusedTarget.isSome and
+      ui.isValidTextInputTarget(inputState.focusedTarget.get):
+    let target = inputState.focusedTarget.get
+    ui.traceInput("deliver unreserved textInput to focused target " & ui.nodeTraceLabel(some(target)))
     return some(target)
 
   ui.traceInput("drop textInput: no matching focused target")
@@ -3449,14 +3460,6 @@ proc main() =
                 caretBlinkVisible = true
                 caretSolidUntil = epochTime() + 0.35
                 nextCaretBlinkAt = caretSolidUntil + 0.5
-                let changed = ui.emitTextControlEvent(focused, keyDownEvent(
-                  event.key,
-                  ctrlKey = event.ctrl,
-                  altKey = event.alt,
-                  shiftKey = event.shift,
-                  metaKey = event.meta
-                ))
-                paintOnlyDirty = paintOnlyDirty or changed
               else:
                 pendingTextInput = none(PendingTextInput)
                 if event.key == "Backspace":
@@ -3673,12 +3676,6 @@ proc main() =
         if event.isStaleAfterTextFocusChange(textFocusChangedAt):
           ui.traceInput(
             "drop stale textInput after focus change text=\"" & event.text & "\""
-          )
-          continue
-        if pendingTextInput.isNone and compositionTarget.isNone:
-          ui.traceInput(
-            "drop unowned textInput text=\"" & event.text & "\" focus=" &
-            ui.nodeTraceLabel(inputState.focusedTarget)
           )
           continue
         ui.traceInput(

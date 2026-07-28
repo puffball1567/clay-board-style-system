@@ -1300,53 +1300,8 @@ proc textFromPrintableKey(event: InputEvent): string =
   if ch < ' ' or ch > '~':
     return ""
   if event.shiftKey:
-    case ch
-    of 'a'..'z':
+    if ch in {'a'..'z'}:
       result = ($ch).toUpperAscii()
-    of '1':
-      result = "!"
-    of '2':
-      result = "@"
-    of '3':
-      result = "#"
-    of '4':
-      result = "$"
-    of '5':
-      result = "%"
-    of '6':
-      result = "^"
-    of '7':
-      result = "&"
-    of '8':
-      result = "*"
-    of '9':
-      result = "("
-    of '0':
-      result = ")"
-    of '-':
-      result = "_"
-    of '=':
-      result = "+"
-    of '[':
-      result = "{"
-    of ']':
-      result = "}"
-    of '\\':
-      result = "|"
-    of ';':
-      result = ":"
-    of '\'':
-      result = "\""
-    of ',':
-      result = "<"
-    of '.':
-      result = ">"
-    of '/':
-      result = "?"
-    of '`':
-      result = "~"
-    else:
-      result = $ch
   else:
     result = $ch
 

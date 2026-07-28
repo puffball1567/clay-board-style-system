@@ -454,3 +454,24 @@ suite "SDL3 Wayland integration driver":
     check driver.headless.value(byId("name")) == "a"
     check driver.headless.value(byId("message")) == "b"
     check driver.textInputArea().isSome
+
+  test "SDL committed text overrides keyboard-layout-dependent key symbols":
+    var input: TextInputHandle
+    let driver = Sdl3WaylandDriver(
+      headless: initCbssTestDriver(proc(): UiRoot = buildTextInputUi(input), size(220, 100)),
+      title: "Keyboard layout",
+      artifacts: @[]
+    )
+
+    check driver.headless.click(byId("name"))
+    check driver.dispatchSdlEvent(
+      Sdl3Event(kind: sekKeyDown, timestamp: 1, key: ";", shift: true),
+      renderAfter = false
+    )
+    check driver.headless.value(byId("name")) == ""
+
+    check driver.dispatchSdlEvent(
+      Sdl3Event(kind: sekTextInput, timestamp: 2, text: "+"),
+      renderAfter = false
+    )
+    check driver.headless.value(byId("name")) == "+"

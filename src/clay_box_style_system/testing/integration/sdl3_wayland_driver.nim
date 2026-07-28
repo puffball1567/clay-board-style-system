@@ -1,6 +1,7 @@
 import std/[math, options, os, strutils]
 
 import ../../backends/sdl3/renderer
+import ../../backends/sdl3/text_event_guard
 import ../../core/[color, computed_style, diagnostics, geometry, node, selector, style_resolver, style_value]
 import ../../generated/default_properties
 import ../../hit/hit_test
@@ -468,13 +469,17 @@ proc dispatchSdlEvent*(
       pointerUpEvent(point, event.button)
     ) or hit
   of sekKeyDown:
-    result = driver.headless.press(
-      event.key,
-      ctrlKey = event.ctrl,
-      altKey = event.alt,
-      shiftKey = event.shift,
-      metaKey = event.meta
-    )
+    if event.isPrintableTextKey:
+      # SDL_TEXT_INPUT is authoritative for layout-dependent printable text.
+      result = driver.headless.focusedTarget().isSome
+    else:
+      result = driver.headless.press(
+        event.key,
+        ctrlKey = event.ctrl,
+        altKey = event.alt,
+        shiftKey = event.shift,
+        metaKey = event.meta
+      )
   of sekKeyUp:
     result = driver.headless.sendFocused(
       keyUpEvent(

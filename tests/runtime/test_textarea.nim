@@ -675,6 +675,16 @@ suite "textarea element":
     check area.state.composingText == ""
     check not area.state.composingActive
 
+  test "shifted punctuation waits for layout-aware text input":
+    let ui = initUiRoot()
+    let area = ui.textArea(TextAreaParams(value: ""))
+
+    discard area.container.emit(keyDownEvent(";", shiftKey = true))
+    check area.value() == ""
+
+    discard area.container.emit(textInputEvent("+"))
+    check area.value() == "+"
+
   test "pointer down moves caret near the clicked line and column":
     let ui = initUiRoot()
     let area = ui.textArea(TextAreaParams(value: "abc\ndef"))

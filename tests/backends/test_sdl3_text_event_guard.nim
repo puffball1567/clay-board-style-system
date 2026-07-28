@@ -29,3 +29,9 @@ suite "sdl3 text event guard":
     check not Sdl3Event(kind: sekTextInput, timestamp: 0, text: "a").isStaleTextControlEvent(focusChangedAt)
     check not Sdl3Event(kind: sekTextInput, timestamp: 19, text: "a").isStaleTextControlEvent(0)
     check not Sdl3Event(kind: sekPointerDown, timestamp: 19, button: 1, buttonX: 4, buttonY: 8).isStaleTextControlEvent(focusChangedAt)
+
+  test "printable key detection does not assume a US keyboard layout":
+    check Sdl3Event(kind: sekKeyDown, key: ";", shift: true).isPrintableTextKey
+    check Sdl3Event(kind: sekKeyDown, key: "+", shift: true).isPrintableTextKey
+    check not Sdl3Event(kind: sekKeyDown, key: "Backspace").isPrintableTextKey
+    check not Sdl3Event(kind: sekKeyDown, key: "v", ctrl: true).isPrintableTextKey
