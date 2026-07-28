@@ -15,6 +15,16 @@ Before writing code, skim:
 - [docs/design-decisions.md](docs/design-decisions.md) — settled decisions and
   component conventions.
 
+## Branch and Release Workflow
+
+- Create feature and fix branches from `devel`.
+- Open pull requests against `devel`. Feature pull requests do not target
+  `main`.
+- Keep `devel` green with the required tests and compatibility checks.
+- For a release, merge `devel` into `main` after the release checks pass.
+- Create the version tag from `main` only after that merge. Direct development
+  commits and feature merges do not land on `main`.
+
 ## Quickstart
 
 ```sh

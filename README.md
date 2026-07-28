@@ -4,7 +4,8 @@ Clay Board Style System (CBSS) is a CSS-inspired primitive style and layout
 foundation for native GUI libraries.
 
 The first implementation target is Nim. The Nim package/import name should be
-`clay_box_style_system`.
+`clay_box_style_system`. A versioned C ABI exposes the same native UI foundation
+to C, C++, Rust, Zig, Swift, and other languages with C interoperability.
 
 The initial runtime target is Linux x86_64 with SDL3. Windows and macOS support
 are planned, but they are contributor-validated and not release-blocking during
@@ -20,11 +21,66 @@ The name is intentional. The project is not the clay itself, meaning the GUI
 components. It is the board where the clay is placed, shaped, arranged, and
 prepared.
 
+## Getting Started
+
+Requirements:
+
+- Nim 2.2 or newer
+- Rust and Cargo for the cosmic-text and image bridges
+- Linux x86_64 SDL3 development files and native bridges
+
+The fastest way to run CBSS from a source checkout is:
+
+```sh
+git clone https://github.com/puffball1567/clay-board-style-system.git
+cd clay-board-style-system
+nimble setupBundled
+nimble test
+nimble sdl3Demo
+```
+
+For an installed package, install CBSS once:
+
+```sh
+nimble install clay_box_style_system
+```
+
+Prepare a runtime directory using the layout in
+[docs/runtime-linking.md](docs/runtime-linking.md), then select bundled setup
+to link its SDL3 archive statically:
+
+```sh
+cbss_configure bundled /path/to/cbss-runtime
+nimble sdl3Demo
+```
+
+To use SDL3 and the native bridges supplied by the operating system instead:
+
+```sh
+cbss_configure system
+nimble sdl3Demo
+```
+
+The selected mode is stored in the application's ignored `.cbss/` directory;
+application source code and imports stay the same. CBSS does not include native
+runtime binaries in its Nimble package. Bundled setup links SDL3 statically and
+the source-built image and cosmic-text C ABI bridges dynamically. Custom
+runtime prefixes and release packaging are documented in
+[docs/runtime-linking.md](docs/runtime-linking.md).
+
+C ABI consumers can start with [docs/c-api.md](docs/c-api.md). Shared and
+static library build commands are listed in
+[Language-Neutral C ABI](#language-neutral-c-abi).
+
 ## Release Status
 
 Version 0.1 is a Linux x86_64 developer preview. It is suitable for evaluating
 the API, building GUI libraries, and contributing runtime capabilities. Public
 APIs may still change before 1.0.
+
+Version 0.2 is planned around state-driven native navigation, including a
+semantic Link primitive, a replaceable screen stack, focus restoration, and
+external URL/deep-link adapters. See the [product roadmap](docs/roadmap.md).
 
 Current boundaries:
 
@@ -37,49 +93,6 @@ Current boundaries:
 - Property status is defined by the
   [support matrix](docs/css-property-support.md); accepted metadata does not
   imply active runtime behavior.
-
-## Quick Start
-
-Requirements:
-
-- Nim 2.2 or newer
-- Rust and Cargo for the cosmic-text and image bridges
-- Linux x86_64 SDL3 development files and native bridges
-
-Install CBSS once:
-
-```sh
-nimble install clay_box_style_system
-```
-
-Prepare a runtime directory using the layout in
-[docs/runtime-linking.md](docs/runtime-linking.md), then select bundled setup
-to link its SDL3 archive statically:
-
-```sh
-cbss_configure bundled /path/to/cbss-runtime
-nimble test
-nimble sdl3Demo
-```
-
-CBSS does not include native runtime binaries in its Nimble package. Bundled
-setup statically links SDL3 from the supplied runtime directory and dynamically
-links the CBSS image and cosmic-text C ABI bridges. Both bridges are built from
-source included with CBSS. To use libraries supplied by the operating system
-instead:
-
-```sh
-cbss_configure system
-nimble sdl3Demo
-```
-
-The selected mode is stored in the application's ignored `.cbss/` directory;
-application source code and imports stay the same. Custom runtime prefixes and
-release packaging are documented in
-[docs/runtime-linking.md](docs/runtime-linking.md).
-
-When developing CBSS itself, `nimble setupBundled` and `nimble setupSystem`
-provide equivalent repository-local shortcuts.
 
 ## Language-Neutral C ABI
 
