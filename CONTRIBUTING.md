@@ -24,6 +24,12 @@ Before writing code, skim:
 - For a release, merge `devel` into `main` after the release checks pass.
 - Create the version tag from `main` only after that merge. Direct development
   commits and feature merges do not land on `main`.
+- Repository Rulesets require pull requests for both protected branches. A
+  required source-policy check accepts `main` pull requests only from this
+  repository's `devel` or `hotfix/*` branches.
+- Use `hotfix/*` only for an urgent correction to the released state. Cut it
+  from `main`, release the patch from `main`, then merge or cherry-pick the same
+  correction back into `devel`.
 
 ## Contribution License
 
