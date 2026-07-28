@@ -1,6 +1,6 @@
 import std/[options, unittest]
 
-import clay_box_style_system
+import clay_board_style_system
 
 suite "label element":
   test "label click toggles an associated checkbox":

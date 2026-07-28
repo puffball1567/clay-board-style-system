@@ -7,6 +7,13 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-29
+
+### Changed
+
+- Unified the public package name, Nim import path, source tree, documentation,
+  demo title, and sample asset names under `clay_board_style_system`.
+
 ## [0.1.0] - 2026-07-28
 
 ### Added

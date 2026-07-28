@@ -1,7 +1,7 @@
 import std/[options, unittest]
 
-import clay_box_style_system
-import clay_box_style_system/generated/default_properties
+import clay_board_style_system
+import clay_board_style_system/generated/default_properties
 
 proc rectFor(layout: LayoutResult; node: NodeId): Rect =
   for box in layout.boxes:

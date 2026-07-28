@@ -1,7 +1,7 @@
 import std/unittest
 
-import clay_box_style_system/backends/sdl3/renderer
-import clay_box_style_system/backends/sdl3/text_event_guard
+import clay_board_style_system/backends/sdl3/renderer
+import clay_board_style_system/backends/sdl3/text_event_guard
 
 suite "sdl3 text event guard":
   test "IME UI modes map to SDL implemented UI hints":

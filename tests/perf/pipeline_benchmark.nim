@@ -2,8 +2,8 @@
 ## benchmarks report numbers, while unit tests assert behavior.
 import std/[algorithm, monotimes, options, strformat, times]
 
-import clay_box_style_system
-import clay_box_style_system/generated/default_properties
+import clay_board_style_system
+import clay_board_style_system/generated/default_properties
 
 type PipelineTiming = object
   styleMs: float

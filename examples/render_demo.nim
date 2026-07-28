@@ -1,8 +1,8 @@
 import std/[options, strformat]
 
-import clay_box_style_system
-import clay_box_style_system/backends/ppm/raster
-import clay_box_style_system/generated/default_properties
+import clay_board_style_system
+import clay_board_style_system/backends/ppm/raster
+import clay_board_style_system/generated/default_properties
 
 proc main() =
   var tree = initTree()
@@ -49,7 +49,7 @@ proc main() =
   let layout = computeLayout(tree, styles, size(300, 64))
   let commands = buildPaintCommands(tree, styles, layout)
   let image = render(commands, 300, 64, rgb(1, 1, 1))
-  let path = "/tmp/clay_box_style_system_demo.ppm"
+  let path = "/tmp/clay_board_style_system_demo.ppm"
   image.writePpm(path)
   echo &"wrote {path}"
 

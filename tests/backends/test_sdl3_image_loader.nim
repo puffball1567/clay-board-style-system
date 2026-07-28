@@ -1,6 +1,6 @@
 import std/[options, os, unittest]
 
-import clay_box_style_system/backends/sdl3/image_loader
+import clay_board_style_system/backends/sdl3/image_loader
 
 const onePixelPpm = "P6\n1 1\n255\n\xFF\x00\x00"
 

@@ -1,6 +1,6 @@
 import std/[os, unittest]
 
-import clay_box_style_system/assets/asset_resolver
+import clay_board_style_system/assets/asset_resolver
 
 suite "asset resolver":
   test "keeps empty absolute and uri sources unchanged":

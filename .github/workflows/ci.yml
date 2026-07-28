@@ -47,11 +47,11 @@ jobs:
           runtime_root="$GITHUB_WORKSPACE/vendor/sdl3"
           nimble install -y
           test -x "$HOME/.nimble/bin/cbss_configure"
-          test ! -e "$(nimble path clay_box_style_system)/vendor/sdl3/linux-x86_64/libSDL3.a"
+          test ! -e "$(nimble path clay_board_style_system)/vendor/sdl3/linux-x86_64/libSDL3.a"
           mkdir -p /tmp/cbss-consumer
           printf '%s\n' \
             'import std/options' \
-            'import clay_box_style_system/backends/sdl3/[image_loader, renderer]' \
+            'import clay_board_style_system/backends/sdl3/[image_loader, renderer]' \
             'delay(0)' \
             'doAssert loadRgbaImage("").isNone' \
             > /tmp/cbss-consumer/main.nim
@@ -96,7 +96,7 @@ jobs:
           test -f THIRD_PARTY_NOTICES.md
           test -f SECURITY.md
           test -f CHANGELOG.md
-          grep -q 'license.*=.*"Apache-2.0"' clay_box_style_system.nimble
+          grep -q 'license.*=.*"Apache-2.0"' clay_board_style_system.nimble
           grep -q 'Apache License' LICENSE
           test -f licenses/Apache-2.0.txt
           test -L vendor/sdl3/linux-x86_64/libSDL3.so
