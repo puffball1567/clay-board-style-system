@@ -1,9 +1,9 @@
 import std/[math, options, strutils, times]
 
-import clay_box_style_system
-import clay_box_style_system/backends/sdl3/renderer
-import clay_box_style_system/backends/sdl3/text_event_guard
-import clay_box_style_system/generated/default_properties
+import clay_board_style_system
+import clay_board_style_system/backends/sdl3/renderer
+import clay_board_style_system/backends/sdl3/text_event_guard
+import clay_board_style_system/generated/default_properties
 
 type
   DemoActionKind = enum
@@ -1564,7 +1564,7 @@ proc ToolButton(ui: UiRoot; label: string; style = buttonStyle()): ButtonHandle 
 
 proc Header(ui: UiRoot): NodeHandle {.discardable.} =
   ui.box(result, headerStyle()):
-    ui.text("Clay Box Style System", titleStyle())
+    ui.text("Clay Board Style System", titleStyle())
     ui.box(badgeStyle()):
       ui.text("SDL3")
 
@@ -2987,7 +2987,7 @@ proc main() =
   var cosmic = initCosmicTextEngine(fonts)
   let textEngine = cosmic.textEngine()
   ui.configureTextLayout(textEngine, fonts)
-  var app = initSdl3Renderer("Clay Box Style System - SDL3", 1200, 980)
+  var app = initSdl3Renderer("Clay Board Style System - SDL3", 1200, 980)
   var viewport = app.windowSize()
   var frame = buildFrame(ui, viewport, textEngine, fonts)
   var inputState = initInteractionState()

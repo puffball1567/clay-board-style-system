@@ -1,7 +1,7 @@
 import std/[json, options, os, strutils, unittest]
 
-import clay_box_style_system
-import clay_box_style_system/testing/test_driver
+import clay_board_style_system
+import clay_board_style_system/testing/test_driver
 
 proc controlStyle(width = 160.0'f32; height = 32.0'f32): UiStyle =
   uiStyle([

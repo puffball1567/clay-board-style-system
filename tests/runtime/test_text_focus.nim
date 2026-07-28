@@ -1,7 +1,7 @@
 import std/[options, unittest]
 
-import clay_box_style_system
-import clay_box_style_system/runtime/text_focus
+import clay_board_style_system
+import clay_board_style_system/runtime/text_focus
 
 suite "text focus runtime":
   test "normalizing focus blurs the previous text control":

@@ -1,7 +1,7 @@
 import std/[options, strformat]
 
-import clay_box_style_system
-import clay_box_style_system/generated/default_properties
+import clay_board_style_system
+import clay_board_style_system/generated/default_properties
 
 proc `$`(color: Color): string =
   &"rgba({color.r:.2f}, {color.g:.2f}, {color.b:.2f}, {color.a:.2f})"

@@ -422,7 +422,7 @@ its own paint and hit passes.
 
 **Multi-window.** There is no window abstraction anywhere in `src/` — no
 `Window`, no `Application`. `backends/` is not exported from the public umbrella
-(`src/clay_box_style_system.nim`), so a library author consuming CBSS gets no
+(`src/clay_board_style_system.nim`), so a library author consuming CBSS gets no
 window at all and must vendor the SDL3 backend. Two hard couplings:
 `initSdl3Renderer` owns global SDL lifetime (`SDL3.init` at
 `backends/sdl3/renderer.nim:289`, `SDL3.quit()` at `:330` inside `close`), so
@@ -627,7 +627,7 @@ Beyond G4/G5:
 
 Beyond G11/G13:
 
-Framing note: `src/clay_box_style_system/vendor/sdl3.nim` is a complete
+Framing note: `src/clay_board_style_system/vendor/sdl3.nim` is a complete
 translation of the SDL3 headers. `showFileDialogWithProperties` (`:16487`),
 `showSimpleMessageBox` (`:23843`), `getSystemTheme` (`:13925`),
 `getDisplayContentScale` (`:14067`), `createTray` (`:27328`), and

@@ -83,7 +83,7 @@ shape of the public model, but it should not make CBSS a clone of any single
 external service.
 
 The import boundary starts with a service-neutral intermediate model under
-`src/clay_box_style_system/design_source/`. Source services should map into
+`src/clay_board_style_system/design_source/`. Source services should map into
 that model first, then CBSS can turn it into `Tree` and `StyleSheet` data. This
 keeps source-specific behavior outside core style, layout, paint, and event
 code.
@@ -138,7 +138,7 @@ The first implementation will be written in Nim.
 The Nimble package and public import path should use snake case:
 
 ```text
-clay_box_style_system
+clay_board_style_system
 ```
 
 The public project name can remain human-readable, but Nim modules should use
@@ -316,7 +316,7 @@ consumes.
 SDL3 path and link differences belong in:
 
 ```text
-src/clay_box_style_system/backends/sdl3/config.nim
+src/clay_board_style_system/backends/sdl3/config.nim
 ```
 
 This is intentional. CBSS may be embedded into projects that already vendor
@@ -1807,9 +1807,9 @@ code. Those steps are runtime responsibilities.
 The current low-level pieces live in:
 
 ```text
-src/clay_box_style_system/input/events.nim
-src/clay_box_style_system/runtime/state_runtime.nim
-src/clay_box_style_system/runtime/providers.nim
+src/clay_board_style_system/input/events.nim
+src/clay_board_style_system/runtime/state_runtime.nim
+src/clay_board_style_system/runtime/providers.nim
 ```
 
 A higher-level CBSS runtime or UI layer should hide that loop and expose a
@@ -1930,13 +1930,13 @@ The initial implementation exposes a small `TextEngine` interface for layout
 measurement:
 
 ```text
-src/clay_box_style_system/text/text_engine.nim
+src/clay_board_style_system/text/text_engine.nim
 ```
 
 Font registration and fallback policy are represented separately:
 
 ```text
-src/clay_box_style_system/text/font_registry.nim
+src/clay_board_style_system/text/font_registry.nim
 ```
 
 Applications can enable system font discovery, register bundled font files, add
@@ -1952,7 +1952,7 @@ Renderer-specific text drawing stays in the renderer backend. For SDL3 debug
 text, that adapter lives in:
 
 ```text
-src/clay_box_style_system/backends/sdl3/text_debug.nim
+src/clay_board_style_system/backends/sdl3/text_debug.nim
 ```
 
 If `cosmic-text` is used, it should be hidden behind a CBSS-owned C ABI or

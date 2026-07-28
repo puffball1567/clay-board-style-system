@@ -1,6 +1,6 @@
 import std/unittest
 
-import clay_box_style_system
+import clay_board_style_system
 
 suite "radio component":
   test "radio set keeps one selected value":

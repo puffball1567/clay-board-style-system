@@ -1,6 +1,6 @@
 import std/unittest
 
-import clay_box_style_system
+import clay_board_style_system
 
 suite "form component":
   test "valid form submits and emits onSubmit":

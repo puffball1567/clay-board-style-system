@@ -168,7 +168,7 @@ process-fatal semantics). Single-thread ownership is documented on the ABI.
 registered family/weight/style metadata cross the ABI or are documented as
 advisory. The stale duplicate SDL3 binding under `bindings/c/sdl3/` is deleted
 or reduced to the documented generator input — one binding copy only
-(`src/clay_box_style_system/vendor/sdl3.nim`).
+(`src/clay_board_style_system/vendor/sdl3.nim`).
 
 ## D11 — Memory-model enforcement under ARC (Adopted)
 
@@ -212,22 +212,19 @@ these native binaries. The image bridge is built from CBSS-owned Rust source,
 and the unused font binary was removed. See
 `docs/runtime-linking.md` for distribution layouts and advanced overrides.
 
-## D13 — Naming: "Clay Board" vs `clay_box` (Adopted)
+## D13 — Naming: Clay Board Style System (Adopted)
 
-The repo, README title, Nimble package, and metaphor say Clay **Board** Style
-System. The Nim import path and internal source tree retain
-`clay_box_style_system`. Both are "CBSS", but they identify different layers
-deliberately:
+The product, repository, Nimble package, Nim import path, and internal source
+tree use the same Clay **Board** Style System name. This removes the previous
+Board-versus-Box distinction before external adoption.
 
 - Product and repository name: **Clay Board Style System**. The board is the
   primitive foundation on which component libraries are built.
 - Nimble package name: `clay_board_style_system`, matching the public product
   and repository name.
-- Nim import name: `clay_box_style_system`. Box identifies the primary layout
-  primitive exposed to Nim code. Retaining it avoids a breaking source change
-  for existing users.
+- Nim import name and internal source tree: `clay_board_style_system`.
 
-The README must state this distinction near the first import-name mention.
+The README must state the public package and import name near its first use.
 
 ## D14 — Documentation restructure (Adopted)
 
@@ -461,7 +458,7 @@ Exporting Nim object layouts would couple every consumer to ARC details,
 compiler versions, and internal refactors.
 
 **Decision.** Maintain a versioned C ABI under
-`src/clay_box_style_system/c_api.nim` with its canonical declaration in
+`src/clay_board_style_system/c_api.nim` with its canonical declaration in
 `include/cbss.h`. The ABI uses opaque owning handles, fixed-width scalar
 values, caller-owned output buffers, explicit status codes, and copied string
 inputs. Nim-managed strings, sequences, references, closures, exceptions, and

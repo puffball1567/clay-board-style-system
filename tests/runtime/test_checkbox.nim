@@ -1,6 +1,6 @@
 import std/unittest
 
-import clay_box_style_system
+import clay_board_style_system
 
 suite "checkbox component":
   test "checkbox toggles checked state on click and emits value events":

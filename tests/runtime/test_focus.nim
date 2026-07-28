@@ -1,6 +1,6 @@
 import std/[options, unittest]
 
-import clay_box_style_system
+import clay_board_style_system
 
 suite "general focus runtime":
   test "decorative nodes are skipped and child hits resolve to a focusable ancestor":

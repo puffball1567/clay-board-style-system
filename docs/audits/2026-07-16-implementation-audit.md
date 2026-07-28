@@ -451,7 +451,7 @@ Beyond P9:
   form. **Fix**: extract component notes to `docs/runtime-components.md`;
   correct the directory map to the real tree.
 - **MEDIUM — "Board" vs "Box" naming split**: repo/README say Clay **Board**
-  Style System; package, imports, and all code say `clay_box_style_system`.
+  Style System; package, imports, and all code say `clay_board_style_system`.
   Pick one; state the other as historical alias. (Owner decision — see
   design-decisions doc.)
 - LOW: no CONTRIBUTING.md (the "files to touch" map architecture.md promises
