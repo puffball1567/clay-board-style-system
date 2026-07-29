@@ -343,6 +343,164 @@ the shared runtime provides style, layout, paint, text, and events, while
 independent libraries provide charts, widgets, themes, and application-specific
 UI systems on top of that runtime.
 
+## Render Surface Extension Contract
+
+Status: `Planned`
+
+The shared runtime must also let an independently developed Nim library or C
+ABI library render inside an application view without depending on a particular
+GUI library, theme, renderer implementation, or private CBSS module. This
+contract is more important than any individual chart, map, media, or
+game-surface library: it is what makes those libraries composable in the first
+place.
+
+The Web analogue is a library receiving a DOM or Canvas host and mounting its
+own rendering into that host. CBSS uses a typed `RenderSurface` or `CanvasHost`
+reference rather than a global class-selector lookup. The application owns the
+host's placement in the UI tree; the mounted library owns only its interior
+content and resources.
+
+Illustrative authoring forms:
+
+```nim
+import cbss_charts
+
+let host = canvasHost()
+
+ui.box(appStyle):
+  host
+
+let chart = lineChart(data, options)
+chart.mount(host)
+```
+
+Libraries may also expose a self-contained component when no pre-existing host
+is needed:
+
+```nim
+import cbss_charts
+
+ui.box(appStyle):
+  lineChart(data, options)
+```
+
+The public contract must provide:
+
+- Typed host creation and stable-in-process handles, with an optional explicit
+  identifier for testing and external-tool inspection. String selectors are
+  not required for ordinary application code.
+- Explicit `mount`, `update`, `unmount`, resize, visibility, focus, and
+  device-loss lifecycle operations.
+- A local drawing context and coordinate system; the host supplies its resolved
+  bounds, DPI, clipping, transform, z-order, and frame scheduler.
+- Routed pointer, wheel, keyboard, touch, pen, and accessibility events with
+  clear propagation and capture rules.
+- Library-scoped resource ownership for textures, GPU buffers, media handles,
+  timers, and subscriptions, released deterministically on unmount.
+- Dirty-region and frame-request APIs so an extension redraws only when its
+  content changes or it explicitly animates.
+- Style injection at component boundaries. A library can expose default styles
+  and named style inputs without reaching into an application's unrelated
+  nodes; documented component-level conflict rules remain in effect.
+- Headless test-driver support for mounting a surface, sending input, asserting
+  paint commands, and taking screenshots.
+
+The contract is a public, versioned CBSS API. Libraries must use it rather than
+casting renderer internals or maintaining private copies of Canvas, event, or
+layout code. A package such as `cbss_charts` declares its CBSS compatibility in
+its Nimble/plugin metadata and imports the shared project facade internally;
+application authors import the library, not CBSS internals or a second runtime.
+
+Dynamic loading is not required for the initial model. Normal Nim imports and
+compile-time dependency resolution are sufficient, provided every library in
+the application is built against the same compatible CBSS public contract.
+
+### External And FFI Surfaces
+
+The same contract must support a library that was not written in Nim. An
+`ExternalSurface` lets CBSS host an independently rendered or independently
+laid-out subsystem inside a normal Box. For example, a Clay adapter can receive
+the resolved Box size and local input coordinates, run Clay for its interior,
+and submit its result through the surface contract. CBSS continues to own the
+outer box's placement, clipping, opacity, transform, stacking, focus boundary,
+and relationship to surrounding UI.
+
+```nim
+import cbss_clay
+
+ui.box(panelStyle):
+  claySurface(clayView)
+```
+
+The application need not import Clay directly. `cbss_clay` owns the one-time
+adapter, linking, conversion, and lifecycle work; its consumer sees a normal
+CBSS component or mounts it into an explicit `RenderSurface` host.
+
+The C ABI form must use opaque handles and a versioned surface descriptor or
+vtable. It must cover only explicit operations such as create, mount, resize,
+paint/command submission, input delivery, visibility, device loss/recovery,
+and unmount/destroy. It must not expose Nim object layouts, renderer-private
+pointers, or arbitrary cross-language closures.
+
+The thread boundary is equally explicit: a surface may prepare data on worker
+threads, but CBSS tree mutation, input dispatch, mount/unmount, and graphics
+submission occur on the host UI/render thread. Cross-thread work returns data
+through queued updates or immutable command/data buffers.
+
+An external surface owns only its interior. It cannot bypass the host clip,
+draw above modal content, consume unrelated input, or force continuous frames
+without an explicit frame request. This makes a Clay view, a C++ chart engine,
+a Rust renderer, a video decoder, or an engine viewport composable with the
+same native GUI tree rather than a separate windowing system.
+
+### External Game Surface Contract
+
+The same `ExternalSurface` contract is the compatibility layer for game
+libraries. CBSS does not reimplement, fork, or compete with a library's game
+loop, scene graph, physics, asset pipeline, or rendering API. An adapter lets
+that library draw into a CBSS Canvas while CBSS retains ownership of the
+application window and UI composition.
+
+Illustrative application code:
+
+```nim
+let gameSurface = initExternalSurface(game)
+
+ui.canvas(gameStyle):
+  gameSurface
+
+ui.box(hudStyle):
+  gameHud(game)
+```
+
+An adapter must choose one explicit render path during mount:
+
+1. **Command path:** the library emits commands accepted by the CBSS Canvas
+   context. This is the most portable path when the library exposes a suitable
+   drawing abstraction.
+2. **Shared-target path:** the library renders into a compatible offscreen
+   texture or render target which CBSS can compose without a CPU readback. This
+   is the required path for real-time engine and GPU scene use.
+   Compatibility is runtime- and backend-specific; texture format, graphics
+   context, synchronization, resize, and destruction ownership are negotiated
+   explicitly.
+3. **CPU-pixel fallback:** the library supplies a bounded pixel buffer that
+   CBSS uploads to a Canvas texture. This is useful for static previews,
+   tooling, and diagnostics, but is not an acceptable real-time fallback for a
+   game scene.
+
+If none of these paths is available, CBSS reports an unsupported-surface
+diagnostic rather than silently opening a second window or presenting outside
+the Canvas.
+
+Every adapter receives Canvas-local input and lifecycle callbacks: mount,
+resize, update, render, visibility/focus change, frame request, device loss or
+recovery, unmount, and destroy. It returns explicit event-consumption results,
+so an active modal, focused control, or CBSS navigation action can take
+priority over a game surface. The adapter must never independently create an
+application window, poll a competing top-level event loop, or present to the
+screen while mounted.
+
 ## CBSS Test Driver
 
 Status: `Prototype`

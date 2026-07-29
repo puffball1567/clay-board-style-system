@@ -7,6 +7,23 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-07-30
+
+### Added
+
+- Published the native web-platform capability roadmap, defining the intended
+  CBSS, Nim, independent-package, and deliberate non-browser boundaries across
+  HTML-like structure, CSS-like presentation, and JavaScript-like behavior.
+- Expanded the Canvas roadmap with a renderer-neutral `ExternalSurface`
+  contract, capability diagnostics, lifecycle ownership, and host-driven UI
+  composition requirements.
+
+### Changed
+
+- Replaced renderer-specific integration examples with a generic external
+  surface contract so future integrations are not coupled to one engine or
+  rendering library.
+
 ## [0.1.4] - 2026-07-29
 
 ### Added
