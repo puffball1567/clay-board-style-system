@@ -66,4 +66,6 @@ navigator.back()
 Later milestones remain intentionally unversioned until Version 0.2 APIs and
 runtime behavior are stable. Tooling plans for galleries, plugins, MCP
 integration, and design-source adapters are tracked separately in
-[tooling-roadmap.md](tooling-roadmap.md).
+[tooling-roadmap.md](tooling-roadmap.md). Native Canvas, visualization, game
+UI, and external-renderer integration are tracked in
+[render-surface-roadmap.md](render-surface-roadmap.md).

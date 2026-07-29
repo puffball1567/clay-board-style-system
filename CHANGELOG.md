@@ -7,6 +7,13 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-07-29
+
+### Added
+
+- Published the Native Canvas, visualization, game UI, SDL3 GPU capability,
+  external-renderer integration, and design-source/NIF-BIF roadmap.
+
 ## [0.1.2] - 2026-07-29
 
 ### Changed
