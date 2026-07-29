@@ -1,8 +1,12 @@
 # Clay Board Style System
 
-Clay Board Style System is a CSS-inspired primitive style and layout foundation
-for native GUI libraries. This document uses `CBSS` only as a short form where
-repeating the full project name would reduce readability.
+**Name clarification:** Clay Board Style System is an independent project. It
+is not related to, affiliated with, derived from, or compatible with Clay, the
+C UI layout library.
+
+Clay Board Style System is a CSS-inspired primitive engine for native GUI
+toolkits. This document uses `CBSS` only as a short form where repeating the
+full project name would reduce readability.
 
 **CSS compatibility boundary:** Clay Board Style System is not CSS and is not a
 fully compatible CSS implementation. It provides CSS-like authoring syntax,
