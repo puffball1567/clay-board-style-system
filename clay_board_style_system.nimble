@@ -1,6 +1,6 @@
 version       = "0.1.1"
 author        = "Clay Board Style System contributors"
-description   = "CSS-like primitive style and layout foundation for native GUI libraries"
+description   = "A CSS-inspired primitive engine for native GUI toolkits"
 license       = "Apache-2.0"
 srcDir        = "src"
 bin           = @["cbss_configure"]
