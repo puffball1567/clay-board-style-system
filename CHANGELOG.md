@@ -7,6 +7,15 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-07-29
+
+### Changed
+
+- Refined the public project description to "A CSS-inspired primitive engine
+  for native GUI toolkits."
+- Clarified that Clay Board Style System is independent from Clay, the C UI
+  layout library.
+
 ## [0.1.1] - 2026-07-29
 
 ### Changed
