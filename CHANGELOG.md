@@ -7,6 +7,15 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-07-30
+
+### Fixed
+
+- Restored Japanese IME preedit rendering after pasting text without changing
+  the active input mode.
+- Reset stale composition deduplication state consistently in text inputs and
+  textareas when committed text or clipboard content is inserted.
+
 ## [0.1.5] - 2026-07-30
 
 ### Added

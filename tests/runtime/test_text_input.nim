@@ -850,6 +850,20 @@ suite "text input component":
     check not input.state.composingActive
     check input.state.composingText == ""
 
+  test "IME preedit restarts after paste with the same update text":
+    let ui = initUiRoot()
+    let input = ui.textInput(TextInputParams())
+
+    discard input.container.emit(iekFocus)
+    check input.container.emit(compositionUpdateEvent("かな"))
+    discard input.container.emit(pasteEvent("日本語"))
+
+    check input.value() == "日本語"
+    check input.container.emit(compositionUpdateEvent("かな"))
+    check input.state.composingActive
+    check input.state.composingText == "かな"
+    check ui.tree.nodes[input.textNode.nodeId.nodeIndex].text == "日本語かな"
+
   test "backspace removes composing text before committed value":
     let ui = initUiRoot()
     let input = ui.textInput(TextInputParams(value: "seed"))
