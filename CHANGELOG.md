@@ -7,6 +7,27 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-07-30
+
+### Added
+
+- Defined local CSS Color 4 parity as the color-system target so supported
+  color values can be shared between a web design and CBSS on the same OS,
+  display, and output color space.
+- Added the planned optional Pixie CPU raster and effects path for cached
+  paths, masks, gradients, shadows, blur, SVG, image processing, and generated
+  game-interface assets.
+- Documented embedded, standard, and full visual deployment profiles together
+  with effect cache policy, resource budgets, and required amd64/arm64
+  measurements.
+- Preserved the stable C ABI boundary by keeping Pixie internal and planning
+  versioned or opaque extended-color inputs alongside the existing RGBA value.
+
+### Changed
+
+- Required release pull requests from `devel` to `main` to use merge commits
+  rather than squash or rebase merges.
+
 ## [0.1.6] - 2026-07-30
 
 ### Fixed
