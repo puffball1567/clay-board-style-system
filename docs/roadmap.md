@@ -74,9 +74,15 @@ are optional modules shipped within CBSS.
 
 Planned capabilities:
 
-- Complete the practical CSS Color authoring surface described below, including
-  hexadecimal, named, RGB, HSL, HWB, Lab/LCH, Oklab/Oklch, alpha, interpolation,
-  gamut handling, `currentColor`, and typed color-mix behavior where relevant.
+- Make the color subsystem semantically compatible with the supported CSS
+  Color 4 surface described below, including hexadecimal, named, RGB, HSL,
+  HWB, Lab/LCH, Oklab/Oklch, alpha, interpolation, gamut handling,
+  `currentColor`, and typed color-mix behavior where relevant. CBSS as a whole
+  remains CSS-inspired rather than a complete CSS implementation.
+- Evaluate Pixie as an optional CPU raster and image-effects backend for
+  paths, masks, gradients, shadows, blur, blending, SVG rasterization, and
+  image processing. Pixie remains behind CBSS color, paint, cache, and C ABI
+  contracts and must not redefine their semantics.
 - Publish a versioned `CanvasHost` / `RenderSurface` lifecycle contract for
   independent Nim modules and C ABI adapters: mount, update, resize, input,
   frame request, visibility, device-loss, unmount, and deterministic cleanup.
@@ -208,11 +214,13 @@ Planned work:
 color, a color pair, gradient stops, border colors, shadow colors, and other
 typed visual values. That distinction remains part of the runtime model.
 
-The target is to support the complete practical authoring surface of CSS Color
-expressions, while retaining a typed Nim API rather than requiring a CSS text
-parser. A syntax is not considered supported merely because CBSS can store its
-source text: it must have a specified conversion, interpolation, paint result,
-and diagnostic behavior.
+The target is semantic compatibility with the supported CSS Color 4 authoring
+surface, while retaining a typed Nim API rather than requiring CSS text for
+ordinary Nim code. A serialized CSS color parser is still valuable for design
+tokens, generated assets, external styles, and web-to-native migration. A
+syntax is not considered supported merely because CBSS can store its source
+text: it must have a specified conversion, interpolation, paint result, and
+diagnostic behavior.
 
 Planned work:
 
@@ -235,6 +243,106 @@ Planned work:
 - Treat device-dependent, wide-gamut, and system-color behavior as explicit
   capability work. Unsupported output profiles must diagnose or use a
   documented conversion; they must not silently render unpredictably.
+
+#### Local CSS Color Parity
+
+Color compatibility is intended to remove duplicate web and native color work
+for designers. The same supported color value should be reusable by a web
+design and a CBSS application without creating a separate native palette.
+
+The conformance target is local rather than cross-device physical identity:
+
+> On the same OS session, display, and output color space, a supported CBSS
+> color value should produce a colorimetrically or perceptually equivalent
+> result to the same value rendered by a reference browser.
+
+This target does not promise that unrelated displays, ICC profiles, ambient
+conditions, HDR modes, or hardware gamuts look identical. It does require CBSS
+to preserve the specified color space and channels until the output conversion
+stage, apply defined interpolation and gamut mapping, and avoid accidental
+double color management.
+
+Validation should include:
+
+- normative conversion and parsing vectors derived from the CSS Color
+  specification;
+- comparative swatch, alpha-composition, and gradient rendering against a
+  pinned reference browser on the same machine;
+- exact channel checks where integer sRGB output permits them and documented
+  Oklab/Delta-E tolerances where rasterization or conversion introduces
+  rounding;
+- SDR sRGB as the required baseline, followed by capability-gated wide-gamut
+  and HDR output; and
+- platform coverage that records the browser engine, compositor, output color
+  space, ICC profile availability, and renderer backend used by each run.
+
+Rendering backends receive resolved paint colors. SDL3, Pixie, a future GPU
+Canvas, or another backend may implement the final raster operation, but none
+may assign a different meaning to a public CBSS color value.
+
+### Optional CPU Raster And Effects Backend
+
+Status: `Planned evaluation`
+
+Pixie is a candidate optional implementation backend for CPU-side raster and
+image-processing work. Its useful scope includes paths, anti-aliased masks,
+gradients, shadows, blur, blend modes, SVG rasterization, image transforms, and
+other operations that would otherwise require a substantial independent
+raster implementation.
+
+Pixie is not the CBSS color specification, layout engine, public paint model,
+or canonical type system. In particular:
+
+- CBSS parses and resolves supported CSS Color 4 values before backend use.
+- A Pixie adapter converts resolved CBSS paint data into Pixie operations.
+- Backend-specific color, image, path, and allocation types do not enter the
+  public Nim component contract or the C ABI.
+- A Pixie-free build path remains supported for applications that do not need
+  these effects.
+- Cached Pixie output is uploaded or composed through the active SDL3 path;
+  static output is not rasterized again every frame.
+
+Effect execution policy must be selectable without changing the authored
+visual value. Provisional policy concepts are:
+
+- `auto`: CBSS chooses from invalidation state and active animation.
+- `on-change`: regenerate only when source data, style, size, scale, or output
+  color context changes.
+- `every-frame`: explicitly allow continuous regeneration for an active
+  effect.
+- `manual`: retain output until the application explicitly invalidates it.
+
+The exact public names remain subject to API design. The behavior must also
+support application-level quality, memory-budget, and dynamic-effect limits.
+Disallowed or unavailable effects produce a diagnostic rather than silently
+changing appearance.
+
+Deployment profiles should make capability and footprint intentional:
+
+- an embedded profile for SDL3-capable Linux SBCs and comparable devices,
+  with bounded caches and optional effects;
+- a standard profile for ordinary native applications; and
+- a full visual profile with CPU effects and later GPU capabilities.
+
+Microcontroller, RTOS, and bare-metal support is not an initial requirement.
+The embedded target begins with SDL3-capable Linux systems. Before Pixie can
+become a recommended dependency, release builds on amd64 and arm64 must measure
+binary size, startup time, idle and active RSS, first-generation cost, cached
+frame cost, and temporary-buffer peaks at embedded-relevant resolutions.
+
+#### C ABI Boundary
+
+The existing 16-byte `CbssColor` remains the stable resolved RGBA interchange
+value and must not be enlarged in place. Extended CSS Color 4 input should use
+new versioned constructors or opaque CBSS-owned color-value handles, with
+corresponding style setters. Existing RGBA callers remain source- and
+binary-compatible.
+
+Pixie handles and Nim-managed Pixie objects never cross `include/cbss.h`.
+Backend selection, effect policy, and capability queries are represented by
+CBSS-owned enums, options, opaque handles, and status codes. Static or shared
+CBSS artifacts may contain the selected implementation internally, but foreign
+callers depend only on the versioned CBSS ABI.
 
 ### Keywords And Closed Value Sets
 

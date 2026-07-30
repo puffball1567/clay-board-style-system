@@ -49,6 +49,10 @@ external surface's interior.
   rendering plugin or a separate game engine.
 - GPU-specific extensions must be capability-gated and explicit. They must not
   silently change the appearance or behavior of ordinary CBSS UI.
+- CPU raster and image-processing implementations are also replaceable
+  internals. A Pixie-backed path may improve masks, gradients, shadows, blur,
+  blending, SVG, and image processing, but it remains behind the canonical
+  CBSS color, paint, cache, surface, and C ABI contracts.
 
 ## Phase 1: Standard Canvas Element
 
@@ -92,6 +96,52 @@ and frame scheduling rules.
 
 The API should be designed around explicit commands and data, not a hidden
 per-frame component rebuild.
+
+### Optional CPU Raster And Effects Path
+
+Pixie is a planned evaluation candidate for CPU rasterization and
+image-processing work used by Canvas and by baked CBSS visual effects. It is
+not required by the standard Canvas contract. A project must be able to build
+the core SDL3 Canvas path without importing Pixie.
+
+For game-oriented applications, this path can provide a reusable authored and
+procedural visual layer rather than acting as the real-time scene renderer.
+Candidate workloads include:
+
+- vector and SVG-derived HUD skins, icons, markers, badges, and inventory art;
+- baked gradients, masks, glows, shadows, outlines, and state variants;
+- procedural textures, minimaps, card faces, gauges, diagrams, and generated
+  interface assets;
+- image cropping, recoloring, compositing, and atlas preparation when source
+  assets or themes change; and
+- cached path-based Canvas content that does not need a GPU pipeline of its
+  own.
+
+Sprites, tile maps, particles, cameras, and continuously changing game scenes
+remain on the SDL3 real-time path or a GPU Canvas. Pixie output becomes a
+texture or cached layer consumed by that path. This combination should let a
+game use CSS-inspired CBSS layout and interaction, high-quality generated 2D
+art, and conventional real-time rendering in one window without forcing all
+three workloads through one implementation.
+
+The adapter owns conversion from resolved CBSS paint commands to Pixie
+operations and conversion of completed images into cacheable SDL3 resources.
+It must preserve the CSS Color compatibility contract established in
+`roadmap.md`; Pixie's internal color representation is not observable public
+behavior.
+
+CPU effect work follows retained invalidation:
+
+- static results are generated once and cached;
+- source, style, size, scale, or output-color changes invalidate only the
+  affected result;
+- continuous regeneration is explicit and active only while requested; and
+- application policy may restrict quality, cache memory, or dynamic effects
+  for embedded Linux deployments.
+
+No Pixie type or owning object crosses the C ABI. Foreign callers select CBSS
+capabilities and policies through CBSS-owned versioned API, while the chosen
+backend remains an implementation detail.
 
 ## Phase 2: Independent Visualization And Surface Libraries
 

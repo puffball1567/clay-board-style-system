@@ -21,7 +21,10 @@ Before writing code, skim:
 - Open pull requests against `devel`. Feature pull requests do not target
   `main`.
 - Keep `devel` green with the required tests and compatibility checks.
-- For a release, merge `devel` into `main` after the release checks pass.
+- For a release, merge `devel` into `main` with a merge commit after the
+  release checks pass. Do not squash or rebase the release pull request:
+  preserving `devel` as an ancestor of `main` prevents the branches from
+  appearing to contain different copies of the same release commits.
 - Create the version tag from `main` only after that merge. Direct development
   commits and feature merges do not land on `main`.
 - Repository Rulesets require pull requests for both protected branches. A
