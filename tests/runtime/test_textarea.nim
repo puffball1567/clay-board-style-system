@@ -601,6 +601,20 @@ suite "textarea element":
     check not area.state.composingActive
     check area.state.composingText == ""
 
+  test "textarea IME preedit restarts after paste with the same update text":
+    let ui = initUiRoot()
+    let area = ui.textArea(TextAreaParams())
+
+    discard area.container.emit(iekFocus)
+    check area.container.emit(compositionUpdateEvent("かな"))
+    discard area.container.emit(pasteEvent("日本語"))
+
+    check area.value() == "日本語"
+    check area.container.emit(compositionUpdateEvent("かな"))
+    check area.state.composingActive
+    check area.state.composingText == "かな"
+    check ui.tree.nodes[area.textNode.nodeId.nodeIndex].text == "日本語かな"
+
   test "textarea backspace removes composing text before committed value":
     let ui = initUiRoot()
     let area = ui.textArea(TextAreaParams(value: "seed"))
