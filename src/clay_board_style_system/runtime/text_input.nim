@@ -638,6 +638,14 @@ proc deleteSelection(input: TextInputHandle; recordUndo = true; refresh = true):
 proc insertText(input: TextInputHandle; text: string; emitValue = false) =
   if input.state.disabled or input.state.readOnly or text.len == 0:
     return
+  # A committed insertion or paste ends the previous preedit transaction.
+  # Reset the deduplication fields as well so an update-only IME stream can
+  # start again with the same preedit text.
+  input.state.composingText = ""
+  input.state.composingActive = false
+  input.state.compositionUpdateSeen = false
+  input.state.lastCompositionUpdateText = ""
+  input.state.pendingFallbackText = ""
   input.state.clampCaret()
   when defined(cbssTracePerf):
     echo "[text-input-detail] insert begin value=", input.state.value.len,
@@ -673,8 +681,6 @@ proc insertText(input: TextInputHandle; text: string; emitValue = false) =
   input.state.value.insert(inserted, input.state.caret)
   input.state.caret += inserted.len
   input.state.collapseSelection()
-  input.state.composingText = ""
-  input.state.composingActive = false
   when defined(cbssTracePerf):
     echo "[text-input-detail] string inserted value=", input.state.value.len,
       " caret=", input.state.caret

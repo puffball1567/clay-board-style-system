@@ -3391,6 +3391,11 @@ proc main() =
                     app.discardPendingTextInputEvents()
                   didChange
                 of "v":
+                  # The clipboard edit starts a new text transaction. Keep the
+                  # SDL composition tracker aligned with the local target so
+                  # the next preedit is emitted as CompositionStart.
+                  discard app.clearTextComposition()
+                  app.discardPendingTextInputEvents()
                   ui.emitTextControlEvent(focused, pasteEvent(ui.clipboardText()))
                 else:
                   ui.emitTextControlEvent(focused, keyDownEvent(

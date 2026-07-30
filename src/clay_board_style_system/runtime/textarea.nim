@@ -539,6 +539,14 @@ proc deleteSelection(area: TextAreaHandle; recordUndo = true; refresh = true): b
 proc insertText(area: TextAreaHandle; text: string; emitValue = false) =
   if area.state.disabled or area.state.readOnly or text.len == 0:
     return
+  # A committed insertion or paste ends the previous preedit transaction.
+  # Reset the deduplication fields as well so an update-only IME stream can
+  # start again with the same preedit text.
+  area.state.composingText = ""
+  area.state.composingActive = false
+  area.state.compositionUpdateSeen = false
+  area.state.lastCompositionUpdateText = ""
+  area.state.pendingFallbackText = ""
   area.state.clampCaret()
   let oldValue = area.state.value
   discard area.deleteSelection(recordUndo = false, refresh = false)
@@ -563,8 +571,6 @@ proc insertText(area: TextAreaHandle; text: string; emitValue = false) =
   area.state.value.insert(inserted, area.state.caret)
   area.state.caret += inserted.len
   area.state.collapseSelection()
-  area.state.composingText = ""
-  area.state.composingActive = false
   area.setVisibleText()
   if emitValue:
     area.emitValueEvents()
