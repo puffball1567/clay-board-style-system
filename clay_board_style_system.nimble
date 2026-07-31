@@ -1,4 +1,4 @@
-version       = "0.1.7"
+version       = "0.1.8"
 author        = "Clay Board Style System contributors"
 description   = "A CSS-inspired primitive engine for native GUI toolkits"
 license       = "Apache-2.0"
