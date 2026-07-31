@@ -39,6 +39,52 @@ Planned capabilities:
 - Platform adapters for external URLs and application deep links.
 - Headless navigation tests plus optional SDL3 integration coverage.
 
+### ARC Ownership And Widget Lifecycle
+
+Version 0.2 must also close the ownership gap between the documented ARC
+model and the reference-control implementation. ARC remains CBSS's release
+memory model. ORC compatibility may be tested as a safety net, but cycle
+collection must not be used to hide an ownership cycle in the runtime.
+
+This work is a Version 0.2 release gate:
+
+- Remove owning `UiRoot` back-references from public and internal component
+  handles. Handles use `NodeId`, component state, or explicitly non-owning
+  `{.cursor.}` access whose lifetime is bounded by the owning `UiRoot`.
+- Ensure event-registry closures cannot form
+  `UiRoot -> EventRegistry -> closure -> component handle -> UiRoot` cycles.
+  Internal handlers capture only the state and stable identifiers they need,
+  and receive root-scoped services from dispatch-time context.
+- Audit every reference control and widget, including buttons, checkboxes,
+  dialogs, details, forms, labels, list boxes, command menus, radio sets,
+  select boxes, sliders, tabs, text inputs, and textareas.
+- Keep SDL windows, renderers, textures, font systems, native bridge contexts,
+  and future GPU resources behind explicit `close`/`destroy` ownership. A
+  cycle collector is not a substitute for native-resource lifecycle APIs.
+- Document that a component handle is valid only while its owning `UiRoot`
+  and node generation remain valid. The C ABI continues to expose opaque
+  handles with explicit create/destroy contracts instead of Nim references.
+
+The existing Valgrind checks exercise shared and static C ABI consumers. They
+do not by themselves prove that Nim component graphs are cycle-free. Version
+0.2 therefore adds a separate ARC widget-lifecycle executable that:
+
+- builds with `--mm:arc -d:release -d:useMalloc` so allocations are visible to
+  Valgrind;
+- repeatedly creates, mounts, interacts with, closes, rebuilds, and destroys
+  `UiRoot` instances containing every reference control and widget;
+- exercises registered closures, popup closers, focus changes, clipboard
+  callbacks, text composition, and component replacement before destruction;
+- runs with full leak reporting and treats definite and indirect leaks,
+  invalid reads/writes, double frees, and use-after-free reports as failures;
+  and
+- runs in CI alongside, but separately from, the C ABI Valgrind consumers and
+  the normal discovered ARC test suite.
+
+The lifecycle test must first reproduce the pre-fix ownership cycle and then
+pass after the strong back-references are removed. A clean C ABI Valgrind run
+alone is not sufficient evidence for this Version 0.2 gate.
+
 The navigation layer owns UI behavior and history mechanics. Applications still
 own route authorization, data loading, persistence, and other business logic.
 Screen constructors and destination payloads should remain normal Nim values so

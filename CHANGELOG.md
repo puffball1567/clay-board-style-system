@@ -7,6 +7,18 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-07-31
+
+### Added
+
+- Made ARC ownership cleanup a Version 0.2 release gate, including removal of
+  owning `UiRoot` back-references from component handles and event closures.
+- Planned a dedicated ARC Widget lifecycle executable and Valgrind CI path
+  covering reference controls, registered handlers, popup lifecycles, focus,
+  clipboard callbacks, text composition, rebuilds, and deterministic cleanup.
+- Defined leak, invalid-access, double-free, and use-after-free failures
+  separately from the existing shared and static C ABI Valgrind checks.
+
 ## [0.1.7] - 2026-07-30
 
 ### Added
