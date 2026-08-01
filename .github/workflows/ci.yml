@@ -62,6 +62,63 @@ jobs:
           ! readelf -d main | grep -q 'libSDL3.so'
           ./main
 
+  portable:
+    name: Portable core (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux x86_64
+            os: ubuntu-latest
+          - platform: Windows x86_64
+            os: windows-latest
+          - platform: macOS arm64
+            os: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nim
+        uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
+        with:
+          nim-version: '2.2.10'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Toolchain versions
+        run: |
+          nim --version
+          nimble --version
+          rustc --version
+          cargo --version
+
+      - name: Check package metadata
+        run: nimble check
+
+      - name: Run portable ARC tests
+        run: >-
+          nim c -r --mm:arc
+          "--nimcache:${{ runner.temp }}/cbss-portable-runner-cache"
+          "--out:${{ runner.temp }}/cbss-portable-runner"
+          tools/run_tests.nim --portable
+
+      - name: Check portable public modules and examples
+        run: |
+          nim check --mm:arc --path:src src/clay_board_style_system.nim
+          nim check --mm:arc --path:src examples/paint_demo.nim
+          nim check --mm:arc --path:src examples/render_demo.nim
+
+      - name: Build shared and static C ABI libraries
+        run: |
+          nim c --app:lib --mm:arc -d:release --path:src "--nimcache:${{ runner.temp }}/cbss-c-api-shared-cache" "--outdir:${{ runner.temp }}/cbss-c-api" src/cbss_c_api.nim
+          nim c --app:staticlib --mm:arc -d:release --path:src "--nimcache:${{ runner.temp }}/cbss-c-api-static-cache" "--outdir:${{ runner.temp }}/cbss-c-api" src/cbss_c_api.nim
+
+      - name: Test native Rust bridges
+        run: |
+          cargo test --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml
+          cargo test --locked --release --manifest-path native/image_bridge/Cargo.toml
+
   arc-memory:
     name: ARC lifecycle and C ABI memory checks
     runs-on: ubuntu-latest

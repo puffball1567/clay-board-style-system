@@ -5,8 +5,17 @@ const excludedTests = [
   "tests/integration/test_sdl3_wayland_smoke.nim",
   "tests/perf/color_conversion_benchmark.nim",
   "tests/perf/dirty_subtree_benchmark.nim",
+  "tests/perf/navigation_screen_host_benchmark.nim",
   "tests/perf/pipeline_benchmark.nim",
   "tests/text/test_cosmic_text_engine.nim"
+]
+
+const portableExcludedTests = [
+  "tests/backends/test_sdl3_image_loader.nim",
+  "tests/backends/test_sdl3_text_event_guard.nim",
+  "tests/integration/test_demo_layout.nim",
+  "tests/integration/test_sdl3_navigation.nim",
+  "tests/testing/test_sdl3_wayland_driver.nim"
 ]
 
 proc normalizedRelative(path, root: string): string =
@@ -19,6 +28,11 @@ proc artifactName(path: string): string =
       result[index] = '_'
 
 proc main() =
+  let portable = paramCount() == 1 and paramStr(1) == "--portable"
+  if paramCount() > 1 or (paramCount() == 1 and not portable):
+    stderr.writeLine("Usage: run_tests [--portable]")
+    quit(QuitFailure)
+
   let repoRoot = currentSourcePath().parentDir().parentDir()
   let testsRoot = repoRoot / "tests"
   let runRoot = getTempDir() / ("cbss-tests-" & $getCurrentProcessId())
@@ -34,7 +48,8 @@ proc main() =
   for path in walkDirRec(testsRoot):
     if path.endsWith(".nim"):
       let relative = path.normalizedRelative(repoRoot)
-      if relative notin excludedTests:
+      if relative notin excludedTests and
+          (not portable or relative notin portableExcludedTests):
         tests.add(relative)
   tests.sort()
 
@@ -44,16 +59,18 @@ proc main() =
 
   for relative in tests:
     let name = relative.artifactName()
-    let command = @[
+    var arguments = @[
       "nim", "c", "-r",
       "--mm:arc",
       "--path:" & (repoRoot / "src"),
-      "-d:cbssSdl3LinkMode=bundled",
-      "-d:cbssRuntimeRoot=" & (repoRoot / "vendor/sdl3"),
-      "--nimcache:" & (runRoot / ("cache_" & name)),
-      "--out:" & (runRoot / name),
-      repoRoot / relative
-    ].mapIt(it.quoteShell()).join(" ")
+    ]
+    if not portable:
+      arguments.add("-d:cbssSdl3LinkMode=bundled")
+      arguments.add("-d:cbssRuntimeRoot=" & (repoRoot / "vendor/sdl3"))
+    arguments.add("--nimcache:" & (runRoot / ("cache_" & name)))
+    arguments.add("--out:" & (runRoot / name))
+    arguments.add(repoRoot / relative)
+    let command = arguments.mapIt(it.quoteShell()).join(" ")
 
     stdout.writeLine("\n==> " & relative)
     let execution = execCmdEx(command, options = {poUsePath, poStdErrToStdOut})
@@ -62,7 +79,10 @@ proc main() =
       stderr.writeLine("FAILED: " & relative)
       quit(execution.exitCode)
 
-  stdout.writeLine("\nPassed " & $tests.len & " discovered test files.")
+  let profile = if portable: "portable" else: "full"
+  stdout.writeLine(
+    "\nPassed " & $tests.len & " discovered test files (" & profile & " profile)."
+  )
 
 when isMainModule:
   main()

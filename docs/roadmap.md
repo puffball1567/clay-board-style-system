@@ -178,6 +178,14 @@ Planned capabilities:
 - Establish the single transform, paint, and hit-test coordinate contract
   needed by Canvas and animation. This does not require all future visual
   effects to ship in Version 0.3.
+- Make cross-platform compatibility a required CI signal. Linux x86_64,
+  Windows x86_64, and macOS arm64 must compile and run the portable ARC suite,
+  compile the public API and non-window examples, build the shared and static
+  C ABI libraries, and test both native Rust bridges. Linux keeps the separate
+  bundled-SDL3, Wayland, and Valgrind lanes. Passing portable CI does not by
+  itself promote Windows or macOS to runtime-supported status; real-window,
+  input, IME, DPI, and accessibility validation remain explicit platform
+  gates.
 
 Independent modules may use the resulting contract to provide capabilities
 such as `cbss_charts`. CBSS itself may provide opt-in game modules for sprites,
@@ -192,6 +200,10 @@ Implementation progress:
   values, conversion to the current SDR sRGB paint boundary, explicit gamut
   policy, late `currentColor` resolution, and premultiplied-alpha
   interpolation. The existing 16-byte resolved `Color` remains unchanged.
+- Implemented on the Version 0.3 development line: a portable test profile and
+  required Linux, Windows, and macOS CI lanes for the platform-neutral core,
+  C ABI build, and native Rust bridges. Linux-specific SDL3 runtime checks
+  remain separate and continue to be release-blocking.
 - Remaining color units: serialized parsing, hexadecimal and named authoring,
   style-property resolution, browser comparison fixtures, and versioned C ABI
   constructors.
