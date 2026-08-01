@@ -17,7 +17,7 @@ type
     trackWidth*: float32
 
   ProgressHandle* = object
-    root*: UiRoot
+    root* {.cursor.}: UiRoot
     container*: NodeHandle
     trackNode*: NodeHandle
     fillNode*: NodeHandle
@@ -48,6 +48,8 @@ proc indeterminate*(progress: ProgressHandle): bool =
   progress.state.indeterminate
 
 proc syncVisibleState(progress: ProgressHandle) =
+  if not progress.container.valid():
+    return
   let label =
     if progress.state.indeterminate:
       "indeterminate"
@@ -71,17 +73,23 @@ proc syncVisibleState(progress: ProgressHandle) =
   )
 
 proc setValue*(progress: ProgressHandle; value: float32) =
+  if not progress.container.valid():
+    return
   if progress.state.indeterminate:
     progress.state.indeterminate = false
   progress.state.value = progress.state.clampedValue(value)
   progress.syncVisibleState()
 
 proc setMax*(progress: ProgressHandle; maxValue: float32) =
+  if not progress.container.valid():
+    return
   progress.state.max = normalizedMax(maxValue)
   progress.state.value = progress.state.clampedValue(progress.state.value)
   progress.syncVisibleState()
 
 proc setIndeterminate*(progress: ProgressHandle; indeterminate: bool) =
+  if not progress.container.valid():
+    return
   progress.state.indeterminate = indeterminate
   progress.syncVisibleState()
 

@@ -154,6 +154,13 @@ CBSS should prefer Nim ARC-compatible ownership patterns:
 
 The core tree should not be modeled as cyclic object references.
 
+Public Nim component handles are non-owning views into a `UiRoot`. Their root
+back-reference uses `{.cursor.}` because the root owns event handlers that may
+capture those handles. A handle must not outlive its root, and code must not
+dereference it after the referenced node generation has been retired. The C ABI
+does not expose these Nim references; it uses opaque handles with explicit
+create and destroy contracts.
+
 Avoid this shape:
 
 ```nim
@@ -219,6 +226,11 @@ Production-oriented runtime updates should be dirty-driven:
   they do not independently decide global focus ownership. Text controls remain
   responsible only for caret and selection geometry. This prevents stale
   carets, delayed focus visibility, and input events leaking between controls.
+- A retained but inactive subtree is marked `inert` by runtime ownership code.
+  Inertness is inherited and excludes descendants from focus, tree-aware event
+  dispatch, and accessibility exposure without pretending to be a CSS state.
+  Visual and geometric exclusion remains the style system's responsibility;
+  the navigation screen host pairs inertness with `display: none`.
 - Hit regions should be rebuilt only when geometry, visibility, z order, or
   event participation changes.
 - Renderer backends should cache expensive rasterized resources such as text,

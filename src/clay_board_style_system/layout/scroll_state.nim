@@ -6,6 +6,7 @@ import ./layout
 type
   ScrollMetrics* = object
     active*: bool
+    node*: Option[NodeId]
     scrolling*: bool
       ## Set while this container is being scrolled and cleared when the host
       ## reports scroll end. Only `scrollbar-visibility: scrolling` reads it.
@@ -60,6 +61,7 @@ proc syncScrollState*(
     let wasScrolling = index < previousLength and state.entries[index].scrolling
     var metrics = ScrollMetrics(
       active: true,
+      node: some(item.node),
       scrolling: wasScrolling,
       offset: oldOffset,
       viewport: item.viewportSize,
@@ -79,7 +81,7 @@ proc metricsFor*(state: ScrollState; id: NodeId): Option[ScrollMetrics] =
   if id.nodeIndex < 0 or id.nodeIndex >= state.entries.len:
     return none(ScrollMetrics)
   let metrics = state.entries[id.nodeIndex]
-  if not metrics.active:
+  if not metrics.active or metrics.node != some(id):
     return none(ScrollMetrics)
   some(metrics)
 
@@ -91,7 +93,7 @@ proc setScrollOffset*(state: var ScrollState; id: NodeId; offset: Vec2): bool =
   if id.nodeIndex < 0 or id.nodeIndex >= state.entries.len:
     return false
   var metrics = state.entries[id.nodeIndex]
-  if not metrics.active:
+  if not metrics.active or metrics.node != some(id):
     return false
   let next = metrics.clampOffset(offset)
   if next == metrics.offset:
@@ -110,12 +112,25 @@ proc setScrolling*(state: var ScrollState; id: NodeId; scrolling: bool): bool =
   if id.nodeIndex < 0 or id.nodeIndex >= state.entries.len:
     return false
   var metrics = state.entries[id.nodeIndex]
-  if not metrics.active or metrics.scrolling == scrolling:
+  if not metrics.active or metrics.node != some(id) or
+      metrics.scrolling == scrolling:
     return false
   metrics.scrolling = scrolling
   state.entries[id.nodeIndex] = metrics
   inc state.revision
   true
+
+proc clearNodes*(state: var ScrollState; nodes: openArray[NodeId]) =
+  var changed = false
+  for id in nodes:
+    let index = id.nodeIndex
+    if index >= 0 and index < state.entries.len and
+        state.entries[index].node == some(id):
+      if state.entries[index].active or state.entries[index].scrolling:
+        changed = true
+      state.entries[index] = ScrollMetrics()
+  if changed:
+    inc state.revision
 
 proc scrollNearest*(
     state: var ScrollState;

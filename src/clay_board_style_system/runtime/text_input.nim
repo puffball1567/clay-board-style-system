@@ -54,7 +54,7 @@ type
   TextInputVisibleInfo = tuple[text: string, start: int, caret: int]
 
   TextInputHandle* = object
-    root*: UiRoot
+    root* {.cursor.}: UiRoot
     container*: NodeHandle
     selectionNode*: NodeHandle
     textNode*: NodeHandle
@@ -869,6 +869,8 @@ proc takeClipboardText*(input: TextInputHandle): string =
   input.state.clipboardWriteRequested = false
 
 proc setValue*(input: TextInputHandle; value: string) =
+  if not input.container.valid():
+    return
   let maxLength = input.state.effectiveMaxLength()
   if value.len > maxLength:
     input.state.value = value.truncateAtRuneBoundary(maxLength)
@@ -881,6 +883,8 @@ proc setValue*(input: TextInputHandle; value: string) =
   input.setVisibleText()
 
 proc setSelection*(input: TextInputHandle; first, last: int) =
+  if not input.container.valid():
+    return
   input.state.selectionStart = first
   input.state.selectionEnd = last
   input.state.clampSelection()
@@ -889,6 +893,8 @@ proc setSelection*(input: TextInputHandle; first, last: int) =
   input.syncTextChrome()
 
 proc moveCaretToPoint*(input: TextInputHandle; local: Vec2; extendSelection = false) =
+  if not input.container.valid():
+    return
   let visible = input.visibleInputInfo()
   let viewportX =
     if input.effectiveTextMaxWidth().isSome:
@@ -916,6 +922,8 @@ proc moveCaretToPoint*(input: TextInputHandle; local: Vec2; extendSelection = fa
   input.setVisibleText()
 
 proc selectAll*(input: TextInputHandle) =
+  if not input.container.valid():
+    return
   input.state.selectionStart = 0
   input.state.selectionEnd = input.state.value.len
   input.state.caret = input.state.selectionEnd
@@ -923,13 +931,15 @@ proc selectAll*(input: TextInputHandle) =
   input.setVisibleText()
 
 proc focus*(input: TextInputHandle) =
-  if input.state.disabled:
+  if not input.container.valid() or input.state.disabled:
     return
   input.state.focused = true
   input.container.addState(esFocus)
   input.setVisibleText()
 
 proc blur*(input: TextInputHandle) =
+  if not input.container.valid():
+    return
   input.state.focused = false
   input.container.removeState(esFocus)
   input.state.collapseSelection()
@@ -939,6 +949,8 @@ proc blur*(input: TextInputHandle) =
   input.setVisibleText()
 
 proc setDisabled*(input: TextInputHandle; disabled: bool) =
+  if not input.container.valid():
+    return
   input.state.disabled = disabled
   input.container.setState(esDisabled, disabled)
   if disabled:

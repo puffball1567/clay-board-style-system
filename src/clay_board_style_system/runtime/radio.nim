@@ -6,7 +6,7 @@ import ./ui_root
 
 type
   RadioState* = ref object
-    root*: UiRoot
+    root* {.cursor.}: UiRoot
     container*: NodeHandle
     markerNode*: NodeHandle
     indicatorNode*: NodeHandle
@@ -52,10 +52,14 @@ proc disabled*(radio: RadioHandle): bool =
   radio.state.disabled
 
 proc updateMarker(state: RadioState) =
+  if not state.container.valid():
+    return
   state.markerNode.setState(esChecked, state.checked)
   state.indicatorNode.setState(esChecked, state.checked)
 
 proc syncChecked(state: RadioState; checked: bool) =
+  if not state.container.valid():
+    return
   state.checked = checked
   state.container.setState(esChecked, checked)
   state.root.tree.setAttribute(state.container.id, "checked", if checked: "true" else: "false")
@@ -66,7 +70,7 @@ proc emitValueEvents(radio: RadioHandle) =
   discard radio.container.emit(changeEvent(radio.state.value))
 
 proc select*(radio: RadioHandle; emitEvents = true) =
-  if radio.state.disabled or radio.state.checked:
+  if not radio.container.valid() or radio.state.disabled or radio.state.checked:
     return
   radio.radioSet.selectedValue = radio.state.value
   for item in radio.radioSet.items:
@@ -75,10 +79,14 @@ proc select*(radio: RadioHandle; emitEvents = true) =
     radio.emitValueEvents()
 
 proc setDisabled*(radio: RadioHandle; disabled: bool) =
+  if not radio.container.valid():
+    return
   radio.state.disabled = disabled
   radio.container.setState(esDisabled, disabled)
 
 proc setLabel*(radio: RadioHandle; label: string) =
+  if not radio.container.valid():
+    return
   radio.state.label = label
   radio.state.root.tree.nodes[radio.state.labelNode.id.nodeIndex].text = label
   radio.container.setAccessibleName(label)

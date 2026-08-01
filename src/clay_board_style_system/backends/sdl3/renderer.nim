@@ -15,8 +15,10 @@ when sdl3CompileFlags.len > 0:
 
 const
   sdlHintImeImplementedUi = "SDL_IME_IMPLEMENTED_UI"
+  sdlHintMouseFocusClickthrough = "SDL_MOUSE_FOCUS_CLICKTHROUGH"
   sdlHintVideoDriver = "SDL_VIDEO_DRIVER"
   sdlInitVideo = SDL_InitFlags(0x00000020'u32)
+  sdlWindowHidden = SDL_WindowFlags(0x0000000000000008'u64)
   sdlWindowResizable = SDL_WindowFlags(0x0000000000000020'u64)
   sdlWindowHighPixelDensity = SDL_WindowFlags(0x0000000000002000'u64)
   sdlBlendModeBlend = SDL_BlendMode(0x00000001'u32)
@@ -91,6 +93,7 @@ type
   Sdl3EventKind* = enum
     sekQuit,
     sekResize,
+    sekExpose,
     sekFocus,
     sekBlur,
     sekPointerMove,
@@ -112,7 +115,7 @@ type
   Sdl3Event* = object
     timestamp*: uint64
     case kind*: Sdl3EventKind
-    of sekQuit:
+    of sekQuit, sekExpose:
       discard
     of sekResize:
       width*, height*: int
@@ -358,6 +361,9 @@ proc initSdl3Renderer*(
       discard SDL3.setHint(sdlHintVideoDriver, "wayland")
   let imeHint = imeUi.imeImplementedUiHint()
   discard SDL3.setHint(sdlHintImeImplementedUi, imeHint.cstring)
+  # Native CBSS controls should activate on the click that focuses the window,
+  # matching the interaction users expect from browser form controls.
+  discard SDL3.setHint(sdlHintMouseFocusClickthrough, "1")
   if not SDL3.init(sdlInitVideo):
     raise sdlError("SDL3 init failed")
   when defined(cbssTraceSdl3):
@@ -365,18 +371,25 @@ proc initSdl3Renderer*(
     echo "[cbss sdl3] videoDriver=", (if driver.isNil: "" else: $driver)
 
   let flags =
-    (if resizable: sdlWindowResizable else: SDL_WindowFlags(0)) or sdlWindowHighPixelDensity
-  result.window = SDL3.createWindow(title.cstring, cint(width), cint(height), flags)
-  if result.window.isNil:
+    (if resizable: sdlWindowResizable else: SDL_WindowFlags(0)) or
+    sdlWindowHighPixelDensity or
+    sdlWindowHidden
+  if not SDL3.createWindowAndRenderer(
+      title.cstring,
+      cint(width),
+      cint(height),
+      flags,
+      addr result.window,
+      addr result.renderer
+  ):
     SDL3.quit()
-    raise sdlError("SDL3 window creation failed")
-
-  result.renderer = SDL3.createRenderer(result.window, nil)
-  if result.renderer.isNil:
+    raise sdlError("SDL3 window and renderer creation failed")
+  discard SDL3.setRenderDrawBlendMode(result.renderer, sdlBlendModeBlend)
+  if not SDL3.showWindow(result.window):
+    SDL3.destroyRenderer(result.renderer)
     SDL3.destroyWindow(result.window)
     SDL3.quit()
-    raise sdlError("SDL3 renderer creation failed")
-  discard SDL3.setRenderDrawBlendMode(result.renderer, sdlBlendModeBlend)
+    raise sdlError("SDL3 window display failed")
   result.assetResolver = initAssetResolver([getCurrentDir()])
   result.textCacheIndex = initTable[Hash, seq[int]]()
   result.imageCacheIndex = initTable[Hash, seq[int]]()
@@ -540,6 +553,14 @@ proc setCursor*(target: var Sdl3Renderer; cursor: CursorKind) =
     discard SDL3.setCursor(sdlCursor)
     target.activeCursor = effective
 
+proc reapplyActiveCursor(target: var Sdl3Renderer) =
+  let effective =
+    if target.activeCursor == ckAuto: ckDefault
+    else: target.activeCursor
+  let sdlCursor = target.cursorPointer(effective)
+  if not sdlCursor.isNil:
+    discard SDL3.setCursor(sdlCursor)
+
 proc activeCursor*(target: Sdl3Renderer): CursorKind =
   target.activeCursor
 
@@ -694,6 +715,9 @@ proc pollEventFromRaw(
     of SDL_EVENT_QUIT, SDL_EVENT_WINDOW_CLOSE_REQUESTED:
       event = Sdl3Event(kind: sekQuit, timestamp: raw.common.timestamp)
       return true
+    of SDL_EVENT_WINDOW_EXPOSED:
+      event = Sdl3Event(kind: sekExpose, timestamp: raw.window.timestamp)
+      return true
     of SDL_EVENT_WINDOW_RESIZED, SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
       let current = target.windowSize()
       event = Sdl3Event(kind: sekResize, timestamp: raw.window.timestamp, width: int(current.w), height: int(current.h))
@@ -704,6 +728,10 @@ proc pollEventFromRaw(
     of SDL_EVENT_WINDOW_FOCUS_LOST:
       event = Sdl3Event(kind: sekBlur, timestamp: raw.window.timestamp)
       return true
+    of SDL_EVENT_WINDOW_MOUSE_ENTER:
+      # Client-side decorations own the cursor while it is over the frame.
+      # Reapply the cached application cursor when control returns to content.
+      target.reapplyActiveCursor()
     of SDL_EVENT_MOUSE_MOTION:
       event = Sdl3Event(kind: sekPointerMove, timestamp: raw.motion.timestamp, x: raw.motion.x.float32, y: raw.motion.y.float32)
       return true

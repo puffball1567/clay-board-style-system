@@ -309,6 +309,7 @@ suite "input events":
     scroll.entries = newSeq[ScrollMetrics](tree.nodes.len)
     scroll.entries[panel.nodeIndex] = ScrollMetrics(
       active: true,
+      node: some(panel),
       viewport: size(80, 40),
       content: size(80, 100),
       enabledY: true

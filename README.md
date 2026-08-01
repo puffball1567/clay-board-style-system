@@ -97,13 +97,17 @@ static library build commands are listed in
 
 ## Release Status
 
-Version 0.1 is a Linux x86_64 developer preview. It is suitable for evaluating
-the API, building GUI libraries, and contributing runtime capabilities. Public
-APIs may still change before 1.0.
+Version 0.2 is the current Linux x86_64 developer preview. It is suitable for
+evaluating the API, building GUI libraries, and contributing runtime
+capabilities. Public APIs may still change before 1.0.
 
-Version 0.2 is planned around state-driven native navigation, including a
-semantic Link primitive, a replaceable screen stack, focus restoration, and
-external URL/deep-link adapters. See the [product roadmap](docs/roadmap.md).
+Version 0.2 adds typed history, an injectable stack driver,
+dirty-domain notifications, semantic Link behavior, per-entry focus restore,
+retained and replaceable screen subtrees, generation-checked disposal, optional
+frame-scheduled transition hooks, policy-checked external URLs, and typed
+application deep links. The Link/transition/deep-link path is also covered by
+an optional real-window SDL3 Wayland scenario. See the
+[navigation guide](docs/navigation.md) and [product roadmap](docs/roadmap.md).
 
 Current boundaries:
 
@@ -286,6 +290,9 @@ See [docs/runtime-components.md](docs/runtime-components.md) for per-component
 behavior notes on the reference runtime controls.
 See [docs/accessibility.md](docs/accessibility.md) for the semantic-tree,
 focus, platform-adapter, and assistive-technology transport boundaries.
+See [docs/navigation.md](docs/navigation.md) for typed destinations, stack
+history, Link behavior, retained screens, transition hooks, URL/deep-link
+adapters, injection, and the custom-driver contract.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the files-to-touch map and ground
 rules for contributions.
 See [docs/platform-support.md](docs/platform-support.md) for the current
@@ -538,19 +545,23 @@ Clay Board Style System (CBSS) is not:
 
 Run `nimble test` for the automatically discovered ARC test suite,
 `nimble checkExamples` for all example and link-mode checks, and `nimble bench`
-for release-mode performance probes. Real-window Wayland tests remain explicit
-opt-in tasks.
+for release-mode performance probes. `nimble testWidgetLifecycleValgrind` and
+`nimble testCAbiValgrind` run the separate native-memory gates. Real-window
+Wayland tests remain explicit opt-in tasks.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) before changing public boundaries or hot
 paths.
 
 ## Memory Verification
 
-The shared and static C ABI consumers are checked with Valgrind during release
-verification. The exercised path covers context and style handle lifetimes,
-tree and style mutation, C event callbacks, focus traversal, retained
-scrolling, recomputation, diagnostics, and repeated context creation and
-destruction.
+The ARC widget graph and the shared and static C ABI consumers are checked by
+separate Valgrind tasks and CI steps. The widget check repeatedly creates,
+interacts with, and releases roots containing all reference controls and
+widgets. It covers internal and replaced user handlers, popup closers, the
+default context menu, focus changes, clipboard callbacks, and text composition.
+The C ABI path separately covers context and style handle lifetimes, tree and
+style mutation, C event callbacks, focus traversal, retained scrolling,
+recomputation, diagnostics, and repeated context creation and destruction.
 
 The current shared and static builds both complete with:
 
@@ -559,17 +570,17 @@ ERROR SUMMARY: 0 errors from 0 contexts
 in use at exit: 0 bytes in 0 blocks
 ```
 
-After `nimble testCAbi`, the checks can be reproduced with:
+Run the complete checks with:
 
 ```sh
-valgrind --vgdb=no --leak-check=full --show-leak-kinds=definite \
-  --errors-for-leak-kinds=definite --error-exitcode=99 \
-  /tmp/clay_board_style_system_c_consumer_shared
-
-valgrind --vgdb=no --leak-check=full --show-leak-kinds=definite \
-  --errors-for-leak-kinds=definite --error-exitcode=99 \
-  /tmp/clay_board_style_system_c_consumer_static
+nimble testWidgetLifecycleValgrind
+nimble testCAbiValgrind
 ```
+
+The ARC widget probe currently completes 16 full root lifecycles with 23,793
+allocations and 23,793 frees, leaving zero bytes in use and zero Valgrind
+errors. Component and node handles are non-owning views: they are valid only
+while their `UiRoot` and referenced node generation remain alive.
 
 Valgrind is one release check, not a substitute for the ARC test suite,
 platform-specific integration tests, sanitizers, or API ownership review.

@@ -26,7 +26,7 @@ The installed header is `include/cbss.h`.
 ABI version `0x00010000` supports:
 
 - Opaque context and style handles.
-- Box, text, and image node creation.
+- Generation-checked node handles plus box, text, and image node creation.
 - Groups, attributes, pseudo-state flags, and accessibility semantics.
 - Typed length, number, keyword, color, color-pair, border, shadow, gradient,
   and transform declarations.
@@ -41,8 +41,8 @@ ABI version `0x00010000` supports:
 - Hover, active, focus, focus-visible, pointer-capture, and focus-scope state.
 - Tab and Shift+Tab focus traversal.
 - Retained scrolling and scrollbar interaction without layout recomputation.
-- Accessibility role, name, description, value, range, relation, and hidden
-  state queries for platform adapters.
+- Accessibility role, including semantic links, name, description, value,
+  range, relation, and hidden state queries for platform adapters.
 - Structured diagnostics and a context error message.
 
 Platform accessibility transports, native resource loading, operating-system

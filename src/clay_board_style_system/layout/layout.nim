@@ -547,6 +547,8 @@ proc computeIntrinsicSizes(
     # subtrees; one scroll container must not force an intrinsic pass over the
     # entire application.
     for nodeIndex, node in tree.nodes:
+      if not node.alive:
+        continue
       let parentStyle {.cursor.} = styles.styles[nodeIndex]
       if parentStyle.layout.overflowX notin {omAuto, omScroll} and
           parentStyle.layout.overflowY notin {omAuto, omScroll}:

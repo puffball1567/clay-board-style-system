@@ -71,6 +71,7 @@ type
     lastEvents*: seq[Sdl3Event]
     lastCompositionCandidates*: Option[Sdl3CompositionCandidates]
     artifacts*: seq[string]
+    clipboardSnapshotValid: bool
 
   Sdl3WaylandScenario* = object
     name*: string
@@ -295,7 +296,7 @@ proc updateCursor*(driver: Sdl3WaylandDriver; point: Vec2): CursorKind =
   driver.rememberAction("cursor @" & $point.x & "," & $point.y & " -> " & $result)
 
 proc descendantWithGroup(driver: Sdl3WaylandDriver; root: NodeId; group: string): Option[NodeId] =
-  if root.nodeIndex < 0 or root.nodeIndex >= driver.headless.ui.tree.nodes.len:
+  if not driver.headless.ui.tree.isValid(root):
     return none(NodeId)
   for child in driver.headless.ui.tree.nodes[root.nodeIndex].children:
     if driver.headless.ui.tree.nodes[child.nodeIndex].hasGroup(group):
@@ -306,7 +307,7 @@ proc descendantWithGroup(driver: Sdl3WaylandDriver; root: NodeId; group: string)
   none(NodeId)
 
 proc componentLengthForNode(driver: Sdl3WaylandDriver; nodeId: NodeId; property: string): Option[float32] =
-  if nodeId.nodeIndex < 0 or nodeId.nodeIndex >= driver.headless.ui.tree.nodes.len:
+  if not driver.headless.ui.tree.isValid(nodeId):
     return none(float32)
   let node = driver.headless.ui.tree.nodes[nodeId.nodeIndex]
   for sheet in driver.headless.ui.componentStyles:
@@ -393,17 +394,27 @@ proc setClipboardText*(driver: Sdl3WaylandDriver; text: string): bool =
   driver.rememberAction("clipboard set len=" & $text.len)
   driver.headless.clipboard = text
   if driver.app.window.isNil:
-    true
+    driver.clipboardSnapshotValid = true
+    result = true
   else:
-    setClipboardText(text)
+    result = setClipboardText(text)
+    driver.clipboardSnapshotValid = result
 
 proc clipboardText*(driver: Sdl3WaylandDriver): string =
   driver.rememberAction("clipboard get")
-  result =
+  let platformText =
     if driver.app.window.isNil:
       driver.headless.clipboard
     else:
       clipboardText()
+  # A synthetic Wayland test window is not guaranteed to receive an input-seat
+  # focus serial. Keep a successful local write usable when the compositor
+  # consequently exposes an empty clipboard to the unfocused test process.
+  result =
+    if platformText.len > 0 or not driver.clipboardSnapshotValid:
+      platformText
+    else:
+      driver.headless.clipboard
   driver.headless.clipboard = result
 
 proc copyFocused*(driver: Sdl3WaylandDriver): bool =
@@ -445,6 +456,8 @@ proc dispatchSdlEvent*(
   driver.rememberAction("dispatch " & $event.kind)
   case event.kind
   of sekQuit:
+    result = true
+  of sekExpose:
     result = true
   of sekResize:
     driver.headless.setViewport(size(event.width.float32, event.height.float32))
@@ -555,7 +568,8 @@ proc initSdl3WaylandDriver*(
     actionLog: @[],
     lastEvents: @[],
     lastCompositionCandidates: none(Sdl3CompositionCandidates),
-    artifacts: @[]
+    artifacts: @[],
+    clipboardSnapshotValid: false
   )
   result.app = initSdl3Renderer(title, int(viewport.w), int(viewport.h), resizable = resizable)
   result.refresh()

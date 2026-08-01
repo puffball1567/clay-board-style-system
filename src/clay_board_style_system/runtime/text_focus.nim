@@ -6,12 +6,12 @@ import ../input/events
 import ./[focus, ui_root]
 
 proc isTextInputTarget*(ui: UiRoot; target: NodeId): bool =
-  target.nodeIndex >= 0 and target.nodeIndex < ui.tree.nodes.len and
+  ui.tree.isValid(target) and
     (ui.tree.nodes[target.nodeIndex].hasGroup("text-input") or
       ui.tree.nodes[target.nodeIndex].hasGroup("textarea"))
 
 proc isValidTextInputTarget*(ui: UiRoot; target: NodeId): bool =
-  target.nodeIndex >= 0 and target.nodeIndex < ui.tree.nodes.len and
+  ui.tree.isValid(target) and
     ui.isTextInputTarget(target) and
     esDisabled notin ui.tree.nodes[target.nodeIndex].states
 
@@ -19,6 +19,8 @@ proc inputTargetForHit*(ui: UiRoot; target: Option[NodeId]): Option[NodeId] =
   var current = target
   while current.isSome:
     let id = current.get
+    if not ui.tree.isValid(id):
+      return none(NodeId)
     if ui.isTextInputTarget(id):
       if ui.isValidTextInputTarget(id):
         return some(id)
@@ -30,12 +32,13 @@ proc isTextControlChromeHit*(ui: UiRoot; target: Option[NodeId]): bool =
   var current = target
   while current.isSome:
     let id = current.get
-    if id.nodeIndex >= 0 and id.nodeIndex < ui.tree.nodes.len:
-      let node = ui.tree.nodes[id.nodeIndex]
-      if node.hasGroup("textarea-resize-handle") or
-          node.hasGroup("textarea-scrollbar-track") or
-          node.hasGroup("textarea-scrollbar-thumb"):
-        return true
+    if not ui.tree.isValid(id):
+      return false
+    let node = ui.tree.nodes[id.nodeIndex]
+    if node.hasGroup("textarea-resize-handle") or
+        node.hasGroup("textarea-scrollbar-track") or
+        node.hasGroup("textarea-scrollbar-thumb"):
+      return true
     current = ui.tree.nodes[id.nodeIndex].parent
   false
 
@@ -101,12 +104,12 @@ proc normalizeTextControlDispatches*(
       dispatch.local = some(textHit.get.local)
 
 proc isTextCaretNode*(ui: UiRoot; id: NodeId): bool =
-  id.nodeIndex >= 0 and id.nodeIndex < ui.tree.nodes.len and
+  ui.tree.isValid(id) and
     (ui.tree.nodes[id.nodeIndex].hasGroup("text-input-caret") or
       ui.tree.nodes[id.nodeIndex].hasGroup("textarea-caret"))
 
 proc collectCaretNodes(ui: UiRoot; id: NodeId; output: var seq[NodeId]) =
-  if id.nodeIndex < 0 or id.nodeIndex >= ui.tree.nodes.len:
+  if not ui.tree.isValid(id):
     return
   if ui.isTextCaretNode(id):
     output.add id

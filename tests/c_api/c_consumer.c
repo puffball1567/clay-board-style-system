@@ -157,6 +157,8 @@ int main(void) {
   require_ok(context, cbss_node_set_focusable(context, sibling, 1, 0));
   require_ok(context, cbss_node_set_accessibility(
       context, child, CBSS_ROLE_BUTTON, "C button", "Runs the C action"));
+  require_ok(context, cbss_node_set_accessibility(
+      context, sibling, CBSS_ROLE_LINK, "C link", "Opens a destination"));
   require_ok(context, cbss_node_set_accessible_value(
       context, child, "ready"));
 
@@ -189,6 +191,9 @@ int main(void) {
   assert(cbss_node_accessible_name(
       context, child, accessible_name, sizeof(accessible_name)) == 8);
   assert(strcmp(accessible_name, "C button") == 0);
+  require_ok(context, cbss_node_accessibility(
+      context, sibling, &accessibility));
+  assert(accessibility.role == CBSS_ROLE_LINK);
 
   CbssRect child_rect;
   require_ok(context, cbss_node_layout_rect(context, child, &child_rect));

@@ -15,14 +15,14 @@ and the language-neutral C ABI.
 
 ## Version 0.2 - Native Navigation
 
-Status: `Planned`
+Status: `Released 2026-08-01`
 
 The primary Version 0.2 feature is a state-driven navigation layer for native
 applications. CBSS already lets applications change state and render a
-different component tree. Version 0.2 should turn that capability into a small,
+different component tree. Version 0.2 turns that capability into a small,
 consistent navigation surface without importing browser-only routing behavior.
 
-Planned capabilities:
+Released capabilities:
 
 - A semantic `Link` primitive with pointer, keyboard, focus-visible, and
   accessibility behavior.
@@ -85,6 +85,15 @@ The lifecycle test must first reproduce the pre-fix ownership cycle and then
 pass after the strong back-references are removed. A clean C ABI Valgrind run
 alone is not sufficient evidence for this Version 0.2 gate.
 
+**Implementation status (2026-08-01):** Component and node handle root
+back-references now use non-owning ARC cursors. The lifecycle probe reproduced
+both the general component-handler cycle and a separate direct root capture in
+the default context menu before the fixes. Its expanded 16-root workload now
+finishes with 23,793 allocations, 23,793 frees, zero bytes in use, and zero
+Valgrind errors. Dedicated widget-lifecycle and C ABI Valgrind tasks run as
+separate CI steps. Explicit destruction of backend and future GPU resources
+remains an ongoing requirement as those resource types are added.
+
 The navigation layer owns UI behavior and history mechanics. Applications still
 own route authorization, data loading, persistence, and other business logic.
 Screen constructors and destination payloads should remain normal Nim values so
@@ -98,6 +107,33 @@ navigator.push(settingsScreen)
 navigator.replace(loginScreen)
 navigator.back()
 ```
+
+**Navigation implementation status (2026-08-01):** The typed destination and
+history core, stable entry identities, default `push`/`replace`/`back`/`forward`
+stack, additive change listeners, dirty-domain metadata, `ViewContext`
+injection, replaceable application-owned drivers, and the semantic Link
+primitive are implemented with headless tests. Link includes pointer, Enter,
+focus, disabled, accessible role, and AT-SPI activation behavior. Focus capture
+and restoration are implemented per stable history entry with active-screen
+validation and fallback transfer. Retained screen hosting now switches disjoint
+prebuilt screen roots without changing NodeIds or growing node/style storage
+during repeated history traversal. Inactive screens are excluded from layout,
+paint, hit testing, direct events, focus traversal, and accessibility through
+`display: none` plus inherited inert state. Generation-checked subtree disposal,
+screen unregister/replacement, stale-handle rejection, and bounded node/style
+slot reuse are implemented. Transition hooks, platform URL/deep-link adapters,
+and optional SDL3 navigation coverage are now implemented. Transition hooks
+request deadlines only while active and settle outgoing roots before disposal
+or replacement. External URLs use an injected, scheme-restricted platform
+adapter. Application deep links validate and decode into typed destinations;
+one-shot command-line launch input and a reusable pending-link source contract
+cover Linux launch flows and future OS lifecycle bridges. A real-window Wayland
+scenario exercises Link activation, transition frames, and deep-link routing.
+The Version 0.2 release matrix passed the complete ARC suite, shared and static
+C ABI consumers, separate widget and C ABI Valgrind checks, all example link
+profiles, both Rust bridges, release benchmarks, real-window Wayland smoke and
+large-paste scenarios, and the navigation E2E scenario. The navigation and full
+SDL3 demos were also reviewed interactively before release.
 
 ### Non-Goals
 
