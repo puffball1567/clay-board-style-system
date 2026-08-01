@@ -3,6 +3,7 @@ import std/[algorithm, os, osproc, sequtils, strutils]
 const excludedTests = [
   "tests/integration/test_sdl3_large_paste.nim",
   "tests/integration/test_sdl3_wayland_smoke.nim",
+  "tests/perf/color_conversion_benchmark.nim",
   "tests/perf/dirty_subtree_benchmark.nim",
   "tests/perf/pipeline_benchmark.nim",
   "tests/text/test_cosmic_text_engine.nim"

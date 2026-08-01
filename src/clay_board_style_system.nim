@@ -1,6 +1,8 @@
 import clay_board_style_system/assets/asset_resolver
 import clay_board_style_system/core/[
   color,
+  color_conversion,
+  color_value,
   computed_style,
   declaration,
   diagnostics,
@@ -30,6 +32,8 @@ import clay_board_style_system/backends/atspi/adapter
 
 export asset_resolver
 export color
+export color_conversion
+export color_value
 export computed_style
 export declaration
 export diagnostics

@@ -300,6 +300,27 @@ exceeds twice the 500-node result plus a one-microsecond noise allowance.
 Dynamic screen creation and physical subtree disposal remain separate work;
 this benchmark covers switching among already registered screens.
 
+### Color conversion baseline (2026-08-01)
+
+Version 0.3 color authoring keeps declared color spaces outside the compact
+paint `Color`. Conversion is allocation-free and occurs when a computed color
+or active color animation needs an output value; unchanged paint colors remain
+resolved and cached with their computed style.
+
+`tests/perf/color_conversion_benchmark.nim` performs 100,000 operations per
+path in a release ARC build. The initial development baseline is:
+
+| path | mean cost |
+| --- | ---: |
+| in-gamut sRGB resolution | 137.1 ns/color |
+| out-of-gamut Display P3 resolution | 1,865.1 ns/color |
+| premultiplied Oklab interpolation | 482.4 ns/color |
+
+The wide-gamut path includes iterative Oklch chroma reduction. It must not run
+for unchanged static colors on every frame. Future browser-parity and Pixie
+work must keep backend conversion and raster caching outside ordinary layout
+and hit-test passes.
+
 ## Renderer budgets
 
 - Texture/measure caches are bounded (entry count and total bytes) with LRU

@@ -293,6 +293,9 @@ focus, platform-adapter, and assistive-technology transport boundaries.
 See [docs/navigation.md](docs/navigation.md) for typed destinations, stack
 history, Link behavior, retained screens, transition hooks, URL/deep-link
 adapters, injection, and the custom-driver contract.
+See [docs/color.md](docs/color.md) for the authored color-space model,
+conversion boundary, gamut policy, and interpolation behavior being developed
+for Version 0.3.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the files-to-touch map and ground
 rules for contributions.
 See [docs/platform-support.md](docs/platform-support.md) for the current

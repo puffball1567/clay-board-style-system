@@ -186,6 +186,19 @@ cache, input routing, coordinate conversion, and frame scheduler. CBSS does
 not bundle image assets or make a chart/widget catalogue part of its core
 release.
 
+Implementation progress:
+
+- Implemented on the Version 0.3 development line: authored color-space
+  values, conversion to the current SDR sRGB paint boundary, explicit gamut
+  policy, late `currentColor` resolution, and premultiplied-alpha
+  interpolation. The existing 16-byte resolved `Color` remains unchanged.
+- Remaining color units: serialized parsing, hexadecimal and named authoring,
+  style-property resolution, browser comparison fixtures, and versioned C ABI
+  constructors.
+- Remaining visual units: optional Pixie output, the RenderSurface lifecycle,
+  SDL Canvas, the animation clock, and the shared transform/paint/hit-test
+  coordinate contract.
+
 ## Version 0.4 - Complete Unit Resolution
 
 Status: `Planned`
