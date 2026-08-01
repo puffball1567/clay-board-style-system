@@ -91,7 +91,7 @@ type
     selectionNodes*: seq[NodeHandle]
 
   TextAreaHandle* = object
-    root*: UiRoot
+    root* {.cursor.}: UiRoot
     container*: NodeHandle
     selectionNode*: NodeHandle
     selectionNodes*: seq[NodeHandle]
@@ -889,6 +889,8 @@ proc ensureCaretVisible(area: TextAreaHandle; caret: TextCaretResult) =
     area.state.scrollY = max(0.0'f32, area.state.scrollY)
 
 proc scrollBy*(area: TextAreaHandle; deltaY: float32) =
+  if not area.container.valid():
+    return
   let previousScrollY = area.state.scrollY
   area.state.scrollY += deltaY
   let lines = area.caretLines()
@@ -901,6 +903,8 @@ proc scrollBy*(area: TextAreaHandle; deltaY: float32) =
   area.root.tree.setAttribute(area.container.id, "scroll-y", $area.state.scrollY)
 
 proc finishScroll*(area: TextAreaHandle) =
+  if not area.container.valid():
+    return
   if not area.state.scrollbarVisible or area.state.scrollbarDragging:
     return
   area.state.scrollbarVisible = false
@@ -1332,6 +1336,8 @@ proc takeClipboardText*(area: TextAreaHandle): string =
   area.state.clipboardWriteRequested = false
 
 proc setValue*(area: TextAreaHandle; value: string) =
+  if not area.container.valid():
+    return
   let maxLength = area.state.effectiveMaxLength()
   if value.len > maxLength:
     area.state.value = value.truncateAtRuneBoundary(maxLength)
@@ -1345,6 +1351,8 @@ proc setValue*(area: TextAreaHandle; value: string) =
   area.setVisibleText()
 
 proc setSelection*(area: TextAreaHandle; first, last: int) =
+  if not area.container.valid():
+    return
   area.state.selectionStart = first
   area.state.selectionEnd = last
   area.state.clampSelection()
@@ -1361,6 +1369,8 @@ proc setSelection*(area: TextAreaHandle; first, last: int) =
   area.root.tree.setAttribute(area.container.id, "scroll-y", $area.state.scrollY)
 
 proc moveCaretToPoint*(area: TextAreaHandle; local: Vec2; extendSelection = false) =
+  if not area.container.valid():
+    return
   let textX =
     if area.state.textMaxWidth.isSome:
       min(max(0.0'f32, local.x - area.state.textLeftInset), area.state.textMaxWidth.get)
@@ -1414,6 +1424,8 @@ proc moveCaretToPoint*(area: TextAreaHandle; local: Vec2; extendSelection = fals
   area.root.tree.setAttribute(area.container.id, "scroll-y", $area.state.scrollY)
 
 proc selectAll*(area: TextAreaHandle) =
+  if not area.container.valid():
+    return
   area.state.selectionStart = 0
   area.state.selectionEnd = area.state.value.len
   area.state.caret = area.state.selectionEnd
@@ -1429,13 +1441,15 @@ proc selectAll*(area: TextAreaHandle) =
   area.root.tree.setAttribute(area.container.id, "scroll-y", $area.state.scrollY)
 
 proc focus*(area: TextAreaHandle) =
-  if area.state.disabled:
+  if not area.container.valid() or area.state.disabled:
     return
   area.state.focused = true
   area.container.addState(esFocus)
   area.setVisibleText()
 
 proc blur*(area: TextAreaHandle) =
+  if not area.container.valid():
+    return
   area.state.focused = false
   area.container.removeState(esFocus)
   area.state.collapseSelection()
@@ -1445,6 +1459,8 @@ proc blur*(area: TextAreaHandle) =
   area.setVisibleText()
 
 proc setDisabled*(area: TextAreaHandle; disabled: bool) =
+  if not area.container.valid():
+    return
   area.state.disabled = disabled
   area.container.setState(esDisabled, disabled)
   if disabled:
@@ -1453,6 +1469,8 @@ proc setDisabled*(area: TextAreaHandle; disabled: bool) =
   area.syncResizeStyle()
 
 proc setSize*(area: TextAreaHandle; width, height: Option[float32]; emitEvent = false) =
+  if not area.container.valid():
+    return
   if width.isSome:
     area.state.width = some(clampDimension(width.get, area.state.minWidth, area.state.maxWidth))
   if height.isSome:
@@ -1467,6 +1485,8 @@ proc setSize*(area: TextAreaHandle; width, height: Option[float32]; emitEvent = 
     area.emitResize()
 
 proc setResize*(area: TextAreaHandle; resize: ResizeKind) =
+  if not area.container.valid():
+    return
   area.state.resize = resize
   if resize == rkNone:
     area.state.resizing = false

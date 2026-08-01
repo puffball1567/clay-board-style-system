@@ -319,11 +319,13 @@ suite "retained scroll state":
     var scroll = initScrollState()
     scroll.entries = newSeq[ScrollMetrics](2)
     scroll.entries[outer.nodeIndex] = ScrollMetrics(
-      active: true, viewport: size(100, 50), content: size(100, 100),
+      active: true, node: some(outer),
+      viewport: size(100, 50), content: size(100, 100),
       enabledY: true, overscrollY: obAuto
     )
     scroll.entries[inner.nodeIndex] = ScrollMetrics(
-      active: true, viewport: size(100, 30), content: size(100, 40),
+      active: true, node: some(inner),
+      viewport: size(100, 30), content: size(100, 40),
       enabledY: true, overscrollY: obAuto
     )
     let regions = @[
@@ -373,11 +375,13 @@ suite "retained scroll state":
     var scroll = initScrollState()
     scroll.entries = newSeq[ScrollMetrics](2)
     scroll.entries[outer.nodeIndex] = ScrollMetrics(
-      active: true, viewport: size(100, 50), content: size(100, 100),
+      active: true, node: some(outer),
+      viewport: size(100, 50), content: size(100, 100),
       enabledY: true, overscrollY: obAuto
     )
     scroll.entries[inner.nodeIndex] = ScrollMetrics(
-      active: true, offset: vec2(0, 10), viewport: size(100, 30),
+      active: true, node: some(inner), offset: vec2(0, 10),
+      viewport: size(100, 30),
       content: size(100, 40), enabledY: true, overscrollY: obContain
     )
     let regions = @[

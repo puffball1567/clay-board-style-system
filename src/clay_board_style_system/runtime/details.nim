@@ -18,7 +18,7 @@ type
     disabled*: bool
 
   DetailsHandle* = object
-    root*: UiRoot
+    root* {.cursor.}: UiRoot
     container*: NodeHandle
     summaryNode*: NodeHandle
     markerNode*: NodeHandle
@@ -27,6 +27,8 @@ type
     state*: DetailsState
 
 proc syncVisibleState(details: DetailsHandle) =
+  if not details.container.valid():
+    return
   details.container.setState(esOpen, details.state.open)
   details.container.setState(esDisabled, details.state.disabled)
   details.summaryNode.setState(esOpen, details.state.open)
@@ -55,7 +57,7 @@ proc body*(details: DetailsHandle): string =
   details.state.body
 
 proc setOpen*(details: DetailsHandle; open: bool; emitToggle = false) =
-  if details.state.disabled or details.state.open == open:
+  if not details.container.valid() or details.state.disabled or details.state.open == open:
     return
   details.state.open = open
   details.syncVisibleState()
@@ -66,14 +68,20 @@ proc toggle*(details: DetailsHandle; emitToggle = true) =
   details.setOpen(not details.state.open, emitToggle = emitToggle)
 
 proc setDisabled*(details: DetailsHandle; disabled: bool) =
+  if not details.container.valid():
+    return
   details.state.disabled = disabled
   details.syncVisibleState()
 
 proc setSummary*(details: DetailsHandle; summary: string) =
+  if not details.container.valid():
+    return
   details.state.summary = summary
   details.syncVisibleState()
 
 proc setBody*(details: DetailsHandle; body: string) =
+  if not details.container.valid():
+    return
   details.state.body = body
   details.syncVisibleState()
 

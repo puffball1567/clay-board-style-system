@@ -1,6 +1,6 @@
 import std/[json, options, os, strutils]
 
-import ../core/[diagnostics, geometry, node, style_resolver]
+import ../core/[computed_style, diagnostics, geometry, node, style_resolver]
 import ../generated/default_properties
 import ../hit/hit_test
 import ../input/events
@@ -191,7 +191,7 @@ proc describe*(query: CbssQuery): string =
     "byAttribute(" & query.attrName & "=" & query.attrValue & ")"
 
 proc matches(tree: Tree; id: NodeId; query: CbssQuery): bool =
-  if id.nodeIndex < 0 or id.nodeIndex >= tree.nodes.len:
+  if not tree.isValid(id):
     return false
   let item = tree.nodes[id.nodeIndex]
   case query.kind
@@ -246,7 +246,10 @@ proc initCbssTestDriver*(builder: proc(): UiRoot {.closure.}; viewport: Size): C
 
 proc all*(driver: CbssTestDriver; query: CbssQuery): seq[NodeId] =
   for index in 0 ..< driver.ui.tree.nodes.len:
-    let id = NodeId(index)
+    let activeId = driver.ui.tree.nodeIdAt(index)
+    if activeId.isNone:
+      continue
+    let id = activeId.get
     if driver.ui.tree.matches(id, query):
       result.add id
 
@@ -280,7 +283,10 @@ proc nodeLabel(driver: CbssTestDriver; id: NodeId): string =
 proc treeSnapshot*(driver: CbssTestDriver): string =
   var lines: seq[string]
   for index, item in driver.ui.tree.nodes:
-    let id = NodeId(index)
+    let activeId = driver.ui.tree.nodeIdAt(index)
+    if activeId.isNone:
+      continue
+    let id = activeId.get
     let parent =
       if item.parent.isSome: $item.parent.get.nodeIndex
       else: "-"
@@ -342,6 +348,8 @@ proc isUnique*(driver: CbssTestDriver; query: CbssQuery): bool =
   driver.count(query) == 1
 
 proc isDescendantOf(driver: CbssTestDriver; child, ancestor: NodeId): bool =
+  if not driver.ui.tree.isValid(child) or not driver.ui.tree.isValid(ancestor):
+    return false
   var current = driver.ui.tree.nodes[child.nodeIndex].parent
   while current.isSome:
     if current.get == ancestor:
@@ -416,7 +424,10 @@ proc queryReport*(scope: CbssScope; query: CbssQuery): string =
   if matches.len == 0:
     lines.add "subtree:"
     for id in 0 ..< scope.driver.ui.tree.nodes.len:
-      let nodeId = NodeId(id)
+      let activeId = scope.driver.ui.tree.nodeIdAt(id)
+      if activeId.isNone:
+        continue
+      let nodeId = activeId.get
       if nodeId == parentId or scope.driver.isDescendantOf(nodeId, parentId):
         lines.add "  " & scope.driver.nodeLabel(nodeId)
   lines.join("\n")
@@ -539,7 +550,20 @@ proc hits*(driver: CbssTestDriver; hitQuery, expectedQuery: CbssQuery): bool =
 
 proc isVisible*(driver: CbssTestDriver; query: CbssQuery): bool =
   let target = driver.first(query)
-  target.isSome and driver.rectFor(target.get).isSome
+  if target.isNone or driver.rectFor(target.get).isNone:
+    return false
+  var current = target
+  while current.isSome:
+    let nodeId = current.get
+    if not driver.ui.tree.isValid(nodeId):
+      return false
+    let style = driver.styles.styles[nodeId.nodeIndex]
+    if style.layout.display == dkNone or
+        (style.visual.contentVisibility.isSome and
+          style.visual.contentVisibility.get == "hidden"):
+      return false
+    current = driver.ui.tree.nodes[nodeId.nodeIndex].parent
+  true
 
 proc hover*(driver: CbssTestDriver; point: Vec2): bool =
   let hit = hitTest(driver.hitRegions, point)
@@ -757,7 +781,7 @@ proc toggle*(driver: CbssTestDriver; query: CbssQuery): bool =
   driver.click(query)
 
 proc textContent(driver: CbssTestDriver; target: NodeId): string =
-  if target.nodeIndex < 0 or target.nodeIndex >= driver.ui.tree.nodes.len:
+  if not driver.ui.tree.isValid(target):
     return ""
   let item = driver.ui.tree.nodes[target.nodeIndex]
   if item.kind == nkText:
@@ -778,7 +802,7 @@ proc value*(driver: CbssTestDriver; query: CbssQuery): string =
 
 proc values*(driver: CbssTestDriver): seq[tuple[id: string, value: string]] =
   for item in driver.ui.tree.nodes:
-    if item.id.len == 0:
+    if not item.alive or item.id.len == 0:
       continue
     let value = item.attrValue("value")
     if value.isSome:
@@ -786,7 +810,7 @@ proc values*(driver: CbssTestDriver): seq[tuple[id: string, value: string]] =
 
 proc valuesByCode*(driver: CbssTestDriver): seq[tuple[code: string, value: string]] =
   for item in driver.ui.tree.nodes:
-    if item.code.len == 0:
+    if not item.alive or item.code.len == 0:
       continue
     let value = item.attrValue("value")
     if value.isSome:
@@ -794,6 +818,8 @@ proc valuesByCode*(driver: CbssTestDriver): seq[tuple[code: string, value: strin
 
 proc controlValues*(driver: CbssTestDriver): seq[tuple[keyKind: string, key: string, value: string]] =
   for item in driver.ui.tree.nodes:
+    if not item.alive:
+      continue
     let value = item.attrValue("value")
     if value.isNone:
       continue
@@ -952,6 +978,8 @@ proc structuredSnapshotJson*(driver: CbssTestDriver): JsonNode =
 
   var nodes = newJArray()
   for index, item in driver.ui.tree.nodes:
+    if not item.alive:
+      continue
     var attrs = newJObject()
     for attr in item.attributes:
       attrs[attr.name] = %attr.value

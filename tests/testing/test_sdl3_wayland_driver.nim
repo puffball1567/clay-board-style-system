@@ -347,7 +347,7 @@ suite "SDL3 Wayland integration driver":
     driver.clearCompositionCandidates()
     check driver.compositionCandidates().isNone
 
-  test "SDL event dispatch updates viewport and text input focus area":
+  test "SDL expose and resize dispatch update the native frame state":
     var input: TextInputHandle
     let driver = Sdl3WaylandDriver(
       headless: initCbssTestDriver(proc(): UiRoot = buildTextInputUi(input), size(220, 100)),
@@ -355,13 +355,17 @@ suite "SDL3 Wayland integration driver":
       artifacts: @[]
     )
     check driver.dispatchSdlEvent(
-      Sdl3Event(kind: sekResize, timestamp: 1, width: 320, height: 180),
+      Sdl3Event(kind: sekExpose, timestamp: 1),
+      renderAfter = false
+    )
+    check driver.dispatchSdlEvent(
+      Sdl3Event(kind: sekResize, timestamp: 2, width: 320, height: 180),
       renderAfter = false
     )
     check driver.headless.viewport == size(320, 180)
     let center = driver.headless.centerFor(byId("name"))
     check driver.dispatchSdlEvent(
-      Sdl3Event(kind: sekPointerDown, timestamp: 2, button: 0, buttonX: center.x, buttonY: center.y),
+      Sdl3Event(kind: sekPointerDown, timestamp: 3, button: 0, buttonX: center.x, buttonY: center.y),
       renderAfter = false
     )
     check driver.headless.focusedTarget().isSome

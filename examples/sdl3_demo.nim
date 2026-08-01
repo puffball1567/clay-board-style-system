@@ -3071,6 +3071,8 @@ proc main() =
       case event.kind
       of sekQuit:
         running = false
+      of sekExpose:
+        frameDirty = true
       of sekResize:
         let nextViewport = size(event.width.float32, event.height.float32)
         if abs(nextViewport.w - viewport.w) > 0.5'f32 or abs(nextViewport.h - viewport.h) > 0.5'f32:

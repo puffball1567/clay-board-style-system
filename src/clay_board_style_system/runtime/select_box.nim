@@ -24,7 +24,7 @@ type
     open*: bool
 
   SelectHandle* = object
-    root*: UiRoot
+    root* {.cursor.}: UiRoot
     container*: NodeHandle
     valueNode*: NodeHandle
     panelNode*: NodeHandle
@@ -53,6 +53,8 @@ proc disabled*(select: SelectHandle): bool =
   select.state.disabled
 
 proc syncVisibleState(select: SelectHandle) =
+  if not select.container.valid():
+    return
   select.root.tree.setAttribute(select.container.id, "value", select.selectedValue())
   select.root.tree.setAttribute(select.container.id, "placeholder", select.state.placeholder)
   select.root.tree.nodes[select.valueNode.id.nodeIndex].text = select.selectedLabel()
@@ -71,7 +73,7 @@ proc emitValueEvents(select: SelectHandle) =
   discard select.container.emit(changeEvent(select.selectedValue()))
 
 proc setOpen*(select: SelectHandle; open: bool; emitToggle = false) =
-  if select.state.disabled or select.state.open == open:
+  if not select.container.valid() or select.state.disabled or select.state.open == open:
     return
   select.state.open = open
   select.syncVisibleState()
@@ -82,11 +84,14 @@ proc toggleOpen*(select: SelectHandle; emitToggle = true) =
   select.setOpen(not select.state.open, emitToggle = emitToggle)
 
 proc setDisabled*(select: SelectHandle; disabled: bool) =
+  if not select.container.valid():
+    return
   select.state.disabled = disabled
   select.syncVisibleState()
 
 proc setSelectedIndex*(select: SelectHandle; index: int; emitEvents = false) =
-  if select.state.disabled or index < 0 or index >= select.state.options.len:
+  if not select.container.valid() or select.state.disabled or
+      index < 0 or index >= select.state.options.len:
     return
   if select.state.options[index].disabled or select.state.selectedIndex == index:
     return
@@ -230,7 +235,7 @@ proc selectBox*(
   result.syncVisibleState()
   let select = result
 
-  root.registerPopupCloser(proc(target: Option[NodeId]): bool =
+  root.registerPopupCloser(result.container.id, proc(target: Option[NodeId]): bool =
     if not select.state.open:
       return false
     if select.containsTarget(target):

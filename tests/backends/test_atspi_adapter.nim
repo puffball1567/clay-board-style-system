@@ -106,6 +106,31 @@ suite "AT-SPI platform-neutral adapter":
     check not ui.performAtspiAction(snapshot, objectPathFor(disabled.container.nodeId))
     check saves == 1
 
+  test "hidden and inert controls cannot be activated through stale snapshots":
+    let ui = initUiRoot()
+    let app = ui.box(fixedStyle(300, 100))
+    ui.pushParent(app)
+    let action = ui.button("Action", style = fixedStyle(120, 32))
+    ui.popParent()
+    var activations = 0
+    action.onClick = proc(event: DispatchResult): bool =
+      inc activations
+      true
+
+    app.setInert()
+    let hiddenSnapshot = ui.buildAtspiSnapshot(ui.layoutFor(), "Actions")
+    let path = objectPathFor(action.container.nodeId)
+    let hiddenNode = hiddenSnapshot.nodeAt(path).get
+    check atsShowing notin hiddenNode.states
+    check atsVisible notin hiddenNode.states
+    check not ui.performAtspiAction(hiddenSnapshot, path)
+    check activations == 0
+
+    app.setInert(false)
+    let visibleSnapshot = ui.buildAtspiSnapshot(ui.layoutFor(), "Actions")
+    check ui.performAtspiAction(visibleSnapshot, path)
+    check activations == 1
+
   test "hidden semantic subtrees keep geometry without advertising visibility":
     let ui = initUiRoot()
     let dialog = ui.dialog(

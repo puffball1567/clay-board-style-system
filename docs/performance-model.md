@@ -106,6 +106,21 @@ nodes that do not declare either group retain only two references; this lowers
 the inline size again to 2,944 bytes. The remaining text, box, and visual split
 is still required to reach the retained-memory budget.
 
+### Version 0.2 release baseline (2026-08-01)
+
+The release ARC pipeline probe passed with the following median results after
+one warmup:
+
+| nodes | style | layout | scroll | paint | hit | commands |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 500 | 1.197 ms | 0.642 ms | 0.003 ms | 0.198 ms | 0.128 ms | 502 |
+| 1,000 | 2.403 ms | 1.297 ms | 0.007 ms | 0.393 ms | 0.239 ms | 1,004 |
+| 4,000 | 10.648 ms | 6.616 ms | 0.021 ms | 2.585 ms | 1.358 ms | 4,004 |
+
+These are full-tree cold-pass measurements, not dirty-subtree frame costs.
+The fixed seven-node dirty benchmark and retained navigation benchmark below
+verify that interactive updates remain independent of unrelated tree size.
+
 ## Hot-path data rules
 
 The hot path is: input event → dispatch → dirty marking → subtree style →
@@ -238,13 +253,14 @@ the static layer. `LayoutResult` retains its `NodeId -> LayoutBox` index, so
 paint and hit updates do not recreate an O(tree) lookup table.
 
 `tests/perf/dirty_subtree_benchmark.nim` holds the dirty subtree at seven nodes
-while growing unrelated retained content. A 2026-07-28 release ARC run measured:
+while growing unrelated retained content. The 2026-08-01 Version 0.2 release
+ARC run measured:
 
 | total nodes | subtree paint | subtree hit | paint commands | hit regions |
 | ---: | ---: | ---: | ---: | ---: |
-| 500 | 5.076 us | 3.410 us | 10 | 5 |
-| 4,000 | 6.157 us | 4.795 us | 10 | 5 |
-| 10,000 | 8.632 us | 7.135 us | 10 | 5 |
+| 500 | 4.964 us | 3.482 us | 10 | 5 |
+| 4,000 | 6.817 us | 5.502 us | 10 | 5 |
+| 10,000 | 10.331 us | 8.883 us | 10 | 5 |
 
 The benchmark fails if the 10k fixed-dirty cost exceeds four times the
 500-node cost. The remaining region-span move is proportional to the retained
@@ -254,6 +270,35 @@ per-node spans is still required for a strict zero-copy `O(dirty)` guarantee.
 This is independent from viewport virtualization. Retaining 100,000 row nodes
 still incurs retained-tree and intrinsic-measurement cost even though scrolling
 those already-laid-out nodes no longer invokes layout.
+
+### Retained navigation status (2026-08-01)
+
+`NavigationScreenHost` registers prebuilt, disjoint screen roots. A navigation
+listener only queues the latest history entry; one `sync` after the event batch
+changes the previous and next roots. Repeated back/forward operations reuse the
+same keyed display declarations and never append nodes or style sheets.
+
+Inactive screens combine `display: none` with inherited runtime inertness, so
+they do not enter layout, paint, hit testing, direct tree-aware dispatch, focus
+traversal, or visible accessibility output. Focus fallback discovery traverses
+only the activated screen subtree. Common focus transfer updates the previous
+and next focus nodes directly instead of clearing focus flags across the full
+tree. Focus records for history entries removed by replace or forward-branch
+truncation are pruned from retained memory.
+
+`tests/perf/navigation_screen_host_benchmark.nim` alternates two fixed screen
+subtrees with `replace` while growing unrelated retained content. The Version
+0.2 release ARC run measured:
+
+| total nodes | replace + host sync |
+| ---: | ---: |
+| 500 | 2.377 us |
+| 10,000 | 1.994 us |
+
+The benchmark also asserts stable node/style counts and fails if the 10k result
+exceeds twice the 500-node result plus a one-microsecond noise allowance.
+Dynamic screen creation and physical subtree disposal remain separate work;
+this benchmark covers switching among already registered screens.
 
 ## Renderer budgets
 

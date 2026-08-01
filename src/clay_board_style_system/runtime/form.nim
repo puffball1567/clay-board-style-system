@@ -15,7 +15,7 @@ type
     invalidCount*: int
 
   FormHandle* = object
-    root*: UiRoot
+    root* {.cursor.}: UiRoot
     container*: NodeHandle
     state*: FormState
 

@@ -233,7 +233,8 @@ typedef enum CbssAccessibleRole {
   CBSS_ROLE_DIALOG = 17,
   CBSS_ROLE_GROUP = 18,
   CBSS_ROLE_IMAGE = 19,
-  CBSS_ROLE_STATIC_TEXT = 20
+  CBSS_ROLE_STATIC_TEXT = 20,
+  CBSS_ROLE_LINK = 21
 } CbssAccessibleRole;
 
 typedef enum CbssHitKind {

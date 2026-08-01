@@ -16,7 +16,7 @@ type
     disabled*: bool
 
   CheckboxHandle* = object
-    root*: UiRoot
+    root* {.cursor.}: UiRoot
     container*: NodeHandle
     markerNode*: NodeHandle
     indicatorNode*: NodeHandle
@@ -24,6 +24,8 @@ type
     state*: CheckboxState
 
 proc updateMarker(checkbox: CheckboxHandle) =
+  if not checkbox.container.valid():
+    return
   checkbox.markerNode.setState(esChecked, checkbox.state.checked)
   checkbox.indicatorNode.setState(esChecked, checkbox.state.checked)
   checkbox.root.tree.setAttribute(
@@ -46,12 +48,14 @@ proc emitValueEvents(checkbox: CheckboxHandle) =
   discard checkbox.container.emit(changeEvent(value))
 
 proc setLabel*(checkbox: CheckboxHandle; label: string) =
+  if not checkbox.container.valid():
+    return
   checkbox.state.label = label
   checkbox.root.tree.nodes[checkbox.labelNode.id.nodeIndex].text = label
   checkbox.container.setAccessibleName(label)
 
 proc setChecked*(checkbox: CheckboxHandle; checked: bool; emitEvents = false) =
-  if checkbox.state.checked == checked:
+  if not checkbox.container.valid() or checkbox.state.checked == checked:
     return
   checkbox.state.checked = checked
   checkbox.container.setState(esChecked, checked)
@@ -60,11 +64,13 @@ proc setChecked*(checkbox: CheckboxHandle; checked: bool; emitEvents = false) =
     checkbox.emitValueEvents()
 
 proc toggle*(checkbox: CheckboxHandle; emitEvents = true) =
-  if checkbox.state.disabled:
+  if not checkbox.container.valid() or checkbox.state.disabled:
     return
   checkbox.setChecked(not checkbox.state.checked, emitEvents = emitEvents)
 
 proc setDisabled*(checkbox: CheckboxHandle; disabled: bool) =
+  if not checkbox.container.valid():
+    return
   checkbox.state.disabled = disabled
   checkbox.container.setState(esDisabled, disabled)
 

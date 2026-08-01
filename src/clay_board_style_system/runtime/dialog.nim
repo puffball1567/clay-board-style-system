@@ -25,13 +25,15 @@ type
     restoreFocusPending*: bool
 
   DialogHandle* = object
-    root*: UiRoot
+    root* {.cursor.}: UiRoot
     container*: NodeHandle
     titleNode*: NodeHandle
     bodyNode*: NodeHandle
     state*: DialogState
 
 proc syncVisibleState(dialog: DialogHandle) =
+  if not dialog.container.valid():
+    return
   dialog.container.setState(esActive, dialog.state.open)
   dialog.container.setState(esDisabled, not dialog.state.open)
   dialog.root.tree.nodes[dialog.titleNode.id.nodeIndex].text = dialog.state.title
@@ -86,7 +88,7 @@ proc initialFocusTarget(
   none(NodeId)
 
 proc show*(dialog: DialogHandle): bool =
-  if dialog.state.open:
+  if not dialog.container.valid() or dialog.state.open:
     return false
   dialog.state.open = true
   inc dialog.state.showCount
@@ -114,7 +116,7 @@ proc show*(
   true
 
 proc close*(dialog: DialogHandle): bool =
-  if not dialog.state.open:
+  if not dialog.container.valid() or not dialog.state.open:
     return false
   dialog.state.open = false
   inc dialog.state.closeCount
@@ -138,7 +140,7 @@ proc close*(dialog: DialogHandle; interaction: var InteractionState): bool =
   true
 
 proc cancel*(dialog: DialogHandle): bool =
-  if not dialog.state.open:
+  if not dialog.container.valid() or not dialog.state.open:
     return false
   inc dialog.state.cancelCount
   discard dialog.container.emit(iekCancel)
@@ -146,22 +148,26 @@ proc cancel*(dialog: DialogHandle): bool =
   true
 
 proc cancel*(dialog: DialogHandle; interaction: var InteractionState): bool =
-  if not dialog.state.open:
+  if not dialog.container.valid() or not dialog.state.open:
     return false
   inc dialog.state.cancelCount
   discard dialog.container.emit(iekCancel)
   dialog.close(interaction)
 
 proc setTitle*(dialog: DialogHandle; title: string) =
+  if not dialog.container.valid():
+    return
   dialog.state.title = title
   dialog.syncVisibleState()
 
 proc setBody*(dialog: DialogHandle; body: string) =
+  if not dialog.container.valid():
+    return
   dialog.state.body = body
   dialog.syncVisibleState()
 
 proc setModal*(dialog: DialogHandle; modal: bool) =
-  if dialog.state.modal == modal:
+  if not dialog.container.valid() or dialog.state.modal == modal:
     return
   dialog.state.modal = modal
   if dialog.state.open and modal:

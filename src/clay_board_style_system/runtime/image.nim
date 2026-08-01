@@ -10,24 +10,34 @@ type
     disabled*: bool
 
   ImageHandle* = object
-    root*: UiRoot
+    root* {.cursor.}: UiRoot
     container*: NodeHandle
 
 proc source*(image: ImageHandle): string =
-  image.root.tree.nodes[image.container.id.nodeIndex].imageSource
+  if image.container.valid():
+    image.root.tree.nodes[image.container.id.nodeIndex].imageSource
+  else:
+    ""
 
 proc setSource*(image: ImageHandle; source: string) =
+  if not image.container.valid():
+    return
   image.root.tree.nodes[image.container.id.nodeIndex].imageSource = source
 
 proc setIntrinsicSize*(image: ImageHandle; width, height: float32) =
+  if not image.container.valid():
+    return
   image.root.tree.nodes[image.container.id.nodeIndex].imageWidth = max(0.0'f32, width)
   image.root.tree.nodes[image.container.id.nodeIndex].imageHeight = max(0.0'f32, height)
 
 proc setDisabled*(image: ImageHandle; disabled: bool) =
+  if not image.container.valid():
+    return
   image.container.setState(esDisabled, disabled)
 
 proc disabled*(image: ImageHandle): bool =
-  esDisabled in image.root.tree.nodes[image.container.id.nodeIndex].states
+  image.container.valid() and
+    esDisabled in image.root.tree.nodes[image.container.id.nodeIndex].states
 
 proc `onLoad=`*(image: ImageHandle; handler: EventHandler) =
   image.container.onLoad = handler

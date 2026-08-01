@@ -8,6 +8,11 @@ the accessible `activate` action. The callback that saves a document, calls a
 backend, or changes application data remains application code. A disclosure
 owns arrow-key expansion because that is UI behavior.
 
+A Link similarly owns focusability, Enter-key activation, disabled behavior,
+and its accessible `activate` action. Its destination is a typed application
+value; accessibility activation uses the same event path as pointer input and
+does not require a browser URL.
+
 ## Layers
 
 Accessibility support is split into independent layers:
@@ -48,6 +53,12 @@ activation, and restores the opening focus when closed. Event handlers queue a
 focus request because they do not own `InteractionState`; hosts call
 `reconcileFocus` after each event batch. The SDL3 demo and headless test driver
 already perform this reconciliation.
+
+Retained navigation screens use inherited runtime `inert` state while
+inactive. Their semantic nodes remain retained with stable IDs, but are marked
+hidden, cannot receive accessibility actions through the UI event path, and do
+not participate in focus traversal. Reactivation restores semantics without
+reconstructing the screen subtree.
 
 ## Security Boundary
 

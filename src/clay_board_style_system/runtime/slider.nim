@@ -23,7 +23,7 @@ type
     trackWidth*: float32
 
   SliderHandle* = object
-    root*: UiRoot
+    root* {.cursor.}: UiRoot
     container*: NodeHandle
     trackNode*: NodeHandle
     fillNode*: NodeHandle
@@ -53,6 +53,8 @@ proc percent(state: SliderState): float32 =
   (state.value - state.min) / (state.max - state.min)
 
 proc syncVisibleState(slider: SliderHandle) =
+  if not slider.container.valid():
+    return
   slider.container.setState(esDisabled, slider.state.disabled)
   slider.container.setState(esActive, slider.state.dragging)
   slider.root.tree.setAttribute(slider.container.id, "value", $slider.state.value)
@@ -81,7 +83,7 @@ proc disabled*(slider: SliderHandle): bool =
   slider.state.disabled
 
 proc setValue*(slider: SliderHandle; value: float32; emitEvents = false) =
-  if slider.state.disabled:
+  if not slider.container.valid() or slider.state.disabled:
     return
   let next = slider.state.clampValue(value)
   if next == slider.state.value:
@@ -92,6 +94,8 @@ proc setValue*(slider: SliderHandle; value: float32; emitEvents = false) =
     slider.emitValueEvents()
 
 proc setDisabled*(slider: SliderHandle; disabled: bool) =
+  if not slider.container.valid():
+    return
   slider.state.disabled = disabled
   if disabled:
     slider.state.dragging = false

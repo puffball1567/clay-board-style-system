@@ -21,7 +21,7 @@ type
     disabled*: bool
 
   TabsHandle* = object
-    root*: UiRoot
+    root* {.cursor.}: UiRoot
     container*: NodeHandle
     tabNodes*: seq[NodeHandle]
     state*: TabsState

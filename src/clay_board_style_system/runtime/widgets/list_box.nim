@@ -21,7 +21,7 @@ type
     disabled*: bool
 
   ListBoxHandle* = object
-    root*: UiRoot
+    root* {.cursor.}: UiRoot
     container*: NodeHandle
     itemNodes*: seq[NodeHandle]
     state*: ListBoxState

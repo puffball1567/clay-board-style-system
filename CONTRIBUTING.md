@@ -76,6 +76,7 @@ and the cosmic-text bridge through its own dynamic-library installation.
 | Hit testing | `src/clay_board_style_system/hit/hit_test.nim` | `tests/hit/` | — |
 | Input/events | `src/clay_board_style_system/input/events.nim` | `tests/input/` | event policy lives in `docs/architecture.md` |
 | Runtime control / widget | `src/clay_board_style_system/runtime/<name>.nim` (widgets under `runtime/widgets/`) | `tests/runtime/test_<name>.nim` | behavior notes in `docs/runtime-components.md`; follow conventions in design-decisions D15 |
+| Native navigation | `src/clay_board_style_system/runtime/navigation.nim`, `runtime/navigation_focus.nim`, `runtime/navigation_screen_host.nim`, `runtime/link.nim` | `tests/runtime/test_navigation*.nim`, `test_link.nim` | update `docs/navigation.md` and `docs/roadmap.md` when the public scope changes |
 | SDL3 backend | `src/clay_board_style_system/backends/sdl3/` (paths/link flags only in `config.nim`) | `tests/backends/`, opt-in Wayland smoke test | `docs/platform-support.md` |
 | Text engine / bridge | `src/clay_board_style_system/text/`, `native/cosmic_text_bridge/src/lib.rs` | `tests/text/` | `docs/architecture.md` text section |
 | Design-source import | `src/clay_board_style_system/design_source/` | `tests/design_source/` | — |
