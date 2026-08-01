@@ -81,6 +81,23 @@ label node, disabled state, disabled click suppression, and keyboard activation
 through Enter and Space. User code can still assign `button.onClick = handler`,
 but disabled behavior remains component-owned and runs before user handlers.
 
+`runtime/link.nim` provides the semantic navigation primitive. It owns pointer
+activation, Enter-key activation, focusability, disabled suppression, and the
+accessible Link role while leaving all visual styling to injected CBSS styles.
+It pushes an application-defined typed destination through an injected
+`Navigator`; optional user `onClick` behavior runs after internal navigation.
+Space is not Link activation. The application-owned navigator must outlive its
+mounted links because links keep a non-owning ARC cursor to it.
+
+`runtime/navigation_screen_host.nim` retains prebuilt screen roots and activates
+the root matching the navigator's current typed destination. Inactive roots are
+`display: none` and inert, so state is preserved without leaking input, focus,
+or accessibility behavior. `sync` is called once after an event batch and
+coalesces any intermediate navigation changes. `replaceScreen` and
+`unregisterScreen` dispose obsolete subtrees through generation-checked node
+slots, removing their event, style, scroll, popup, focus, and semantic runtime
+references before those slots can be reused.
+
 `runtime/checkbox.nim` provides a boolean form component. It owns its checked
 state, syncs that state to `esChecked`, suppresses pointer and keyboard changes
 when disabled, and emits `onInput` followed by `onChange` only when the checked

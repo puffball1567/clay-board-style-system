@@ -79,6 +79,27 @@ proc buildControlsUi(): UiRoot =
     discard result.radio(radioSet, "Advanced", "advanced", id = "radio-advanced")
 
 suite "CBSS headless test driver":
+  test "visibility excludes display-none nodes and descendants":
+    let ui = initUiRoot()
+    discard ui.box(id = "visible")
+    let hidden = ui.box(
+      uiStyle([decl("display", keyword("none"))]),
+      id = "hidden"
+    )
+    discard ui.box(parent = some(hidden), id = "hidden-child")
+    let contentHidden = ui.box(
+      uiStyle([decl("content-visibility", keyword("hidden"))]),
+      id = "content-hidden"
+    )
+    discard ui.box(parent = some(contentHidden), id = "content-hidden-child")
+    let driver = initCbssTestDriver(ui, size(320, 200))
+
+    check driver.isVisible(byId("visible"))
+    check not driver.isVisible(byId("hidden"))
+    check not driver.isVisible(byId("hidden-child"))
+    check not driver.isVisible(byId("content-hidden"))
+    check not driver.isVisible(byId("content-hidden-child"))
+
   test "driver can test handle-first ui without ids":
     var nameInput: TextInputHandle
     var rememberBox: CheckboxHandle

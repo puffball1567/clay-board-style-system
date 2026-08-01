@@ -22,16 +22,15 @@ type
     bounds*: Option[Rect]
 
 proc descendantText(tree: Tree; id: NodeId): string =
-  if id.nodeIndex < 0 or id.nodeIndex >= tree.nodes.len:
+  if not tree.isValid(id):
     return ""
-  let node = tree.nodes[id.nodeIndex]
-  if node.kind == nkText:
-    result.add node.text
-  for child in node.children:
+  if tree.nodes[id.nodeIndex].kind == nkText:
+    result.add tree.nodes[id.nodeIndex].text
+  for child in tree.nodes[id.nodeIndex].children:
     result.add tree.descendantText(child)
 
 proc resolvedAccessibleName*(tree: Tree; id: NodeId): string =
-  if id.nodeIndex < 0 or id.nodeIndex >= tree.nodes.len:
+  if not tree.isValid(id):
     return ""
   let info = tree.semanticInfo(id)
   if info.name.len > 0:
@@ -41,7 +40,7 @@ proc resolvedAccessibleName*(tree: Tree; id: NodeId): string =
   ""
 
 proc resolvedAccessibleDescription*(tree: Tree; id: NodeId): string =
-  if id.nodeIndex < 0 or id.nodeIndex >= tree.nodes.len:
+  if not tree.isValid(id):
     return ""
   let info = tree.semanticInfo(id)
   if info.description.len > 0:
@@ -51,9 +50,13 @@ proc resolvedAccessibleDescription*(tree: Tree; id: NodeId): string =
   ""
 
 proc nearestAccessibleParent(tree: Tree; id: NodeId): Option[NodeId] =
+  if not tree.isValid(id):
+    return none(NodeId)
   var current = tree.nodes[id.nodeIndex].parent
   while current.isSome:
     let parent = current.get
+    if not tree.isValid(parent):
+      return none(NodeId)
     if tree.semanticInfo(parent).role != arNone:
       return some(parent)
     current = tree.nodes[parent.nodeIndex].parent
@@ -61,10 +64,13 @@ proc nearestAccessibleParent(tree: Tree; id: NodeId): Option[NodeId] =
 
 proc accessibilityTree*(tree: Tree): seq[AccessibleNode] =
   for index, source in tree.nodes:
-    let info = tree.semanticInfo(NodeId(index))
+    let activeId = tree.nodeIdAt(index)
+    if activeId.isNone:
+      continue
+    let id = activeId.get
+    let info = tree.semanticInfo(id)
     if info.role == arNone:
       continue
-    let id = NodeId(index)
     result.add AccessibleNode(
       node: id,
       parent: tree.nearestAccessibleParent(id),

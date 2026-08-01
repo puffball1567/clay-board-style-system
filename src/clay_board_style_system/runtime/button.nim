@@ -14,17 +14,21 @@ type
     disabled*: bool
 
   ButtonHandle* = object
-    root*: UiRoot
+    root* {.cursor.}: UiRoot
     container*: NodeHandle
     labelNode*: NodeHandle
     state*: ButtonState
 
 proc setLabel*(button: ButtonHandle; label: string) =
+  if not button.container.valid():
+    return
   button.state.label = label
   button.root.tree.nodes[button.labelNode.id.nodeIndex].text = label
   button.container.setAccessibleName(label)
 
 proc setDisabled*(button: ButtonHandle; disabled: bool) =
+  if not button.container.valid():
+    return
   button.state.disabled = disabled
   button.container.setState(esDisabled, disabled)
 

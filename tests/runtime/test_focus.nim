@@ -54,6 +54,25 @@ suite "general focus runtime":
     check ui.tree.isFocusable(pointerOnly.nodeId)
     check not ui.tree.isFocusable(pointerOnly.nodeId, forTraversal = true)
 
+  test "subtree focus order ignores unrelated and inert nodes":
+    let ui = initUiRoot()
+    let app = ui.box()
+    let screen = ui.box(parent = some(app))
+    let outside = ui.box(parent = some(app))
+    let zero = ui.box(parent = some(screen))
+    zero.setFocusable(tabIndex = 0)
+    let positive = ui.box(parent = some(screen))
+    positive.setFocusable(tabIndex = 1)
+    let inactive = ui.box(parent = some(screen))
+    inactive.setFocusable(tabIndex = 2)
+    inactive.setInert()
+    outside.setFocusable(tabIndex = 1)
+
+    check ui.focusTargets(screen.nodeId) == @[
+      positive.nodeId,
+      zero.nodeId
+    ]
+
   test "focus movement emits blur and focus and marks keyboard focus visible":
     let ui = initUiRoot()
     let first = ui.box()

@@ -23,9 +23,35 @@ proc compareFocusOrder(a, b: FocusOrderEntry): int {.nimcall.} =
 proc focusTargets*(ui: UiRoot): seq[NodeId] =
   var entries: seq[FocusOrderEntry]
   for index in 0 ..< ui.tree.nodes.len:
-    let id = NodeId(index)
+    let activeId = ui.tree.nodeIdAt(index)
+    if activeId.isNone:
+      continue
+    let id = activeId.get
     if ui.tree.isFocusable(id, forTraversal = true):
       entries.add FocusOrderEntry(node: id, tabIndex: ui.tree.nodes[index].tabIndex)
+  entries.sort(compareFocusOrder)
+  result = newSeqOfCap[NodeId](entries.len)
+  for entry in entries:
+    result.add entry.node
+
+proc focusTargets*(ui: UiRoot; within: NodeId): seq[NodeId] =
+  if not ui.tree.isValid(within):
+    return @[]
+  var entries: seq[FocusOrderEntry]
+  var pending = @[within]
+  while pending.len > 0:
+    let id = pending.pop()
+    if not ui.tree.isValid(id):
+      continue
+    if ui.tree.isFocusable(id, forTraversal = true):
+      entries.add FocusOrderEntry(
+        node: id,
+        tabIndex: ui.tree.nodes[id.nodeIndex].tabIndex
+      )
+    let children = ui.tree.nodes[id.nodeIndex].children
+    if children.len > 0:
+      for index in countdown(children.high, 0):
+        pending.add children[index]
   entries.sort(compareFocusOrder)
   result = newSeqOfCap[NodeId](entries.len)
   for entry in entries:
@@ -51,8 +77,10 @@ proc setFocus*(
   let previous = state.focusedTarget
   if previous.isSome:
     discard ui.events.emit(ui.tree, previous.get, iekBlur)
-  ui.tree.clearState(esFocus)
-  ui.tree.clearState(esFocusVisible)
+    if previous.get.nodeIndex >= 0 and
+        previous.get.nodeIndex < ui.tree.nodes.len:
+      ui.tree.removeState(previous.get, esFocus)
+      ui.tree.removeState(previous.get, esFocusVisible)
   discard state.setFocusedTarget(next)
   if next.isSome:
     ui.tree.addState(next.get, esFocus)

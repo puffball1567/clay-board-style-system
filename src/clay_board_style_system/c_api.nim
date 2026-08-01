@@ -206,7 +206,7 @@ proc fromCString(value: cstring): string {.inline.} =
 
 proc validNode(context: CbssContextHandle; node: uint32): bool {.inline.} =
   not context.isNil and node != CbssNodeNone and
-    uint64(node) < uint64(context.tree.nodes.len)
+    context.tree.isValid(NodeId(int(node)))
 
 proc nodeId(node: uint32): NodeId {.inline.} =
   NodeId(int(node))
@@ -390,8 +390,8 @@ proc callbackEvent(
   let includeLocal = currentTarget == originalTarget
   result = CbssEventC(
     kind: uint32(ord(dispatch.event.kind)),
-    target: uint32(originalTarget.nodeIndex),
-    currentTarget: uint32(currentTarget.nodeIndex),
+    target: originalTarget.nodeRawValue(),
+    currentTarget: currentTarget.nodeRawValue(),
     flags: dispatch.eventFlags(includeLocal),
     button:
       if dispatch.event.button.isSome:
@@ -495,7 +495,10 @@ proc compareFocusOrder(a, b: FocusOrderEntry): int {.nimcall.} =
 proc focusTargets(context: CbssContextHandle): seq[NodeId] =
   var entries: seq[FocusOrderEntry]
   for index in 0 ..< context.tree.nodes.len:
-    let id = NodeId(index)
+    let activeId = context.tree.nodeIdAt(index)
+    if activeId.isNone:
+      continue
+    let id = activeId.get
     if context.tree.isFocusable(id, forTraversal = true):
       entries.add FocusOrderEntry(
         node: id,
@@ -522,9 +525,11 @@ proc setContextFocus(
     return
   var dispatches: seq[DispatchResult]
   if context.interaction.focusedTarget.isSome:
-    dispatches.add blurEvent(context.interaction.focusedTarget.get)
-  context.tree.clearState(esFocus)
-  context.tree.clearState(esFocusVisible)
+    let previous = context.interaction.focusedTarget.get
+    dispatches.add blurEvent(previous)
+    if previous.nodeIndex >= 0 and previous.nodeIndex < context.tree.nodes.len:
+      context.tree.removeState(previous, esFocus)
+      context.tree.removeState(previous, esFocusVisible)
   discard context.interaction.setFocusedTarget(next)
   if next.isSome:
     context.tree.addState(next.get, esFocus)
@@ -628,7 +633,7 @@ proc cbssNodeParent(
   if context.isNil or not context.validNode(node):
     return CbssNodeNone
   let parent = context.tree.nodes[node.nodeId.nodeIndex].parent
-  if parent.isSome: uint32(parent.get.nodeIndex) else: CbssNodeNone
+  if parent.isSome: parent.get.nodeRawValue() else: CbssNodeNone
 
 proc cbssNodeChildCount(
     context: CbssContextHandle;
@@ -650,7 +655,7 @@ proc cbssNodeChild(
   let children = context.tree.nodes[node.nodeId.nodeIndex].children
   if uint64(index) >= uint64(children.len):
     return CbssNodeNone
-  uint32(children[int(index)].nodeIndex)
+  children[int(index)].nodeRawValue()
 
 proc cbssNodeIdentifier(
     context: CbssContextHandle;
@@ -712,7 +717,7 @@ proc cbssContextAddBox(
       id = fromCString(identifier)
     )
     context.invalidate()
-    uint32(id.nodeIndex)
+    id.nodeRawValue()
   except CatchableError as error:
     context.setError(error.msg)
     CbssNodeNone
@@ -733,7 +738,7 @@ proc cbssContextAddText(
       parent.nodeId, fromCString(text), id = fromCString(identifier)
     )
     context.invalidate()
-    uint32(id.nodeIndex)
+    id.nodeRawValue()
   except CatchableError as error:
     context.setError(error.msg)
     CbssNodeNone
@@ -759,7 +764,7 @@ proc cbssContextAddImage(
       id = fromCString(identifier)
     )
     context.invalidate()
-    uint32(id.nodeIndex)
+    id.nodeRawValue()
   except CatchableError as error:
     context.setError(error.msg)
     CbssNodeNone
@@ -954,12 +959,12 @@ proc cbssNodeAccessibility(
     valueMax: if semantic.valueMax.isSome: semantic.valueMax.get else: 0,
     labelledBy:
       if semantic.labelledBy.isSome:
-        uint32(semantic.labelledBy.get.nodeIndex)
+        semantic.labelledBy.get.nodeRawValue()
       else:
         CbssNodeNone,
     describedBy:
       if semantic.describedBy.isSome:
-        uint32(semantic.describedBy.get.nodeIndex)
+        semantic.describedBy.get.nodeRawValue()
       else:
         CbssNodeNone,
     hidden: uint8(ord(context.tree.isAccessibleHidden(node.nodeId)))
@@ -1460,7 +1465,7 @@ proc cbssContextLayoutBox(
     return CbssOutOfRange
   let item = context.layout.boxes[int(index)]
   output[] = CbssLayoutBoxC(
-    node: uint32(item.node.nodeIndex),
+    node: item.node.nodeRawValue(),
     rect: item.rect.toRect,
     zIndex: int32(item.zIndex)
   )
@@ -1504,7 +1509,7 @@ proc cbssContextPaintCommand(
   output[] = CbssPaintCommandC(
     kind: uint32(ord(command.kind)),
     owner:
-      if command.owner.isSome: uint32(command.owner.get.nodeIndex)
+      if command.owner.isSome: command.owner.get.nodeRawValue()
       else: CbssNodeNone,
     rect: command.commandRect().toRect,
     color: command.commandColor().toColor,
@@ -1629,7 +1634,7 @@ proc cbssContextHitTest(
   if hit.isNone:
     return CbssOutOfRange
   output[] = CbssHitResultC(
-    node: uint32(hit.get.node.nodeIndex),
+    node: hit.get.node.nodeRawValue(),
     localX: hit.get.local.x,
     localY: hit.get.local.y,
     kind: uint32(ord(hit.get.kind)),
@@ -1650,7 +1655,7 @@ proc writeDispatchSummary(
     return
   output[] = CbssDispatchSummaryC(
     target:
-      if target.isSome: uint32(target.get.nodeIndex)
+      if target.isSome: target.get.nodeRawValue()
       else: CbssNodeNone,
     dispatchCount: uint32(min(dispatchCount, int(high(uint32)))),
     handled: uint8(ord(handled)),
@@ -1813,7 +1818,7 @@ proc cbssContextFocusedNode(context: CbssContextHandle): uint32 {.
     exportc: "cbss_context_focused_node", cdecl, dynlib.} =
   if context.isNil or context.interaction.focusedTarget.isNone:
     return CbssNodeNone
-  uint32(context.interaction.focusedTarget.get.nodeIndex)
+  context.interaction.focusedTarget.get.nodeRawValue()
 
 proc cbssContextSetFocus(
     context: CbssContextHandle;

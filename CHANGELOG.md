@@ -7,6 +7,47 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-01
+
+### Added
+
+- Added typed native navigation with stable history entries, `push`,
+  `replace`, `back`, and `forward`, additive listeners, dirty-domain metadata,
+  dependency injection, and application-owned navigator drivers.
+- Added the semantic `Link` primitive with pointer, keyboard, focus-visible,
+  disabled, accessibility, external-URL, and typed deep-link behavior.
+- Added retained navigation screen hosting with per-entry focus restoration,
+  inactive-screen inertness, replaceable and disposable screen subtrees, and
+  optional frame-scheduled transition hooks.
+- Added the Version 0.2 navigation demo, headless navigation coverage, release
+  benchmarks, and real-window Wayland navigation tests.
+- Added a dedicated ARC widget-lifecycle Valgrind gate covering every
+  reference control and widget independently from the shared and static C ABI
+  memory checks.
+
+### Changed
+
+- Made component handles non-owning ARC views and generation-checked node IDs,
+  preventing stale handles from mutating reused tree slots and removing event
+  closure ownership cycles.
+- Extended inactive-state handling across layout, paint, hit testing, direct
+  events, focus traversal, and accessibility output.
+- Added `link` to the accessibility role vocabulary and propagated
+  generation-checked node handles through the existing C ABI.
+- Updated the SDL3 test integration driver to retain a deterministic local
+  clipboard snapshot when an unfocused synthetic Wayland window cannot read
+  back its compositor selection.
+
+### Fixed
+
+- Fixed initial input routing under SDL3, Wayland, and libdecor by repainting
+  after window expose events and restoring the application cursor when the
+  pointer returns from client-side decorations.
+- Fixed focus changes that previously cleared state across unrelated nodes and
+  hardened focus, accessibility, and event paths against stale node handles.
+- Preserved retained scroll bounds and minimum sizes while avoiding unrelated
+  layout work during scroll-only updates.
+
 ## [0.1.8] - 2026-07-31
 
 ### Added

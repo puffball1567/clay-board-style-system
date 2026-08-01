@@ -16,16 +16,20 @@ type
     target*: Option[NodeHandle]
 
   LabelHandle* = object
-    root*: UiRoot
+    root* {.cursor.}: UiRoot
     container*: NodeHandle
     textNode*: NodeHandle
     state*: LabelState
 
 proc setText*(label: LabelHandle; text: string) =
+  if not label.container.valid():
+    return
   label.state.text = text
   label.root.tree.nodes[label.textNode.id.nodeIndex].text = text
 
 proc setDisabled*(label: LabelHandle; disabled: bool) =
+  if not label.container.valid():
+    return
   label.state.disabled = disabled
   label.container.setState(esDisabled, disabled)
 
@@ -39,6 +43,12 @@ proc target*(label: LabelHandle): Option[NodeHandle] =
   label.state.target
 
 proc setTarget*(label: LabelHandle; target: NodeHandle) =
+  if not label.container.valid():
+    return
+  if target.root != label.root:
+    raise newException(ValueError, "label target belongs to another UiRoot")
+  if not target.valid():
+    raise newException(ValueError, "label target is not active")
   if label.state.target.isSome:
     let previous = label.state.target.get
     if label.root.tree.semanticInfo(previous.id).labelledBy ==
@@ -49,6 +59,8 @@ proc setTarget*(label: LabelHandle; target: NodeHandle) =
   target.setAccessibleLabelledBy(some(label.container))
 
 proc clearTarget*(label: LabelHandle) =
+  if not label.container.valid():
+    return
   if label.state.target.isSome:
     let target = label.state.target.get
     if label.root.tree.semanticInfo(target.id).labelledBy ==

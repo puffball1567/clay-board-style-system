@@ -1,4 +1,4 @@
-import std/[hashes, math, options, tables]
+import std/[hashes, math, options, sets, tables]
 
 import ../core/[color, declaration, geometry, node, rule, selector, style_value]
 import ../input/events
@@ -11,6 +11,10 @@ type
   ClipboardTextProvider* = proc(): string {.closure.}
   ClipboardTextWriter* = proc(text: string) {.closure.}
   PopupCloser* = proc(target: Option[NodeId]): bool {.closure.}
+
+  PopupCloserBinding = object
+    owner: NodeId
+    callback: PopupCloser
 
   ContextMenuAction* = enum
     cmaCut,
@@ -28,7 +32,7 @@ type
     declarations*: seq[Declaration]
 
   AppliedStyleKey = object
-    nodeIndex: int
+    node: NodeId
     states: set[ElementState]
     priority: int
 
@@ -37,6 +41,7 @@ type
     events*: EventRegistry
     componentStyles*: seq[StyleSheet]
     appliedStyleIndices: Table[AppliedStyleKey, int]
+    freeComponentStyleIndices: seq[int]
     textEngine*: TextEngine
     fonts*: FontRegistry
     scroll*: ScrollState
@@ -51,7 +56,7 @@ type
     clipboardTextWriter*: ClipboardTextWriter
     clipboardTextCache: string
     clipboardTextCached: bool
-    popupClosers*: seq[PopupCloser]
+    popupClosers*: seq[PopupCloserBinding]
     focusRequestPending*: bool
     focusRequestTarget*: Option[NodeId]
     parentStack: seq[NodeId]
@@ -69,6 +74,7 @@ proc initUiRoot*(): UiRoot =
     events: initEventRegistry(),
     componentStyles: @[],
     appliedStyleIndices: initTable[AppliedStyleKey, int](),
+    freeComponentStyleIndices: @[],
     textEngine: debugTextEngine(),
     fonts: initFontRegistry(),
     scroll: initScrollState(),
@@ -140,12 +146,18 @@ proc writeClipboardText*(root: UiRoot; text: string) =
   if root.clipboardTextCache.len > 0:
     root.clipboardTextWriter(root.clipboardTextCache)
 
-proc registerPopupCloser*(root: UiRoot; closer: PopupCloser) =
-  root.popupClosers.add closer
+proc registerPopupCloser*(
+    root: UiRoot;
+    owner: NodeId;
+    closer: PopupCloser
+) =
+  if not root.tree.isValid(owner):
+    raise newException(ValueError, "popup closer owner is not active")
+  root.popupClosers.add PopupCloserBinding(owner: owner, callback: closer)
 
 proc closeOpenPopups*(root: UiRoot; target: Option[NodeId]): bool =
-  for closer in root.popupClosers:
-    if closer(target):
+  for binding in root.popupClosers:
+    if binding.callback(target):
       result = true
 
 proc uiStyle*(declarations: openArray[Declaration]): UiStyle =
@@ -155,7 +167,7 @@ proc `+`*(a, b: UiStyle): UiStyle =
   UiStyle(declarations: a.declarations & b.declarations)
 
 proc hash(key: AppliedStyleKey): Hash =
-  result = hash(key.nodeIndex)
+  result = hash(key.node)
   result = result !& hash(key.priority)
   result = result !& hash(cast[uint8](key.states))
   result = !$result
@@ -180,10 +192,22 @@ proc nodeId*(handle: NodeHandle): NodeId =
   handle.id
 
 proc setCode*(handle: NodeHandle; code: string) =
-  handle.root.tree.nodes[handle.id.nodeIndex].code = code
+  if not handle.root.isNil and handle.root.tree.isValid(handle.id):
+    handle.root.tree.nodes[handle.id.nodeIndex].code = code
+
+proc valid*(handle: NodeHandle): bool =
+  not handle.root.isNil and handle.root.tree.isValid(handle.id)
+
+proc storeComponentStyle(root: UiRoot; sheet: StyleSheet): int =
+  if root.freeComponentStyleIndices.len > 0:
+    result = root.freeComponentStyleIndices.pop()
+    root.componentStyles[result] = sheet
+  else:
+    root.componentStyles.add sheet
+    result = root.componentStyles.high
 
 proc addStyle*(root: UiRoot; sheet: StyleSheet) =
-  root.componentStyles.add sheet
+  discard root.storeComponentStyle(sheet)
 
 proc addStyles*(root: UiRoot; sheets: openArray[StyleSheet]) =
   for sheet in sheets:
@@ -198,8 +222,10 @@ proc setNodeStyle*(
 ) =
   ## Replaces a prior style for the same node/state slot instead of retaining
   ## stale sheets after interactive updates.
+  if not root.tree.isValid(node):
+    return
   let key = AppliedStyleKey(
-    nodeIndex: node.nodeIndex,
+    node: node,
     states: states,
     priority: priority
   )
@@ -215,8 +241,7 @@ proc setNodeStyle*(
       root.componentStyles[index] = styleSheet([rule(selector, declarations, priority = priority)])
       return
   let sheet = styleSheet([rule(selector, style.declarations, priority = priority)])
-  root.componentStyles.add sheet
-  root.appliedStyleIndices[key] = root.componentStyles.len - 1
+  root.appliedStyleIndices[key] = root.storeComponentStyle(sheet)
 
 proc applyStyle*(root: UiRoot; handle: NodeHandle; style: UiStyle) =
   if style.declarations.len > 0:
@@ -243,6 +268,139 @@ proc applyFocusStyle*(root: UiRoot; handle: NodeHandle; style: UiStyle; priority
 
 proc applyFocusVisibleStyle*(root: UiRoot; handle: NodeHandle; style: UiStyle; priority = 0) =
   root.applyStateStyle(handle, {esFocusVisible}, style, priority = priority)
+
+proc releaseComponentStyleSlot(root: UiRoot; index: int) =
+  if index < 0 or index >= root.componentStyles.len:
+    return
+  if root.defaultContextMenuStyleIndex == some(index):
+    return
+  root.componentStyles[index] = StyleSheet(rules: @[])
+  if index notin root.freeComponentStyleIndices:
+    root.freeComponentStyleIndices.add index
+
+proc removeSubtreeStyles(root: UiRoot; removed: HashSet[NodeId]) =
+  var staleKeys: seq[AppliedStyleKey]
+  for key in root.appliedStyleIndices.keys:
+    if key.node in removed:
+      staleKeys.add key
+  for key in staleKeys:
+    let index = root.appliedStyleIndices[key]
+    root.appliedStyleIndices.del(key)
+    root.releaseComponentStyleSlot(index)
+
+  for index in 0 ..< root.componentStyles.len:
+    if index in root.freeComponentStyleIndices:
+      continue
+    let sheet = root.componentStyles[index]
+    var retained = newSeqOfCap[StyleRule](sheet.rules.len)
+    var changed = false
+    for item in sheet.rules:
+      if item.selector.nodeId.isSome and item.selector.nodeId.get in removed:
+        changed = true
+      else:
+        retained.add item
+    if changed:
+      if retained.len == 0:
+        root.releaseComponentStyleSlot(index)
+      else:
+        root.componentStyles[index] = StyleSheet(rules: retained)
+
+proc clearInteractionTargets(
+    root: UiRoot;
+    interaction: var InteractionState;
+    removed: HashSet[NodeId]
+) =
+  if interaction.focusedTarget.isSome and
+      interaction.focusedTarget.get in removed:
+    let focused = interaction.focusedTarget.get
+    discard root.events.emit(root.tree, focused, iekBlur)
+    discard interaction.setFocusedTarget(none(NodeId))
+
+  template clearTarget(field: untyped) =
+    if field.isSome and field.get in removed:
+      field = none(NodeId)
+
+  if interaction.pressedTarget.isSome and
+      interaction.pressedTarget.get in removed:
+    interaction.pressedTarget = none(NodeId)
+    interaction.pointerDownPosition = none(Vec2)
+  clearTarget(interaction.hoveredTarget)
+  clearTarget(interaction.pointerCaptureTarget)
+  clearTarget(interaction.lastClickTarget)
+  clearTarget(interaction.dragTarget)
+  clearTarget(interaction.dragOverTarget)
+  clearTarget(interaction.scrollTarget)
+  clearTarget(interaction.scrollbarPointerTarget)
+  if interaction.lastClickTarget.isNone:
+    interaction.clickCount = 0
+  if interaction.scrollbarPointerTarget.isNone:
+    interaction.scrollbarDragging = false
+
+proc disposeSubtree*(
+    root: UiRoot;
+    subtree: NodeHandle;
+    interaction: var InteractionState
+): bool {.discardable.} =
+  if subtree.root != root:
+    raise newException(ValueError, "disposed subtree belongs to another UiRoot")
+  if not root.tree.isValid(subtree.id):
+    return false
+
+  var removedIds: seq[NodeId]
+  var removed = initHashSet[NodeId]()
+  var pending = @[subtree.id]
+  while pending.len > 0:
+    let id = pending.pop()
+    if not root.tree.isValid(id) or id in removed:
+      continue
+    removed.incl id
+    removedIds.add id
+    for child in root.tree.nodes[id.nodeIndex].children:
+      pending.add child
+
+  root.clearInteractionTargets(interaction, removed)
+  discard root.events.removeEventHandlers(removed)
+  root.removeSubtreeStyles(removed)
+  root.scroll.clearNodes(removedIds)
+
+  var retainedClosers = newSeqOfCap[PopupCloserBinding](root.popupClosers.len)
+  for binding in root.popupClosers:
+    if binding.owner notin removed:
+      retainedClosers.add binding
+  root.popupClosers = retainedClosers
+
+  var retainedParents = newSeqOfCap[NodeId](root.parentStack.len)
+  for id in root.parentStack:
+    if id notin removed:
+      retainedParents.add id
+  root.parentStack = retainedParents
+
+  if root.focusRequestTarget.isSome and root.focusRequestTarget.get in removed:
+    root.focusRequestPending = false
+    root.focusRequestTarget = none(NodeId)
+  if root.defaultContextMenuTarget.isSome and
+      root.defaultContextMenuTarget.get in removed:
+    root.defaultContextMenuTarget = none(NodeId)
+    root.defaultContextMenuOpen = false
+  if root.defaultContextMenuNode.isSome and
+      root.defaultContextMenuNode.get in removed:
+    if root.defaultContextMenuStyleIndex.isSome:
+      let styleIndex = root.defaultContextMenuStyleIndex.get
+      root.defaultContextMenuStyleIndex = none(int)
+      root.releaseComponentStyleSlot(styleIndex)
+    root.defaultContextMenuNode = none(NodeId)
+    root.defaultContextMenuItemNodes.setLen(0)
+    root.defaultContextMenuItems.setLen(0)
+    root.defaultContextMenuOpen = false
+  else:
+    var retainedItems: seq[NodeId]
+    for id in root.defaultContextMenuItemNodes:
+      if id notin removed:
+        retainedItems.add id
+    root.defaultContextMenuItemNodes = retainedItems
+
+  discard root.tree.disposeSubtree(subtree.id)
+  true
 
 proc defaultContextMenuItems*(): seq[ContextMenuItem] =
   @[
@@ -291,8 +449,7 @@ proc syncDefaultContextMenuStyle*(root: UiRoot) =
   if root.defaultContextMenuStyleIndex.isSome and root.defaultContextMenuStyleIndex.get < root.componentStyles.len:
     root.componentStyles[root.defaultContextMenuStyleIndex.get] = sheet
   else:
-    root.componentStyles.add sheet
-    root.defaultContextMenuStyleIndex = some(root.componentStyles.len - 1)
+    root.defaultContextMenuStyleIndex = some(root.storeComponentStyle(sheet))
 
 proc closeDefaultContextMenu*(root: UiRoot): bool =
   if not root.defaultContextMenuOpen:
@@ -318,12 +475,15 @@ proc styleSheets*(root: UiRoot; externalStyles: openArray[StyleSheet] = []): seq
     result.add sheet
 
 proc currentParent(root: UiRoot): Option[NodeId] =
-  if root.parentStack.len == 0:
-    none(NodeId)
-  else:
-    some(root.parentStack[^1])
+  while root.parentStack.len > 0 and
+      not root.tree.isValid(root.parentStack[^1]):
+    root.parentStack.setLen(root.parentStack.len - 1)
+  if root.parentStack.len == 0: none(NodeId)
+  else: some(root.parentStack[^1])
 
 proc pushParent*(root: UiRoot; handle: NodeHandle) =
+  if handle.root != root or not root.tree.isValid(handle.id):
+    raise newException(ValueError, "parent handle does not belong to this UiRoot")
   root.parentStack.add handle.id
 
 proc popParent*(root: UiRoot) =
@@ -348,6 +508,8 @@ proc box*(
     code = "";
     groups: openArray[string] = []
 ): NodeHandle {.discardable.} =
+  if parent.isSome and parent.get.root != root:
+    raise newException(ValueError, "box parent belongs to another UiRoot")
   let parentId =
     if parent.isSome: some(parent.get.id)
     else: root.currentParent()
@@ -462,6 +624,8 @@ proc text*(
     code = "";
     groups: openArray[string] = []
 ): NodeHandle {.discardable.} =
+  if parent.root != root or not root.tree.isValid(parent.id):
+    raise newException(ValueError, "text parent does not belong to this UiRoot")
   NodeHandle(root: root, id: root.tree.addText(parent.id, value, id = id, code = code, groups = groups))
 
 proc text*(
@@ -591,6 +755,7 @@ proc mountDefaultContextMenu*(
 ): NodeHandle {.discardable.} =
   root.defaultContextMenuItems = @items
   result = root.box(root.defaultContextMenuPanelStyle(), parent = some(parent), groups = ["context-menu", "context-menu-default"])
+  let menu = result
   root.defaultContextMenuNode = some(result.id)
   root.syncDefaultContextMenuStyle()
   for item in items:
@@ -601,7 +766,7 @@ proc mountDefaultContextMenu*(
     root.defaultContextMenuItemNodes.add node.id
     let captured = item
     root.events.addInternalEventHandler(node.id, iekPointerDown, proc(event: DispatchResult): bool =
-      root.dispatchDefaultContextMenuAction(captured)
+      menu.root.dispatchDefaultContextMenuAction(captured)
     )
     root.events.addInternalEventHandler(node.id, iekClick, proc(event: DispatchResult): bool =
       true
@@ -609,7 +774,7 @@ proc mountDefaultContextMenu*(
 
   root.events.addInternalEventHandler(result.id, iekKeyDown, proc(event: DispatchResult): bool =
     if event.event.key.isSome and event.event.key.get == "Escape":
-      discard root.closeDefaultContextMenu()
+      discard menu.root.closeDefaultContextMenu()
       return true
     false
   )
@@ -623,6 +788,8 @@ proc imageNode*(
     id = "";
     groups: openArray[string] = []
 ): NodeHandle {.discardable.} =
+  if parent.root != root or not root.tree.isValid(parent.id):
+    raise newException(ValueError, "image parent does not belong to this UiRoot")
   NodeHandle(
     root: root,
     id: root.tree.addImage(parent.id, source, width = width, height = height, id = id, groups = groups)
@@ -682,10 +849,18 @@ proc setFocusable*(handle: NodeHandle; focusable = true; tabIndex = 0) =
   handle.root.tree.setFocusable(handle.id, focusable, tabIndex)
 
 proc setFocusDelegate*(handle: NodeHandle; target: Option[NodeHandle]) =
+  if target.isSome and target.get.root != handle.root:
+    raise newException(ValueError, "focus delegate belongs to another UiRoot")
   handle.root.tree.setFocusDelegate(
     handle.id,
     if target.isSome: some(target.get.id) else: none(NodeId)
   )
+
+proc setInert*(handle: NodeHandle; inert = true) =
+  handle.root.tree.setInert(handle.id, inert)
+
+proc inert*(handle: NodeHandle): bool =
+  handle.root.tree.isInert(handle.id)
 
 proc setAccessibleRole*(handle: NodeHandle; role: AccessibleRole) =
   handle.root.tree.setAccessibleRole(handle.id, role)
@@ -706,12 +881,16 @@ proc setAccessibleRange*(
   handle.root.tree.setAccessibleRange(handle.id, valueNow, valueMin, valueMax)
 
 proc setAccessibleLabelledBy*(handle: NodeHandle; label: Option[NodeHandle]) =
+  if label.isSome and label.get.root != handle.root:
+    raise newException(ValueError, "accessible label belongs to another UiRoot")
   handle.root.tree.setAccessibleLabelledBy(
     handle.id,
     if label.isSome: some(label.get.id) else: none(NodeId)
   )
 
 proc setAccessibleDescribedBy*(handle: NodeHandle; description: Option[NodeHandle]) =
+  if description.isSome and description.get.root != handle.root:
+    raise newException(ValueError, "accessible description belongs to another UiRoot")
   handle.root.tree.setAccessibleDescribedBy(
     handle.id,
     if description.isSome: some(description.get.id) else: none(NodeId)
@@ -724,7 +903,8 @@ proc focusable*(handle: NodeHandle): bool =
   handle.root.tree.isFocusable(handle.id)
 
 proc tabIndex*(handle: NodeHandle): int =
-  handle.root.tree.nodes[handle.id.nodeIndex].tabIndex
+  if handle.valid(): handle.root.tree.nodes[handle.id.nodeIndex].tabIndex
+  else: -1
 
 proc target*(handle: NodeHandle): SelectorCondition =
   target(handle.id)

@@ -23,7 +23,7 @@ type
     selectedValue*: string
 
   CommandMenuHandle* = object
-    root*: UiRoot
+    root* {.cursor.}: UiRoot
     container*: NodeHandle
     itemNodes*: seq[NodeHandle]
     state*: CommandMenuState

@@ -62,6 +62,30 @@ jobs:
           ! readelf -d main | grep -q 'libSDL3.so'
           ./main
 
+  arc-memory:
+    name: ARC lifecycle and C ABI memory checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nim
+        run: |
+          curl https://nim-lang.org/choosenim/init.sh -sSf | sh -s -- -y 2.2.10
+          echo "$HOME/.nimble/bin" >> "$GITHUB_PATH"
+
+      - name: Install Valgrind
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y valgrind
+
+      - name: Check ARC widget lifecycle
+        run: nimble testWidgetLifecycleValgrind -y
+
+      - name: Check shared and static C ABI lifecycles
+        run: nimble testCAbiValgrind -y
+
   rust-bridge:
     name: Native Rust bridges
     runs-on: ubuntu-latest

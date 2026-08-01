@@ -1,5 +1,11 @@
-import std/options
+import std/[hashes, options, sets]
 import ./geometry
+
+const
+  nodeIndexBits = 20
+  nodeIndexMask = (1'u32 shl nodeIndexBits) - 1'u32
+  nodeGenerationMask = (1'u32 shl (32 - nodeIndexBits)) - 1'u32
+  maxReusableNodeGeneration = nodeGenerationMask - 1'u32
 
 type
   NodeId* = distinct int
@@ -30,7 +36,8 @@ type
     arDialog,
     arGroup,
     arImage,
-    arStaticText
+    arStaticText,
+    arLink
 
   ElementState* = enum
     esHover,
@@ -59,6 +66,8 @@ type
     value*: string
 
   Node* = object
+    alive*: bool
+    generation*: uint16
     kind*: NodeKind
     parent*: Option[NodeId]
     children*: seq[NodeId]
@@ -76,30 +85,82 @@ type
     focusable*: bool
     tabIndex*: int
     focusDelegate*: Option[NodeId]
+    inert*: bool
 
   Tree* = object
     root*: Option[NodeId]
     nodes*: seq[Node]
     semantics*: seq[SemanticInfo]
     focusScopeRoot*: Option[NodeId]
+    freeNodeIndices: seq[int]
 
 proc initTree*(): Tree =
   Tree(
     root: none(NodeId),
     nodes: @[],
     semantics: @[],
-    focusScopeRoot: none(NodeId)
+    focusScopeRoot: none(NodeId),
+    freeNodeIndices: @[]
   )
 
+proc nodeRawValue*(id: NodeId): uint32 =
+  cast[uint32](int(id))
+
 proc nodeIndex*(id: NodeId): int =
-  int(id)
+  int(id.nodeRawValue() and nodeIndexMask)
+
+proc nodeGeneration*(id: NodeId): uint32 =
+  (id.nodeRawValue() shr nodeIndexBits) and nodeGenerationMask
+
+proc makeNodeId(index: int; generation: uint32): NodeId =
+  NodeId(int(
+    ((generation and nodeGenerationMask) shl nodeIndexBits) or
+      (uint32(index) and nodeIndexMask)
+  ))
 
 proc `==`*(a, b: NodeId): bool =
-  a.nodeIndex == b.nodeIndex
+  a.nodeRawValue() == b.nodeRawValue()
+
+proc hash*(id: NodeId): Hash =
+  hash(id.nodeRawValue())
+
+proc isValid*(tree: Tree; id: NodeId): bool =
+  let index = id.nodeIndex
+  index >= 0 and index < tree.nodes.len and
+    tree.nodes[index].alive and
+    uint32(tree.nodes[index].generation) == id.nodeGeneration()
+
+proc nodeIdAt*(tree: Tree; index: int): Option[NodeId] =
+  if index < 0 or index >= tree.nodes.len or not tree.nodes[index].alive:
+    return none(NodeId)
+  some(makeNodeId(index, uint32(tree.nodes[index].generation)))
+
+proc activeNodeCount*(tree: Tree): int =
+  for node in tree.nodes:
+    if node.alive:
+      inc result
 
 proc addNode*(tree: var Tree; kind: NodeKind; parent = none(NodeId)): NodeId =
-  result = NodeId(tree.nodes.len)
-  tree.nodes.add Node(
+  if parent.isSome and not tree.isValid(parent.get):
+    raise newException(ValueError, "parent node is not active")
+
+  var index: int
+  var generation: uint32
+  if tree.freeNodeIndices.len > 0:
+    index = tree.freeNodeIndices.pop()
+    generation = uint32(tree.nodes[index].generation)
+  else:
+    index = tree.nodes.len
+    if uint32(index) > nodeIndexMask:
+      raise newException(ValueError, "node arena capacity exceeded")
+    generation = 0
+    tree.nodes.add Node()
+    tree.semantics.add SemanticInfo()
+
+  result = makeNodeId(index, generation)
+  tree.nodes[index] = Node(
+    alive: true,
+    generation: uint16(generation),
     kind: kind,
     parent: parent,
     children: @[],
@@ -107,11 +168,77 @@ proc addNode*(tree: var Tree; kind: NodeKind; parent = none(NodeId)): NodeId =
     attributes: @[],
     tabIndex: -1
   )
-  tree.semantics.add SemanticInfo()
+  tree.semantics[index] = SemanticInfo()
   if parent.isSome:
     tree.nodes[parent.get.nodeIndex].children.add result
   elif tree.root.isNone:
     tree.root = some(result)
+
+proc disposeSubtree*(tree: var Tree; root: NodeId): seq[NodeId] =
+  if not tree.isValid(root):
+    return @[]
+
+  var pending = @[root]
+  var removed = initHashSet[NodeId]()
+  while pending.len > 0:
+    let id = pending.pop()
+    if not tree.isValid(id) or id in removed:
+      continue
+    removed.incl id
+    result.add id
+    for child in tree.nodes[id.nodeIndex].children:
+      pending.add child
+
+  let parent = tree.nodes[root.nodeIndex].parent
+  if parent.isSome and tree.isValid(parent.get):
+    let parentIndex = parent.get.nodeIndex
+    for index, child in tree.nodes[parentIndex].children:
+      if child == root:
+        tree.nodes[parentIndex].children.delete(index)
+        break
+
+  if tree.root.isSome and tree.root.get in removed:
+    tree.root = none(NodeId)
+  if tree.focusScopeRoot.isSome and tree.focusScopeRoot.get in removed:
+    tree.focusScopeRoot = none(NodeId)
+
+  for index in 0 ..< tree.nodes.len:
+    if not tree.nodes[index].alive:
+      continue
+    let id = tree.nodeIdAt(index).get
+    if id in removed:
+      continue
+    if tree.nodes[index].focusDelegate.isSome and
+        tree.nodes[index].focusDelegate.get in removed:
+      tree.nodes[index].focusDelegate = none(NodeId)
+    if tree.semantics[index].labelledBy.isSome and
+        tree.semantics[index].labelledBy.get in removed:
+      tree.semantics[index].labelledBy = none(NodeId)
+    if tree.semantics[index].describedBy.isSome and
+        tree.semantics[index].describedBy.get in removed:
+      tree.semantics[index].describedBy = none(NodeId)
+
+  for id in result:
+    let index = id.nodeIndex
+    let generation = uint32(tree.nodes[index].generation)
+    let nextGeneration = min(nodeGenerationMask, generation + 1'u32)
+    tree.nodes[index] = Node(
+      alive: false,
+      generation: uint16(nextGeneration),
+      children: @[],
+      groups: @[],
+      attributes: @[],
+      tabIndex: -1
+    )
+    tree.semantics[index] = SemanticInfo()
+    if generation < maxReusableNodeGeneration:
+      tree.freeNodeIndices.add index
+
+  if tree.root.isNone:
+    for index in 0 ..< tree.nodes.len:
+      if tree.nodes[index].alive and tree.nodes[index].parent.isNone:
+        tree.root = tree.nodeIdAt(index)
+        break
 
 proc addBox*(tree: var Tree; parent = none(NodeId); id = ""; code = ""; groups: openArray[string] = []): NodeId =
   result = tree.addNode(nkBox, parent)
@@ -148,9 +275,13 @@ proc addImage*(
     tree.nodes[result.nodeIndex].groups.add group
 
 proc addAttribute*(tree: var Tree; id: NodeId; name, value: string) =
+  if not tree.isValid(id):
+    return
   tree.nodes[id.nodeIndex].attributes.add Attribute(name: name, value: value)
 
 proc setAttribute*(tree: var Tree; id: NodeId; name, value: string) =
+  if not tree.isValid(id):
+    return
   for attr in tree.nodes[id.nodeIndex].attributes.mitems:
     if attr.name == name:
       if attr.value == value:
@@ -160,9 +291,13 @@ proc setAttribute*(tree: var Tree; id: NodeId; name, value: string) =
   tree.addAttribute(id, name, value)
 
 proc addState*(tree: var Tree; id: NodeId; state: ElementState) =
+  if not tree.isValid(id):
+    return
   tree.nodes[id.nodeIndex].states.incl state
 
 proc removeState*(tree: var Tree; id: NodeId; state: ElementState) =
+  if not tree.isValid(id):
+    return
   tree.nodes[id.nodeIndex].states.excl state
 
 proc setState*(tree: var Tree; id: NodeId; state: ElementState; enabled: bool) =
@@ -173,26 +308,40 @@ proc setState*(tree: var Tree; id: NodeId; state: ElementState; enabled: bool) =
 
 proc clearState*(tree: var Tree; state: ElementState) =
   for node in tree.nodes.mitems:
-    node.states.excl state
+    if node.alive:
+      node.states.excl state
 
 proc setFocusable*(tree: var Tree; id: NodeId; focusable = true; tabIndex = 0) =
-  if id.nodeIndex < 0 or id.nodeIndex >= tree.nodes.len:
+  if not tree.isValid(id):
     return
   tree.nodes[id.nodeIndex].focusable = focusable
   tree.nodes[id.nodeIndex].tabIndex = if focusable: tabIndex else: -1
 
 proc setFocusDelegate*(tree: var Tree; id: NodeId; target: Option[NodeId]) =
-  if id.nodeIndex < 0 or id.nodeIndex >= tree.nodes.len:
+  if not tree.isValid(id):
     return
-  if target.isSome and
-      (target.get.nodeIndex < 0 or target.get.nodeIndex >= tree.nodes.len):
+  if target.isSome and not tree.isValid(target.get):
     tree.nodes[id.nodeIndex].focusDelegate = none(NodeId)
   else:
     tree.nodes[id.nodeIndex].focusDelegate = target
 
+proc setInert*(tree: var Tree; id: NodeId; inert = true) =
+  if not tree.isValid(id):
+    return
+  tree.nodes[id.nodeIndex].inert = inert
+
+proc isInert*(tree: Tree; id: NodeId): bool =
+  if not tree.isValid(id):
+    return true
+  var current = some(id)
+  while current.isSome:
+    if tree.nodes[current.get.nodeIndex].inert:
+      return true
+    current = tree.nodes[current.get.nodeIndex].parent
+  false
+
 proc isDescendantOrSelf*(tree: Tree; id, ancestor: NodeId): bool =
-  if id.nodeIndex < 0 or id.nodeIndex >= tree.nodes.len or
-      ancestor.nodeIndex < 0 or ancestor.nodeIndex >= tree.nodes.len:
+  if not tree.isValid(id) or not tree.isValid(ancestor):
     return false
   var current = some(id)
   while current.isSome:
@@ -205,26 +354,25 @@ proc isWithinFocusScope*(tree: Tree; id: NodeId): bool =
   tree.focusScopeRoot.isNone or tree.isDescendantOrSelf(id, tree.focusScopeRoot.get)
 
 proc setFocusScope*(tree: var Tree; root: Option[NodeId]) =
-  if root.isSome and
-      (root.get.nodeIndex < 0 or root.get.nodeIndex >= tree.nodes.len):
+  if root.isSome and not tree.isValid(root.get):
     tree.focusScopeRoot = none(NodeId)
   else:
     tree.focusScopeRoot = root
 
 proc setAccessibleRole*(tree: var Tree; id: NodeId; role: AccessibleRole) =
-  if id.nodeIndex >= 0 and id.nodeIndex < tree.semantics.len:
+  if tree.isValid(id):
     tree.semantics[id.nodeIndex].role = role
 
 proc setAccessibleName*(tree: var Tree; id: NodeId; name: string) =
-  if id.nodeIndex >= 0 and id.nodeIndex < tree.semantics.len:
+  if tree.isValid(id):
     tree.semantics[id.nodeIndex].name = name
 
 proc setAccessibleDescription*(tree: var Tree; id: NodeId; description: string) =
-  if id.nodeIndex >= 0 and id.nodeIndex < tree.semantics.len:
+  if tree.isValid(id):
     tree.semantics[id.nodeIndex].description = description
 
 proc setAccessibleValue*(tree: var Tree; id: NodeId; value: string) =
-  if id.nodeIndex >= 0 and id.nodeIndex < tree.semantics.len:
+  if tree.isValid(id):
     tree.semantics[id.nodeIndex].value = value
 
 proc setAccessibleRange*(
@@ -232,54 +380,61 @@ proc setAccessibleRange*(
     id: NodeId;
     valueNow, valueMin, valueMax: Option[float32]
 ) =
-  if id.nodeIndex < 0 or id.nodeIndex >= tree.semantics.len:
+  if not tree.isValid(id):
     return
   tree.semantics[id.nodeIndex].valueNow = valueNow
   tree.semantics[id.nodeIndex].valueMin = valueMin
   tree.semantics[id.nodeIndex].valueMax = valueMax
 
 proc setAccessibleLabelledBy*(tree: var Tree; id: NodeId; label: Option[NodeId]) =
-  if id.nodeIndex >= 0 and id.nodeIndex < tree.semantics.len:
-    tree.semantics[id.nodeIndex].labelledBy = label
+  if tree.isValid(id):
+    tree.semantics[id.nodeIndex].labelledBy =
+      if label.isSome and tree.isValid(label.get): label
+      else: none(NodeId)
 
 proc setAccessibleDescribedBy*(tree: var Tree; id: NodeId; description: Option[NodeId]) =
-  if id.nodeIndex >= 0 and id.nodeIndex < tree.semantics.len:
-    tree.semantics[id.nodeIndex].describedBy = description
+  if tree.isValid(id):
+    tree.semantics[id.nodeIndex].describedBy =
+      if description.isSome and tree.isValid(description.get): description
+      else: none(NodeId)
 
 proc setAccessibleHidden*(tree: var Tree; id: NodeId; hidden: bool) =
-  if id.nodeIndex >= 0 and id.nodeIndex < tree.semantics.len:
+  if tree.isValid(id):
     tree.semantics[id.nodeIndex].hidden = hidden
 
 proc isAccessibleHidden*(tree: Tree; id: NodeId): bool =
-  if id.nodeIndex < 0 or id.nodeIndex >= tree.nodes.len:
+  if not tree.isValid(id):
     return true
   var current = some(id)
   while current.isSome:
-    if tree.semantics[current.get.nodeIndex].hidden:
+    if tree.nodes[current.get.nodeIndex].inert or
+        tree.semantics[current.get.nodeIndex].hidden:
       return true
     current = tree.nodes[current.get.nodeIndex].parent
   false
 
 proc semanticInfo*(tree: Tree; id: NodeId): SemanticInfo =
-  if id.nodeIndex >= 0 and id.nodeIndex < tree.semantics.len:
+  if tree.isValid(id):
     tree.semantics[id.nodeIndex]
   else:
     SemanticInfo()
 
 proc isFocusable*(tree: Tree; id: NodeId; forTraversal = false): bool =
-  if id.nodeIndex < 0 or id.nodeIndex >= tree.nodes.len:
+  if not tree.isValid(id):
     return false
   if not tree.isWithinFocusScope(id):
     return false
-  let target = tree.nodes[id.nodeIndex]
-  if not target.focusable or (forTraversal and target.tabIndex < 0):
+  if tree.isInert(id):
+    return false
+  if not tree.nodes[id.nodeIndex].focusable or
+      (forTraversal and tree.nodes[id.nodeIndex].tabIndex < 0):
     return false
   var current = some(id)
   while current.isSome:
-    let node = tree.nodes[current.get.nodeIndex]
-    if esDisabled in node.states:
+    let index = current.get.nodeIndex
+    if esDisabled in tree.nodes[index].states:
       return false
-    current = node.parent
+    current = tree.nodes[index].parent
   true
 
 proc focusTargetForHit*(tree: Tree; target: Option[NodeId]): Option[NodeId] =
@@ -288,15 +443,15 @@ proc focusTargetForHit*(tree: Tree; target: Option[NodeId]): Option[NodeId] =
   var current = target
   while current.isSome:
     let id = current.get
-    if id.nodeIndex < 0 or id.nodeIndex >= tree.nodes.len:
+    if not tree.isValid(id):
       return none(NodeId)
-    let node = tree.nodes[id.nodeIndex]
-    if esDisabled notin node.states and node.focusDelegate.isSome and
-        tree.isFocusable(node.focusDelegate.get):
-      return node.focusDelegate
+    let delegate = tree.nodes[id.nodeIndex].focusDelegate
+    if esDisabled notin tree.nodes[id.nodeIndex].states and
+        delegate.isSome and tree.isFocusable(delegate.get):
+      return delegate
     if tree.isFocusable(id):
       return some(id)
-    current = node.parent
+    current = tree.nodes[id.nodeIndex].parent
   none(NodeId)
 
 proc hasGroup*(node: Node; group: string): bool =

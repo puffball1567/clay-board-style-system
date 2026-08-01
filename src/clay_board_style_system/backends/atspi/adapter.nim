@@ -27,7 +27,8 @@ type
     atrPageTab,
     atrDialog,
     atrImage,
-    atrStatic
+    atrStatic,
+    atrLink
 
   AtspiState* = enum
     atsActive,
@@ -102,7 +103,7 @@ type
     published*: bool
 
 proc objectPathFor*(id: NodeId): string =
-  "/org/a11y/atspi/accessible/node_" & $id.nodeIndex
+  "/org/a11y/atspi/accessible/node_" & $id.nodeRawValue()
 
 proc roleFor(role: AccessibleRole): AtspiRole =
   case role
@@ -122,12 +123,13 @@ proc roleFor(role: AccessibleRole): AtspiRole =
   of arDialog: atrDialog
   of arImage: atrImage
   of arStaticText: atrStatic
+  of arLink: atrLink
   of arNone, arGeneric, arGroup: atrPanel
 
 proc actionsFor(role: AccessibleRole): seq[string] =
   case role
   of arButton, arCheckBox, arRadio, arComboBox, arOption, arDisclosure,
-      arListItem, arTab:
+      arListItem, arTab, arLink:
     @["activate"]
   else:
     @[]
@@ -261,9 +263,13 @@ proc performAtspiAction*(
   let target = snapshot.nodeAt(objectPath)
   if target.isNone or target.get.source.isNone or action notin target.get.actions:
     return false
-  if atsEnabled notin target.get.states or atsSensitive notin target.get.states:
+  if atsEnabled notin target.get.states or
+      atsSensitive notin target.get.states or
+      atsShowing notin target.get.states or
+      atsVisible notin target.get.states:
     return false
-  ui.events.emit(ui.tree, target.get.source.get, iekClick)
+  discard ui.events.emit(ui.tree, target.get.source.get, iekClick)
+  true
 
 proc initAtspiAdapter*(transport = AtspiTransport()): AtspiAdapter =
   AtspiAdapter(transport: transport)

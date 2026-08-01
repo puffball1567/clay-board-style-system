@@ -1,4 +1,4 @@
-import std/[math, options, tables]
+import std/[math, options, sets, tables]
 import ../core/[geometry, node]
 import ../hit/hit_test
 import ../layout/scroll_state
@@ -151,7 +151,7 @@ type
 
   EventRegistry* = object
     bindings*: seq[EventBinding]
-    bindingIndex: Table[(int, InputEventKind), seq[int]]
+    bindingIndex: Table[(NodeId, InputEventKind), seq[int]]
 
 const maxPasteEventBytes* = 8_192
 const dragStartThreshold* = 4.0'f32
@@ -421,13 +421,32 @@ proc dispatchInput*(regions: openArray[HitRegion]; event: InputEvent): DispatchR
 proc initEventRegistry*(): EventRegistry =
   EventRegistry(
     bindings: @[],
-    bindingIndex: initTable[(int, InputEventKind), seq[int]]()
+    bindingIndex: initTable[(NodeId, InputEventKind), seq[int]]()
   )
 
 proc indexBinding(registry: var EventRegistry; bindingIndex: int) =
   let binding = registry.bindings[bindingIndex]
-  let key = (binding.node.nodeIndex, binding.kind)
+  let key = (binding.node, binding.kind)
   registry.bindingIndex.mgetOrPut(key, @[]).add bindingIndex
+
+proc rebuildBindingIndex(registry: var EventRegistry) =
+  registry.bindingIndex.clear()
+  for index in 0 ..< registry.bindings.len:
+    registry.indexBinding(index)
+
+proc removeEventHandlers*(
+    registry: var EventRegistry;
+    nodes: HashSet[NodeId]
+): int =
+  var retained = newSeqOfCap[EventBinding](registry.bindings.len)
+  for binding in registry.bindings:
+    if binding.node in nodes:
+      inc result
+    else:
+      retained.add binding
+  if result > 0:
+    registry.bindings = retained
+    registry.rebuildBindingIndex()
 
 proc addEventHandler*(
     registry: var EventRegistry;
@@ -638,7 +657,7 @@ proc handle*(registry: EventRegistry; dispatch: DispatchResult): bool =
   if dispatch.event.focusOwner.isSome and dispatch.event.focusOwner.get != dispatch.target.get:
     return false
   for effectiveKind in dispatch.event.kind.expandedEventKinds:
-    let key = (dispatch.target.get.nodeIndex, effectiveKind)
+    let key = (dispatch.target.get, effectiveKind)
     if key notin registry.bindingIndex:
       continue
     let indices = registry.bindingIndex[key]
@@ -669,6 +688,8 @@ proc handle*(registry: EventRegistry; tree: Tree; dispatch: DispatchResult): boo
     return false
 
   let originalTarget = dispatch.target.get
+  if tree.isInert(originalTarget):
+    return false
   var current = some(originalTarget)
   while current.isSome:
     let node = current.get
@@ -786,10 +807,9 @@ proc disabledTarget(tree: Tree; target: Option[NodeId]): bool =
     let id = current.get
     if id.nodeIndex < 0 or id.nodeIndex >= tree.nodes.len:
       return false
-    let node = tree.nodes[id.nodeIndex]
-    if esDisabled in node.states:
+    if esDisabled in tree.nodes[id.nodeIndex].states:
       return true
-    current = node.parent
+    current = tree.nodes[id.nodeIndex].parent
   false
 
 proc exceededDragThreshold(start, current: Option[Vec2]): bool =

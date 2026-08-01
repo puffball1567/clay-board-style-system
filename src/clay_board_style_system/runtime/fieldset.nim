@@ -13,7 +13,7 @@ type
     disabledTargets*: seq[DisabledSetter]
 
   FieldsetHandle* = object
-    root*: UiRoot
+    root* {.cursor.}: UiRoot
     container*: NodeHandle
     legendNode*: NodeHandle
     state*: FieldsetState
@@ -25,15 +25,21 @@ proc disabled*(fieldset: FieldsetHandle): bool =
   fieldset.state.disabled
 
 proc setLegend*(fieldset: FieldsetHandle; legend: string) =
+  if not fieldset.container.valid():
+    return
   fieldset.state.legend = legend
   fieldset.root.tree.nodes[fieldset.legendNode.id.nodeIndex].text = legend
 
 proc addDisabledTarget*(fieldset: FieldsetHandle; setter: DisabledSetter) =
+  if not fieldset.container.valid():
+    return
   fieldset.state.disabledTargets.add setter
   if fieldset.state.disabled:
     setter(true)
 
 proc setDisabled*(fieldset: FieldsetHandle; disabled: bool) =
+  if not fieldset.container.valid():
+    return
   fieldset.state.disabled = disabled
   fieldset.container.setState(esDisabled, disabled)
   for setter in fieldset.state.disabledTargets:
