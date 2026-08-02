@@ -184,6 +184,8 @@ proc rawLinearSrgb(value: ColorValue; current: Color): Vec3 =
     let linear = [linearizeSrgb(components[0]), linearizeSrgb(components[1]),
         linearizeSrgb(components[2])]
     result = multiply(XyzD65ToSrgb, multiply(DisplayP3ToXyzD65, linear))
+  of csDisplayP3Linear:
+    result = multiply(XyzD65ToSrgb, multiply(DisplayP3ToXyzD65, components))
   of csA98Rgb:
     let linear = [linearizeA98(components[0]), linearizeA98(components[1]),
         linearizeA98(components[2])]

@@ -25,6 +25,20 @@ suite "CSS color-space conversion foundation":
     check value.space == csDisplayP3
     check value.components == [0.9, 0.2, 0.1]
     check value.alpha == 0.75
+    check value.missing == {}
+
+  test "linear Display P3 stays distinct from gamma-encoded Display P3":
+    let linear = displayP3Linear(0.25, 0.5, 0.75, 0.8)
+
+    check linear.space == csDisplayP3Linear
+    check linear.components == [0.25, 0.5, 0.75]
+    check linear.alpha == 0.8
+    check linear.missing == {}
+    displayP3Linear(1, 1, 1).resolveColor.checkColor(1, 1, 1,
+        tolerance = 0.001)
+    let linearGray = displayP3Linear(0.25, 0.25, 0.25).resolveColor
+    let encodedGray = displayP3(0.25, 0.25, 0.25).resolveColor
+    check linearGray.r > encodedGray.r + 0.2
 
   test "typed constructors accept float32 authoring values":
     let value = srgb(0.1'f32, 0.2'f32, 0.3'f32, 0.4'f32)
@@ -40,6 +54,12 @@ suite "CSS color-space conversion foundation":
       discard colorIn(csLab, 50, NaN, 0)
     expect ValueError:
       discard colorIn(csOklab, 0.5, 0, 0, NegInf)
+
+  test "explicit missing metadata survives typed color construction":
+    let value = colorIn(csOklch, 0.5, 0.0, 0.0, 0.0,
+        {ccSecond, ccThird, ccAlpha})
+
+    check value.missing == {ccSecond, ccThird, ccAlpha}
 
   test "HSL primary colors resolve to sRGB":
     hsl(0, 100, 50).resolveColor.checkColor(1, 0, 0)

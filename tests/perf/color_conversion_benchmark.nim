@@ -1,6 +1,6 @@
 ## Compiled color conversion probe. This is intentionally outside
 ## `nimble test`: it records the cost of common and wide-gamut paths.
-import std/[monotimes, strformat, times]
+import std/[monotimes, options, strformat, times]
 
 import clay_board_style_system
 
@@ -41,23 +41,45 @@ proc benchmarkInterpolation(
     checksum += resolved.r + resolved.g + resolved.b
   (elapsedNs(started) / iterations.float, checksum)
 
+proc benchmarkParsing(
+    iterations: int
+): tuple[nsPerColor: float, checksum: float64] =
+  const sources = [
+    "#1f80ffcc",
+    "rgb(12 60% 240 / 75%)",
+    "oklch(62% 0.18 250deg / 90%)",
+    "color(display-p3 1.05 0.3 0.12 / 0.8)"
+  ]
+  var checksum = 0.0
+  let started = getMonoTime()
+  for index in 0 ..< iterations:
+    let parsed = parseColor(sources[index mod sources.len])
+    doAssert parsed.value.isSome
+    let value = parsed.value.get
+    checksum += value.components[0] + value.alpha
+  (elapsedNs(started) / iterations.float, checksum)
+
 proc main() =
   const iterations = 100_000
   discard benchmarkSrgb(1_000)
   discard benchmarkWideGamut(1_000)
   discard benchmarkInterpolation(1_000)
+  discard benchmarkParsing(1_000)
 
   let srgbTiming = benchmarkSrgb(iterations)
   let wideTiming = benchmarkWideGamut(iterations)
   let interpolationTiming = benchmarkInterpolation(iterations)
+  let parsingTiming = benchmarkParsing(iterations)
   doAssert srgbTiming.checksum > 0
   doAssert wideTiming.checksum > 0
   doAssert interpolationTiming.checksum > 0
+  doAssert parsingTiming.checksum > 0
 
   echo "CBSS color conversion benchmark (release, ARC)"
   echo &"sRGB resolve\t{srgbTiming.nsPerColor:.1f} ns/color"
   echo &"wide-gamut resolve\t{wideTiming.nsPerColor:.1f} ns/color"
   echo &"Oklab interpolation\t{interpolationTiming.nsPerColor:.1f} ns/color"
+  echo &"serialized parsing\t{parsingTiming.nsPerColor:.1f} ns/color"
 
 when isMainModule:
   main()

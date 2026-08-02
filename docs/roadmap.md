@@ -200,13 +200,18 @@ Implementation progress:
   values, conversion to the current SDR sRGB paint boundary, explicit gamut
   policy, late `currentColor` resolution, and premultiplied-alpha
   interpolation. The existing 16-byte resolved `Color` remains unchanged.
+- Implemented on the Version 0.3 development line: structured serialized color
+  parsing with byte-offset diagnostics for hexadecimal and named colors,
+  modern and legacy RGB/HSL, HWB, Lab/LCH, Oklab/Oklch, predefined
+  `color()` spaces, angle units, alpha, and missing components. Parsing is a
+  typed input boundary and does not add a CSS cascade or custom properties.
 - Implemented on the Version 0.3 development line: a portable test profile and
   required Linux, Windows, and macOS CI lanes for the platform-neutral core,
   C ABI build, and native Rust bridges. Linux-specific SDL3 runtime checks
   remain separate and continue to be release-blocking.
-- Remaining color units: serialized parsing, hexadecimal and named authoring,
-  style-property resolution, browser comparison fixtures, and versioned C ABI
-  constructors.
+- Remaining color units: style-property resolution, missing-component
+  interpolation, `color-mix()`, browser comparison fixtures, and versioned C
+  ABI constructors.
 - Remaining visual units: optional Pixie output, the RenderSurface lifecycle,
   SDL Canvas, the animation clock, and the shared transform/paint/hit-test
   coordinate contract.
@@ -323,25 +328,23 @@ typed visual values. That distinction remains part of the runtime model.
 
 The target is semantic compatibility with the supported CSS Color 4 authoring
 surface, while retaining a typed Nim API rather than requiring CSS text for
-ordinary Nim code. A serialized CSS color parser is still valuable for design
+ordinary Nim code. A serialized CSS color parser is provided for design
 tokens, generated assets, external styles, and web-to-native migration. A
 syntax is not considered supported merely because CBSS can store its source
 text: it must have a specified conversion, interpolation, paint result, and
 diagnostic behavior.
 
-Planned work:
+Capability plan and progress:
 
 - Keep explicit `rgb(...)` and `rgba(...)` constructors for numeric color
   values and alpha.
-- Add hexadecimal color constructors, including short, long, and alpha forms,
-  with strict validation and clear diagnostics.
-- Add named colors, `transparent`, and `currentColor` semantics where the
-  consuming property has a foreground-color context.
-- Add modern and legacy-compatible RGB forms, HSL/HSLA, HWB, Lab/LCH, and
-  Oklab/Oklch constructors, with defined gamut mapping into the renderer's
-  output space.
-- Add CSS Color 4/5-style functional forms where meaningful in typed Nim,
-  including `color(...)` spaces and `color-mix(...)`.
+- Parse hexadecimal forms, named colors, `transparent`, `currentColor`, modern
+  and legacy RGB/HSL, HWB, Lab/LCH, Oklab/Oklch, and predefined `color()`
+  spaces with strict diagnostics. This parser foundation is implemented in
+  Version 0.3; consuming properties must still define their resolution
+  contexts.
+- Keep the implemented predefined `color(...)` spaces and add typed
+  `color-mix(...)` behavior where it is meaningful for CBSS declarations.
 - Provide ergonomic declaration overloads where a plain `Color` unambiguously
   means a solid style color, so authors need not write `colorValue(...)` in
   ordinary declarations.
