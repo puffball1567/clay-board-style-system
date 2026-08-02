@@ -1,4 +1,4 @@
-import std/options
+import std/[math, options]
 
 import ../core/[color, computed_style, geometry, node]
 import ../paint/[paint_command, path_geometry]
@@ -6,6 +6,9 @@ import ./render_surface
 
 type
   CanvasCommandKind* = enum
+    cckSaveTransform,
+    cckRestoreTransform,
+    cckPushTransform,
     cckPushClip,
     cckPopClip,
     cckFillRect,
@@ -17,6 +20,10 @@ type
 
   CanvasCommand* = object
     case kind*: CanvasCommandKind
+    of cckSaveTransform, cckRestoreTransform:
+      discard
+    of cckPushTransform:
+      transform*: Affine2D
     of cckPushClip:
       clipRect*: Rect
       clipRadius*: float32
@@ -72,6 +79,51 @@ proc touch(canvas: Canvas2D) =
 proc clear*(canvas: Canvas2D) =
   canvas.commands.setLen(0)
   canvas.touch()
+
+proc finite(value: float32): bool {.inline.} =
+  value.classify notin {fcNan, fcInf, fcNegInf}
+
+proc finite(transform: Affine2D): bool {.inline.} =
+  transform.m11.finite and transform.m12.finite and
+    transform.m21.finite and transform.m22.finite and
+    transform.tx.finite and transform.ty.finite
+
+proc save*(canvas: Canvas2D) =
+  ## Saves the current Canvas transform and clip scope depth.
+  canvas.commands.add CanvasCommand(kind: cckSaveTransform)
+  canvas.touch()
+
+proc restore*(canvas: Canvas2D) =
+  ## Restores the most recent saved transform and clip scope depth. An
+  ## unmatched restore is retained as a safe no-op.
+  canvas.commands.add CanvasCommand(kind: cckRestoreTransform)
+  canvas.touch()
+
+proc transform*(canvas: Canvas2D; value: Affine2D) =
+  ## Concatenates a local affine transform for subsequent commands. Invalid
+  ## and identity matrices cannot create an unusable render scope.
+  if not value.finite or value.isIdentity:
+    return
+  canvas.commands.add CanvasCommand(kind: cckPushTransform, transform: value)
+  canvas.touch()
+
+proc translate*(canvas: Canvas2D; x, y: float32) =
+  if not x.finite or not y.finite or (x == 0 and y == 0):
+    return
+  canvas.transform(translationAffine2D(x, y))
+
+proc rotate*(canvas: Canvas2D; radians: float32) =
+  if not radians.finite or radians == 0:
+    return
+  canvas.transform(rotationAffine2D(radians))
+
+proc scale*(canvas: Canvas2D; x, y: float32) =
+  if not x.finite or not y.finite or (x == 1 and y == 1):
+    return
+  canvas.transform(scaleAffine2D(x, y))
+
+proc scale*(canvas: Canvas2D; value: float32) =
+  canvas.scale(value, value)
 
 proc pushClip*(canvas: Canvas2D; bounds: Rect; radius = 0.0'f32) =
   canvas.commands.add CanvasCommand(
@@ -223,23 +275,48 @@ proc paintCommands*(
     canvas: Canvas2D;
     owner: NodeId;
     bounds: Rect;
-    opacity = 1.0'f32
+    opacity = 1.0'f32;
+    resolveBounds = true
 ): seq[PaintCommand] =
   ## Convert retained local commands at the paint boundary. The display list
   ## remains independent of window placement and can be reused after layout,
   ## scrolling, or DPI changes without being rebuilt.
   let offset = vec2(bounds.x, bounds.y)
   result = newSeqOfCap[PaintCommand](canvas.commands.len + 8)
-  var clipDepth = 0
+  type CanvasPaintScope = enum
+    cpsTransform,
+    cpsClip
+  var scopes: seq[CanvasPaintScope]
+  var savedScopeDepths: seq[int]
+  var hasTransform = false
   for command in canvas.commands:
     case command.kind
+    of cckSaveTransform:
+      savedScopeDepths.add scopes.len
+    of cckRestoreTransform:
+      if savedScopeDepths.len > 0:
+        let savedDepth = savedScopeDepths.pop()
+        while scopes.len > savedDepth:
+          case scopes.pop()
+          of cpsTransform:
+            result.add popTransform()
+          of cpsClip:
+            result.add popClip()
+    of cckPushTransform:
+      let placementTransform =
+        translationAffine2D(offset.x, offset.y) *
+        command.transform *
+        translationAffine2D(-offset.x, -offset.y)
+      result.add pushTransform(placementTransform)
+      scopes.add cpsTransform
+      hasTransform = true
     of cckPushClip:
       result.add pushClip(command.clipRect.translated(offset), command.clipRadius)
-      inc clipDepth
+      scopes.add cpsClip
     of cckPopClip:
-      if clipDepth > 0:
+      if scopes.len > 0 and scopes[^1] == cpsClip:
         result.add popClip()
-        dec clipDepth
+        discard scopes.pop()
     of cckFillRect:
       result.add fillRect(
         command.fillRect.translated(offset),
@@ -290,9 +367,14 @@ proc paintCommands*(
         command.imageOpacity * opacity,
         command.imageStyle
       )
-  while clipDepth > 0:
-    result.add popClip()
-    dec clipDepth
+  while scopes.len > 0:
+    case scopes.pop()
+    of cpsTransform:
+      result.add popTransform()
+    of cpsClip:
+      result.add popClip()
+  if resolveBounds and hasTransform:
+    result.resolveTransformBounds()
 
 proc renderSurfaceDescriptor*(canvas: Canvas2D; name = "canvas-2d"): RenderSurfaceDescriptor =
   RenderSurfaceDescriptor(

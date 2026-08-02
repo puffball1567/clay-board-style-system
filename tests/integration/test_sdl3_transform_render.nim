@@ -1,8 +1,9 @@
 import std/[math, options, os, unittest]
 
 import clay_board_style_system/backends/sdl3/renderer
-import clay_board_style_system/core/[color, geometry]
+import clay_board_style_system/core/[color, geometry, node]
 import clay_board_style_system/paint/paint_command
+import clay_board_style_system/runtime/canvas
 import clay_board_style_system/text/[cosmic_text_engine, font_registry]
 
 proc pixel(frame: Sdl3CapturedFrame; x, y: int): tuple[r, g, b: uint8] =
@@ -149,3 +150,28 @@ suite "SDL3 transform rendering":
     let frame = renderer.capturedFrame().get
     check frame.pixel(50, 35).r > 220
     check frame.pixel(15, 15).r < 25
+
+  test "retained Canvas transforms reach the SDL composition path":
+    let previousDriver = getEnv("SDL_VIDEODRIVER")
+    putEnv("SDL_VIDEODRIVER", "dummy")
+    defer:
+      if previousDriver.len > 0:
+        putEnv("SDL_VIDEODRIVER", previousDriver)
+      else:
+        delEnv("SDL_VIDEODRIVER")
+
+    let canvas = newCanvas2D()
+    canvas.save()
+    canvas.translate(20, 0)
+    canvas.fillRect(rect(10, 30, 20, 10), rgb(1, 0, 0))
+    canvas.restore()
+    var commands = canvas.paintCommands(NodeId(1), rect(0, 0, 100, 80))
+
+    var renderer = initSdl3Renderer("CBSS Canvas transform test", 100, 80, false)
+    defer: renderer.close()
+    renderer.requestFrameCapture()
+    renderer.render(commands, rgb(0, 0, 0))
+    check renderer.capturedFrame().isSome
+    let frame = renderer.capturedFrame().get
+    check frame.pixel(40, 35).r > 220
+    check frame.pixel(15, 35).r < 25

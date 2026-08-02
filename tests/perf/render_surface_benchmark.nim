@@ -7,6 +7,8 @@ const
   idleProbeCount = 1_000_000
   canvasCommandCount = 10_000
   canvasIterations = 30
+  transformScopeCount = 1_000
+  transformIterations = 30
   curveSegmentCount = 1_000
   curveIterations = 30
 
@@ -54,6 +56,28 @@ when not defined(cbssMemoryCheck):
   doAssert canvasAverageMs <= 4.0,
     &"10k-command Canvas flatten exceeded budget: {canvasAverageMs:.3f} ms"
 
+let transformedCanvas = newCanvas2D()
+for index in 0 ..< transformScopeCount:
+  transformedCanvas.save()
+  transformedCanvas.translate(
+    (index mod 32).float32 + 1, (index div 32).float32 + 1
+  )
+  transformedCanvas.fillRect(rect(0, 0, 4, 4), rgb(0.8, 0.3, 0.2))
+  transformedCanvas.restore()
+
+let transformStarted = cpuTime()
+var flattenedTransformCommands = 0
+for _ in 0 ..< transformIterations:
+  flattenedTransformCommands += transformedCanvas.paintCommands(
+    NodeId(1), rect(10, 20, 640, 480)
+  ).len
+let transformMs = elapsedMilliseconds(transformStarted)
+let transformAverageMs = transformMs / transformIterations.float
+doAssert flattenedTransformCommands == transformScopeCount * 3 * transformIterations
+when not defined(cbssMemoryCheck):
+  doAssert transformAverageMs <= 4.0,
+    &"1k transformed Canvas scopes exceeded budget: {transformAverageMs:.3f} ms"
+
 var curve = initPath2D()
 curve.moveTo(vec2(0, 50))
 for index in 0 ..< curveSegmentCount:
@@ -79,4 +103,5 @@ when not defined(cbssMemoryCheck):
 
 echo &"render-surface idle probes ({surfaceCount} registered): {idleMs:.3f} ms / {idleProbeCount}"
 echo &"Canvas flatten ({canvasCommandCount} commands): {canvasAverageMs:.3f} ms average"
+echo &"Canvas transform flatten ({transformScopeCount} scopes): {transformAverageMs:.3f} ms average"
 echo &"Path flatten ({curveSegmentCount} cubic curves): {curveAverageMs:.3f} ms average"

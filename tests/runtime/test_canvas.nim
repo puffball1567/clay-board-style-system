@@ -1,4 +1,4 @@
-import std/[options, unittest]
+import std/[math, options, unittest]
 
 import clay_board_style_system
 import clay_board_style_system/generated/default_properties
@@ -110,6 +110,102 @@ suite "standard canvas surface":
     check commands[0].clipRect == rect(10, 20, 20, 20)
     check commands[1].kind == pcFillRect
     check commands[2].kind == pcPopClip
+
+  test "canvas transforms use local coordinates and nested save restore scopes":
+    let drawing = newCanvas2D()
+    drawing.save()
+    drawing.translate(10, 5)
+    drawing.fillRect(rect(1, 2, 8, 6), rgb(1, 0, 0))
+    drawing.save()
+    drawing.scale(2, 3)
+    drawing.fillRect(rect(4, 5, 2, 2), rgb(0, 1, 0))
+    drawing.restore()
+    drawing.restore()
+
+    let commands = drawing.paintCommands(NodeId(9), rect(20, 30, 100, 80))
+    check commands.len == 6
+    check commands[0].kind == pcPushTransform
+    check commands[1].kind == pcFillRect
+    check commands[2].kind == pcPushTransform
+    check commands[3].kind == pcFillRect
+    check commands[4].kind == pcPopTransform
+    check commands[5].kind == pcPopTransform
+    check commands[1].rect == rect(21, 32, 8, 6)
+    check commands[3].rect == rect(24, 35, 2, 2)
+    check commands[0].transform.transformPoint(vec2(21, 32)) == vec2(31, 37)
+    let nested = commands[0].transform * commands[2].transform
+    check nested.transformPoint(vec2(24, 35)) == vec2(38, 50)
+    check not commands[0].transformBounds.isEmpty
+    check not commands[2].transformBounds.isEmpty
+
+  test "UI paint pipeline resolves Canvas transform bounds at the final boundary":
+    let ui = initUiRoot()
+    let root = ui.box(uiStyle([
+      decl("width", px(120)), decl("height", px(80))
+    ]))
+    let drawing = newCanvas2D()
+    drawing.translate(7, 9)
+    drawing.fillRect(rect(2, 3, 20, 10), rgb(1, 0, 0))
+    let canvas = ui.canvas(
+      drawing,
+      uiStyle([decl("width", px(100)), decl("height", px(60))]),
+      parent = some(root)
+    )
+    let frame = resolveUi(ui)
+    let commands = buildPaintCommands(
+      ui.tree, frame.styles, frame.layout, ui.scroll, ui.canvasPaintProvider()
+    )
+
+    var sawTransform = false
+    var sawCanvasFill = false
+    for command in commands:
+      case command.kind
+      of pcPushTransform:
+        if not command.transformBounds.isEmpty:
+          sawTransform = true
+      of pcFillRect:
+        if command.owner == some(canvas.node.id):
+          sawCanvasFill = true
+      else:
+        discard
+    check sawTransform
+    check sawCanvasFill
+
+  test "save restore closes transformed clips in strict LIFO order":
+    let drawing = newCanvas2D()
+    drawing.save()
+    drawing.translate(3, 4)
+    drawing.pushClip(rect(0, 0, 20, 20))
+    drawing.fillRect(rect(0, 0, 30, 30), rgb(1, 1, 1))
+    drawing.restore()
+    drawing.fillRect(rect(1, 1, 2, 2), rgb(1, 0, 0))
+
+    let commands = drawing.paintCommands(NodeId(2), rect(10, 20, 40, 40))
+    check commands.len == 6
+    check commands[0].kind == pcPushTransform
+    check commands[1].kind == pcPushClip
+    check commands[2].kind == pcFillRect
+    check commands[3].kind == pcPopClip
+    check commands[4].kind == pcPopTransform
+    check commands[5].kind == pcFillRect
+
+  test "canvas safely balances dangling scopes and rejects invalid transforms":
+    let drawing = newCanvas2D()
+    let initialRevision = drawing.revision
+    drawing.transform(Affine2D(m11: NaN.float32, m22: 1))
+    drawing.restore()
+    check drawing.revision == initialRevision + 1
+    drawing.translate(4, 0)
+    drawing.pushClip(rect(0, 0, 10, 10))
+    drawing.fillRect(rect(0, 0, 20, 20), rgb(1, 1, 1))
+
+    let commands = drawing.paintCommands(NodeId(3), rect(5, 6, 20, 20))
+    check commands.len == 5
+    check commands[0].kind == pcPushTransform
+    check commands[1].kind == pcPushClip
+    check commands[2].kind == pcFillRect
+    check commands[3].kind == pcPopClip
+    check commands[4].kind == pcPopTransform
 
   test "retained paths preserve local geometry ownership and opacity":
     let drawing = newCanvas2D()

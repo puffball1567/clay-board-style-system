@@ -123,6 +123,14 @@ proc drawSignal(canvas: Canvas2D; now: float64; pointer: Vec2) =
 
   let markerX = max(12.0'f32, min(canvasWidth - 28, pointer.x - 8))
   let markerY = max(12.0'f32, min(canvasHeight - 28, pointer.y - 8))
+  canvas.save()
+  canvas.translate(markerX + 8, markerY + 8)
+  canvas.rotate(phase * 0.55'f32)
+  canvas.scale(1.0'f32 + sin(phase) * 0.12'f32)
+  canvas.fillRect(
+    rect(-15, -3, 30, 6), rgba(0.48, 0.96, 0.90, 0.72), radius = 3
+  )
+  canvas.restore()
   canvas.fillRect(
     rect(markerX, markerY, 16, 16), rgba(1, 1, 1, 0.92), radius = 8
   )

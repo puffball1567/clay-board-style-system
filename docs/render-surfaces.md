@@ -101,14 +101,24 @@ and can return to the SDL event wait path.
 
 ## Canvas Commands
 
-The initial retained command set includes nested clips, filled and stroked
-rectangles, rounded rectangles, open and closed paths, adaptive quadratic and
-cubic curves, configurable line caps and joins, linear gradients, text, and
-images. Use `strokeLine` for one segment, the point overload of `strokePath`
-for a polyline, or build a retained `Path2D` with `moveTo`, `lineTo`,
-`quadraticCurveTo`, `bezierCurveTo`, and `closePath`. Every mutation increments
-the Canvas revision. A frame callback may replace only the Canvas commands
-without rebuilding or resolving the surrounding UI tree.
+The initial retained command set includes nested clips, affine transforms,
+filled and stroked rectangles, rounded rectangles, open and closed paths,
+adaptive quadratic and cubic curves, configurable line caps and joins, linear
+gradients, text, and images. Use `strokeLine` for one segment, the point
+overload of `strokePath` for a polyline, or build a retained `Path2D` with
+`moveTo`, `lineTo`, `quadraticCurveTo`, `bezierCurveTo`, and `closePath`.
+
+`save` and `restore` delimit transform and clip state. `translate`, `rotate`,
+`scale`, and `transform` concatenate Canvas-local affine transforms for later
+commands. Restore and end-of-list balancing close scopes in strict LIFO order;
+an unmatched restore or pop is a safe no-op. Identity and non-finite transform
+values are rejected without changing the revision. Placement converts local
+matrices at the Canvas Box origin, so ancestor transforms, scrolling, and DPI
+do not require rebuilding the retained list.
+
+Every effective mutation increments the Canvas revision. A frame callback may
+replace only the Canvas commands without rebuilding or resolving the
+surrounding UI tree.
 
 Unbalanced authored clip pushes are closed at the paint boundary. Extra pops
 are ignored so a surface cannot corrupt the surrounding CBSS clip stack.
@@ -118,11 +128,12 @@ are ignored so a surface cannot corrupt the surrounding CBSS clip stack.
 The Version 0.3 contract is still in development. The following are not yet
 runtime-complete:
 
-- Canvas save/restore transforms, blend modes, and offscreen surfaces;
+- Canvas blend modes and explicit offscreen surfaces;
 - C ABI drawing commands beyond the implemented RenderSurface lifecycle; and
 - GPU/shared-texture surface paths.
 
-Resolved box transforms already use one affine contract across SDL3 and
-headless paint, hit tests, clips, and RenderSurface-local input. Canvas-authored
-save/restore transforms are a separate command API and remain release work
-rather than a silent backend difference.
+Resolved box transforms and Canvas-authored transforms use one affine command
+contract across SDL3 and headless paint. Box hit tests, clips, and
+RenderSurface-local input use the same presentation matrices; Canvas commands
+remain local to their host surface and do not create a second backend-specific
+coordinate system.

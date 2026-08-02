@@ -287,20 +287,25 @@ Implementation progress:
   offscreen scopes with reusable high-DPI textures; the PPM reference backend
   inverse-samples transformed gradients and clips. Pixel tests cover normal,
   layered, nested, and rounded-clip composition.
+- Implemented on the Version 0.3 development line: retained Canvas `save`,
+  `restore`, `transform`, `translate`, `rotate`, and `scale`. Transform and clip
+  scopes restore in strict LIFO order, local matrices are placed at the Canvas
+  Box origin, malformed scopes are contained, and SDL pixel tests exercise the
+  same bounded affine composition path as styled Box transforms.
 - Pixie evaluation result: do not make Pixie a core dependency or expose its
   types. A future optional adapter remains appropriate for cached paths,
   masks, SVG, blur, and image effects after the canonical path/mask paint
   vocabulary and cache ownership are stable. SDL3 remains sufficient for the
   mandatory Version 0.3 Canvas path.
-- Remaining Version 0.3 visual work: add Canvas-authored transform
-  save/restore, blend state, and explicit offscreen surfaces; expose drawing
-  adapters beyond the existing C ABI lifecycle; and complete the final SDL3,
-  headless, performance, memory, and platform release gates. Three-dimensional
-  transforms, filters, and blend/isolation semantics remain later work.
+- Remaining Version 0.3 visual work: add blend state and explicit offscreen
+  surfaces; expose drawing adapters beyond the existing C ABI lifecycle; and
+  complete the final SDL3, headless, performance, memory, and platform release
+  gates. Three-dimensional transforms, filters, and blend/isolation semantics
+  remain later work.
 
 ## Version 0.4 - Complete Unit Resolution
 
-Status: `Planned`
+Status: `Partially implemented`
 
 Version 0.4 completes the typed unit model across supported properties. The
 goal is not merely to parse more values: every supported unit/property pair
@@ -584,18 +589,20 @@ to resolve style or relayout on every frame.
 
 ### Transforms And Transitions
 
-Planned work:
+Current and planned work:
 
-- Complete `translate`, `scale`, `rotate`, transform origin, and composition
-  order with a single layout, paint, and hit-test coordinate contract.
+- Implemented: `translate`, `scale`, `rotate`, transform origin, and 2D
+  composition order use a single layout, paint, hit-test, clip, and
+  RenderSurface coordinate contract. Canvas uses the same affine paint scopes.
 - Add declarative transition property, duration, delay, timing-function, and
   interpolation behavior for supported style values.
-- Add keyframe-style animation definitions for values that CBSS can resolve,
-  interpolate, and paint deterministically.
-- Schedule frames only while an animation, transition, caret blink, scrolling
-  motion, or Canvas explicitly needs one; idle UI remains event-driven.
-- Respect reduced-motion preferences through an application or platform
-  capability interface.
+- Implemented foundation: typed float/color keyframes and the animation clock
+  resolve and interpolate deterministically; declaration-driven keyframe
+  binding remains planned.
+- Implemented: frames are scheduled only while timed work, caret blink,
+  scrolling motion, or Canvas requests one; idle UI remains event-driven.
+- Implemented foundation: the animation clock accepts reduced-motion policy;
+  platform preference adapters remain planned.
 
 ### Sprites And Tile Maps
 

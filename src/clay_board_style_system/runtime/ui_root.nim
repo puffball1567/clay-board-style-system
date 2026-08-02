@@ -640,7 +640,9 @@ proc canvasPaintProvider*(root: UiRoot): SurfacePaintProvider =
   ): seq[PaintCommand] =
     let id = RenderSurfaceId(surfaceId)
     if id in owner.canvases:
-      result = owner.canvases[id].paintCommands(node, bounds, opacity)
+      result = owner.canvases[id].paintCommands(
+        node, bounds, opacity, resolveBounds = false
+      )
 
 proc syncRenderSurfaces*(
     root: UiRoot;
