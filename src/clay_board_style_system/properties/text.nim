@@ -1,8 +1,11 @@
 import std/[options, strutils]
-import ../core/[color, computed_style, declaration, diagnostics, property, style_value]
+import ../core/[color, computed_style, declaration, diagnostics, property,
+    style_color, style_value]
 
-proc requireKeyword(declaration: Declaration; diagnostics: var Diagnostics): Option[string] =
-  if declaration.operation.value.isNone or declaration.operation.value.get.kind != svKeyword:
+proc requireKeyword(declaration: Declaration;
+    diagnostics: var Diagnostics): Option[string] =
+  if declaration.operation.value.isNone or
+      declaration.operation.value.get.kind != svKeyword:
     diagnostics.addError(declaration.property, declaration.property & " requires a keyword value")
     return none(string)
   some(declaration.operation.value.get.keyword)
@@ -191,7 +194,8 @@ proc applyFontSettings(
       else:
         style.text.fontVariationSettings = env.parent.get.text.fontVariationSettings
     else:
-      diagnostics.addError(declaration.property, "cannot inherit " & declaration.property & " without parent")
+      diagnostics.addError(declaration.property, "cannot inherit " &
+          declaration.property & " without parent")
   of mmRelative:
     diagnostics.addError(declaration.property, declaration.property & " does not support relative merge")
 
@@ -316,7 +320,8 @@ proc applyFontVariantKeyword(
     else: style.text.fontVariantNumeric = none(string)
   of mmInherit:
     if env.parent.isNone:
-      diagnostics.addError(declaration.property, "cannot inherit " & declaration.property & " without parent")
+      diagnostics.addError(declaration.property, "cannot inherit " &
+          declaration.property & " without parent")
       return
     case declaration.property
     of "font-variant": style.text.fontVariant = env.parent.get.text.fontVariant
@@ -341,7 +346,8 @@ proc setFontKeywordField(style: var ComputedStyle; property, value: string) =
   of "font-synthesis-style": style.text.fontSynthesisStyle = normalized
   else: style.text.fontSynthesisWeight = normalized
 
-proc inheritFontKeywordField(style: var ComputedStyle; property: string; parent: ComputedStyle) =
+proc inheritFontKeywordField(style: var ComputedStyle; property: string;
+    parent: ComputedStyle) =
   case property
   of "font-variant-east-asian": style.text.fontVariantEastAsian = parent.text.fontVariantEastAsian
   of "font-variant-position": style.text.fontVariantPosition = parent.text.fontVariantPosition
@@ -372,7 +378,8 @@ proc applyFontKeywordPassthrough(
     if env.parent.isSome:
       style.inheritFontKeywordField(declaration.property, env.parent.get)
     else:
-      diagnostics.addError(declaration.property, "cannot inherit " & declaration.property & " without parent")
+      diagnostics.addError(declaration.property, "cannot inherit " &
+          declaration.property & " without parent")
   of mmRelative:
     diagnostics.addError(declaration.property, declaration.property & " does not support relative merge")
 
@@ -532,12 +539,14 @@ proc applyWhiteSpace(
   of mmRelative:
     diagnostics.addError(declaration.property, "white-space does not support relative merge")
 
-proc resolvePx(value: StyleValue; property: string; diagnostics: var Diagnostics): Option[float32] =
+proc resolvePx(value: StyleValue; property: string;
+    diagnostics: var Diagnostics): Option[float32] =
   if value.kind != svLength:
     diagnostics.addError(property, property & " requires a length value")
     return none(float32)
   if value.length.kind != ukPx:
-    diagnostics.addError(property, "only px is supported for initial " & property & " implementation")
+    diagnostics.addError(property, "only px is supported for initial " &
+        property & " implementation")
     return none(float32)
   some(value.length.value)
 
@@ -577,12 +586,14 @@ proc applyOverflowWrap(
     of "normal": style.text.overflowWrap = some(owNormal)
     of "anywhere": style.text.overflowWrap = some(owAnywhere)
     of "break-word": style.text.overflowWrap = some(owBreakWord)
-    else: diagnostics.addError(declaration.property, "unsupported " & declaration.property & " keyword")
+    else: diagnostics.addError(declaration.property, "unsupported " &
+        declaration.property & " keyword")
   of mmInitial, mmUnset:
     style.text.overflowWrap = some(owNormal)
   of mmInherit:
     if env.parent.isSome: style.text.overflowWrap = env.parent.get.text.overflowWrap
-    else: diagnostics.addError(declaration.property, "cannot inherit " & declaration.property & " without parent")
+    else: diagnostics.addError(declaration.property, "cannot inherit " &
+        declaration.property & " without parent")
   of mmRelative:
     diagnostics.addError(declaration.property, declaration.property & " does not support relative merge")
 
@@ -658,7 +669,8 @@ proc applyTextSpacing(
     else: style.text.wordSpacing = some(0.0'f32)
   of mmInherit:
     if env.parent.isNone:
-      diagnostics.addError(declaration.property, "cannot inherit " & declaration.property & " without parent")
+      diagnostics.addError(declaration.property, "cannot inherit " &
+          declaration.property & " without parent")
       return
     if declaration.property == "letter-spacing": style.text.letterSpacing = env.parent.get.text.letterSpacing
     else: style.text.wordSpacing = env.parent.get.text.wordSpacing
@@ -697,10 +709,12 @@ proc applyTextDecorationColor(
 ) =
   case declaration.operation.mode
   of mmOverwrite:
-    if declaration.operation.value.isNone or declaration.operation.value.get.kind != svColor:
+    if declaration.operation.value.isNone or
+        declaration.operation.value.get.kind != svColor:
       diagnostics.addError(declaration.property, "text-decoration-color requires a color value")
       return
-    style.text.textDecorationColor = some(declaration.operation.value.get.color)
+    style.text.textDecorationColor = declaration.operation.value.get.resolveStyleColor(
+        style, env)
   of mmInitial, mmUnset:
     style.text.textDecorationColor = none(Color)
   of mmInherit:
@@ -772,12 +786,15 @@ proc applyTextDecoration(
     let value = declaration.operation.value.get
     case value.kind
     of svKeyword:
-      let lineDecl = Declaration(property: "text-decoration-line", operation: declaration.operation, sourceOrder: declaration.sourceOrder)
+      let lineDecl = Declaration(property: "text-decoration-line",
+          operation: declaration.operation,
+          sourceOrder: declaration.sourceOrder)
       style.applyTextDecorationLine(lineDecl, env, diagnostics)
     of svColor:
-      style.text.textDecorationColor = some(value.color)
+      style.text.textDecorationColor = value.resolveStyleColor(style, env)
     of svLength:
-      style.text.textDecorationThickness = resolvePx(value, declaration.property, diagnostics)
+      style.text.textDecorationThickness = resolvePx(value,
+          declaration.property, diagnostics)
     else:
       diagnostics.addError(declaration.property, "text-decoration supports line keywords, color, or thickness initially")
   of mmInitial, mmUnset:
@@ -823,7 +840,13 @@ proc applyTextShadow(
       blur = value.shadowBlur.get.value
     if value.shadowSpread.isSome and value.shadowSpread.get.kind == ukPx:
       spread = value.shadowSpread.get.value
-    style.text.textShadow = some(BoxShadow(offsetX: value.shadowOffsetX.value, offsetY: value.shadowOffsetY.value, blur: blur, spread: spread, color: value.shadowColor))
+    style.text.textShadow = some(BoxShadow(
+      offsetX: value.shadowOffsetX.value,
+      offsetY: value.shadowOffsetY.value,
+      blur: blur,
+      spread: spread,
+      color: value.resolveShadowColor(style, env)
+    ))
   of mmInitial, mmUnset:
     style.text.textShadow = none(BoxShadow)
   of mmInherit:
@@ -867,7 +890,8 @@ proc applyTextIndent(
     if declaration.operation.value.isNone:
       diagnostics.addError(declaration.property, "text-indent requires a value")
       return
-    style.text.textIndent = resolvePx(declaration.operation.value.get, declaration.property, diagnostics)
+    style.text.textIndent = resolvePx(declaration.operation.value.get,
+        declaration.property, diagnostics)
   of mmInitial, mmUnset:
     style.text.textIndent = some(0.0'f32)
   of mmInherit:
@@ -892,12 +916,14 @@ proc applyTextWrap(
     of "balance": style.text.textWrap = some(twBalance)
     of "pretty": style.text.textWrap = some(twPretty)
     of "stable": style.text.textWrap = some(twStable)
-    else: diagnostics.addError(declaration.property, "unsupported " & declaration.property & " keyword")
+    else: diagnostics.addError(declaration.property, "unsupported " &
+        declaration.property & " keyword")
   of mmInitial, mmUnset:
     style.text.textWrap = some(twWrap)
   of mmInherit:
     if env.parent.isSome: style.text.textWrap = env.parent.get.text.textWrap
-    else: diagnostics.addError(declaration.property, "cannot inherit " & declaration.property & " without parent")
+    else: diagnostics.addError(declaration.property, "cannot inherit " &
+        declaration.property & " without parent")
   of mmRelative:
     diagnostics.addError(declaration.property, declaration.property & " does not support relative merge")
 
@@ -1222,11 +1248,13 @@ proc applyTextMetadata(
       if value.isSome: style.setTextMetadata(declaration.property, value.get)
       else: style.clearTextMetadata(declaration.property)
     else:
-      diagnostics.addError(declaration.property, "cannot inherit " & declaration.property & " without parent")
+      diagnostics.addError(declaration.property, "cannot inherit " &
+          declaration.property & " without parent")
   of mmRelative:
     diagnostics.addError(declaration.property, declaration.property & " does not support relative merge")
 
-proc setTextLengthMetadata(style: var ComputedStyle; property: string; value: Option[float32]) =
+proc setTextLengthMetadata(style: var ComputedStyle; property: string;
+    value: Option[float32]) =
   case property
   of "text-decoration-inset":
     style.text.textDecorationInset = value
@@ -1263,7 +1291,8 @@ proc applyTextLengthMetadata(
     case value.kind
     of svLength:
       if value.length.kind in {ukPx, ukPercent}:
-        style.setTextLengthMetadata(declaration.property, some(value.length.value))
+        style.setTextLengthMetadata(declaration.property, some(
+            value.length.value))
       else:
         diagnostics.addError(declaration.property, declaration.property & " only supports px or percent lengths")
     of svNumber:
@@ -1272,16 +1301,19 @@ proc applyTextLengthMetadata(
       if value.keyword == "auto" or value.keyword == "none":
         style.setTextLengthMetadata(declaration.property, none(float32))
       else:
-        diagnostics.addError(declaration.property, "unsupported " & declaration.property & " keyword")
+        diagnostics.addError(declaration.property, "unsupported " &
+            declaration.property & " keyword")
     else:
       diagnostics.addError(declaration.property, declaration.property & " requires a length, number, auto, or none")
   of mmInitial, mmUnset:
     style.setTextLengthMetadata(declaration.property, none(float32))
   of mmInherit:
     if env.parent.isSome:
-      style.setTextLengthMetadata(declaration.property, env.parent.get.getTextLengthMetadata(declaration.property))
+      style.setTextLengthMetadata(declaration.property,
+          env.parent.get.getTextLengthMetadata(declaration.property))
     else:
-      diagnostics.addError(declaration.property, "cannot inherit " & declaration.property & " without parent")
+      diagnostics.addError(declaration.property, "cannot inherit " &
+          declaration.property & " without parent")
   of mmRelative:
     diagnostics.addError(declaration.property, declaration.property & " does not support relative merge")
 
@@ -1333,10 +1365,12 @@ proc applyTextEmphasisColor(
 ) =
   case declaration.operation.mode
   of mmOverwrite:
-    if declaration.operation.value.isNone or declaration.operation.value.get.kind != svColor:
+    if declaration.operation.value.isNone or
+        declaration.operation.value.get.kind != svColor:
       diagnostics.addError(declaration.property, "text-emphasis-color requires a color value")
       return
-    style.text.textEmphasisColor = some(declaration.operation.value.get.color)
+    style.text.textEmphasisColor = declaration.operation.value.get.resolveStyleColor(
+        style, env)
   of mmInitial, mmUnset:
     style.text.textEmphasisColor = none(Color)
   of mmInherit:
@@ -1345,89 +1379,165 @@ proc applyTextEmphasisColor(
   of mmRelative:
     diagnostics.addError(declaration.property, "text-emphasis-color does not support relative merge")
 
-let fontFamilyProperty* = PropertyImpl(name: "font-family", apply: applyFontFamily)
+let fontFamilyProperty* = PropertyImpl(name: "font-family",
+    apply: applyFontFamily)
 let fontProperty* = PropertyImpl(name: "font", apply: applyTextMetadata)
 let fontStyleProperty* = PropertyImpl(name: "font-style", apply: applyFontStyle)
-let fontWeightProperty* = PropertyImpl(name: "font-weight", apply: applyFontWeight)
-let fontStretchProperty* = PropertyImpl(name: "font-stretch", apply: applyFontStretch)
+let fontWeightProperty* = PropertyImpl(name: "font-weight",
+    apply: applyFontWeight)
+let fontStretchProperty* = PropertyImpl(name: "font-stretch",
+    apply: applyFontStretch)
 let fontWidthProperty* = PropertyImpl(name: "font-width", apply: applyFontWidth)
-let fontSmoothProperty* = PropertyImpl(name: "font-smooth", apply: applyTextMetadata)
-let alignmentBaselineProperty* = PropertyImpl(name: "alignment-baseline", apply: applyTextMetadata)
-let baselineShiftProperty* = PropertyImpl(name: "baseline-shift", apply: applyTextMetadata)
-let baselineSourceProperty* = PropertyImpl(name: "baseline-source", apply: applyTextMetadata)
-let dominantBaselineProperty* = PropertyImpl(name: "dominant-baseline", apply: applyTextMetadata)
-let fontFeatureSettingsProperty* = PropertyImpl(name: "font-feature-settings", apply: applyFontSettings)
-let fontVariationSettingsProperty* = PropertyImpl(name: "font-variation-settings", apply: applyFontSettings)
-let fontKerningProperty* = PropertyImpl(name: "font-kerning", apply: applyFontKerning)
-let fontOpticalSizingProperty* = PropertyImpl(name: "font-optical-sizing", apply: applyFontOpticalSizing)
-let fontSizeAdjustProperty* = PropertyImpl(name: "font-size-adjust", apply: applyFontSizeAdjust)
-let fontVariantProperty* = PropertyImpl(name: "font-variant", apply: applyFontVariantKeyword)
-let fontVariantLigaturesProperty* = PropertyImpl(name: "font-variant-ligatures", apply: applyFontVariantKeyword)
-let fontVariantCapsProperty* = PropertyImpl(name: "font-variant-caps", apply: applyFontVariantKeyword)
-let fontVariantNumericProperty* = PropertyImpl(name: "font-variant-numeric", apply: applyFontVariantKeyword)
-let fontVariantEastAsianProperty* = PropertyImpl(name: "font-variant-east-asian", apply: applyFontKeywordPassthrough)
-let fontVariantPositionProperty* = PropertyImpl(name: "font-variant-position", apply: applyFontKeywordPassthrough)
-let fontVariantAlternatesProperty* = PropertyImpl(name: "font-variant-alternates", apply: applyFontKeywordPassthrough)
-let fontVariantEmojiProperty* = PropertyImpl(name: "font-variant-emoji", apply: applyFontKeywordPassthrough)
-let fontLanguageOverrideProperty* = PropertyImpl(name: "font-language-override", apply: applyFontKeywordPassthrough)
-let fontPaletteProperty* = PropertyImpl(name: "font-palette", apply: applyFontKeywordPassthrough)
-let fontSynthesisProperty* = PropertyImpl(name: "font-synthesis", apply: applyFontKeywordPassthrough)
-let fontSynthesisPositionProperty* = PropertyImpl(name: "font-synthesis-position", apply: applyFontKeywordPassthrough)
-let fontSynthesisSmallCapsProperty* = PropertyImpl(name: "font-synthesis-small-caps", apply: applyFontKeywordPassthrough)
-let fontSynthesisStyleProperty* = PropertyImpl(name: "font-synthesis-style", apply: applyFontKeywordPassthrough)
-let fontSynthesisWeightProperty* = PropertyImpl(name: "font-synthesis-weight", apply: applyFontKeywordPassthrough)
-let lineHeightProperty* = PropertyImpl(name: "line-height", apply: applyLineHeight)
+let fontSmoothProperty* = PropertyImpl(name: "font-smooth",
+    apply: applyTextMetadata)
+let alignmentBaselineProperty* = PropertyImpl(name: "alignment-baseline",
+    apply: applyTextMetadata)
+let baselineShiftProperty* = PropertyImpl(name: "baseline-shift",
+    apply: applyTextMetadata)
+let baselineSourceProperty* = PropertyImpl(name: "baseline-source",
+    apply: applyTextMetadata)
+let dominantBaselineProperty* = PropertyImpl(name: "dominant-baseline",
+    apply: applyTextMetadata)
+let fontFeatureSettingsProperty* = PropertyImpl(name: "font-feature-settings",
+    apply: applyFontSettings)
+let fontVariationSettingsProperty* = PropertyImpl(
+    name: "font-variation-settings", apply: applyFontSettings)
+let fontKerningProperty* = PropertyImpl(name: "font-kerning",
+    apply: applyFontKerning)
+let fontOpticalSizingProperty* = PropertyImpl(name: "font-optical-sizing",
+    apply: applyFontOpticalSizing)
+let fontSizeAdjustProperty* = PropertyImpl(name: "font-size-adjust",
+    apply: applyFontSizeAdjust)
+let fontVariantProperty* = PropertyImpl(name: "font-variant",
+    apply: applyFontVariantKeyword)
+let fontVariantLigaturesProperty* = PropertyImpl(name: "font-variant-ligatures",
+    apply: applyFontVariantKeyword)
+let fontVariantCapsProperty* = PropertyImpl(name: "font-variant-caps",
+    apply: applyFontVariantKeyword)
+let fontVariantNumericProperty* = PropertyImpl(name: "font-variant-numeric",
+    apply: applyFontVariantKeyword)
+let fontVariantEastAsianProperty* = PropertyImpl(
+    name: "font-variant-east-asian", apply: applyFontKeywordPassthrough)
+let fontVariantPositionProperty* = PropertyImpl(name: "font-variant-position",
+    apply: applyFontKeywordPassthrough)
+let fontVariantAlternatesProperty* = PropertyImpl(
+    name: "font-variant-alternates", apply: applyFontKeywordPassthrough)
+let fontVariantEmojiProperty* = PropertyImpl(name: "font-variant-emoji",
+    apply: applyFontKeywordPassthrough)
+let fontLanguageOverrideProperty* = PropertyImpl(name: "font-language-override",
+    apply: applyFontKeywordPassthrough)
+let fontPaletteProperty* = PropertyImpl(name: "font-palette",
+    apply: applyFontKeywordPassthrough)
+let fontSynthesisProperty* = PropertyImpl(name: "font-synthesis",
+    apply: applyFontKeywordPassthrough)
+let fontSynthesisPositionProperty* = PropertyImpl(
+    name: "font-synthesis-position", apply: applyFontKeywordPassthrough)
+let fontSynthesisSmallCapsProperty* = PropertyImpl(
+    name: "font-synthesis-small-caps", apply: applyFontKeywordPassthrough)
+let fontSynthesisStyleProperty* = PropertyImpl(name: "font-synthesis-style",
+    apply: applyFontKeywordPassthrough)
+let fontSynthesisWeightProperty* = PropertyImpl(name: "font-synthesis-weight",
+    apply: applyFontKeywordPassthrough)
+let lineHeightProperty* = PropertyImpl(name: "line-height",
+    apply: applyLineHeight)
 let textAlignProperty* = PropertyImpl(name: "text-align", apply: applyTextAlign)
-let textAlignLastProperty* = PropertyImpl(name: "text-align-last", apply: applyTextAlignLast)
-let whiteSpaceProperty* = PropertyImpl(name: "white-space", apply: applyWhiteSpace)
-let textOverflowProperty* = PropertyImpl(name: "text-overflow", apply: applyTextOverflow)
-let overflowWrapProperty* = PropertyImpl(name: "overflow-wrap", apply: applyOverflowWrap)
-let wordWrapProperty* = PropertyImpl(name: "word-wrap", apply: applyOverflowWrap)
+let textAlignLastProperty* = PropertyImpl(name: "text-align-last",
+    apply: applyTextAlignLast)
+let whiteSpaceProperty* = PropertyImpl(name: "white-space",
+    apply: applyWhiteSpace)
+let textOverflowProperty* = PropertyImpl(name: "text-overflow",
+    apply: applyTextOverflow)
+let overflowWrapProperty* = PropertyImpl(name: "overflow-wrap",
+    apply: applyOverflowWrap)
+let wordWrapProperty* = PropertyImpl(name: "word-wrap",
+    apply: applyOverflowWrap)
 let wordBreakProperty* = PropertyImpl(name: "word-break", apply: applyWordBreak)
 let hyphensProperty* = PropertyImpl(name: "hyphens", apply: applyHyphens)
-let letterSpacingProperty* = PropertyImpl(name: "letter-spacing", apply: applyTextSpacing)
-let wordSpacingProperty* = PropertyImpl(name: "word-spacing", apply: applyTextSpacing)
-let textDecorationProperty* = PropertyImpl(name: "text-decoration", apply: applyTextDecoration)
-let textDecorationLineProperty* = PropertyImpl(name: "text-decoration-line", apply: applyTextDecorationLine)
-let textDecorationColorProperty* = PropertyImpl(name: "text-decoration-color", apply: applyTextDecorationColor)
-let textDecorationStyleProperty* = PropertyImpl(name: "text-decoration-style", apply: applyTextDecorationStyle)
-let textDecorationThicknessProperty* = PropertyImpl(name: "text-decoration-thickness", apply: applyTextDecorationThickness)
-let textDecorationInsetProperty* = PropertyImpl(name: "text-decoration-inset", apply: applyTextLengthMetadata)
-let textDecorationSkipProperty* = PropertyImpl(name: "text-decoration-skip", apply: applyTextMetadata)
-let textDecorationSkipInkProperty* = PropertyImpl(name: "text-decoration-skip-ink", apply: applyTextMetadata)
-let textShadowProperty* = PropertyImpl(name: "text-shadow", apply: applyTextShadow)
-let textTransformProperty* = PropertyImpl(name: "text-transform", apply: applyTextTransform)
-let textIndentProperty* = PropertyImpl(name: "text-indent", apply: applyTextIndent)
+let letterSpacingProperty* = PropertyImpl(name: "letter-spacing",
+    apply: applyTextSpacing)
+let wordSpacingProperty* = PropertyImpl(name: "word-spacing",
+    apply: applyTextSpacing)
+let textDecorationProperty* = PropertyImpl(name: "text-decoration",
+    apply: applyTextDecoration)
+let textDecorationLineProperty* = PropertyImpl(name: "text-decoration-line",
+    apply: applyTextDecorationLine)
+let textDecorationColorProperty* = PropertyImpl(name: "text-decoration-color",
+    apply: applyTextDecorationColor)
+let textDecorationStyleProperty* = PropertyImpl(name: "text-decoration-style",
+    apply: applyTextDecorationStyle)
+let textDecorationThicknessProperty* = PropertyImpl(
+    name: "text-decoration-thickness", apply: applyTextDecorationThickness)
+let textDecorationInsetProperty* = PropertyImpl(name: "text-decoration-inset",
+    apply: applyTextLengthMetadata)
+let textDecorationSkipProperty* = PropertyImpl(name: "text-decoration-skip",
+    apply: applyTextMetadata)
+let textDecorationSkipInkProperty* = PropertyImpl(
+    name: "text-decoration-skip-ink", apply: applyTextMetadata)
+let textShadowProperty* = PropertyImpl(name: "text-shadow",
+    apply: applyTextShadow)
+let textTransformProperty* = PropertyImpl(name: "text-transform",
+    apply: applyTextTransform)
+let textIndentProperty* = PropertyImpl(name: "text-indent",
+    apply: applyTextIndent)
 let textWrapProperty* = PropertyImpl(name: "text-wrap", apply: applyTextWrap)
-let textWrapModeProperty* = PropertyImpl(name: "text-wrap-mode", apply: applyTextWrap)
-let textWrapStyleProperty* = PropertyImpl(name: "text-wrap-style", apply: applyTextWrap)
-let textAnchorProperty* = PropertyImpl(name: "text-anchor", apply: applyTextMetadata)
-let textAutospaceProperty* = PropertyImpl(name: "text-autospace", apply: applyTextMetadata)
+let textWrapModeProperty* = PropertyImpl(name: "text-wrap-mode",
+    apply: applyTextWrap)
+let textWrapStyleProperty* = PropertyImpl(name: "text-wrap-style",
+    apply: applyTextWrap)
+let textAnchorProperty* = PropertyImpl(name: "text-anchor",
+    apply: applyTextMetadata)
+let textAutospaceProperty* = PropertyImpl(name: "text-autospace",
+    apply: applyTextMetadata)
 let textBoxProperty* = PropertyImpl(name: "text-box", apply: applyTextMetadata)
-let textBoxEdgeProperty* = PropertyImpl(name: "text-box-edge", apply: applyTextMetadata)
-let textBoxTrimProperty* = PropertyImpl(name: "text-box-trim", apply: applyTextMetadata)
-let textCombineUprightProperty* = PropertyImpl(name: "text-combine-upright", apply: applyTextMetadata)
-let textEmphasisProperty* = PropertyImpl(name: "text-emphasis", apply: applyTextMetadata)
-let textEmphasisColorProperty* = PropertyImpl(name: "text-emphasis-color", apply: applyTextEmphasisColor)
-let textEmphasisPositionProperty* = PropertyImpl(name: "text-emphasis-position", apply: applyTextMetadata)
-let textEmphasisStyleProperty* = PropertyImpl(name: "text-emphasis-style", apply: applyTextMetadata)
-let textJustifyProperty* = PropertyImpl(name: "text-justify", apply: applyTextMetadata)
-let textOrientationProperty* = PropertyImpl(name: "text-orientation", apply: applyTextMetadata)
-let textRenderingProperty* = PropertyImpl(name: "text-rendering", apply: applyTextMetadata)
-let textSizeAdjustProperty* = PropertyImpl(name: "text-size-adjust", apply: applyTextLengthMetadata)
-let textSpacingTrimProperty* = PropertyImpl(name: "text-spacing-trim", apply: applyTextMetadata)
-let textUnderlineOffsetProperty* = PropertyImpl(name: "text-underline-offset", apply: applyTextLengthMetadata)
-let textUnderlinePositionProperty* = PropertyImpl(name: "text-underline-position", apply: applyTextMetadata)
+let textBoxEdgeProperty* = PropertyImpl(name: "text-box-edge",
+    apply: applyTextMetadata)
+let textBoxTrimProperty* = PropertyImpl(name: "text-box-trim",
+    apply: applyTextMetadata)
+let textCombineUprightProperty* = PropertyImpl(name: "text-combine-upright",
+    apply: applyTextMetadata)
+let textEmphasisProperty* = PropertyImpl(name: "text-emphasis",
+    apply: applyTextMetadata)
+let textEmphasisColorProperty* = PropertyImpl(name: "text-emphasis-color",
+    apply: applyTextEmphasisColor)
+let textEmphasisPositionProperty* = PropertyImpl(name: "text-emphasis-position",
+    apply: applyTextMetadata)
+let textEmphasisStyleProperty* = PropertyImpl(name: "text-emphasis-style",
+    apply: applyTextMetadata)
+let textJustifyProperty* = PropertyImpl(name: "text-justify",
+    apply: applyTextMetadata)
+let textOrientationProperty* = PropertyImpl(name: "text-orientation",
+    apply: applyTextMetadata)
+let textRenderingProperty* = PropertyImpl(name: "text-rendering",
+    apply: applyTextMetadata)
+let textSizeAdjustProperty* = PropertyImpl(name: "text-size-adjust",
+    apply: applyTextLengthMetadata)
+let textSpacingTrimProperty* = PropertyImpl(name: "text-spacing-trim",
+    apply: applyTextMetadata)
+let textUnderlineOffsetProperty* = PropertyImpl(name: "text-underline-offset",
+    apply: applyTextLengthMetadata)
+let textUnderlinePositionProperty* = PropertyImpl(
+    name: "text-underline-position", apply: applyTextMetadata)
 let directionProperty* = PropertyImpl(name: "direction", apply: applyDirection)
-let unicodeBidiProperty* = PropertyImpl(name: "unicode-bidi", apply: applyUnicodeBidi)
-let writingModeProperty* = PropertyImpl(name: "writing-mode", apply: applyWritingMode)
-let whiteSpaceCollapseProperty* = PropertyImpl(name: "white-space-collapse", apply: applyTextMetadata)
-let verticalAlignProperty* = PropertyImpl(name: "vertical-align", apply: applyTextMetadata)
+let unicodeBidiProperty* = PropertyImpl(name: "unicode-bidi",
+    apply: applyUnicodeBidi)
+let writingModeProperty* = PropertyImpl(name: "writing-mode",
+    apply: applyWritingMode)
+let whiteSpaceCollapseProperty* = PropertyImpl(name: "white-space-collapse",
+    apply: applyTextMetadata)
+let verticalAlignProperty* = PropertyImpl(name: "vertical-align",
+    apply: applyTextMetadata)
 let tabSizeProperty* = PropertyImpl(name: "tab-size", apply: applyTabSize)
-let hangingPunctuationProperty* = PropertyImpl(name: "hanging-punctuation", apply: applyTextMetadata)
-let hyphenateCharacterProperty* = PropertyImpl(name: "hyphenate-character", apply: applyTextMetadata)
-let hyphenateLimitCharsProperty* = PropertyImpl(name: "hyphenate-limit-chars", apply: applyTextMetadata)
-let initialLetterProperty* = PropertyImpl(name: "initial-letter", apply: applyTextMetadata)
-let initialLetterAlignProperty* = PropertyImpl(name: "initial-letter-align", apply: applyTextMetadata)
-let maxLinesProperty* = PropertyImpl(name: "max-lines", apply: applyTextMetadata)
-let rubyMergeProperty* = PropertyImpl(name: "ruby-merge", apply: applyTextMetadata)
+let hangingPunctuationProperty* = PropertyImpl(name: "hanging-punctuation",
+    apply: applyTextMetadata)
+let hyphenateCharacterProperty* = PropertyImpl(name: "hyphenate-character",
+    apply: applyTextMetadata)
+let hyphenateLimitCharsProperty* = PropertyImpl(name: "hyphenate-limit-chars",
+    apply: applyTextMetadata)
+let initialLetterProperty* = PropertyImpl(name: "initial-letter",
+    apply: applyTextMetadata)
+let initialLetterAlignProperty* = PropertyImpl(name: "initial-letter-align",
+    apply: applyTextMetadata)
+let maxLinesProperty* = PropertyImpl(name: "max-lines",
+    apply: applyTextMetadata)
+let rubyMergeProperty* = PropertyImpl(name: "ruby-merge",
+    apply: applyTextMetadata)

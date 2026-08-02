@@ -324,6 +324,15 @@ and hit-test passes. Serialized parsing is likewise an authoring and resource
 ingestion operation: computed styles retain parsed values, so paint, layout,
 and hit-test passes do not reparse unchanged strings.
 
+Solid authored-color integration keeps `ColorValue` behind an ARC-managed cold
+reference in declaration values and resolves it before compact computed styles
+reach paint. A same-machine release ARC A/B run against development commit
+`37d31b9` measured the 4,000-node ordinary pipeline at 11.610 ms for style
+resolution before the integration and 11.552 ms after the cold-reference
+change. Style-context construction places foreground declarations first while
+preserving their cascade order, so runtime style resolution remains a single
+pass for every context.
+
 ## Renderer budgets
 
 - Texture/measure caches are bounded (entry count and total bytes) with LRU

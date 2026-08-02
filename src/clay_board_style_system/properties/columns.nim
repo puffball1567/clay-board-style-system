@@ -1,5 +1,6 @@
 import std/options
-import ../core/[color, computed_style, declaration, diagnostics, property, style_value]
+import ../core/[color, computed_style, declaration, diagnostics, property,
+    style_color, style_value]
 
 proc setColumnKeyword(style: var ComputedStyle; property: string; value: Option[string]) =
   style.ensureColumns()
@@ -46,7 +47,8 @@ proc applyColumnKeyword(
 ) =
   case declaration.operation.mode
   of mmOverwrite:
-    if declaration.operation.value.isNone or declaration.operation.value.get.kind != svKeyword:
+    if declaration.operation.value.isNone or
+        declaration.operation.value.get.kind != svKeyword:
       diagnostics.addError(declaration.property, declaration.property & " requires a keyword metadata value")
       return
     let value = declaration.operation.value.get.keyword
@@ -58,9 +60,11 @@ proc applyColumnKeyword(
     style.setColumnKeyword(declaration.property, none(string))
   of mmInherit:
     if env.parent.isSome:
-      style.setColumnKeyword(declaration.property, env.parent.get.columnKeyword(declaration.property))
+      style.setColumnKeyword(declaration.property, env.parent.get.columnKeyword(
+          declaration.property))
     else:
-      diagnostics.addError(declaration.property, "cannot inherit " & declaration.property & " without parent")
+      diagnostics.addError(declaration.property, "cannot inherit " &
+          declaration.property & " without parent")
   of mmRelative:
     diagnostics.addError(declaration.property, declaration.property & " does not support relative merge")
 
@@ -97,7 +101,8 @@ proc applyColumnLength(
 ) =
   case declaration.operation.mode
   of mmOverwrite:
-    if declaration.operation.value.isNone or declaration.operation.value.get.kind != svLength:
+    if declaration.operation.value.isNone or
+        declaration.operation.value.get.kind != svLength:
       diagnostics.addError(declaration.property, declaration.property & " requires a px length value")
       return
     let length = declaration.operation.value.get.length
@@ -109,9 +114,11 @@ proc applyColumnLength(
     style.setColumnLength(declaration.property, none(float32))
   of mmInherit:
     if env.parent.isSome:
-      style.setColumnLength(declaration.property, env.parent.get.columnLength(declaration.property))
+      style.setColumnLength(declaration.property, env.parent.get.columnLength(
+          declaration.property))
     else:
-      diagnostics.addError(declaration.property, "cannot inherit " & declaration.property & " without parent")
+      diagnostics.addError(declaration.property, "cannot inherit " &
+          declaration.property & " without parent")
   of mmRelative:
     diagnostics.addError(declaration.property, declaration.property & " does not support relative merge")
 
@@ -160,10 +167,12 @@ proc applyColumnRuleColor(
   style.ensureColumns()
   case declaration.operation.mode
   of mmOverwrite:
-    if declaration.operation.value.isNone or declaration.operation.value.get.kind != svColor:
+    if declaration.operation.value.isNone or
+        declaration.operation.value.get.kind != svColor:
       diagnostics.addError(declaration.property, "column-rule-color requires a color value")
       return
-    style.columns.columnRuleColor = some(declaration.operation.value.get.color)
+    style.columns.columnRuleColor = declaration.operation.value.get.resolveStyleColor(
+        style, env)
   of mmInitial, mmUnset:
     style.columns.columnRuleColor = none(Color)
   of mmInherit:
@@ -174,14 +183,24 @@ proc applyColumnRuleColor(
   of mmRelative:
     diagnostics.addError(declaration.property, "column-rule-color does not support relative merge")
 
-let columnCountProperty* = PropertyImpl(name: "column-count", apply: applyColumnCount)
-let columnFillProperty* = PropertyImpl(name: "column-fill", apply: applyColumnKeyword)
-let columnHeightProperty* = PropertyImpl(name: "column-height", apply: applyColumnLength)
-let columnRuleProperty* = PropertyImpl(name: "column-rule", apply: applyColumnKeyword)
-let columnRuleColorProperty* = PropertyImpl(name: "column-rule-color", apply: applyColumnRuleColor)
-let columnRuleStyleProperty* = PropertyImpl(name: "column-rule-style", apply: applyColumnKeyword)
-let columnRuleWidthProperty* = PropertyImpl(name: "column-rule-width", apply: applyColumnLength)
-let columnSpanProperty* = PropertyImpl(name: "column-span", apply: applyColumnKeyword)
-let columnWidthProperty* = PropertyImpl(name: "column-width", apply: applyColumnLength)
-let columnWrapProperty* = PropertyImpl(name: "column-wrap", apply: applyColumnKeyword)
+let columnCountProperty* = PropertyImpl(name: "column-count",
+    apply: applyColumnCount)
+let columnFillProperty* = PropertyImpl(name: "column-fill",
+    apply: applyColumnKeyword)
+let columnHeightProperty* = PropertyImpl(name: "column-height",
+    apply: applyColumnLength)
+let columnRuleProperty* = PropertyImpl(name: "column-rule",
+    apply: applyColumnKeyword)
+let columnRuleColorProperty* = PropertyImpl(name: "column-rule-color",
+    apply: applyColumnRuleColor)
+let columnRuleStyleProperty* = PropertyImpl(name: "column-rule-style",
+    apply: applyColumnKeyword)
+let columnRuleWidthProperty* = PropertyImpl(name: "column-rule-width",
+    apply: applyColumnLength)
+let columnSpanProperty* = PropertyImpl(name: "column-span",
+    apply: applyColumnKeyword)
+let columnWidthProperty* = PropertyImpl(name: "column-width",
+    apply: applyColumnLength)
+let columnWrapProperty* = PropertyImpl(name: "column-wrap",
+    apply: applyColumnKeyword)
 let columnsProperty* = PropertyImpl(name: "columns", apply: applyColumnKeyword)

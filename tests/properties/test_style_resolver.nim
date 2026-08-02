@@ -4,6 +4,29 @@ import clay_board_style_system
 import clay_board_style_system/generated/default_properties
 
 suite "style resolver invalidation":
+  test "selector rules preserve foreground-first currentColor resolution":
+    var tree = initTree()
+    let root = tree.addBox(id = "root")
+    let child = tree.addBox(parent = some(root), id = "child")
+    let foreground = rgb(0.25, 0.55, 0.85)
+    let sheet = styleSheet([
+      rule(id("root"), [
+        decl("background-color", colorValue(currentColor())),
+        decl("color", colorValue(foreground))
+      ]),
+      rule(id("child"), [
+        decl("border-color", colorValue(currentColor()))
+      ])
+    ])
+    var diagnostics: Diagnostics
+    let resolved = resolveTreeStyles(
+      tree, [sheet], defaultProperties(), diagnostics
+    )
+
+    check not diagnostics.hasErrors
+    check resolved.styles[root.nodeIndex].box.backgroundColor == some(foreground)
+    check resolved.styles[child.nodeIndex].box.borderColor == some(foreground)
+
   test "subtree resolution updates descendants and preserves inherited parent style":
     let ui = initUiRoot()
     let parent = ui.box()

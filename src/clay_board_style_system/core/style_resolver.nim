@@ -117,14 +117,15 @@ proc matchingContext(
   matched.sort(compareMatched)
   result = initStyleContext()
   for item in matched:
-    result.declarations.add item.declaration
+    result.addDeclaration item.declaration
 
-proc contextForProperty(context: StyleContext; property: string; keepMatches: bool): StyleContext =
+proc contextForProperty(context: StyleContext; property: string;
+    keepMatches: bool): StyleContext =
   ## Font-relative units need a resolved font size before other declarations.
   result = initStyleContext()
   for declaration in context.declarations:
     if (declaration.property == property) == keepMatches:
-      result.declarations.add declaration
+      result.addDeclaration declaration
 
 proc resolveNode(
     tree: Tree;
@@ -165,7 +166,8 @@ proc resolveNode(
     rootFontSize: some(effectiveRootFontSize),
     currentFontSize: some(currentFontSize)
   )
-  let remainingContext = context.contextForProperty("font-size", keepMatches = false)
+  let remainingContext = context.contextForProperty("font-size",
+      keepMatches = false)
   var style = resolveStyles(remainingContext, registry, env, diagnostics)
   style.text.fontSize = some(currentFontSize)
   if parent.isSome:
@@ -300,7 +302,8 @@ proc resolveSubtreeStyles*(
     if parent.isSome: computedStyleRef(resolved.styles[parent.get.nodeIndex])
     else: ComputedStyleRef()
   let rootFontSize =
-    if tree.root.isSome and resolved.styles[tree.root.get.nodeIndex].text.fontSize.isSome:
+    if tree.root.isSome and resolved.styles[
+        tree.root.get.nodeIndex].text.fontSize.isSome:
       resolved.styles[tree.root.get.nodeIndex].text.fontSize.get
     else:
       16.0'f32
