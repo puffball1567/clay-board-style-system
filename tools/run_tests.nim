@@ -15,6 +15,7 @@ const portableExcludedTests = [
   "tests/backends/test_sdl3_text_event_guard.nim",
   "tests/integration/test_demo_layout.nim",
   "tests/integration/test_sdl3_navigation.nim",
+  "tests/integration/test_sdl3_transform_render.nim",
   "tests/testing/test_sdl3_wayland_driver.nim"
 ]
 
@@ -64,13 +65,22 @@ proc main() =
       "--mm:arc",
       "--path:" & (repoRoot / "src"),
     ]
+    if relative.startsWith("tests/perf/"):
+      arguments.add("-d:release")
     if not portable:
       arguments.add("-d:cbssSdl3LinkMode=bundled")
       arguments.add("-d:cbssRuntimeRoot=" & (repoRoot / "vendor/sdl3"))
     arguments.add("--nimcache:" & (runRoot / ("cache_" & name)))
     arguments.add("--out:" & (runRoot / name))
     arguments.add(repoRoot / relative)
-    let command = arguments.mapIt(it.quoteShell()).join(" ")
+    var command = arguments.mapIt(it.quoteShell()).join(" ")
+    when defined(linux):
+      if not portable:
+        let bridgeLibraryPath = [
+          repoRoot / "native" / "cosmic_text_bridge" / "target" / "release",
+          repoRoot / "native" / "image_bridge" / "target" / "release"
+        ].join(":")
+        command = "env LD_LIBRARY_PATH=" & bridgeLibraryPath.quoteShell & " " & command
 
     stdout.writeLine("\n==> " & relative)
     let execution = execCmdEx(command, options = {poUsePath, poStdErrToStdOut})

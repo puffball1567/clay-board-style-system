@@ -145,7 +145,7 @@ SDL3 demos were also reviewed interactively before release.
 
 ## Version 0.3 - Visual Foundation And Color
 
-Status: `Planned`
+Status: `In progress`
 
 Version 0.3 establishes the public visual-surface foundation that independent
 libraries can build on. CBSS owns the host contract, placement, composition,
@@ -216,16 +216,96 @@ Implementation progress:
   required Linux, Windows, and macOS CI lanes for the platform-neutral core,
   C ABI build, and native Rust bridges. Linux-specific SDL3 runtime checks
   remain separate and continue to be release-blocking.
-- Remaining color units: gradient color-space integration, missing-component
-  interpolation, `color-mix()`, browser comparison fixtures, and versioned C
-  ABI constructors.
-- Remaining visual units: optional Pixie output, the RenderSurface lifecycle,
-  SDL Canvas, the animation clock, and the shared transform/paint/hit-test
-  coordinate contract.
+- Implemented on the Version 0.3 development line: typed and serialized
+  `color-mix()` with CSS percentage defaulting and normalization, explicit
+  sRGB, linear-sRGB, and Oklab interpolation, premultiplied alpha, late
+  `currentColor`, strict diagnostics, and direct solid/border/shadow style
+  integration. Additional interpolation spaces, hue methods, and nested mixes
+  remain explicit follow-up work.
+- Implemented on the Version 0.3 development line: CSS missing-component
+  interpolation for the currently supported rectangular interpolation spaces,
+  including analogous cross-space components, remaining-component sets, and
+  alpha carry-forward before premultiplication.
+- Implemented on the Version 0.3 development line: explicit sRGB,
+  linear-sRGB, and Oklab interpolation for linear gradients through one shared
+  premultiplied-alpha sampler used by SDL3 and PPM. The selected space is part
+  of computed style, paint commands, and SDL3 baked-texture cache identity.
+- Implemented on the Version 0.3 development line: additive C ABI 1.1 opaque
+  authored-color handles and constructors for typed spaces, `currentColor`,
+  CSS color parsing, and `color-mix()`. The stable 16-byte resolved color ABI
+  remains unchanged.
+- Implemented on the Version 0.3 development line: mixed resolved and authored
+  gradient stops, including wide-gamut values, `currentColor`, and color mixes.
+  Stops retain authored intent in declarations and resolve to the existing
+  compact paint representation during style computation. The C ABI copies
+  opaque authored-color stop handles rather than borrowing them.
+- Implemented on the Version 0.3 development line: pinned Chrome 150 fixtures
+  for serialized colors, color mixes, alpha composition, wide-gamut Canvas
+  conversion, and actual CSS swatches. Portable tests enforce the captured
+  RGBA8 boundary without requiring a browser in product builds. A Chrome 150
+  Rec.2020 transfer-function difference from current CSS Color 4 is recorded
+  explicitly rather than hidden behind a broad tolerance.
+- The planned Version 0.3 color units are implemented. Additional
+  interpolation spaces, polar hue methods, serialized gradient syntax,
+  wide-gamut/HDR output surfaces, and newer browser comparison lanes remain
+  follow-up capabilities rather than release blockers for the SDR sRGB path.
+- Implemented on the Version 0.3 development line: versioned RenderSurface
+  registration and lifecycle, placement, local input conversion, explicit
+  frame requests, visibility, device-loss/recovery, deterministic teardown,
+  and idle-aware scheduling.
+- Implemented on the Version 0.3 development line: a first retained `Canvas2D`
+  surface for rectangles, rounded rectangles, linear gradients, strokes,
+  text, images, and nested clips. Canvas content uses the Box content area;
+  CBSS retains ownership of padding, borders, opacity, clipping, stacking, and
+  event routing. Canvas commands enter the existing paint stream, so SDL3 and
+  headless rendering do not acquire separate style semantics.
+- Implemented on the Version 0.3 development line: a deterministic animation
+  clock with delays, finite and infinite iterations, direction, fill,
+  pause/resume, reduced-motion policy, CSS timing functions, typed float and
+  color keyframes, dirty-domain integration, and no idle frame loop.
+- Implemented on the Version 0.3 development line: one presentation-coordinate
+  helper for ancestor scroll translation, overflow clipping, inherited
+  opacity, paint, hit testing, and RenderSurface placement. Dedicated tests
+  assert that these consumers agree.
+- Implemented on the Version 0.3 development line: the versioned RenderSurface
+  contract is exposed through the C ABI, including Box attachment, placement,
+  local input, explicit frame requests, pixel-scale resize, visibility,
+  device loss/recovery, and deterministic unmount. Shared and static C
+  consumers exercise the complete lifecycle.
+- Implemented on the Version 0.3 development line: an interactive Canvas and
+  wide-gamut color demo exercises retained drawing, local pointer input,
+  explicit 60 Hz frame requests, event-driven idle waiting, clipping, and
+  Oklab-interpolated gradients through the bundled SDL3 path.
+- Implemented on the Version 0.3 development line: retained open and closed
+  paths with adaptive quadratic/cubic curves, configurable butt/round/square
+  caps, miter/round/bevel joins, Canvas-local placement, opacity, clipping,
+  and shared SDL3/headless rendering.
+- Implemented on the Version 0.3 development line: resolved 2D
+  `transform`, `translate`, `rotate`, `scale`, transform origin, and transform
+  box now share one affine coordinate contract across paint, exact hit tests,
+  transformed clips, and RenderSurface-local input. SDL3 composites bounded
+  offscreen scopes with reusable high-DPI textures; the PPM reference backend
+  inverse-samples transformed gradients and clips. Pixel tests cover normal,
+  layered, nested, and rounded-clip composition.
+- Implemented on the Version 0.3 development line: retained Canvas `save`,
+  `restore`, `transform`, `translate`, `rotate`, and `scale`. Transform and clip
+  scopes restore in strict LIFO order, local matrices are placed at the Canvas
+  Box origin, malformed scopes are contained, and SDL pixel tests exercise the
+  same bounded affine composition path as styled Box transforms.
+- Pixie evaluation result: do not make Pixie a core dependency or expose its
+  types. A future optional adapter remains appropriate for cached paths,
+  masks, SVG, blur, and image effects after the canonical path/mask paint
+  vocabulary and cache ownership are stable. SDL3 remains sufficient for the
+  mandatory Version 0.3 Canvas path.
+- Remaining Version 0.3 visual work: add blend state and explicit offscreen
+  surfaces; expose drawing adapters beyond the existing C ABI lifecycle; and
+  complete the final SDL3, headless, performance, memory, and platform release
+  gates. Three-dimensional transforms, filters, and blend/isolation semantics
+  remain later work.
 
 ## Version 0.4 - Complete Unit Resolution
 
-Status: `Planned`
+Status: `Partially implemented`
 
 Version 0.4 completes the typed unit model across supported properties. The
 goal is not merely to parse more values: every supported unit/property pair
@@ -350,7 +430,7 @@ Capability plan and progress:
   spaces with strict diagnostics. This parser foundation is implemented in
   Version 0.3; consuming properties must still define their resolution
   contexts.
-- Keep the implemented predefined `color(...)` spaces and add typed
+- Keep the implemented predefined `color(...)` spaces and typed/serialized
   `color-mix(...)` behavior where it is meaningful for CBSS declarations.
 - Keep the implemented declaration overloads where `Color` or `ColorValue`
   unambiguously means a solid style color, so ordinary declarations do not
@@ -509,18 +589,20 @@ to resolve style or relayout on every frame.
 
 ### Transforms And Transitions
 
-Planned work:
+Current and planned work:
 
-- Complete `translate`, `scale`, `rotate`, transform origin, and composition
-  order with a single layout, paint, and hit-test coordinate contract.
+- Implemented: `translate`, `scale`, `rotate`, transform origin, and 2D
+  composition order use a single layout, paint, hit-test, clip, and
+  RenderSurface coordinate contract. Canvas uses the same affine paint scopes.
 - Add declarative transition property, duration, delay, timing-function, and
   interpolation behavior for supported style values.
-- Add keyframe-style animation definitions for values that CBSS can resolve,
-  interpolate, and paint deterministically.
-- Schedule frames only while an animation, transition, caret blink, scrolling
-  motion, or Canvas explicitly needs one; idle UI remains event-driven.
-- Respect reduced-motion preferences through an application or platform
-  capability interface.
+- Implemented foundation: typed float/color keyframes and the animation clock
+  resolve and interpolate deterministically; declaration-driven keyframe
+  binding remains planned.
+- Implemented: frames are scheduled only while timed work, caret blink,
+  scrolling motion, or Canvas requests one; idle UI remains event-driven.
+- Implemented foundation: the animation clock accepts reduced-motion policy;
+  platform preference adapters remain planned.
 
 ### Sprites And Tile Maps
 

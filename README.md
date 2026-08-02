@@ -1,5 +1,16 @@
 # Clay Board Style System
 
+**The flexibility of CSS. Native performance. A shared foundation for GUI
+development.**
+
+Clay Board Style System brings CSS-inspired styling to native GUI development.
+It combines styling, layout, events, state management, and Canvas drawing
+without depending on a DOM or WebView. It is not a collection of ready-made
+widgets; it is the foundation for building and distributing original GUI
+libraries and design systems. Its SDL3-based runtime is built for
+cross-platform deployment, while its versioned C ABI makes the same foundation
+available from Nim and other programming languages.
+
 **Name clarification:** Clay Board Style System is an independent project. It
 is not related to, affiliated with, derived from, or compatible with Clay, the
 C UI layout library.
@@ -60,6 +71,12 @@ cd clay-board-style-system
 nimble setupBundled
 nimble test
 nimble sdl3Demo
+```
+
+The in-development Version 0.3 color and Canvas path has a focused demo:
+
+```sh
+nimble v03CanvasDemo
 ```
 
 For an installed package, install CBSS once:
@@ -296,6 +313,9 @@ adapters, injection, and the custom-driver contract.
 See [docs/color.md](docs/color.md) for the authored color-space model,
 conversion boundary, gamut policy, and interpolation behavior being developed
 for Version 0.3.
+See [docs/render-surfaces.md](docs/render-surfaces.md) for the implemented
+RenderSurface lifecycle, retained Canvas API, input coordinates, and frame
+scheduling contract.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the files-to-touch map and ground
 rules for contributions.
 See [docs/platform-support.md](docs/platform-support.md) for the current

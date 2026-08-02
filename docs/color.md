@@ -61,14 +61,18 @@ The Version 0.3 parser supports:
 - the modern `none` keyword for missing components.
 
 Missing components are stored separately from their numerical placeholder.
-This preserves authored intent for future cross-space interpolation. Version
-0.3 does not yet implement the CSS carry-forward rules for missing components
-during interpolation.
+This preserves authored intent during cross-space interpolation. Version 0.3
+classifies analogous components before conversion and carries a numeric
+counterpart into a missing component before alpha premultiplication. It also
+implements the CSS rule that carries a fully missing remaining component set,
+such as Oklch chroma and hue, into the corresponding Oklab `a` and `b` set.
 
-The parser deliberately does not accept deprecated system colors, relative
-color syntax, `color-mix()`, `calc()`, `var()`, or CSS comments. CBSS Nim
-values and constants remain the theme/value-indirection mechanism; the parser
-does not introduce a browser cascade or a CSS custom-property runtime. These
+The single-color parser deliberately does not accept deprecated system colors,
+relative color syntax, `calc()`, `var()`, or CSS comments. `color-mix()` uses
+the separate `parseColorMix` boundary described below because it produces a
+deferred color expression rather than one authored color. CBSS Nim values and
+constants remain the theme/value-indirection mechanism; neither parser
+introduces a browser cascade or a CSS custom-property runtime. These
 boundaries produce explicit errors rather than silently degrading to another
 color.
 
@@ -117,14 +121,126 @@ round trip.
 
 The numerical model, serialized parser, and solid style-property integration
 remain independent implementation units. Browser comparison fixtures, C ABI
-input handles, missing-value interpolation, gradient color spaces,
-`color-mix()`, and optional Pixie output remain separate units built on this
-contract.
+input handles, gradient color spaces, and optional Pixie output remain
+separate units built on this contract.
+
+## Color Mixing
+
+`ColorMixValue` retains both authored endpoints, the interpolation space,
+normalized weights, and any alpha multiplier. It resolves only when consumed,
+so `currentColor` continues to use the foreground from the relevant style
+context.
+
+```nim
+let accent = colorMix(
+  currentColor(), 30,
+  displayP3(0.1, 0.45, 0.9), 70,
+  cisOklab
+)
+
+let panelStyle = styleContext([
+  decl("color", rgb(0.9, 0.9, 0.95)),
+  decl("background-color", accent)
+])
+```
+
+The typed API and `parseColorMix` implement the CSS Color 5 percentage rules:
+
+- two omitted percentages become 50% each;
+- one omitted percentage is the complement of the specified percentage;
+- totals above 100% are normalized without increasing alpha;
+- totals below 100% are normalized and multiply the result alpha; and
+- negative, non-finite, over-100%, and all-zero inputs are rejected.
+
+The initial interpolation-space surface is `cisSrgb`, `cisSrgbLinear`, and
+`cisOklab`. Serialized input accepts the corresponding `srgb`, `srgb-linear`,
+and `oklab` names:
+
+```nim
+let parsed = parseColorMix(
+  "color-mix(in srgb-linear, currentColor 25%, #2677ff 75%)"
+)
+```
+
+`parseColorMix` intentionally remains separate from `parseColor`: the former
+returns `ColorMixValue`, while the latter returns one `ColorValue`. Both can be
+passed directly to `decl` after successful parsing. Nested mixes, polar hue
+interpolation methods, and additional interpolation spaces remain follow-up
+units rather than silently using an incorrect fallback.
+
+## Gradient Interpolation
+
+Linear gradients use the same interpolation contract as `color-mix()`. The
+existing `linearGradient(...)` helper retains its sRGB default for source
+compatibility. `linearGradientIn(...)` selects a space explicitly:
+
+```nim
+let background = linearGradientIn(
+  cisOklab,
+  135,
+  colorStop(rgb(0.95, 0.18, 0.12), 0),
+  colorStop(rgb(0.10, 0.32, 0.95), 100)
+)
+```
+
+The selected space survives style resolution and paint-command generation.
+SDL3 and the deterministic PPM backend share one sampler, including
+premultiplied-alpha handling, instead of maintaining backend-specific color
+math. SDL3 also includes the interpolation space in its baked texture cache
+key. Raster backends prepare stop conversions once and use a projected-pixel
+lookup capped at 2,048 samples. This avoids doing color-space matrices and
+gamut mapping per output pixel while keeping lookup error within one RGBA8
+channel step in the conformance tests. Gradient declarations may mix resolved
+colors with authored `ColorValue`, `currentColor`, and `ColorMixValue` stops.
+Authored stops resolve during style computation, after the foreground color is
+known; computed and paint data keep the existing resolved `GradientStop`
+representation. Serialized CSS gradient syntax remains a separate follow-up
+input unit.
+
+```nim
+let background = linearGradientIn(
+  cisOklab,
+  110,
+  colorStop(displayP3(0.94, 0.22, 0.08), 0),
+  colorStop(currentColor(), 45),
+  colorStop(colorMix(oklch(0.72, 0.16, 42), rec2020(0.1, 0.7, 0.3)), 100)
+)
+```
+
+C ABI version `0x00010001` adds opaque authored-color handles. Foreign callers
+can construct typed color-space values and `currentColor`, parse supported CSS
+color and `color-mix()` syntax, resolve a value for inspection, and copy it
+into a style declaration. The original 16-byte `CbssColor` and existing RGBA
+setter remain unchanged. The additive gradient setter selects an interpolation
+space, which is also emitted in renderer-neutral paint commands.
+`cbss_style_set_linear_gradient_color_values` accepts opaque authored-color
+handles as stops and copies their values into the style, so callers may destroy
+the handles immediately after a successful call.
 
 ## Conformance Source
 
-The transfer functions, color-space matrices, D50/D65 adaptation, and
+The transfer functions, color-space matrices, D50/D65 adaptation, and base
 interpolation rules follow the W3C
-[CSS Color Module Level 4](https://www.w3.org/TR/css-color-4/). Tests use
+[CSS Color Module Level 4](https://www.w3.org/TR/css-color-4/). Color-mix
+percentage normalization follows
+[CSS Color Module Level 5](https://www.w3.org/TR/css-color-5/). Tests use
 published reference primaries and white points rather than backend-specific
 color behavior.
+
+## Browser Comparison Fixtures
+
+`tests/fixtures/color/browser_reference.html` captures serialized color,
+color-mix, alpha-composition, and wide-gamut values through a one-pixel sRGB
+Canvas boundary. `browser_visual_reference.html` renders the corresponding
+values as ordinary CSS backgrounds so the Canvas result can be checked against
+actual browser paint. The pinned Chrome 150 Linux values live in
+`chrome_150_linux_srgb.json`; the portable Nim test consumes only that data, so
+Chrome is not a runtime or product dependency.
+
+Chrome 150 exposes channel-clipped sRGB at this boundary. The fixture therefore
+compares against explicit `cgmClip` conversion while CBSS retains Oklch chroma
+reduction as its default perceptual gamut policy. Exact or two-step RGBA8
+tolerances cover quantization and premultiplied readback. Rec.2020 is recorded
+as a named divergence: Chrome 150's output does not match the current CSS Color
+4 BT.1886 2.4 transfer used by CBSS. The fixture stores both results and tests
+them independently instead of weakening the tolerance for every color.

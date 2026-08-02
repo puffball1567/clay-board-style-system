@@ -1,0 +1,69 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CBSS browser color reference generator</title>
+<pre id="result">pending</pre>
+<script>
+const cases = [
+  { name: "hex-short", input: "#369" },
+  { name: "hex-alpha", input: "#3698" },
+  { name: "named", input: "rebeccapurple" },
+  { name: "transparent", input: "transparent" },
+  { name: "modern-rgb", input: "rgb(12 140 230 / 72%)" },
+  { name: "modern-hsl", input: "hsl(210 80% 48% / 65%)" },
+  { name: "hwb", input: "hwb(30 12% 18% / 75%)" },
+  { name: "lab", input: "lab(62% 35 -42 / 80%)" },
+  { name: "lch", input: "lch(70% 56 48deg / 90%)" },
+  { name: "oklab", input: "oklab(70% 0.1 -0.12 / 85%)" },
+  { name: "oklch", input: "oklch(68% 0.19 260deg / 80%)" },
+  { name: "display-p3", input: "color(display-p3 0.92 0.18 0.08 / 90%)" },
+  { name: "a98-rgb", input: "color(a98-rgb 0.22 0.68 0.33)" },
+  { name: "prophoto-rgb", input: "color(prophoto-rgb 0.38 0.25 0.61)" },
+  { name: "rec2020", input: "color(rec2020 0.12 0.66 0.32)" },
+  { name: "xyz-d50", input: "color(xyz-d50 0.3 0.35 0.2)" },
+  { name: "xyz-d65", input: "color(xyz-d65 0.3 0.35 0.2)" },
+  { name: "missing-component", input: "oklab(60% none 0.1)" },
+  { name: "mix-srgb", input: "color-mix(in srgb, red 25%, blue 75%)", kind: "mix" },
+  { name: "mix-linear", input: "color-mix(in srgb-linear, red 25%, blue 75%)", kind: "mix" },
+  { name: "mix-oklab", input: "color-mix(in oklab, red 25%, blue 75%)", kind: "mix" },
+  { name: "alpha-over-white", input: "rgb(240 20 80 / 35%)", backdrop: "white" },
+  { name: "p3-alpha-over-dark", input: "color(display-p3 0.9 0.3 0.1 / 45%)", backdrop: "rgb(20 30 45)" }
+];
+
+function sample(testCase) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1;
+  canvas.height = 1;
+  const context = canvas.getContext("2d", {
+    alpha: true,
+    colorSpace: "srgb",
+    willReadFrequently: true
+  });
+  context.clearRect(0, 0, 1, 1);
+  if (testCase.backdrop) {
+    context.fillStyle = testCase.backdrop;
+    context.fillRect(0, 0, 1, 1);
+  }
+  context.fillStyle = "rgb(1 2 3)";
+  const sentinel = context.fillStyle;
+  context.fillStyle = testCase.input;
+  const serialized = context.fillStyle;
+  context.fillRect(0, 0, 1, 1);
+  return {
+    name: testCase.name,
+    kind: testCase.kind || "color",
+    input: testCase.input,
+    backdrop: testCase.backdrop || null,
+    accepted: serialized !== sentinel,
+    serialized,
+    rgba8: Array.from(context.getImageData(0, 0, 1, 1).data)
+  };
+}
+
+const output = {
+  schema: 1,
+  pixelBoundary: "CanvasRenderingContext2D/getImageData/srgb/rgba8",
+  userAgent: navigator.userAgent,
+  cases: cases.map(sample)
+};
+document.getElementById("result").textContent = JSON.stringify(output);
+</script>

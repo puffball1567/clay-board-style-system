@@ -2,8 +2,10 @@ import std/options
 import ../core/[computed_style, geometry, node, style_resolver]
 import ../layout/layout
 import ../layout/overflow_geometry
+import ../layout/presentation
 import ../layout/scroll_state
 import ../layout/scrollbar_geometry
+import ../layout/transform_geometry
 
 type
   HitRegionKind* = enum
@@ -22,6 +24,8 @@ type
     kind*: HitRegionKind
     scrollbarTrack*: Option[Rect]
     scrollbarThumb*: Option[Rect]
+    shape*: Option[TransformedRect]
+    clipShapes*: seq[TransformedRect]
 
   HitTestResult* = object
     node*: NodeId
@@ -84,6 +88,8 @@ proc addHitRegions(
     id: NodeId;
     translation: Vec2;
     inheritedClip: Option[Rect];
+    inheritedClipShapes: seq[TransformedRect];
+    inheritedTransform: Affine2D;
     output: var seq[HitRegion]
 ) =
   let boxIndex = boxIndices.boxIndexFor(id)
@@ -95,7 +101,9 @@ proc addHitRegions(
     return
 
   let nodeRect = item.rect.translated(translation)
-  var visibleRect = nodeRect
+  let worldTransform = inheritedTransform * resolvedTransform(style, nodeRect)
+  let nodeShape = transformedRect(nodeRect, worldTransform)
+  var visibleRect = nodeShape.bounds
   if inheritedClip.isSome:
     visibleRect = visibleRect.intersection(inheritedClip.get)
 
@@ -105,15 +113,21 @@ proc addHitRegions(
       rect: visibleRect,
       localOrigin: some(vec2(nodeRect.x, nodeRect.y)),
       zIndex: item.zIndex * 100000 + boxIndex,
-      cursor: tree.inheritedCursor(styles, id)
+      cursor: tree.inheritedCursor(styles, id),
+      shape: some(nodeShape),
+      clipShapes: inheritedClipShapes
     )
 
   if style.hidesContents:
     return
 
   var childClip = inheritedClip
+  var childClipShapes = inheritedClipShapes
   if tree.nodes[id.nodeIndex].kind == nkBox and style.clipsOverflow():
-    let ownClip = overflowClipRect(nodeRect, style)
+    let ownClipSource = overflowClipRect(nodeRect, style)
+    let ownClipShape = transformedRect(ownClipSource, worldTransform)
+    let ownClip = ownClipShape.bounds
+    childClipShapes.add ownClipShape
     childClip =
       if childClip.isSome: some(childClip.get.intersection(ownClip))
       else: some(ownClip)
@@ -125,7 +139,7 @@ proc addHitRegions(
   for child in tree.nodes[id.nodeIndex].children:
     addHitRegions(
       tree, layout, boxIndices, styles, scroll, child, childTranslation,
-      childClip, output
+      childClip, childClipShapes, worldTransform, output
     )
 
   if tree.nodes[id.nodeIndex].kind == nkBox and
@@ -150,7 +164,9 @@ proc addHitRegions(
             zIndex: item.zIndex * 100000 + boxIndex,
             kind: trackKind,
             scrollbarTrack: some(axis.track),
-            scrollbarThumb: some(axis.thumb)
+            scrollbarThumb: some(axis.thumb),
+            shape: some(transformedRect(axis.track, worldTransform)),
+            clipShapes: inheritedClipShapes
           )
         if not visibleThumb.isEmpty:
           output.add HitRegion(
@@ -160,7 +176,9 @@ proc addHitRegions(
             zIndex: item.zIndex * 100000 + boxIndex,
             kind: thumbKind,
             scrollbarTrack: some(axis.track),
-            scrollbarThumb: some(axis.thumb)
+            scrollbarThumb: some(axis.thumb),
+            shape: some(transformedRect(axis.thumb, worldTransform)),
+            clipShapes: inheritedClipShapes
           )
       if scrollbars.horizontal.isSome:
         addScrollbarRegions(
@@ -181,59 +199,8 @@ proc buildHitRegions*(
     let boxIndices = layout.layoutBoxIndices(tree.nodes.len)
     addHitRegions(
       tree, layout, boxIndices, styles, scroll, tree.root.get, vec2(0, 0),
-      none(Rect), result
+      none(Rect), @[], identityAffine2D(), result
     )
-
-type HitAncestorContext = object
-  translation: Vec2
-  clip: Option[Rect]
-  visible: bool
-
-proc ancestorHitContext(
-    tree: Tree;
-    layout: LayoutResult;
-    boxIndices: openArray[int];
-    styles: ResolvedTree;
-    scroll: ScrollState;
-    root: NodeId
-): HitAncestorContext =
-  result.visible = true
-  var parent = tree.nodes[root.nodeIndex].parent
-  var ancestors: seq[NodeId]
-  while parent.isSome:
-    ancestors.add parent.get
-    parent = tree.nodes[parent.get.nodeIndex].parent
-
-  if ancestors.len == 0:
-    return
-
-  for index in countdown(ancestors.high, 0):
-    let ancestor = ancestors[index]
-    let boxIndex = boxIndices.boxIndexFor(ancestor)
-    if boxIndex < 0:
-      result.visible = false
-      return
-    let style {.cursor.} = styles.styles[ancestor.nodeIndex]
-    if not style.visual.visible or style.layout.display == dkNone or
-        style.hidesContents:
-      result.visible = false
-      return
-
-    let nodeRect = layout.boxes[boxIndex].rect.translated(result.translation)
-    if tree.nodes[ancestor.nodeIndex].kind == nkBox and style.clipsOverflow():
-      let ownClip = overflowClipRect(nodeRect, style)
-      result.clip =
-        if result.clip.isSome:
-          some(result.clip.get.intersection(ownClip))
-        else:
-          some(ownClip)
-      if result.clip.get.isEmpty:
-        result.visible = false
-        return
-
-    let offset = scroll.scrollOffset(ancestor)
-    result.translation.x -= offset.x
-    result.translation.y -= offset.y
 
 proc buildHitRegionsForSubtree*(
     tree: Tree;
@@ -248,13 +215,13 @@ proc buildHitRegionsForSubtree*(
   if root.nodeIndex < 0 or root.nodeIndex >= tree.nodes.len:
     return
   let boxIndices = layout.layoutBoxIndices(tree.nodes.len)
-  let context = ancestorHitContext(
+  let context = ancestorPresentationContext(
     tree, layout, boxIndices, styles, scroll, root
   )
   if context.visible:
     addHitRegions(
       tree, layout, boxIndices, styles, scroll, root, context.translation,
-      context.clip, result
+      context.clip, context.clipShapes, context.transform, result
     )
 
 proc buildHitRegionsForSubtree*(
@@ -291,7 +258,16 @@ proc isBetterHit(candidate, current: HitRegion): bool =
 proc hitTest*(regions: openArray[HitRegion]; point: Vec2): Option[HitTestResult] =
   var best: Option[HitRegion]
   for region in regions:
-    if region.rect.contains(point):
+    let insideShape =
+      if region.shape.isSome: region.shape.get.contains(point)
+      else: region.rect.contains(point)
+    var insideClips = true
+    if insideShape:
+      for clip in region.clipShapes:
+        if not clip.contains(point):
+          insideClips = false
+          break
+    if insideShape and insideClips:
       if best.isNone:
         best = some(region)
       elif region.isBetterHit(best.get):
@@ -299,12 +275,17 @@ proc hitTest*(regions: openArray[HitRegion]; point: Vec2): Option[HitTestResult]
 
   if best.isSome:
     let region = best.get
+    let localPoint =
+      if region.shape.isSome and region.shape.get.inverseTransform.isSome:
+        region.shape.get.inverseTransform.get.transformPoint(point)
+      else:
+        point
     let origin =
       if region.localOrigin.isSome: region.localOrigin.get
       else: vec2(region.rect.x, region.rect.y)
     return some(HitTestResult(
       node: region.node,
-      local: vec2(point.x - origin.x, point.y - origin.y),
+      local: vec2(localPoint.x - origin.x, localPoint.y - origin.y),
       cursor: region.cursor,
       kind: region.kind,
       scrollbarTrack: region.scrollbarTrack,

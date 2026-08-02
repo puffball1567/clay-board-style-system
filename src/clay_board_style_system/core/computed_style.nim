@@ -1,5 +1,5 @@
 import std/options
-import ./[color, style_value]
+import ./[color, color_conversion, style_value]
 
 type
   DisplayKind* = enum
@@ -198,6 +198,7 @@ type
 
   LinearGradient* = object
     angle*: float32
+    interpolationSpace*: ColorInterpolationSpace
     stops*: seq[GradientStop]
 
   BackgroundRepeat* = enum

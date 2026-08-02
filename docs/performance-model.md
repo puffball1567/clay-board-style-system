@@ -121,6 +121,33 @@ These are full-tree cold-pass measurements, not dirty-subtree frame costs.
 The fixed seven-node dirty benchmark and retained navigation benchmark below
 verify that interactive updates remain independent of unrelated tree size.
 
+### Version 0.3 RenderSurface baseline (2026-08-02)
+
+`RenderSurfaceRegistry` retains an explicit set of requested, visible, mounted
+surfaces. The idle event-loop predicate is therefore `O(1)` and frame delivery
+is `O(requested)` rather than scanning every registered surface. Hidden and
+device-lost surfaces retain their request without entering the runnable set.
+
+The release ARC benchmark on the development machine measured:
+
+| workload | result | gate |
+| --- | ---: | ---: |
+| 1,000,000 idle predicates with 10,000 registered surfaces | 5.690 ms total | <= 50 ms |
+| flatten 10,000 retained Canvas commands | 2.198 ms average | <= 4 ms |
+| flatten 1,000 transformed Canvas scopes | 0.566 ms average | <= 4 ms |
+| flatten a retained path with 1,000 cubic curves | 0.436 ms average | <= 12 ms |
+
+`tests/perf/render_surface_benchmark.nim` enforces all four gates. The Canvas
+measurements cover display-list translation, transform-scope balancing, and
+transform visual-bounds resolution into canonical paint commands. The path
+measurement covers adaptive curve subdivision into backend-ready contours.
+None of these measurements includes backend rasterization or text shaping.
+Memory instrumentation may compile the same workload with
+`-d:cbssMemoryCheck`; this keeps structural assertions and workload sizes but
+disables wall-clock gates that are not meaningful under Valgrind.
+The release ARC memory-check build completed this workload under Valgrind with
+zero bytes retained at exit and zero reported memory errors.
+
 ## Hot-path data rules
 
 The hot path is: input event → dispatch → dirty marking → subtree style →
