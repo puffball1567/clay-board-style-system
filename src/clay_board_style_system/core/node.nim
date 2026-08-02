@@ -80,6 +80,7 @@ type
     imageSource*: string
     imageWidth*: float32
     imageHeight*: float32
+    renderSurfaceId*: Option[uint64]
     renderOffset*: Vec2
     textRenderWidth*: Option[float32]
     focusable*: bool
@@ -273,6 +274,19 @@ proc addImage*(
   tree.nodes[result.nodeIndex].code = code
   for group in groups:
     tree.nodes[result.nodeIndex].groups.add group
+
+proc addRenderSurfaceBox*(
+    tree: var Tree;
+    surfaceId: uint64;
+    parent = none(NodeId);
+    id = "";
+    code = "";
+    groups: openArray[string] = []
+): NodeId =
+  if surfaceId == 0:
+    raise newException(ValueError, "render surface identifier must not be zero")
+  result = tree.addBox(parent = parent, id = id, code = code, groups = groups)
+  tree.nodes[result.nodeIndex].renderSurfaceId = some(surfaceId)
 
 proc addAttribute*(tree: var Tree; id: NodeId; name, value: string) =
   if not tree.isValid(id):

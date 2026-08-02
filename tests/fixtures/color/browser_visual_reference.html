@@ -1,0 +1,23 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CBSS browser visual color reference</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: black; }
+  main { display: flex; width: 600px; height: 100px; }
+  .swatch { flex: 0 0 100px; height: 100px; }
+  #display-p3 { background: color(display-p3 0.92 0.18 0.08 / 90%); }
+  #a98-rgb { background: color(a98-rgb 0.22 0.68 0.33); }
+  #rec2020 { background: color(rec2020 0.12 0.66 0.32); }
+  #oklch { background: oklch(68% 0.19 260deg / 80%); }
+  #mix-linear { background: color-mix(in srgb-linear, red 25%, blue 75%); }
+  #mix-oklab { background: color-mix(in oklab, red 25%, blue 75%); }
+</style>
+<main>
+  <div class="swatch" id="display-p3"></div>
+  <div class="swatch" id="a98-rgb"></div>
+  <div class="swatch" id="rec2020"></div>
+  <div class="swatch" id="oklch"></div>
+  <div class="swatch" id="mix-linear"></div>
+  <div class="swatch" id="mix-oklab"></div>
+</main>

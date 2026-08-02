@@ -12,8 +12,31 @@ type
     cisSrgbLinear,
     cisOklab
 
+  PreparedColorInterpolation* = object
+    space*: ColorInterpolationSpace
+    components*: array[3, float64]
+    alpha*: float64
+
   Vec3 = array[3, float64]
   Matrix3 = array[3, array[3, float64]]
+
+  ComponentAnalogy = enum
+    caNone,
+    caRed,
+    caGreen,
+    caBlue,
+    caLightness,
+    caColorfulness,
+    caHue,
+    caOpponentA,
+    caOpponentB
+
+  InterpolationValue = object
+    components: Vec3
+    alpha: float64
+    missing: set[ColorComponent]
+
+const ComponentSlots = [ccFirst, ccSecond, ccThird]
 
 const
   D50ToD65: Matrix3 = [
@@ -223,6 +246,110 @@ proc rawLinearSrgb(value: ColorValue; current: Color): Vec3 =
 proc alphaOf(value: ColorValue; current: Color): float64 =
   if value.kind == cvCurrentColor: current.a.float64 else: value.alpha
 
+proc componentAnalogies(space: ColorSpace): array[3, ComponentAnalogy] =
+  case space
+  of csSrgb, csSrgbLinear, csDisplayP3, csA98Rgb, csProPhotoRgb, csRec2020,
+      csDisplayP3Linear, csXyzD50, csXyzD65:
+    [caRed, caGreen, caBlue]
+  of csHsl:
+    [caHue, caColorfulness, caLightness]
+  of csHwb:
+    [caHue, caNone, caNone]
+  of csLab, csOklab:
+    [caLightness, caOpponentA, caOpponentB]
+  of csLch, csOklch:
+    [caLightness, caColorfulness, caHue]
+
+proc interpolationAnalogies(
+    space: ColorInterpolationSpace): array[3, ComponentAnalogy] =
+  case space
+  of cisSrgb, cisSrgbLinear:
+    [caRed, caGreen, caBlue]
+  of cisOklab:
+    [caLightness, caOpponentA, caOpponentB]
+
+proc carriedMissing(value: ColorValue;
+    targetSpace: ColorInterpolationSpace): set[ColorComponent] =
+  if value.kind == cvCurrentColor:
+    return
+
+  let sourceAnalogies = value.space.componentAnalogies
+  let targetAnalogies = targetSpace.interpolationAnalogies
+  var sourceMatched: array[3, bool]
+  var targetMatched: array[3, bool]
+
+  for sourceIndex in 0 .. 2:
+    let analogy = sourceAnalogies[sourceIndex]
+    if analogy == caNone:
+      continue
+    for targetIndex in 0 .. 2:
+      if analogy == targetAnalogies[targetIndex]:
+        sourceMatched[sourceIndex] = true
+        targetMatched[targetIndex] = true
+        if ComponentSlots[sourceIndex] in value.missing:
+          result.incl(ComponentSlots[targetIndex])
+        break
+
+  var hasSourceRemainder = false
+  var allSourceRemainderMissing = true
+  var hasTargetRemainder = false
+  for index in 0 .. 2:
+    if not sourceMatched[index]:
+      hasSourceRemainder = true
+      if ComponentSlots[index] notin value.missing:
+        allSourceRemainderMissing = false
+    if not targetMatched[index]:
+      hasTargetRemainder = true
+
+  if hasSourceRemainder and hasTargetRemainder and
+      allSourceRemainderMissing:
+    for index in 0 .. 2:
+      if not targetMatched[index]:
+        result.incl(ComponentSlots[index])
+
+  if ccAlpha in value.missing:
+    result.incl(ccAlpha)
+
+proc interpolationValue(value: ColorValue; space: ColorInterpolationSpace;
+    current: Color): InterpolationValue =
+  case space
+  of cisSrgb:
+    let linear = rawLinearSrgb(value, current)
+    result.components = [encodeSrgb(linear[0]), encodeSrgb(linear[1]),
+        encodeSrgb(linear[2])]
+  of cisSrgbLinear:
+    result.components = rawLinearSrgb(value, current)
+  of cisOklab:
+    result.components = linearSrgbToOklab(rawLinearSrgb(value, current))
+  result.alpha = clamp01(value.alphaOf(current))
+  result.missing = value.carriedMissing(space)
+
+proc carryMissing(left, right: var InterpolationValue) =
+  for index in 0 .. 2:
+    let slot = ComponentSlots[index]
+    let leftMissing = slot in left.missing
+    let rightMissing = slot in right.missing
+    if leftMissing and rightMissing:
+      left.components[index] = 0.0
+      right.components[index] = 0.0
+    elif leftMissing:
+      left.components[index] = right.components[index]
+    elif rightMissing:
+      right.components[index] = left.components[index]
+
+  let leftAlphaMissing = ccAlpha in left.missing
+  let rightAlphaMissing = ccAlpha in right.missing
+  if leftAlphaMissing and rightAlphaMissing:
+    left.alpha = 0.0
+    right.alpha = 0.0
+  elif leftAlphaMissing:
+    left.alpha = right.alpha
+  elif rightAlphaMissing:
+    right.alpha = left.alpha
+
+proc hasMissing(value: ColorValue): bool {.inline.} =
+  value.kind == cvComponents and value.missing != {}
+
 proc inSrgbGamut(linear: Vec3): bool =
   for channel in linear:
     if channel < -1e-7 or channel > 1.0 + 1e-7:
@@ -285,53 +412,20 @@ proc resolveColor*(
 proc toOklab*(value: ColorValue; current: Color = rgb(0, 0, 0)): array[3, float64] =
   linearSrgbToOklab(rawLinearSrgb(value, current))
 
-proc interpolateColor*(
-    first, second: ColorValue;
-    progress: SomeNumber;
-    space = cisOklab;
-    current: Color = rgb(0, 0, 0)
+proc resolveInterpolatedColor(
+    components: Vec3;
+    alpha: float64;
+    space: ColorInterpolationSpace
 ): Color =
-  let t = clamp01(progress.float64)
-  if t <= 0.0:
-    return first.resolveColor(current)
-  if t >= 1.0:
-    return second.resolveColor(current)
-  let firstAlpha = clamp01(first.alphaOf(current))
-  let secondAlpha = clamp01(second.alphaOf(current))
-  let alpha = firstAlpha * (1.0 - t) + secondAlpha * t
-
-  var left, right: Vec3
-  case space
-  of cisSrgb:
-    let leftLinear = rawLinearSrgb(first, current)
-    let rightLinear = rawLinearSrgb(second, current)
-    left = [encodeSrgb(leftLinear[0]), encodeSrgb(leftLinear[1]), encodeSrgb(
-        leftLinear[2])]
-    right = [encodeSrgb(rightLinear[0]), encodeSrgb(rightLinear[1]), encodeSrgb(
-        rightLinear[2])]
-  of cisSrgbLinear:
-    left = rawLinearSrgb(first, current)
-    right = rawLinearSrgb(second, current)
-  of cisOklab:
-    left = first.toOklab(current)
-    right = second.toOklab(current)
-
-  var mixed: Vec3
-  if alpha > 1e-12:
-    for index in 0 .. 2:
-      mixed[index] =
-        (left[index] * firstAlpha * (1.0 - t) + right[index] * secondAlpha *
-            t) / alpha
-
   var linear: Vec3
   case space
   of cisSrgb:
-    linear = [linearizeSrgb(mixed[0]), linearizeSrgb(mixed[1]), linearizeSrgb(
-        mixed[2])]
+    linear = [linearizeSrgb(components[0]), linearizeSrgb(components[1]),
+        linearizeSrgb(components[2])]
   of cisSrgbLinear:
-    linear = mixed
+    linear = components
   of cisOklab:
-    linear = oklabToLinearSrgb(mixed)
+    linear = oklabToLinearSrgb(components)
   linear = mapOklchChroma(linear)
   rgba(
     clamp01(encodeSrgb(linear[0])).float32,
@@ -339,3 +433,72 @@ proc interpolateColor*(
     clamp01(encodeSrgb(linear[2])).float32,
     alpha.float32
   )
+
+proc prepareColorInterpolation*(
+    color: Color;
+    space: ColorInterpolationSpace
+): PreparedColorInterpolation =
+  result.space = space
+  result.alpha = clamp01(color.a.float64)
+  let linear = [
+    linearizeSrgb(color.r.float64),
+    linearizeSrgb(color.g.float64),
+    linearizeSrgb(color.b.float64)
+  ]
+  case space
+  of cisSrgb:
+    result.components = [color.r.float64, color.g.float64, color.b.float64]
+  of cisSrgbLinear:
+    result.components = linear
+  of cisOklab:
+    result.components = linearSrgbToOklab(linear)
+
+proc interpolateColor*(
+    first, second: PreparedColorInterpolation;
+    progress: SomeNumber
+): Color =
+  if first.space != second.space:
+    raise newException(ValueError,
+        "prepared colors must use the same interpolation space")
+  let t = clamp01(progress.float64)
+  if t <= 0.0:
+    return resolveInterpolatedColor(first.components, first.alpha, first.space)
+  if t >= 1.0:
+    return resolveInterpolatedColor(second.components, second.alpha, second.space)
+
+  let alpha = first.alpha * (1.0 - t) + second.alpha * t
+  var mixed: Vec3
+  if alpha > 1e-12:
+    for index in 0 .. 2:
+      mixed[index] =
+        (first.components[index] * first.alpha * (1.0 - t) +
+            second.components[index] * second.alpha * t) / alpha
+  resolveInterpolatedColor(mixed, alpha, first.space)
+
+proc interpolateColor*(
+    first, second: ColorValue;
+    progress: SomeNumber;
+    space = cisOklab;
+    current: Color = rgb(0, 0, 0)
+): Color =
+  let t = clamp01(progress.float64)
+  if t <= 0.0 and not first.hasMissing and not second.hasMissing:
+    return first.resolveColor(current)
+  if t >= 1.0 and not first.hasMissing and not second.hasMissing:
+    return second.resolveColor(current)
+
+  var leftValue = first.interpolationValue(space, current)
+  var rightValue = second.interpolationValue(space, current)
+  carryMissing(leftValue, rightValue)
+  let firstAlpha = leftValue.alpha
+  let secondAlpha = rightValue.alpha
+  let alpha = firstAlpha * (1.0 - t) + secondAlpha * t
+
+  var mixed: Vec3
+  if alpha > 1e-12:
+    for index in 0 .. 2:
+      mixed[index] =
+        (leftValue.components[index] * firstAlpha * (1.0 - t) +
+            rightValue.components[index] * secondAlpha * t) / alpha
+
+  resolveInterpolatedColor(mixed, alpha, space)

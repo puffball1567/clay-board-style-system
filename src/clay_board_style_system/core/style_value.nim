@@ -1,9 +1,24 @@
 import std/[options, strutils]
-import ./[color, color_conversion, color_value]
+import ./[color, color_conversion, color_mix, color_value]
 
 type
+  AuthoredColorKind = enum
+    ackValue,
+    ackMix
+
   AuthoredColorRef = ref object
-    value: ColorValue
+    case kind: AuthoredColorKind
+    of ackValue:
+      value: ColorValue
+    of ackMix:
+      mix: ColorMixValue
+
+  GradientValueStop* = object
+    ## Declaration-time gradient stop. Resolved colors remain compact while
+    ## authored colors retain their color space until style resolution.
+    color*: Color
+    offset*: float32
+    authoredColor: AuthoredColorRef
 
   UnitKind* = enum
     ukPx,
@@ -75,7 +90,8 @@ type
       shadowAuthoredColor: AuthoredColorRef
     of svLinearGradient:
       gradientAngle*: float32
-      gradientStops*: seq[GradientStop]
+      gradientInterpolationSpace*: ColorInterpolationSpace
+      gradientStops*: seq[GradientValueStop]
     of svTransform:
       transformOperations*: seq[TransformOperationValue]
     of svTransformOperation:
@@ -143,14 +159,58 @@ proc colorValue*(color: Color): StyleValue =
   StyleValue(kind: svColor, color: color)
 
 proc authoredColorRef(color: ColorValue): AuthoredColorRef =
-  new(result)
-  result.value = color
+  AuthoredColorRef(kind: ackValue, value: color)
+
+proc authoredColorRef(mix: ColorMixValue): AuthoredColorRef =
+  AuthoredColorRef(kind: ackMix, mix: mix)
+
+proc resolveColor(color: AuthoredColorRef; current: Color): Color =
+  case color.kind
+  of ackValue: color.value.resolveColor(current)
+  of ackMix: color.mix.resolveColor(current)
+
+converter gradientValueStop*(stop: GradientStop): GradientValueStop =
+  GradientValueStop(color: stop.color, offset: stop.offset)
+
+proc gradientValueStop*(stop: GradientValueStop): GradientValueStop {.inline.} =
+  stop
+
+proc colorStop*(color: ColorValue; offset: SomeNumber): GradientValueStop =
+  GradientValueStop(
+    offset: offset.float32,
+    authoredColor: authoredColorRef(color)
+  )
+
+proc colorStop*(color: ColorMixValue; offset: SomeNumber): GradientValueStop =
+  GradientValueStop(
+    offset: offset.float32,
+    authoredColor: authoredColorRef(color)
+  )
+
+proc resolveGradientStops*(value: StyleValue; current: Color): seq[GradientStop] =
+  if value.kind != svLinearGradient:
+    return
+  result = newSeqOfCap[GradientStop](value.gradientStops.len)
+  for stop in value.gradientStops:
+    let color =
+      if stop.authoredColor.isNil:
+        stop.color
+      else:
+        stop.authoredColor.resolveColor(current)
+    result.add GradientStop(color: color, offset: stop.offset)
 
 proc colorValue*(color: ColorValue): StyleValue =
   StyleValue(
     kind: svColor,
     color: Color(),
     authoredColor: authoredColorRef(color)
+  )
+
+proc colorValue*(mix: ColorMixValue): StyleValue =
+  StyleValue(
+    kind: svColor,
+    color: Color(),
+    authoredColor: authoredColorRef(mix)
   )
 
 proc colorPairValue*(first, second: Color): StyleValue =
@@ -185,7 +245,7 @@ proc resolveStyleColor*(value: StyleValue; current: Color): Option[Color] =
   if value.kind != svColor:
     return none(Color)
   if not value.authoredColor.isNil:
-    return some(value.authoredColor.value.resolveColor(current))
+    return some(value.authoredColor.resolveColor(current))
   some(value.color)
 
 proc resolveColorPair*(value: StyleValue; current: Color): Option[tuple[
@@ -194,12 +254,12 @@ proc resolveColorPair*(value: StyleValue; current: Color): Option[tuple[
     return none(tuple[first, second: Color])
   let first =
     if not value.firstAuthoredColor.isNil:
-      value.firstAuthoredColor.value.resolveColor(current)
+      value.firstAuthoredColor.resolveColor(current)
     else:
       value.firstColor
   let second =
     if not value.secondAuthoredColor.isNil:
-      value.secondAuthoredColor.value.resolveColor(current)
+      value.secondAuthoredColor.resolveColor(current)
     else:
       value.secondColor
   some((first: first, second: second))
@@ -281,11 +341,26 @@ proc borderValue*(lineWeight: StyleValue; lineColor: ColorValue): StyleValue =
     result.borderWidth = some(lineWeight.length)
   result.borderAuthoredColor = authoredColorRef(lineColor)
 
+proc borderValue*(lineWeight: StyleValue; lineStyle: string;
+    lineColor: ColorMixValue): StyleValue =
+  result = StyleValue(kind: svBorder)
+  if lineWeight.kind == svLength:
+    result.borderWidth = some(lineWeight.length)
+  result.borderStyle = some(lineStyle)
+  result.borderAuthoredColor = authoredColorRef(lineColor)
+
+proc borderValue*(lineWeight: StyleValue;
+    lineColor: ColorMixValue): StyleValue =
+  result = StyleValue(kind: svBorder)
+  if lineWeight.kind == svLength:
+    result.borderWidth = some(lineWeight.length)
+  result.borderAuthoredColor = authoredColorRef(lineColor)
+
 proc resolveBorderColor*(value: StyleValue; current: Color): Option[Color] =
   if value.kind != svBorder:
     return none(Color)
   if not value.borderAuthoredColor.isNil:
-    return some(value.borderAuthoredColor.value.resolveColor(current))
+    return some(value.borderAuthoredColor.resolveColor(current))
   value.borderColor
 
 proc shadowValue*(
@@ -316,17 +391,39 @@ proc shadowValue*(
   result = shadowValue(offsetX, offsetY, blur, spread)
   result.shadowAuthoredColor = authoredColorRef(shadowColor)
 
+proc shadowValue*(
+    offsetX: StyleValue;
+    offsetY: StyleValue;
+    shadowColor: ColorMixValue;
+    blur: Option[StyleValue] = none(StyleValue);
+    spread: Option[StyleValue] = none(StyleValue)
+): StyleValue =
+  result = shadowValue(offsetX, offsetY, blur, spread)
+  result.shadowAuthoredColor = authoredColorRef(shadowColor)
+
 proc resolveShadowColor*(value: StyleValue; current: Color): Option[Color] =
   if value.kind != svShadow:
     return none(Color)
   if not value.shadowAuthoredColor.isNil:
-    return some(value.shadowAuthoredColor.value.resolveColor(current))
+    return some(value.shadowAuthoredColor.resolveColor(current))
   value.shadowColor
 
-proc linearGradient*(angle: SomeNumber; stops: varargs[
-    GradientStop]): StyleValue =
+proc linearGradient*(angle: SomeNumber;
+    stops: varargs[GradientValueStop, gradientValueStop]): StyleValue =
   StyleValue(kind: svLinearGradient, gradientAngle: angle.float32,
-      gradientStops: @stops)
+      gradientInterpolationSpace: cisSrgb, gradientStops: @stops)
+
+proc linearGradientIn*(
+    interpolationSpace: ColorInterpolationSpace;
+    angle: SomeNumber;
+    stops: varargs[GradientValueStop, gradientValueStop]
+): StyleValue =
+  StyleValue(
+    kind: svLinearGradient,
+    gradientAngle: angle.float32,
+    gradientInterpolationSpace: interpolationSpace,
+    gradientStops: @stops
+  )
 
 proc translate*(x, y: StyleValue; z: Option[StyleValue] = none(
     StyleValue)): StyleValue =

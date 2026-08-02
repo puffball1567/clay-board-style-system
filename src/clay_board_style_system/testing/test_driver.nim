@@ -6,7 +6,7 @@ import ../hit/hit_test
 import ../input/events
 import ../layout/layout
 import ../layout/scroll_state
-import ../paint/[paint, paint_command]
+import ../paint/[paint, paint_command, path_geometry]
 import ../runtime/[focus, text_focus, ui_root]
 
 type
@@ -892,6 +892,25 @@ proc scrollY*(driver: CbssTestDriver; query: CbssQuery): Option[float32] =
 proc rectSnapshot(rect: Rect): string =
   $rect.x & "," & $rect.y & "," & $rect.w & "," & $rect.h
 
+proc pathSnapshot(path: Path2D): string =
+  var values = newSeqOfCap[string](path.segments.len)
+  for segment in path.segments:
+    var value = $segment.kind
+    case segment.kind
+    of pskMoveTo, pskLineTo:
+      value.add "(" & $segment.endpoint.x & "," & $segment.endpoint.y & ")"
+    of pskQuadraticTo:
+      value.add "(" & $segment.control1.x & "," & $segment.control1.y &
+        ";" & $segment.endpoint.x & "," & $segment.endpoint.y & ")"
+    of pskCubicTo:
+      value.add "(" & $segment.control1.x & "," & $segment.control1.y &
+        ";" & $segment.control2.x & "," & $segment.control2.y &
+        ";" & $segment.endpoint.x & "," & $segment.endpoint.y & ")"
+    of pskClose:
+      discard
+    values.add value
+  values.join(";")
+
 proc layoutSnapshot*(driver: CbssTestDriver): string =
   var lines: seq[string]
   for item in driver.layout.boxes:
@@ -927,6 +946,10 @@ proc paintSnapshot*(driver: CbssTestDriver): string =
       lines.add "linear-gradient " & rectSnapshot(command.gradientRect)
     of pcStrokeRect:
       lines.add "stroke-rect " & rectSnapshot(command.strokeRect) & " width=" & $command.strokeWidth
+    of pcStrokePath:
+      lines.add "stroke-path " & pathSnapshot(command.path) &
+        " width=" & $command.pathWidth & " cap=" & $command.pathLineCap &
+        " join=" & $command.pathLineJoin
     of pcDrawText:
       lines.add "draw-text " & $command.node.nodeIndex & " " & command.text & " @" & $command.position.x & "," & $command.position.y
     of pcDrawImage:
@@ -1029,6 +1052,20 @@ proc structuredSnapshotJson*(driver: CbssTestDriver): JsonNode =
     of pcStrokeRect:
       entry["rect"] = rectJson(command.strokeRect)
       entry["width"] = %command.strokeWidth
+    of pcStrokePath:
+      var segments = newJArray()
+      for segment in command.path.segments:
+        segments.add %*{
+          "kind": $segment.kind,
+          "control1": {"x": segment.control1.x, "y": segment.control1.y},
+          "control2": {"x": segment.control2.x, "y": segment.control2.y},
+          "endpoint": {"x": segment.endpoint.x, "y": segment.endpoint.y}
+        }
+      entry["segments"] = segments
+      entry["width"] = %command.pathWidth
+      entry["lineCap"] = %($command.pathLineCap)
+      entry["lineJoin"] = %($command.pathLineJoin)
+      entry["miterLimit"] = %command.pathMiterLimit
     of pcDrawText:
       entry["node"] = %command.node.nodeIndex
       entry["text"] = %command.text

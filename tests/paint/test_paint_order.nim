@@ -415,7 +415,80 @@ suite "paint ordering":
     check commands[1].kind == pcFillLinearGradient
     check commands[1].gradientRect == rect(0, 0, 20, 12)
     check commands[1].gradient.angle == 90
+    check commands[1].gradient.interpolationSpace == cisSrgb
     check commands[1].gradient.stops.len == 2
+
+  test "gradient interpolation space reaches the paint command":
+    var tree = initTree()
+    discard tree.addBox(id = "root")
+
+    let sheet = styleSheet([
+      rule(id("root"), [
+        decl("width", px(20)),
+        decl("height", px(12)),
+        decl("background-image", linearGradientIn(
+          cisOklab,
+          90,
+          colorStop(rgb(1, 0, 0), 0),
+          colorStop(rgb(0, 0, 1), 100)
+        ))
+      ])
+    ])
+
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(tree, [sheet], defaultProperties(), diagnostics)
+    check not diagnostics.hasErrors
+
+    let layout = computeLayout(tree, styles, size(40, 30))
+    let commands = buildPaintCommands(tree, styles, layout)
+
+    check commands.len == 1
+    check commands[0].kind == pcFillLinearGradient
+    check commands[0].gradient.interpolationSpace == cisOklab
+
+  test "authored and resolved gradient stops share one declaration":
+    var tree = initTree()
+    discard tree.addBox(id = "root")
+
+    let foreground = rgb(0.18, 0.42, 0.76)
+    let wideGamut = displayP3(0.92, 0.18, 0.08)
+    let mixed = colorMix(
+      oklch(0.72, 0.16, 42),
+      35,
+      rec2020(0.12, 0.66, 0.32),
+      65,
+      cisOklab
+    )
+    let sheet = styleSheet([
+      rule(id("root"), [
+        decl("width", px(20)),
+        decl("height", px(12)),
+        decl("color", foreground),
+        decl("background-image", linearGradientIn(
+          cisSrgbLinear,
+          90,
+          colorStop(rgb(0.05, 0.08, 0.12), 0),
+          colorStop(wideGamut, 33),
+          colorStop(currentColor(), 66),
+          colorStop(mixed, 100)
+        ))
+      ])
+    ])
+
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(tree, [sheet], defaultProperties(), diagnostics)
+    check not diagnostics.hasErrors
+
+    let layout = computeLayout(tree, styles, size(40, 30))
+    let commands = buildPaintCommands(tree, styles, layout)
+
+    check commands.len == 1
+    check commands[0].kind == pcFillLinearGradient
+    check commands[0].gradient.stops.len == 4
+    check commands[0].gradient.stops[0].color == rgb(0.05, 0.08, 0.12)
+    check commands[0].gradient.stops[1].color == wideGamut.resolveColor()
+    check commands[0].gradient.stops[2].color == foreground
+    check commands[0].gradient.stops[3].color == mixed.resolveColor(foreground)
 
   test "max-lines limits drawn text command":
     var tree = initTree()

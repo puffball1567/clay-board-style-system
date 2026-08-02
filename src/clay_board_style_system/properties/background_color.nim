@@ -54,7 +54,9 @@ proc applyBackground(
     of svLinearGradient:
       style.box.backgroundImage = none(string)
       style.box.backgroundGradient = some(LinearGradient(
-          angle: value.gradientAngle, stops: value.gradientStops))
+          angle: value.gradientAngle,
+          interpolationSpace: value.gradientInterpolationSpace,
+          stops: value.resolveGradientStops(style.foregroundColor(env))))
     else:
       diagnostics.addError(declaration.property, "background supports color values, image keywords, or linear gradients")
   of mmInitial, mmUnset:
@@ -94,7 +96,9 @@ proc applyBackgroundImage(
     of svLinearGradient:
       style.box.backgroundImage = none(string)
       style.box.backgroundGradient = some(LinearGradient(
-          angle: value.gradientAngle, stops: value.gradientStops))
+          angle: value.gradientAngle,
+          interpolationSpace: value.gradientInterpolationSpace,
+          stops: value.resolveGradientStops(style.foregroundColor(env))))
     else:
       diagnostics.addError(declaration.property, "background-image requires a keyword or linear gradient value")
   of mmInitial, mmUnset:

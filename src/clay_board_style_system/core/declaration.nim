@@ -1,4 +1,4 @@
-import ./[color, color_value, style_value]
+import ./[color, color_mix, color_value, style_value]
 
 type
   Declaration* = object
@@ -14,6 +14,10 @@ proc decl*(property: string; value: Color; sourceOrder = 0): Declaration =
   decl(property, colorValue(value), sourceOrder)
 
 proc decl*(property: string; value: ColorValue; sourceOrder = 0): Declaration =
+  decl(property, colorValue(value), sourceOrder)
+
+proc decl*(property: string; value: ColorMixValue;
+    sourceOrder = 0): Declaration =
   decl(property, colorValue(value), sourceOrder)
 
 proc decl*(property: string; operation: StyleOperation;

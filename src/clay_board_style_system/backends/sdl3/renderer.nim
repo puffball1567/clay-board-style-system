@@ -1,8 +1,8 @@
 import std/[hashes, math, options, os, strutils, tables]
 
 import ../../assets/asset_resolver
-import ../../core/[color, computed_style, geometry, node]
-import ../../paint/paint_command
+import ../../core/[color, computed_style, geometry, gradient_sampling, node]
+import ../../paint/[paint_command, path_geometry]
 import ../../text/[cosmic_text_engine, font_registry, text_engine]
 import ../../vendor/sdl3
 import ./config
@@ -1150,30 +1150,6 @@ proc fillRoundedRect(target: Sdl3Renderer; rect: Rect; radius: float32; color: C
     if roundedSpan(rect, r, centerY, x1, x2):
       target.fillHorizontal(x1, x2, y.float32, color)
 
-proc mixColor(a, b: Color; t: float32): Color =
-  let amount = max(0.0'f32, min(1.0'f32, t))
-  rgba(
-    a.r + (b.r - a.r) * amount,
-    a.g + (b.g - a.g) * amount,
-    a.b + (b.b - a.b) * amount,
-    a.a + (b.a - a.a) * amount
-  )
-
-proc gradientColorAt(gradient: LinearGradient; t: float32): Color =
-  if gradient.stops.len == 0:
-    return rgba(0, 0, 0, 0)
-  if gradient.stops.len == 1:
-    return gradient.stops[0].color
-  let position = max(0.0'f32, min(100.0'f32, t * 100.0'f32))
-  var previous = gradient.stops[0]
-  for index in 1 ..< gradient.stops.len:
-    let current = gradient.stops[index]
-    if position <= current.offset:
-      let span = max(0.001'f32, current.offset - previous.offset)
-      return mixColor(previous.color, current.color, (position - previous.offset) / span)
-    previous = current
-  gradient.stops[^1].color
-
 proc cacheFloat(value: float32): string =
   $(round(value * 100.0'f32) / 100.0'f32)
 
@@ -1183,7 +1159,8 @@ proc gradientTextureCacheKey(rect: Rect; gradient: LinearGradient; radius, scale
     cacheFloat(rect.h) & "," &
     cacheFloat(radius) & "," &
     cacheFloat(scale) & "," &
-    cacheFloat(gradient.angle)
+    cacheFloat(gradient.angle) & "," &
+    $ord(gradient.interpolationSpace)
   for stop in gradient.stops:
     result.add "|"
     result.add cacheFloat(stop.offset)
@@ -1258,6 +1235,9 @@ proc createGradientTexture(
   let span = max(0.001'f32, maxProjection - minProjection)
   let localRect = Rect(x: 0, y: 0, w: logicalW, h: logicalH)
   let localRadius = localRect.clampedRadius(radius)
+  let lookup = gradient.prepareGradientSampler.buildGradientLookup(
+    (span * scale).gradientLookupSampleCount
+  )
   var pixels = newSeq[uint8](width * height * 4)
 
   for y in 0 ..< height:
@@ -1271,7 +1251,7 @@ proc createGradientTexture(
         pixels[index + 3] = 0
         continue
       let projection = localX * dx + localY * dy
-      let color = gradient.gradientColorAt((projection - minProjection) / span)
+      let color = lookup.gradientColorAt((projection - minProjection) / span)
       pixels[index] = color.r.toByte
       pixels[index + 1] = color.g.toByte
       pixels[index + 2] = color.b.toByte
@@ -1344,6 +1324,9 @@ proc fillLinearGradient(target: var Sdl3Renderer; rect: Rect; gradient: LinearGr
     minProjection = min(minProjection, projection)
     maxProjection = max(maxProjection, projection)
   let span = max(0.001'f32, maxProjection - minProjection)
+  let lookup = gradient.prepareGradientSampler.buildGradientLookup(
+    (span * scale).gradientLookupSampleCount
+  )
   let r = rect.clampedRadius(radius)
   let yStart = int(floor(rect.y))
   let yEnd = int(ceil(rect.y + rect.h)) - 1
@@ -1365,7 +1348,7 @@ proc fillLinearGradient(target: var Sdl3Renderer; rect: Rect; gradient: LinearGr
       let projection = centerX * dx + centerY * dy
       let t = (projection - minProjection) / span
       var pixel = SDL_FRect(x: cfloat(x.float32), y: cfloat(y.float32), w: cfloat(1.0'f32), h: cfloat(1.0'f32))
-      target.renderer.setColor(gradient.gradientColorAt(t))
+      target.renderer.setColor(lookup.gradientColorAt(t))
       discard SDL3.renderFillRect(target.renderer, addr pixel)
 
 proc strokeRoundedRect(target: Sdl3Renderer; rect: Rect; radius, width: float32; color: Color) =
@@ -1410,6 +1393,196 @@ proc strokeRoundedRect(target: Sdl3Renderer; rect: Rect; radius, width: float32;
       target.fillHorizontal(max(ix2, ox1), ox2, y.float32, color)
     else:
       target.fillHorizontal(ox1, ox2, y.float32, color)
+
+proc samePoint(a, b: Vec2): bool =
+  abs(a.x - b.x) <= 0.0001'f32 and abs(a.y - b.y) <= 0.0001'f32
+
+proc drawSolidTriangle(
+    target: Sdl3Renderer;
+    first, second, third: Vec2;
+    color: Color
+) =
+  let vertexColor = SDL_FColor(
+    r: cfloat(color.r), g: cfloat(color.g),
+    b: cfloat(color.b), a: cfloat(color.a)
+  )
+  var vertices = [
+    SDL_Vertex(position: SDL_FPoint(x: first.x, y: first.y), color: vertexColor),
+    SDL_Vertex(position: SDL_FPoint(x: second.x, y: second.y), color: vertexColor),
+    SDL_Vertex(position: SDL_FPoint(x: third.x, y: third.y), color: vertexColor)
+  ]
+  discard SDL3.renderGeometry(
+    target.renderer, nil, addr vertices[0], 3, nil, 0
+  )
+
+proc strokeJoin(
+    target: Sdl3Renderer;
+    previous, point, following: Vec2;
+    radius: float32;
+    color: Color;
+    lineJoin: StrokeLineJoin;
+    miterLimit: float32
+) =
+  let previousDelta = vec2(point.x - previous.x, point.y - previous.y)
+  let followingDelta = vec2(following.x - point.x, following.y - point.y)
+  let previousLength = sqrt(
+    previousDelta.x * previousDelta.x + previousDelta.y * previousDelta.y
+  )
+  let followingLength = sqrt(
+    followingDelta.x * followingDelta.x + followingDelta.y * followingDelta.y
+  )
+  if previousLength <= 0.0001'f32 or followingLength <= 0.0001'f32:
+    return
+  let previousDirection = vec2(
+    previousDelta.x / previousLength, previousDelta.y / previousLength
+  )
+  let followingDirection = vec2(
+    followingDelta.x / followingLength, followingDelta.y / followingLength
+  )
+  let turn = previousDirection.x * followingDirection.y -
+    previousDirection.y * followingDirection.x
+  if abs(turn) <= 0.0001'f32:
+    return
+  if lineJoin == sljRound:
+    target.fillRoundedRect(
+      rect(point.x - radius, point.y - radius, radius * 2, radius * 2),
+      radius,
+      color
+    )
+    return
+
+  let outerSign = if turn > 0: -1.0'f32 else: 1.0'f32
+  let previousNormal = vec2(
+    -previousDirection.y * outerSign,
+    previousDirection.x * outerSign
+  )
+  let followingNormal = vec2(
+    -followingDirection.y * outerSign,
+    followingDirection.x * outerSign
+  )
+  let previousOuter = vec2(
+    point.x + previousNormal.x * radius,
+    point.y + previousNormal.y * radius
+  )
+  let followingOuter = vec2(
+    point.x + followingNormal.x * radius,
+    point.y + followingNormal.y * radius
+  )
+  if lineJoin == sljBevel:
+    target.drawSolidTriangle(previousOuter, point, followingOuter, color)
+    return
+
+  let sum = vec2(
+    previousNormal.x + followingNormal.x,
+    previousNormal.y + followingNormal.y
+  )
+  let sumLength = sqrt(sum.x * sum.x + sum.y * sum.y)
+  if sumLength <= 0.0001'f32:
+    target.drawSolidTriangle(previousOuter, point, followingOuter, color)
+    return
+  let miterDirection = vec2(sum.x / sumLength, sum.y / sumLength)
+  let denominator = miterDirection.x * followingNormal.x +
+    miterDirection.y * followingNormal.y
+  if abs(denominator) <= 0.0001'f32:
+    target.drawSolidTriangle(previousOuter, point, followingOuter, color)
+    return
+  let miterLength = radius / denominator
+  if abs(miterLength) > radius * max(1.0'f32, miterLimit):
+    target.drawSolidTriangle(previousOuter, point, followingOuter, color)
+    return
+  let miterPoint = vec2(
+    point.x + miterDirection.x * miterLength,
+    point.y + miterDirection.y * miterLength
+  )
+  target.drawSolidTriangle(previousOuter, miterPoint, followingOuter, color)
+
+proc strokePolyline(
+    target: Sdl3Renderer;
+    points: openArray[Vec2];
+    width: float32;
+    color: Color;
+    closed: bool;
+    lineCap: StrokeLineCap;
+    lineJoin: StrokeLineJoin;
+    miterLimit: float32
+) =
+  if points.len < 2 or width <= 0:
+    return
+  var normalized = newSeqOfCap[Vec2](points.len)
+  for point in points:
+    if normalized.len == 0 or not normalized[^1].samePoint(point):
+      normalized.add point
+  if closed and normalized.len > 1 and normalized[0].samePoint(normalized[^1]):
+    normalized.setLen(normalized.len - 1)
+  if normalized.len < 2:
+    return
+
+  target.renderer.setColor(color)
+  let lanes = max(1, int(ceil(width)))
+  let halfLane = (lanes - 1).float32 * 0.5'f32
+  let radius = width * 0.5'f32
+  let segmentCount = normalized.len - 1 + ord(closed)
+  for index in 0 ..< segmentCount:
+    var first = normalized[index mod normalized.len]
+    var second = normalized[(index + 1) mod normalized.len]
+    let dx = second.x - first.x
+    let dy = second.y - first.y
+    let length = sqrt(dx * dx + dy * dy)
+    if length <= 0.0001'f32:
+      continue
+    let normalX = -dy / length
+    let normalY = dx / length
+    if not closed and lineCap == slcSquare:
+      if index == 0:
+        first.x -= dx / length * radius
+        first.y -= dy / length * radius
+      if index == segmentCount - 1:
+        second.x += dx / length * radius
+        second.y += dy / length * radius
+    for lane in 0 ..< lanes:
+      let offset = lane.float32 - halfLane
+      discard SDL3.renderLine(
+        target.renderer,
+        cfloat(first.x + normalX * offset),
+        cfloat(first.y + normalY * offset),
+        cfloat(second.x + normalX * offset),
+        cfloat(second.y + normalY * offset)
+      )
+
+  if closed:
+    for index in 0 ..< normalized.len:
+      target.strokeJoin(
+        normalized[(index - 1 + normalized.len) mod normalized.len],
+        normalized[index],
+        normalized[(index + 1) mod normalized.len],
+        radius, color, lineJoin, miterLimit
+      )
+  else:
+    for index in 1 ..< normalized.len - 1:
+      target.strokeJoin(
+        normalized[index - 1], normalized[index], normalized[index + 1],
+        radius, color, lineJoin, miterLimit
+      )
+    if lineCap == slcRound:
+      for point in [normalized[0], normalized[^1]]:
+        target.fillRoundedRect(
+          rect(point.x - radius, point.y - radius, width, width),
+          radius,
+          color
+        )
+
+proc renderStrokePath(target: Sdl3Renderer; command: PaintCommand) =
+  let tolerance = 0.25'f32 / max(1.0'f32, target.pixelScale())
+  for contour in command.path.flattened(tolerance):
+    target.strokePolyline(
+      contour.points,
+      command.pathWidth,
+      command.pathColor,
+      contour.closed,
+      command.pathLineCap,
+      command.pathLineJoin,
+      command.pathMiterLimit
+    )
 
 proc shadowRect(command: PaintCommand; grow: float32): Rect =
   Rect(
@@ -1997,6 +2170,8 @@ proc render*(target: var Sdl3Renderer; commands: openArray[PaintCommand]; clearC
       target.fillLinearGradient(command.gradientRect, command.gradient, command.gradientRadius)
     of pcStrokeRect:
       target.strokeRoundedRect(command.strokeRect, command.strokeRadius, command.strokeWidth, command.strokeColor)
+    of pcStrokePath:
+      target.renderStrokePath(command)
     of pcDrawText:
       target.renderer.drawDebugText(command)
     of pcDrawImage:
@@ -2165,6 +2340,8 @@ proc render*(
       target.fillLinearGradient(command.gradientRect, command.gradient, command.gradientRadius)
     of pcStrokeRect:
       target.strokeRoundedRect(command.strokeRect, command.strokeRadius, command.strokeWidth, command.strokeColor)
+    of pcStrokePath:
+      target.renderStrokePath(command)
     of pcDrawText:
       target.drawCosmicText(command, cosmic, fonts)
     of pcDrawImage:
@@ -2214,6 +2391,9 @@ proc renderPreparedCommand(
   of pcStrokeRect:
     if drawCommand:
       target.strokeRoundedRect(command.strokeRect, command.strokeRadius, command.strokeWidth, command.strokeColor)
+  of pcStrokePath:
+    if drawCommand:
+      target.renderStrokePath(command)
   of pcDrawText:
     if drawCommand:
       target.drawCosmicText(command, cosmic, fonts)

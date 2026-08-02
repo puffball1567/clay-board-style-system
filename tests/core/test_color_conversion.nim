@@ -126,3 +126,60 @@ suite "CSS color-space conversion foundation":
 
     check interpolateColor(first, second, 0, cisOklab) == first.resolveColor
     check interpolateColor(first, second, 1, cisOklab) == second.resolveColor
+
+suite "CSS missing-component interpolation":
+  test "an analogous missing RGB channel uses the other endpoint channel":
+    let first = colorIn(csSrgb, 0, 0.2, 0.4, missing = {ccFirst})
+    let second = srgb(0.8, 0.6, 0.2)
+
+    interpolateColor(first, second, 0, cisSrgb).checkColor(0.8, 0.2, 0.4)
+    interpolateColor(first, second, 0.5, cisSrgb).checkColor(0.8, 0.4, 0.3)
+
+  test "XYZ channels are analogous to their corresponding RGB channels":
+    let first = colorIn(csXyzD65, 0, 0.1, 0.1, missing = {ccFirst})
+    let second = srgb(0.8, 0.3, 0.2)
+    let mixed = interpolateColor(first, second, 0, cisSrgb)
+
+    check mixed.r.close(0.8)
+
+  test "a fully missing non-analogous set carries into Oklab":
+    let first = colorIn(csSrgb, 0, 0, 0,
+        missing = {ccFirst, ccSecond, ccThird})
+    let second = oklab(0.7, 0.1, 0.05)
+
+    interpolateColor(first, second, 0.35, cisOklab).checkColor(
+        second.resolveColor.r,
+        second.resolveColor.g,
+        second.resolveColor.b,
+        tolerance = 0.001
+    )
+
+  test "the remaining polar components carry as one analogous set":
+    let first = colorIn(csOklch, 0.5, 0, 0,
+        missing = {ccSecond, ccThird})
+    let second = oklab(0.7, 0.1, 0.05)
+    let expected = oklab(0.6, 0.1, 0.05).resolveColor
+
+    interpolateColor(first, second, 0.5, cisOklab).checkColor(
+        expected.r, expected.g, expected.b, tolerance = 0.001)
+
+  test "a partly missing remainder is converted numerically instead of carried":
+    let first = colorIn(csOklch, 0.5, 0, 0, missing = {ccSecond})
+    let second = oklab(0.7, 0.1, 0.05)
+    let expected = oklab(0.6, 0.05, 0.025).resolveColor
+
+    interpolateColor(first, second, 0.5, cisOklab).checkColor(
+        expected.r, expected.g, expected.b, tolerance = 0.001)
+
+  test "missing alpha carries before premultiplication":
+    let first = colorIn(csSrgb, 1, 0, 0, 0, {ccAlpha})
+    let second = srgb(0, 0, 1, 0.6)
+
+    interpolateColor(first, second, 0.5, cisSrgb).checkColor(
+        0.5, 0, 0.5, 0.6)
+
+  test "two missing alpha components resolve to transparent black":
+    let first = colorIn(csSrgb, 1, 0, 0, 0, {ccAlpha})
+    let second = colorIn(csSrgb, 0, 0, 1, 0, {ccAlpha})
+
+    interpolateColor(first, second, 0.5, cisSrgb).checkColor(0, 0, 0, 0)

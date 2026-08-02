@@ -62,6 +62,12 @@ nimble test
 nimble sdl3Demo
 ```
 
+The in-development Version 0.3 color and Canvas path has a focused demo:
+
+```sh
+nimble v03CanvasDemo
+```
+
 For an installed package, install CBSS once:
 
 ```sh
@@ -296,6 +302,9 @@ adapters, injection, and the custom-driver contract.
 See [docs/color.md](docs/color.md) for the authored color-space model,
 conversion boundary, gamut policy, and interpolation behavior being developed
 for Version 0.3.
+See [docs/render-surfaces.md](docs/render-surfaces.md) for the implemented
+RenderSurface lifecycle, retained Canvas API, input coordinates, and frame
+scheduling contract.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the files-to-touch map and ground
 rules for contributions.
 See [docs/platform-support.md](docs/platform-support.md) for the current
