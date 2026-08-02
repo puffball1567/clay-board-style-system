@@ -65,6 +65,8 @@ proc main() =
       "--mm:arc",
       "--path:" & (repoRoot / "src"),
     ]
+    if relative.startsWith("tests/perf/"):
+      arguments.add("-d:release")
     if not portable:
       arguments.add("-d:cbssSdl3LinkMode=bundled")
       arguments.add("-d:cbssRuntimeRoot=" & (repoRoot / "vendor/sdl3"))
