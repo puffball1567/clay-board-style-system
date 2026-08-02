@@ -1,7 +1,10 @@
 import std/[options, strutils]
-import ./color
+import ./[color, color_conversion, color_value]
 
 type
+  AuthoredColorRef = ref object
+    value: ColorValue
+
   UnitKind* = enum
     ukPx,
     ukPercent,
@@ -51,8 +54,10 @@ type
       length*: LengthValue
     of svColor:
       color*: Color
+      authoredColor: AuthoredColorRef
     of svColorPair:
       firstColor*, secondColor*: Color
+      firstAuthoredColor, secondAuthoredColor: AuthoredColorRef
     of svKeyword:
       keyword*: string
     of svNumber:
@@ -61,11 +66,13 @@ type
       borderWidth*: Option[LengthValue]
       borderStyle*: Option[string]
       borderColor*: Option[Color]
+      borderAuthoredColor: AuthoredColorRef
     of svShadow:
       shadowOffsetX*, shadowOffsetY*: LengthValue
       shadowBlur*: Option[LengthValue]
       shadowSpread*: Option[LengthValue]
       shadowColor*: Option[Color]
+      shadowAuthoredColor: AuthoredColorRef
     of svLinearGradient:
       gradientAngle*: float32
       gradientStops*: seq[GradientStop]
@@ -88,31 +95,39 @@ type
     value*: Option[StyleValue]
 
 proc px*(value: SomeNumber): StyleValue =
-  StyleValue(kind: svLength, length: LengthValue(kind: ukPx, value: value.float32))
+  StyleValue(kind: svLength, length: LengthValue(kind: ukPx,
+      value: value.float32))
 
 proc percent*(value: SomeNumber): StyleValue =
-  StyleValue(kind: svLength, length: LengthValue(kind: ukPercent, value: value.float32))
+  StyleValue(kind: svLength, length: LengthValue(kind: ukPercent,
+      value: value.float32))
 
 proc em*(value: SomeNumber): StyleValue =
-  StyleValue(kind: svLength, length: LengthValue(kind: ukEm, value: value.float32))
+  StyleValue(kind: svLength, length: LengthValue(kind: ukEm,
+      value: value.float32))
 
 proc rem*(value: SomeNumber): StyleValue =
-  StyleValue(kind: svLength, length: LengthValue(kind: ukRem, value: value.float32))
+  StyleValue(kind: svLength, length: LengthValue(kind: ukRem,
+      value: value.float32))
 
 proc fill*(): StyleValue =
   StyleValue(kind: svLength, length: LengthValue(kind: ukFill, value: 1.0'f32))
 
 proc content*(): StyleValue =
-  StyleValue(kind: svLength, length: LengthValue(kind: ukContent, value: 0.0'f32))
+  StyleValue(kind: svLength, length: LengthValue(kind: ukContent,
+      value: 0.0'f32))
 
 proc minContent*(): StyleValue =
-  StyleValue(kind: svLength, length: LengthValue(kind: ukMinContent, value: 0.0'f32))
+  StyleValue(kind: svLength, length: LengthValue(kind: ukMinContent,
+      value: 0.0'f32))
 
 proc maxContent*(): StyleValue =
-  StyleValue(kind: svLength, length: LengthValue(kind: ukMaxContent, value: 0.0'f32))
+  StyleValue(kind: svLength, length: LengthValue(kind: ukMaxContent,
+      value: 0.0'f32))
 
 proc fitContent*(): StyleValue =
-  StyleValue(kind: svLength, length: LengthValue(kind: ukFitContent, value: 0.0'f32))
+  StyleValue(kind: svLength, length: LengthValue(kind: ukFitContent,
+      value: 0.0'f32))
 
 proc auto*(): StyleValue =
   StyleValue(kind: svLength, length: LengthValue(kind: ukAuto, value: 0.0'f32))
@@ -127,8 +142,67 @@ proc none*(): StyleValue =
 proc colorValue*(color: Color): StyleValue =
   StyleValue(kind: svColor, color: color)
 
+proc authoredColorRef(color: ColorValue): AuthoredColorRef =
+  new(result)
+  result.value = color
+
+proc colorValue*(color: ColorValue): StyleValue =
+  StyleValue(
+    kind: svColor,
+    color: Color(),
+    authoredColor: authoredColorRef(color)
+  )
+
 proc colorPairValue*(first, second: Color): StyleValue =
   StyleValue(kind: svColorPair, firstColor: first, secondColor: second)
+
+proc colorPairValue*(first, second: ColorValue): StyleValue =
+  StyleValue(
+    kind: svColorPair,
+    firstColor: Color(),
+    secondColor: Color(),
+    firstAuthoredColor: authoredColorRef(first),
+    secondAuthoredColor: authoredColorRef(second)
+  )
+
+proc colorPairValue*(first: ColorValue; second: Color): StyleValue =
+  StyleValue(
+    kind: svColorPair,
+    firstColor: Color(),
+    secondColor: second,
+    firstAuthoredColor: authoredColorRef(first)
+  )
+
+proc colorPairValue*(first: Color; second: ColorValue): StyleValue =
+  StyleValue(
+    kind: svColorPair,
+    firstColor: first,
+    secondColor: Color(),
+    secondAuthoredColor: authoredColorRef(second)
+  )
+
+proc resolveStyleColor*(value: StyleValue; current: Color): Option[Color] =
+  if value.kind != svColor:
+    return none(Color)
+  if not value.authoredColor.isNil:
+    return some(value.authoredColor.value.resolveColor(current))
+  some(value.color)
+
+proc resolveColorPair*(value: StyleValue; current: Color): Option[tuple[
+    first, second: Color]] =
+  if value.kind != svColorPair:
+    return none(tuple[first, second: Color])
+  let first =
+    if not value.firstAuthoredColor.isNil:
+      value.firstAuthoredColor.value.resolveColor(current)
+    else:
+      value.firstColor
+  let second =
+    if not value.secondAuthoredColor.isNil:
+      value.secondAuthoredColor.value.resolveColor(current)
+    else:
+      value.secondColor
+  some((first: first, second: second))
 
 proc keyword*(value: string): StyleValue =
   StyleValue(kind: svKeyword, keyword: value)
@@ -170,25 +244,49 @@ proc borderValue*(
     let value = color.get
     if value.kind == svColor:
       result.borderColor = some(value.color)
+      result.borderAuthoredColor = value.authoredColor
 
-proc borderValue*(width: StyleValue; style: StyleValue; color: StyleValue): StyleValue =
+proc borderValue*(width: StyleValue; style: StyleValue;
+    color: StyleValue): StyleValue =
   borderValue(some(width), some(style), some(color))
 
 proc borderValue*(width: StyleValue; color: StyleValue): StyleValue =
   borderValue(some(width), none(StyleValue), some(color))
 
-proc borderValue*(lineWeight: StyleValue; lineStyle: string; lineColor: Color): StyleValue =
+proc borderValue*(lineWeight: StyleValue; lineStyle: string;
+    lineColor: Color): StyleValue =
   result = StyleValue(kind: svBorder)
   if lineWeight.kind == svLength:
     result.borderWidth = some(lineWeight.length)
   result.borderStyle = some(lineStyle)
   result.borderColor = some(lineColor)
 
+proc borderValue*(lineWeight: StyleValue; lineStyle: string;
+    lineColor: ColorValue): StyleValue =
+  result = StyleValue(kind: svBorder)
+  if lineWeight.kind == svLength:
+    result.borderWidth = some(lineWeight.length)
+  result.borderStyle = some(lineStyle)
+  result.borderAuthoredColor = authoredColorRef(lineColor)
+
 proc borderValue*(lineWeight: StyleValue; lineColor: Color): StyleValue =
   result = StyleValue(kind: svBorder)
   if lineWeight.kind == svLength:
     result.borderWidth = some(lineWeight.length)
   result.borderColor = some(lineColor)
+
+proc borderValue*(lineWeight: StyleValue; lineColor: ColorValue): StyleValue =
+  result = StyleValue(kind: svBorder)
+  if lineWeight.kind == svLength:
+    result.borderWidth = some(lineWeight.length)
+  result.borderAuthoredColor = authoredColorRef(lineColor)
+
+proc resolveBorderColor*(value: StyleValue; current: Color): Option[Color] =
+  if value.kind != svBorder:
+    return none(Color)
+  if not value.borderAuthoredColor.isNil:
+    return some(value.borderAuthoredColor.value.resolveColor(current))
+  value.borderColor
 
 proc shadowValue*(
     offsetX: StyleValue;
@@ -208,10 +306,30 @@ proc shadowValue*(
     result.shadowSpread = some(spread.get.length)
   result.shadowColor = shadowColor
 
-proc linearGradient*(angle: SomeNumber; stops: varargs[GradientStop]): StyleValue =
-  StyleValue(kind: svLinearGradient, gradientAngle: angle.float32, gradientStops: @stops)
+proc shadowValue*(
+    offsetX: StyleValue;
+    offsetY: StyleValue;
+    shadowColor: ColorValue;
+    blur: Option[StyleValue] = none(StyleValue);
+    spread: Option[StyleValue] = none(StyleValue)
+): StyleValue =
+  result = shadowValue(offsetX, offsetY, blur, spread)
+  result.shadowAuthoredColor = authoredColorRef(shadowColor)
 
-proc translate*(x, y: StyleValue; z: Option[StyleValue] = none(StyleValue)): StyleValue =
+proc resolveShadowColor*(value: StyleValue; current: Color): Option[Color] =
+  if value.kind != svShadow:
+    return none(Color)
+  if not value.shadowAuthoredColor.isNil:
+    return some(value.shadowAuthoredColor.value.resolveColor(current))
+  value.shadowColor
+
+proc linearGradient*(angle: SomeNumber; stops: varargs[
+    GradientStop]): StyleValue =
+  StyleValue(kind: svLinearGradient, gradientAngle: angle.float32,
+      gradientStops: @stops)
+
+proc translate*(x, y: StyleValue; z: Option[StyleValue] = none(
+    StyleValue)): StyleValue =
   result = StyleValue(kind: svTransformOperation)
   result.transformOperation.kind = tokTranslate
   if x.kind == svLength:
@@ -221,7 +339,8 @@ proc translate*(x, y: StyleValue; z: Option[StyleValue] = none(StyleValue)): Sty
   if z.isSome and z.get.kind == svLength:
     result.transformOperation.zLength = some(z.get.length)
 
-proc scale*(x: SomeNumber; y: Option[float32] = none(float32); z: Option[float32] = none(float32)): StyleValue =
+proc scale*(x: SomeNumber; y: Option[float32] = none(float32); z: Option[
+    float32] = none(float32)): StyleValue =
   result = StyleValue(kind: svTransformOperation)
   result.transformOperation.kind = tokScale
   result.transformOperation.xNumber = some(x.float32)

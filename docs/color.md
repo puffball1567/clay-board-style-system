@@ -72,6 +72,37 @@ does not introduce a browser cascade or a CSS custom-property runtime. These
 boundaries produce explicit errors rather than silently degrading to another
 color.
 
+## Style Declarations
+
+Typed and parsed `ColorValue` instances can be passed through the existing
+`colorValue(...)` declaration helper. Solid color properties resolve the
+authored color into the compact 16-byte `Color` stored by `ComputedStyle`:
+
+```nim
+let accent = parseColorOrRaise("oklch(68% 0.17 245deg)")
+let panelStyle = styleContext([
+  decl("color", accent),
+  decl("border-color", currentColor()),
+  decl("background-color", displayP3(0.12, 0.18, 0.28))
+])
+```
+
+The direct `decl` overload is preferred when the value is unambiguously a
+solid color. `colorValue(...)` remains available for explicit construction and
+for composition with helpers that accept a general `StyleValue`.
+
+Foreground `color` declarations are resolved before other properties. This
+makes `currentColor` independent of declaration order and lets a child use its
+inherited foreground when no local color is declared. The conversion occurs
+during style resolution; paint and hit-test passes do not retain or repeatedly
+convert the authored value.
+
+The same authored-color path covers solid background, border, outline, input,
+text-decoration, text-emphasis, column-rule, vector, scrollbar-pair, and
+structured border/shadow values. Gradient-stop interpolation remains a
+separate color unit because it requires defined missing-component and
+interpolation-space behavior.
+
 ## Resolution And Interpolation
 
 `resolveColor` converts an authored value to the current SDR sRGB paint
@@ -84,10 +115,11 @@ Alpha is premultiplied before component interpolation. The endpoints return
 the independently resolved endpoint colors without an avoidable conversion
 round trip.
 
-The numerical model and serialized parser are independent from style-property
-integration. Browser comparison fixtures, C ABI input handles, missing-value
-interpolation, `color-mix()`, and optional Pixie output remain separate
-implementation units built on this contract.
+The numerical model, serialized parser, and solid style-property integration
+remain independent implementation units. Browser comparison fixtures, C ABI
+input handles, missing-value interpolation, gradient color spaces,
+`color-mix()`, and optional Pixie output remain separate units built on this
+contract.
 
 ## Conformance Source
 

@@ -1,5 +1,6 @@
 import std/options
-import ../core/[color, computed_style, declaration, diagnostics, property, style_value]
+import ../core/[color, computed_style, declaration, diagnostics, property,
+    style_color, style_value]
 
 proc applyBackgroundColor(
     style: var ComputedStyle;
@@ -9,10 +10,12 @@ proc applyBackgroundColor(
 ) =
   case declaration.operation.mode
   of mmOverwrite:
-    if declaration.operation.value.isNone or declaration.operation.value.get.kind != svColor:
+    if declaration.operation.value.isNone or
+        declaration.operation.value.get.kind != svColor:
       diagnostics.addError(declaration.property, "background-color requires a color value")
       return
-    style.box.backgroundColor = some(declaration.operation.value.get.color)
+    style.box.backgroundColor = declaration.operation.value.get.resolveStyleColor(
+        style, env)
   of mmInitial, mmUnset:
     style.box.backgroundColor = none(Color)
   of mmInherit:
@@ -23,7 +26,8 @@ proc applyBackgroundColor(
   of mmRelative:
     diagnostics.addError(declaration.property, "background-color does not support relative merge")
 
-let backgroundColorProperty* = PropertyImpl(name: "background-color", apply: applyBackgroundColor)
+let backgroundColorProperty* = PropertyImpl(name: "background-color",
+    apply: applyBackgroundColor)
 
 proc applyBackground(
     style: var ComputedStyle;
@@ -39,7 +43,7 @@ proc applyBackground(
     let value = declaration.operation.value.get
     case value.kind
     of svColor:
-      style.box.backgroundColor = some(value.color)
+      style.box.backgroundColor = value.resolveStyleColor(style, env)
     of svKeyword:
       if value.keyword == "none":
         style.box.backgroundImage = none(string)
@@ -49,7 +53,8 @@ proc applyBackground(
         style.box.backgroundGradient = none(LinearGradient)
     of svLinearGradient:
       style.box.backgroundImage = none(string)
-      style.box.backgroundGradient = some(LinearGradient(angle: value.gradientAngle, stops: value.gradientStops))
+      style.box.backgroundGradient = some(LinearGradient(
+          angle: value.gradientAngle, stops: value.gradientStops))
     else:
       diagnostics.addError(declaration.property, "background supports color values, image keywords, or linear gradients")
   of mmInitial, mmUnset:
@@ -88,7 +93,8 @@ proc applyBackgroundImage(
         style.box.backgroundGradient = none(LinearGradient)
     of svLinearGradient:
       style.box.backgroundImage = none(string)
-      style.box.backgroundGradient = some(LinearGradient(angle: value.gradientAngle, stops: value.gradientStops))
+      style.box.backgroundGradient = some(LinearGradient(
+          angle: value.gradientAngle, stops: value.gradientStops))
     else:
       diagnostics.addError(declaration.property, "background-image requires a keyword or linear gradient value")
   of mmInitial, mmUnset:
@@ -130,7 +136,8 @@ proc applyBackgroundSize(
       if value.length.kind != ukPx:
         diagnostics.addError(declaration.property, "only px is supported for length background-size")
         return
-      style.box.backgroundSize = some(BackgroundSize(kind: bgSizeLength, width: some(value.length.value), height: none(float32)))
+      style.box.backgroundSize = some(BackgroundSize(kind: bgSizeLength,
+          width: some(value.length.value), height: none(float32)))
     else:
       diagnostics.addError(declaration.property, "background-size requires a keyword or length value")
   of mmInitial, mmUnset:
@@ -198,7 +205,8 @@ proc applyBackgroundPosition(
     if env.parent.isSome:
       style.box.backgroundPosition = env.parent.get.box.backgroundPosition
     else:
-      diagnostics.addError(declaration.property, "cannot inherit " & declaration.property & " without parent")
+      diagnostics.addError(declaration.property, "cannot inherit " &
+          declaration.property & " without parent")
   of mmRelative:
     diagnostics.addError(declaration.property, declaration.property & " does not support relative merge")
 
@@ -214,7 +222,8 @@ proc applyBackgroundRepeat(
   if declaration.operation.mode in {mmInitial, mmUnset}:
     style.box.backgroundRepeat = bgRepeat
     return
-  if declaration.operation.value.isNone or declaration.operation.value.get.kind != svKeyword:
+  if declaration.operation.value.isNone or
+      declaration.operation.value.get.kind != svKeyword:
     diagnostics.addError(declaration.property, "background-repeat requires a keyword value")
     return
   case declaration.operation.value.get.keyword
@@ -255,12 +264,14 @@ proc applyBackgroundBox(
     else:
       style.box.backgroundClip = bgBorderBox
     return
-  if declaration.operation.value.isNone or declaration.operation.value.get.kind != svKeyword:
+  if declaration.operation.value.isNone or
+      declaration.operation.value.get.kind != svKeyword:
     diagnostics.addError(declaration.property, declaration.property & " requires a keyword value")
     return
   let box = backgroundBoxFrom(declaration.operation.value.get.keyword)
   if box.isNone:
-    diagnostics.addError(declaration.property, "unsupported " & declaration.property & " keyword")
+    diagnostics.addError(declaration.property, "unsupported " &
+        declaration.property & " keyword")
     return
   if declaration.property == "background-origin":
     style.box.backgroundOrigin = box.get
@@ -279,7 +290,8 @@ proc applyBackgroundAttachment(
   if declaration.operation.mode in {mmInitial, mmUnset}:
     style.box.backgroundAttachment = bgScroll
     return
-  if declaration.operation.value.isNone or declaration.operation.value.get.kind != svKeyword:
+  if declaration.operation.value.isNone or
+      declaration.operation.value.get.kind != svKeyword:
     diagnostics.addError(declaration.property, "background-attachment requires a keyword value")
     return
   case declaration.operation.value.get.keyword
@@ -304,7 +316,8 @@ proc applyBackgroundBlendMode(
   if declaration.operation.mode in {mmInitial, mmUnset}:
     style.box.backgroundBlendMode = bmNormal
     return
-  if declaration.operation.value.isNone or declaration.operation.value.get.kind != svKeyword:
+  if declaration.operation.value.isNone or
+      declaration.operation.value.get.kind != svKeyword:
     diagnostics.addError(declaration.property, "background-blend-mode requires a keyword value")
     return
   case declaration.operation.value.get.keyword
@@ -323,14 +336,25 @@ proc applyBackgroundBlendMode(
   else:
     diagnostics.addError(declaration.property, "unsupported background-blend-mode keyword")
 
-let backgroundProperty* = PropertyImpl(name: "background", apply: applyBackground)
-let backgroundImageProperty* = PropertyImpl(name: "background-image", apply: applyBackgroundImage)
-let backgroundSizeProperty* = PropertyImpl(name: "background-size", apply: applyBackgroundSize)
-let backgroundPositionProperty* = PropertyImpl(name: "background-position", apply: applyBackgroundPosition)
-let backgroundPositionXProperty* = PropertyImpl(name: "background-position-x", apply: applyBackgroundPosition)
-let backgroundPositionYProperty* = PropertyImpl(name: "background-position-y", apply: applyBackgroundPosition)
-let backgroundRepeatProperty* = PropertyImpl(name: "background-repeat", apply: applyBackgroundRepeat)
-let backgroundClipProperty* = PropertyImpl(name: "background-clip", apply: applyBackgroundBox)
-let backgroundOriginProperty* = PropertyImpl(name: "background-origin", apply: applyBackgroundBox)
-let backgroundAttachmentProperty* = PropertyImpl(name: "background-attachment", apply: applyBackgroundAttachment)
-let backgroundBlendModeProperty* = PropertyImpl(name: "background-blend-mode", apply: applyBackgroundBlendMode)
+let backgroundProperty* = PropertyImpl(name: "background",
+    apply: applyBackground)
+let backgroundImageProperty* = PropertyImpl(name: "background-image",
+    apply: applyBackgroundImage)
+let backgroundSizeProperty* = PropertyImpl(name: "background-size",
+    apply: applyBackgroundSize)
+let backgroundPositionProperty* = PropertyImpl(name: "background-position",
+    apply: applyBackgroundPosition)
+let backgroundPositionXProperty* = PropertyImpl(name: "background-position-x",
+    apply: applyBackgroundPosition)
+let backgroundPositionYProperty* = PropertyImpl(name: "background-position-y",
+    apply: applyBackgroundPosition)
+let backgroundRepeatProperty* = PropertyImpl(name: "background-repeat",
+    apply: applyBackgroundRepeat)
+let backgroundClipProperty* = PropertyImpl(name: "background-clip",
+    apply: applyBackgroundBox)
+let backgroundOriginProperty* = PropertyImpl(name: "background-origin",
+    apply: applyBackgroundBox)
+let backgroundAttachmentProperty* = PropertyImpl(name: "background-attachment",
+    apply: applyBackgroundAttachment)
+let backgroundBlendModeProperty* = PropertyImpl(name: "background-blend-mode",
+    apply: applyBackgroundBlendMode)

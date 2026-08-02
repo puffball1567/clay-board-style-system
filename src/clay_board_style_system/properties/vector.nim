@@ -1,5 +1,6 @@
 import std/options
-import ../core/[color, computed_style, declaration, diagnostics, property, style_value]
+import ../core/[color, computed_style, declaration, diagnostics, property,
+    style_color, style_value]
 
 proc setVectorKeyword(style: var ComputedStyle; property: string; value: Option[string]) =
   style.ensureVector()
@@ -66,7 +67,8 @@ proc applyVectorKeyword(
 ) =
   case declaration.operation.mode
   of mmOverwrite:
-    if declaration.operation.value.isNone or declaration.operation.value.get.kind != svKeyword:
+    if declaration.operation.value.isNone or
+        declaration.operation.value.get.kind != svKeyword:
       diagnostics.addError(declaration.property, declaration.property & " requires a keyword metadata value")
       return
     let value = declaration.operation.value.get.keyword
@@ -78,9 +80,11 @@ proc applyVectorKeyword(
     style.setVectorKeyword(declaration.property, none(string))
   of mmInherit:
     if env.parent.isSome:
-      style.setVectorKeyword(declaration.property, env.parent.get.vectorKeyword(declaration.property))
+      style.setVectorKeyword(declaration.property, env.parent.get.vectorKeyword(
+          declaration.property))
     else:
-      diagnostics.addError(declaration.property, "cannot inherit " & declaration.property & " without parent")
+      diagnostics.addError(declaration.property, "cannot inherit " &
+          declaration.property & " without parent")
   of mmRelative:
     diagnostics.addError(declaration.property, declaration.property & " does not support relative merge")
 
@@ -134,7 +138,7 @@ proc applyVectorColor(
     let value = declaration.operation.value.get
     case value.kind
     of svColor:
-      style.setVectorColor(declaration.property, some(value.color))
+      style.setVectorColor(declaration.property, value.resolveStyleColor(style, env))
     of svKeyword:
       if declaration.property in ["fill", "stroke"]:
         if value.keyword == "none":
@@ -150,11 +154,14 @@ proc applyVectorColor(
     style.setVectorColor(declaration.property, none(Color))
   of mmInherit:
     if env.parent.isSome:
-      style.setVectorColor(declaration.property, env.parent.get.vectorColor(declaration.property))
+      style.setVectorColor(declaration.property, env.parent.get.vectorColor(
+          declaration.property))
       if declaration.property in ["fill", "stroke"]:
-        style.setVectorKeyword(declaration.property, env.parent.get.vectorKeyword(declaration.property))
+        style.setVectorKeyword(declaration.property,
+            env.parent.get.vectorKeyword(declaration.property))
     else:
-      diagnostics.addError(declaration.property, "cannot inherit " & declaration.property & " without parent")
+      diagnostics.addError(declaration.property, "cannot inherit " &
+          declaration.property & " without parent")
   of mmRelative:
     diagnostics.addError(declaration.property, declaration.property & " does not support relative merge")
 
@@ -253,33 +260,53 @@ proc applyVectorNumber(
     style.setVectorNumber(declaration.property, none(float32))
   of mmInherit:
     if env.parent.isSome:
-      style.setVectorNumber(declaration.property, env.parent.get.vectorNumber(declaration.property))
+      style.setVectorNumber(declaration.property, env.parent.get.vectorNumber(
+          declaration.property))
     else:
-      diagnostics.addError(declaration.property, "cannot inherit " & declaration.property & " without parent")
+      diagnostics.addError(declaration.property, "cannot inherit " &
+          declaration.property & " without parent")
   of mmRelative:
     diagnostics.addError(declaration.property, declaration.property & " does not support relative merge")
 
-let colorInterpolationFiltersProperty* = PropertyImpl(name: "color-interpolation-filters", apply: applyVectorKeyword)
+let colorInterpolationFiltersProperty* = PropertyImpl(
+    name: "color-interpolation-filters", apply: applyVectorKeyword)
 let fillProperty* = PropertyImpl(name: "fill", apply: applyVectorColor)
-let fillOpacityProperty* = PropertyImpl(name: "fill-opacity", apply: applyVectorNumber)
-let fillRuleProperty* = PropertyImpl(name: "fill-rule", apply: applyVectorKeyword)
-let floodColorProperty* = PropertyImpl(name: "flood-color", apply: applyVectorColor)
-let floodOpacityProperty* = PropertyImpl(name: "flood-opacity", apply: applyVectorNumber)
-let lightingColorProperty* = PropertyImpl(name: "lighting-color", apply: applyVectorColor)
+let fillOpacityProperty* = PropertyImpl(name: "fill-opacity",
+    apply: applyVectorNumber)
+let fillRuleProperty* = PropertyImpl(name: "fill-rule",
+    apply: applyVectorKeyword)
+let floodColorProperty* = PropertyImpl(name: "flood-color",
+    apply: applyVectorColor)
+let floodOpacityProperty* = PropertyImpl(name: "flood-opacity",
+    apply: applyVectorNumber)
+let lightingColorProperty* = PropertyImpl(name: "lighting-color",
+    apply: applyVectorColor)
 let markerProperty* = PropertyImpl(name: "marker", apply: applyVectorKeyword)
-let paintOrderProperty* = PropertyImpl(name: "paint-order", apply: applyVectorKeyword)
-let stopColorProperty* = PropertyImpl(name: "stop-color", apply: applyVectorColor)
-let stopOpacityProperty* = PropertyImpl(name: "stop-opacity", apply: applyVectorNumber)
+let paintOrderProperty* = PropertyImpl(name: "paint-order",
+    apply: applyVectorKeyword)
+let stopColorProperty* = PropertyImpl(name: "stop-color",
+    apply: applyVectorColor)
+let stopOpacityProperty* = PropertyImpl(name: "stop-opacity",
+    apply: applyVectorNumber)
 let strokeProperty* = PropertyImpl(name: "stroke", apply: applyVectorColor)
-let strokeColorProperty* = PropertyImpl(name: "stroke-color", apply: applyVectorColor)
-let strokeDasharrayProperty* = PropertyImpl(name: "stroke-dasharray", apply: applyVectorKeyword)
-let strokeDashoffsetProperty* = PropertyImpl(name: "stroke-dashoffset", apply: applyVectorNumber)
-let strokeLinecapProperty* = PropertyImpl(name: "stroke-linecap", apply: applyVectorKeyword)
-let strokeLinejoinProperty* = PropertyImpl(name: "stroke-linejoin", apply: applyVectorKeyword)
-let strokeMiterlimitProperty* = PropertyImpl(name: "stroke-miterlimit", apply: applyVectorNumber)
-let strokeOpacityProperty* = PropertyImpl(name: "stroke-opacity", apply: applyVectorNumber)
-let strokeWidthProperty* = PropertyImpl(name: "stroke-width", apply: applyVectorNumber)
-let vectorEffectProperty* = PropertyImpl(name: "vector-effect", apply: applyVectorKeyword)
+let strokeColorProperty* = PropertyImpl(name: "stroke-color",
+    apply: applyVectorColor)
+let strokeDasharrayProperty* = PropertyImpl(name: "stroke-dasharray",
+    apply: applyVectorKeyword)
+let strokeDashoffsetProperty* = PropertyImpl(name: "stroke-dashoffset",
+    apply: applyVectorNumber)
+let strokeLinecapProperty* = PropertyImpl(name: "stroke-linecap",
+    apply: applyVectorKeyword)
+let strokeLinejoinProperty* = PropertyImpl(name: "stroke-linejoin",
+    apply: applyVectorKeyword)
+let strokeMiterlimitProperty* = PropertyImpl(name: "stroke-miterlimit",
+    apply: applyVectorNumber)
+let strokeOpacityProperty* = PropertyImpl(name: "stroke-opacity",
+    apply: applyVectorNumber)
+let strokeWidthProperty* = PropertyImpl(name: "stroke-width",
+    apply: applyVectorNumber)
+let vectorEffectProperty* = PropertyImpl(name: "vector-effect",
+    apply: applyVectorKeyword)
 let xProperty* = PropertyImpl(name: "x", apply: applyVectorNumber)
 let yProperty* = PropertyImpl(name: "y", apply: applyVectorNumber)
 let cxProperty* = PropertyImpl(name: "cx", apply: applyVectorNumber)

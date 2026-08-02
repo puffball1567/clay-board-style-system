@@ -205,11 +205,18 @@ Implementation progress:
   modern and legacy RGB/HSL, HWB, Lab/LCH, Oklab/Oklch, predefined
   `color()` spaces, angle units, alpha, and missing components. Parsing is a
   typed input boundary and does not add a CSS cascade or custom properties.
+- Implemented on the Version 0.3 development line: typed and parsed authored
+  colors resolve through solid color properties, structured borders and
+  shadows, and scrollbar color pairs. Foreground color resolves first so
+  `currentColor` is independent of declaration order. Computed and paint data
+  retain the existing compact resolved `Color` representation. Direct `decl`
+  overloads accept both resolved `Color` and authored `ColorValue` without an
+  extra `colorValue(...)` wrapper.
 - Implemented on the Version 0.3 development line: a portable test profile and
   required Linux, Windows, and macOS CI lanes for the platform-neutral core,
   C ABI build, and native Rust bridges. Linux-specific SDL3 runtime checks
   remain separate and continue to be release-blocking.
-- Remaining color units: style-property resolution, missing-component
+- Remaining color units: gradient color-space integration, missing-component
   interpolation, `color-mix()`, browser comparison fixtures, and versioned C
   ABI constructors.
 - Remaining visual units: optional Pixie output, the RenderSurface lifecycle,
@@ -345,9 +352,9 @@ Capability plan and progress:
   contexts.
 - Keep the implemented predefined `color(...)` spaces and add typed
   `color-mix(...)` behavior where it is meaningful for CBSS declarations.
-- Provide ergonomic declaration overloads where a plain `Color` unambiguously
-  means a solid style color, so authors need not write `colorValue(...)` in
-  ordinary declarations.
+- Keep the implemented declaration overloads where `Color` or `ColorValue`
+  unambiguously means a solid style color, so ordinary declarations do not
+  require a `colorValue(...)` wrapper.
 - Define interpolation-space behavior for gradients, transitions, and animated
   colors instead of relying on backend-specific blending.
 - Treat device-dependent, wide-gamut, and system-color behavior as explicit
