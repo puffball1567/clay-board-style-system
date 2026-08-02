@@ -6,6 +6,7 @@ type
   RasterImage* = object
     width*, height*: int
     pixels*: seq[uint8]
+    alpha*: seq[uint8]
 
   PpmClip = object
     bounds: Rect
@@ -16,6 +17,12 @@ type
     minProjection, span: float32
     lookup: GradientLookupTable
 
+  PpmLayer = object
+    bounds: Rect
+    opacity: float32
+    compositeMode: LayerCompositeMode
+    clipDepth: int
+
 proc clampByte(value: float32): uint8 =
   uint8(clamp(round(value * 255.0'f32).int, 0, 255))
 
@@ -23,20 +30,99 @@ proc initRasterImage*(width, height: int; background = rgb(1, 1, 1)): RasterImag
   result.width = width
   result.height = height
   result.pixels = newSeq[uint8](width * height * 3)
+  result.alpha = newSeq[uint8](width * height)
   for y in 0 ..< height:
     for x in 0 ..< width:
       let index = (y * width + x) * 3
+      let alphaIndex = y * width + x
       result.pixels[index] = clampByte(background.r)
       result.pixels[index + 1] = clampByte(background.g)
       result.pixels[index + 2] = clampByte(background.b)
+      result.alpha[alphaIndex] = clampByte(background.a)
+
+proc pixelColor(image: RasterImage; x, y: int): Color =
+  let index = (y * image.width + x) * 3
+  let alphaIndex = y * image.width + x
+  rgba(
+    image.pixels[index].float32 / 255.0'f32,
+    image.pixels[index + 1].float32 / 255.0'f32,
+    image.pixels[index + 2].float32 / 255.0'f32,
+    image.alpha[alphaIndex].float32 / 255.0'f32
+  )
+
+proc storePixel(image: var RasterImage; x, y: int; color: Color) =
+  let index = (y * image.width + x) * 3
+  let alphaIndex = y * image.width + x
+  image.pixels[index] = clampByte(color.r)
+  image.pixels[index + 1] = clampByte(color.g)
+  image.pixels[index + 2] = clampByte(color.b)
+  image.alpha[alphaIndex] = clampByte(color.a)
+
+proc sourceOver(source, destination: Color): Color =
+  let sourceAlpha = clamp(source.a, 0.0'f32, 1.0'f32)
+  let destinationAlpha = clamp(destination.a, 0.0'f32, 1.0'f32)
+  let outputAlpha = sourceAlpha + destinationAlpha * (1.0'f32 - sourceAlpha)
+  if outputAlpha <= 0.000001'f32:
+    return rgba(0, 0, 0, 0)
+  rgba(
+    (source.r * sourceAlpha +
+      destination.r * destinationAlpha * (1.0'f32 - sourceAlpha)) / outputAlpha,
+    (source.g * sourceAlpha +
+      destination.g * destinationAlpha * (1.0'f32 - sourceAlpha)) / outputAlpha,
+    (source.b * sourceAlpha +
+      destination.b * destinationAlpha * (1.0'f32 - sourceAlpha)) / outputAlpha,
+    outputAlpha
+  )
 
 proc putPixel(image: var RasterImage; x, y: int; color: Color) =
   if x < 0 or y < 0 or x >= image.width or y >= image.height:
     return
-  let index = (y * image.width + x) * 3
-  image.pixels[index] = clampByte(color.r)
-  image.pixels[index + 1] = clampByte(color.g)
-  image.pixels[index + 2] = clampByte(color.b)
+  image.storePixel(x, y, color.sourceOver(image.pixelColor(x, y)))
+
+proc compositePixel(
+    destination: var RasterImage;
+    source: RasterImage;
+    x, y: int;
+    opacity: float32;
+    compositeMode: LayerCompositeMode
+) =
+  var sourceColor = source.pixelColor(x, y)
+  sourceColor.a *= opacity
+  let destinationColor = destination.pixelColor(x, y)
+  case compositeMode
+  of lcmSourceOver:
+    destination.storePixel(x, y, sourceColor.sourceOver(destinationColor))
+  of lcmCopy:
+    destination.storePixel(x, y, sourceColor)
+  of lcmAdditive:
+    let sourceAlpha = clamp(sourceColor.a, 0.0'f32, 1.0'f32)
+    destination.storePixel(x, y, rgba(
+      min(1.0'f32, destinationColor.r + sourceColor.r * sourceAlpha),
+      min(1.0'f32, destinationColor.g + sourceColor.g * sourceAlpha),
+      min(1.0'f32, destinationColor.b + sourceColor.b * sourceAlpha),
+      destinationColor.a
+    ))
+
+proc intBounds(rect: Rect; width, height: int): tuple[x0, y0, x1, y1: int]
+proc intersect(a, b: Rect): Rect
+proc contains(clip: PpmClip; point: Vec2): bool
+
+proc compositeLayer(
+    destination: var RasterImage;
+    source: RasterImage;
+    layer: PpmLayer;
+    clip: PpmClip
+) =
+  let bounds = intBounds(
+    intersect(layer.bounds, clip.bounds), destination.width, destination.height
+  )
+  for y in bounds.y0 ..< bounds.y1:
+    for x in bounds.x0 ..< bounds.x1:
+      let sample = vec2(x.float32 + 0.5'f32, y.float32 + 0.5'f32)
+      if clip.contains(sample):
+        destination.compositePixel(
+          source, x, y, layer.opacity, layer.compositeMode
+        )
 
 proc intBounds(rect: Rect; width, height: int): tuple[x0, y0, x1, y1: int] =
   result.x0 = clamp(floor(rect.x).int, 0, width)
@@ -126,14 +212,17 @@ proc fillTransformedRect(
     color: Color;
     clip: PpmClip
 ) =
-  let topLeft = transform.transformPoint(vec2(source.x, source.y))
-  let topRight = transform.transformPoint(vec2(source.x + source.w, source.y))
-  let bottomRight = transform.transformPoint(
-    vec2(source.x + source.w, source.y + source.h)
+  let shape = transformedRect(source, transform)
+  if shape.inverseTransform.isNone:
+    return
+  let bounds = intBounds(
+    intersect(shape.bounds, clip.bounds), image.width, image.height
   )
-  let bottomLeft = transform.transformPoint(vec2(source.x, source.y + source.h))
-  image.fillTriangle(topLeft, topRight, bottomRight, color, clip)
-  image.fillTriangle(topLeft, bottomRight, bottomLeft, color, clip)
+  for y in bounds.y0 ..< bounds.y1:
+    for x in bounds.x0 ..< bounds.x1:
+      let sample = vec2(x.float32 + 0.5'f32, y.float32 + 0.5'f32)
+      if clip.contains(sample) and shape.contains(sample):
+        image.putPixel(x, y, color)
 
 proc strokeScale(transform: Affine2D): float32 =
   let xScale = sqrt(transform.m11 * transform.m11 + transform.m12 * transform.m12)
@@ -384,7 +473,8 @@ proc fillLinearGradient(
         image.putPixel(x, y, sampler.colorAt(source))
 
 proc render*(commands: openArray[PaintCommand]; width, height: int; background = rgb(1, 1, 1)): RasterImage =
-  result = initRasterImage(width, height, background)
+  var targets = @[initRasterImage(width, height, background)]
+  var layers: seq[PpmLayer]
   var clipStack = @[
     PpmClip(bounds: rect(0, 0, width.float32, height.float32))
   ]
@@ -396,6 +486,24 @@ proc render*(commands: openArray[PaintCommand]; width, height: int; background =
     of pcPopTransform:
       if transformStack.len > 1:
         discard transformStack.pop()
+    of pcPushLayer:
+      let layerBounds = transformStack[^1].transformedBounds(command.layerBounds)
+      layers.add PpmLayer(
+        bounds: layerBounds,
+        opacity: command.layerOpacity,
+        compositeMode: command.layerCompositeMode,
+        clipDepth: clipStack.len
+      )
+      targets.add initRasterImage(width, height, rgba(0, 0, 0, 0))
+      clipStack.add clipStack[^1].withShape(
+        transformedRect(command.layerBounds, transformStack[^1])
+      )
+    of pcPopLayer:
+      if layers.len > 0 and targets.len > 1:
+        let source = targets.pop()
+        let layer = layers.pop()
+        clipStack.setLen(max(1, layer.clipDepth))
+        targets[^1].compositeLayer(source, layer, clipStack[^1])
     of pcPushClip:
       clipStack.add clipStack[^1].withShape(
         transformedRect(command.clipRect, transformStack[^1])
@@ -411,15 +519,15 @@ proc render*(commands: openArray[PaintCommand]; width, height: int; background =
         command.shadowRect.w + grow * 2.0'f32,
         command.shadowRect.h + grow * 2.0'f32
       )
-      result.fillTransformedRect(
+      targets[^1].fillTransformedRect(
         shadowRect, transformStack[^1], command.shadowColor, clipStack[^1]
       )
     of pcFillRect:
-      result.fillTransformedRect(
+      targets[^1].fillTransformedRect(
         command.rect, transformStack[^1], command.color, clipStack[^1]
       )
     of pcFillLinearGradient:
-      result.fillLinearGradient(
+      targets[^1].fillLinearGradient(
         command.gradientRect, command.gradient, transformStack[^1], clipStack[^1]
       )
     of pcStrokeRect:
@@ -429,7 +537,7 @@ proc render*(commands: openArray[PaintCommand]; width, height: int; background =
         vec2(command.strokeRect.x + command.strokeRect.w, command.strokeRect.y + command.strokeRect.h),
         vec2(command.strokeRect.x, command.strokeRect.y + command.strokeRect.h)
       ]
-      result.strokePolyline(
+      targets[^1].strokePolyline(
         corners.mapIt(transformStack[^1].transformPoint(it)),
         command.strokeColor,
         command.strokeWidth * transformStack[^1].strokeScale,
@@ -439,11 +547,18 @@ proc render*(commands: openArray[PaintCommand]; width, height: int; background =
       var transformedCommand = command
       transformedCommand.path = command.path.transformed(transformStack[^1])
       transformedCommand.pathWidth = command.pathWidth * transformStack[^1].strokeScale
-      result.strokePath(transformedCommand, clipStack[^1])
+      targets[^1].strokePath(transformedCommand, clipStack[^1])
     of pcDrawText:
       discard
     of pcDrawImage:
       discard
+
+  while layers.len > 0 and targets.len > 1:
+    let source = targets.pop()
+    let layer = layers.pop()
+    clipStack.setLen(max(1, layer.clipDepth))
+    targets[^1].compositeLayer(source, layer, clipStack[^1])
+  result = targets[0]
 
 proc writePpm*(image: RasterImage; path: string) =
   var content = "P6\n" & $image.width & " " & $image.height & "\n255\n"

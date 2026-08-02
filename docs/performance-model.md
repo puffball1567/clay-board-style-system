@@ -135,11 +135,14 @@ The release ARC benchmark on the development machine measured:
 | 1,000,000 idle predicates with 10,000 registered surfaces | 5.690 ms total | <= 50 ms |
 | flatten 10,000 retained Canvas commands | 2.198 ms average | <= 4 ms |
 | flatten 1,000 transformed Canvas scopes | 0.566 ms average | <= 4 ms |
+| flatten 1,000 bounded Canvas layers | 0.382 ms average | <= 4 ms |
 | flatten a retained path with 1,000 cubic curves | 0.436 ms average | <= 12 ms |
 
-`tests/perf/render_surface_benchmark.nim` enforces all four gates. The Canvas
+`tests/perf/render_surface_benchmark.nim` enforces all five gates. The Canvas
 measurements cover display-list translation, transform-scope balancing, and
-transform visual-bounds resolution into canonical paint commands. The path
+transform visual-bounds resolution into canonical paint commands. The layer
+measurement covers bounded scope conversion and balancing; it does not include
+backend texture allocation or composition. The path
 measurement covers adaptive curve subdivision into backend-ready contours.
 None of these measurements includes backend rasterization or text shaping.
 Memory instrumentation may compile the same workload with

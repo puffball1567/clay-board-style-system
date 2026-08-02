@@ -297,11 +297,16 @@ Implementation progress:
   masks, SVG, blur, and image effects after the canonical path/mask paint
   vocabulary and cache ownership are stable. SDL3 remains sufficient for the
   mandatory Version 0.3 Canvas path.
-- Remaining Version 0.3 visual work: add blend state and explicit offscreen
-  surfaces; expose drawing adapters beyond the existing C ABI lifecycle; and
-  complete the final SDL3, headless, performance, memory, and platform release
-  gates. Three-dimensional transforms, filters, and blend/isolation semantics
-  remain later work.
+- Implemented on the Version 0.3 development line: bounded Canvas offscreen
+  layers with explicit opacity and portable source-over, copy, and additive
+  composition. Scopes balance in strict LIFO order with transforms and clips;
+  SDL3 reuses compact high-DPI textures and the PPM reference backend verifies
+  alpha composition pixel by pixel. The append-only C ABI exposes layer paint
+  kinds and composition metadata.
+- Remaining Version 0.3 visual work: expose drawing adapters beyond the
+  existing C ABI lifecycle and complete the final SDL3, headless, performance,
+  memory, and platform release gates. Three-dimensional transforms, filters,
+  and full CSS blend/isolation semantics remain later work.
 
 ## Version 0.4 - Complete Unit Resolution
 

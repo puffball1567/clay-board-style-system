@@ -154,6 +154,11 @@ static uint8_t handle_event(
 
 int main(void) {
   assert(cbss_abi_version() == CBSS_ABI_VERSION);
+  assert(CBSS_PAINT_PUSH_LAYER == 11);
+  assert(CBSS_PAINT_POP_LAYER == 12);
+  assert(CBSS_LAYER_SOURCE_OVER == 0);
+  assert(CBSS_LAYER_COPY == 1);
+  assert(CBSS_LAYER_ADDITIVE == 2);
 
   CbssContext *context = cbss_context_create();
   CbssStyle *root_style = cbss_style_create();

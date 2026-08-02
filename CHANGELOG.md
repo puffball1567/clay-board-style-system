@@ -50,11 +50,16 @@ release. Before 1.0, minor releases may contain public API changes.
 - Added retained open and closed Canvas paths with adaptive quadratic/cubic
   curves, configurable cap/join styles, shared SDL3/headless rendering,
   clipping, opacity, and Canvas-local coordinates.
+- Added bounded Canvas offscreen layers with explicit opacity, source-over,
+  copy, and additive composition across SDL3 and the alpha-aware PPM reference
+  backend, including append-only C ABI paint kinds and performance gates.
 
 ### Fixed
 
 - Corrected `step-start` to jump at the zero endpoint and rejected non-finite
   Canvas target frame rates before they can enter the scheduler.
+- Prevented transformed PPM rectangles from alpha-compositing shared triangle
+  edges twice.
 
 ## [0.2.0] - 2026-08-01
 

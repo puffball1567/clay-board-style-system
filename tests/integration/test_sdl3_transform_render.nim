@@ -175,3 +175,85 @@ suite "SDL3 transform rendering":
     let frame = renderer.capturedFrame().get
     check frame.pixel(40, 35).r > 220
     check frame.pixel(15, 35).r < 25
+
+  test "bounded Canvas layers apply portable composition modes":
+    let previousDriver = getEnv("SDL_VIDEODRIVER")
+    putEnv("SDL_VIDEODRIVER", "dummy")
+    defer:
+      if previousDriver.len > 0:
+        putEnv("SDL_VIDEODRIVER", previousDriver)
+      else:
+        delEnv("SDL_VIDEODRIVER")
+
+    var renderer = initSdl3Renderer("CBSS Canvas layer test", 40, 30, false)
+    defer: renderer.close()
+
+    let sourceOverCanvas = newCanvas2D()
+    sourceOverCanvas.fillRect(rect(0, 0, 40, 30), rgb(0, 0, 1))
+    sourceOverCanvas.beginLayer(rect(10, 5, 20, 20), opacity = 0.5)
+    sourceOverCanvas.fillRect(rect(10, 5, 20, 20), rgb(1, 0, 0))
+    sourceOverCanvas.endLayer()
+    renderer.requestFrameCapture()
+    renderer.render(
+      sourceOverCanvas.paintCommands(NodeId(1), rect(0, 0, 40, 30)),
+      rgb(0, 0, 0)
+    )
+    let sourceOverFrame = renderer.capturedFrame().get
+    let mixed = sourceOverFrame.pixel(20, 15)
+    check mixed.r in 120'u8 .. 136'u8
+    check mixed.g < 10
+    check mixed.b in 120'u8 .. 136'u8
+    check sourceOverFrame.pixel(5, 15).b > 240
+
+    let additiveCanvas = newCanvas2D()
+    additiveCanvas.fillRect(rect(0, 0, 40, 30), rgb(0, 0, 0.4))
+    additiveCanvas.beginLayer(
+      rect(10, 5, 20, 20), opacity = 0.5,
+      compositeMode = lcmAdditive
+    )
+    additiveCanvas.fillRect(rect(10, 5, 20, 20), rgb(0.8, 0, 0))
+    additiveCanvas.endLayer()
+    renderer.requestFrameCapture()
+    renderer.render(
+      additiveCanvas.paintCommands(NodeId(2), rect(0, 0, 40, 30)),
+      rgb(0, 0, 0)
+    )
+    let additive = renderer.capturedFrame().get.pixel(20, 15)
+    check additive.r in 96'u8 .. 112'u8
+    check additive.g < 10
+    check additive.b in 96'u8 .. 112'u8
+
+    let copyCanvas = newCanvas2D()
+    copyCanvas.fillRect(rect(0, 0, 40, 30), rgb(0, 0, 1))
+    copyCanvas.beginLayer(
+      rect(10, 5, 20, 20), compositeMode = lcmCopy
+    )
+    copyCanvas.fillRect(rect(15, 10, 5, 5), rgb(0, 1, 0))
+    copyCanvas.endLayer()
+    renderer.requestFrameCapture()
+    renderer.render(
+      copyCanvas.paintCommands(NodeId(3), rect(0, 0, 40, 30)),
+      rgb(0, 0, 0)
+    )
+    let copyFrame = renderer.capturedFrame().get
+    check copyFrame.pixel(17, 12).g > 240
+    let cleared = copyFrame.pixel(25, 15)
+    check cleared.r < 10
+    check cleared.g < 10
+    check cleared.b < 10
+    check copyFrame.pixel(5, 15).b > 240
+
+    let emptyCopyCanvas = newCanvas2D()
+    emptyCopyCanvas.fillRect(rect(0, 0, 40, 30), rgb(0, 0, 1))
+    emptyCopyCanvas.beginLayer(
+      rect(10, 5, 20, 20), compositeMode = lcmCopy
+    )
+    emptyCopyCanvas.endLayer()
+    renderer.requestFrameCapture()
+    renderer.render(
+      emptyCopyCanvas.paintCommands(NodeId(4), rect(0, 0, 40, 30)),
+      rgb(0, 0, 0)
+    )
+    let emptyCopyFrame = renderer.capturedFrame().get
+    check emptyCopyFrame.pixel(20, 15) == (0'u8, 0'u8, 0'u8)
+    check emptyCopyFrame.pixel(5, 15).b > 240

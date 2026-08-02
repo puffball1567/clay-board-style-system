@@ -9,6 +9,8 @@ type
     cckSaveTransform,
     cckRestoreTransform,
     cckPushTransform,
+    cckPushLayer,
+    cckPopLayer,
     cckPushClip,
     cckPopClip,
     cckFillRect,
@@ -24,6 +26,12 @@ type
       discard
     of cckPushTransform:
       transform*: Affine2D
+    of cckPushLayer:
+      layerBounds*: Rect
+      layerOpacity*: float32
+      layerCompositeMode*: LayerCompositeMode
+    of cckPopLayer:
+      discard
     of cckPushClip:
       clipRect*: Rect
       clipRadius*: float32
@@ -88,6 +96,9 @@ proc finite(transform: Affine2D): bool {.inline.} =
     transform.m21.finite and transform.m22.finite and
     transform.tx.finite and transform.ty.finite
 
+proc finite(bounds: Rect): bool {.inline.} =
+  bounds.x.finite and bounds.y.finite and bounds.w.finite and bounds.h.finite
+
 proc save*(canvas: Canvas2D) =
   ## Saves the current Canvas transform and clip scope depth.
   canvas.commands.add CanvasCommand(kind: cckSaveTransform)
@@ -124,6 +135,39 @@ proc scale*(canvas: Canvas2D; x, y: float32) =
 
 proc scale*(canvas: Canvas2D; value: float32) =
   canvas.scale(value, value)
+
+proc beginLayer*(
+    canvas: Canvas2D;
+    bounds: Rect;
+    opacity = 1.0'f32;
+    compositeMode = lcmSourceOver
+) =
+  ## Begins a bounded offscreen composition scope. Invalid or empty bounds do
+  ## not allocate a retained layer command.
+  if not bounds.finite or bounds.isEmpty or not opacity.finite:
+    return
+  canvas.commands.add CanvasCommand(
+    kind: cckPushLayer,
+    layerBounds: bounds,
+    layerOpacity: clamp(opacity, 0.0'f32, 1.0'f32),
+    layerCompositeMode: compositeMode
+  )
+  canvas.touch()
+
+proc endLayer*(canvas: Canvas2D) =
+  canvas.commands.add CanvasCommand(kind: cckPopLayer)
+  canvas.touch()
+
+proc saveLayer*(
+    canvas: Canvas2D;
+    bounds: Rect;
+    opacity = 1.0'f32;
+    compositeMode = lcmSourceOver
+) =
+  canvas.beginLayer(bounds, opacity, compositeMode)
+
+proc restoreLayer*(canvas: Canvas2D) =
+  canvas.endLayer()
 
 proc pushClip*(canvas: Canvas2D; bounds: Rect; radius = 0.0'f32) =
   canvas.commands.add CanvasCommand(
@@ -285,6 +329,7 @@ proc paintCommands*(
   result = newSeqOfCap[PaintCommand](canvas.commands.len + 8)
   type CanvasPaintScope = enum
     cpsTransform,
+    cpsLayer,
     cpsClip
   var scopes: seq[CanvasPaintScope]
   var savedScopeDepths: seq[int]
@@ -300,6 +345,8 @@ proc paintCommands*(
           case scopes.pop()
           of cpsTransform:
             result.add popTransform()
+          of cpsLayer:
+            result.add popLayer()
           of cpsClip:
             result.add popClip()
     of cckPushTransform:
@@ -310,6 +357,17 @@ proc paintCommands*(
       result.add pushTransform(placementTransform)
       scopes.add cpsTransform
       hasTransform = true
+    of cckPushLayer:
+      result.add pushLayer(
+        command.layerBounds.translated(offset),
+        command.layerOpacity,
+        command.layerCompositeMode
+      )
+      scopes.add cpsLayer
+    of cckPopLayer:
+      if scopes.len > 0 and scopes[^1] == cpsLayer:
+        result.add popLayer()
+        discard scopes.pop()
     of cckPushClip:
       result.add pushClip(command.clipRect.translated(offset), command.clipRadius)
       scopes.add cpsClip
@@ -371,6 +429,8 @@ proc paintCommands*(
     case scopes.pop()
     of cpsTransform:
       result.add popTransform()
+    of cpsLayer:
+      result.add popLayer()
     of cpsClip:
       result.add popClip()
   if resolveBounds and hasTransform:
