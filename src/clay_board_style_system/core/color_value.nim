@@ -17,11 +17,18 @@ type
     csLab,
     csLch,
     csOklab,
-    csOklch
+    csOklch,
+    csDisplayP3Linear
 
   ColorValueKind* = enum
     cvComponents,
     cvCurrentColor
+
+  ColorComponent* = enum
+    ccFirst,
+    ccSecond,
+    ccThird,
+    ccAlpha
 
   ColorValue* = object
     ## Author-facing color value. Components remain in their declared color
@@ -31,6 +38,7 @@ type
       space*: ColorSpace
       components*: array[3, float64]
       alpha*: float64
+      missing*: set[ColorComponent]
     of cvCurrentColor:
       discard
 
@@ -39,7 +47,8 @@ proc colorIn*[First, Second, Third: SomeNumber](
     first: First;
     second: Second;
     third: Third;
-    alpha: float64 = 1.0
+    alpha: float64 = 1.0;
+    missing: set[ColorComponent] = {}
 ): ColorValue =
   for component in [first.float64, second.float64, third.float64, alpha]:
     if component.classify in {fcNan, fcInf, fcNegInf}:
@@ -48,7 +57,8 @@ proc colorIn*[First, Second, Third: SomeNumber](
     kind: cvComponents,
     space: space,
     components: [first.float64, second.float64, third.float64],
-    alpha: alpha.float64
+    alpha: alpha.float64,
+    missing: missing
   )
 
 proc srgb*[Red, Green, Blue: SomeNumber](red: Red; green: Green; blue: Blue;
@@ -62,6 +72,10 @@ proc srgbLinear*[Red, Green, Blue: SomeNumber](red: Red; green: Green;
 proc displayP3*[Red, Green, Blue: SomeNumber](red: Red; green: Green;
     blue: Blue; alpha: float64 = 1.0): ColorValue =
   colorIn(csDisplayP3, red, green, blue, alpha)
+
+proc displayP3Linear*[Red, Green, Blue: SomeNumber](red: Red; green: Green;
+    blue: Blue; alpha: float64 = 1.0): ColorValue =
+  colorIn(csDisplayP3Linear, red, green, blue, alpha)
 
 proc a98Rgb*[Red, Green, Blue: SomeNumber](red: Red; green: Green; blue: Blue;
     alpha: float64 = 1.0): ColorValue =

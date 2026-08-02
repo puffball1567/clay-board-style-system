@@ -2,6 +2,7 @@ import clay_board_style_system/assets/asset_resolver
 import clay_board_style_system/core/[
   color,
   color_conversion,
+  color_parser,
   color_value,
   computed_style,
   declaration,
@@ -24,7 +25,11 @@ import clay_board_style_system/hit/hit_test
 import clay_board_style_system/input/events
 import clay_board_style_system/input/pointer
 import clay_board_style_system/paint/[paint, paint_command]
-import clay_board_style_system/runtime/[accessibility, button, checkbox, details, dialog, fieldset, focus, form, frame_scheduler, image, invalidation, label, link, navigation, navigation_focus, navigation_transition, navigation_screen_host, platform_links, progress, providers, radio, select_box, slider, state_runtime, text_input, textarea, ui_root]
+import clay_board_style_system/runtime/[accessibility, button, checkbox,
+    details, dialog, fieldset, focus, form, frame_scheduler, image,
+    invalidation, label, link, navigation, navigation_focus,
+    navigation_transition, navigation_screen_host, platform_links, progress,
+    providers, radio, select_box, slider, state_runtime, text_input, textarea, ui_root]
 import clay_board_style_system/runtime/widgets/[command_menu, list_box, tabs]
 import clay_board_style_system/text/[cosmic_text_engine, font_registry, text_engine]
 import clay_board_style_system/design_source/model
@@ -33,6 +38,7 @@ import clay_board_style_system/backends/atspi/adapter
 export asset_resolver
 export color
 export color_conversion
+export color_parser
 export color_value
 export computed_style
 export declaration

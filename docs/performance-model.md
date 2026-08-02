@@ -300,7 +300,7 @@ exceeds twice the 500-node result plus a one-microsecond noise allowance.
 Dynamic screen creation and physical subtree disposal remain separate work;
 this benchmark covers switching among already registered screens.
 
-### Color conversion baseline (2026-08-01)
+### Color conversion and parsing baseline (2026-08-02)
 
 Version 0.3 color authoring keeps declared color spaces outside the compact
 paint `Color`. Conversion is allocation-free and occurs when a computed color
@@ -315,11 +315,14 @@ path in a release ARC build. The initial development baseline is:
 | in-gamut sRGB resolution | 137.1 ns/color |
 | out-of-gamut Display P3 resolution | 1,865.1 ns/color |
 | premultiplied Oklab interpolation | 482.4 ns/color |
+| serialized color parsing | 1,151.3 ns/color |
 
 The wide-gamut path includes iterative Oklch chroma reduction. It must not run
 for unchanged static colors on every frame. Future browser-parity and Pixie
 work must keep backend conversion and raster caching outside ordinary layout
-and hit-test passes.
+and hit-test passes. Serialized parsing is likewise an authoring and resource
+ingestion operation: computed styles retain parsed values, so paint, layout,
+and hit-test passes do not reparse unchanged strings.
 
 ## Renderer budgets
 
