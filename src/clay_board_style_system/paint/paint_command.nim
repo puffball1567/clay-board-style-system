@@ -1,9 +1,11 @@
-import std/options
+import std/[math, options, strutils, unicode]
 import ../core/[color, computed_style, geometry, node]
 import ./path_geometry
 
 type
   PaintCommandKind* = enum
+    pcPushTransform,
+    pcPopTransform,
     pcPushClip,
     pcPopClip,
     pcBoxShadow,
@@ -17,6 +19,11 @@ type
   PaintCommand* = object
     owner*: Option[NodeId]
     case kind*: PaintCommandKind
+    of pcPushTransform:
+      transform*: Affine2D
+      transformBounds*: Rect
+    of pcPopTransform:
+      discard
     of pcPushClip:
       clipRect*: Rect
       clipRadius*: float32
@@ -64,6 +71,97 @@ type
 
 proc fillRect*(rect: Rect; color: Color; radius: float32 = 0; owner = none(NodeId)): PaintCommand =
   PaintCommand(kind: pcFillRect, owner: owner, rect: rect, color: color, radius: radius)
+
+proc pushTransform*(transform: Affine2D; bounds = rect(0, 0, 0, 0)): PaintCommand =
+  PaintCommand(kind: pcPushTransform, transform: transform, transformBounds: bounds)
+
+proc popTransform*(): PaintCommand =
+  PaintCommand(kind: pcPopTransform)
+
+type TransformBoundsFrame = object
+  commandIndex: int
+  bounds: Option[Rect]
+
+proc expanded(bounds: Rect; amount: float32): Rect =
+  rect(
+    bounds.x - amount,
+    bounds.y - amount,
+    max(0.0'f32, bounds.w + amount * 2.0'f32),
+    max(0.0'f32, bounds.h + amount * 2.0'f32)
+  )
+
+proc includeBounds(bounds: var Option[Rect]; value: Rect) =
+  if value.isEmpty:
+    return
+  if bounds.isNone:
+    bounds = some(value)
+    return
+  let current = bounds.get
+  let left = min(current.x, value.x)
+  let top = min(current.y, value.y)
+  let right = max(current.x + current.w, value.x + value.w)
+  let bottom = max(current.y + current.h, value.y + value.h)
+  bounds = some(rect(left, top, right - left, bottom - top))
+
+proc visualBounds(command: PaintCommand): Option[Rect] =
+  case command.kind
+  of pcBoxShadow:
+    let blur = max(0.0'f32, command.shadowBlur)
+    let grow = command.shadowSpread + blur
+    some(rect(
+      command.shadowRect.x + command.shadowOffsetX - grow,
+      command.shadowRect.y + command.shadowOffsetY - grow,
+      max(0.0'f32, command.shadowRect.w + grow * 2.0'f32),
+      max(0.0'f32, command.shadowRect.h + grow * 2.0'f32)
+    ))
+  of pcFillRect:
+    some(command.rect)
+  of pcFillLinearGradient:
+    some(command.gradientRect)
+  of pcStrokeRect:
+    some(command.strokeRect.expanded(max(0.0'f32, command.strokeWidth) * 0.5'f32))
+  of pcStrokePath:
+    some(command.path.bounds().expanded(max(0.0'f32, command.pathWidth) * 0.5'f32))
+  of pcDrawText:
+    let fontSize =
+      if command.textStyle.fontSize.isSome: command.textStyle.fontSize.get
+      else: 14.0'f32
+    let lineHeight =
+      if command.textStyle.lineHeight.isSome: command.textStyle.lineHeight.get
+      else: fontSize * 1.25'f32
+    let lineCount = max(1, command.text.count('\n') + 1)
+    let width =
+      if command.textMaxWidth.isSome: command.textMaxWidth.get
+      else: max(fontSize, command.text.runeLen.float32 * fontSize * 0.7'f32)
+    some(rect(command.position.x, command.position.y, width, lineHeight * lineCount.float32))
+  of pcDrawImage:
+    some(command.imageRect)
+  of pcPushTransform, pcPopTransform, pcPushClip, pcPopClip:
+    none(Rect)
+
+proc resolveTransformBounds*(commands: var seq[PaintCommand]) =
+  ## Annotates generated transform scopes with their source-space visual bounds.
+  ## Render backends can therefore allocate compact intermediate surfaces.
+  var stack: seq[TransformBoundsFrame]
+  for index in 0 ..< commands.len:
+    case commands[index].kind
+    of pcPushTransform:
+      stack.add TransformBoundsFrame(commandIndex: index)
+    of pcPopTransform:
+      if stack.len == 0:
+        continue
+      let frame = stack.pop()
+      if frame.bounds.isSome:
+        commands[frame.commandIndex].transformBounds = frame.bounds.get
+        if stack.len > 0:
+          stack[^1].bounds.includeBounds(
+            commands[frame.commandIndex].transform.transformedBounds(frame.bounds.get)
+          )
+    else:
+      if stack.len > 0:
+        let bounds = commands[index].visualBounds()
+        if bounds.isSome:
+          stack[^1].bounds.includeBounds(bounds.get)
 
 proc fillLinearGradient*(rect: Rect; gradient: LinearGradient; radius: float32 = 0; owner = none(NodeId)): PaintCommand =
   PaintCommand(kind: pcFillLinearGradient, owner: owner, gradientRect: rect, gradient: gradient, gradientRadius: radius)

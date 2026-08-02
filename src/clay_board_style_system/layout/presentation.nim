@@ -10,6 +10,7 @@ type
     bounds*: Rect
     sourceBounds*: Rect
     transform*: Affine2D
+    ownTransform*: Affine2D
 
   PresentationContext* = object
     translation*: Vec2
@@ -106,7 +107,8 @@ proc ancestorPresentationContext*(
       node: ancestor,
       bounds: bounds,
       sourceBounds: sourceBounds,
-      transform: worldTransform
+      transform: worldTransform,
+      ownTransform: ownTransform
     )
     if tree.nodes[ancestor.nodeIndex].kind == nkBox and style.clipsOverflow():
       let ownClipShape = transformedRect(

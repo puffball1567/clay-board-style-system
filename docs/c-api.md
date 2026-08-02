@@ -23,7 +23,7 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x00010001` supports:
+ABI version `0x00010002` supports:
 
 - Opaque context and style handles.
 - Generation-checked node handles plus box, text, and image node creation.
@@ -38,6 +38,9 @@ ABI version `0x00010001` supports:
 - Layout-box and node-rectangle queries.
 - Renderer-neutral paint-command iteration.
 - Text/image payload, basic computed text style, and gradient-stop queries.
+- Append-only paint kinds for retained paths and 2D transform scopes, including
+  path-segment/stroke metadata and affine-matrix queries. Existing paint-kind
+  values remain unchanged.
 - Hit testing.
 - C callbacks for all CBSS event kinds, including bubbling through ancestors.
 - Pointer, touch, keyboard, text, wheel, and component-event dispatch.

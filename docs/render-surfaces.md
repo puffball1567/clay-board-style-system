@@ -119,10 +119,10 @@ The Version 0.3 contract is still in development. The following are not yet
 runtime-complete:
 
 - Canvas save/restore transforms, blend modes, and offscreen surfaces;
-- applying resolved CSS-inspired transforms consistently to paint, hit tests,
-  clips, and local input;
 - C ABI drawing commands beyond the implemented RenderSurface lifecycle; and
 - GPU/shared-texture surface paths.
 
-Computed transform metadata is not treated as rendered transform support.
-These limits remain release work rather than silent backend differences.
+Resolved box transforms already use one affine contract across SDL3 and
+headless paint, hit tests, clips, and RenderSurface-local input. Canvas-authored
+save/restore transforms are a separate command API and remain release work
+rather than a silent backend difference.

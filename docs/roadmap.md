@@ -280,17 +280,23 @@ Implementation progress:
   paths with adaptive quadratic/cubic curves, configurable butt/round/square
   caps, miter/round/bevel joins, Canvas-local placement, opacity, clipping,
   and shared SDL3/headless rendering.
+- Implemented on the Version 0.3 development line: resolved 2D
+  `transform`, `translate`, `rotate`, `scale`, transform origin, and transform
+  box now share one affine coordinate contract across paint, exact hit tests,
+  transformed clips, and RenderSurface-local input. SDL3 composites bounded
+  offscreen scopes with reusable high-DPI textures; the PPM reference backend
+  inverse-samples transformed gradients and clips. Pixel tests cover normal,
+  layered, nested, and rounded-clip composition.
 - Pixie evaluation result: do not make Pixie a core dependency or expose its
   types. A future optional adapter remains appropriate for cached paths,
   masks, SVG, blur, and image effects after the canonical path/mask paint
   vocabulary and cache ownership are stable. SDL3 remains sufficient for the
   mandatory Version 0.3 Canvas path.
-- Remaining Version 0.3 visual work: apply the resolved 2D transform model to
-  paint, hit testing, clips, and RenderSurface input; add Canvas offscreen
-  composition with save/restore and blend state; expose drawing adapters beyond
-  the existing C ABI lifecycle; and complete the final SDL3/headless and
-  platform release gates. Metadata-only transform support is not counted as
-  runtime support.
+- Remaining Version 0.3 visual work: add Canvas-authored transform
+  save/restore, blend state, and explicit offscreen surfaces; expose drawing
+  adapters beyond the existing C ABI lifecycle; and complete the final SDL3,
+  headless, performance, memory, and platform release gates. Three-dimensional
+  transforms, filters, and blend/isolation semantics remain later work.
 
 ## Version 0.4 - Complete Unit Resolution
 

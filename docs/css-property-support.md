@@ -652,7 +652,7 @@ subsystem.
 | `reading-order` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `resize` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `right` | Runtime | Supports signed px and percentage offsets against the containing content width. |
-| `rotate` | Metadata | Stored as computed transform metadata; renderer application is a later runtime layer. |
+| `rotate` | Runtime | Resolves into the shared 2D affine paint, hit-test, clip, and surface-input contract. |
 | `row-gap` | Runtime | Supports px and percentage spacing against the container content height. |
 | `ruby-align` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
 | `ruby-merge` | Metadata | Stored as computed text metadata. |
@@ -660,7 +660,7 @@ subsystem.
 | `ruby-position` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
 | `rx` | Metadata | Stores number and px length values as computed vector geometry metadata. |
 | `ry` | Metadata | Stores number and px length values as computed vector geometry metadata. |
-| `scale` | Metadata | Stored as computed transform metadata; renderer application is a later runtime layer. |
+| `scale` | Runtime | Resolves into the shared 2D affine paint, hit-test, clip, and surface-input contract. |
 | `scroll-behavior` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `scroll-initial-target` | Metadata | Stored as computed scroll metadata. |
 | `scroll-margin` | No plan | Browser scrolling model property; no initial CBSS support. |
@@ -766,9 +766,9 @@ subsystem.
 | `timeline-trigger-source` | Metadata | Stored as computed timeline trigger metadata. |
 | `top` | Runtime | Supports signed px and percentage offsets against the containing content height. |
 | `touch-action` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
-| `transform` | Metadata | Supports structured `transformValue(...)` operations and raw metadata; renderer application is a later runtime layer. |
-| `transform-box` | Metadata | Stored as computed transform metadata. |
-| `transform-origin` | Computed | Accepts single-value length/percent/keyword input mirrored to x/y. |
+| `transform` | Runtime | Structured 2D transform operations resolve into shared SDL3/headless paint, exact hit-test, clip, and surface-input coordinates. Unsupported raw operations remain diagnostic metadata rather than silently changing paint. |
+| `transform-box` | Runtime | Selects the source box used to resolve the 2D transform origin. |
+| `transform-origin` | Runtime | Resolves length, percentage, and keyword origins for the shared 2D affine contract. |
 | `transform-style` | Metadata | Supports `flat` and `preserve-3d` metadata. |
 | `transition` | Metadata | Stored as transition metadata; runtime subsystem is not complete yet. |
 | `transition-behavior` | Metadata | Stored as transition metadata; runtime subsystem is not complete yet. |
@@ -776,7 +776,7 @@ subsystem.
 | `transition-duration` | Metadata | Stored as transition metadata; runtime subsystem is not complete yet. |
 | `transition-property` | Metadata | Stored as transition metadata; runtime subsystem is not complete yet. |
 | `transition-timing-function` | Metadata | Stored as transition metadata; runtime subsystem is not complete yet. |
-| `translate` | Metadata | Stored as computed transform metadata; renderer application is a later runtime layer. |
+| `translate` | Runtime | Resolves into the shared 2D affine paint, hit-test, clip, and surface-input contract. |
 | `trigger-scope` | Metadata | Stored as computed timeline trigger metadata. |
 | `unicode-bidi` | Metadata | Stored in computed text style; full bidi shaping remains text-engine dependent. |
 | `user-select` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |

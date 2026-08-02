@@ -12,6 +12,10 @@ _Static_assert(sizeof(CbssLayoutBox) == 24, "CbssLayoutBox ABI changed");
 _Static_assert(sizeof(CbssHitResult) == 24, "CbssHitResult ABI changed");
 _Static_assert(sizeof(CbssPaintCommand) == 64,
                "CbssPaintCommand ABI changed");
+_Static_assert(sizeof(CbssAffineTransform) == 24,
+               "CbssAffineTransform ABI changed");
+_Static_assert(sizeof(CbssPathSegment) == 28,
+               "CbssPathSegment ABI changed");
 _Static_assert(sizeof(CbssTextStyle) == 24, "CbssTextStyle ABI changed");
 _Static_assert(sizeof(CbssGradientStop) == 20,
                "CbssGradientStop ABI changed");
@@ -355,14 +359,16 @@ int main(void) {
       CBSS_SHADOW_HAS_BLUR | CBSS_SHADOW_HAS_COLOR,
       CBSS_UNIT_PX, 2.0f, CBSS_UNIT_PX, 0.0f,
       (CbssColor){0.0f, 0.0f, 0.0f, 0.25f}) == CBSS_OK);
-  CbssTransformOperation identity = {
-      .kind = CBSS_TRANSFORM_SCALE,
+  CbssTransformOperation translation = {
+      .kind = CBSS_TRANSFORM_TRANSLATE,
       .flags = CBSS_TRANSFORM_HAS_X | CBSS_TRANSFORM_HAS_Y,
+      .x_unit = CBSS_UNIT_PX,
+      .y_unit = CBSS_UNIT_PX,
       .x = 1.0f,
-      .y = 1.0f
+      .y = 0.0f
   };
   assert(cbss_style_set_transform(
-      child_style, "transform", &identity, 1) == CBSS_OK);
+      child_style, "transform", &translation, 1) == CBSS_OK);
   assert(cbss_style_set_length(
       surface_style, "width", CBSS_UNIT_PX, 30.0f) == CBSS_OK);
   assert(cbss_style_set_length(
@@ -493,6 +499,8 @@ int main(void) {
   assert(command_count > 0);
   int found_text = 0;
   int found_gradient = 0;
+  int found_transform_push = 0;
+  int found_transform_pop = 0;
   for (uint32_t i = 0; i < command_count; ++i) {
     CbssPaintCommand command;
     require_ok(context, cbss_context_paint_command(context, i, &command));
@@ -518,10 +526,32 @@ int main(void) {
       assert(fabsf(second_stop.color.g - 0.75f) < 0.002f);
       assert(fabsf(second_stop.color.b - 0.65f) < 0.002f);
       found_gradient = 1;
+    } else if (command.kind == CBSS_PAINT_PUSH_TRANSFORM) {
+      CbssAffineTransform transform;
+      require_ok(context, cbss_paint_command_transform(
+          context, i, &transform));
+      assert(fabsf(transform.m11 - 1.0f) < 0.001f);
+      assert(fabsf(transform.m12) < 0.001f);
+      assert(fabsf(transform.m21) < 0.001f);
+      assert(fabsf(transform.m22 - 1.0f) < 0.001f);
+      assert(fabsf(transform.tx - 1.0f) < 0.001f);
+      assert(fabsf(transform.ty) < 0.001f);
+      found_transform_push = 1;
+    } else if (command.kind == CBSS_PAINT_POP_TRANSFORM) {
+      CbssAffineTransform transform;
+      assert(cbss_paint_command_transform(context, i, &transform) ==
+             CBSS_INVALID_ARGUMENT);
+      CbssPathSegment segment;
+      assert(cbss_paint_command_path_segment_count(context, i) == 0);
+      assert(cbss_paint_command_path_segment(context, i, 0, &segment) ==
+             CBSS_INVALID_ARGUMENT);
+      found_transform_pop = 1;
     }
   }
   assert(found_text);
   assert(found_gradient);
+  assert(found_transform_push);
+  assert(found_transform_pop);
 
   CbssDispatchSummary dispatch;
   CbssInputEvent pointer_down = {

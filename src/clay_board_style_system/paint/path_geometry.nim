@@ -137,6 +137,26 @@ proc translated*(path: Path2D; offset: Vec2): Path2D =
   if result.subpathStart.isSome:
     result.subpathStart = some(result.subpathStart.get.translated(offset))
 
+proc transformed*(path: Path2D; transform: Affine2D): Path2D =
+  result = path
+  for segment in result.segments.mitems:
+    case segment.kind
+    of pskMoveTo, pskLineTo:
+      segment.endpoint = transform.transformPoint(segment.endpoint)
+    of pskQuadraticTo:
+      segment.control1 = transform.transformPoint(segment.control1)
+      segment.endpoint = transform.transformPoint(segment.endpoint)
+    of pskCubicTo:
+      segment.control1 = transform.transformPoint(segment.control1)
+      segment.control2 = transform.transformPoint(segment.control2)
+      segment.endpoint = transform.transformPoint(segment.endpoint)
+    of pskClose:
+      discard
+  if result.currentPoint.isSome:
+    result.currentPoint = some(transform.transformPoint(result.currentPoint.get))
+  if result.subpathStart.isSome:
+    result.subpathStart = some(transform.transformPoint(result.subpathStart.get))
+
 proc midpoint(a, b: Vec2): Vec2 =
   vec2((a.x + b.x) * 0.5'f32, (a.y + b.y) * 0.5'f32)
 

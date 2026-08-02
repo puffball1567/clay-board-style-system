@@ -57,6 +57,11 @@ proc main() =
   echo "Paint commands:"
   for command in commands:
     case command.kind
+    of pcPushTransform:
+      let transform = command.transform
+      echo &"  PushTransform matrix=({transform.m11:.2f}, {transform.m12:.2f}, {transform.m21:.2f}, {transform.m22:.2f}, {transform.tx:.1f}, {transform.ty:.1f})"
+    of pcPopTransform:
+      echo "  PopTransform"
     of pcBoxShadow:
       echo &"  BoxShadow rect=({command.shadowRect.x:.1f}, {command.shadowRect.y:.1f}, {command.shadowRect.w:.1f}, {command.shadowRect.h:.1f}) offset=({command.shadowOffsetX:.1f}, {command.shadowOffsetY:.1f}) blur={command.shadowBlur:.1f} spread={command.shadowSpread:.1f} radius={command.shadowRadius:.1f} color={command.shadowColor}"
     of pcFillRect:
@@ -65,6 +70,8 @@ proc main() =
       echo &"  FillLinearGradient rect=({command.gradientRect.x:.1f}, {command.gradientRect.y:.1f}, {command.gradientRect.w:.1f}, {command.gradientRect.h:.1f}) angle={command.gradient.angle:.1f} stops={command.gradient.stops.len}"
     of pcStrokeRect:
       echo &"  StrokeRect rect=({command.strokeRect.x:.1f}, {command.strokeRect.y:.1f}, {command.strokeRect.w:.1f}, {command.strokeRect.h:.1f}) width={command.strokeWidth:.1f} radius={command.strokeRadius:.1f} color={command.strokeColor}"
+    of pcStrokePath:
+      echo &"  StrokePath segments={command.path.segments.len} width={command.pathWidth:.1f} color={command.pathColor}"
     of pcDrawText:
       echo &"  DrawText node={command.node.nodeIndex} text=\"{command.text}\" pos=({command.position.x:.1f}, {command.position.y:.1f}) color={command.textColor}"
     of pcDrawImage:

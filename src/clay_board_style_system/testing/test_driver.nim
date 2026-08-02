@@ -934,6 +934,10 @@ proc paintSnapshot*(driver: CbssTestDriver): string =
   var lines: seq[string]
   for command in driver.paintCommands:
     case command.kind
+    of pcPushTransform:
+      lines.add "push-transform"
+    of pcPopTransform:
+      lines.add "pop-transform"
     of pcPushClip:
       lines.add "push-clip " & rectSnapshot(command.clipRect)
     of pcPopClip:
@@ -1039,6 +1043,14 @@ proc structuredSnapshotJson*(driver: CbssTestDriver): JsonNode =
     var entry = newJObject()
     entry["kind"] = %($command.kind)
     case command.kind
+    of pcPushTransform:
+      entry["matrix"] = %*[
+        command.transform.m11, command.transform.m12,
+        command.transform.m21, command.transform.m22,
+        command.transform.tx, command.transform.ty
+      ]
+    of pcPopTransform:
+      discard
     of pcPushClip:
       entry["rect"] = rectJson(command.clipRect)
     of pcPopClip:

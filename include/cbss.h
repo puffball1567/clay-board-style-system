@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define CBSS_ABI_VERSION 0x00010001u
+#define CBSS_ABI_VERSION 0x00010002u
 #define CBSS_NODE_NONE UINT32_MAX
 
 typedef struct CbssContext CbssContext;
@@ -263,8 +263,31 @@ typedef enum CbssPaintKind {
   CBSS_PAINT_FILL_LINEAR_GRADIENT = 4,
   CBSS_PAINT_STROKE_RECT = 5,
   CBSS_PAINT_DRAW_TEXT = 6,
-  CBSS_PAINT_DRAW_IMAGE = 7
+  CBSS_PAINT_DRAW_IMAGE = 7,
+  CBSS_PAINT_STROKE_PATH = 8,
+  CBSS_PAINT_PUSH_TRANSFORM = 9,
+  CBSS_PAINT_POP_TRANSFORM = 10
 } CbssPaintKind;
+
+typedef enum CbssPathSegmentKind {
+  CBSS_PATH_MOVE_TO = 0,
+  CBSS_PATH_LINE_TO = 1,
+  CBSS_PATH_QUADRATIC_TO = 2,
+  CBSS_PATH_CUBIC_TO = 3,
+  CBSS_PATH_CLOSE = 4
+} CbssPathSegmentKind;
+
+typedef enum CbssStrokeLineCap {
+  CBSS_STROKE_CAP_BUTT = 0,
+  CBSS_STROKE_CAP_ROUND = 1,
+  CBSS_STROKE_CAP_SQUARE = 2
+} CbssStrokeLineCap;
+
+typedef enum CbssStrokeLineJoin {
+  CBSS_STROKE_JOIN_MITER = 0,
+  CBSS_STROKE_JOIN_ROUND = 1,
+  CBSS_STROKE_JOIN_BEVEL = 2
+} CbssStrokeLineJoin;
 
 typedef struct CbssRect {
   float x;
@@ -279,6 +302,25 @@ typedef struct CbssColor {
   float b;
   float a;
 } CbssColor;
+
+typedef struct CbssAffineTransform {
+  float m11;
+  float m12;
+  float m21;
+  float m22;
+  float tx;
+  float ty;
+} CbssAffineTransform;
+
+typedef struct CbssPathSegment {
+  uint32_t kind;
+  float control1_x;
+  float control1_y;
+  float control2_x;
+  float control2_y;
+  float endpoint_x;
+  float endpoint_y;
+} CbssPathSegment;
 
 typedef enum CbssColorSpace {
   CBSS_COLOR_SRGB = 0,
@@ -336,6 +378,7 @@ typedef struct CbssHitResult {
  * BOX_SHADOW: offset_x, offset_y, blur, spread
  * LINEAR_GRADIENT: angle, stop_count, interpolation_space
  * STROKE_RECT: width
+ * STROKE_PATH: width, line_cap, line_join, miter_limit
  * DRAW_IMAGE: opacity
  */
 typedef struct CbssPaintCommand {
@@ -691,6 +734,13 @@ CBSS_API CbssStatus cbss_context_paint_command(
     CbssContext *context, uint32_t index, CbssPaintCommand *output);
 CBSS_API uint32_t cbss_paint_command_string(
     CbssContext *context, uint32_t index, char *buffer, uint32_t capacity);
+CBSS_API CbssStatus cbss_paint_command_transform(
+    CbssContext *context, uint32_t index, CbssAffineTransform *output);
+CBSS_API uint32_t cbss_paint_command_path_segment_count(
+    CbssContext *context, uint32_t index);
+CBSS_API CbssStatus cbss_paint_command_path_segment(
+    CbssContext *context, uint32_t command_index, uint32_t segment_index,
+    CbssPathSegment *output);
 CBSS_API CbssStatus cbss_paint_command_text_style(
     CbssContext *context, uint32_t index, CbssTextStyle *output);
 CBSS_API uint32_t cbss_paint_command_font_family(

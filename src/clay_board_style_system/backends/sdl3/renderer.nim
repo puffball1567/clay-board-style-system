@@ -28,6 +28,7 @@ const
   defaultImageCacheBytes = 256'u64 * 1024 * 1024
   defaultRoundedTextureCacheBytes = 128'u64 * 1024 * 1024
   defaultShadowTextureCacheBytes = 128'u64 * 1024 * 1024
+  defaultTransformTextureCacheBytes = 128'u64 * 1024 * 1024
 
 type
   Sdl3ImeUiMode* = enum
@@ -61,6 +62,12 @@ type
     width, height: int
     lastUsed: uint64
 
+  Sdl3TransformTextureCacheEntry = object
+    texture: pointer
+    width, height: int
+    lastUsed: uint64
+    inUse: bool
+
   Sdl3CapturedFrame* = object
     width*: int
     height*: int
@@ -69,6 +76,7 @@ type
   Sdl3CacheUsage* = object
     textBytes*, imageBytes*: uint64
     roundedTextureBytes*, shadowTextureBytes*: uint64
+    transformTextureBytes*: uint64
 
   Sdl3ClipRegion = object
     rect: Rect
@@ -78,6 +86,17 @@ type
   Sdl3PreparedCommand = object
     command: PaintCommand
     roundedImageClipStack: seq[Sdl3ClipRegion]
+
+  Sdl3TransformLayer = object
+    texture: pointer
+    previousTarget: pointer
+    previousClips: seq[Sdl3ClipRegion]
+    transform: Affine2D
+    sourceBounds: Rect
+    pixelWidth, pixelHeight: int
+    textureCacheIndex: int
+    valid: bool
+    hasContent: bool
 
   Sdl3ImageEventKind* = enum
     sieLoadStart,
@@ -154,6 +173,7 @@ type
     roundedTextureCacheIndex: Table[Hash, seq[int]]
     shadowTextureCache: seq[Sdl3ShadowTextureCacheEntry]
     shadowTextureCacheIndex: Table[Hash, seq[int]]
+    transformTextureCache: seq[Sdl3TransformTextureCacheEntry]
 
     staticLayerTexture: pointer
     staticLayerWidth, staticLayerHeight: int
@@ -167,8 +187,10 @@ type
     shadowTextureCacheLimit: int
     textCacheByteLimit, imageCacheByteLimit: uint64
     roundedTextureCacheByteLimit, shadowTextureCacheByteLimit: uint64
+    transformTextureCacheByteLimit: uint64
     textCacheBytes, imageCacheBytes: uint64
     roundedTextureCacheBytes, shadowTextureCacheBytes: uint64
+    transformTextureCacheBytes: uint64
     frameId: uint64
     pendingEvents: seq[Sdl3Event]
     captureNextFrame: bool
@@ -192,7 +214,8 @@ proc cacheUsage*(target: Sdl3Renderer): Sdl3CacheUsage =
     textBytes: target.textCacheBytes,
     imageBytes: target.imageCacheBytes,
     roundedTextureBytes: target.roundedTextureCacheBytes,
-    shadowTextureBytes: target.shadowTextureCacheBytes
+    shadowTextureBytes: target.shadowTextureCacheBytes,
+    transformTextureBytes: target.transformTextureCacheBytes
   )
 
 proc indexKey(index: var Table[Hash, seq[int]]; key: string; entryIndex: int) =
@@ -325,6 +348,13 @@ proc destroyShadowTextureCache(target: var Sdl3Renderer) =
   target.shadowTextureCacheIndex.clear()
   target.shadowTextureCacheBytes = 0
 
+proc destroyTransformTextureCache(target: var Sdl3Renderer) =
+  for entry in target.transformTextureCache:
+    if not entry.texture.isNil:
+      SDL3.destroyTexture(entry.texture)
+  target.transformTextureCache.setLen(0)
+  target.transformTextureCacheBytes = 0
+
 proc destroyStaticLayer(target: var Sdl3Renderer) =
   if not target.staticLayerTexture.isNil:
     SDL3.destroyTexture(target.staticLayerTexture)
@@ -403,6 +433,7 @@ proc initSdl3Renderer*(
   result.imageCacheByteLimit = defaultImageCacheBytes
   result.roundedTextureCacheByteLimit = defaultRoundedTextureCacheBytes
   result.shadowTextureCacheByteLimit = defaultShadowTextureCacheBytes
+  result.transformTextureCacheByteLimit = defaultTransformTextureCacheBytes
   result.imeCandidatesEnabled = imeUi == siuCompositionAndCandidates
   result.activeCursor = ckDefault
 
@@ -412,6 +443,7 @@ proc close*(target: var Sdl3Renderer) =
   target.destroyImageCache()
   target.destroyRoundedTextureCache()
   target.destroyShadowTextureCache()
+  target.destroyTransformTextureCache()
   target.destroyStaticLayer()
   if not target.renderer.isNil:
     SDL3.destroyRenderer(target.renderer)
@@ -606,10 +638,14 @@ proc captureCurrentFrame(target: var Sdl3Renderer) =
 
 proc pixelScale*(target: Sdl3Renderer): float32 =
   let logical = target.windowSize()
-  let output = target.renderOutputSize()
-  if logical.w <= 0 or logical.h <= 0 or output.w <= 0 or output.h <= 0:
+  var pixelWidth, pixelHeight: cint
+  if logical.w <= 0 or logical.h <= 0 or
+      not SDL3.getWindowSizeInPixels(target.window, addr pixelWidth, addr pixelHeight):
     return 1.0'f32
-  let scale = min(output.w / logical.w, output.h / logical.h)
+  let scale = min(
+    pixelWidth.float32 / logical.w,
+    pixelHeight.float32 / logical.h
+  )
   max(1.0'f32, round(scale * 100.0'f32) / 100.0'f32)
 
 proc updateLogicalPresentation(target: Sdl3Renderer) =
@@ -988,8 +1024,19 @@ proc hasRoundedClip(clips: openArray[Sdl3ClipRegion]): bool =
 
 proc prepareRenderPlan(commands: openArray[PaintCommand]): seq[Sdl3PreparedCommand] =
   var clipStack: seq[Sdl3ClipRegion]
+  var transformClipStacks: seq[seq[Sdl3ClipRegion]]
   for command in commands:
     case command.kind
+    of pcPushTransform:
+      result.add Sdl3PreparedCommand(command: command)
+      transformClipStacks.add clipStack
+      clipStack = @[]
+    of pcPopTransform:
+      result.add Sdl3PreparedCommand(command: command)
+      if transformClipStacks.len > 0:
+        clipStack = transformClipStacks.pop()
+      else:
+        clipStack = @[]
     of pcPushClip:
       clipStack.add command.clipRegion()
       result.add Sdl3PreparedCommand(command: command)
@@ -1015,6 +1062,275 @@ proc effectiveClipBounds(target: Sdl3Renderer): Option[SDL_Rect] =
 
 proc hasRoundedClip(target: Sdl3Renderer): bool =
   target.clipStack.hasRoundedClip()
+
+proc translated(command: PaintCommand; offset: Vec2): PaintCommand =
+  result = command
+  case result.kind
+  of pcPushTransform:
+    result.transformBounds = result.transformBounds.translated(offset)
+  of pcPopTransform, pcPopClip:
+    discard
+  of pcPushClip:
+    result.clipRect = result.clipRect.translated(offset)
+  of pcBoxShadow:
+    result.shadowRect = result.shadowRect.translated(offset)
+  of pcFillRect:
+    result.rect = result.rect.translated(offset)
+  of pcFillLinearGradient:
+    result.gradientRect = result.gradientRect.translated(offset)
+  of pcStrokeRect:
+    result.strokeRect = result.strokeRect.translated(offset)
+  of pcStrokePath:
+    result.path = result.path.translated(offset)
+  of pcDrawText:
+    result.position = result.position.translated(offset)
+  of pcDrawImage:
+    result.imageRect = result.imageRect.translated(offset)
+
+proc translated(region: Sdl3ClipRegion; offset: Vec2): Sdl3ClipRegion =
+  result = region
+  result.rect = result.rect.translated(offset)
+  result.bounds = result.rect.toSdlClip
+
+proc activeTransformOffset(layers: openArray[Sdl3TransformLayer]): Vec2 =
+  for index in countdown(layers.high, 0):
+    if layers[index].valid:
+      return vec2(-layers[index].sourceBounds.x, -layers[index].sourceBounds.y)
+  vec2(0, 0)
+
+proc localPreparedCommand(
+    prepared: Sdl3PreparedCommand;
+    layers: openArray[Sdl3TransformLayer]
+): Sdl3PreparedCommand =
+  let offset = layers.activeTransformOffset()
+  if offset.x == 0 and offset.y == 0:
+    return prepared
+  result.command = prepared.command.translated(offset)
+  for clip in prepared.roundedImageClipStack:
+    result.roundedImageClipStack.add clip.translated(offset)
+
+proc acquireTransformTexture(
+    target: var Sdl3Renderer;
+    width, height: int
+): tuple[texture: pointer, index: int] =
+  for index in 0 ..< target.transformTextureCache.len:
+    if not target.transformTextureCache[index].inUse and
+        target.transformTextureCache[index].width == width and
+        target.transformTextureCache[index].height == height:
+      target.transformTextureCache[index].inUse = true
+      target.transformTextureCache[index].lastUsed = target.frameId
+      return (target.transformTextureCache[index].texture, index)
+
+  let texture = SDL3.createTexture(
+    target.renderer,
+    SDL_PIXELFORMAT_RGBA32,
+    sdlTextureAccessTarget,
+    cint(width),
+    cint(height)
+  )
+  if texture.isNil:
+    return (nil, -1)
+  discard SDL3.setTextureBlendMode(texture, sdlBlendModeBlend)
+  discard SDL3.setTextureScaleMode(texture, SDL_SCALEMODE_LINEAR)
+  target.transformTextureCache.add Sdl3TransformTextureCacheEntry(
+    texture: texture,
+    width: width,
+    height: height,
+    lastUsed: target.frameId,
+    inUse: true
+  )
+  target.transformTextureCacheBytes += textureBytes(width, height)
+  (texture, target.transformTextureCache.high)
+
+proc releaseTransformTexture(target: var Sdl3Renderer; index: int) =
+  if index >= 0 and index < target.transformTextureCache.len:
+    target.transformTextureCache[index].inUse = false
+
+proc evictTransformTextureCacheIfNeeded(target: var Sdl3Renderer) =
+  while target.transformTextureCache.len > 64 or
+      (target.transformTextureCache.len > 1 and
+        target.transformTextureCacheBytes > target.transformTextureCacheByteLimit):
+    var victim = -1
+    for index in 0 ..< target.transformTextureCache.len:
+      if target.transformTextureCache[index].inUse:
+        continue
+      if victim < 0 or
+          target.transformTextureCache[index].lastUsed <
+            target.transformTextureCache[victim].lastUsed:
+        victim = index
+    if victim < 0:
+      return
+    SDL3.destroyTexture(target.transformTextureCache[victim].texture)
+    target.transformTextureCacheBytes -= textureBytes(
+      target.transformTextureCache[victim].width,
+      target.transformTextureCache[victim].height
+    )
+    target.transformTextureCache.delete(victim)
+
+proc beginTransformLayer(
+    target: var Sdl3Renderer;
+    command: PaintCommand;
+    layers: var seq[Sdl3TransformLayer]
+) =
+  var sourceBounds = command.transformBounds
+  if sourceBounds.isEmpty:
+    let viewport = target.windowSize()
+    sourceBounds = rect(0, 0, viewport.w, viewport.h)
+  sourceBounds = rect(
+    floor(sourceBounds.x) - 1.0'f32,
+    floor(sourceBounds.y) - 1.0'f32,
+    ceil(sourceBounds.x + sourceBounds.w) - floor(sourceBounds.x) + 2.0'f32,
+    ceil(sourceBounds.y + sourceBounds.h) - floor(sourceBounds.y) + 2.0'f32
+  )
+  let scale = target.pixelScale()
+  let width = max(1, int(ceil(sourceBounds.w * scale)))
+  let height = max(1, int(ceil(sourceBounds.h * scale)))
+  let acquired = target.acquireTransformTexture(width, height)
+  let texture = acquired.texture
+  var layer = Sdl3TransformLayer(
+    texture: texture,
+    previousTarget: SDL3.getRenderTarget(target.renderer),
+    previousClips: target.clipStack,
+    transform: command.transform,
+    sourceBounds: sourceBounds,
+    pixelWidth: width,
+    pixelHeight: height,
+    textureCacheIndex: acquired.index,
+    valid: not texture.isNil
+  )
+  layers.add layer
+  if texture.isNil:
+    return
+
+  discard SDL3.setRenderTarget(target.renderer, texture)
+  discard SDL3.setRenderLogicalPresentation(
+    target.renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED
+  )
+  discard SDL3.setRenderScale(target.renderer, cfloat(scale), cfloat(scale))
+  target.clipStack.setLen(0)
+  target.renderer.setClip(none(SDL_Rect))
+  discard SDL3.setRenderDrawColor(target.renderer, 0, 0, 0, 0)
+  discard SDL3.renderClear(target.renderer)
+
+proc markTransformContent(layers: var seq[Sdl3TransformLayer]) =
+  for index in countdown(layers.high, 0):
+    if layers[index].valid:
+      layers[index].hasContent = true
+      return
+
+proc renderAffineLayer(
+    target: var Sdl3Renderer;
+    texture: pointer;
+    source: var SDL_FRect;
+    origin, right, down: Vec2
+) =
+  if not target.hasRoundedClip():
+    var sdlOrigin = SDL_FPoint(x: cfloat(origin.x), y: cfloat(origin.y))
+    var sdlRight = SDL_FPoint(x: cfloat(right.x), y: cfloat(right.y))
+    var sdlDown = SDL_FPoint(x: cfloat(down.x), y: cfloat(down.y))
+    discard SDL3.renderTextureAffine(
+      target.renderer, texture, addr source,
+      addr sdlOrigin, addr sdlRight, addr sdlDown
+    )
+    return
+
+  let fourth = vec2(right.x + down.x - origin.x, right.y + down.y - origin.y)
+  let left = floor(min(min(origin.x, right.x), min(down.x, fourth.x))) - 1.0'f32
+  let top = floor(min(min(origin.y, right.y), min(down.y, fourth.y))) - 1.0'f32
+  let bounds = rect(
+    left,
+    top,
+    ceil(max(max(origin.x, right.x), max(down.x, fourth.x))) - left + 1.0'f32,
+    ceil(max(max(origin.y, right.y), max(down.y, fourth.y))) - top + 1.0'f32
+  )
+  let scale = target.pixelScale()
+  let width = max(1, int(ceil(bounds.w * scale)))
+  let height = max(1, int(ceil(bounds.h * scale)))
+  let clipped = target.acquireTransformTexture(width, height)
+  let clippedTexture = clipped.texture
+  if clippedTexture.isNil:
+    var sdlOrigin = SDL_FPoint(x: cfloat(origin.x), y: cfloat(origin.y))
+    var sdlRight = SDL_FPoint(x: cfloat(right.x), y: cfloat(right.y))
+    var sdlDown = SDL_FPoint(x: cfloat(down.x), y: cfloat(down.y))
+    discard SDL3.renderTextureAffine(
+      target.renderer, texture, addr source,
+      addr sdlOrigin, addr sdlRight, addr sdlDown
+    )
+    return
+
+  let previousTarget = SDL3.getRenderTarget(target.renderer)
+  discard SDL3.setRenderTarget(target.renderer, clippedTexture)
+  discard SDL3.setRenderLogicalPresentation(
+    target.renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED
+  )
+  discard SDL3.setRenderScale(target.renderer, cfloat(scale), cfloat(scale))
+  target.renderer.setClip(none(SDL_Rect))
+  discard SDL3.setRenderDrawColor(target.renderer, 0, 0, 0, 0)
+  discard SDL3.renderClear(target.renderer)
+
+  var localOrigin = SDL_FPoint(
+    x: cfloat(origin.x - bounds.x), y: cfloat(origin.y - bounds.y)
+  )
+  var localRight = SDL_FPoint(
+    x: cfloat(right.x - bounds.x), y: cfloat(right.y - bounds.y)
+  )
+  var localDown = SDL_FPoint(
+    x: cfloat(down.x - bounds.x), y: cfloat(down.y - bounds.y)
+  )
+  discard SDL3.renderTextureAffine(
+    target.renderer, texture, addr source,
+    addr localOrigin, addr localRight, addr localDown
+  )
+
+  discard SDL3.setRenderTarget(target.renderer, previousTarget)
+  target.renderer.setClip(target.effectiveClipBounds())
+  var clippedSource = SDL_FRect(
+    x: 0, y: 0, w: cfloat(width), h: cfloat(height)
+  )
+  var destination = bounds.toSdl
+  target.renderTextureClippedWith(
+    clippedTexture, clippedSource, destination, target.clipStack
+  )
+  target.releaseTransformTexture(clipped.index)
+
+proc endTransformLayer(
+    target: var Sdl3Renderer;
+    layers: var seq[Sdl3TransformLayer]
+) =
+  if layers.len == 0:
+    return
+  let layer = layers.pop()
+  if not layer.valid:
+    return
+
+  discard SDL3.setRenderTarget(target.renderer, layer.previousTarget)
+  target.clipStack = layer.previousClips
+  target.renderer.setClip(target.effectiveClipBounds())
+  if layer.hasContent:
+    let destinationOffset = layers.activeTransformOffset()
+    let topLeft = layer.transform.transformPoint(
+      vec2(layer.sourceBounds.x, layer.sourceBounds.y)
+    ).translated(destinationOffset)
+    let topRight = layer.transform.transformPoint(
+      vec2(layer.sourceBounds.x + layer.sourceBounds.w, layer.sourceBounds.y)
+    ).translated(destinationOffset)
+    let bottomLeft = layer.transform.transformPoint(
+      vec2(layer.sourceBounds.x, layer.sourceBounds.y + layer.sourceBounds.h)
+    ).translated(destinationOffset)
+    var source = SDL_FRect(
+      x: 0, y: 0, w: cfloat(layer.pixelWidth), h: cfloat(layer.pixelHeight)
+    )
+    target.renderAffineLayer(layer.texture, source, topLeft, topRight, bottomLeft)
+    layers.markTransformContent()
+  target.releaseTransformTexture(layer.textureCacheIndex)
+
+proc closeTransformLayers(
+    target: var Sdl3Renderer;
+    layers: var seq[Sdl3TransformLayer]
+) =
+  while layers.len > 0:
+    target.endTransformLayer(layers)
+  target.evictTransformTextureCacheIfNeeded()
 
 proc clippedHorizontalSpan(clips: openArray[Sdl3ClipRegion]; centerY: float32; x1, x2: var float32): bool =
   if x2 <= x1:
@@ -2152,9 +2468,20 @@ proc render*(target: var Sdl3Renderer; commands: openArray[PaintCommand]; clearC
   target.clipStack.setLen(0)
   target.renderer.setClip(none(SDL_Rect))
 
-  for prepared in prepareRenderPlan(commands):
+  var transformLayers: seq[Sdl3TransformLayer]
+  for sourcePrepared in prepareRenderPlan(commands):
+    let sourceCommand = sourcePrepared.command
+    if sourceCommand.kind == pcPushTransform:
+      target.beginTransformLayer(sourceCommand, transformLayers)
+      continue
+    if sourceCommand.kind == pcPopTransform:
+      target.endTransformLayer(transformLayers)
+      continue
+    let prepared = sourcePrepared.localPreparedCommand(transformLayers)
     let command = prepared.command
     case command.kind
+    of pcPushTransform, pcPopTransform:
+      discard # Handled before localization.
     of pcPushClip:
       target.clipStack.add command.clipRegion()
       target.renderer.setClip(target.effectiveClipBounds())
@@ -2163,20 +2490,29 @@ proc render*(target: var Sdl3Renderer; commands: openArray[PaintCommand]; clearC
         target.clipStack.setLen(target.clipStack.len - 1)
       target.renderer.setClip(target.effectiveClipBounds())
     of pcBoxShadow:
+      transformLayers.markTransformContent()
       target.renderBoxShadow(command)
     of pcFillRect:
+      transformLayers.markTransformContent()
       target.fillRoundedRect(command.rect, command.radius, command.color)
     of pcFillLinearGradient:
+      transformLayers.markTransformContent()
       target.fillLinearGradient(command.gradientRect, command.gradient, command.gradientRadius)
     of pcStrokeRect:
+      transformLayers.markTransformContent()
       target.strokeRoundedRect(command.strokeRect, command.strokeRadius, command.strokeWidth, command.strokeColor)
     of pcStrokePath:
+      transformLayers.markTransformContent()
       target.renderStrokePath(command)
     of pcDrawText:
+      transformLayers.markTransformContent()
       target.renderer.drawDebugText(command)
     of pcDrawImage:
+      transformLayers.markTransformContent()
       target.drawImageTexture(command, prepared.roundedImageClipStack)
       target.evictImageCacheIfNeeded()
+
+  target.closeTransformLayers(transformLayers)
 
   target.captureCurrentFrame()
   discard SDL3.renderPresent(target.renderer)
@@ -2322,9 +2658,20 @@ proc render*(
   target.clipStack.setLen(0)
   target.renderer.setClip(none(SDL_Rect))
 
-  for prepared in prepareRenderPlan(commands):
+  var transformLayers: seq[Sdl3TransformLayer]
+  for sourcePrepared in prepareRenderPlan(commands):
+    let sourceCommand = sourcePrepared.command
+    if sourceCommand.kind == pcPushTransform:
+      target.beginTransformLayer(sourceCommand, transformLayers)
+      continue
+    if sourceCommand.kind == pcPopTransform:
+      target.endTransformLayer(transformLayers)
+      continue
+    let prepared = sourcePrepared.localPreparedCommand(transformLayers)
     let command = prepared.command
     case command.kind
+    of pcPushTransform, pcPopTransform:
+      discard # Handled before localization.
     of pcPushClip:
       target.clipStack.add command.clipRegion()
       target.renderer.setClip(target.effectiveClipBounds())
@@ -2333,20 +2680,29 @@ proc render*(
         target.clipStack.setLen(target.clipStack.len - 1)
       target.renderer.setClip(target.effectiveClipBounds())
     of pcBoxShadow:
+      transformLayers.markTransformContent()
       target.renderBoxShadow(command)
     of pcFillRect:
+      transformLayers.markTransformContent()
       target.fillRoundedRect(command.rect, command.radius, command.color)
     of pcFillLinearGradient:
+      transformLayers.markTransformContent()
       target.fillLinearGradient(command.gradientRect, command.gradient, command.gradientRadius)
     of pcStrokeRect:
+      transformLayers.markTransformContent()
       target.strokeRoundedRect(command.strokeRect, command.strokeRadius, command.strokeWidth, command.strokeColor)
     of pcStrokePath:
+      transformLayers.markTransformContent()
       target.renderStrokePath(command)
     of pcDrawText:
+      transformLayers.markTransformContent()
       target.drawCosmicText(command, cosmic, fonts)
     of pcDrawImage:
+      transformLayers.markTransformContent()
       target.drawImageTexture(command, prepared.roundedImageClipStack)
       target.evictImageCacheIfNeeded()
+
+  target.closeTransformLayers(transformLayers)
 
   target.captureCurrentFrame()
   discard SDL3.renderPresent(target.renderer)
@@ -2359,9 +2715,18 @@ proc renderPreparedCommand(
     fonts: FontRegistry;
     dynamicOnly: bool;
     skipDynamic: bool;
-    dynamicNodeMask: openArray[bool]
+    dynamicNodeMask: openArray[bool];
+    transformLayers: var seq[Sdl3TransformLayer]
 ) =
-  let command = prepared.command
+  let sourceCommand = prepared.command
+  if sourceCommand.kind == pcPushTransform:
+    target.beginTransformLayer(sourceCommand, transformLayers)
+    return
+  if sourceCommand.kind == pcPopTransform:
+    target.endTransformLayer(transformLayers)
+    return
+  let localPrepared = prepared.localPreparedCommand(transformLayers)
+  let command = localPrepared.command
   let isDynamic =
     command.owner.isSome and
       command.owner.get.nodeIndex >= 0 and
@@ -2372,6 +2737,8 @@ proc renderPreparedCommand(
     elif skipDynamic: not isDynamic
     else: true
   case command.kind
+  of pcPushTransform, pcPopTransform:
+    discard
   of pcPushClip:
     target.clipStack.add command.clipRegion()
     target.renderer.setClip(target.effectiveClipBounds())
@@ -2381,25 +2748,32 @@ proc renderPreparedCommand(
       target.renderer.setClip(target.effectiveClipBounds())
   of pcBoxShadow:
     if drawCommand:
+      transformLayers.markTransformContent()
       target.renderBoxShadow(command)
   of pcFillRect:
     if drawCommand:
+      transformLayers.markTransformContent()
       target.fillRoundedRect(command.rect, command.radius, command.color)
   of pcFillLinearGradient:
     if drawCommand:
+      transformLayers.markTransformContent()
       target.fillLinearGradient(command.gradientRect, command.gradient, command.gradientRadius)
   of pcStrokeRect:
     if drawCommand:
+      transformLayers.markTransformContent()
       target.strokeRoundedRect(command.strokeRect, command.strokeRadius, command.strokeWidth, command.strokeColor)
   of pcStrokePath:
     if drawCommand:
+      transformLayers.markTransformContent()
       target.renderStrokePath(command)
   of pcDrawText:
     if drawCommand:
+      transformLayers.markTransformContent()
       target.drawCosmicText(command, cosmic, fonts)
   of pcDrawImage:
     if drawCommand:
-      target.drawImageTexture(command, prepared.roundedImageClipStack)
+      transformLayers.markTransformContent()
+      target.drawImageTexture(command, localPrepared.roundedImageClipStack)
       target.evictImageCacheIfNeeded()
 
 proc renderCommandPass(
@@ -2420,10 +2794,13 @@ proc renderCommandPass(
   for node in dynamicNodes:
     if node.nodeIndex >= 0:
       dynamicNodeMask[node.nodeIndex] = true
+  var transformLayers: seq[Sdl3TransformLayer]
   for prepared in prepareRenderPlan(commands):
     target.renderPreparedCommand(
-      prepared, cosmic, fonts, dynamicOnly, skipDynamic, dynamicNodeMask
+      prepared, cosmic, fonts, dynamicOnly, skipDynamic, dynamicNodeMask,
+      transformLayers
     )
+  target.closeTransformLayers(transformLayers)
 
 proc ensureStaticLayer(target: var Sdl3Renderer): bool =
   let output = target.windowSize()

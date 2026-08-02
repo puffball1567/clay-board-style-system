@@ -23,7 +23,7 @@ proc ensureNimRuntime() {.inline.} =
     NimMain()
 
 const
-  CbssAbiVersion* = 0x0001_0001'u32
+  CbssAbiVersion* = 0x0001_0002'u32
   CbssNodeNone* = high(uint32)
 
   CbssOk* = 0'i32
@@ -91,6 +91,15 @@ type
 
   CbssColorC* {.bycopy.} = object
     r*, g*, b*, a*: cfloat
+
+  CbssAffineTransformC* {.bycopy.} = object
+    m11*, m12*, m21*, m22*, tx*, ty*: cfloat
+
+  CbssPathSegmentC* {.bycopy.} = object
+    kind*: uint32
+    control1X*, control1Y*: cfloat
+    control2X*, control2Y*: cfloat
+    endpointX*, endpointY*: cfloat
 
   CbssLayoutBoxC* {.bycopy.} = object
     node*: uint32
@@ -252,6 +261,8 @@ static:
   doAssert sizeof(CbssLayoutBoxC) == 24
   doAssert sizeof(CbssHitResultC) == 24
   doAssert sizeof(CbssPaintCommandC) == 64
+  doAssert sizeof(CbssAffineTransformC) == 24
+  doAssert sizeof(CbssPathSegmentC) == 28
   doAssert sizeof(CbssTextStyleC) == 24
   doAssert sizeof(CbssGradientStopC) == 20
   doAssert sizeof(CbssTransformOperationC) == 36
@@ -416,8 +427,25 @@ proc commandString(command: PaintCommand): string =
   else:
     ""
 
+proc commandKindToC(command: PaintCommand): uint32 =
+  ## Public ABI values are append-only and must not follow Nim enum ordinals.
+  case command.kind
+  of pcPushClip: 0
+  of pcPopClip: 1
+  of pcBoxShadow: 2
+  of pcFillRect: 3
+  of pcFillLinearGradient: 4
+  of pcStrokeRect: 5
+  of pcDrawText: 6
+  of pcDrawImage: 7
+  of pcStrokePath: 8
+  of pcPushTransform: 9
+  of pcPopTransform: 10
+
 proc commandRect(command: PaintCommand): Rect =
   case command.kind
+  of pcPushTransform, pcPopTransform:
+    rect(0, 0, 0, 0)
   of pcPushClip:
     command.clipRect
   of pcPopClip:
@@ -2241,7 +2269,7 @@ proc cbssContextPaintCommand(
   let command = context.commands[int(index)]
   let value = command.commandString()
   output[] = CbssPaintCommandC(
-    kind: uint32(ord(command.kind)),
+    kind: command.commandKindToC(),
     owner:
       if command.owner.isSome: command.owner.get.nodeRawValue()
       else: CbssNodeNone,
@@ -2264,6 +2292,11 @@ proc cbssContextPaintCommand(
     )
   of pcStrokeRect:
     output.value0 = command.strokeWidth
+  of pcStrokePath:
+    output.value0 = command.pathWidth
+    output.value1 = cfloat(ord(command.pathLineCap))
+    output.value2 = cfloat(ord(command.pathLineJoin))
+    output.value3 = command.pathMiterLimit
   of pcDrawImage:
     output.value0 = command.imageOpacity
   else:
@@ -2280,6 +2313,69 @@ proc cbssPaintCommandString(
       uint64(index) >= uint64(context.commands.len):
     return 0
   copyString(context.commands[int(index)].commandString(), buffer, capacity)
+
+proc cbssPaintCommandTransform(
+    context: CbssContextHandle;
+    index: uint32;
+    output: ptr CbssAffineTransformC
+): int32 {.exportc: "cbss_paint_command_transform", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if output.isNil or not context.computed:
+    return CbssInvalidArgument
+  if uint64(index) >= uint64(context.commands.len):
+    return CbssOutOfRange
+  let command = context.commands[int(index)]
+  if command.kind != pcPushTransform:
+    return CbssInvalidArgument
+  output[] = CbssAffineTransformC(
+    m11: command.transform.m11,
+    m12: command.transform.m12,
+    m21: command.transform.m21,
+    m22: command.transform.m22,
+    tx: command.transform.tx,
+    ty: command.transform.ty
+  )
+  CbssOk
+
+proc cbssPaintCommandPathSegmentCount(
+    context: CbssContextHandle;
+    index: uint32
+): uint32 {.exportc: "cbss_paint_command_path_segment_count", cdecl, dynlib.} =
+  if context.isNil or not context.computed or
+      uint64(index) >= uint64(context.commands.len):
+    return 0
+  let command = context.commands[int(index)]
+  if command.kind != pcStrokePath:
+    return 0
+  uint32(min(command.path.segments.len, int(high(uint32))))
+
+proc cbssPaintCommandPathSegment(
+    context: CbssContextHandle;
+    commandIndex, segmentIndex: uint32;
+    output: ptr CbssPathSegmentC
+): int32 {.exportc: "cbss_paint_command_path_segment", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if output.isNil or not context.computed or
+      uint64(commandIndex) >= uint64(context.commands.len):
+    return CbssInvalidArgument
+  let command = context.commands[int(commandIndex)]
+  if command.kind != pcStrokePath:
+    return CbssInvalidArgument
+  if uint64(segmentIndex) >= uint64(command.path.segments.len):
+    return CbssOutOfRange
+  let segment = command.path.segments[int(segmentIndex)]
+  output[] = CbssPathSegmentC(
+    kind: uint32(ord(segment.kind)),
+    control1X: segment.control1.x,
+    control1Y: segment.control1.y,
+    control2X: segment.control2.x,
+    control2Y: segment.control2.y,
+    endpointX: segment.endpoint.x,
+    endpointY: segment.endpoint.y
+  )
+  CbssOk
 
 proc cbssPaintCommandTextStyle(
     context: CbssContextHandle;

@@ -5,6 +5,7 @@ import ../layout/overflow_geometry
 import ../layout/presentation
 import ../layout/scroll_state
 import ../layout/scrollbar_geometry
+import ../layout/transform_geometry
 import ./paint_command
 
 type
@@ -328,6 +329,11 @@ proc paintNode(
   if opacity <= 0.0'f32:
     return
 
+  let ownTransform = resolvedTransform(style, nodeRect)
+  let transformed = not ownTransform.isIdentity
+  if transformed:
+    output.add pushTransform(ownTransform)
+
   let visualClip = insetClipRect(nodeRect, style.visual.clipPath)
   if visualClip.isSome:
     output.add pushClip(visualClip.get, style.box.borderRadius)
@@ -440,6 +446,9 @@ proc paintNode(
   if visualClip.isSome:
     output.add popClip()
 
+  if transformed:
+    output.add popTransform()
+
 proc collectOverlayRoots(
     tree: Tree;
     styles: ResolvedTree;
@@ -453,10 +462,15 @@ proc collectOverlayRoots(
   for child in node.children:
     collectOverlayRoots(tree, styles, child, output)
 
-type AncestorPaintContext = object
-  opacity: float32
-  translation: Vec2
-  clipCount: int
+type
+  AncestorPaintScope = object
+    clipCount: int
+    transformed: bool
+
+  AncestorPaintContext = object
+    opacity: float32
+    translation: Vec2
+    scopes: seq[AncestorPaintScope]
 
 proc pushAncestorPaintContext(
     tree: Tree;
@@ -474,23 +488,31 @@ proc pushAncestorPaintContext(
   result.translation = presentation.translation
   for ancestor in presentation.ancestors:
     let style {.cursor.} = styles.styles[ancestor.node.nodeIndex]
-    let visualClip = insetClipRect(ancestor.bounds, style.visual.clipPath)
+    var scope: AncestorPaintScope
+    if not ancestor.ownTransform.isIdentity:
+      output.add pushTransform(ancestor.ownTransform)
+      scope.transformed = true
+    let visualClip = insetClipRect(ancestor.sourceBounds, style.visual.clipPath)
     if visualClip.isSome:
       output.add pushClip(visualClip.get, style.box.borderRadius)
-      inc result.clipCount
+      inc scope.clipCount
     if tree.nodes[ancestor.node.nodeIndex].kind == nkBox and
         style.clipsOverflow():
       output.add pushClip(
-        overflowClipRect(ancestor.bounds, style), style.box.borderRadius
+        overflowClipRect(ancestor.sourceBounds, style), style.box.borderRadius
       )
-      inc result.clipCount
+      inc scope.clipCount
+    result.scopes.add scope
 
 proc popAncestorPaintContext(
     context: AncestorPaintContext;
     output: var seq[PaintCommand]
 ) =
-  for _ in 0 ..< context.clipCount:
-    output.add popClip()
+  for index in countdown(context.scopes.high, 0):
+    for _ in 0 ..< context.scopes[index].clipCount:
+      output.add popClip()
+    if context.scopes[index].transformed:
+      output.add popTransform()
 
 proc buildPaintCommands*(
     tree: Tree;
@@ -516,6 +538,7 @@ proc buildPaintCommands*(
         scroll, context.translation, surfaceProvider, overlayPass = true
       )
       popAncestorPaintContext(context, result)
+    result.resolveTransformBounds()
 
 proc buildPaintCommands*(tree: Tree; styles: ResolvedTree; layout: LayoutResult): seq[PaintCommand] =
   buildPaintCommands(tree, styles, layout, initScrollState())
@@ -568,6 +591,7 @@ proc buildPaintCommandsForSubtree*(
       overlayPass = true
     )
     popAncestorPaintContext(overlayContext, result)
+  result.resolveTransformBounds()
 
 proc buildPaintCommandsForSubtree*(
     tree: Tree;

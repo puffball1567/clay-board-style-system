@@ -1,4 +1,4 @@
-import std/math
+import std/[math, options, sequtils]
 import ../../core/[color, computed_style, geometry, gradient_sampling]
 import ../../paint/[paint_command, path_geometry]
 
@@ -6,6 +6,15 @@ type
   RasterImage* = object
     width*, height*: int
     pixels*: seq[uint8]
+
+  PpmClip = object
+    bounds: Rect
+    shapes: seq[TransformedRect]
+
+  PpmLinearGradientSampler = object
+    dx, dy: float32
+    minProjection, span: float32
+    lookup: GradientLookupTable
 
 proc clampByte(value: float32): uint8 =
   uint8(clamp(round(value * 255.0'f32).int, 0, 255))
@@ -42,31 +51,27 @@ proc intersect(a, b: Rect): Rect =
   let y1 = min(a.y + a.h, b.y + b.h)
   rect(x0, y0, max(0.0'f32, x1 - x0), max(0.0'f32, y1 - y0))
 
-proc fillRect(image: var RasterImage; rect: Rect; color: Color; clip: Rect) =
-  let bounds = intBounds(intersect(rect, clip), image.width, image.height)
-  for y in bounds.y0 ..< bounds.y1:
-    for x in bounds.x0 ..< bounds.x1:
-      image.putPixel(x, y, color)
+proc contains(clip: PpmClip; point: Vec2): bool =
+  if not clip.bounds.contains(point):
+    return false
+  for shape in clip.shapes:
+    if not shape.contains(point):
+      return false
+  true
 
-proc strokeRect(image: var RasterImage; rect: Rect; color: Color; width: float32; clip: Rect) =
-  let stroke = max(1, round(width).int)
-  let bounds = intBounds(intersect(rect, clip), image.width, image.height)
-  let original = intBounds(rect, image.width, image.height)
-  for y in bounds.y0 ..< bounds.y1:
-    for x in bounds.x0 ..< bounds.x1:
-      let left = x < original.x0 + stroke
-      let right = x >= original.x1 - stroke
-      let top = y < original.y0 + stroke
-      let bottom = y >= original.y1 - stroke
-      if left or right or top or bottom:
-        image.putPixel(x, y, color)
+proc withShape(clip: PpmClip; shape: TransformedRect): PpmClip =
+  result.bounds = intersect(clip.bounds, shape.bounds)
+  result.shapes = newSeqOfCap[TransformedRect](clip.shapes.len + 1)
+  for existing in clip.shapes:
+    result.shapes.add existing
+  result.shapes.add shape
 
 proc fillCircle(
     image: var RasterImage;
     center: Vec2;
     radius: float32;
     color: Color;
-    clip: Rect
+    clip: PpmClip
 ) =
   let radiusSquared = radius * radius
   let bounds = intBounds(
@@ -90,7 +95,7 @@ proc fillTriangle(
     image: var RasterImage;
     first, second, third: Vec2;
     color: Color;
-    clip: Rect
+    clip: PpmClip
 ) =
   let bounds = intBounds(
     rect(
@@ -114,6 +119,27 @@ proc fillTriangle(
           (a <= 0 and b <= 0 and c <= 0):
         image.putPixel(x, y, color)
 
+proc fillTransformedRect(
+    image: var RasterImage;
+    source: Rect;
+    transform: Affine2D;
+    color: Color;
+    clip: PpmClip
+) =
+  let topLeft = transform.transformPoint(vec2(source.x, source.y))
+  let topRight = transform.transformPoint(vec2(source.x + source.w, source.y))
+  let bottomRight = transform.transformPoint(
+    vec2(source.x + source.w, source.y + source.h)
+  )
+  let bottomLeft = transform.transformPoint(vec2(source.x, source.y + source.h))
+  image.fillTriangle(topLeft, topRight, bottomRight, color, clip)
+  image.fillTriangle(topLeft, bottomRight, bottomLeft, color, clip)
+
+proc strokeScale(transform: Affine2D): float32 =
+  let xScale = sqrt(transform.m11 * transform.m11 + transform.m12 * transform.m12)
+  let yScale = sqrt(transform.m21 * transform.m21 + transform.m22 * transform.m22)
+  max(0.0001'f32, (xScale + yScale) * 0.5'f32)
+
 proc strokeJoin(
     image: var RasterImage;
     previous, point, following: Vec2;
@@ -121,7 +147,7 @@ proc strokeJoin(
     color: Color;
     lineJoin: StrokeLineJoin;
     miterLimit: float32;
-    clip: Rect
+    clip: PpmClip
 ) =
   let previousDelta = vec2(point.x - previous.x, point.y - previous.y)
   let followingDelta = vec2(following.x - point.x, following.y - point.y)
@@ -208,7 +234,7 @@ proc strokePolyline(
     lineCap: StrokeLineCap;
     lineJoin: StrokeLineJoin;
     miterLimit: float32;
-    clip: Rect
+    clip: PpmClip
 ) =
   if points.len < 2 or width <= 0:
     return
@@ -291,7 +317,7 @@ proc strokePolyline(
 proc strokePath(
     image: var RasterImage;
     command: PaintCommand;
-    clip: Rect
+    clip: PpmClip
 ) =
   for contour in command.path.flattened():
     image.strokePolyline(
@@ -305,41 +331,75 @@ proc strokePath(
       clip
     )
 
-proc fillLinearGradient(image: var RasterImage; rect: Rect; gradient: LinearGradient; clip: Rect) =
-  if gradient.stops.len == 0:
-    return
-  let bounds = intBounds(intersect(rect, clip), image.width, image.height)
+proc prepareLinearGradient(rect: Rect; gradient: LinearGradient): PpmLinearGradientSampler =
   let radians = (gradient.angle - 90.0'f32) * PI / 180.0'f32
-  let dx = cos(radians)
-  let dy = sin(radians)
+  result.dx = cos(radians)
+  result.dy = sin(radians)
   let corners = [
     vec2(rect.x, rect.y),
     vec2(rect.x + rect.w, rect.y),
     vec2(rect.x, rect.y + rect.h),
     vec2(rect.x + rect.w, rect.y + rect.h)
   ]
-  var minProjection = corners[0].x * dx + corners[0].y * dy
-  var maxProjection = minProjection
+  result.minProjection = corners[0].x * result.dx + corners[0].y * result.dy
+  var maxProjection = result.minProjection
   for corner in corners:
-    let projection = corner.x * dx + corner.y * dy
-    minProjection = min(minProjection, projection)
+    let projection = corner.x * result.dx + corner.y * result.dy
+    result.minProjection = min(result.minProjection, projection)
     maxProjection = max(maxProjection, projection)
-  let span = max(0.001'f32, maxProjection - minProjection)
-  let lookup = gradient.prepareGradientSampler.buildGradientLookup(
-    span.gradientLookupSampleCount
+  result.span = max(0.001'f32, maxProjection - result.minProjection)
+  result.lookup = gradient.prepareGradientSampler.buildGradientLookup(
+    result.span.gradientLookupSampleCount
   )
+
+proc colorAt(sampler: PpmLinearGradientSampler; point: Vec2): Color =
+  let projection = point.x * sampler.dx + point.y * sampler.dy
+  sampler.lookup.gradientColorAt(
+    (projection - sampler.minProjection) / sampler.span
+  )
+
+proc fillLinearGradient(
+    image: var RasterImage;
+    sourceRect: Rect;
+    gradient: LinearGradient;
+    transform: Affine2D;
+    clip: PpmClip
+) =
+  if gradient.stops.len == 0:
+    return
+  let shape = transformedRect(sourceRect, transform)
+  if shape.inverseTransform.isNone:
+    return
+  let bounds = intBounds(
+    intersect(shape.bounds, clip.bounds), image.width, image.height
+  )
+  let sampler = prepareLinearGradient(sourceRect, gradient)
   for y in bounds.y0 ..< bounds.y1:
     for x in bounds.x0 ..< bounds.x1:
-      let projection = (x.float32 + 0.5'f32) * dx + (y.float32 + 0.5'f32) * dy
-      image.putPixel(x, y, lookup.gradientColorAt((projection - minProjection) / span))
+      let destination = vec2(x.float32 + 0.5'f32, y.float32 + 0.5'f32)
+      if not clip.contains(destination):
+        continue
+      let source = shape.inverseTransform.get.transformPoint(destination)
+      if sourceRect.contains(source):
+        image.putPixel(x, y, sampler.colorAt(source))
 
 proc render*(commands: openArray[PaintCommand]; width, height: int; background = rgb(1, 1, 1)): RasterImage =
   result = initRasterImage(width, height, background)
-  var clipStack = @[rect(0, 0, width.float32, height.float32)]
+  var clipStack = @[
+    PpmClip(bounds: rect(0, 0, width.float32, height.float32))
+  ]
+  var transformStack = @[identityAffine2D()]
   for command in commands:
     case command.kind
+    of pcPushTransform:
+      transformStack.add(transformStack[^1] * command.transform)
+    of pcPopTransform:
+      if transformStack.len > 1:
+        discard transformStack.pop()
     of pcPushClip:
-      clipStack.add intersect(clipStack[^1], command.clipRect)
+      clipStack.add clipStack[^1].withShape(
+        transformedRect(command.clipRect, transformStack[^1])
+      )
     of pcPopClip:
       if clipStack.len > 1:
         discard clipStack.pop()
@@ -351,15 +411,35 @@ proc render*(commands: openArray[PaintCommand]; width, height: int; background =
         command.shadowRect.w + grow * 2.0'f32,
         command.shadowRect.h + grow * 2.0'f32
       )
-      result.fillRect(shadowRect, command.shadowColor, clipStack[^1])
+      result.fillTransformedRect(
+        shadowRect, transformStack[^1], command.shadowColor, clipStack[^1]
+      )
     of pcFillRect:
-      result.fillRect(command.rect, command.color, clipStack[^1])
+      result.fillTransformedRect(
+        command.rect, transformStack[^1], command.color, clipStack[^1]
+      )
     of pcFillLinearGradient:
-      result.fillLinearGradient(command.gradientRect, command.gradient, clipStack[^1])
+      result.fillLinearGradient(
+        command.gradientRect, command.gradient, transformStack[^1], clipStack[^1]
+      )
     of pcStrokeRect:
-      result.strokeRect(command.strokeRect, command.strokeColor, command.strokeWidth, clipStack[^1])
+      let corners = [
+        vec2(command.strokeRect.x, command.strokeRect.y),
+        vec2(command.strokeRect.x + command.strokeRect.w, command.strokeRect.y),
+        vec2(command.strokeRect.x + command.strokeRect.w, command.strokeRect.y + command.strokeRect.h),
+        vec2(command.strokeRect.x, command.strokeRect.y + command.strokeRect.h)
+      ]
+      result.strokePolyline(
+        corners.mapIt(transformStack[^1].transformPoint(it)),
+        command.strokeColor,
+        command.strokeWidth * transformStack[^1].strokeScale,
+        true, slcButt, sljMiter, 10, clipStack[^1]
+      )
     of pcStrokePath:
-      result.strokePath(command, clipStack[^1])
+      var transformedCommand = command
+      transformedCommand.path = command.path.transformed(transformStack[^1])
+      transformedCommand.pathWidth = command.pathWidth * transformStack[^1].strokeScale
+      result.strokePath(transformedCommand, clipStack[^1])
     of pcDrawText:
       discard
     of pcDrawImage:
