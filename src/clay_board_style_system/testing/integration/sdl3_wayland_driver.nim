@@ -468,19 +468,18 @@ proc dispatchSdlEvent*(
     let point = vec2(event.x, event.y)
     discard driver.updateCursor(point)
     let hit = driver.headless.hitAt(point).isSome
-    result = driver.headless.sendPointer(pointerMoveEvent(point)) or hit
+    let input = event.pointerInputEvent()
+    result = (input.isSome and driver.headless.sendPointer(input.get)) or hit
   of sekPointerDown:
     let point = vec2(event.buttonX, event.buttonY)
     let hit = driver.headless.hitAt(point).isSome
-    result = driver.headless.sendPointer(
-      pointerDownEvent(point, event.button)
-    ) or hit
+    let input = event.pointerInputEvent()
+    result = (input.isSome and driver.headless.sendPointer(input.get)) or hit
   of sekPointerUp:
     let point = vec2(event.buttonX, event.buttonY)
     let hit = driver.headless.hitAt(point).isSome
-    result = driver.headless.sendPointer(
-      pointerUpEvent(point, event.button)
-    ) or hit
+    let input = event.pointerInputEvent()
+    result = (input.isSome and driver.headless.sendPointer(input.get)) or hit
   of sekKeyDown:
     if event.isPrintableTextKey:
       # SDL_TEXT_INPUT is authoritative for layout-dependent printable text.
@@ -528,15 +527,21 @@ proc dispatchSdlEvent*(
       )
     ) or hit
   of sekTouchStart:
-    result = driver.headless.sendPointer(touchStartEvent(vec2(event.touchX, event.touchY)))
+    let input = event.pointerInputEvent()
+    result = input.isSome and driver.headless.sendPointer(input.get)
   of sekTouchMove:
-    result = driver.headless.sendPointer(
-      touchMoveEvent(vec2(event.touchX, event.touchY), vec2(event.touchDx, event.touchDy))
-    )
+    let input = event.pointerInputEvent()
+    result = input.isSome and driver.headless.sendPointer(input.get)
   of sekTouchEnd:
-    result = driver.headless.sendPointer(touchEndEvent(vec2(event.touchX, event.touchY)))
+    let input = event.pointerInputEvent()
+    result = input.isSome and driver.headless.sendPointer(input.get)
   of sekTouchCancel:
-    result = driver.headless.sendPointer(touchCancelEvent(vec2(event.touchX, event.touchY)))
+    let input = event.pointerInputEvent()
+    result = input.isSome and driver.headless.sendPointer(input.get)
+  of sekPenProximityIn, sekPenProximityOut,
+     sekPenButtonDown, sekPenButtonUp:
+    let input = event.pointerInputEvent()
+    result = input.isSome and driver.headless.sendPointer(input.get)
   driver.finishSdlDispatch(renderAfter)
 
 proc pollAndDispatch*(driver: Sdl3WaylandDriver; maxEvents = 64; renderAfter = true): int =

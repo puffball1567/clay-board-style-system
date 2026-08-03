@@ -332,10 +332,30 @@ suite "standard canvas surface":
     ).get
     let point = vec2(presentation.bounds.x + 17, presentation.bounds.y + 11)
 
-    check ui.events.emit(ui.tree, canvas.node.id, pointerDownEvent(point))
+    let pen = PointerData(
+      device: pdkPenDirect,
+      deviceId: 33,
+      axes: {paPressure, paTiltY},
+      pressure: 0.5,
+      tiltY: 24,
+      contact: true,
+      inProximity: true
+    )
+    check ui.events.emit(
+      ui.tree, canvas.node.id, pointerDownEvent(point, pointer = some(pen))
+    )
     check received.len == 1
     check received[0].localPosition == some(vec2(17, 11))
     check received[0].inside
+    check received[0].event.pointer == some(pen)
+
+    check ui.events.emit(
+      ui.tree, canvas.node.id, penProximityEvent(true, pen)
+    )
+    check received.len == 2
+    check received[1].localPosition.isNone
+    check received[1].event.kind == iekPenProximityIn
+    check received[1].event.pointer == some(pen)
 
   test "transformed canvas input resolves back to content-local coordinates":
     let ui = initUiRoot()

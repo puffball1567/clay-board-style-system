@@ -3108,7 +3108,8 @@ proc main() =
         let scrollbarPointer = inputState.scrollbarPointerTarget.isSome
         let scrollRevision = ui.scroll.revision
         var dispatches = inputState.processInput(
-          ui.tree, frame.regions, pointerMoveEvent(point), ui.scroll
+          ui.tree, frame.regions,
+          pointerMoveEvent(point, event.pointer, event.timestamp), ui.scroll
         )
         ui.normalizeTextControlDispatches(frame.regions, dispatches)
         discard ui.events.handle(ui.tree, dispatches)
@@ -3151,7 +3152,9 @@ proc main() =
             local:
               if hit.isSome: some(hit.get.local)
               else: none(Vec2),
-            event: pointerDownEvent(point, event.button)
+            event: pointerDownEvent(
+              point, event.button, event.pointer, event.timestamp
+            )
           ))
           needsFrame = true
           continue
@@ -3162,7 +3165,9 @@ proc main() =
           let scrollRevision = ui.scroll.revision
           var dispatches = inputState.processInput(
             ui.tree, frame.regions,
-            pointerDownEvent(point, event.button), ui.scroll
+            pointerDownEvent(
+              point, event.button, event.pointer, event.timestamp
+            ), ui.scroll
           )
           discard ui.events.handle(ui.tree, dispatches)
           if ui.scroll.revision != scrollRevision:
@@ -3182,7 +3187,10 @@ proc main() =
           if textHit.isSome: some(textHit.get.node)
           else: hitTarget
         var dispatches = inputState.processInput(
-          ui.tree, frame.regions, pointerDownEvent(point, event.button), ui.scroll
+          ui.tree, frame.regions,
+          pointerDownEvent(
+            point, event.button, event.pointer, event.timestamp
+          ), ui.scroll
         )
         ui.normalizeTextControlDispatches(frame.regions, dispatches)
         discard ui.events.handle(ui.tree, dispatches)
@@ -3258,7 +3266,9 @@ proc main() =
             local:
               if hit.isSome: some(hit.get.local)
               else: none(Vec2),
-            event: pointerUpEvent(point, event.button)
+            event: pointerUpEvent(
+              point, event.button, event.pointer, event.timestamp
+            )
           ))
           needsFrame = true
           continue
@@ -3272,7 +3282,10 @@ proc main() =
             needsFrame = true
           continue
         var dispatches = inputState.processInput(
-          ui.tree, frame.regions, pointerUpEvent(point, event.button), ui.scroll
+          ui.tree, frame.regions,
+          pointerUpEvent(
+            point, event.button, event.pointer, event.timestamp
+          ), ui.scroll
         )
         ui.normalizeTextControlDispatches(frame.regions, dispatches)
         discard ui.events.handle(ui.tree, dispatches)
@@ -3747,27 +3760,42 @@ proc main() =
         )
       of sekTouchStart:
         staticLayerDirty = true
-        let dispatches = inputState.processInput(ui.tree, frame.regions, touchStartEvent(vec2(event.touchX, event.touchY)))
-        discard ui.events.handle(ui.tree, dispatches)
+        let input = event.pointerInputEvent()
+        if input.isSome:
+          let dispatches = inputState.processInput(ui.tree, frame.regions, input.get)
+          discard ui.events.handle(ui.tree, dispatches)
         paintOnlyDirty = true
       of sekTouchMove:
         staticLayerDirty = true
-        let dispatches = inputState.processInput(
-          ui.tree,
-          frame.regions,
-          touchMoveEvent(vec2(event.touchX, event.touchY), vec2(event.touchDx, event.touchDy))
-        )
-        discard ui.events.handle(ui.tree, dispatches)
+        let input = event.pointerInputEvent()
+        if input.isSome:
+          let dispatches = inputState.processInput(
+            ui.tree, frame.regions, input.get
+          )
+          discard ui.events.handle(ui.tree, dispatches)
         paintOnlyDirty = true
       of sekTouchEnd:
         staticLayerDirty = true
-        let dispatches = inputState.processInput(ui.tree, frame.regions, touchEndEvent(vec2(event.touchX, event.touchY)))
-        discard ui.events.handle(ui.tree, dispatches)
+        let input = event.pointerInputEvent()
+        if input.isSome:
+          let dispatches = inputState.processInput(ui.tree, frame.regions, input.get)
+          discard ui.events.handle(ui.tree, dispatches)
         paintOnlyDirty = true
       of sekTouchCancel:
         staticLayerDirty = true
-        let dispatches = inputState.processInput(ui.tree, frame.regions, touchCancelEvent(vec2(event.touchX, event.touchY)))
-        discard ui.events.handle(ui.tree, dispatches)
+        let input = event.pointerInputEvent()
+        if input.isSome:
+          let dispatches = inputState.processInput(ui.tree, frame.regions, input.get)
+          discard ui.events.handle(ui.tree, dispatches)
+        paintOnlyDirty = true
+      of sekPenProximityIn, sekPenProximityOut,
+         sekPenButtonDown, sekPenButtonUp:
+        let input = event.pointerInputEvent()
+        if input.isSome:
+          let dispatches = inputState.processInput(
+            ui.tree, frame.regions, input.get, ui.scroll
+          )
+          discard ui.events.handle(ui.tree, dispatches)
         paintOnlyDirty = true
       if ui.reconcileFocus(inputState):
         staticLayerDirty = true

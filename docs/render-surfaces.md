@@ -157,3 +157,11 @@ contract across SDL3 and headless paint. Box hit tests, clips, and
 RenderSurface-local input use the same presentation matrices; Canvas commands
 remain local to their host surface and do not create a second backend-specific
 coordinate system.
+
+Pointer-family input retains its timestamp and optional `PointerData` while the host position
+is converted to surface-local coordinates. Touch pressure and pen pressure,
+tilt, rotation, distance, slider, buttons, eraser state, proximity state, and
+stable-in-process device identity are therefore available to a mounted drawing
+module without bypassing normal CBSS hit testing. The `axes` capability set
+separates an unavailable device axis from a supported axis currently reporting
+zero. The C ABI exposes the same contract through `CbssPointerData`.

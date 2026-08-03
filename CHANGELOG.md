@@ -9,6 +9,11 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added typed mouse, touch, and pen metadata across SDL3 input, normal event
+  dispatch, Canvas/RenderSurface-local callbacks, and C ABI version
+  `0x00010005`, including source timestamps and capability-masked pressure,
+  tilt, rotation, distance,
+  slider, eraser, button, proximity, and stable-in-process device data.
 - Added typed and serialized `color-mix()` values with CSS percentage
   normalization, delayed `currentColor` resolution, strict diagnostics, and
   direct integration with solid color, border, and shadow declarations.

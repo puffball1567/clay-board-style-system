@@ -60,7 +60,8 @@ Status: `In progress`
 
 The first implementation slice now provides the versioned Nim RenderSurface
 lifecycle, retained Canvas construction in `UiRoot`, content-area placement,
-local pointer/input conversion, deterministic disposal, explicit frame
+local pointer/input conversion including typed touch and pen metadata,
+deterministic disposal, explicit frame
 requests, and conversion of retained Canvas commands into the canonical paint
 stream. Scroll translation, ancestor clipping, inherited opacity, paint, hit
 testing, and surface placement share one presentation-coordinate helper. The
@@ -75,6 +76,14 @@ platform gates remain required. The interactive SDL3 Canvas/color demo is
 available through
 `nimble v03CanvasDemo`. See
 [render-surfaces.md](render-surfaces.md) for the implemented contract.
+
+SDL3 pen proximity, contact, motion, axis, and barrel-button events now feed
+the common pointer contract. Axis capability masks preserve meaningful zero
+values, synthesized duplicate mouse/touch events are filtered, RenderSurface
+callbacks receive local coordinates without losing device data, and the C ABI
+uses the same fixed-layout representation. High-rate sample coalescing and
+hardware-specific platform validation remain later performance and release
+gates.
 
 Introduce a first-class `Canvas` element and a backend-neutral `CanvasContext`.
 The initial surface is 2D and uses the existing SDL3 renderer path.

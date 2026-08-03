@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define CBSS_ABI_VERSION 0x00010004u
+#define CBSS_ABI_VERSION 0x00010005u
 #define CBSS_NODE_NONE UINT32_MAX
 
 typedef struct CbssContext CbssContext;
@@ -156,7 +156,11 @@ typedef enum CbssEventKind {
   CBSS_EVENT_TRANSITION_END = 87,
   CBSS_EVENT_VOLUME_CHANGE = 88,
   CBSS_EVENT_WAITING = 89,
-  CBSS_EVENT_WHEEL = 90
+  CBSS_EVENT_WHEEL = 90,
+  CBSS_EVENT_PEN_PROXIMITY_IN = 91,
+  CBSS_EVENT_PEN_PROXIMITY_OUT = 92,
+  CBSS_EVENT_PEN_BUTTON_DOWN = 93,
+  CBSS_EVENT_PEN_BUTTON_UP = 94
 } CbssEventKind;
 
 enum {
@@ -164,7 +168,26 @@ enum {
   CBSS_INPUT_HAS_DELTA = 1u << 1,
   CBSS_INPUT_HAS_BUTTON = 1u << 2,
   CBSS_INPUT_HAS_KEY = 1u << 3,
-  CBSS_INPUT_HAS_TEXT = 1u << 4
+  CBSS_INPUT_HAS_TEXT = 1u << 4,
+  CBSS_INPUT_HAS_POINTER = 1u << 5
+};
+
+typedef enum CbssPointerDeviceKind {
+  CBSS_POINTER_MOUSE = 0,
+  CBSS_POINTER_TOUCH = 1,
+  CBSS_POINTER_PEN_UNKNOWN = 2,
+  CBSS_POINTER_PEN_DIRECT = 3,
+  CBSS_POINTER_PEN_INDIRECT = 4
+} CbssPointerDeviceKind;
+
+enum {
+  CBSS_POINTER_AXIS_PRESSURE = 1u << 0,
+  CBSS_POINTER_AXIS_TANGENTIAL_PRESSURE = 1u << 1,
+  CBSS_POINTER_AXIS_TILT_X = 1u << 2,
+  CBSS_POINTER_AXIS_TILT_Y = 1u << 3,
+  CBSS_POINTER_AXIS_ROTATION = 1u << 4,
+  CBSS_POINTER_AXIS_DISTANCE = 1u << 5,
+  CBSS_POINTER_AXIS_SLIDER = 1u << 6
 };
 
 enum {
@@ -180,7 +203,8 @@ enum {
   CBSS_EVENT_HAS_DELTA = 1u << 2,
   CBSS_EVENT_HAS_BUTTON = 1u << 3,
   CBSS_EVENT_HAS_KEY = 1u << 4,
-  CBSS_EVENT_HAS_TEXT = 1u << 5
+  CBSS_EVENT_HAS_TEXT = 1u << 5,
+  CBSS_EVENT_HAS_POINTER = 1u << 6
 };
 
 enum {
@@ -442,6 +466,25 @@ typedef struct CbssTransformOperation {
   float angle;
 } CbssTransformOperation;
 
+/* Axis bits distinguish an unsupported axis from a supported zero value. */
+typedef struct CbssPointerData {
+  uint32_t device;
+  uint32_t axes;
+  uint64_t device_id;
+  float pressure;
+  float tangential_pressure;
+  float tilt_x;
+  float tilt_y;
+  float rotation;
+  float distance;
+  float slider;
+  uint32_t buttons;
+  uint8_t contact;
+  uint8_t primary;
+  uint8_t eraser;
+  uint8_t in_proximity;
+} CbssPointerData;
+
 typedef struct CbssInputEvent {
   uint32_t kind;
   uint32_t flags;
@@ -453,6 +496,8 @@ typedef struct CbssInputEvent {
   float delta_y;
   const char *key;
   const char *text;
+  CbssPointerData pointer;
+  uint64_t timestamp;
 } CbssInputEvent;
 
 /*
@@ -474,6 +519,8 @@ typedef struct CbssEvent {
   uint32_t modifiers;
   const char *key;
   const char *text;
+  CbssPointerData pointer;
+  uint64_t timestamp;
 } CbssEvent;
 
 typedef struct CbssDispatchSummary {

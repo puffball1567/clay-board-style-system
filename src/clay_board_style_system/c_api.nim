@@ -24,7 +24,7 @@ proc ensureNimRuntime() {.inline.} =
     NimMain()
 
 const
-  CbssAbiVersion* = 0x0001_0004'u32
+  CbssAbiVersion* = 0x0001_0005'u32
   CbssNodeNone* = high(uint32)
 
   CbssOk* = 0'i32
@@ -39,11 +39,14 @@ const
   CbssInputHasButton* = 1'u32 shl 2
   CbssInputHasKey* = 1'u32 shl 3
   CbssInputHasText* = 1'u32 shl 4
+  CbssInputHasPointer* = 1'u32 shl 5
+  CbssInputFlagsMask* = (1'u32 shl 6) - 1
 
   CbssModifierCtrl* = 1'u32 shl 0
   CbssModifierAlt* = 1'u32 shl 1
   CbssModifierShift* = 1'u32 shl 2
   CbssModifierMeta* = 1'u32 shl 3
+  CbssModifierMask* = (1'u32 shl 4) - 1
 
   CbssEventHasLocal* = 1'u32 shl 0
   CbssEventHasPosition* = 1'u32 shl 1
@@ -51,6 +54,16 @@ const
   CbssEventHasButton* = 1'u32 shl 3
   CbssEventHasKey* = 1'u32 shl 4
   CbssEventHasText* = 1'u32 shl 5
+  CbssEventHasPointer* = 1'u32 shl 6
+
+  CbssPointerAxisPressure* = 1'u32 shl 0
+  CbssPointerAxisTangentialPressure* = 1'u32 shl 1
+  CbssPointerAxisTiltX* = 1'u32 shl 2
+  CbssPointerAxisTiltY* = 1'u32 shl 3
+  CbssPointerAxisRotation* = 1'u32 shl 4
+  CbssPointerAxisDistance* = 1'u32 shl 5
+  CbssPointerAxisSlider* = 1'u32 shl 6
+  CbssPointerAxesMask* = (1'u32 shl 7) - 1
 
   CbssBorderHasWidth* = 1'u32 shl 0
   CbssBorderHasStyle* = 1'u32 shl 1
@@ -150,11 +163,21 @@ type
     kind*, flags*, xUnit*, yUnit*, zUnit*: uint32
     x*, y*, z*, angle*: cfloat
 
+  CbssPointerDataC* {.bycopy.} = object
+    device*, axes*: uint32
+    deviceId*: uint64
+    pressure*, tangentialPressure*: cfloat
+    tiltX*, tiltY*, rotation*, distance*, slider*: cfloat
+    buttons*: uint32
+    contact*, primary*, eraser*, inProximity*: uint8
+
   CbssInputEventC* {.bycopy.} = object
     kind*, flags*, modifiers*: uint32
     button*: int32
     x*, y*, deltaX*, deltaY*: cfloat
     key*, text*: cstring
+    pointer*: CbssPointerDataC
+    timestamp*: uint64
 
   CbssEventC* {.bycopy.} = object
     kind*, target*, currentTarget*, flags*: uint32
@@ -162,6 +185,8 @@ type
     button*: int32
     modifiers*: uint32
     key*, text*: cstring
+    pointer*: CbssPointerDataC
+    timestamp*: uint64
 
   CbssDispatchSummaryC* {.bycopy.} = object
     target*, dispatchCount*: uint32
@@ -282,13 +307,14 @@ static:
   doAssert sizeof(CbssTextStyleC) == 24
   doAssert sizeof(CbssGradientStopC) == 20
   doAssert sizeof(CbssTransformOperationC) == 36
-  doAssert sizeof(CbssInputEventC) == 48
-  doAssert sizeof(CbssEventC) == 64
+  doAssert sizeof(CbssPointerDataC) == 56
+  doAssert sizeof(CbssInputEventC) == 112
+  doAssert sizeof(CbssEventC) == 128
   doAssert sizeof(CbssDispatchSummaryC) == 12
   doAssert sizeof(CbssScrollMetricsC) == 36
   doAssert sizeof(CbssAccessibilityC) == 32
   doAssert sizeof(CbssRenderSurfacePlacementC) == 40
-  doAssert sizeof(CbssRenderSurfaceEventC) == 168
+  doAssert sizeof(CbssRenderSurfaceEventC) == 232
 
 proc toRect(value: Rect): CbssRectC {.inline.} =
   CbssRectC(x: value.x, y: value.y, w: value.w, h: value.h)
@@ -402,6 +428,59 @@ proc toAffine(value: CbssAffineTransformC): Affine2D {.inline.} =
 
 proc finite(value: float32): bool {.inline.} =
   value.classify notin {fcNan, fcInf, fcNegInf}
+
+proc validPointerData(value: CbssPointerDataC): bool =
+  if value.device > uint32(ord(high(PointerDeviceKind))) or
+      (value.axes and not CbssPointerAxesMask) != 0 or
+      value.contact > 1 or value.primary > 1 or value.eraser > 1 or
+      value.inProximity > 1:
+    return false
+  if not (value.pressure.finite and value.tangentialPressure.finite and
+      value.tiltX.finite and value.tiltY.finite and value.rotation.finite and
+      value.distance.finite and value.slider.finite):
+    return false
+  if (value.axes and CbssPointerAxisPressure) != 0 and
+      (value.pressure < 0 or value.pressure > 1):
+    return false
+  if (value.axes and CbssPointerAxisTangentialPressure) != 0 and
+      (value.tangentialPressure < -1 or value.tangentialPressure > 1):
+    return false
+  if (value.axes and CbssPointerAxisTiltX) != 0 and
+      (value.tiltX < -90 or value.tiltX > 90):
+    return false
+  if (value.axes and CbssPointerAxisTiltY) != 0 and
+      (value.tiltY < -90 or value.tiltY > 90):
+    return false
+  if (value.axes and CbssPointerAxisRotation) != 0 and
+      (value.rotation < -180 or value.rotation > 180):
+    return false
+  if (value.axes and CbssPointerAxisDistance) != 0 and
+      (value.distance < 0 or value.distance > 1):
+    return false
+  if (value.axes and CbssPointerAxisSlider) != 0 and
+      (value.slider < 0 or value.slider > 1):
+    return false
+  true
+
+proc validInputEvent(value: CbssInputEventC): bool =
+  if value.kind > uint32(ord(high(InputEventKind))) or
+      (value.flags and not CbssInputFlagsMask) != 0 or
+      (value.modifiers and not CbssModifierMask) != 0:
+    return false
+  if (value.flags and CbssInputHasPosition) != 0 and
+      not (value.x.finite and value.y.finite):
+    return false
+  if (value.flags and CbssInputHasDelta) != 0 and
+      not (value.deltaX.finite and value.deltaY.finite):
+    return false
+  if (value.flags and CbssInputHasKey) != 0 and value.key.isNil:
+    return false
+  if (value.flags and CbssInputHasText) != 0 and value.text.isNil:
+    return false
+  if (value.flags and CbssInputHasPointer) != 0 and
+      not value.pointer.validPointerData():
+    return false
+  true
 
 proc validRect(value: CbssRectC; allowEmpty = false): bool {.inline.} =
   value.x.finite and value.y.finite and value.w.finite and value.h.finite and
@@ -678,9 +757,56 @@ proc eventModifiers(event: InputEvent): uint32 {.inline.} =
     (if event.shiftKey: CbssModifierShift else: 0'u32) or
     (if event.metaKey: CbssModifierMeta else: 0'u32)
 
+proc pointerAxes(value: set[PointerAxis]): uint32 {.inline.} =
+  for axis in value:
+    result = result or (1'u32 shl uint32(ord(axis)))
+
+proc pointerDataC(value: PointerData): CbssPointerDataC {.inline.} =
+  CbssPointerDataC(
+    device: uint32(ord(value.device)),
+    axes: value.axes.pointerAxes(),
+    deviceId: value.deviceId,
+    pressure: value.pressure,
+    tangentialPressure: value.tangentialPressure,
+    tiltX: value.tiltX,
+    tiltY: value.tiltY,
+    rotation: value.rotation,
+    distance: value.distance,
+    slider: value.slider,
+    buttons: value.buttons,
+    contact: uint8(ord(value.contact)),
+    primary: uint8(ord(value.primary)),
+    eraser: uint8(ord(value.eraser)),
+    inProximity: uint8(ord(value.inProximity))
+  )
+
+proc pointerData(value: CbssPointerDataC): PointerData {.inline.} =
+  var axes: set[PointerAxis]
+  for axis in PointerAxis:
+    if (value.axes and (1'u32 shl uint32(ord(axis)))) != 0:
+      axes.incl axis
+  PointerData(
+    device: PointerDeviceKind(value.device),
+    deviceId: value.deviceId,
+    axes: axes,
+    pressure: value.pressure,
+    tangentialPressure: value.tangentialPressure,
+    tiltX: value.tiltX,
+    tiltY: value.tiltY,
+    rotation: value.rotation,
+    distance: value.distance,
+    slider: value.slider,
+    buttons: value.buttons,
+    contact: value.contact != 0,
+    primary: value.primary != 0,
+    eraser: value.eraser != 0,
+    inProximity: value.inProximity != 0
+  )
+
 proc inputEvent(value: CbssInputEventC): InputEvent =
   result = InputEvent(
     kind: InputEventKind(value.kind),
+    timestamp: value.timestamp,
     ctrlKey: (value.modifiers and CbssModifierCtrl) != 0,
     altKey: (value.modifiers and CbssModifierAlt) != 0,
     shiftKey: (value.modifiers and CbssModifierShift) != 0,
@@ -696,11 +822,14 @@ proc inputEvent(value: CbssInputEventC): InputEvent =
     result.key = some(fromCString(value.key))
   if (value.flags and CbssInputHasText) != 0:
     result.text = some(fromCString(value.text))
+  if (value.flags and CbssInputHasPointer) != 0:
+    result.pointer = some(value.pointer.pointerData())
 
 proc inputEventC(value: InputEvent): CbssInputEventC =
   result = CbssInputEventC(
     kind: uint32(ord(value.kind)),
-    modifiers: value.eventModifiers()
+    modifiers: value.eventModifiers(),
+    timestamp: value.timestamp
   )
   if value.position.isSome:
     result.flags = result.flags or CbssInputHasPosition
@@ -719,6 +848,9 @@ proc inputEventC(value: InputEvent): CbssInputEventC =
   if value.text.isSome:
     result.flags = result.flags or CbssInputHasText
     result.text = cstring(value.text.get)
+  if value.pointer.isSome:
+    result.flags = result.flags or CbssInputHasPointer
+    result.pointer = value.pointer.get.pointerDataC()
 
 proc surfaceEvent(
     kind: uint32;
@@ -843,6 +975,8 @@ proc eventFlags(dispatch: DispatchResult; includeLocal: bool): uint32 =
     result = result or CbssEventHasKey
   if dispatch.event.text.isSome:
     result = result or CbssEventHasText
+  if dispatch.event.pointer.isSome:
+    result = result or CbssEventHasPointer
 
 proc callbackEvent(
     dispatch: DispatchResult;
@@ -854,6 +988,7 @@ proc callbackEvent(
     target: originalTarget.nodeRawValue(),
     currentTarget: currentTarget.nodeRawValue(),
     flags: dispatch.eventFlags(includeLocal),
+    timestamp: dispatch.event.timestamp,
     button:
       if dispatch.event.button.isSome:
         int32(dispatch.event.button.get)
@@ -874,6 +1009,8 @@ proc callbackEvent(
     result.key = dispatch.event.key.get.cstring
   if dispatch.event.text.isSome:
     result.text = dispatch.event.text.get.cstring
+  if dispatch.event.pointer.isSome:
+    result.pointer = dispatch.event.pointer.get.pointerDataC()
 
 proc effectiveEventKinds(kind: InputEventKind): seq[InputEventKind] =
   case kind
@@ -3007,7 +3144,7 @@ proc cbssContextDispatchInput(
 ): int32 {.exportc: "cbss_context_dispatch_input", cdecl, dynlib.} =
   if context.isNil:
     return CbssInvalidHandle
-  if input.isNil or input.kind > uint32(ord(high(InputEventKind))):
+  if input.isNil or not input[].validInputEvent():
     return CbssInvalidArgument
   if (input.flags and CbssInputHasPosition) != 0 and not context.computed:
     context.setError("positioned input requires a computed context")
@@ -3118,7 +3255,7 @@ proc cbssContextEmitEvent(
   if context.isNil:
     return CbssInvalidHandle
   if not context.validNode(node) or input.isNil or
-      input.kind > uint32(ord(high(InputEventKind))):
+      not input[].validInputEvent():
     return CbssInvalidArgument
   try:
     let event = input[].inputEvent()

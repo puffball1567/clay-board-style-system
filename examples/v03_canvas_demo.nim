@@ -297,27 +297,42 @@ proc main() =
     of sekPointerMove:
       let point = vec2(event.x, event.y)
       renderer.setCursor(cursorAt(frame.regions, point))
+      let input = event.pointerInputEvent()
+      if input.isNone:
+        return
       let dispatches = interaction.processInput(
-        ui.tree, frame.regions, pointerMoveEvent(point), ui.scroll
+        ui.tree, frame.regions, input.get, ui.scroll
       )
       discard ui.events.handle(ui.tree, dispatches)
       scheduler.markDirty({ddStyle, ddPaint, ddHit})
     of sekPointerDown:
-      let point = vec2(event.buttonX, event.buttonY)
+      let input = event.pointerInputEvent()
+      if input.isNone:
+        return
       let dispatches = interaction.processInput(
-        ui.tree, frame.regions,
-        pointerDownEvent(point, event.button), ui.scroll
+        ui.tree, frame.regions, input.get, ui.scroll
       )
       discard ui.events.handle(ui.tree, dispatches)
       scheduler.markDirty({ddStyle, ddPaint, ddHit})
     of sekPointerUp:
-      let point = vec2(event.buttonX, event.buttonY)
+      let input = event.pointerInputEvent()
+      if input.isNone:
+        return
       let dispatches = interaction.processInput(
-        ui.tree, frame.regions,
-        pointerUpEvent(point, event.button), ui.scroll
+        ui.tree, frame.regions, input.get, ui.scroll
       )
       discard ui.events.handle(ui.tree, dispatches)
       scheduler.markDirty({ddStyle, ddPaint, ddHit})
+    of sekTouchStart, sekTouchMove, sekTouchEnd, sekTouchCancel,
+       sekPenProximityIn, sekPenProximityOut,
+       sekPenButtonDown, sekPenButtonUp:
+      let input = event.pointerInputEvent()
+      if input.isSome:
+        let dispatches = interaction.processInput(
+          ui.tree, frame.regions, input.get, ui.scroll
+        )
+        discard ui.events.handle(ui.tree, dispatches)
+        scheduler.markDirty({ddStyle, ddPaint, ddHit})
     else:
       discard
 
