@@ -3,67 +3,115 @@
 **The flexibility of CSS. Native performance. A shared foundation for GUI
 development.**
 
-Clay Board Style System brings CSS-inspired styling to native GUI development.
-It combines styling, layout, events, state management, and Canvas drawing
-without depending on a DOM or WebView. It is not a collection of ready-made
-widgets; it is the foundation for building and distributing original GUI
-libraries and design systems. Its SDL3-based runtime is built for
-cross-platform deployment, while its versioned C ABI makes the same foundation
-available from Nim and other programming languages.
+[![CI](https://github.com/puffball1567/clay-board-style-system/actions/workflows/ci.yml/badge.svg)](https://github.com/puffball1567/clay-board-style-system/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 
-**Name clarification:** Clay Board Style System is an independent project. It
-is not related to, affiliated with, derived from, or compatible with Clay, the
-C UI layout library.
+Clay Board Style System is a CSS-inspired primitive engine for building native
+GUI toolkits. It gives GUI-library authors one styleable foundation for layout,
+text, input, state, accessibility, navigation, and retained Canvas drawing,
+instead of making every toolkit rebuild those systems. CBSS runs without a DOM
+or WebView, updates only affected work, uses SDL3 for portable native windows
+and rendering, and exposes a versioned C ABI for languages beyond Nim.
 
-Clay Board Style System is a CSS-inspired primitive engine for native GUI
-toolkits. This document uses `CBSS` only as a short form where repeating the
-full project name would reduce readability.
+[![Clay Board Style System demo](sample/ClayBoardStyleSystem_demo_preview.gif)](sample/ClayBoardStyleSystem_demo.mp4)
 
-**CSS compatibility boundary:** Clay Board Style System is not CSS and is not a
-fully compatible CSS implementation. It provides CSS-like authoring syntax,
-property names, typed values, and familiar layout concepts for native UI
-development. Browser stylesheet syntax, DOM behavior, the complete CSS cascade,
-and bug-for-bug browser compatibility are not part of its compatibility
-contract.
+## Why CBSS
 
-Unlike CSS, CBSS also provides native UI behavior APIs. Elements can expose
-familiar event-handler slots such as `onClick`, `onChange`, `onInput`,
-`onKeyDown`, and `onPointerMove`, backed by CBSS-owned event dispatch rather
-than browser events or JavaScript. Applications may also use the exported,
-typed `StateRuntime[State, Action]` to apply actions through an
-application-supplied update procedure and mark affected work dirty. This small
-state runtime is optional infrastructure, not React hooks, Redux, a virtual
-DOM, persistence, or an application business-logic framework.
+- **Familiar to frontend engineers.** Typed Nim APIs use CSS-inspired
+  properties, units, box layout, state styling, colors, and transforms.
+- **A foundation, not a visual identity.** `Box`, `Text`, `Image`, Canvas, and
+  replaceable reference controls let libraries define their own components and
+  design systems.
+- **Retained and event-driven.** CBSS does not replay every component after an
+  event. Dirty domains limit updates, and idle applications block on SDL events.
+- **Native behavior in the same model.** Focus, keyboard and pointer events,
+  IME, clipboard, scrolling, popups, accessibility semantics, and typed
+  navigation are part of the runtime contract.
+- **Built for an ecosystem.** Components are ordinary Nim modules with Style
+  DI, standard event properties, lifecycle hooks, and no private tag registry.
+- **Language-neutral at the boundary.** The append-only C ABI uses opaque
+  handles and fixed-layout values rather than exposing Nim-managed objects.
 
-The first implementation target is Nim. The Nimble package name is
-`clay_board_style_system`; the stable Nim import path is
-`clay_board_style_system`. A versioned C ABI exposes the same native UI
-foundation to C, C++, Rust, Zig, Swift, and other languages with C
-interoperability.
+CBSS is not a browser, a WebView wrapper, a complete CSS implementation, or a
+finished component library. It is the primitive native UI layer on which those
+libraries can be built.
 
-The initial runtime target is Linux x86_64 with SDL3. Windows and macOS support
-are planned, but they are contributor-validated and not release-blocking during
-the early phase.
+## The API
 
-CBSS is not a component library. Its product boundary is the primitive layer
-that GUI libraries build on: boxes, text, images, style, layout, state, drawing
-commands, hit testing, focus, input, and accessibility semantics. The repository
-contains replaceable reference controls so these mechanisms can be exercised
-and tested, but their visual design is not the public product.
+Components remain ordinary Nim types and `render` procedures, so the compiler
+and language server can follow them. There is no TSX parser or virtual DOM.
 
-The name is intentional. The project is not the clay itself, meaning the GUI
-components. It is the board where the clay is placed, shaped, arranged, and
-prepared.
+```nim
+import clay_board_style_system
 
-## Getting Started
+type SaveButton = ref object of CBSSComponent
+  label: string
 
-Requirements:
+proc saveButtonStyle(): UiStyle =
+  uiStyle([
+    decl("width", px(112)),
+    decl("height", px(40)),
+    decl("padding", px(10)),
+    decl("background-color", oklch(0.62, 0.16, 250))
+  ])
+
+proc render(self: SaveButton) =
+  proc onSave(event: DispatchResult): bool =
+    echo "Saved"
+    return true
+
+  ui.box(self, ownedStyle = saveButtonStyle()):
+    ui.text(self.label)
+
+  self.onClick = onSave
+
+let app = initUiRoot()
+app.mount(SaveButton(label: "Save"))
+```
+
+The component owns its behavior and required style. A caller can inject
+additional style through the inherited `style` field, while the component wins
+when both sides define the same property. See
+[Typed Component Authoring](docs/component-authoring.md) for composition,
+lifecycle, failure handling, and Style DI.
+
+## Measured Foundation
+
+Performance is a release constraint, not a future slogan. Current ARC release
+probes include:
+
+| Workload | Measured result |
+| --- | ---: |
+| Full cold style pass, 4,000 nodes | 10.648 ms |
+| Full cold layout pass, 4,000 nodes | 6.616 ms |
+| Full cold paint build, 4,000 nodes | 2.585 ms |
+| Full cold hit build, 4,000 nodes | 1.358 ms |
+| Flatten 10,000 retained Canvas commands | 2.198 ms average |
+| 1,000,000 idle predicates with 10,000 surfaces | 5.690 ms total |
+
+Cold passes are used for initial construction and resize. Interactive updates
+are required to remain proportional to dirty work rather than total tree size.
+The exact workloads, machine-local interpretation, budgets, and regression
+gates are documented in [Performance Model](docs/performance-model.md) and can
+be run with `nimble bench`.
+
+The discovered ARC suite currently covers 79 independently compiled test
+files. Separate Valgrind gates exercise the complete reference-control graph
+and both shared and static C ABI consumers.
+
+## Try It
+
+### 1. Requirements
 
 - Nim 2.2 or newer
 - Rust and Cargo for the cosmic-text and image bridges
-- Linux x86_64 SDL3 development files and native bridges
+- Linux x86_64 for the current Tier 1 SDL3 runtime
 
-The fastest way to run CBSS from a source checkout is:
+Windows x86_64 and macOS arm64 are continuously checked by the portable CI
+suite, but their complete native runtime paths still require contributor
+validation.
+
+### 2. Run from a source checkout
 
 ```sh
 git clone https://github.com/puffball1567/clay-board-style-system.git
@@ -73,93 +121,140 @@ nimble test
 nimble sdl3Demo
 ```
 
-Version 0.3.1 includes focused Canvas/color and typed component demos. The full
-SDL3 demo also includes interactive, independently styled Switch controls. A
-standalone Canvas demo shows event-driven continuous animation without
-relayout or an idle polling loop:
+The focused demos isolate component authoring, Canvas/color behavior, and an
+event-driven loading animation:
 
 ```sh
-nimble v03CanvasDemo
 nimble componentDemo
+nimble v03CanvasDemo
 nimble loadingIndicatorDemo
 ```
 
-![Native navigation demo](sample/ClayBoardStyleSystem_navigation_demo_preview.gif)
-
-For an installed package, install CBSS once:
+### 3. Install for an application
 
 ```sh
 nimble install https://github.com/puffball1567/clay-board-style-system
 ```
 
-Prepare a runtime directory using the layout in
-[docs/runtime-linking.md](docs/runtime-linking.md), then select bundled setup
-to link its SDL3 archive statically:
+Prepare a runtime directory as described in
+[Runtime Linking](docs/runtime-linking.md), then choose a link profile without
+changing application imports.
+
+Use an application-supplied SDL3 archive and native bridge runtime:
 
 ```sh
 cbss_configure bundled /path/to/cbss-runtime
-nimble sdl3Demo
 ```
 
-To use SDL3 and the native bridges supplied by the operating system instead:
+Or use SDL3 and bridge libraries installed on the system:
 
 ```sh
 cbss_configure system
-nimble sdl3Demo
 ```
 
-The selected mode is stored in the application's ignored `.cbss/` directory;
-application source code and imports stay the same. CBSS does not include native
-runtime binaries in its Nimble package. Bundled setup links SDL3 statically and
-the source-built image and cosmic-text C ABI bridges dynamically. Custom
-runtime prefixes and release packaging are documented in
-[docs/runtime-linking.md](docs/runtime-linking.md).
+The selection is written to the application's ignored `.cbss/` directory.
+CBSS does not ship native runtime binaries inside its Nimble package.
 
-C ABI consumers can start with [docs/c-api.md](docs/c-api.md). Shared and
-static library build commands are listed in
-[Language-Neutral C ABI](#language-neutral-c-abi).
+## What Version 0.3.1 Contains
 
-## Release Status
+- Typed `CBSSComponent` authoring, nested composition, Style DI, lifecycle
+  hooks, and transactional mount rollback.
+- CSS Color 4-inspired typed and serialized colors, `color-mix()`, wide-gamut
+  conversion, and selectable gradient interpolation spaces.
+- Retained `Canvas2D` paths, transforms, clips, layers, text, images, gradients,
+  local input, frame requests, and a deterministic headless renderer.
+- Typed navigation with `Link`, retained screen roots, history, focus
+  restoration, external URLs, and application deep links.
+- Mouse, touch, pen, keyboard, focus, form, clipboard, IME, drag, scroll, and
+  accessibility event contracts.
+- Reference controls including button, checkbox, radio, Switch, input,
+  textarea, select, slider, details, dialog, progress, tabs, and list box.
+- An idle-aware reversible Switch transition and deterministic animation clock
+  with reduced-motion support.
+- A versioned C ABI for tree, style, layout, paint, input, events, focus,
+  scrolling, accessibility, Canvas, and diagnostics.
+- Headless unit and E2E tooling, screenshot snapshots, optional real-window
+  Wayland scenarios, portable CI, and native memory checks.
 
-Version 0.3.1 is the current Linux x86_64 developer preview. It is suitable for
-evaluating the API, building GUI libraries, and contributing runtime
-capabilities. Public APIs may still change before 1.0.
+The [property support matrix](docs/css-property-support.md) is authoritative.
+Accepting a value as metadata does not mean that layout or paint consumes it.
 
-Version 0.3.1 includes CSS Color 4-inspired authored colors and mixing, retained
-Canvas drawing, RenderSurface lifecycle and C ABI integration, deterministic
-keyframe animation, affine Box and Canvas transforms, offscreen composition
-layers, rich pen input, and typed Nim component authoring with Style DI. The
-Canvas path is shared by SDL3 and the deterministic headless reference
-renderer. See the [Canvas guide](docs/render-surfaces.md),
-[component guide](docs/component-authoring.md), and
-[product roadmap](docs/roadmap.md).
+## Current Boundaries
 
-The reference-control layer now includes a semantic Switch with injectable
-base and checked-state Styles, an idle-aware reversible `ease` transition,
-pointer and keyboard activation, disabled and fieldset behavior, reduced-motion
-handling, and accessibility semantics. It remains replaceable by GUI libraries
-built on CBSS rather than imposing a product design system.
-
-Current boundaries:
+Version 0.3.1 is a developer preview. Public APIs may change before 1.0.
 
 - Linux x86_64 with SDL3 is the only Tier 1 runtime target.
-- Windows and macOS adapters require contributor validation.
-- The semantic accessibility model exists, but the Linux AT-SPI D-Bus
-  transport, UIA, and NSAccessibility transports are not complete.
-- Full inline rich-text layout, native multi-window popup escape, filters,
-  three-dimensional transforms, and shared GPU texture surfaces are not
-  complete.
-- Property status is defined by the
-  [support matrix](docs/css-property-support.md); accepted metadata does not
-  imply active runtime behavior.
+- Windows and macOS native runtime validation is incomplete.
+- The semantic accessibility model and platform-neutral AT-SPI adapter exist;
+  Linux AT-SPI D-Bus, Windows UIA, and macOS NSAccessibility transports remain
+  incomplete.
+- Complete unit resolution, inline rich text, declarative transitions and
+  style-bound keyframes, filters, 3D transforms, CPU effects, and GPU Canvas
+  are roadmap work.
+- CBSS intentionally does not reproduce DOM selectors, browser quirks, legacy
+  CSS behavior, JavaScript, or a browser security model.
+
+See the [Product Roadmap](docs/roadmap.md) for the complete dependency order.
+
+## Architecture
+
+The core pipeline is retained and renderer-oriented:
+
+```text
+Node tree
+  -> style resolution
+  -> layout
+  -> paint commands
+  -> hit regions
+  -> renderer backend
+```
+
+The core primitives are `Box`, `Text`, and `Image`. Canvas and RenderSurface
+provide bounded custom drawing inside ordinary layout. Reference controls are
+compositions that validate behavior; GUI libraries may use, restyle, replace,
+or ignore them.
+
+Independent packages can build higher layers without changing CBSS core:
+
+```text
+CBSS
+  style, layout, text, events, semantics, Canvas, rendering contracts
+
+GUI and visualization libraries
+  design systems, grids, charts, editors, game UI, domain components
+
+Applications
+  product state, business logic, persistence, networking, backend services
+```
+
+State changes update stable nodes and mark the affected dirty domains. CBSS
+does not use React-style component replay as its performance strategy. Timed
+work requests frames explicitly; an idle host can block in `SDL_WaitEvent`.
+
+## CSS-Inspired, Not CSS
+
+CBSS uses familiar property names, units, colors, flex and box concepts, and
+state styling because they provide a productive UI vocabulary. The authored
+values are typed Nim data, not browser stylesheet text.
+
+CBSS does not promise:
+
+- CSS source compatibility
+- a DOM or document cascade
+- descendant or structural selector matching
+- browser default stylesheets
+- bug-for-bug browser rendering
+- legacy browser layout models
+
+Unlike CSS, CBSS also owns native UI behavior such as typed `onClick`,
+`onChange`, `onInput`, keyboard, pointer, focus, composition, and lifecycle
+APIs. Application business logic remains ordinary Nim or an external service.
 
 ## Language-Neutral C ABI
 
-CBSS exposes its tree, full typed-style values, layout, paint commands, input
-dispatch, event callbacks, focus, retained scrolling, accessibility semantics,
-diagnostics, and hit testing through a versioned C ABI. The public boundary
-uses opaque handles and fixed-layout value structs; Nim strings, sequences,
-references, exceptions, and object layouts are not exposed.
+The public C boundary uses opaque handles, fixed-layout values, explicit
+ownership, status codes, and append-only enums. Nim strings, sequences,
+references, exceptions, and object layouts do not cross the ABI.
 
 ```sh
 nimble buildCAbiShared
@@ -167,466 +262,71 @@ nimble buildCAbiStatic
 nimble testCAbi
 ```
 
-These tasks produce `/tmp/libcbss.so` or `/tmp/libcbss.a` during development.
-Applications include `cbss.h` and may wrap the same ABI from C++, Rust, Zig,
-Swift, or another language with C interop. See
-[docs/c-api.md](docs/c-api.md) for ownership and compatibility rules.
-
-## Motivation
-
-Modern web frontend development is productive partly because many frameworks
-share the same underlying platform: the browser style and layout engine. React,
-Vue, Svelte, Solid, and other frameworks can focus on component models because
-CSS already provides a common foundation for color, spacing, sizing, layout,
-state styling, and responsive behavior.
-
-Native GUI ecosystems usually do not have an equivalent shared layer. Each GUI
-toolkit tends to reinvent:
-
-- Layout
-- Styling
-- Theming
-- Responsive sizing
-- State styling
-- Text measurement
-- Clipping and scrolling
-- Hit testing
-- Paint ordering
-- Focus and input routing
-
-As a result, building a modern native GUI library remains expensive. CBSS is an
-attempt to provide the missing CSS-position layer for native GUI work, without
-copying browser-specific CSS behavior.
-
-## Design Philosophy
-
-CBSS should borrow the mental model of CSS, not the full browser specification.
-
-The goal is not CSS compatibility. The goal is to make primitive native GUI
-construction understandable to people who already know how to build interfaces
-with CSS-like concepts.
-
-The same rule applies to event and component vocabulary. CBSS may use familiar
-Web/DOM/TSX names such as `onClick`, `onInput`, or `onPointerMove`, but the
-implementation is independent. CBSS should not copy browser or framework
-internals such as React SyntheticEvent, Fiber/reconciler behavior, hooks, or
-framework source code.
-
-CBSS should make common UI intentions direct:
-
-- Make a rectangle
-- Set a color
-- Add padding
-- Add a border
-- Round corners
-- Put text inside a box
-- Arrange children horizontally or vertically
-- Add a gap between children
-- Fill remaining space
-- Size to content
-- Center children
-- Hide overflow
-- Wrap text
-- Change style on hover, active, focus, or disabled state
-- Create hit regions for pointer events
-
-The project should avoid legacy browser concerns that do not help native GUI
-libraries.
-
-Do not implement:
-
-- HTML output
-- DOM compatibility
-- JavaScript
-- Full CSS compatibility
-- Float layout
-- Table layout
-- Browser quirks
-- Full cascade specificity
-- Full inline formatting context
-- Full CSS Grid as an initial goal
-- Browser default stylesheets
-
-## Core Idea
-
-The primitive element should be similar in spirit to a `div`: a generic box that
-can be styled, laid out, nested, drawn, and used as an event region.
-
-CBSS core primitives:
-
-- `Box`
-- `Text`
-- `Image`
-
-Everything else belongs to GUI libraries built on top of CBSS.
-
-Examples:
-
-- `Button = Box + Text + clickable behavior`
-- `Card = Box + padding + border/radius/shadow + children`
-- `Toolbar = Box + row layout + gap`
-- `Window = Box + titlebar + draggable/resizable behavior + z-order`
-- `ScrollView = Box + clipping + scroll behavior`
-
-The CBSS core should not need to know what a button is.
-
-Reference controls under `runtime/` are compositions used to verify this
-primitive machinery. GUI libraries may use, replace, or ignore them without
-changing the core pipeline.
-
-## Conceptual Pipeline
-
-CBSS should work as a native UI computation engine:
-
-```text
-Node tree
-  -> style resolution
-  -> layout calculation
-  -> paint command generation
-  -> hit region generation
-  -> native renderer backend
-```
-
-The output should be native-renderer-friendly command data, not HTML.
-
-Possible backend targets:
-
-- SDL3
-- OpenGL
-- Vulkan
-- Metal
-- Direct2D
-- Skia
-- Blend2D
-- Sokol
-
-The core should stay renderer-independent.
-
-## Architecture Notes
-
-The intended internal architecture is organized around loosely coupled
-extension units:
-
-- Elements
-- Selectors
-- Style properties
-
-See [docs/architecture.md](docs/architecture.md) for the current design notes.
-See [docs/performance-model.md](docs/performance-model.md) for performance
-budgets and hot-path rules — being lightweight and fast is a product
-requirement, and that document has the same authority as the architecture
-notes.
-See [docs/design-decisions.md](docs/design-decisions.md) for settled design
-decisions and component conventions.
-See [docs/runtime-components.md](docs/runtime-components.md) for per-component
-behavior notes on the reference runtime controls.
-See [docs/component-authoring.md](docs/component-authoring.md) for the typed Nim
-component API, Style DI, composition, events, and lifecycle rules.
-See [docs/accessibility.md](docs/accessibility.md) for the semantic-tree,
-focus, platform-adapter, and assistive-technology transport boundaries.
-See [docs/navigation.md](docs/navigation.md) for typed destinations, stack
-history, Link behavior, retained screens, transition hooks, URL/deep-link
-adapters, injection, and the custom-driver contract.
-See [docs/color.md](docs/color.md) for the authored color-space model,
-conversion boundary, gamut policy, and interpolation behavior being developed
-for Version 0.3.
-See [docs/render-surfaces.md](docs/render-surfaces.md) for the implemented
-RenderSurface lifecycle, retained Canvas API, input coordinates, and frame
-scheduling contract.
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the files-to-touch map and ground
-rules for contributions.
-See [docs/platform-support.md](docs/platform-support.md) for the current
-platform support policy.
-See [docs/runtime-linking.md](docs/runtime-linking.md) for bundled, system, and
-custom dynamic-link setup and packaging.
-Use
-[docs/platform-validation-checklist.md](docs/platform-validation-checklist.md)
-when validating Windows, macOS, or another non-primary platform.
-See [docs/css-property-support.md](docs/css-property-support.md) for the CSS
-property support matrix.
-See
-[docs/css-property-implementation-order.md](docs/css-property-implementation-order.md)
-for the planned CSS property implementation order.
-
-## Initial Scope
-
-The first useful version should focus on primitive layout and style, not rich
-widgets.
-
-Minimum useful features:
-
-- Node tree
-- Generic `Box`
-- `Text`
-- `Image`
-- Width and height
-- Min and max size
-- `px`, `percent`, `fill`, and `content` sizing
-- Padding
-- Margin
-- Border
-- Border radius
-- Background color
-- Text color
-- Row and column layout
-- Gap
-- Align and justify
-- Basic absolute or overlay positioning
-- Overflow hidden
-- Text wrapping
-- Hover, active, focus, and disabled state styling
-- Draw command output
-- Hit testing
-- General keyboard focus traversal
-- Text input, selection, clipboard, and IME handling
-- Platform-neutral accessibility semantics
-- AT-SPI semantic adapter core and action routing
-
-Possible later features:
-
-- Typed theme and token APIs
-- Broader partial-render invalidation
-- Linux AT-SPI D-Bus transport, UIA, and NSAccessibility adapters
-- Animation and transitions
-- Debug inspector for computed style and layout boxes
-
-## CSS-Like, Not CSS-Compatible
-
-CBSS should use familiar names where they help:
-
-- `padding`
-- `margin`
-- `gap`
-- `border`
-- `radius`
-- `background`
-- `color`
-- `fontSize`
-- `align`
-- `justify`
-- `overflow`
-
-But it should prefer direct native-GUI intentions where CSS is more complicated
-than necessary:
-
-- `width = fill`
-- `height = content`
-- `textWrapping = word`
-- `clip = true`
-- `scroll = vertical`
-- `clickable = true`
-- `draggable = true`
-
-The guiding rule:
-
-```text
-Use CSS vocabulary when it improves intuition.
-Avoid CSS behavior when it only exists for browser compatibility.
-```
-
-## Example Shape
-
-The exact API is not decided, but usage should feel understandable to people
-who know CSS concepts.
-
-```nim
-box(id = "toolbar"):
-  box(groups = ["button", "primary"]):
-    text("Save")
-  box(groups = ["button"]):
-    text("Cancel")
-```
-
-Style could be represented with a Nim DSL:
-
-```nim
-style "[id=toolbar]":
-  layout row
-  gap 8.px
-  padding 8.px
-  background "#20242a"
-
-style ".button":
-  padding 6.px, 12.px
-  radius 4.px
-  background "#3a3f48"
-  color "#f5f5f5"
-
-style ".button:hover":
-  background "#4b5563"
-```
-
-Or the API could be more explicitly typed. The important part is that written
-style and visual result are easy to connect mentally.
-
-For hand-written code, component-owned styles and events should be the main
-path:
-
-```nim
-proc saveButtonStyle(): UiStyle =
-  uiStyle([
-    decl("padding", px(8)),
-    decl("background-color", colorValue(rgb(0.1, 0.35, 0.6))),
-    decl("color", colorValue(rgb(1, 1, 1)))
-  ])
-
-proc onSave(event: DispatchResult): bool =
-  echo "save"
-  true
-
-proc SaveButton(ui: UiRoot; style = saveButtonStyle()): NodeHandle {.discardable.} =
-  ui.box(result, style):
-    ui.text("Save")
-  result.onClick = onSave
-```
-
-For deeper trees, block-style builders keep parent-child relationships visible:
-
-```nim
-let ui = initUiRoot()
-var app: NodeHandle
-
-ui.box(app, "app"):
-  ui.box("header"):
-    ui.box("toolbar"):
-      SaveButton(ui)
-```
-
-Large UIs should be split into component-like procedures instead of one large
-nested block. Style can be injected, events stay inside the component by
-default, and params are only for extra values the component needs:
-
-```nim
-type ToolbarParams = object
-  title: string
-
-proc toolbarStyle(): UiStyle =
-  uiStyle([
-    decl("height", px(48)),
-    decl("gap", px(8))
-  ])
-
-proc onSave(event: DispatchResult): bool =
-  echo "save"
-  true
-
-proc SaveButton(ui: UiRoot; style = saveButtonStyle()): NodeHandle {.discardable.} =
-  ui.box(result, style):
-    ui.text("Save")
-  result.onClick = onSave
-
-proc Toolbar(
-    ui: UiRoot;
-    style = toolbarStyle();
-    params = ToolbarParams(title: "Editor")
-): NodeHandle {.discardable.} =
-  ui.box(result, style):
-    ui.text(params.title, groups = ["title"])
-    SaveButton(ui)
-
-proc App(ui: UiRoot): NodeHandle {.discardable.} =
-  ui.box(result, uiStyle([decl("padding", px(16))])):
-    Toolbar(ui, params = ToolbarParams(title: "Editor"))
-    ui.box(uiStyle([decl("padding", px(12))])):
-      ui.text("Document body")
-```
-
-If a parent wants to change a child component's style, it imports or builds a
-`UiStyle` and passes it directly:
-
-```nim
-SaveButton(ui, style = saveButtonStyle() + uiStyle([
-  decl("background-color", colorValue(rgb(0.45, 0.12, 0.12)))
-]))
-```
-
-## Why This Matters
-
-If CBSS exists, native GUI libraries do not need to repeatedly solve the same
-primitive layout and styling problems. They can focus on higher-level component
-behavior and application architecture.
-
-The intended ecosystem shape is:
-
-```text
-CBSS core:
-  primitive boxes, text, style, layout, paint commands, hit testing
-
-GUI libraries:
-  Button, Card, Dialog, TextInput, Menu, Window, Inspector, Editor UI
-
-Applications:
-  actual product interfaces
-```
-
-This makes GUI components a matter of composition rather than reinvention.
-
-## Project Positioning
-
-Clay Board Style System (CBSS) is:
-
-- A native GUI foundation
-- CSS-inspired
-- Primitive-first
-- Renderer-independent
-- Widget-toolkit-agnostic
-- Useful for building GUI libraries
-
-Clay Board Style System (CBSS) is not:
-
-- A browser
-- A webview
-- A CSS implementation
-- A complete GUI toolkit
-- A component library
-- A replacement for application architecture
+Applications can wrap `include/cbss.h` from C, C++, Rust, Zig, Swift, or another
+language with C interoperability. See [C ABI Guide](docs/c-api.md) for
+construction, ownership, callbacks, versioning, and static/shared linking.
+
+## Documentation
+
+| Topic | Document |
+| --- | --- |
+| Product direction | [Roadmap](docs/roadmap.md) |
+| Architecture and boundaries | [Architecture](docs/architecture.md) |
+| Performance budgets | [Performance Model](docs/performance-model.md) |
+| Components and Style DI | [Component Authoring](docs/component-authoring.md) |
+| Canvas and custom drawing | [Render Surfaces](docs/render-surfaces.md) |
+| Navigation and Link | [Navigation](docs/navigation.md) |
+| Color model | [Color](docs/color.md) |
+| Accessibility | [Accessibility](docs/accessibility.md) |
+| Property coverage | [CSS Property Support](docs/css-property-support.md) |
+| Runtime setup | [Runtime Linking](docs/runtime-linking.md) |
+| Platform status | [Platform Support](docs/platform-support.md) |
+| Contribution boundaries | [Contributing](CONTRIBUTING.md) |
 
 ## Development
 
-Run `nimble test` for the automatically discovered ARC test suite,
-`nimble checkExamples` for all example and link-mode checks, and `nimble bench`
-for release-mode performance probes. `nimble testWidgetLifecycleValgrind` and
-`nimble testCAbiValgrind` run the separate native-memory gates. Real-window
-Wayland tests remain explicit opt-in tasks.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) before changing public boundaries or hot
-paths.
-
-## Memory Verification
-
-The ARC widget graph and the shared and static C ABI consumers are checked by
-separate Valgrind tasks and CI steps. The widget check repeatedly creates,
-interacts with, and releases roots containing all reference controls and
-widgets. It covers internal and replaced user handlers, popup closers, the
-default context menu, focus changes, clipboard callbacks, and text composition.
-The C ABI path separately covers context and style handle lifetimes, tree and
-style mutation, C event callbacks, focus traversal, retained scrolling,
-recomputation, diagnostics, and repeated context creation and destruction.
-
-The current shared and static builds both complete with:
-
-```text
-ERROR SUMMARY: 0 errors from 0 contexts
-in use at exit: 0 bytes in 0 blocks
-```
-
-Run the complete checks with:
-
 ```sh
+nimble test
+nimble checkExamples
+nimble bench
 nimble testWidgetLifecycleValgrind
 nimble testCAbiValgrind
 ```
 
-The ARC widget probe currently completes 16 full root lifecycles with 31,009
-allocations and 31,009 frees, leaving zero bytes in use and zero Valgrind
-errors. It includes typed component mount, event, disposal, and lifecycle
-hooks. Component and node handles are non-owning views: they are valid only
-while their `UiRoot` and referenced node generation remain alive.
+The full test task discovers and independently compiles ARC tests. CI also
+checks portable public modules on Linux, Windows, and macOS, builds shared and
+static C ABI artifacts, tests both Rust bridges, verifies source-only package
+installation, and runs release hygiene checks.
 
-Valgrind is one release check, not a substitute for the ARC test suite,
-platform-specific integration tests, sanitizers, or API ownership review.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before changing a public boundary or hot
+path. Properties, elements, backends, and reference controls are separated so
+contributors can work without editing unrelated modules.
 
-## License
+## Memory Verification
+
+The current ARC widget probe completes 16 full root lifecycles with 33,201
+allocations and 33,201 frees. Valgrind reports:
+
+```text
+in use at exit: 0 bytes in 0 blocks
+ERROR SUMMARY: 0 errors from 0 contexts
+```
+
+The probe covers all reference controls, internal and replaced handlers,
+component mount and disposal, animations, popup closers, focus, clipboard, and
+text composition. Shared and static C ABI consumers have separate lifecycle
+gates. Valgrind complements the ARC suite and platform integration tests; it
+does not replace them.
+
+## Name And License
+
+The name describes the intended ecosystem. CBSS is the board or foundation;
+independent GUI libraries, components, and design systems are the work that
+other engineers shape on it.
+
+Clay Board Style System is an independent project. It is not related to,
+affiliated with, derived from, or compatible with Clay, the C UI layout
+library. `CBSS` is only the short form used in documentation.
 
 CBSS is licensed under the [Apache License 2.0](LICENSE). Vendored and
 dynamically linked dependency notices are recorded in
