@@ -6,7 +6,7 @@ import ../hit/hit_test
 import ../input/events
 import ../layout/layout
 import ../layout/scroll_state
-import ../paint/[paint, paint_command]
+import ../paint/[paint, paint_command, path_geometry]
 import ../runtime/[focus, text_focus, ui_root]
 
 type
@@ -222,8 +222,12 @@ proc refresh*(driver: CbssTestDriver) =
   driver.styles = resolveTreeStyles(driver.ui.tree, driver.ui.styleSheets(), defaultProperties(), driver.diagnostics)
   driver.layout = computeLayout(driver.ui.tree, driver.styles, driver.viewport, driver.ui.textEngine, driver.ui.fonts)
   driver.ui.scroll.syncScrollState(driver.ui.tree, driver.styles, driver.layout)
+  driver.ui.syncRenderSurfaces(driver.styles, driver.layout)
   driver.hitRegions = buildHitRegions(driver.ui.tree, driver.layout, driver.styles, driver.ui.scroll)
-  driver.paintCommands = buildPaintCommands(driver.ui.tree, driver.styles, driver.layout, driver.ui.scroll)
+  driver.paintCommands = buildPaintCommands(
+    driver.ui.tree, driver.styles, driver.layout, driver.ui.scroll,
+    driver.ui.canvasPaintProvider()
+  )
 
 proc setViewport*(driver: CbssTestDriver; viewport: Size) =
   driver.rememberAction("setViewport " & $viewport.w & "x" & $viewport.h)
@@ -892,6 +896,25 @@ proc scrollY*(driver: CbssTestDriver; query: CbssQuery): Option[float32] =
 proc rectSnapshot(rect: Rect): string =
   $rect.x & "," & $rect.y & "," & $rect.w & "," & $rect.h
 
+proc pathSnapshot(path: Path2D): string =
+  var values = newSeqOfCap[string](path.segments.len)
+  for segment in path.segments:
+    var value = $segment.kind
+    case segment.kind
+    of pskMoveTo, pskLineTo:
+      value.add "(" & $segment.endpoint.x & "," & $segment.endpoint.y & ")"
+    of pskQuadraticTo:
+      value.add "(" & $segment.control1.x & "," & $segment.control1.y &
+        ";" & $segment.endpoint.x & "," & $segment.endpoint.y & ")"
+    of pskCubicTo:
+      value.add "(" & $segment.control1.x & "," & $segment.control1.y &
+        ";" & $segment.control2.x & "," & $segment.control2.y &
+        ";" & $segment.endpoint.x & "," & $segment.endpoint.y & ")"
+    of pskClose:
+      discard
+    values.add value
+  values.join(";")
+
 proc layoutSnapshot*(driver: CbssTestDriver): string =
   var lines: seq[string]
   for item in driver.layout.boxes:
@@ -915,6 +938,16 @@ proc paintSnapshot*(driver: CbssTestDriver): string =
   var lines: seq[string]
   for command in driver.paintCommands:
     case command.kind
+    of pcPushTransform:
+      lines.add "push-transform"
+    of pcPopTransform:
+      lines.add "pop-transform"
+    of pcPushLayer:
+      lines.add "push-layer " & rectSnapshot(command.layerBounds) &
+        " opacity=" & $command.layerOpacity &
+        " composite=" & $command.layerCompositeMode
+    of pcPopLayer:
+      lines.add "pop-layer"
     of pcPushClip:
       lines.add "push-clip " & rectSnapshot(command.clipRect)
     of pcPopClip:
@@ -927,6 +960,10 @@ proc paintSnapshot*(driver: CbssTestDriver): string =
       lines.add "linear-gradient " & rectSnapshot(command.gradientRect)
     of pcStrokeRect:
       lines.add "stroke-rect " & rectSnapshot(command.strokeRect) & " width=" & $command.strokeWidth
+    of pcStrokePath:
+      lines.add "stroke-path " & pathSnapshot(command.path) &
+        " width=" & $command.pathWidth & " cap=" & $command.pathLineCap &
+        " join=" & $command.pathLineJoin
     of pcDrawText:
       lines.add "draw-text " & $command.node.nodeIndex & " " & command.text & " @" & $command.position.x & "," & $command.position.y
     of pcDrawImage:
@@ -1016,6 +1053,20 @@ proc structuredSnapshotJson*(driver: CbssTestDriver): JsonNode =
     var entry = newJObject()
     entry["kind"] = %($command.kind)
     case command.kind
+    of pcPushTransform:
+      entry["matrix"] = %*[
+        command.transform.m11, command.transform.m12,
+        command.transform.m21, command.transform.m22,
+        command.transform.tx, command.transform.ty
+      ]
+    of pcPopTransform:
+      discard
+    of pcPushLayer:
+      entry["rect"] = rectJson(command.layerBounds)
+      entry["opacity"] = %command.layerOpacity
+      entry["compositeMode"] = %($command.layerCompositeMode)
+    of pcPopLayer:
+      discard
     of pcPushClip:
       entry["rect"] = rectJson(command.clipRect)
     of pcPopClip:
@@ -1029,6 +1080,20 @@ proc structuredSnapshotJson*(driver: CbssTestDriver): JsonNode =
     of pcStrokeRect:
       entry["rect"] = rectJson(command.strokeRect)
       entry["width"] = %command.strokeWidth
+    of pcStrokePath:
+      var segments = newJArray()
+      for segment in command.path.segments:
+        segments.add %*{
+          "kind": $segment.kind,
+          "control1": {"x": segment.control1.x, "y": segment.control1.y},
+          "control2": {"x": segment.control2.x, "y": segment.control2.y},
+          "endpoint": {"x": segment.endpoint.x, "y": segment.endpoint.y}
+        }
+      entry["segments"] = segments
+      entry["width"] = %command.pathWidth
+      entry["lineCap"] = %($command.pathLineCap)
+      entry["lineJoin"] = %($command.pathLineJoin)
+      entry["miterLimit"] = %command.pathMiterLimit
     of pcDrawText:
       entry["node"] = %command.node.nodeIndex
       entry["text"] = %command.text

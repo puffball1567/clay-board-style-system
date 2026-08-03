@@ -1,8 +1,9 @@
 import std/[hashes, math, options, os, strutils, tables]
 
 import ../../assets/asset_resolver
-import ../../core/[color, computed_style, geometry, node]
-import ../../paint/paint_command
+import ../../core/[color, computed_style, geometry, gradient_sampling, node]
+import ../../input/events
+import ../../paint/[paint_command, path_geometry]
 import ../../text/[cosmic_text_engine, font_registry, text_engine]
 import ../../vendor/sdl3
 import ./config
@@ -21,13 +22,18 @@ const
   sdlWindowHidden = SDL_WindowFlags(0x0000000000000008'u64)
   sdlWindowResizable = SDL_WindowFlags(0x0000000000000020'u64)
   sdlWindowHighPixelDensity = SDL_WindowFlags(0x0000000000002000'u64)
+  sdlBlendModeNone = SDL_BlendMode(0x00000000'u32)
   sdlBlendModeBlend = SDL_BlendMode(0x00000001'u32)
+  sdlBlendModeAdd = SDL_BlendMode(0x00000002'u32)
+  sdlBlendModeBlendPremultiplied = SDL_BlendMode(0x00000010'u32)
+  sdlBlendModeAddPremultiplied = SDL_BlendMode(0x00000020'u32)
   sdlTextureAccessStatic = SDL_TEXTUREACCESS_STATIC
   sdlTextureAccessTarget = SDL_TEXTUREACCESS_TARGET
   defaultTextCacheBytes = 64'u64 * 1024 * 1024
   defaultImageCacheBytes = 256'u64 * 1024 * 1024
   defaultRoundedTextureCacheBytes = 128'u64 * 1024 * 1024
   defaultShadowTextureCacheBytes = 128'u64 * 1024 * 1024
+  defaultTransformTextureCacheBytes = 128'u64 * 1024 * 1024
 
 type
   Sdl3ImeUiMode* = enum
@@ -61,6 +67,12 @@ type
     width, height: int
     lastUsed: uint64
 
+  Sdl3TransformTextureCacheEntry = object
+    texture: pointer
+    width, height: int
+    lastUsed: uint64
+    inUse: bool
+
   Sdl3CapturedFrame* = object
     width*: int
     height*: int
@@ -69,6 +81,7 @@ type
   Sdl3CacheUsage* = object
     textBytes*, imageBytes*: uint64
     roundedTextureBytes*, shadowTextureBytes*: uint64
+    transformTextureBytes*: uint64
 
   Sdl3ClipRegion = object
     rect: Rect
@@ -78,6 +91,19 @@ type
   Sdl3PreparedCommand = object
     command: PaintCommand
     roundedImageClipStack: seq[Sdl3ClipRegion]
+
+  Sdl3TransformLayer = object
+    texture: pointer
+    previousTarget: pointer
+    previousClips: seq[Sdl3ClipRegion]
+    transform: Affine2D
+    sourceBounds: Rect
+    pixelWidth, pixelHeight: int
+    textureCacheIndex: int
+    opacity: float32
+    compositeMode: LayerCompositeMode
+    valid: bool
+    hasContent: bool
 
   Sdl3ImageEventKind* = enum
     sieLoadStart,
@@ -110,10 +136,15 @@ type
     sekTouchStart,
     sekTouchMove,
     sekTouchEnd,
-    sekTouchCancel
+    sekTouchCancel,
+    sekPenProximityIn,
+    sekPenProximityOut,
+    sekPenButtonDown,
+    sekPenButtonUp
 
   Sdl3Event* = object
     timestamp*: uint64
+    pointer*: Option[PointerData]
     case kind*: Sdl3EventKind
     of sekQuit, sekExpose:
       discard
@@ -140,6 +171,15 @@ type
       wheelX*, wheelY*, wheelMouseX*, wheelMouseY*: float32
     of sekTouchStart, sekTouchMove, sekTouchEnd, sekTouchCancel:
       touchX*, touchY*, touchDx*, touchDy*: float32
+    of sekPenProximityIn, sekPenProximityOut:
+      discard
+    of sekPenButtonDown, sekPenButtonUp:
+      penButton*: int
+      penButtonX*, penButtonY*: float32
+
+  Sdl3PenDeviceState = object
+    pointer: PointerData
+    position: Vec2
 
   Sdl3Renderer* = object
     window*: pointer
@@ -154,6 +194,7 @@ type
     roundedTextureCacheIndex: Table[Hash, seq[int]]
     shadowTextureCache: seq[Sdl3ShadowTextureCacheEntry]
     shadowTextureCacheIndex: Table[Hash, seq[int]]
+    transformTextureCache: seq[Sdl3TransformTextureCacheEntry]
 
     staticLayerTexture: pointer
     staticLayerWidth, staticLayerHeight: int
@@ -167,10 +208,13 @@ type
     shadowTextureCacheLimit: int
     textCacheByteLimit, imageCacheByteLimit: uint64
     roundedTextureCacheByteLimit, shadowTextureCacheByteLimit: uint64
+    transformTextureCacheByteLimit: uint64
     textCacheBytes, imageCacheBytes: uint64
     roundedTextureCacheBytes, shadowTextureCacheBytes: uint64
+    transformTextureCacheBytes: uint64
     frameId: uint64
     pendingEvents: seq[Sdl3Event]
+    penStates: Table[SDL_PenID, Sdl3PenDeviceState]
     captureNextFrame: bool
     capturedFrame: Option[Sdl3CapturedFrame]
     composing: bool
@@ -178,6 +222,7 @@ type
     textInputRunning: bool
     textInputArea: Option[Rect]
     textInputCursor: int
+    premultipliedLayerBlend: bool
     cursorCache: array[CursorKind, pointer]
     ownsCursor: array[CursorKind, bool]
     activeCursor: CursorKind
@@ -192,7 +237,8 @@ proc cacheUsage*(target: Sdl3Renderer): Sdl3CacheUsage =
     textBytes: target.textCacheBytes,
     imageBytes: target.imageCacheBytes,
     roundedTextureBytes: target.roundedTextureCacheBytes,
-    shadowTextureBytes: target.shadowTextureCacheBytes
+    shadowTextureBytes: target.shadowTextureCacheBytes,
+    transformTextureBytes: target.transformTextureCacheBytes
   )
 
 proc indexKey(index: var Table[Hash, seq[int]]; key: string; entryIndex: int) =
@@ -227,6 +273,69 @@ proc scrollDelta*(event: Sdl3Event; pixelsPerStep = DefaultWheelStepPixels): Vec
   # SDL reports positive vertical values away from the user. UI scroll
   # offsets grow toward the document end, so the coordinate is inverted once.
   vec2(-event.wheelX * pixelsPerStep, -event.wheelY * pixelsPerStep)
+
+proc pointerInputEvent*(event: Sdl3Event): Option[InputEvent] =
+  ## Converts SDL pointer-family events without losing optional device axes.
+  ## Keyboard, text, window, and wheel events remain explicit at the host.
+  case event.kind
+  of sekPointerMove:
+    result = some(pointerMoveEvent(vec2(event.x, event.y), event.pointer))
+  of sekPointerDown:
+    result = some(pointerDownEvent(
+      vec2(event.buttonX, event.buttonY), event.button, event.pointer
+    ))
+  of sekPointerUp:
+    result = some(pointerUpEvent(
+      vec2(event.buttonX, event.buttonY), event.button, event.pointer
+    ))
+  of sekTouchStart:
+    result = some(InputEvent(
+      kind: iekTouchStart,
+      position: some(vec2(event.touchX, event.touchY)),
+      pointer: event.pointer
+    ))
+  of sekTouchMove:
+    result = some(InputEvent(
+      kind: iekTouchMove,
+      position: some(vec2(event.touchX, event.touchY)),
+      delta: some(vec2(event.touchDx, event.touchDy)),
+      pointer: event.pointer
+    ))
+  of sekTouchEnd:
+    result = some(InputEvent(
+      kind: iekTouchEnd,
+      position: some(vec2(event.touchX, event.touchY)),
+      pointer: event.pointer
+    ))
+  of sekTouchCancel:
+    result = some(InputEvent(
+      kind: iekTouchCancel,
+      position: some(vec2(event.touchX, event.touchY)),
+      pointer: event.pointer
+    ))
+  of sekPenProximityIn, sekPenProximityOut:
+    if event.pointer.isSome:
+      result = some(penProximityEvent(
+        event.kind == sekPenProximityIn, event.pointer.get
+      ))
+    else:
+      result = none(InputEvent)
+  of sekPenButtonDown, sekPenButtonUp:
+    if event.pointer.isSome:
+      result = some(penButtonEvent(
+        event.kind == sekPenButtonDown,
+        vec2(event.penButtonX, event.penButtonY),
+        event.penButton,
+        event.pointer.get
+      ))
+    else:
+      result = none(InputEvent)
+  else:
+    result = none(InputEvent)
+  if result.isSome:
+    var converted = result.get
+    converted.timestamp = event.timestamp
+    result = some(converted)
 
 proc sdlError(message: string): ref CatchableError =
   let err = $SDL3.getError()
@@ -325,6 +434,13 @@ proc destroyShadowTextureCache(target: var Sdl3Renderer) =
   target.shadowTextureCacheIndex.clear()
   target.shadowTextureCacheBytes = 0
 
+proc destroyTransformTextureCache(target: var Sdl3Renderer) =
+  for entry in target.transformTextureCache:
+    if not entry.texture.isNil:
+      SDL3.destroyTexture(entry.texture)
+  target.transformTextureCache.setLen(0)
+  target.transformTextureCacheBytes = 0
+
 proc destroyStaticLayer(target: var Sdl3Renderer) =
   if not target.staticLayerTexture.isNil:
     SDL3.destroyTexture(target.staticLayerTexture)
@@ -385,6 +501,9 @@ proc initSdl3Renderer*(
     SDL3.quit()
     raise sdlError("SDL3 window and renderer creation failed")
   discard SDL3.setRenderDrawBlendMode(result.renderer, sdlBlendModeBlend)
+  let rendererName = SDL3.getRendererName(result.renderer)
+  result.premultipliedLayerBlend =
+    not rendererName.isNil and $rendererName != "software"
   if not SDL3.showWindow(result.window):
     SDL3.destroyRenderer(result.renderer)
     SDL3.destroyWindow(result.window)
@@ -395,6 +514,7 @@ proc initSdl3Renderer*(
   result.imageCacheIndex = initTable[Hash, seq[int]]()
   result.roundedTextureCacheIndex = initTable[Hash, seq[int]]()
   result.shadowTextureCacheIndex = initTable[Hash, seq[int]]()
+  result.penStates = initTable[SDL_PenID, Sdl3PenDeviceState]()
   result.textCacheLimit = 256
   result.imageCacheLimit = 128
   result.roundedTextureCacheLimit = 128
@@ -403,6 +523,7 @@ proc initSdl3Renderer*(
   result.imageCacheByteLimit = defaultImageCacheBytes
   result.roundedTextureCacheByteLimit = defaultRoundedTextureCacheBytes
   result.shadowTextureCacheByteLimit = defaultShadowTextureCacheBytes
+  result.transformTextureCacheByteLimit = defaultTransformTextureCacheBytes
   result.imeCandidatesEnabled = imeUi == siuCompositionAndCandidates
   result.activeCursor = ckDefault
 
@@ -412,6 +533,7 @@ proc close*(target: var Sdl3Renderer) =
   target.destroyImageCache()
   target.destroyRoundedTextureCache()
   target.destroyShadowTextureCache()
+  target.destroyTransformTextureCache()
   target.destroyStaticLayer()
   if not target.renderer.isNil:
     SDL3.destroyRenderer(target.renderer)
@@ -606,10 +728,14 @@ proc captureCurrentFrame(target: var Sdl3Renderer) =
 
 proc pixelScale*(target: Sdl3Renderer): float32 =
   let logical = target.windowSize()
-  let output = target.renderOutputSize()
-  if logical.w <= 0 or logical.h <= 0 or output.w <= 0 or output.h <= 0:
+  var pixelWidth, pixelHeight: cint
+  if logical.w <= 0 or logical.h <= 0 or
+      not SDL3.getWindowSizeInPixels(target.window, addr pixelWidth, addr pixelHeight):
     return 1.0'f32
-  let scale = min(output.w / logical.w, output.h / logical.h)
+  let scale = min(
+    pixelWidth.float32 / logical.w,
+    pixelHeight.float32 / logical.h
+  )
   max(1.0'f32, round(scale * 100.0'f32) / 100.0'f32)
 
 proc updateLogicalPresentation(target: Sdl3Renderer) =
@@ -626,6 +752,61 @@ proc updateLogicalPresentation(target: Sdl3Renderer) =
 proc touchPoint(target: Sdl3Renderer; x, y: cfloat): Vec2 =
   let viewport = target.windowSize()
   vec2(x.float32 * viewport.w, y.float32 * viewport.h)
+
+const
+  sdlPenInputDown = 1'u32 shl 0
+  sdlPenInputButtonMask = 0x1f'u32 shl 1
+  sdlPenInputEraserTip = 1'u32 shl 30
+  sdlPenInputInProximity = 1'u32 shl 31
+
+proc penState(
+    target: var Sdl3Renderer;
+    deviceId: SDL_PenID
+): var Sdl3PenDeviceState =
+  target.penStates.mgetOrPut(
+    deviceId,
+    Sdl3PenDeviceState(pointer: PointerData(
+      device: pdkPenUnknown,
+      deviceId: uint64(deviceId),
+      primary: true
+    ))
+  )
+
+proc applyPenFlags*(pointer: var PointerData; flags: SDL_PenInputFlags) =
+  let value = uint32(flags)
+  pointer.contact = (value and sdlPenInputDown) != 0
+  pointer.buttons = (value and sdlPenInputButtonMask) shr 1
+  pointer.eraser = (value and sdlPenInputEraserTip) != 0
+  pointer.inProximity = pointer.contact or
+    (value and sdlPenInputInProximity) != 0
+
+proc applyPenAxis*(pointer: var PointerData; axis: SDL_PenAxis; value: float32) =
+  if value.classify in {fcNan, fcInf, fcNegInf}:
+    return
+  case axis
+  of SDL_PEN_AXIS_PRESSURE:
+    pointer.axes.incl paPressure
+    pointer.pressure = clamp(value, 0.0'f32, 1.0'f32)
+  of SDL_PEN_AXIS_XTILT:
+    pointer.axes.incl paTiltX
+    pointer.tiltX = clamp(value, -90.0'f32, 90.0'f32)
+  of SDL_PEN_AXIS_YTILT:
+    pointer.axes.incl paTiltY
+    pointer.tiltY = clamp(value, -90.0'f32, 90.0'f32)
+  of SDL_PEN_AXIS_DISTANCE:
+    pointer.axes.incl paDistance
+    pointer.distance = clamp(value, 0.0'f32, 1.0'f32)
+  of SDL_PEN_AXIS_ROTATION:
+    pointer.axes.incl paRotation
+    pointer.rotation = clamp(value, -180.0'f32, 180.0'f32)
+  of SDL_PEN_AXIS_SLIDER:
+    pointer.axes.incl paSlider
+    pointer.slider = clamp(value, 0.0'f32, 1.0'f32)
+  of SDL_PEN_AXIS_TANGENTIAL_PRESSURE:
+    pointer.axes.incl paTangentialPressure
+    pointer.tangentialPressure = clamp(value, -1.0'f32, 1.0'f32)
+  of SDL_PEN_AXIS_COUNT:
+    discard
 
 proc printableKey(keycode: SDL_Keycode): string =
   let value = int(keycode)
@@ -733,24 +914,52 @@ proc pollEventFromRaw(
       # Reapply the cached application cursor when control returns to content.
       target.reapplyActiveCursor()
     of SDL_EVENT_MOUSE_MOTION:
-      event = Sdl3Event(kind: sekPointerMove, timestamp: raw.motion.timestamp, x: raw.motion.x.float32, y: raw.motion.y.float32)
+      if raw.motion.which in [SDL_TOUCH_MOUSEID, SDL_PEN_MOUSEID]:
+        continue
+      event = Sdl3Event(
+        kind: sekPointerMove,
+        timestamp: raw.motion.timestamp,
+        x: raw.motion.x.float32,
+        y: raw.motion.y.float32,
+        pointer: some(PointerData(device: pdkMouse, primary: true))
+      )
       return true
     of SDL_EVENT_MOUSE_BUTTON_DOWN:
+      if raw.button.which in [SDL_TOUCH_MOUSEID, SDL_PEN_MOUSEID]:
+        continue
       event = Sdl3Event(
         kind: sekPointerDown,
         timestamp: raw.button.timestamp,
         button: int(raw.button.button),
         buttonX: raw.button.x.float32,
-        buttonY: raw.button.y.float32
+        buttonY: raw.button.y.float32,
+        pointer: some(PointerData(
+          device: pdkMouse,
+          buttons:
+            if raw.button.button >= 1 and raw.button.button <= 32:
+              1'u32 shl (uint32(raw.button.button) - 1)
+            else:
+              0'u32,
+          contact: true,
+          primary: true,
+          inProximity: true
+        ))
       )
       return true
     of SDL_EVENT_MOUSE_BUTTON_UP:
+      if raw.button.which in [SDL_TOUCH_MOUSEID, SDL_PEN_MOUSEID]:
+        continue
       event = Sdl3Event(
         kind: sekPointerUp,
         timestamp: raw.button.timestamp,
         button: int(raw.button.button),
         buttonX: raw.button.x.float32,
-        buttonY: raw.button.y.float32
+        buttonY: raw.button.y.float32,
+        pointer: some(PointerData(
+          device: pdkMouse,
+          primary: true,
+          inProximity: true
+        ))
       )
       return true
     of SDL_EVENT_KEY_DOWN:
@@ -832,21 +1041,170 @@ proc pollEventFromRaw(
       )
       return true
     of SDL_EVENT_FINGER_DOWN:
+      if raw.tfinger.touchID in [SDL_MOUSE_TOUCHID, SDL_PEN_TOUCHID]:
+        continue
       let point = target.touchPoint(raw.tfinger.x, raw.tfinger.y)
-      event = Sdl3Event(kind: sekTouchStart, timestamp: raw.tfinger.timestamp, touchX: point.x, touchY: point.y, touchDx: 0, touchDy: 0)
+      event = Sdl3Event(
+        kind: sekTouchStart,
+        timestamp: raw.tfinger.timestamp,
+        touchX: point.x,
+        touchY: point.y,
+        touchDx: 0,
+        touchDy: 0,
+        pointer: some(touchPointerData(
+          uint64(raw.tfinger.fingerID), raw.tfinger.pressure, true
+        ))
+      )
       return true
     of SDL_EVENT_FINGER_MOTION:
+      if raw.tfinger.touchID in [SDL_MOUSE_TOUCHID, SDL_PEN_TOUCHID]:
+        continue
       let point = target.touchPoint(raw.tfinger.x, raw.tfinger.y)
       let delta = target.touchPoint(raw.tfinger.dx, raw.tfinger.dy)
-      event = Sdl3Event(kind: sekTouchMove, timestamp: raw.tfinger.timestamp, touchX: point.x, touchY: point.y, touchDx: delta.x, touchDy: delta.y)
+      event = Sdl3Event(
+        kind: sekTouchMove,
+        timestamp: raw.tfinger.timestamp,
+        touchX: point.x,
+        touchY: point.y,
+        touchDx: delta.x,
+        touchDy: delta.y,
+        pointer: some(touchPointerData(
+          uint64(raw.tfinger.fingerID), raw.tfinger.pressure, true
+        ))
+      )
       return true
     of SDL_EVENT_FINGER_UP:
+      if raw.tfinger.touchID in [SDL_MOUSE_TOUCHID, SDL_PEN_TOUCHID]:
+        continue
       let point = target.touchPoint(raw.tfinger.x, raw.tfinger.y)
-      event = Sdl3Event(kind: sekTouchEnd, timestamp: raw.tfinger.timestamp, touchX: point.x, touchY: point.y, touchDx: 0, touchDy: 0)
+      event = Sdl3Event(
+        kind: sekTouchEnd,
+        timestamp: raw.tfinger.timestamp,
+        touchX: point.x,
+        touchY: point.y,
+        touchDx: 0,
+        touchDy: 0,
+        pointer: some(touchPointerData(
+          uint64(raw.tfinger.fingerID), 0, false
+        ))
+      )
       return true
     of SDL_EVENT_FINGER_CANCELED:
+      if raw.tfinger.touchID in [SDL_MOUSE_TOUCHID, SDL_PEN_TOUCHID]:
+        continue
       let point = target.touchPoint(raw.tfinger.x, raw.tfinger.y)
-      event = Sdl3Event(kind: sekTouchCancel, timestamp: raw.tfinger.timestamp, touchX: point.x, touchY: point.y, touchDx: 0, touchDy: 0)
+      event = Sdl3Event(
+        kind: sekTouchCancel,
+        timestamp: raw.tfinger.timestamp,
+        touchX: point.x,
+        touchY: point.y,
+        touchDx: 0,
+        touchDy: 0,
+        pointer: some(touchPointerData(
+          uint64(raw.tfinger.fingerID), 0, false
+        ))
+      )
+      return true
+    of SDL_EVENT_PEN_PROXIMITY_IN, SDL_EVENT_PEN_PROXIMITY_OUT:
+      let deviceId = raw.pproximity.which
+      var state = target.penState(deviceId)
+      let inside = SDL_EventType(raw.`type`) == SDL_EVENT_PEN_PROXIMITY_IN
+      state.pointer.inProximity = inside
+      if not inside:
+        state.pointer.contact = false
+        state.pointer.pressure = 0
+      else:
+        target.penStates[deviceId] = state
+      event = Sdl3Event(
+        kind: if inside: sekPenProximityIn else: sekPenProximityOut,
+        timestamp: raw.pproximity.timestamp,
+        pointer: some(state.pointer)
+      )
+      if not inside:
+        target.penStates.del(deviceId)
+      return true
+    of SDL_EVENT_PEN_DOWN, SDL_EVENT_PEN_UP:
+      var state = target.penState(raw.ptouch.which)
+      state.position = vec2(raw.ptouch.x, raw.ptouch.y)
+      state.pointer.applyPenFlags(raw.ptouch.pen_state)
+      state.pointer.contact = raw.ptouch.down
+      state.pointer.eraser = raw.ptouch.eraser or state.pointer.eraser
+      state.pointer.inProximity = true
+      if not state.pointer.contact and paPressure in state.pointer.axes:
+        state.pointer.pressure = 0
+      target.penStates[raw.ptouch.which] = state
+      if raw.ptouch.down:
+        event = Sdl3Event(
+          kind: sekPointerDown,
+          timestamp: raw.ptouch.timestamp,
+          button: 0,
+          buttonX: state.position.x,
+          buttonY: state.position.y,
+          pointer: some(state.pointer)
+        )
+      else:
+        event = Sdl3Event(
+          kind: sekPointerUp,
+          timestamp: raw.ptouch.timestamp,
+          button: 0,
+          buttonX: state.position.x,
+          buttonY: state.position.y,
+          pointer: some(state.pointer)
+        )
+      return true
+    of SDL_EVENT_PEN_MOTION:
+      var state = target.penState(raw.pmotion.which)
+      state.position = vec2(raw.pmotion.x, raw.pmotion.y)
+      state.pointer.applyPenFlags(raw.pmotion.pen_state)
+      state.pointer.inProximity = true
+      target.penStates[raw.pmotion.which] = state
+      event = Sdl3Event(
+        kind: sekPointerMove,
+        timestamp: raw.pmotion.timestamp,
+        x: state.position.x,
+        y: state.position.y,
+        pointer: some(state.pointer)
+      )
+      return true
+    of SDL_EVENT_PEN_AXIS:
+      var state = target.penState(raw.paxis.which)
+      state.position = vec2(raw.paxis.x, raw.paxis.y)
+      state.pointer.applyPenFlags(raw.paxis.pen_state)
+      state.pointer.applyPenAxis(raw.paxis.axis, raw.paxis.value)
+      state.pointer.inProximity = true
+      target.penStates[raw.paxis.which] = state
+      event = Sdl3Event(
+        kind: sekPointerMove,
+        timestamp: raw.paxis.timestamp,
+        x: state.position.x,
+        y: state.position.y,
+        pointer: some(state.pointer)
+      )
+      return true
+    of SDL_EVENT_PEN_BUTTON_DOWN, SDL_EVENT_PEN_BUTTON_UP:
+      var state = target.penState(raw.pbutton.which)
+      state.position = vec2(raw.pbutton.x, raw.pbutton.y)
+      state.pointer.applyPenFlags(raw.pbutton.pen_state)
+      state.pointer.inProximity = true
+      target.penStates[raw.pbutton.which] = state
+      if raw.pbutton.down:
+        event = Sdl3Event(
+          kind: sekPenButtonDown,
+          timestamp: raw.pbutton.timestamp,
+          penButton: int(raw.pbutton.button),
+          penButtonX: state.position.x,
+          penButtonY: state.position.y,
+          pointer: some(state.pointer)
+        )
+      else:
+        event = Sdl3Event(
+          kind: sekPenButtonUp,
+          timestamp: raw.pbutton.timestamp,
+          penButton: int(raw.pbutton.button),
+          penButtonX: state.position.x,
+          penButtonY: state.position.y,
+          pointer: some(state.pointer)
+        )
       return true
     else:
       discard
@@ -988,8 +1346,19 @@ proc hasRoundedClip(clips: openArray[Sdl3ClipRegion]): bool =
 
 proc prepareRenderPlan(commands: openArray[PaintCommand]): seq[Sdl3PreparedCommand] =
   var clipStack: seq[Sdl3ClipRegion]
+  var transformClipStacks: seq[seq[Sdl3ClipRegion]]
   for command in commands:
     case command.kind
+    of pcPushTransform, pcPushLayer:
+      result.add Sdl3PreparedCommand(command: command)
+      transformClipStacks.add clipStack
+      clipStack = @[]
+    of pcPopTransform, pcPopLayer:
+      result.add Sdl3PreparedCommand(command: command)
+      if transformClipStacks.len > 0:
+        clipStack = transformClipStacks.pop()
+      else:
+        clipStack = @[]
     of pcPushClip:
       clipStack.add command.clipRegion()
       result.add Sdl3PreparedCommand(command: command)
@@ -1015,6 +1384,376 @@ proc effectiveClipBounds(target: Sdl3Renderer): Option[SDL_Rect] =
 
 proc hasRoundedClip(target: Sdl3Renderer): bool =
   target.clipStack.hasRoundedClip()
+
+proc translated(command: PaintCommand; offset: Vec2): PaintCommand =
+  result = command
+  case result.kind
+  of pcPushTransform:
+    result.transformBounds = result.transformBounds.translated(offset)
+  of pcPushLayer:
+    result.layerBounds = result.layerBounds.translated(offset)
+  of pcPopTransform, pcPopLayer, pcPopClip:
+    discard
+  of pcPushClip:
+    result.clipRect = result.clipRect.translated(offset)
+  of pcBoxShadow:
+    result.shadowRect = result.shadowRect.translated(offset)
+  of pcFillRect:
+    result.rect = result.rect.translated(offset)
+  of pcFillLinearGradient:
+    result.gradientRect = result.gradientRect.translated(offset)
+  of pcStrokeRect:
+    result.strokeRect = result.strokeRect.translated(offset)
+  of pcStrokePath:
+    result.path = result.path.translated(offset)
+  of pcDrawText:
+    result.position = result.position.translated(offset)
+  of pcDrawImage:
+    result.imageRect = result.imageRect.translated(offset)
+
+proc translated(region: Sdl3ClipRegion; offset: Vec2): Sdl3ClipRegion =
+  result = region
+  result.rect = result.rect.translated(offset)
+  result.bounds = result.rect.toSdlClip
+
+proc activeTransformOffset(layers: openArray[Sdl3TransformLayer]): Vec2 =
+  for index in countdown(layers.high, 0):
+    if layers[index].valid:
+      return vec2(-layers[index].sourceBounds.x, -layers[index].sourceBounds.y)
+  vec2(0, 0)
+
+proc localPreparedCommand(
+    prepared: Sdl3PreparedCommand;
+    layers: openArray[Sdl3TransformLayer]
+): Sdl3PreparedCommand =
+  let offset = layers.activeTransformOffset()
+  if offset.x == 0 and offset.y == 0:
+    return prepared
+  result.command = prepared.command.translated(offset)
+  for clip in prepared.roundedImageClipStack:
+    result.roundedImageClipStack.add clip.translated(offset)
+
+proc acquireTransformTexture(
+    target: var Sdl3Renderer;
+    width, height: int
+): tuple[texture: pointer, index: int] =
+  for index in 0 ..< target.transformTextureCache.len:
+    if not target.transformTextureCache[index].inUse and
+        target.transformTextureCache[index].width == width and
+        target.transformTextureCache[index].height == height:
+      target.transformTextureCache[index].inUse = true
+      target.transformTextureCache[index].lastUsed = target.frameId
+      return (target.transformTextureCache[index].texture, index)
+
+  let texture = SDL3.createTexture(
+    target.renderer,
+    SDL_PIXELFORMAT_RGBA32,
+    sdlTextureAccessTarget,
+    cint(width),
+    cint(height)
+  )
+  if texture.isNil:
+    return (nil, -1)
+  discard SDL3.setTextureBlendMode(texture, sdlBlendModeBlend)
+  discard SDL3.setTextureScaleMode(texture, SDL_SCALEMODE_LINEAR)
+  target.transformTextureCache.add Sdl3TransformTextureCacheEntry(
+    texture: texture,
+    width: width,
+    height: height,
+    lastUsed: target.frameId,
+    inUse: true
+  )
+  target.transformTextureCacheBytes += textureBytes(width, height)
+  (texture, target.transformTextureCache.high)
+
+proc releaseTransformTexture(target: var Sdl3Renderer; index: int) =
+  if index >= 0 and index < target.transformTextureCache.len:
+    target.transformTextureCache[index].inUse = false
+
+proc evictTransformTextureCacheIfNeeded(target: var Sdl3Renderer) =
+  while target.transformTextureCache.len > 64 or
+      (target.transformTextureCache.len > 1 and
+        target.transformTextureCacheBytes > target.transformTextureCacheByteLimit):
+    var victim = -1
+    for index in 0 ..< target.transformTextureCache.len:
+      if target.transformTextureCache[index].inUse:
+        continue
+      if victim < 0 or
+          target.transformTextureCache[index].lastUsed <
+            target.transformTextureCache[victim].lastUsed:
+        victim = index
+    if victim < 0:
+      return
+    SDL3.destroyTexture(target.transformTextureCache[victim].texture)
+    target.transformTextureCacheBytes -= textureBytes(
+      target.transformTextureCache[victim].width,
+      target.transformTextureCache[victim].height
+    )
+    target.transformTextureCache.delete(victim)
+
+proc beginOffscreenLayer(
+    target: var Sdl3Renderer;
+    requestedBounds: Rect;
+    transform: Affine2D;
+    opacity: float32;
+    compositeMode: LayerCompositeMode;
+    padding: float32;
+    layers: var seq[Sdl3TransformLayer]
+) =
+  for existing in layers:
+    if not existing.valid:
+      layers.add Sdl3TransformLayer(valid: false)
+      return
+  var sourceBounds = requestedBounds
+  if sourceBounds.isEmpty:
+    let viewport = target.windowSize()
+    sourceBounds = rect(0, 0, viewport.w, viewport.h)
+  sourceBounds = rect(
+    floor(sourceBounds.x) - padding,
+    floor(sourceBounds.y) - padding,
+    ceil(sourceBounds.x + sourceBounds.w) - floor(sourceBounds.x) + padding * 2.0'f32,
+    ceil(sourceBounds.y + sourceBounds.h) - floor(sourceBounds.y) + padding * 2.0'f32
+  )
+  let scale = target.pixelScale()
+  let width = max(1, int(ceil(sourceBounds.w * scale)))
+  let height = max(1, int(ceil(sourceBounds.h * scale)))
+  let acquired = target.acquireTransformTexture(width, height)
+  let texture = acquired.texture
+  var layer = Sdl3TransformLayer(
+    texture: texture,
+    previousTarget: SDL3.getRenderTarget(target.renderer),
+    previousClips: target.clipStack,
+    transform: transform,
+    sourceBounds: sourceBounds,
+    pixelWidth: width,
+    pixelHeight: height,
+    textureCacheIndex: acquired.index,
+    opacity: clamp(opacity, 0.0'f32, 1.0'f32),
+    compositeMode: compositeMode,
+    valid: not texture.isNil
+  )
+  layers.add layer
+  if texture.isNil:
+    return
+
+  discard SDL3.setRenderTarget(target.renderer, texture)
+  discard SDL3.setRenderLogicalPresentation(
+    target.renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED
+  )
+  discard SDL3.setRenderScale(target.renderer, cfloat(scale), cfloat(scale))
+  target.clipStack.setLen(0)
+  target.renderer.setClip(none(SDL_Rect))
+  discard SDL3.setRenderDrawColor(target.renderer, 0, 0, 0, 0)
+  discard SDL3.renderClear(target.renderer)
+
+proc beginTransformLayer(
+    target: var Sdl3Renderer;
+    command: PaintCommand;
+    layers: var seq[Sdl3TransformLayer]
+) =
+  target.beginOffscreenLayer(
+    command.transformBounds,
+    command.transform,
+    1.0'f32,
+    lcmSourceOver,
+    1.0'f32,
+    layers
+  )
+
+proc beginCompositeLayer(
+    target: var Sdl3Renderer;
+    command: PaintCommand;
+    layers: var seq[Sdl3TransformLayer]
+) =
+  target.beginOffscreenLayer(
+    command.layerBounds,
+    identityAffine2D(),
+    command.layerOpacity,
+    command.layerCompositeMode,
+    0.0'f32,
+    layers
+  )
+
+proc markTransformContent(layers: var seq[Sdl3TransformLayer]) =
+  for index in countdown(layers.high, 0):
+    if layers[index].valid:
+      layers[index].hasContent = true
+      return
+
+proc renderingSuppressed(layers: openArray[Sdl3TransformLayer]): bool =
+  ## Allocation failure must not turn an isolated scope into direct drawing on
+  ## its parent. That would silently change both opacity and composition.
+  for layer in layers:
+    if not layer.valid:
+      return true
+  false
+
+proc supportsPremultipliedBlend(target: Sdl3Renderer): bool =
+  target.premultipliedLayerBlend
+
+proc sdlBlendMode(
+    compositeMode: LayerCompositeMode;
+    premultiplied: bool
+): SDL_BlendMode =
+  case compositeMode
+  of lcmSourceOver:
+    if premultiplied: sdlBlendModeBlendPremultiplied
+    else: sdlBlendModeBlend
+  of lcmCopy:
+    sdlBlendModeNone
+  of lcmAdditive:
+    if premultiplied: sdlBlendModeAddPremultiplied
+    else: sdlBlendModeAdd
+
+proc configureLayerTexture(
+    texture: pointer;
+    opacity: float32;
+    compositeMode: LayerCompositeMode;
+    premultiplied: bool
+) =
+  let resolvedOpacity = clamp(opacity, 0.0'f32, 1.0'f32)
+  let colorMultiplier = if premultiplied: resolvedOpacity else: 1.0'f32
+  discard SDL3.setTextureColorModFloat(
+    texture, cfloat(colorMultiplier), cfloat(colorMultiplier),
+    cfloat(colorMultiplier)
+  )
+  discard SDL3.setTextureAlphaModFloat(texture, cfloat(resolvedOpacity))
+  discard SDL3.setTextureBlendMode(
+    texture, compositeMode.sdlBlendMode(premultiplied)
+  )
+
+proc resetLayerTexture(texture: pointer) =
+  discard SDL3.setTextureColorModFloat(texture, 1, 1, 1)
+  discard SDL3.setTextureAlphaModFloat(texture, 1)
+  discard SDL3.setTextureBlendMode(texture, sdlBlendModeBlend)
+
+proc renderAffineLayer(
+    target: var Sdl3Renderer;
+    texture: pointer;
+    source: var SDL_FRect;
+    origin, right, down: Vec2;
+    opacity: float32;
+    compositeMode: LayerCompositeMode
+) =
+  let premultiplied = target.supportsPremultipliedBlend()
+  if not target.hasRoundedClip():
+    var sdlOrigin = SDL_FPoint(x: cfloat(origin.x), y: cfloat(origin.y))
+    var sdlRight = SDL_FPoint(x: cfloat(right.x), y: cfloat(right.y))
+    var sdlDown = SDL_FPoint(x: cfloat(down.x), y: cfloat(down.y))
+    texture.configureLayerTexture(opacity, compositeMode, premultiplied)
+    discard SDL3.renderTextureAffine(
+      target.renderer, texture, addr source,
+      addr sdlOrigin, addr sdlRight, addr sdlDown
+    )
+    texture.resetLayerTexture()
+    return
+
+  let fourth = vec2(right.x + down.x - origin.x, right.y + down.y - origin.y)
+  let left = floor(min(min(origin.x, right.x), min(down.x, fourth.x))) - 1.0'f32
+  let top = floor(min(min(origin.y, right.y), min(down.y, fourth.y))) - 1.0'f32
+  let bounds = rect(
+    left,
+    top,
+    ceil(max(max(origin.x, right.x), max(down.x, fourth.x))) - left + 1.0'f32,
+    ceil(max(max(origin.y, right.y), max(down.y, fourth.y))) - top + 1.0'f32
+  )
+  let scale = target.pixelScale()
+  let width = max(1, int(ceil(bounds.w * scale)))
+  let height = max(1, int(ceil(bounds.h * scale)))
+  let clipped = target.acquireTransformTexture(width, height)
+  let clippedTexture = clipped.texture
+  if clippedTexture.isNil:
+    var sdlOrigin = SDL_FPoint(x: cfloat(origin.x), y: cfloat(origin.y))
+    var sdlRight = SDL_FPoint(x: cfloat(right.x), y: cfloat(right.y))
+    var sdlDown = SDL_FPoint(x: cfloat(down.x), y: cfloat(down.y))
+    texture.configureLayerTexture(opacity, compositeMode, premultiplied)
+    discard SDL3.renderTextureAffine(
+      target.renderer, texture, addr source,
+      addr sdlOrigin, addr sdlRight, addr sdlDown
+    )
+    texture.resetLayerTexture()
+    return
+
+  let previousTarget = SDL3.getRenderTarget(target.renderer)
+  discard SDL3.setRenderTarget(target.renderer, clippedTexture)
+  discard SDL3.setRenderLogicalPresentation(
+    target.renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED
+  )
+  discard SDL3.setRenderScale(target.renderer, cfloat(scale), cfloat(scale))
+  target.renderer.setClip(none(SDL_Rect))
+  discard SDL3.setRenderDrawColor(target.renderer, 0, 0, 0, 0)
+  discard SDL3.renderClear(target.renderer)
+
+  var localOrigin = SDL_FPoint(
+    x: cfloat(origin.x - bounds.x), y: cfloat(origin.y - bounds.y)
+  )
+  var localRight = SDL_FPoint(
+    x: cfloat(right.x - bounds.x), y: cfloat(right.y - bounds.y)
+  )
+  var localDown = SDL_FPoint(
+    x: cfloat(down.x - bounds.x), y: cfloat(down.y - bounds.y)
+  )
+  texture.configureLayerTexture(1.0'f32, lcmSourceOver, premultiplied)
+  discard SDL3.renderTextureAffine(
+    target.renderer, texture, addr source,
+    addr localOrigin, addr localRight, addr localDown
+  )
+  texture.resetLayerTexture()
+
+  discard SDL3.setRenderTarget(target.renderer, previousTarget)
+  target.renderer.setClip(target.effectiveClipBounds())
+  var clippedSource = SDL_FRect(
+    x: 0, y: 0, w: cfloat(width), h: cfloat(height)
+  )
+  var destination = bounds.toSdl
+  clippedTexture.configureLayerTexture(opacity, compositeMode, premultiplied)
+  target.renderTextureClippedWith(
+    clippedTexture, clippedSource, destination, target.clipStack
+  )
+  clippedTexture.resetLayerTexture()
+  target.releaseTransformTexture(clipped.index)
+
+proc endTransformLayer(
+    target: var Sdl3Renderer;
+    layers: var seq[Sdl3TransformLayer]
+) =
+  if layers.len == 0:
+    return
+  let layer = layers.pop()
+  if not layer.valid:
+    return
+
+  discard SDL3.setRenderTarget(target.renderer, layer.previousTarget)
+  target.clipStack = layer.previousClips
+  target.renderer.setClip(target.effectiveClipBounds())
+  if layer.hasContent or layer.compositeMode == lcmCopy:
+    let destinationOffset = layers.activeTransformOffset()
+    let topLeft = layer.transform.transformPoint(
+      vec2(layer.sourceBounds.x, layer.sourceBounds.y)
+    ).translated(destinationOffset)
+    let topRight = layer.transform.transformPoint(
+      vec2(layer.sourceBounds.x + layer.sourceBounds.w, layer.sourceBounds.y)
+    ).translated(destinationOffset)
+    let bottomLeft = layer.transform.transformPoint(
+      vec2(layer.sourceBounds.x, layer.sourceBounds.y + layer.sourceBounds.h)
+    ).translated(destinationOffset)
+    var source = SDL_FRect(
+      x: 0, y: 0, w: cfloat(layer.pixelWidth), h: cfloat(layer.pixelHeight)
+    )
+    target.renderAffineLayer(
+      layer.texture, source, topLeft, topRight, bottomLeft,
+      layer.opacity, layer.compositeMode
+    )
+    layers.markTransformContent()
+  target.releaseTransformTexture(layer.textureCacheIndex)
+
+proc closeTransformLayers(
+    target: var Sdl3Renderer;
+    layers: var seq[Sdl3TransformLayer]
+) =
+  while layers.len > 0:
+    target.endTransformLayer(layers)
+  target.evictTransformTextureCacheIfNeeded()
 
 proc clippedHorizontalSpan(clips: openArray[Sdl3ClipRegion]; centerY: float32; x1, x2: var float32): bool =
   if x2 <= x1:
@@ -1150,30 +1889,6 @@ proc fillRoundedRect(target: Sdl3Renderer; rect: Rect; radius: float32; color: C
     if roundedSpan(rect, r, centerY, x1, x2):
       target.fillHorizontal(x1, x2, y.float32, color)
 
-proc mixColor(a, b: Color; t: float32): Color =
-  let amount = max(0.0'f32, min(1.0'f32, t))
-  rgba(
-    a.r + (b.r - a.r) * amount,
-    a.g + (b.g - a.g) * amount,
-    a.b + (b.b - a.b) * amount,
-    a.a + (b.a - a.a) * amount
-  )
-
-proc gradientColorAt(gradient: LinearGradient; t: float32): Color =
-  if gradient.stops.len == 0:
-    return rgba(0, 0, 0, 0)
-  if gradient.stops.len == 1:
-    return gradient.stops[0].color
-  let position = max(0.0'f32, min(100.0'f32, t * 100.0'f32))
-  var previous = gradient.stops[0]
-  for index in 1 ..< gradient.stops.len:
-    let current = gradient.stops[index]
-    if position <= current.offset:
-      let span = max(0.001'f32, current.offset - previous.offset)
-      return mixColor(previous.color, current.color, (position - previous.offset) / span)
-    previous = current
-  gradient.stops[^1].color
-
 proc cacheFloat(value: float32): string =
   $(round(value * 100.0'f32) / 100.0'f32)
 
@@ -1183,7 +1898,8 @@ proc gradientTextureCacheKey(rect: Rect; gradient: LinearGradient; radius, scale
     cacheFloat(rect.h) & "," &
     cacheFloat(radius) & "," &
     cacheFloat(scale) & "," &
-    cacheFloat(gradient.angle)
+    cacheFloat(gradient.angle) & "," &
+    $ord(gradient.interpolationSpace)
   for stop in gradient.stops:
     result.add "|"
     result.add cacheFloat(stop.offset)
@@ -1258,6 +1974,9 @@ proc createGradientTexture(
   let span = max(0.001'f32, maxProjection - minProjection)
   let localRect = Rect(x: 0, y: 0, w: logicalW, h: logicalH)
   let localRadius = localRect.clampedRadius(radius)
+  let lookup = gradient.prepareGradientSampler.buildGradientLookup(
+    (span * scale).gradientLookupSampleCount
+  )
   var pixels = newSeq[uint8](width * height * 4)
 
   for y in 0 ..< height:
@@ -1271,7 +1990,7 @@ proc createGradientTexture(
         pixels[index + 3] = 0
         continue
       let projection = localX * dx + localY * dy
-      let color = gradient.gradientColorAt((projection - minProjection) / span)
+      let color = lookup.gradientColorAt((projection - minProjection) / span)
       pixels[index] = color.r.toByte
       pixels[index + 1] = color.g.toByte
       pixels[index + 2] = color.b.toByte
@@ -1344,6 +2063,9 @@ proc fillLinearGradient(target: var Sdl3Renderer; rect: Rect; gradient: LinearGr
     minProjection = min(minProjection, projection)
     maxProjection = max(maxProjection, projection)
   let span = max(0.001'f32, maxProjection - minProjection)
+  let lookup = gradient.prepareGradientSampler.buildGradientLookup(
+    (span * scale).gradientLookupSampleCount
+  )
   let r = rect.clampedRadius(radius)
   let yStart = int(floor(rect.y))
   let yEnd = int(ceil(rect.y + rect.h)) - 1
@@ -1365,7 +2087,7 @@ proc fillLinearGradient(target: var Sdl3Renderer; rect: Rect; gradient: LinearGr
       let projection = centerX * dx + centerY * dy
       let t = (projection - minProjection) / span
       var pixel = SDL_FRect(x: cfloat(x.float32), y: cfloat(y.float32), w: cfloat(1.0'f32), h: cfloat(1.0'f32))
-      target.renderer.setColor(gradient.gradientColorAt(t))
+      target.renderer.setColor(lookup.gradientColorAt(t))
       discard SDL3.renderFillRect(target.renderer, addr pixel)
 
 proc strokeRoundedRect(target: Sdl3Renderer; rect: Rect; radius, width: float32; color: Color) =
@@ -1410,6 +2132,196 @@ proc strokeRoundedRect(target: Sdl3Renderer; rect: Rect; radius, width: float32;
       target.fillHorizontal(max(ix2, ox1), ox2, y.float32, color)
     else:
       target.fillHorizontal(ox1, ox2, y.float32, color)
+
+proc samePoint(a, b: Vec2): bool =
+  abs(a.x - b.x) <= 0.0001'f32 and abs(a.y - b.y) <= 0.0001'f32
+
+proc drawSolidTriangle(
+    target: Sdl3Renderer;
+    first, second, third: Vec2;
+    color: Color
+) =
+  let vertexColor = SDL_FColor(
+    r: cfloat(color.r), g: cfloat(color.g),
+    b: cfloat(color.b), a: cfloat(color.a)
+  )
+  var vertices = [
+    SDL_Vertex(position: SDL_FPoint(x: first.x, y: first.y), color: vertexColor),
+    SDL_Vertex(position: SDL_FPoint(x: second.x, y: second.y), color: vertexColor),
+    SDL_Vertex(position: SDL_FPoint(x: third.x, y: third.y), color: vertexColor)
+  ]
+  discard SDL3.renderGeometry(
+    target.renderer, nil, addr vertices[0], 3, nil, 0
+  )
+
+proc strokeJoin(
+    target: Sdl3Renderer;
+    previous, point, following: Vec2;
+    radius: float32;
+    color: Color;
+    lineJoin: StrokeLineJoin;
+    miterLimit: float32
+) =
+  let previousDelta = vec2(point.x - previous.x, point.y - previous.y)
+  let followingDelta = vec2(following.x - point.x, following.y - point.y)
+  let previousLength = sqrt(
+    previousDelta.x * previousDelta.x + previousDelta.y * previousDelta.y
+  )
+  let followingLength = sqrt(
+    followingDelta.x * followingDelta.x + followingDelta.y * followingDelta.y
+  )
+  if previousLength <= 0.0001'f32 or followingLength <= 0.0001'f32:
+    return
+  let previousDirection = vec2(
+    previousDelta.x / previousLength, previousDelta.y / previousLength
+  )
+  let followingDirection = vec2(
+    followingDelta.x / followingLength, followingDelta.y / followingLength
+  )
+  let turn = previousDirection.x * followingDirection.y -
+    previousDirection.y * followingDirection.x
+  if abs(turn) <= 0.0001'f32:
+    return
+  if lineJoin == sljRound:
+    target.fillRoundedRect(
+      rect(point.x - radius, point.y - radius, radius * 2, radius * 2),
+      radius,
+      color
+    )
+    return
+
+  let outerSign = if turn > 0: -1.0'f32 else: 1.0'f32
+  let previousNormal = vec2(
+    -previousDirection.y * outerSign,
+    previousDirection.x * outerSign
+  )
+  let followingNormal = vec2(
+    -followingDirection.y * outerSign,
+    followingDirection.x * outerSign
+  )
+  let previousOuter = vec2(
+    point.x + previousNormal.x * radius,
+    point.y + previousNormal.y * radius
+  )
+  let followingOuter = vec2(
+    point.x + followingNormal.x * radius,
+    point.y + followingNormal.y * radius
+  )
+  if lineJoin == sljBevel:
+    target.drawSolidTriangle(previousOuter, point, followingOuter, color)
+    return
+
+  let sum = vec2(
+    previousNormal.x + followingNormal.x,
+    previousNormal.y + followingNormal.y
+  )
+  let sumLength = sqrt(sum.x * sum.x + sum.y * sum.y)
+  if sumLength <= 0.0001'f32:
+    target.drawSolidTriangle(previousOuter, point, followingOuter, color)
+    return
+  let miterDirection = vec2(sum.x / sumLength, sum.y / sumLength)
+  let denominator = miterDirection.x * followingNormal.x +
+    miterDirection.y * followingNormal.y
+  if abs(denominator) <= 0.0001'f32:
+    target.drawSolidTriangle(previousOuter, point, followingOuter, color)
+    return
+  let miterLength = radius / denominator
+  if abs(miterLength) > radius * max(1.0'f32, miterLimit):
+    target.drawSolidTriangle(previousOuter, point, followingOuter, color)
+    return
+  let miterPoint = vec2(
+    point.x + miterDirection.x * miterLength,
+    point.y + miterDirection.y * miterLength
+  )
+  target.drawSolidTriangle(previousOuter, miterPoint, followingOuter, color)
+
+proc strokePolyline(
+    target: Sdl3Renderer;
+    points: openArray[Vec2];
+    width: float32;
+    color: Color;
+    closed: bool;
+    lineCap: StrokeLineCap;
+    lineJoin: StrokeLineJoin;
+    miterLimit: float32
+) =
+  if points.len < 2 or width <= 0:
+    return
+  var normalized = newSeqOfCap[Vec2](points.len)
+  for point in points:
+    if normalized.len == 0 or not normalized[^1].samePoint(point):
+      normalized.add point
+  if closed and normalized.len > 1 and normalized[0].samePoint(normalized[^1]):
+    normalized.setLen(normalized.len - 1)
+  if normalized.len < 2:
+    return
+
+  target.renderer.setColor(color)
+  let lanes = max(1, int(ceil(width)))
+  let halfLane = (lanes - 1).float32 * 0.5'f32
+  let radius = width * 0.5'f32
+  let segmentCount = normalized.len - 1 + ord(closed)
+  for index in 0 ..< segmentCount:
+    var first = normalized[index mod normalized.len]
+    var second = normalized[(index + 1) mod normalized.len]
+    let dx = second.x - first.x
+    let dy = second.y - first.y
+    let length = sqrt(dx * dx + dy * dy)
+    if length <= 0.0001'f32:
+      continue
+    let normalX = -dy / length
+    let normalY = dx / length
+    if not closed and lineCap == slcSquare:
+      if index == 0:
+        first.x -= dx / length * radius
+        first.y -= dy / length * radius
+      if index == segmentCount - 1:
+        second.x += dx / length * radius
+        second.y += dy / length * radius
+    for lane in 0 ..< lanes:
+      let offset = lane.float32 - halfLane
+      discard SDL3.renderLine(
+        target.renderer,
+        cfloat(first.x + normalX * offset),
+        cfloat(first.y + normalY * offset),
+        cfloat(second.x + normalX * offset),
+        cfloat(second.y + normalY * offset)
+      )
+
+  if closed:
+    for index in 0 ..< normalized.len:
+      target.strokeJoin(
+        normalized[(index - 1 + normalized.len) mod normalized.len],
+        normalized[index],
+        normalized[(index + 1) mod normalized.len],
+        radius, color, lineJoin, miterLimit
+      )
+  else:
+    for index in 1 ..< normalized.len - 1:
+      target.strokeJoin(
+        normalized[index - 1], normalized[index], normalized[index + 1],
+        radius, color, lineJoin, miterLimit
+      )
+    if lineCap == slcRound:
+      for point in [normalized[0], normalized[^1]]:
+        target.fillRoundedRect(
+          rect(point.x - radius, point.y - radius, width, width),
+          radius,
+          color
+        )
+
+proc renderStrokePath(target: Sdl3Renderer; command: PaintCommand) =
+  let tolerance = 0.25'f32 / max(1.0'f32, target.pixelScale())
+  for contour in command.path.flattened(tolerance):
+    target.strokePolyline(
+      contour.points,
+      command.pathWidth,
+      command.pathColor,
+      contour.closed,
+      command.pathLineCap,
+      command.pathLineJoin,
+      command.pathMiterLimit
+    )
 
 proc shadowRect(command: PaintCommand; grow: float32): Rect =
   Rect(
@@ -1979,9 +2891,28 @@ proc render*(target: var Sdl3Renderer; commands: openArray[PaintCommand]; clearC
   target.clipStack.setLen(0)
   target.renderer.setClip(none(SDL_Rect))
 
-  for prepared in prepareRenderPlan(commands):
+  var transformLayers: seq[Sdl3TransformLayer]
+  for sourcePrepared in prepareRenderPlan(commands):
+    let sourceCommand = sourcePrepared.command
+    if sourceCommand.kind == pcPushTransform:
+      target.beginTransformLayer(sourceCommand, transformLayers)
+      continue
+    if sourceCommand.kind == pcPushLayer:
+      target.beginCompositeLayer(sourceCommand, transformLayers)
+      continue
+    if sourceCommand.kind == pcPopTransform:
+      target.endTransformLayer(transformLayers)
+      continue
+    if sourceCommand.kind == pcPopLayer:
+      target.endTransformLayer(transformLayers)
+      continue
+    if transformLayers.renderingSuppressed():
+      continue
+    let prepared = sourcePrepared.localPreparedCommand(transformLayers)
     let command = prepared.command
     case command.kind
+    of pcPushTransform, pcPopTransform, pcPushLayer, pcPopLayer:
+      discard # Handled before localization.
     of pcPushClip:
       target.clipStack.add command.clipRegion()
       target.renderer.setClip(target.effectiveClipBounds())
@@ -1990,18 +2921,29 @@ proc render*(target: var Sdl3Renderer; commands: openArray[PaintCommand]; clearC
         target.clipStack.setLen(target.clipStack.len - 1)
       target.renderer.setClip(target.effectiveClipBounds())
     of pcBoxShadow:
+      transformLayers.markTransformContent()
       target.renderBoxShadow(command)
     of pcFillRect:
+      transformLayers.markTransformContent()
       target.fillRoundedRect(command.rect, command.radius, command.color)
     of pcFillLinearGradient:
+      transformLayers.markTransformContent()
       target.fillLinearGradient(command.gradientRect, command.gradient, command.gradientRadius)
     of pcStrokeRect:
+      transformLayers.markTransformContent()
       target.strokeRoundedRect(command.strokeRect, command.strokeRadius, command.strokeWidth, command.strokeColor)
+    of pcStrokePath:
+      transformLayers.markTransformContent()
+      target.renderStrokePath(command)
     of pcDrawText:
+      transformLayers.markTransformContent()
       target.renderer.drawDebugText(command)
     of pcDrawImage:
+      transformLayers.markTransformContent()
       target.drawImageTexture(command, prepared.roundedImageClipStack)
       target.evictImageCacheIfNeeded()
+
+  target.closeTransformLayers(transformLayers)
 
   target.captureCurrentFrame()
   discard SDL3.renderPresent(target.renderer)
@@ -2147,9 +3089,28 @@ proc render*(
   target.clipStack.setLen(0)
   target.renderer.setClip(none(SDL_Rect))
 
-  for prepared in prepareRenderPlan(commands):
+  var transformLayers: seq[Sdl3TransformLayer]
+  for sourcePrepared in prepareRenderPlan(commands):
+    let sourceCommand = sourcePrepared.command
+    if sourceCommand.kind == pcPushTransform:
+      target.beginTransformLayer(sourceCommand, transformLayers)
+      continue
+    if sourceCommand.kind == pcPushLayer:
+      target.beginCompositeLayer(sourceCommand, transformLayers)
+      continue
+    if sourceCommand.kind == pcPopTransform:
+      target.endTransformLayer(transformLayers)
+      continue
+    if sourceCommand.kind == pcPopLayer:
+      target.endTransformLayer(transformLayers)
+      continue
+    if transformLayers.renderingSuppressed():
+      continue
+    let prepared = sourcePrepared.localPreparedCommand(transformLayers)
     let command = prepared.command
     case command.kind
+    of pcPushTransform, pcPopTransform, pcPushLayer, pcPopLayer:
+      discard # Handled before localization.
     of pcPushClip:
       target.clipStack.add command.clipRegion()
       target.renderer.setClip(target.effectiveClipBounds())
@@ -2158,18 +3119,29 @@ proc render*(
         target.clipStack.setLen(target.clipStack.len - 1)
       target.renderer.setClip(target.effectiveClipBounds())
     of pcBoxShadow:
+      transformLayers.markTransformContent()
       target.renderBoxShadow(command)
     of pcFillRect:
+      transformLayers.markTransformContent()
       target.fillRoundedRect(command.rect, command.radius, command.color)
     of pcFillLinearGradient:
+      transformLayers.markTransformContent()
       target.fillLinearGradient(command.gradientRect, command.gradient, command.gradientRadius)
     of pcStrokeRect:
+      transformLayers.markTransformContent()
       target.strokeRoundedRect(command.strokeRect, command.strokeRadius, command.strokeWidth, command.strokeColor)
+    of pcStrokePath:
+      transformLayers.markTransformContent()
+      target.renderStrokePath(command)
     of pcDrawText:
+      transformLayers.markTransformContent()
       target.drawCosmicText(command, cosmic, fonts)
     of pcDrawImage:
+      transformLayers.markTransformContent()
       target.drawImageTexture(command, prepared.roundedImageClipStack)
       target.evictImageCacheIfNeeded()
+
+  target.closeTransformLayers(transformLayers)
 
   target.captureCurrentFrame()
   discard SDL3.renderPresent(target.renderer)
@@ -2182,9 +3154,26 @@ proc renderPreparedCommand(
     fonts: FontRegistry;
     dynamicOnly: bool;
     skipDynamic: bool;
-    dynamicNodeMask: openArray[bool]
+    dynamicNodeMask: openArray[bool];
+    transformLayers: var seq[Sdl3TransformLayer]
 ) =
-  let command = prepared.command
+  let sourceCommand = prepared.command
+  if sourceCommand.kind == pcPushTransform:
+    target.beginTransformLayer(sourceCommand, transformLayers)
+    return
+  if sourceCommand.kind == pcPushLayer:
+    target.beginCompositeLayer(sourceCommand, transformLayers)
+    return
+  if sourceCommand.kind == pcPopTransform:
+    target.endTransformLayer(transformLayers)
+    return
+  if sourceCommand.kind == pcPopLayer:
+    target.endTransformLayer(transformLayers)
+    return
+  if transformLayers.renderingSuppressed():
+    return
+  let localPrepared = prepared.localPreparedCommand(transformLayers)
+  let command = localPrepared.command
   let isDynamic =
     command.owner.isSome and
       command.owner.get.nodeIndex >= 0 and
@@ -2195,6 +3184,8 @@ proc renderPreparedCommand(
     elif skipDynamic: not isDynamic
     else: true
   case command.kind
+  of pcPushTransform, pcPopTransform, pcPushLayer, pcPopLayer:
+    discard
   of pcPushClip:
     target.clipStack.add command.clipRegion()
     target.renderer.setClip(target.effectiveClipBounds())
@@ -2204,22 +3195,32 @@ proc renderPreparedCommand(
       target.renderer.setClip(target.effectiveClipBounds())
   of pcBoxShadow:
     if drawCommand:
+      transformLayers.markTransformContent()
       target.renderBoxShadow(command)
   of pcFillRect:
     if drawCommand:
+      transformLayers.markTransformContent()
       target.fillRoundedRect(command.rect, command.radius, command.color)
   of pcFillLinearGradient:
     if drawCommand:
+      transformLayers.markTransformContent()
       target.fillLinearGradient(command.gradientRect, command.gradient, command.gradientRadius)
   of pcStrokeRect:
     if drawCommand:
+      transformLayers.markTransformContent()
       target.strokeRoundedRect(command.strokeRect, command.strokeRadius, command.strokeWidth, command.strokeColor)
+  of pcStrokePath:
+    if drawCommand:
+      transformLayers.markTransformContent()
+      target.renderStrokePath(command)
   of pcDrawText:
     if drawCommand:
+      transformLayers.markTransformContent()
       target.drawCosmicText(command, cosmic, fonts)
   of pcDrawImage:
     if drawCommand:
-      target.drawImageTexture(command, prepared.roundedImageClipStack)
+      transformLayers.markTransformContent()
+      target.drawImageTexture(command, localPrepared.roundedImageClipStack)
       target.evictImageCacheIfNeeded()
 
 proc renderCommandPass(
@@ -2240,10 +3241,13 @@ proc renderCommandPass(
   for node in dynamicNodes:
     if node.nodeIndex >= 0:
       dynamicNodeMask[node.nodeIndex] = true
+  var transformLayers: seq[Sdl3TransformLayer]
   for prepared in prepareRenderPlan(commands):
     target.renderPreparedCommand(
-      prepared, cosmic, fonts, dynamicOnly, skipDynamic, dynamicNodeMask
+      prepared, cosmic, fonts, dynamicOnly, skipDynamic, dynamicNodeMask,
+      transformLayers
     )
+  target.closeTransformLayers(transformLayers)
 
 proc ensureStaticLayer(target: var Sdl3Renderer): bool =
   let output = target.windowSize()

@@ -1,5 +1,6 @@
 import std/options
-import ../core/[color, computed_style, declaration, diagnostics, property, style_value]
+import ../core/[color, computed_style, declaration, diagnostics, property,
+    style_color, style_value]
 
 proc clampOpacity(value: float32): float32 =
   max(0.0'f32, min(1.0'f32, value))
@@ -16,7 +17,8 @@ proc applyVisibility(
   if declaration.operation.mode in {mmInitial, mmUnset}:
     style.visual.visible = true
     return
-  if declaration.operation.value.isSome and declaration.operation.value.get.kind == svKeyword:
+  if declaration.operation.value.isSome and
+      declaration.operation.value.get.kind == svKeyword:
     case declaration.operation.value.get.keyword
     of "visible":
       style.visual.visible = true
@@ -35,7 +37,8 @@ proc applyOpacity(
 ) =
   case declaration.operation.mode
   of mmOverwrite:
-    if declaration.operation.value.isNone or declaration.operation.value.get.kind != svNumber:
+    if declaration.operation.value.isNone or
+        declaration.operation.value.get.kind != svNumber:
       diagnostics.addError(declaration.property, "opacity requires a number value")
       return
     style.visual.opacity = clampOpacity(declaration.operation.value.get.number)
@@ -49,7 +52,8 @@ proc applyOpacity(
   of mmRelative:
     diagnostics.addError(declaration.property, "opacity relative merge is not implemented yet")
 
-let visibilityProperty* = PropertyImpl(name: "visibility", apply: applyVisibility)
+let visibilityProperty* = PropertyImpl(name: "visibility",
+    apply: applyVisibility)
 let opacityProperty* = PropertyImpl(name: "opacity", apply: applyOpacity)
 
 proc applyColorScheme(
@@ -60,7 +64,8 @@ proc applyColorScheme(
 ) =
   case declaration.operation.mode
   of mmOverwrite:
-    if declaration.operation.value.isNone or declaration.operation.value.get.kind != svKeyword:
+    if declaration.operation.value.isNone or
+        declaration.operation.value.get.kind != svKeyword:
       diagnostics.addError(declaration.property, "color-scheme requires a keyword value")
       return
     let value = declaration.operation.value.get.keyword
@@ -90,7 +95,8 @@ proc applyForcedColorAdjust(
   if declaration.operation.mode in {mmInitial, mmUnset}:
     style.visual.forcedColorAdjust = caAuto
     return
-  if declaration.operation.value.isNone or declaration.operation.value.get.kind != svKeyword:
+  if declaration.operation.value.isNone or
+      declaration.operation.value.get.kind != svKeyword:
     diagnostics.addError(declaration.property, "forced-color-adjust requires a keyword value")
     return
   case declaration.operation.value.get.keyword
@@ -113,7 +119,8 @@ proc applyPrintColorAdjust(
   if declaration.operation.mode in {mmInitial, mmUnset}:
     style.visual.printColorAdjust = pcaEconomy
     return
-  if declaration.operation.value.isNone or declaration.operation.value.get.kind != svKeyword:
+  if declaration.operation.value.isNone or
+      declaration.operation.value.get.kind != svKeyword:
     diagnostics.addError(declaration.property, "print-color-adjust requires a keyword value")
     return
   case declaration.operation.value.get.keyword
@@ -132,7 +139,8 @@ proc applyWillChange(
 ) =
   case declaration.operation.mode
   of mmOverwrite:
-    if declaration.operation.value.isNone or declaration.operation.value.get.kind != svKeyword:
+    if declaration.operation.value.isNone or
+        declaration.operation.value.get.kind != svKeyword:
       diagnostics.addError(declaration.property, "will-change requires a keyword value")
       return
     let value = declaration.operation.value.get.keyword
@@ -150,12 +158,17 @@ proc applyWillChange(
   of mmRelative:
     diagnostics.addError(declaration.property, "will-change does not support relative merge")
 
-let colorSchemeProperty* = PropertyImpl(name: "color-scheme", apply: applyColorScheme)
-let forcedColorAdjustProperty* = PropertyImpl(name: "forced-color-adjust", apply: applyForcedColorAdjust)
-let printColorAdjustProperty* = PropertyImpl(name: "print-color-adjust", apply: applyPrintColorAdjust)
-let willChangeProperty* = PropertyImpl(name: "will-change", apply: applyWillChange)
+let colorSchemeProperty* = PropertyImpl(name: "color-scheme",
+    apply: applyColorScheme)
+let forcedColorAdjustProperty* = PropertyImpl(name: "forced-color-adjust",
+    apply: applyForcedColorAdjust)
+let printColorAdjustProperty* = PropertyImpl(name: "print-color-adjust",
+    apply: applyPrintColorAdjust)
+let willChangeProperty* = PropertyImpl(name: "will-change",
+    apply: applyWillChange)
 
-proc resolvePx(value: StyleValue; property: string; diagnostics: var Diagnostics): Option[float32] =
+proc resolvePx(value: StyleValue; property: string;
+    diagnostics: var Diagnostics): Option[float32] =
   if value.kind != svLength or value.length.kind != ukPx:
     diagnostics.addError(property, property & " requires a px length value")
     return none(float32)
@@ -173,7 +186,8 @@ proc applyScrollbarWidth(
   if declaration.operation.mode in {mmInitial, mmUnset}:
     style.visual.scrollbarWidth = swAuto
     return
-  if declaration.operation.value.isNone or declaration.operation.value.get.kind != svKeyword:
+  if declaration.operation.value.isNone or
+      declaration.operation.value.get.kind != svKeyword:
     diagnostics.addError(declaration.property, "scrollbar-width requires a keyword value")
     return
   case declaration.operation.value.get.keyword
@@ -198,7 +212,8 @@ proc applyScrollbarVisibility(
   if declaration.operation.mode in {mmInitial, mmUnset}:
     style.visual.scrollbarVisibility = svAlways
     return
-  if declaration.operation.value.isNone or declaration.operation.value.get.kind != svKeyword:
+  if declaration.operation.value.isNone or
+      declaration.operation.value.get.kind != svKeyword:
     diagnostics.addError(declaration.property, "scrollbar-visibility requires a keyword value")
     return
   case declaration.operation.value.get.keyword
@@ -229,8 +244,10 @@ proc applyScrollbarColor(
       else:
         diagnostics.addError(declaration.property, "unsupported scrollbar-color keyword")
     of svColorPair:
-      style.visual.scrollbarThumbColor = some(value.firstColor)
-      style.visual.scrollbarTrackColor = some(value.secondColor)
+      let colors = value.resolveColorPair(style, env)
+      if colors.isSome:
+        style.visual.scrollbarThumbColor = some(colors.get.first)
+        style.visual.scrollbarTrackColor = some(colors.get.second)
     else:
       diagnostics.addError(declaration.property, "scrollbar-color requires auto or a color pair")
   of mmInitial, mmUnset:
@@ -253,7 +270,8 @@ proc applyScrollbarGutter(
 ) =
   case declaration.operation.mode
   of mmOverwrite:
-    if declaration.operation.value.isNone or declaration.operation.value.get.kind != svKeyword:
+    if declaration.operation.value.isNone or
+        declaration.operation.value.get.kind != svKeyword:
       diagnostics.addError(declaration.property, "scrollbar-gutter requires a keyword value")
       return
     let value = declaration.operation.value.get.keyword
@@ -285,7 +303,8 @@ proc applyScrollBehavior(
   if declaration.operation.mode in {mmInitial, mmUnset}:
     style.visual.scrollBehavior = sbAuto
     return
-  if declaration.operation.value.isNone or declaration.operation.value.get.kind != svKeyword:
+  if declaration.operation.value.isNone or
+      declaration.operation.value.get.kind != svKeyword:
     diagnostics.addError(declaration.property, "scroll-behavior requires a keyword value")
     return
   case declaration.operation.value.get.keyword
@@ -307,7 +326,8 @@ proc parseOverscroll(value: string): Option[OverscrollBehavior] =
   else:
     none(OverscrollBehavior)
 
-proc setOverscroll(style: var ComputedStyle; property: string; value: OverscrollBehavior) =
+proc setOverscroll(style: var ComputedStyle; property: string;
+    value: OverscrollBehavior) =
   case property
   of "overscroll-behavior":
     style.visual.overscrollBehaviorX = value
@@ -335,14 +355,16 @@ proc applyOverscrollBehavior(
   if declaration.operation.mode in {mmInitial, mmUnset}:
     style.setOverscroll(declaration.property, obAuto)
     return
-  if declaration.operation.value.isNone or declaration.operation.value.get.kind != svKeyword:
+  if declaration.operation.value.isNone or
+      declaration.operation.value.get.kind != svKeyword:
     diagnostics.addError(declaration.property, declaration.property & " requires a keyword value")
     return
   let parsed = parseOverscroll(declaration.operation.value.get.keyword)
   if parsed.isSome:
     style.setOverscroll(declaration.property, parsed.get)
   else:
-    diagnostics.addError(declaration.property, "unsupported " & declaration.property & " keyword")
+    diagnostics.addError(declaration.property, "unsupported " &
+        declaration.property & " keyword")
 
 proc applyOverflowAnchor(
     style: var ComputedStyle;
@@ -356,7 +378,8 @@ proc applyOverflowAnchor(
   if declaration.operation.mode in {mmInitial, mmUnset}:
     style.visual.overflowAnchor = true
     return
-  if declaration.operation.value.isNone or declaration.operation.value.get.kind != svKeyword:
+  if declaration.operation.value.isNone or
+      declaration.operation.value.get.kind != svKeyword:
     diagnostics.addError(declaration.property, "overflow-anchor requires a keyword value")
     return
   case declaration.operation.value.get.keyword
@@ -378,7 +401,8 @@ proc applyOverflowClipMargin(
     if declaration.operation.value.isNone:
       diagnostics.addError(declaration.property, "overflow-clip-margin requires a length value")
       return
-    let resolved = resolvePx(declaration.operation.value.get, declaration.property, diagnostics)
+    let resolved = resolvePx(declaration.operation.value.get,
+        declaration.property, diagnostics)
     if resolved.isSome:
       style.visual.overflowClipMargin = resolved
   of mmInitial, mmUnset:
@@ -403,7 +427,8 @@ proc applyTouchAction(
   if declaration.operation.mode in {mmInitial, mmUnset}:
     style.visual.touchAction = taAutoTouch
     return
-  if declaration.operation.value.isNone or declaration.operation.value.get.kind != svKeyword:
+  if declaration.operation.value.isNone or
+      declaration.operation.value.get.kind != svKeyword:
     diagnostics.addError(declaration.property, "touch-action requires a keyword value")
     return
   case declaration.operation.value.get.keyword
@@ -434,7 +459,8 @@ proc applyReadingFlow(
   if declaration.operation.mode in {mmInitial, mmUnset}:
     style.visual.readingFlow = rfNormal
     return
-  if declaration.operation.value.isNone or declaration.operation.value.get.kind != svKeyword:
+  if declaration.operation.value.isNone or
+      declaration.operation.value.get.kind != svKeyword:
     diagnostics.addError(declaration.property, "reading-flow requires a keyword value")
     return
   case declaration.operation.value.get.keyword
@@ -461,7 +487,8 @@ proc applyReadingOrder(
 ) =
   case declaration.operation.mode
   of mmOverwrite:
-    if declaration.operation.value.isNone or declaration.operation.value.get.kind != svNumber:
+    if declaration.operation.value.isNone or
+        declaration.operation.value.get.kind != svNumber:
       diagnostics.addError(declaration.property, "reading-order requires a number value")
       return
     style.visual.readingOrder = declaration.operation.value.get.number.int
@@ -475,7 +502,8 @@ proc applyReadingOrder(
   of mmRelative:
     diagnostics.addError(declaration.property, "reading-order does not support relative merge")
 
-proc setVisualMetadata(style: var ComputedStyle; property: string; value: Option[string]) =
+proc setVisualMetadata(style: var ComputedStyle; property: string;
+    value: Option[string]) =
   case property
   of "appearance":
     style.visual.appearance = value
@@ -577,7 +605,8 @@ proc visualMetadata(style: ComputedStyle; property: string): Option[string] =
   else:
     none(string)
 
-proc visualMetadataValue(property: string; value: StyleValue; diagnostics: var Diagnostics): Option[string] =
+proc visualMetadataValue(property: string; value: StyleValue;
+    diagnostics: var Diagnostics): Option[string] =
   case value.kind
   of svKeyword:
     some(value.keyword)
@@ -608,7 +637,8 @@ proc applyVisualMetadata(
     if declaration.operation.value.isNone:
       diagnostics.addError(declaration.property, declaration.property & " requires a keyword value")
       return
-    let parsed = visualMetadataValue(declaration.property, declaration.operation.value.get, diagnostics)
+    let parsed = visualMetadataValue(declaration.property,
+        declaration.operation.value.get, diagnostics)
     if parsed.isNone:
       return
     let value = parsed.get
@@ -620,48 +650,85 @@ proc applyVisualMetadata(
     style.setVisualMetadata(declaration.property, none(string))
   of mmInherit:
     if env.parent.isSome:
-      style.setVisualMetadata(declaration.property, env.parent.get.visualMetadata(declaration.property))
+      style.setVisualMetadata(declaration.property,
+          env.parent.get.visualMetadata(declaration.property))
     else:
-      diagnostics.addError(declaration.property, "cannot inherit " & declaration.property & " without parent")
+      diagnostics.addError(declaration.property, "cannot inherit " &
+          declaration.property & " without parent")
   of mmRelative:
     diagnostics.addError(declaration.property, declaration.property & " does not support relative merge")
 
-let appearanceProperty* = PropertyImpl(name: "appearance", apply: applyVisualMetadata)
-let contentVisibilityProperty* = PropertyImpl(name: "content-visibility", apply: applyVisualMetadata)
+let appearanceProperty* = PropertyImpl(name: "appearance",
+    apply: applyVisualMetadata)
+let contentVisibilityProperty* = PropertyImpl(name: "content-visibility",
+    apply: applyVisualMetadata)
 let caretProperty* = PropertyImpl(name: "caret", apply: applyVisualMetadata)
-let caretAnimationProperty* = PropertyImpl(name: "caret-animation", apply: applyVisualMetadata)
-let caretShapeProperty* = PropertyImpl(name: "caret-shape", apply: applyVisualMetadata)
-let clipPathProperty* = PropertyImpl(name: "clip-path", apply: applyVisualMetadata)
-let clipRuleProperty* = PropertyImpl(name: "clip-rule", apply: applyVisualMetadata)
-let dynamicRangeLimitProperty* = PropertyImpl(name: "dynamic-range-limit", apply: applyVisualMetadata)
-let fieldSizingProperty* = PropertyImpl(name: "field-sizing", apply: applyVisualMetadata)
-let interactivityProperty* = PropertyImpl(name: "interactivity", apply: applyVisualMetadata)
-let interpolateSizeProperty* = PropertyImpl(name: "interpolate-size", apply: applyVisualMetadata)
+let caretAnimationProperty* = PropertyImpl(name: "caret-animation",
+    apply: applyVisualMetadata)
+let caretShapeProperty* = PropertyImpl(name: "caret-shape",
+    apply: applyVisualMetadata)
+let clipPathProperty* = PropertyImpl(name: "clip-path",
+    apply: applyVisualMetadata)
+let clipRuleProperty* = PropertyImpl(name: "clip-rule",
+    apply: applyVisualMetadata)
+let dynamicRangeLimitProperty* = PropertyImpl(name: "dynamic-range-limit",
+    apply: applyVisualMetadata)
+let fieldSizingProperty* = PropertyImpl(name: "field-sizing",
+    apply: applyVisualMetadata)
+let interactivityProperty* = PropertyImpl(name: "interactivity",
+    apply: applyVisualMetadata)
+let interpolateSizeProperty* = PropertyImpl(name: "interpolate-size",
+    apply: applyVisualMetadata)
 let overlayProperty* = PropertyImpl(name: "overlay", apply: applyVisualMetadata)
-let overflowBlockProperty* = PropertyImpl(name: "overflow-block", apply: applyVisualMetadata)
-let overflowClipBoxProperty* = PropertyImpl(name: "overflow-clip-box", apply: applyVisualMetadata)
-let overflowInlineProperty* = PropertyImpl(name: "overflow-inline", apply: applyVisualMetadata)
-let interestDelayProperty* = PropertyImpl(name: "interest-delay", apply: applyVisualMetadata)
-let interestDelayEndProperty* = PropertyImpl(name: "interest-delay-end", apply: applyVisualMetadata)
-let interestDelayStartProperty* = PropertyImpl(name: "interest-delay-start", apply: applyVisualMetadata)
-let scrollInitialTargetProperty* = PropertyImpl(name: "scroll-initial-target", apply: applyVisualMetadata)
-let scrollMarkerGroupProperty* = PropertyImpl(name: "scroll-marker-group", apply: applyVisualMetadata)
-let scrollTargetGroupProperty* = PropertyImpl(name: "scroll-target-group", apply: applyVisualMetadata)
-let viewTransitionScopeProperty* = PropertyImpl(name: "view-transition-scope", apply: applyVisualMetadata)
+let overflowBlockProperty* = PropertyImpl(name: "overflow-block",
+    apply: applyVisualMetadata)
+let overflowClipBoxProperty* = PropertyImpl(name: "overflow-clip-box",
+    apply: applyVisualMetadata)
+let overflowInlineProperty* = PropertyImpl(name: "overflow-inline",
+    apply: applyVisualMetadata)
+let interestDelayProperty* = PropertyImpl(name: "interest-delay",
+    apply: applyVisualMetadata)
+let interestDelayEndProperty* = PropertyImpl(name: "interest-delay-end",
+    apply: applyVisualMetadata)
+let interestDelayStartProperty* = PropertyImpl(name: "interest-delay-start",
+    apply: applyVisualMetadata)
+let scrollInitialTargetProperty* = PropertyImpl(name: "scroll-initial-target",
+    apply: applyVisualMetadata)
+let scrollMarkerGroupProperty* = PropertyImpl(name: "scroll-marker-group",
+    apply: applyVisualMetadata)
+let scrollTargetGroupProperty* = PropertyImpl(name: "scroll-target-group",
+    apply: applyVisualMetadata)
+let viewTransitionScopeProperty* = PropertyImpl(name: "view-transition-scope",
+    apply: applyVisualMetadata)
 let zoomProperty* = PropertyImpl(name: "zoom", apply: applyVisualMetadata)
 
-let scrollbarWidthProperty* = PropertyImpl(name: "scrollbar-width", apply: applyScrollbarWidth)
-let scrollbarVisibilityProperty* = PropertyImpl(name: "scrollbar-visibility", apply: applyScrollbarVisibility)
-let scrollbarColorProperty* = PropertyImpl(name: "scrollbar-color", apply: applyScrollbarColor)
-let scrollbarGutterProperty* = PropertyImpl(name: "scrollbar-gutter", apply: applyScrollbarGutter)
-let scrollBehaviorProperty* = PropertyImpl(name: "scroll-behavior", apply: applyScrollBehavior)
-let overscrollBehaviorProperty* = PropertyImpl(name: "overscroll-behavior", apply: applyOverscrollBehavior)
-let overscrollBehaviorXProperty* = PropertyImpl(name: "overscroll-behavior-x", apply: applyOverscrollBehavior)
-let overscrollBehaviorYProperty* = PropertyImpl(name: "overscroll-behavior-y", apply: applyOverscrollBehavior)
-let overscrollBehaviorBlockProperty* = PropertyImpl(name: "overscroll-behavior-block", apply: applyOverscrollBehavior)
-let overscrollBehaviorInlineProperty* = PropertyImpl(name: "overscroll-behavior-inline", apply: applyOverscrollBehavior)
-let overflowAnchorProperty* = PropertyImpl(name: "overflow-anchor", apply: applyOverflowAnchor)
-let overflowClipMarginProperty* = PropertyImpl(name: "overflow-clip-margin", apply: applyOverflowClipMargin)
-let touchActionProperty* = PropertyImpl(name: "touch-action", apply: applyTouchAction)
-let readingFlowProperty* = PropertyImpl(name: "reading-flow", apply: applyReadingFlow)
-let readingOrderProperty* = PropertyImpl(name: "reading-order", apply: applyReadingOrder)
+let scrollbarWidthProperty* = PropertyImpl(name: "scrollbar-width",
+    apply: applyScrollbarWidth)
+let scrollbarVisibilityProperty* = PropertyImpl(name: "scrollbar-visibility",
+    apply: applyScrollbarVisibility)
+let scrollbarColorProperty* = PropertyImpl(name: "scrollbar-color",
+    apply: applyScrollbarColor)
+let scrollbarGutterProperty* = PropertyImpl(name: "scrollbar-gutter",
+    apply: applyScrollbarGutter)
+let scrollBehaviorProperty* = PropertyImpl(name: "scroll-behavior",
+    apply: applyScrollBehavior)
+let overscrollBehaviorProperty* = PropertyImpl(name: "overscroll-behavior",
+    apply: applyOverscrollBehavior)
+let overscrollBehaviorXProperty* = PropertyImpl(name: "overscroll-behavior-x",
+    apply: applyOverscrollBehavior)
+let overscrollBehaviorYProperty* = PropertyImpl(name: "overscroll-behavior-y",
+    apply: applyOverscrollBehavior)
+let overscrollBehaviorBlockProperty* = PropertyImpl(
+    name: "overscroll-behavior-block", apply: applyOverscrollBehavior)
+let overscrollBehaviorInlineProperty* = PropertyImpl(
+    name: "overscroll-behavior-inline", apply: applyOverscrollBehavior)
+let overflowAnchorProperty* = PropertyImpl(name: "overflow-anchor",
+    apply: applyOverflowAnchor)
+let overflowClipMarginProperty* = PropertyImpl(name: "overflow-clip-margin",
+    apply: applyOverflowClipMargin)
+let touchActionProperty* = PropertyImpl(name: "touch-action",
+    apply: applyTouchAction)
+let readingFlowProperty* = PropertyImpl(name: "reading-flow",
+    apply: applyReadingFlow)
+let readingOrderProperty* = PropertyImpl(name: "reading-order",
+    apply: applyReadingOrder)

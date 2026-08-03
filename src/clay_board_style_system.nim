@@ -1,10 +1,16 @@
 import clay_board_style_system/assets/asset_resolver
 import clay_board_style_system/core/[
   color,
+  color_conversion,
+  color_mix,
+  color_mix_parser,
+  color_parser,
+  color_value,
   computed_style,
   declaration,
   diagnostics,
   geometry,
+  gradient_sampling,
   node,
   property,
   registry,
@@ -16,13 +22,21 @@ import clay_board_style_system/core/[
 ]
 import clay_board_style_system/layout/layout
 import clay_board_style_system/layout/overflow_geometry
+import clay_board_style_system/layout/presentation
+import clay_board_style_system/layout/transform_geometry
 import clay_board_style_system/layout/scroll_state
 import clay_board_style_system/layout/scrollbar_geometry
 import clay_board_style_system/hit/hit_test
 import clay_board_style_system/input/events
 import clay_board_style_system/input/pointer
-import clay_board_style_system/paint/[paint, paint_command]
-import clay_board_style_system/runtime/[accessibility, button, checkbox, details, dialog, fieldset, focus, form, frame_scheduler, image, invalidation, label, link, navigation, navigation_focus, navigation_transition, navigation_screen_host, platform_links, progress, providers, radio, select_box, slider, state_runtime, text_input, textarea, ui_root]
+import clay_board_style_system/paint/[paint, paint_command, path_geometry]
+import clay_board_style_system/runtime/[accessibility, button, checkbox,
+    animation_clock, canvas, component, details, dialog, fieldset, focus, form,
+    frame_scheduler, image,
+    invalidation, label, link, navigation, navigation_focus,
+    navigation_transition, navigation_screen_host, platform_links, progress,
+    providers, radio, render_surface, select_box, slider, state_runtime,
+    text_input, textarea, ui_root]
 import clay_board_style_system/runtime/widgets/[command_menu, list_box, tabs]
 import clay_board_style_system/text/[cosmic_text_engine, font_registry, text_engine]
 import clay_board_style_system/design_source/model
@@ -30,10 +44,16 @@ import clay_board_style_system/backends/atspi/adapter
 
 export asset_resolver
 export color
+export color_conversion
+export color_mix
+export color_mix_parser
+export color_parser
+export color_value
 export computed_style
 export declaration
 export diagnostics
 export geometry
+export gradient_sampling
 export node
 export property
 export registry
@@ -44,6 +64,8 @@ export style_context
 export style_value
 export layout
 export overflow_geometry
+export presentation
+export transform_geometry
 export scroll_state
 export scrollbar_geometry
 export hit_test
@@ -51,8 +73,12 @@ export events
 export pointer
 export paint
 export paint_command
+export path_geometry
 export accessibility
+export animation_clock
 export button
+export canvas
+export component
 export checkbox
 export details
 export dialog
@@ -74,6 +100,7 @@ export list_box
 export progress
 export providers
 export radio
+export render_surface
 export select_box
 export slider
 export state_runtime

@@ -1,4 +1,4 @@
-version       = "0.2.0"
+version       = "0.3.0"
 author        = "Clay Board Style System contributors"
 description   = "A CSS-inspired primitive engine for native GUI toolkits"
 license       = "Apache-2.0"
@@ -41,12 +41,16 @@ task checkExamples, "Type-check every example in each supported link configurati
   exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_paint examples/paint_demo.nim"
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_render examples/render_demo.nim"
+  exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_component examples/component_demo.nim"
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_sdl3 -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/sdl3_demo.nim"
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_sdl3_system -d:cbssSdl3LinkMode=system examples/sdl3_demo.nim"
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_sdl3_custom -d:cbssSdl3LinkMode=custom -d:cbssRuntimeRoot=vendor/sdl3 examples/sdl3_demo.nim"
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_navigation -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/navigation_demo.nim"
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_navigation_system -d:cbssSdl3LinkMode=system examples/navigation_demo.nim"
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_navigation_custom -d:cbssSdl3LinkMode=custom -d:cbssRuntimeRoot=vendor/sdl3 examples/navigation_demo.nim"
+  exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_v03_canvas -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/v03_canvas_demo.nim"
+  exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_v03_canvas_system -d:cbssSdl3LinkMode=system examples/v03_canvas_demo.nim"
+  exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_v03_canvas_custom -d:cbssSdl3LinkMode=custom -d:cbssRuntimeRoot=vendor/sdl3 examples/v03_canvas_demo.nim"
 
 task buildCAbiShared, "Build the shared CBSS C ABI library":
   exec "nim c --app:lib --mm:arc -d:release --path:src --nimcache:/tmp/clay_board_style_system_c_api_shared_nimcache --out:/tmp/libcbss.so src/cbss_c_api.nim"
@@ -78,15 +82,20 @@ task setupSystem, "Dynamically link SDL3 and the image bridge from the system":
   exec "nim c -r --mm:arc --nimcache:/tmp/clay_board_style_system_setup_nimcache --out:/tmp/cbss_configure src/cbss_configure.nim system ."
 
 task bench, "Run compiled pipeline benchmarks (not part of the product build)":
+  exec "nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_color_bench_nimcache --out:/tmp/clay_board_style_system_color_conversion_benchmark tests/perf/color_conversion_benchmark.nim"
   exec "nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_bench_nimcache --out:/tmp/clay_board_style_system_pipeline_benchmark tests/perf/pipeline_benchmark.nim"
   exec "nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_dirty_bench_nimcache --out:/tmp/clay_board_style_system_dirty_subtree_benchmark tests/perf/dirty_subtree_benchmark.nim"
   exec "nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_navigation_bench_nimcache --out:/tmp/clay_board_style_system_navigation_screen_host_benchmark tests/perf/navigation_screen_host_benchmark.nim"
+  exec "nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_render_surface_bench_nimcache --out:/tmp/clay_board_style_system_render_surface_benchmark tests/perf/render_surface_benchmark.nim"
 
 task demo, "Run the paint command demo":
   exec "nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_nimcache --out:/tmp/clay_board_style_system_paint_demo examples/paint_demo.nim"
 
 task renderDemo, "Render the demo to a PPM image":
   exec "nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_nimcache --out:/tmp/clay_board_style_system_render_demo examples/render_demo.nim"
+
+task componentDemo, "Run the typed component authoring demo":
+  exec "nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_component_demo_nimcache --out:/tmp/clay_board_style_system_component_demo examples/component_demo.nim"
 
 task buildSdl3Demo, "Build the SDL3 demo":
   exec "cargo build --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml"
@@ -102,6 +111,11 @@ task navigationDemo, "Run the Version 0.2 native navigation demo":
   exec "cargo build --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml"
   exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
   exec "env LD_LIBRARY_PATH=native/cosmic_text_bridge/target/release:native/image_bridge/target/release nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_navigation_demo_nimcache --out:/tmp/clay_board_style_system_navigation_demo examples/navigation_demo.nim"
+
+task v03CanvasDemo, "Run the Version 0.3 Canvas and color demo":
+  exec "cargo build --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml"
+  exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
+  exec "env LD_LIBRARY_PATH=native/cosmic_text_bridge/target/release:native/image_bridge/target/release nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_v03_canvas_demo_nimcache --out:/tmp/clay_board_style_system_v03_canvas_demo examples/v03_canvas_demo.nim"
 
 task buildCosmicTextBridge, "Build the Rust cosmic-text C ABI bridge":
   exec "cargo build --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml"

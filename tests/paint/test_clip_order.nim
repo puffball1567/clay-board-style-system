@@ -1,4 +1,4 @@
-import std/[options, unittest]
+import std/[options, sequtils, unittest]
 
 import clay_board_style_system
 import clay_board_style_system/generated/default_properties
@@ -183,3 +183,42 @@ suite "paint clipping":
     check commands[0].kind == pcPushClip
     check commands[1].kind == pcFillRect
     check commands[2].kind == pcPopClip
+
+  test "retained subtree closes interleaved ancestor transforms and clips in LIFO order":
+    var tree = initTree()
+    let root = tree.addBox(id = "root")
+    let middle = tree.addBox(parent = some(root), id = "middle")
+    let leaf = tree.addBox(parent = some(middle), id = "leaf")
+
+    let sheet = styleSheet([
+      rule(id("root"), [
+        decl("width", px(100)),
+        decl("height", px(80)),
+        decl("overflow", keyword("hidden")),
+        decl("transform", transformValue(translate(px(2), px(1))))
+      ]),
+      rule(id("middle"), [
+        decl("width", px(80)),
+        decl("height", px(60)),
+        decl("overflow", keyword("hidden")),
+        decl("transform", transformValue(rotate(5)))
+      ]),
+      rule(id("leaf"), [
+        decl("width", px(20)),
+        decl("height", px(10)),
+        decl("background-color", rgb(1, 0, 0))
+      ])
+    ])
+
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(tree, [sheet], defaultProperties(), diagnostics)
+    check not diagnostics.hasErrors
+    let layout = computeLayout(tree, styles, size(100, 80))
+    let commands = buildPaintCommandsForSubtree(tree, styles, layout, leaf)
+    check commands.mapIt(it.kind) == @[
+      pcPushTransform, pcPushClip,
+      pcPushTransform, pcPushClip,
+      pcFillRect,
+      pcPopClip, pcPopTransform,
+      pcPopClip, pcPopTransform
+    ]

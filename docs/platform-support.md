@@ -4,16 +4,24 @@ CBSS is Linux-first during the initial development phase.
 
 ## Support Tiers
 
-| Tier | Platform | Status | Release Blocking | Validation Owner |
-| --- | --- | --- | --- | --- |
-| Tier 1 | Linux x86_64 | Active | Yes | Maintainer |
-| Tier 2 | Windows x86_64 | Planned | No | Contributors |
-| Tier 2 | macOS Apple Silicon | Planned | No | Contributors |
-| Tier 2 | macOS x86_64 | Planned | No | Contributors |
+| Tier | Platform | Runtime status | Automated CI | Release Blocking | Validation Owner |
+| --- | --- | --- | --- | --- | --- |
+| Tier 1 | Linux x86_64 | Active | Full Linux and portable lanes | Yes | Maintainer |
+| Tier 2 | Windows x86_64 | Planned | Portable lane | No | Contributors |
+| Tier 2 | macOS Apple Silicon | Planned | Portable lane | No | Contributors |
+| Tier 2 | macOS x86_64 | Planned | No dedicated runner | No | Contributors |
 
 The primary runtime target is Linux x86_64 with SDL3. Windows and macOS support
 are welcome, but they require contributor validation before they can be treated
 as supported release targets.
+
+The portable CI lane runs the platform-neutral ARC tests, checks the public
+module and non-window examples, builds the shared and static C ABI libraries,
+and tests the Rust text and image bridges on Linux, Windows, and macOS. It
+deliberately excludes SDL3-window, Wayland, bundled-runtime, and platform
+accessibility tests. This catches source, ABI-build, memory-model, and native
+bridge portability regressions without presenting compilation as real-device
+GUI validation.
 
 ## SDL3 Policy
 

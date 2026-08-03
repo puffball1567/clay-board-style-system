@@ -1,5 +1,16 @@
 # Clay Board Style System
 
+**The flexibility of CSS. Native performance. A shared foundation for GUI
+development.**
+
+Clay Board Style System brings CSS-inspired styling to native GUI development.
+It combines styling, layout, events, state management, and Canvas drawing
+without depending on a DOM or WebView. It is not a collection of ready-made
+widgets; it is the foundation for building and distributing original GUI
+libraries and design systems. Its SDL3-based runtime is built for
+cross-platform deployment, while its versioned C ABI makes the same foundation
+available from Nim and other programming languages.
+
 **Name clarification:** Clay Board Style System is an independent project. It
 is not related to, affiliated with, derived from, or compatible with Clay, the
 C UI layout library.
@@ -62,6 +73,15 @@ nimble test
 nimble sdl3Demo
 ```
 
+Version 0.3 includes focused Canvas/color and typed component demos:
+
+```sh
+nimble v03CanvasDemo
+nimble componentDemo
+```
+
+![Native navigation demo](sample/ClayBoardStyleSystem_navigation_demo_preview.gif)
+
 For an installed package, install CBSS once:
 
 ```sh
@@ -97,17 +117,18 @@ static library build commands are listed in
 
 ## Release Status
 
-Version 0.2 is the current Linux x86_64 developer preview. It is suitable for
+Version 0.3 is the current Linux x86_64 developer preview. It is suitable for
 evaluating the API, building GUI libraries, and contributing runtime
 capabilities. Public APIs may still change before 1.0.
 
-Version 0.2 adds typed history, an injectable stack driver,
-dirty-domain notifications, semantic Link behavior, per-entry focus restore,
-retained and replaceable screen subtrees, generation-checked disposal, optional
-frame-scheduled transition hooks, policy-checked external URLs, and typed
-application deep links. The Link/transition/deep-link path is also covered by
-an optional real-window SDL3 Wayland scenario. See the
-[navigation guide](docs/navigation.md) and [product roadmap](docs/roadmap.md).
+Version 0.3 adds CSS Color 4-inspired authored colors and mixing, retained
+Canvas drawing, RenderSurface lifecycle and C ABI integration, deterministic
+keyframe animation, affine Box and Canvas transforms, offscreen composition
+layers, rich pen input, and typed Nim component authoring with Style DI. The
+Canvas path is shared by SDL3 and the deterministic headless reference
+renderer. See the [Canvas guide](docs/render-surfaces.md),
+[component guide](docs/component-authoring.md), and
+[product roadmap](docs/roadmap.md).
 
 Current boundaries:
 
@@ -115,8 +136,9 @@ Current boundaries:
 - Windows and macOS adapters require contributor validation.
 - The semantic accessibility model exists, but the Linux AT-SPI D-Bus
   transport, UIA, and NSAccessibility transports are not complete.
-- Animation timelines, full inline rich-text layout, and native multi-window
-  popup escape are not complete.
+- Full inline rich-text layout, native multi-window popup escape, filters,
+  three-dimensional transforms, and shared GPU texture surfaces are not
+  complete.
 - Property status is defined by the
   [support matrix](docs/css-property-support.md); accepted metadata does not
   imply active runtime behavior.
@@ -288,11 +310,19 @@ See [docs/design-decisions.md](docs/design-decisions.md) for settled design
 decisions and component conventions.
 See [docs/runtime-components.md](docs/runtime-components.md) for per-component
 behavior notes on the reference runtime controls.
+See [docs/component-authoring.md](docs/component-authoring.md) for the typed Nim
+component API, Style DI, composition, events, and lifecycle rules.
 See [docs/accessibility.md](docs/accessibility.md) for the semantic-tree,
 focus, platform-adapter, and assistive-technology transport boundaries.
 See [docs/navigation.md](docs/navigation.md) for typed destinations, stack
 history, Link behavior, retained screens, transition hooks, URL/deep-link
 adapters, injection, and the custom-driver contract.
+See [docs/color.md](docs/color.md) for the authored color-space model,
+conversion boundary, gamut policy, and interpolation behavior being developed
+for Version 0.3.
+See [docs/render-surfaces.md](docs/render-surfaces.md) for the implemented
+RenderSurface lifecycle, retained Canvas API, input coordinates, and frame
+scheduling contract.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the files-to-touch map and ground
 rules for contributions.
 See [docs/platform-support.md](docs/platform-support.md) for the current
@@ -577,9 +607,10 @@ nimble testWidgetLifecycleValgrind
 nimble testCAbiValgrind
 ```
 
-The ARC widget probe currently completes 16 full root lifecycles with 23,793
-allocations and 23,793 frees, leaving zero bytes in use and zero Valgrind
-errors. Component and node handles are non-owning views: they are valid only
+The ARC widget probe currently completes 16 full root lifecycles with 31,009
+allocations and 31,009 frees, leaving zero bytes in use and zero Valgrind
+errors. It includes typed component mount, event, disposal, and lifecycle
+hooks. Component and node handles are non-owning views: they are valid only
 while their `UiRoot` and referenced node generation remain alive.
 
 Valgrind is one release check, not a substitute for the ARC test suite,

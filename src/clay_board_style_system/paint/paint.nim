@@ -2,13 +2,23 @@ import std/[algorithm, math, options, strutils]
 import ../core/[color, computed_style, geometry, node, style_resolver]
 import ../layout/layout
 import ../layout/overflow_geometry
+import ../layout/presentation
 import ../layout/scroll_state
 import ../layout/scrollbar_geometry
+import ../layout/transform_geometry
 import ./paint_command
 
-type PaintOrderNode = object
-  node: NodeId
-  zIndex: int
+type
+  SurfacePaintProvider* = proc(
+    surfaceId: uint64;
+    owner: NodeId;
+    bounds: Rect;
+    opacity: float32
+  ): seq[PaintCommand] {.closure.}
+
+  PaintOrderNode = object
+    node: NodeId
+    zIndex: int
 
 proc comparePaintOrderNode(a, b: PaintOrderNode): int {.nimcall.} =
   result = cmp(a.zIndex, b.zIndex)
@@ -295,8 +305,10 @@ proc paintNode(
     id: NodeId;
     inheritedOpacity: float32;
     output: var seq[PaintCommand];
+    hasTransform: var bool;
     scroll: ScrollState;
     translation: Vec2;
+    surfaceProvider: SurfacePaintProvider;
     overlayPass = false
 ) =
   let node = tree.nodes[id.nodeIndex]
@@ -317,6 +329,12 @@ proc paintNode(
   let opacity = inheritedOpacity * style.visual.opacity
   if opacity <= 0.0'f32:
     return
+
+  let ownTransform = resolvedTransform(style, nodeRect)
+  let transformed = not ownTransform.isIdentity
+  if transformed:
+    output.add pushTransform(ownTransform)
+    hasTransform = true
 
   let visualClip = insetClipRect(nodeRect, style.visual.clipPath)
   if visualClip.isSome:
@@ -401,13 +419,25 @@ proc paintNode(
   if needsClip:
     output.add pushClip(overflowClipRect(nodeRect, style), style.box.borderRadius)
 
+  if node.renderSurfaceId.isSome and not surfaceProvider.isNil:
+    let contentRect = presentedContentBounds(nodeRect, style)
+    output.add pushClip(contentRect, style.box.borderRadius)
+    for command in surfaceProvider(
+        node.renderSurfaceId.get, id, contentRect, opacity):
+      output.add command
+      if command.kind == pcPushTransform:
+        hasTransform = true
+    output.add popClip()
+
   if not style.hidesContents:
     let ownOffset = scroll.scrollOffset(id)
     let childTranslation = vec2(translation.x - ownOffset.x, translation.y - ownOffset.y)
     let children = node.childrenInPaintOrder(styles)
     for child in children:
       paintNode(
-        tree, styles, layout, boxIndices, child, opacity, output, scroll, childTranslation,
+        tree, styles, layout, boxIndices, child, opacity, output, hasTransform,
+        scroll, childTranslation,
+        surfaceProvider,
         overlayPass = overlayPass
       )
 
@@ -420,6 +450,9 @@ proc paintNode(
 
   if visualClip.isSome:
     output.add popClip()
+
+  if transformed:
+    output.add popTransform()
 
 proc collectOverlayRoots(
     tree: Tree;
@@ -434,10 +467,15 @@ proc collectOverlayRoots(
   for child in node.children:
     collectOverlayRoots(tree, styles, child, output)
 
-type AncestorPaintContext = object
-  opacity: float32
-  translation: Vec2
-  clipCount: int
+type
+  AncestorPaintScope = object
+    clipCount: int
+    transformed: bool
+
+  AncestorPaintContext = object
+    opacity: float32
+    translation: Vec2
+    scopes: seq[AncestorPaintScope]
 
 proc pushAncestorPaintContext(
     tree: Tree;
@@ -446,65 +484,71 @@ proc pushAncestorPaintContext(
     boxIndices: openArray[int];
     scroll: ScrollState;
     id: NodeId;
-    output: var seq[PaintCommand]
+    output: var seq[PaintCommand];
+    hasTransform: var bool
 ): AncestorPaintContext =
-  result.opacity = 1.0'f32
-  var parent = tree.nodes[id.nodeIndex].parent
-  var ancestors: seq[NodeId]
-  while parent.isSome:
-    ancestors.add parent.get
-    parent = tree.nodes[parent.get.nodeIndex].parent
-
-  if ancestors.len > 0:
-    for index in countdown(ancestors.high, 0):
-      let ancestor = ancestors[index]
-      let boxIndex = boxIndices.boxIndexFor(ancestor)
-      if boxIndex < 0:
-        continue
-      let style {.cursor.} = styles.styles[ancestor.nodeIndex]
-      let ancestorRect = layout.boxes[boxIndex].rect.translated(result.translation)
-      result.opacity *= style.visual.opacity
-      let visualClip = insetClipRect(ancestorRect, style.visual.clipPath)
-      if visualClip.isSome:
-        output.add pushClip(visualClip.get, style.box.borderRadius)
-        inc result.clipCount
-      if tree.nodes[ancestor.nodeIndex].kind == nkBox and style.clipsOverflow():
-        output.add pushClip(overflowClipRect(ancestorRect, style), style.box.borderRadius)
-        inc result.clipCount
-      let offset = scroll.scrollOffset(ancestor)
-      result.translation.x -= offset.x
-      result.translation.y -= offset.y
+  let presentation = ancestorPresentationContext(
+    tree, layout, boxIndices, styles, scroll, id
+  )
+  result.opacity = presentation.opacity
+  result.translation = presentation.translation
+  for ancestor in presentation.ancestors:
+    let style {.cursor.} = styles.styles[ancestor.node.nodeIndex]
+    var scope: AncestorPaintScope
+    if not ancestor.ownTransform.isIdentity:
+      output.add pushTransform(ancestor.ownTransform)
+      scope.transformed = true
+      hasTransform = true
+    let visualClip = insetClipRect(ancestor.sourceBounds, style.visual.clipPath)
+    if visualClip.isSome:
+      output.add pushClip(visualClip.get, style.box.borderRadius)
+      inc scope.clipCount
+    if tree.nodes[ancestor.node.nodeIndex].kind == nkBox and
+        style.clipsOverflow():
+      output.add pushClip(
+        overflowClipRect(ancestor.sourceBounds, style), style.box.borderRadius
+      )
+      inc scope.clipCount
+    result.scopes.add scope
 
 proc popAncestorPaintContext(
     context: AncestorPaintContext;
     output: var seq[PaintCommand]
 ) =
-  for _ in 0 ..< context.clipCount:
-    output.add popClip()
+  for index in countdown(context.scopes.high, 0):
+    for _ in 0 ..< context.scopes[index].clipCount:
+      output.add popClip()
+    if context.scopes[index].transformed:
+      output.add popTransform()
 
 proc buildPaintCommands*(
     tree: Tree;
     styles: ResolvedTree;
     layout: LayoutResult;
-    scroll: ScrollState
+    scroll: ScrollState;
+    surfaceProvider: SurfacePaintProvider = nil
 ): seq[PaintCommand] =
+  var hasTransform = false
   if tree.root.isSome:
     let boxIndices = layout.layoutBoxIndices(tree.nodes.len)
     paintNode(
       tree, styles, layout, boxIndices, tree.root.get, 1.0'f32, result,
-      scroll, vec2(0, 0)
+      hasTransform, scroll, vec2(0, 0), surfaceProvider
     )
     var overlays: seq[NodeId]
     collectOverlayRoots(tree, styles, tree.root.get, overlays)
     for overlay in overlays.overlayRootsInPaintOrder(styles):
       let context = pushAncestorPaintContext(
-        tree, styles, layout, boxIndices, scroll, overlay, result
+        tree, styles, layout, boxIndices, scroll, overlay, result, hasTransform
       )
       paintNode(
         tree, styles, layout, boxIndices, overlay, context.opacity, result,
-        scroll, context.translation, overlayPass = true
+        hasTransform, scroll, context.translation, surfaceProvider,
+        overlayPass = true
       )
       popAncestorPaintContext(context, result)
+    if hasTransform:
+      result.resolveTransformBounds()
 
 proc buildPaintCommands*(tree: Tree; styles: ResolvedTree; layout: LayoutResult): seq[PaintCommand] =
   buildPaintCommands(tree, styles, layout, initScrollState())
@@ -514,8 +558,10 @@ proc buildPaintCommandsForSubtree*(
     styles: ResolvedTree;
     layout: LayoutResult;
     root: NodeId;
-    scroll: ScrollState
+    scroll: ScrollState;
+    surfaceProvider: SurfacePaintProvider = nil
 ): seq[PaintCommand] =
+  var hasTransform = false
   if root.nodeIndex < 0 or root.nodeIndex >= tree.nodes.len:
     return
   let overlayPass =
@@ -523,7 +569,7 @@ proc buildPaintCommandsForSubtree*(
       styles.styles[root.nodeIndex].layout.zIndex > 0
   let boxIndices = layout.layoutBoxIndices(tree.nodes.len)
   let context = pushAncestorPaintContext(
-    tree, styles, layout, boxIndices, scroll, root, result
+    tree, styles, layout, boxIndices, scroll, root, result, hasTransform
   )
   paintNode(
     tree,
@@ -533,8 +579,10 @@ proc buildPaintCommandsForSubtree*(
     root,
     context.opacity,
     result,
+    hasTransform,
     scroll,
     context.translation,
+    surfaceProvider,
     overlayPass = overlayPass
   )
   popAncestorPaintContext(context, result)
@@ -547,13 +595,16 @@ proc buildPaintCommandsForSubtree*(
     collectOverlayRoots(tree, styles, child, overlays)
   for overlay in overlays.overlayRootsInPaintOrder(styles):
     let overlayContext = pushAncestorPaintContext(
-      tree, styles, layout, boxIndices, scroll, overlay, result
+      tree, styles, layout, boxIndices, scroll, overlay, result, hasTransform
     )
     paintNode(
       tree, styles, layout, boxIndices, overlay, overlayContext.opacity,
-      result, scroll, overlayContext.translation, overlayPass = true
+      result, hasTransform, scroll, overlayContext.translation, surfaceProvider,
+      overlayPass = true
     )
     popAncestorPaintContext(overlayContext, result)
+  if hasTransform:
+    result.resolveTransformBounds()
 
 proc buildPaintCommandsForSubtree*(
     tree: Tree;

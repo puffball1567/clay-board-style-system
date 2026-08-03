@@ -5,6 +5,7 @@ import ../core/[
   declaration,
   diagnostics,
   property,
+  style_color,
   style_value
 ]
 
@@ -16,10 +17,13 @@ proc applyColor(
 ) =
   case declaration.operation.mode
   of mmOverwrite:
-    if declaration.operation.value.isNone or declaration.operation.value.get.kind != svColor:
+    if declaration.operation.value.isNone or
+        declaration.operation.value.get.kind != svColor:
       diagnostics.addError(declaration.property, "color requires a color value")
       return
-    style.text.color = some(declaration.operation.value.get.color)
+    style.text.color = declaration.operation.value.get.resolveStyleColor(
+      env.inheritedForegroundColor()
+    )
   of mmInherit:
     if env.parent.isSome and env.parent.get.text.color.isSome:
       style.text.color = env.parent.get.text.color

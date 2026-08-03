@@ -1,9 +1,18 @@
 import std/[hashes, math, options, sets, tables]
 
 import ../core/[color, declaration, geometry, node, rule, selector, style_value]
+import ../core/style_resolver
 import ../input/events
+import ../layout/layout
+import ../layout/presentation
 import ../layout/scroll_state
+import ../paint/paint
+import ../paint/paint_command
 import ../text/[font_registry, text_engine]
+import ./canvas
+import ./frame_scheduler
+import ./invalidation
+import ./render_surface
 
 type
   DisabledSetter* = proc(disabled: bool) {.closure.}
@@ -11,10 +20,17 @@ type
   ClipboardTextProvider* = proc(): string {.closure.}
   ClipboardTextWriter* = proc(text: string) {.closure.}
   PopupCloser* = proc(target: Option[NodeId]): bool {.closure.}
+  ComponentRetention* = ref RootObj
+  ComponentUnmountCallback* = proc(component: ComponentRetention) {.nimcall.}
 
   PopupCloserBinding = object
     owner: NodeId
     callback: PopupCloser
+
+  MountedComponentBinding = object
+    owner: NodeId
+    component: ComponentRetention
+    callback: ComponentUnmountCallback
 
   ContextMenuAction* = enum
     cmaCut,
@@ -45,6 +61,8 @@ type
     textEngine*: TextEngine
     fonts*: FontRegistry
     scroll*: ScrollState
+    surfaces*: RenderSurfaceRegistry
+    canvases*: Table[RenderSurfaceId, Canvas2D]
     defaultContextMenuOpen*: bool
     defaultContextMenuPosition*: Vec2
     defaultContextMenuTarget*: Option[NodeId]
@@ -57,6 +75,7 @@ type
     clipboardTextCache: string
     clipboardTextCached: bool
     popupClosers*: seq[PopupCloserBinding]
+    mountedComponents: seq[MountedComponentBinding]
     focusRequestPending*: bool
     focusRequestTarget*: Option[NodeId]
     parentStack: seq[NodeId]
@@ -68,6 +87,11 @@ type
     root* {.cursor.}: UiRoot
     id*: NodeId
 
+  CanvasHandle* = object
+    node*: NodeHandle
+    surface*: RenderSurfaceId
+    canvas*: Canvas2D
+
 proc initUiRoot*(): UiRoot =
   UiRoot(
     tree: initTree(),
@@ -78,6 +102,8 @@ proc initUiRoot*(): UiRoot =
     textEngine: debugTextEngine(),
     fonts: initFontRegistry(),
     scroll: initScrollState(),
+    surfaces: initRenderSurfaceRegistry(),
+    canvases: initTable[RenderSurfaceId, Canvas2D](),
     defaultContextMenuPosition: vec2(0, 0),
     defaultContextMenuTarget: none(NodeId),
     defaultContextMenuNode: none(NodeId),
@@ -89,6 +115,7 @@ proc initUiRoot*(): UiRoot =
     clipboardTextCache: "",
     clipboardTextCached: false,
     popupClosers: @[],
+    mountedComponents: @[],
     focusRequestPending: false,
     focusRequestTarget: none(NodeId),
     parentStack: @[],
@@ -160,6 +187,39 @@ proc closeOpenPopups*(root: UiRoot; target: Option[NodeId]): bool =
     if binding.callback(target):
       result = true
 
+proc retainMountedComponent*(
+    root: UiRoot;
+    owner: NodeHandle;
+    component: ComponentRetention;
+    callback: ComponentUnmountCallback
+) =
+  if owner.root != root or not root.tree.isValid(owner.id):
+    raise newException(ValueError, "component root does not belong to this UiRoot")
+  if callback.isNil:
+    raise newException(ValueError, "component unmount callback cannot be nil")
+  if component.isNil:
+    raise newException(ValueError, "mounted component cannot be nil")
+  for binding in root.mountedComponents:
+    if binding.owner == owner.id:
+      raise newException(ValueError, "component root is already retained")
+  root.mountedComponents.add MountedComponentBinding(
+    owner: owner.id,
+    component: component,
+    callback: callback
+  )
+
+proc takeComponentUnmountCallbacks(
+    root: UiRoot;
+    removed: HashSet[NodeId]
+): seq[MountedComponentBinding] =
+  var retained = newSeqOfCap[MountedComponentBinding](root.mountedComponents.len)
+  for binding in root.mountedComponents:
+    if binding.owner in removed:
+      result.add binding
+    else:
+      retained.add binding
+  root.mountedComponents = retained
+
 proc uiStyle*(declarations: openArray[Declaration]): UiStyle =
   UiStyle(declarations: @declarations)
 
@@ -197,6 +257,17 @@ proc setCode*(handle: NodeHandle; code: string) =
 
 proc valid*(handle: NodeHandle): bool =
   not handle.root.isNil and handle.root.tree.isValid(handle.id)
+
+proc valid*(handle: CanvasHandle): bool =
+  handle.node.valid and handle.node.root.surfaces.hasSurface(handle.surface)
+
+proc nodeHandle*(handle: CanvasHandle): NodeHandle =
+  handle.node
+
+proc requestFrame*(handle: CanvasHandle): bool {.discardable.} =
+  if not handle.valid:
+    return false
+  handle.node.root.surfaces.requestSurfaceFrame(handle.surface)
 
 proc storeComponentStyle(root: UiRoot; sheet: StyleSheet): int =
   if root.freeComponentStyleIndices.len > 0:
@@ -359,9 +430,17 @@ proc disposeSubtree*(
       pending.add child
 
   root.clearInteractionTargets(interaction, removed)
+  let componentUnmountCallbacks = root.takeComponentUnmountCallbacks(removed)
   discard root.events.removeEventHandlers(removed)
   root.removeSubtreeStyles(removed)
   root.scroll.clearNodes(removedIds)
+
+  for id in removedIds:
+    let surface = root.tree.nodes[id.nodeIndex].renderSurfaceId
+    if surface.isSome:
+      let surfaceId = RenderSurfaceId(surface.get)
+      root.canvases.del(surfaceId)
+      discard root.surfaces.unregisterSurface(surfaceId)
 
   var retainedClosers = newSeqOfCap[PopupCloserBinding](root.popupClosers.len)
   for binding in root.popupClosers:
@@ -400,6 +479,16 @@ proc disposeSubtree*(
     root.defaultContextMenuItemNodes = retainedItems
 
   discard root.tree.disposeSubtree(subtree.id)
+
+  var unmountFailure: ref CatchableError
+  for binding in componentUnmountCallbacks:
+    try:
+      binding.callback(binding.component)
+    except CatchableError as error:
+      if unmountFailure.isNil:
+        unmountFailure = error
+  if not unmountFailure.isNil:
+    raise unmountFailure
   true
 
 proc defaultContextMenuItems*(): seq[ContextMenuItem] =
@@ -525,6 +614,178 @@ proc box*(
 ): NodeHandle {.discardable.} =
   result = root.box(parent = parent, id = id, code = code, groups = groups)
   root.applyStyle(result, style)
+
+proc bindRenderSurfaceEvents(root: UiRoot; node: NodeHandle; surface: RenderSurfaceId) =
+  let target = node
+  const surfaceInputEventKinds = {
+    iekPointerMove, iekPointerDown, iekPointerUp, iekPointerCancel,
+    iekPointerEnter, iekPointerLeave, iekClick, iekAuxClick,
+    iekContextMenu, iekDoubleClick, iekWheel,
+    iekKeyDown, iekKeyUp, iekTextInput,
+    iekFocus, iekBlur,
+    iekCompositionStart, iekCompositionUpdate, iekCompositionEnd,
+    iekCopy, iekCut, iekPaste,
+    iekTouchStart, iekTouchMove, iekTouchEnd, iekTouchCancel,
+    iekPenProximityIn, iekPenProximityOut,
+    iekPenButtonDown, iekPenButtonUp,
+    iekDragStart, iekDrag, iekDragEnd, iekDragEnter, iekDragOver,
+    iekDragLeave, iekDrop
+  }
+  for kind in surfaceInputEventKinds:
+    let eventKind = kind
+    root.events.addInternalEventHandler(node.id, eventKind, proc(event: DispatchResult): bool =
+      if not target.valid:
+        return false
+      target.root.surfaces.dispatchSurfaceInput(
+        surface,
+        event.event,
+        captured = false
+      )
+    )
+
+proc canvas*(
+    root: UiRoot;
+    value: Canvas2D;
+    parent = none(NodeHandle);
+    id = "";
+    code = "";
+    groups: openArray[string] = []
+): CanvasHandle {.discardable.} =
+  if value.isNil:
+    raise newException(ValueError, "canvas value must not be nil")
+  if parent.isSome and parent.get.root != root:
+    raise newException(ValueError, "canvas parent belongs to another UiRoot")
+  let parentId =
+    if parent.isSome: some(parent.get.id)
+    else: root.currentParent()
+  let surface = root.surfaces.registerSurface(value.renderSurfaceDescriptor())
+  let node = NodeHandle(
+    root: root,
+    id: root.tree.addRenderSurfaceBox(
+      surface.renderSurfaceIdValue,
+      parent = parentId,
+      id = id,
+      code = code,
+      groups = groups
+    )
+  )
+  root.canvases[surface] = value
+  root.bindRenderSurfaceEvents(node, surface)
+  result = CanvasHandle(node: node, surface: surface, canvas: value)
+
+proc canvas*(
+    root: UiRoot;
+    value: Canvas2D;
+    style: UiStyle;
+    parent = none(NodeHandle);
+    id = "";
+    code = "";
+    groups: openArray[string] = []
+): CanvasHandle {.discardable.} =
+  result = root.canvas(value, parent, id, code, groups)
+  root.applyStyle(result.node, style)
+
+proc canvasPaintProvider*(root: UiRoot): SurfacePaintProvider =
+  let owner = root
+  result = proc(
+      surfaceId: uint64;
+      node: NodeId;
+      bounds: Rect;
+      opacity: float32
+  ): seq[PaintCommand] =
+    let id = RenderSurfaceId(surfaceId)
+    if id in owner.canvases:
+      result = owner.canvases[id].paintCommands(
+        node, bounds, opacity, resolveBounds = false
+      )
+
+proc syncRenderSurfaces*(
+    root: UiRoot;
+    styles: ResolvedTree;
+    layout: LayoutResult;
+    pixelScale = 1.0'f32
+) =
+  for index, node in root.tree.nodes:
+    if not node.alive or node.renderSurfaceId.isNone:
+      continue
+    let nodeId = root.tree.nodeIdAt(index).get
+    let surface = RenderSurfaceId(node.renderSurfaceId.get)
+    if not root.surfaces.hasSurface(surface):
+      continue
+    let presentation = presentationForNode(
+      root.tree, layout, styles, nodeId, root.scroll
+    )
+    let placement =
+      if presentation.isSome:
+        let sourceContentBounds = presentation.get.sourceContentBounds(
+          styles.styles[nodeId.nodeIndex]
+        )
+        let contentClip = presentation.get.contentClip(
+          styles.styles[nodeId.nodeIndex]
+        )
+        renderSurfacePlacement(
+          sourceContentBounds,
+          contentClip,
+          pixelScale = pixelScale,
+          opacity = max(0.0'f32, min(1.0'f32, presentation.get.opacity)),
+          transform = presentation.get.transform
+        )
+      else:
+        renderSurfacePlacement(
+          rect(0, 0, 0, 0), rect(0, 0, 0, 0), pixelScale = pixelScale,
+          opacity = 0
+        )
+    let visible = presentation.isSome and presentation.get.visible and
+      not placement.effectiveClip.isEmpty
+    if root.surfaces.surfaceState(surface) == rssUnmounted:
+      let revision =
+        if surface in root.canvases: root.canvases[surface].revision
+        else: 0'u64
+      root.surfaces.mountSurface(
+        surface, nodeId, placement, visible = visible, revision = revision
+      )
+      if surface in root.canvases and not root.canvases[surface].onFrame.isNil:
+        discard root.surfaces.requestSurfaceFrame(surface)
+    else:
+      discard root.surfaces.placeSurface(surface, placement)
+      discard root.surfaces.setSurfaceVisible(surface, visible)
+      if surface in root.canvases:
+        discard root.surfaces.updateSurface(
+          surface, root.canvases[surface].revision
+        )
+
+proc runRenderSurfaceFrames*(root: UiRoot; nowSeconds: float64): int {.discardable.} =
+  result = root.surfaces.runSurfaceFrames(nowSeconds)
+  if result == 0:
+    return
+  for surface, canvas in root.canvases.pairs:
+    discard root.surfaces.updateSurface(surface, canvas.revision)
+
+proc scheduleRenderSurfaceFrames*(
+    root: UiRoot;
+    scheduler: var FrameScheduler;
+    nowSeconds: float64
+) =
+  if root.surfaces.needsSurfaceFrame:
+    scheduler.markDirty(ddAnimation)
+    scheduler.requestDeadline(nowSeconds)
+
+proc runRenderSurfaceFrames*(
+    root: UiRoot;
+    scheduler: var FrameScheduler;
+    nowSeconds: float64;
+    targetFramesPerSecond = 60.0
+): int {.discardable.} =
+  if targetFramesPerSecond.classify in {fcNan, fcInf, fcNegInf} or
+      targetFramesPerSecond <= 0:
+    raise newException(
+      ValueError, "surface target frame rate must be positive and finite"
+    )
+  result = root.runRenderSurfaceFrames(nowSeconds)
+  if result > 0:
+    scheduler.markDirty(ddPaint)
+  if root.surfaces.needsSurfaceFrame:
+    scheduler.requestDeadline(nowSeconds + 1.0 / targetFramesPerSecond)
 
 template box*(root: UiRoot; group: string; body: untyped) =
   block:
@@ -1005,6 +1266,10 @@ handleEventSlot(`onPointerMove=`, iekPointerMove)
 handleEventSlot(`onPointerOut=`, iekPointerOut)
 handleEventSlot(`onPointerOver=`, iekPointerOver)
 handleEventSlot(`onPointerUp=`, iekPointerUp)
+handleEventSlot(`onPenButtonDown=`, iekPenButtonDown)
+handleEventSlot(`onPenButtonUp=`, iekPenButtonUp)
+handleEventSlot(`onPenProximityIn=`, iekPenProximityIn)
+handleEventSlot(`onPenProximityOut=`, iekPenProximityOut)
 handleEventSlot(`onProgress=`, iekProgress)
 handleEventSlot(`onRateChange=`, iekRateChange)
 handleEventSlot(`onReset=`, iekReset)

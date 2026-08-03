@@ -121,6 +121,36 @@ These are full-tree cold-pass measurements, not dirty-subtree frame costs.
 The fixed seven-node dirty benchmark and retained navigation benchmark below
 verify that interactive updates remain independent of unrelated tree size.
 
+### Version 0.3 RenderSurface baseline (2026-08-02)
+
+`RenderSurfaceRegistry` retains an explicit set of requested, visible, mounted
+surfaces. The idle event-loop predicate is therefore `O(1)` and frame delivery
+is `O(requested)` rather than scanning every registered surface. Hidden and
+device-lost surfaces retain their request without entering the runnable set.
+
+The release ARC benchmark on the development machine measured:
+
+| workload | result | gate |
+| --- | ---: | ---: |
+| 1,000,000 idle predicates with 10,000 registered surfaces | 5.690 ms total | <= 50 ms |
+| flatten 10,000 retained Canvas commands | 2.198 ms average | <= 4 ms |
+| flatten 1,000 transformed Canvas scopes | 0.566 ms average | <= 4 ms |
+| flatten 1,000 bounded Canvas layers | 0.382 ms average | <= 4 ms |
+| flatten a retained path with 1,000 cubic curves | 0.436 ms average | <= 12 ms |
+
+`tests/perf/render_surface_benchmark.nim` enforces all five gates. The Canvas
+measurements cover display-list translation, transform-scope balancing, and
+transform visual-bounds resolution into canonical paint commands. The layer
+measurement covers bounded scope conversion and balancing; it does not include
+backend texture allocation or composition. The path
+measurement covers adaptive curve subdivision into backend-ready contours.
+None of these measurements includes backend rasterization or text shaping.
+Memory instrumentation may compile the same workload with
+`-d:cbssMemoryCheck`; this keeps structural assertions and workload sizes but
+disables wall-clock gates that are not meaningful under Valgrind.
+The release ARC memory-check build completed this workload under Valgrind with
+zero bytes retained at exit and zero reported memory errors.
+
 ## Hot-path data rules
 
 The hot path is: input event → dispatch → dirty marking → subtree style →
@@ -299,6 +329,39 @@ The benchmark also asserts stable node/style counts and fails if the 10k result
 exceeds twice the 500-node result plus a one-microsecond noise allowance.
 Dynamic screen creation and physical subtree disposal remain separate work;
 this benchmark covers switching among already registered screens.
+
+### Color conversion and parsing baseline (2026-08-02)
+
+Version 0.3 color authoring keeps declared color spaces outside the compact
+paint `Color`. Conversion is allocation-free and occurs when a computed color
+or active color animation needs an output value; unchanged paint colors remain
+resolved and cached with their computed style.
+
+`tests/perf/color_conversion_benchmark.nim` performs 100,000 operations per
+path in a release ARC build. The initial development baseline is:
+
+| path | mean cost |
+| --- | ---: |
+| in-gamut sRGB resolution | 137.1 ns/color |
+| out-of-gamut Display P3 resolution | 1,865.1 ns/color |
+| premultiplied Oklab interpolation | 482.4 ns/color |
+| serialized color parsing | 1,151.3 ns/color |
+
+The wide-gamut path includes iterative Oklch chroma reduction. It must not run
+for unchanged static colors on every frame. Future browser-parity and Pixie
+work must keep backend conversion and raster caching outside ordinary layout
+and hit-test passes. Serialized parsing is likewise an authoring and resource
+ingestion operation: computed styles retain parsed values, so paint, layout,
+and hit-test passes do not reparse unchanged strings.
+
+Solid authored-color integration keeps `ColorValue` behind an ARC-managed cold
+reference in declaration values and resolves it before compact computed styles
+reach paint. A same-machine release ARC A/B run against development commit
+`37d31b9` measured the 4,000-node ordinary pipeline at 11.610 ms for style
+resolution before the integration and 11.552 ms after the cold-reference
+change. Style-context construction places foreground declarations first while
+preserving their cascade order, so runtime style resolution remains a single
+pass for every context.
 
 ## Renderer budgets
 

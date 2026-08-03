@@ -4,6 +4,51 @@ import clay_board_style_system
 import clay_board_style_system/generated/default_properties
 
 suite "hit testing":
+  test "transformed hit regions use inverse coordinates instead of AABB corners":
+    var tree = initTree()
+    let root = tree.addBox(id = "root")
+    let child = tree.addBox(parent = some(root), id = "child")
+
+    let sheet = styleSheet([
+      rule(id("root"), [
+        decl("width", px(200)),
+        decl("height", px(200))
+      ]),
+      rule(id("child"), [
+        decl("width", px(40)),
+        decl("height", px(20)),
+        decl("transform", transformValue(
+          translate(px(70), px(60)),
+          rotate(45)
+        ))
+      ])
+    ])
+
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(
+      tree, [sheet], defaultProperties(), diagnostics
+    )
+    check not diagnostics.hasErrors
+    let layout = computeLayout(tree, styles, size(200, 200))
+    let regions = buildHitRegions(tree, layout, styles)
+    let childRegion = regions.filterIt(it.node == child)[0]
+    check childRegion.shape.isSome
+
+    let center = childRegion.shape.get.transform.transformPoint(vec2(20, 10))
+    let centerHit = hitTest(regions, center)
+    check centerHit.isSome
+    check centerHit.get.node == child
+    check abs(centerHit.get.local.x - 20) < 0.001
+    check abs(centerHit.get.local.y - 10) < 0.001
+
+    let aabbCorner = vec2(
+      childRegion.shape.get.bounds.x + 0.1,
+      childRegion.shape.get.bounds.y + 0.1
+    )
+    let cornerHit = hitTest(regions, aabbCorner)
+    check cornerHit.isSome
+    check cornerHit.get.node == root
+
   test "returns the topmost node containing the point":
     var tree = initTree()
     let root = tree.addBox(id = "toolbar")

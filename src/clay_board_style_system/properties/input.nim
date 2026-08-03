@@ -1,8 +1,11 @@
 import std/options
-import ../core/[color, computed_style, declaration, diagnostics, property, style_value]
+import ../core/[color, computed_style, declaration, diagnostics, property,
+    style_color, style_value]
 
-proc keywordValue(declaration: Declaration; diagnostics: var Diagnostics): Option[string] =
-  if declaration.operation.value.isNone or declaration.operation.value.get.kind != svKeyword:
+proc keywordValue(declaration: Declaration;
+    diagnostics: var Diagnostics): Option[string] =
+  if declaration.operation.value.isNone or
+      declaration.operation.value.get.kind != svKeyword:
     diagnostics.addError(declaration.property, declaration.property & " requires a keyword value")
     return none(string)
   some(declaration.operation.value.get.keyword)
@@ -120,9 +123,9 @@ proc applyInputColor(
       diagnostics.addError(declaration.property, declaration.property & " requires a color value or auto")
       return
     if declaration.property == "caret-color":
-      style.visual.caretColor = some(value.color)
+      style.visual.caretColor = value.resolveStyleColor(style, env)
     else:
-      style.visual.accentColor = some(value.color)
+      style.visual.accentColor = value.resolveStyleColor(style, env)
   of mmInitial, mmUnset:
     if declaration.property == "caret-color":
       style.visual.caretColor = none(Color)
@@ -135,7 +138,8 @@ proc applyInputColor(
       else:
         style.visual.accentColor = env.parent.get.visual.accentColor
     else:
-      diagnostics.addError(declaration.property, "cannot inherit " & declaration.property & " without parent")
+      diagnostics.addError(declaration.property, "cannot inherit " &
+          declaration.property & " without parent")
   of mmRelative:
     diagnostics.addError(declaration.property, declaration.property & " does not support relative merge")
 
@@ -166,9 +170,13 @@ proc applyResize(
   else:
     diagnostics.addError(declaration.property, "unsupported resize keyword")
 
-let pointerEventsProperty* = PropertyImpl(name: "pointer-events", apply: applyPointerEvents)
+let pointerEventsProperty* = PropertyImpl(name: "pointer-events",
+    apply: applyPointerEvents)
 let cursorProperty* = PropertyImpl(name: "cursor", apply: applyCursor)
-let userSelectProperty* = PropertyImpl(name: "user-select", apply: applyUserSelect)
-let caretColorProperty* = PropertyImpl(name: "caret-color", apply: applyInputColor)
-let accentColorProperty* = PropertyImpl(name: "accent-color", apply: applyInputColor)
+let userSelectProperty* = PropertyImpl(name: "user-select",
+    apply: applyUserSelect)
+let caretColorProperty* = PropertyImpl(name: "caret-color",
+    apply: applyInputColor)
+let accentColorProperty* = PropertyImpl(name: "accent-color",
+    apply: applyInputColor)
 let resizeProperty* = PropertyImpl(name: "resize", apply: applyResize)

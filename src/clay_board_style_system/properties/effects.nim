@@ -1,13 +1,17 @@
 import std/options
-import ../core/[color, computed_style, declaration, diagnostics, property, style_value]
+import ../core/[color, computed_style, declaration, diagnostics, property,
+    style_color, style_value]
 
-proc resolvePx(value: LengthValue; property: string; diagnostics: var Diagnostics): Option[float32] =
+proc resolvePx(value: LengthValue; property: string;
+    diagnostics: var Diagnostics): Option[float32] =
   if value.kind != ukPx:
-    diagnostics.addError(property, "only px is supported for initial " & property & " implementation")
+    diagnostics.addError(property, "only px is supported for initial " &
+        property & " implementation")
     return none(float32)
   some(value.value)
 
-proc resolvePxValue(value: StyleValue; property: string; diagnostics: var Diagnostics): Option[float32] =
+proc resolvePxValue(value: StyleValue; property: string;
+    diagnostics: var Diagnostics): Option[float32] =
   if value.kind != svLength:
     diagnostics.addError(property, property & " requires a length value")
     return none(float32)
@@ -46,7 +50,13 @@ proc applyBoxShadow(
         let resolved = resolvePx(value.shadowSpread.get, declaration.property, diagnostics)
         if resolved.isSome:
           spread = resolved.get
-      style.box.boxShadow = some(BoxShadow(offsetX: offsetX.get, offsetY: offsetY.get, blur: blur, spread: spread, color: value.shadowColor))
+      style.box.boxShadow = some(BoxShadow(
+        offsetX: offsetX.get,
+        offsetY: offsetY.get,
+        blur: blur,
+        spread: spread,
+        color: value.resolveShadowColor(style, env)
+      ))
     else:
       diagnostics.addError(declaration.property, "box-shadow requires a structured shadow value or none")
   of mmInitial, mmUnset:
@@ -76,7 +86,8 @@ proc applyVisualEffect(
 ) =
   case declaration.operation.mode
   of mmOverwrite:
-    if declaration.operation.value.isNone or declaration.operation.value.get.kind != svKeyword:
+    if declaration.operation.value.isNone or
+        declaration.operation.value.get.kind != svKeyword:
       diagnostics.addError(declaration.property, declaration.property & " requires a keyword value")
       return
     let value = declaration.operation.value.get.keyword
@@ -88,9 +99,11 @@ proc applyVisualEffect(
     style.setVisualEffect(declaration.property, none(string))
   of mmInherit:
     if env.parent.isSome:
-      style.setVisualEffect(declaration.property, env.parent.get.visualEffect(declaration.property))
+      style.setVisualEffect(declaration.property, env.parent.get.visualEffect(
+          declaration.property))
     else:
-      diagnostics.addError(declaration.property, "cannot inherit " & declaration.property & " without parent")
+      diagnostics.addError(declaration.property, "cannot inherit " &
+          declaration.property & " without parent")
   of mmRelative:
     diagnostics.addError(declaration.property, declaration.property & " does not support relative merge")
 
@@ -119,7 +132,8 @@ proc applyMixBlendMode(
 ) =
   case declaration.operation.mode
   of mmOverwrite:
-    if declaration.operation.value.isNone or declaration.operation.value.get.kind != svKeyword:
+    if declaration.operation.value.isNone or
+        declaration.operation.value.get.kind != svKeyword:
       diagnostics.addError(declaration.property, "mix-blend-mode requires a keyword value")
       return
     let parsed = parseBlendMode(declaration.operation.value.get.keyword)
@@ -149,7 +163,8 @@ proc applyIsolation(
   if declaration.operation.mode in {mmInitial, mmUnset}:
     style.visual.isolation = isoAuto
     return
-  if declaration.operation.value.isNone or declaration.operation.value.get.kind != svKeyword:
+  if declaration.operation.value.isNone or
+      declaration.operation.value.get.kind != svKeyword:
     diagnostics.addError(declaration.property, "isolation requires a keyword value")
     return
   case declaration.operation.value.get.keyword
@@ -172,7 +187,8 @@ proc applyBoxDecorationBreak(
   if declaration.operation.mode in {mmInitial, mmUnset}:
     style.box.boxDecorationBreak = bdbSlice
     return
-  if declaration.operation.value.isNone or declaration.operation.value.get.kind != svKeyword:
+  if declaration.operation.value.isNone or
+      declaration.operation.value.get.kind != svKeyword:
     diagnostics.addError(declaration.property, "box-decoration-break requires a keyword value")
     return
   case declaration.operation.value.get.keyword
@@ -200,7 +216,8 @@ proc applyOutlineWidth(
     if declaration.operation.value.isNone:
       diagnostics.addError(declaration.property, "outline-width requires a value")
       return
-    let resolved = resolvePxValue(declaration.operation.value.get, declaration.property, diagnostics)
+    let resolved = resolvePxValue(declaration.operation.value.get,
+        declaration.property, diagnostics)
     if resolved.isSome:
       style.setOutlineWidth(resolved.get)
   of mmInitial, mmUnset:
@@ -221,10 +238,12 @@ proc applyOutlineColor(
 ) =
   case declaration.operation.mode
   of mmOverwrite:
-    if declaration.operation.value.isNone or declaration.operation.value.get.kind != svColor:
+    if declaration.operation.value.isNone or
+        declaration.operation.value.get.kind != svColor:
       diagnostics.addError(declaration.property, "outline-color requires a color value")
       return
-    style.setOutlineColor(some(declaration.operation.value.get.color))
+    style.setOutlineColor(declaration.operation.value.get.resolveStyleColor(
+        style, env))
   of mmInitial, mmUnset:
     style.setOutlineColor(some(rgba(0, 0, 0, 1)))
   of mmInherit:
@@ -247,7 +266,8 @@ proc applyOutlineStyle(
   if declaration.operation.mode in {mmInitial, mmUnset}:
     style.box.outlineVisible = true
     return
-  if declaration.operation.value.isNone or declaration.operation.value.get.kind != svKeyword:
+  if declaration.operation.value.isNone or
+      declaration.operation.value.get.kind != svKeyword:
     diagnostics.addError(declaration.property, "outline-style requires a keyword value")
     return
   case declaration.operation.value.get.keyword
@@ -269,7 +289,8 @@ proc applyOutlineOffset(
     if declaration.operation.value.isNone:
       diagnostics.addError(declaration.property, "outline-offset requires a value")
       return
-    let resolved = resolvePxValue(declaration.operation.value.get, declaration.property, diagnostics)
+    let resolved = resolvePxValue(declaration.operation.value.get,
+        declaration.property, diagnostics)
     if resolved.isSome:
       style.box.outlineOffset = resolved.get
   of mmInitial, mmUnset:
@@ -300,7 +321,7 @@ proc applyOutline(
       if resolved.isSome:
         style.setOutlineWidth(resolved.get)
     of svColor:
-      style.setOutlineColor(some(value.color))
+      style.setOutlineColor(value.resolveStyleColor(style, env))
     of svKeyword:
       case value.keyword
       of "solid":
@@ -314,8 +335,9 @@ proc applyOutline(
         let resolved = resolvePx(value.borderWidth.get, declaration.property, diagnostics)
         if resolved.isSome:
           style.setOutlineWidth(resolved.get)
-      if value.borderColor.isSome:
-        style.setOutlineColor(some(value.borderColor.get))
+      let color = value.resolveBorderColor(style, env)
+      if color.isSome:
+        style.setOutlineColor(color)
       if value.borderStyle.isSome:
         case value.borderStyle.get
         of "solid":
@@ -342,12 +364,19 @@ proc applyOutline(
 
 let boxShadowProperty* = PropertyImpl(name: "box-shadow", apply: applyBoxShadow)
 let filterProperty* = PropertyImpl(name: "filter", apply: applyVisualEffect)
-let backdropFilterProperty* = PropertyImpl(name: "backdrop-filter", apply: applyVisualEffect)
-let mixBlendModeProperty* = PropertyImpl(name: "mix-blend-mode", apply: applyMixBlendMode)
+let backdropFilterProperty* = PropertyImpl(name: "backdrop-filter",
+    apply: applyVisualEffect)
+let mixBlendModeProperty* = PropertyImpl(name: "mix-blend-mode",
+    apply: applyMixBlendMode)
 let isolationProperty* = PropertyImpl(name: "isolation", apply: applyIsolation)
-let boxDecorationBreakProperty* = PropertyImpl(name: "box-decoration-break", apply: applyBoxDecorationBreak)
+let boxDecorationBreakProperty* = PropertyImpl(name: "box-decoration-break",
+    apply: applyBoxDecorationBreak)
 let outlineProperty* = PropertyImpl(name: "outline", apply: applyOutline)
-let outlineWidthProperty* = PropertyImpl(name: "outline-width", apply: applyOutlineWidth)
-let outlineStyleProperty* = PropertyImpl(name: "outline-style", apply: applyOutlineStyle)
-let outlineColorProperty* = PropertyImpl(name: "outline-color", apply: applyOutlineColor)
-let outlineOffsetProperty* = PropertyImpl(name: "outline-offset", apply: applyOutlineOffset)
+let outlineWidthProperty* = PropertyImpl(name: "outline-width",
+    apply: applyOutlineWidth)
+let outlineStyleProperty* = PropertyImpl(name: "outline-style",
+    apply: applyOutlineStyle)
+let outlineColorProperty* = PropertyImpl(name: "outline-color",
+    apply: applyOutlineColor)
+let outlineOffsetProperty* = PropertyImpl(name: "outline-offset",
+    apply: applyOutlineOffset)

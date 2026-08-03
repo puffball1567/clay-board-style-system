@@ -1,12 +1,15 @@
-import std/[algorithm, options, strutils]
+import std/[algorithm, math, options, strutils, tables]
 
-import ./core/[color, declaration, diagnostics, geometry, node, rule, selector,
-  style_resolver, style_value]
+import ./core/[color, color_conversion, color_mix, color_mix_parser,
+  color_parser, color_value, declaration, diagnostics, geometry, node, rule,
+  selector, style_resolver, style_value]
+import ./core/computed_style as computed_style_types
 import ./generated/default_properties
 import ./hit/hit_test
 import ./input/events
-import ./layout/[layout, scroll_state]
-import ./paint/[paint, paint_command]
+import ./layout/[layout, presentation, scroll_state]
+import ./paint/[paint, paint_command, path_geometry]
+import ./runtime/[canvas, render_surface]
 
 var cbssRuntimeInitialized: bool
 cbssRuntimeInitialized = true
@@ -21,7 +24,7 @@ proc ensureNimRuntime() {.inline.} =
     NimMain()
 
 const
-  CbssAbiVersion* = 0x0001_0000'u32
+  CbssAbiVersion* = 0x0001_0005'u32
   CbssNodeNone* = high(uint32)
 
   CbssOk* = 0'i32
@@ -36,11 +39,14 @@ const
   CbssInputHasButton* = 1'u32 shl 2
   CbssInputHasKey* = 1'u32 shl 3
   CbssInputHasText* = 1'u32 shl 4
+  CbssInputHasPointer* = 1'u32 shl 5
+  CbssInputFlagsMask* = (1'u32 shl 6) - 1
 
   CbssModifierCtrl* = 1'u32 shl 0
   CbssModifierAlt* = 1'u32 shl 1
   CbssModifierShift* = 1'u32 shl 2
   CbssModifierMeta* = 1'u32 shl 3
+  CbssModifierMask* = (1'u32 shl 4) - 1
 
   CbssEventHasLocal* = 1'u32 shl 0
   CbssEventHasPosition* = 1'u32 shl 1
@@ -48,6 +54,16 @@ const
   CbssEventHasButton* = 1'u32 shl 3
   CbssEventHasKey* = 1'u32 shl 4
   CbssEventHasText* = 1'u32 shl 5
+  CbssEventHasPointer* = 1'u32 shl 6
+
+  CbssPointerAxisPressure* = 1'u32 shl 0
+  CbssPointerAxisTangentialPressure* = 1'u32 shl 1
+  CbssPointerAxisTiltX* = 1'u32 shl 2
+  CbssPointerAxisTiltY* = 1'u32 shl 3
+  CbssPointerAxisRotation* = 1'u32 shl 4
+  CbssPointerAxisDistance* = 1'u32 shl 5
+  CbssPointerAxisSlider* = 1'u32 shl 6
+  CbssPointerAxesMask* = (1'u32 shl 7) - 1
 
   CbssBorderHasWidth* = 1'u32 shl 0
   CbssBorderHasStyle* = 1'u32 shl 1
@@ -65,12 +81,46 @@ const
   CbssAccessibleHasValueMin* = 1'u32 shl 1
   CbssAccessibleHasValueMax* = 1'u32 shl 2
 
+  CbssColorMissingFirst* = 1'u32 shl 0
+  CbssColorMissingSecond* = 1'u32 shl 1
+  CbssColorMissingThird* = 1'u32 shl 2
+  CbssColorMissingAlpha* = 1'u32 shl 3
+  CbssColorMissingMask* = (1'u32 shl 4) - 1
+
+  CbssColorMixHasFirstPercentage* = 1'u32 shl 0
+  CbssColorMixHasSecondPercentage* = 1'u32 shl 1
+  CbssColorMixFlagsMask* = (1'u32 shl 2) - 1
+
+  CbssSurfaceVisible* = 1'u32 shl 0
+  CbssSurfaceInside* = 1'u32 shl 1
+  CbssSurfaceCaptured* = 1'u32 shl 2
+  CbssSurfaceHasLocalPosition* = 1'u32 shl 3
+
+  CbssSurfaceHandled* = 1'u32 shl 0
+  CbssSurfaceRequestNextFrame* = 1'u32 shl 1
+
+  CbssTextHasFontSize* = 1'u32 shl 0
+  CbssTextHasLineHeight* = 1'u32 shl 1
+  CbssTextHasFontWeight* = 1'u32 shl 2
+  CbssTextHasLetterSpacing* = 1'u32 shl 3
+  CbssTextHasFontStyle* = 1'u32 shl 4
+  CbssTextFlagsMask* = (1'u32 shl 5) - 1
+
 type
   CbssRectC* {.bycopy.} = object
     x*, y*, w*, h*: cfloat
 
   CbssColorC* {.bycopy.} = object
     r*, g*, b*, a*: cfloat
+
+  CbssAffineTransformC* {.bycopy.} = object
+    m11*, m12*, m21*, m22*, tx*, ty*: cfloat
+
+  CbssPathSegmentC* {.bycopy.} = object
+    kind*: uint32
+    control1X*, control1Y*: cfloat
+    control2X*, control2Y*: cfloat
+    endpointX*, endpointY*: cfloat
 
   CbssLayoutBoxC* {.bycopy.} = object
     node*: uint32
@@ -105,15 +155,29 @@ type
     color*: CbssColorC
     offset*: cfloat
 
+  CbssColorValueGradientStopC* {.bycopy.} = object
+    color*: CbssColorValueHandle
+    offset*: cfloat
+
   CbssTransformOperationC* {.bycopy.} = object
     kind*, flags*, xUnit*, yUnit*, zUnit*: uint32
     x*, y*, z*, angle*: cfloat
+
+  CbssPointerDataC* {.bycopy.} = object
+    device*, axes*: uint32
+    deviceId*: uint64
+    pressure*, tangentialPressure*: cfloat
+    tiltX*, tiltY*, rotation*, distance*, slider*: cfloat
+    buttons*: uint32
+    contact*, primary*, eraser*, inProximity*: uint8
 
   CbssInputEventC* {.bycopy.} = object
     kind*, flags*, modifiers*: uint32
     button*: int32
     x*, y*, deltaX*, deltaY*: cfloat
     key*, text*: cstring
+    pointer*: CbssPointerDataC
+    timestamp*: uint64
 
   CbssEventC* {.bycopy.} = object
     kind*, target*, currentTarget*, flags*: uint32
@@ -121,6 +185,8 @@ type
     button*: int32
     modifiers*: uint32
     key*, text*: cstring
+    pointer*: CbssPointerDataC
+    timestamp*: uint64
 
   CbssDispatchSummaryC* {.bycopy.} = object
     target*, dispatchCount*: uint32
@@ -139,19 +205,52 @@ type
     labelledBy*, describedBy*: uint32
     hidden*: uint8
 
+  CbssRenderSurfacePlacementC* {.bycopy.} = object
+    bounds*, clip*: CbssRectC
+    pixelScale*, opacity*: cfloat
+
+  CbssRenderSurfaceEventC* {.bycopy.} = object
+    kind*, flags*: uint32
+    surface*: uint64
+    node*, apiVersion*: uint32
+    revision*, frameNumber*: uint64
+    nowSeconds*, deltaSeconds*: cdouble
+    placement*: CbssRenderSurfacePlacementC
+    localX*, localY*: cfloat
+    logicalWidth*, logicalHeight*: cfloat
+    pixelWidth*, pixelHeight*: cfloat
+    input*: CbssInputEventC
+
   CbssContextHandle* = ptr CbssContextObj
   CbssStyleHandle* = ptr CbssStyleObj
+  CbssColorValueHandle* = ptr CbssColorValueObj
   CbssEventCallback* = proc(
     context: CbssContextHandle;
     event: ptr CbssEventC;
     userData: pointer
   ): uint8 {.cdecl.}
+  CbssRenderSurfaceCallback* = proc(
+    context: CbssContextHandle;
+    event: ptr CbssRenderSurfaceEventC;
+    userData: pointer
+  ): uint32 {.cdecl.}
 
   CbssEventBinding = object
     node: NodeId
     kind: InputEventKind
     callback: CbssEventCallback
     userData: pointer
+
+  CbssRenderSurfaceBinding = ref object
+    context: CbssContextHandle
+    surface: RenderSurfaceId
+    mountedNode: uint32
+    callback: CbssRenderSurfaceCallback
+    userData: pointer
+    canvas: Canvas2D
+    committedCanvas: Canvas2D
+    committedCanvasRevision: uint64
+    publishedRevision: uint64
 
   CbssAppliedStyle = object
     node: NodeId
@@ -171,14 +270,31 @@ type
     scroll: ScrollState
     interaction: InteractionState
     eventBindings: seq[CbssEventBinding]
+    surfaces: RenderSurfaceRegistry
+    surfaceBindings: Table[RenderSurfaceId, CbssRenderSurfaceBinding]
+    surfacePaintProvider: SurfacePaintProvider
+    pixelScale: float32
     diagnostics: Diagnostics
     lastError: string
     computed: bool
     hasViewport: bool
     viewportWidth, viewportHeight: float32
+    refreshingPresentation: bool
+    presentationRefreshPending: bool
 
   CbssStyleObj = object
     declarations: seq[Declaration]
+
+  CbssColorValueKind = enum
+    ccvValue,
+    ccvMix
+
+  CbssColorValueObj = object
+    case kind: CbssColorValueKind
+    of ccvValue:
+      value: ColorValue
+    of ccvMix:
+      mix: ColorMixValue
 
 static:
   doAssert sizeof(CbssRectC) == 16
@@ -186,23 +302,235 @@ static:
   doAssert sizeof(CbssLayoutBoxC) == 24
   doAssert sizeof(CbssHitResultC) == 24
   doAssert sizeof(CbssPaintCommandC) == 64
+  doAssert sizeof(CbssAffineTransformC) == 24
+  doAssert sizeof(CbssPathSegmentC) == 28
   doAssert sizeof(CbssTextStyleC) == 24
   doAssert sizeof(CbssGradientStopC) == 20
   doAssert sizeof(CbssTransformOperationC) == 36
-  doAssert sizeof(CbssInputEventC) == 48
-  doAssert sizeof(CbssEventC) == 64
+  doAssert sizeof(CbssPointerDataC) == 56
+  doAssert sizeof(CbssInputEventC) == 112
+  doAssert sizeof(CbssEventC) == 128
   doAssert sizeof(CbssDispatchSummaryC) == 12
   doAssert sizeof(CbssScrollMetricsC) == 36
   doAssert sizeof(CbssAccessibilityC) == 32
+  doAssert sizeof(CbssRenderSurfacePlacementC) == 40
+  doAssert sizeof(CbssRenderSurfaceEventC) == 232
 
 proc toRect(value: Rect): CbssRectC {.inline.} =
   CbssRectC(x: value.x, y: value.y, w: value.w, h: value.h)
 
+proc toPlacement(
+    value: RenderSurfacePlacement
+): CbssRenderSurfacePlacementC {.inline.} =
+  CbssRenderSurfacePlacementC(
+    bounds: value.bounds.toRect(),
+    clip: value.clip.toRect(),
+    pixelScale: value.pixelScale,
+    opacity: value.opacity
+  )
+
 proc toColor(value: Color): CbssColorC {.inline.} =
   CbssColorC(r: value.r, g: value.g, b: value.b, a: value.a)
 
+proc toMissingComponents(mask: uint32): set[ColorComponent] {.inline.} =
+  if (mask and CbssColorMissingFirst) != 0:
+    result.incl ccFirst
+  if (mask and CbssColorMissingSecond) != 0:
+    result.incl ccSecond
+  if (mask and CbssColorMissingThird) != 0:
+    result.incl ccThird
+  if (mask and CbssColorMissingAlpha) != 0:
+    result.incl ccAlpha
+
+proc colorSpaceFromC(value: uint32): Option[ColorSpace] =
+  case value
+  of 0: some(csSrgb)
+  of 1: some(csSrgbLinear)
+  of 2: some(csDisplayP3)
+  of 3: some(csA98Rgb)
+  of 4: some(csProPhotoRgb)
+  of 5: some(csRec2020)
+  of 6: some(csXyzD50)
+  of 7: some(csXyzD65)
+  of 8: some(csHsl)
+  of 9: some(csHwb)
+  of 10: some(csLab)
+  of 11: some(csLch)
+  of 12: some(csOklab)
+  of 13: some(csOklch)
+  of 14: some(csDisplayP3Linear)
+  else: none(ColorSpace)
+
+proc interpolationSpaceFromC(
+    value: uint32
+): Option[ColorInterpolationSpace] =
+  case value
+  of 0: some(cisSrgb)
+  of 1: some(cisSrgbLinear)
+  of 2: some(cisOklab)
+  else: none(ColorInterpolationSpace)
+
+proc interpolationSpaceToC(value: ColorInterpolationSpace): uint32 =
+  case value
+  of cisSrgb: 0
+  of cisSrgbLinear: 1
+  of cisOklab: 2
+
+proc layerCompositeModeFromC(value: uint32): Option[LayerCompositeMode] =
+  case value
+  of 0: some(lcmSourceOver)
+  of 1: some(lcmCopy)
+  of 2: some(lcmAdditive)
+  else: none(LayerCompositeMode)
+
+proc strokeLineCapFromC(value: uint32): Option[StrokeLineCap] =
+  case value
+  of 0: some(slcButt)
+  of 1: some(slcRound)
+  of 2: some(slcSquare)
+  else: none(StrokeLineCap)
+
+proc strokeLineJoinFromC(value: uint32): Option[StrokeLineJoin] =
+  case value
+  of 0: some(sljMiter)
+  of 1: some(sljRound)
+  of 2: some(sljBevel)
+  else: none(StrokeLineJoin)
+
+proc colorValueOf(value: CbssColorValueHandle): ColorValue {.inline.} =
+  value.value
+
+proc resolveColor(value: CbssColorValueHandle; current: Color): Color {.inline.} =
+  case value.kind
+  of ccvValue:
+    value.value.resolveColor(current)
+  of ccvMix:
+    value.mix.resolveColor(current)
+
 proc fromCString(value: cstring): string {.inline.} =
   if value.isNil: "" else: $value
+
+proc toRect(value: CbssRectC): Rect {.inline.} =
+  rect(value.x, value.y, value.w, value.h)
+
+proc toColor(value: CbssColorC): Color {.inline.} =
+  rgba(value.r, value.g, value.b, value.a)
+
+proc toAffine(value: CbssAffineTransformC): Affine2D {.inline.} =
+  Affine2D(
+    m11: value.m11,
+    m12: value.m12,
+    m21: value.m21,
+    m22: value.m22,
+    tx: value.tx,
+    ty: value.ty
+  )
+
+proc finite(value: float32): bool {.inline.} =
+  value.classify notin {fcNan, fcInf, fcNegInf}
+
+proc validPointerData(value: CbssPointerDataC): bool =
+  if value.device > uint32(ord(high(PointerDeviceKind))) or
+      (value.axes and not CbssPointerAxesMask) != 0 or
+      value.contact > 1 or value.primary > 1 or value.eraser > 1 or
+      value.inProximity > 1:
+    return false
+  if not (value.pressure.finite and value.tangentialPressure.finite and
+      value.tiltX.finite and value.tiltY.finite and value.rotation.finite and
+      value.distance.finite and value.slider.finite):
+    return false
+  if (value.axes and CbssPointerAxisPressure) != 0 and
+      (value.pressure < 0 or value.pressure > 1):
+    return false
+  if (value.axes and CbssPointerAxisTangentialPressure) != 0 and
+      (value.tangentialPressure < -1 or value.tangentialPressure > 1):
+    return false
+  if (value.axes and CbssPointerAxisTiltX) != 0 and
+      (value.tiltX < -90 or value.tiltX > 90):
+    return false
+  if (value.axes and CbssPointerAxisTiltY) != 0 and
+      (value.tiltY < -90 or value.tiltY > 90):
+    return false
+  if (value.axes and CbssPointerAxisRotation) != 0 and
+      (value.rotation < -180 or value.rotation > 180):
+    return false
+  if (value.axes and CbssPointerAxisDistance) != 0 and
+      (value.distance < 0 or value.distance > 1):
+    return false
+  if (value.axes and CbssPointerAxisSlider) != 0 and
+      (value.slider < 0 or value.slider > 1):
+    return false
+  true
+
+proc validInputEvent(value: CbssInputEventC): bool =
+  if value.kind > uint32(ord(high(InputEventKind))) or
+      (value.flags and not CbssInputFlagsMask) != 0 or
+      (value.modifiers and not CbssModifierMask) != 0:
+    return false
+  if (value.flags and CbssInputHasPosition) != 0 and
+      not (value.x.finite and value.y.finite):
+    return false
+  if (value.flags and CbssInputHasDelta) != 0 and
+      not (value.deltaX.finite and value.deltaY.finite):
+    return false
+  if (value.flags and CbssInputHasKey) != 0 and value.key.isNil:
+    return false
+  if (value.flags and CbssInputHasText) != 0 and value.text.isNil:
+    return false
+  if (value.flags and CbssInputHasPointer) != 0 and
+      not value.pointer.validPointerData():
+    return false
+  true
+
+proc validRect(value: CbssRectC; allowEmpty = false): bool {.inline.} =
+  value.x.finite and value.y.finite and value.w.finite and value.h.finite and
+    value.w >= 0 and value.h >= 0 and
+    (allowEmpty or (value.w > 0 and value.h > 0))
+
+proc validColor(value: CbssColorC): bool {.inline.} =
+  value.r.finite and value.g.finite and value.b.finite and value.a.finite
+
+proc surfaceBinding(
+    context: CbssContextHandle;
+    surfaceValue: uint64
+): CbssRenderSurfaceBinding {.inline.} =
+  if context.isNil or surfaceValue == 0:
+    return nil
+  let surface = RenderSurfaceId(surfaceValue)
+  if surface in context.surfaceBindings:
+    context.surfaceBindings[surface]
+  else:
+    nil
+
+proc checkedSurfaceCanvas(
+    context: CbssContextHandle;
+    surfaceValue: uint64
+): tuple[status: int32, binding: CbssRenderSurfaceBinding] {.inline.} =
+  if context.isNil:
+    return (CbssInvalidHandle, nil)
+  let binding = context.surfaceBinding(surfaceValue)
+  if binding.isNil:
+    return (CbssOutOfRange, nil)
+  (CbssOk, binding)
+
+proc copyCanvasCommands(source: Canvas2D): seq[CanvasCommand] =
+  ## Presentation reads only snapshots published by commit. Nested strings,
+  ## gradients, and paths are immutable through the C adapter and remain
+  ## reference-counted values inside the copied command sequence.
+  result = newSeqOfCap[CanvasCommand](source.commands.len)
+  for command in source.commands:
+    result.add command
+
+template guardedCanvasMutation(
+    context: CbssContextHandle;
+    body: untyped
+): int32 =
+  try:
+    body
+    CbssOk
+  except CatchableError as error:
+    context.setError(error.msg)
+    CbssInternalError
 
 proc validNode(context: CbssContextHandle; node: uint32): bool {.inline.} =
   not context.isNil and node != CbssNodeNone and
@@ -284,8 +612,29 @@ proc commandString(command: PaintCommand): string =
   else:
     ""
 
+proc commandKindToC(command: PaintCommand): uint32 =
+  ## Public ABI values are append-only and must not follow Nim enum ordinals.
+  case command.kind
+  of pcPushClip: 0
+  of pcPopClip: 1
+  of pcBoxShadow: 2
+  of pcFillRect: 3
+  of pcFillLinearGradient: 4
+  of pcStrokeRect: 5
+  of pcDrawText: 6
+  of pcDrawImage: 7
+  of pcStrokePath: 8
+  of pcPushTransform: 9
+  of pcPopTransform: 10
+  of pcPushLayer: 11
+  of pcPopLayer: 12
+
 proc commandRect(command: PaintCommand): Rect =
   case command.kind
+  of pcPushTransform, pcPopTransform, pcPopLayer:
+    rect(0, 0, 0, 0)
+  of pcPushLayer:
+    command.layerBounds
   of pcPushClip:
     command.clipRect
   of pcPopClip:
@@ -298,6 +647,8 @@ proc commandRect(command: PaintCommand): Rect =
     command.gradientRect
   of pcStrokeRect:
     command.strokeRect
+  of pcStrokePath:
+    command.path.bounds()
   of pcDrawText:
     rect(
       command.position.x,
@@ -316,6 +667,8 @@ proc commandColor(command: PaintCommand): Color =
     command.color
   of pcStrokeRect:
     command.strokeColor
+  of pcStrokePath:
+    command.pathColor
   of pcDrawText:
     command.textColor
   else:
@@ -337,12 +690,66 @@ proc commandRadius(command: PaintCommand): float32 =
     0
 
 proc refreshPresentation(context: CbssContextHandle) =
-  context.commands = buildPaintCommands(
-    context.tree, context.resolved, context.layout, context.scroll
-  )
-  context.hits = buildHitRegions(
-    context.tree, context.layout, context.resolved, context.scroll
-  )
+  if context.refreshingPresentation:
+    context.presentationRefreshPending = true
+    return
+  context.refreshingPresentation = true
+  try:
+    while true:
+      context.presentationRefreshPending = false
+      context.commands = buildPaintCommands(
+        context.tree, context.resolved, context.layout, context.scroll,
+        context.surfacePaintProvider
+      )
+      context.hits = buildHitRegions(
+        context.tree, context.layout, context.resolved, context.scroll
+      )
+      for index, node in context.tree.nodes:
+        if not node.alive or node.renderSurfaceId.isNone:
+          continue
+        let nodeId = context.tree.nodeIdAt(index)
+        if nodeId.isNone:
+          continue
+        let surface = RenderSurfaceId(node.renderSurfaceId.get)
+        if not context.surfaces.hasSurface(surface):
+          continue
+        let presented = presentationForNode(
+          context.tree, context.layout, context.resolved, nodeId.get,
+          context.scroll
+        )
+        let placement =
+          if presented.isSome:
+            let style {.cursor.} = context.resolved.styles[nodeId.get.nodeIndex]
+            renderSurfacePlacement(
+              presented.get.contentBounds(style),
+              presented.get.contentClip(style),
+              pixelScale = context.pixelScale,
+              opacity = max(0.0'f32, min(1.0'f32, presented.get.opacity))
+            )
+          else:
+            renderSurfacePlacement(
+              rect(0, 0, 0, 0), rect(0, 0, 0, 0),
+              pixelScale = context.pixelScale, opacity = 0
+            )
+        let visible = presented.isSome and presented.get.visible and
+          not placement.effectiveClip.isEmpty
+        if context.surfaces.surfaceState(surface) == rssUnmounted:
+          let revision =
+            if surface in context.surfaceBindings:
+              context.surfaceBindings[surface].publishedRevision
+            else:
+              0'u64
+          context.surfaces.mountSurface(
+            surface, nodeId.get, placement, visible = visible,
+            revision = revision
+          )
+        else:
+          discard context.surfaces.placeSurface(surface, placement)
+          discard context.surfaces.setSurfaceVisible(surface, visible)
+      if not context.presentationRefreshPending:
+        break
+  finally:
+    context.refreshingPresentation = false
 
 proc eventModifiers(event: InputEvent): uint32 {.inline.} =
   (if event.ctrlKey: CbssModifierCtrl else: 0'u32) or
@@ -350,9 +757,56 @@ proc eventModifiers(event: InputEvent): uint32 {.inline.} =
     (if event.shiftKey: CbssModifierShift else: 0'u32) or
     (if event.metaKey: CbssModifierMeta else: 0'u32)
 
+proc pointerAxes(value: set[PointerAxis]): uint32 {.inline.} =
+  for axis in value:
+    result = result or (1'u32 shl uint32(ord(axis)))
+
+proc pointerDataC(value: PointerData): CbssPointerDataC {.inline.} =
+  CbssPointerDataC(
+    device: uint32(ord(value.device)),
+    axes: value.axes.pointerAxes(),
+    deviceId: value.deviceId,
+    pressure: value.pressure,
+    tangentialPressure: value.tangentialPressure,
+    tiltX: value.tiltX,
+    tiltY: value.tiltY,
+    rotation: value.rotation,
+    distance: value.distance,
+    slider: value.slider,
+    buttons: value.buttons,
+    contact: uint8(ord(value.contact)),
+    primary: uint8(ord(value.primary)),
+    eraser: uint8(ord(value.eraser)),
+    inProximity: uint8(ord(value.inProximity))
+  )
+
+proc pointerData(value: CbssPointerDataC): PointerData {.inline.} =
+  var axes: set[PointerAxis]
+  for axis in PointerAxis:
+    if (value.axes and (1'u32 shl uint32(ord(axis)))) != 0:
+      axes.incl axis
+  PointerData(
+    device: PointerDeviceKind(value.device),
+    deviceId: value.deviceId,
+    axes: axes,
+    pressure: value.pressure,
+    tangentialPressure: value.tangentialPressure,
+    tiltX: value.tiltX,
+    tiltY: value.tiltY,
+    rotation: value.rotation,
+    distance: value.distance,
+    slider: value.slider,
+    buttons: value.buttons,
+    contact: value.contact != 0,
+    primary: value.primary != 0,
+    eraser: value.eraser != 0,
+    inProximity: value.inProximity != 0
+  )
+
 proc inputEvent(value: CbssInputEventC): InputEvent =
   result = InputEvent(
     kind: InputEventKind(value.kind),
+    timestamp: value.timestamp,
     ctrlKey: (value.modifiers and CbssModifierCtrl) != 0,
     altKey: (value.modifiers and CbssModifierAlt) != 0,
     shiftKey: (value.modifiers and CbssModifierShift) != 0,
@@ -368,6 +822,145 @@ proc inputEvent(value: CbssInputEventC): InputEvent =
     result.key = some(fromCString(value.key))
   if (value.flags and CbssInputHasText) != 0:
     result.text = some(fromCString(value.text))
+  if (value.flags and CbssInputHasPointer) != 0:
+    result.pointer = some(value.pointer.pointerData())
+
+proc inputEventC(value: InputEvent): CbssInputEventC =
+  result = CbssInputEventC(
+    kind: uint32(ord(value.kind)),
+    modifiers: value.eventModifiers(),
+    timestamp: value.timestamp
+  )
+  if value.position.isSome:
+    result.flags = result.flags or CbssInputHasPosition
+    result.x = value.position.get.x
+    result.y = value.position.get.y
+  if value.delta.isSome:
+    result.flags = result.flags or CbssInputHasDelta
+    result.deltaX = value.delta.get.x
+    result.deltaY = value.delta.get.y
+  if value.button.isSome:
+    result.flags = result.flags or CbssInputHasButton
+    result.button = int32(value.button.get)
+  if value.key.isSome:
+    result.flags = result.flags or CbssInputHasKey
+    result.key = cstring(value.key.get)
+  if value.text.isSome:
+    result.flags = result.flags or CbssInputHasText
+    result.text = cstring(value.text.get)
+  if value.pointer.isSome:
+    result.flags = result.flags or CbssInputHasPointer
+    result.pointer = value.pointer.get.pointerDataC()
+
+proc surfaceEvent(
+    kind: uint32;
+    surface: RenderSurfaceId;
+    node = CbssNodeNone;
+    flags = 0'u32;
+    revision = 0'u64;
+    frameNumber = 0'u64;
+    nowSeconds = 0.0;
+    deltaSeconds = 0.0;
+    placement = renderSurfacePlacement(rect(0, 0, 0, 0), rect(0, 0, 0, 0));
+    localPosition = none(Vec2);
+    logicalSize = size(0, 0);
+    pixelSize = size(0, 0);
+    input = InputEvent()
+): CbssRenderSurfaceEventC =
+  result = CbssRenderSurfaceEventC(
+    kind: kind,
+    flags: flags,
+    surface: surface.renderSurfaceIdValue,
+    node: node,
+    apiVersion: renderSurfaceApiVersion,
+    revision: revision,
+    frameNumber: frameNumber,
+    nowSeconds: nowSeconds,
+    deltaSeconds: deltaSeconds,
+    placement: placement.toPlacement(),
+    logicalWidth: logicalSize.w,
+    logicalHeight: logicalSize.h,
+    pixelWidth: pixelSize.w,
+    pixelHeight: pixelSize.h,
+    input: input.inputEventC()
+  )
+  if localPosition.isSome:
+    result.flags = result.flags or CbssSurfaceHasLocalPosition
+    result.localX = localPosition.get.x
+    result.localY = localPosition.get.y
+
+proc cRenderSurfaceDescriptor(
+    binding: CbssRenderSurfaceBinding;
+    name: string
+): RenderSurfaceDescriptor =
+  template invoke(event: CbssRenderSurfaceEventC): uint32 =
+    var callbackValue = event
+    binding.callback(binding.context, addr callbackValue, binding.userData)
+
+  RenderSurfaceDescriptor(
+    name: name,
+    callbacks: RenderSurfaceCallbacks(
+      onMount: proc(event: RenderSurfaceMount) =
+        binding.mountedNode = event.node.nodeRawValue()
+        let flags = if event.visible: CbssSurfaceVisible else: 0'u32
+        discard invoke(surfaceEvent(
+          0, event.surface, binding.mountedNode, flags, event.revision,
+          placement = event.placement
+        )),
+      onUpdate: proc(event: RenderSurfaceUpdate) =
+        discard invoke(surfaceEvent(
+          1, event.surface, binding.mountedNode, revision = event.revision,
+          placement = event.placement
+        )),
+      onResize: proc(event: RenderSurfaceResize) =
+        discard invoke(surfaceEvent(
+          2, event.surface, binding.mountedNode,
+          logicalSize = event.logicalSize,
+          pixelSize = event.pixelSize
+        )),
+      onInput: proc(event: RenderSurfaceInput): bool =
+        var flags = 0'u32
+        if event.inside:
+          flags = flags or CbssSurfaceInside
+        if event.captured:
+          flags = flags or CbssSurfaceCaptured
+        let response = invoke(surfaceEvent(
+          3, event.surface, binding.mountedNode, flags,
+          localPosition = event.localPosition, input = event.event
+        ))
+        (response and CbssSurfaceHandled) != 0,
+      onFrame: proc(event: RenderSurfaceFrame): RenderSurfaceFrameResult =
+        let response = invoke(surfaceEvent(
+          4, event.surface, binding.mountedNode,
+          frameNumber = event.frameNumber,
+          nowSeconds = event.nowSeconds,
+          deltaSeconds = event.deltaSeconds,
+          placement = event.placement
+        ))
+        if (response and CbssSurfaceRequestNextFrame) != 0:
+          rsfRequestNext
+        else:
+          rsfIdle,
+      onVisibility: proc(visible: bool) =
+        let flags = if visible: CbssSurfaceVisible else: 0'u32
+        discard invoke(surfaceEvent(
+          5, binding.surface, binding.mountedNode, flags
+        )),
+      onDeviceLost: proc() =
+        discard invoke(surfaceEvent(
+          6, binding.surface, binding.mountedNode
+        )),
+      onDeviceRestored: proc() =
+        discard invoke(surfaceEvent(
+          7, binding.surface, binding.mountedNode
+        )),
+      onUnmount: proc() =
+        discard invoke(surfaceEvent(
+          8, binding.surface, binding.mountedNode
+        ))
+        binding.mountedNode = CbssNodeNone
+    )
+  )
 
 proc eventFlags(dispatch: DispatchResult; includeLocal: bool): uint32 =
   if includeLocal and dispatch.local.isSome:
@@ -382,6 +975,8 @@ proc eventFlags(dispatch: DispatchResult; includeLocal: bool): uint32 =
     result = result or CbssEventHasKey
   if dispatch.event.text.isSome:
     result = result or CbssEventHasText
+  if dispatch.event.pointer.isSome:
+    result = result or CbssEventHasPointer
 
 proc callbackEvent(
     dispatch: DispatchResult;
@@ -393,6 +988,7 @@ proc callbackEvent(
     target: originalTarget.nodeRawValue(),
     currentTarget: currentTarget.nodeRawValue(),
     flags: dispatch.eventFlags(includeLocal),
+    timestamp: dispatch.event.timestamp,
     button:
       if dispatch.event.button.isSome:
         int32(dispatch.event.button.get)
@@ -413,6 +1009,8 @@ proc callbackEvent(
     result.key = dispatch.event.key.get.cstring
   if dispatch.event.text.isSome:
     result.text = dispatch.event.text.get.cstring
+  if dispatch.event.pointer.isSome:
+    result.pointer = dispatch.event.pointer.get.pointerDataC()
 
 proc effectiveEventKinds(kind: InputEventKind): seq[InputEventKind] =
   case kind
@@ -467,6 +1065,25 @@ proc invokeCallbacks(
             break
     current = parent
 
+proc invokeRenderSurface(
+    context: CbssContextHandle;
+    dispatch: DispatchResult
+): bool =
+  if dispatch.target.isNone or not context.tree.isValid(dispatch.target.get):
+    return false
+  let target = dispatch.target.get
+  let surfaceValue = context.tree.nodes[target.nodeIndex].renderSurfaceId
+  if surfaceValue.isNone:
+    return false
+  let surface = RenderSurfaceId(surfaceValue.get)
+  if not context.surfaces.hasSurface(surface):
+    return false
+  context.surfaces.dispatchSurfaceInput(
+    surface,
+    dispatch.event,
+    captured = context.interaction.pointerCaptureTarget == some(target)
+  )
+
 proc dispatchAll(
     context: CbssContextHandle;
     dispatches: openArray[DispatchResult]
@@ -474,6 +1091,8 @@ proc dispatchAll(
   for dispatch in dispatches:
     inc result.count
     if context.invokeCallbacks(dispatch):
+      result.handled = true
+    if context.invokeRenderSurface(dispatch):
       result.handled = true
 
 type
@@ -550,9 +1169,10 @@ proc cbssAbiVersion(): uint32 {.
 proc cbssContextCreate(): CbssContextHandle {.
     exportc: "cbss_context_create", cdecl, dynlib.} =
   ensureNimRuntime()
+  var allocated: CbssContextHandle = nil
   try:
-    result = create(CbssContextObj)
-    result[] = CbssContextObj(
+    allocated = create(CbssContextObj)
+    allocated[] = CbssContextObj(
       tree: initTree(),
       sheets: @[],
       appliedStyles: @[],
@@ -563,17 +1183,39 @@ proc cbssContextCreate(): CbssContextHandle {.
       scroll: initScrollState(),
       interaction: initInteractionState(),
       eventBindings: @[],
+      surfaces: initRenderSurfaceRegistry(),
+      surfaceBindings: initTable[RenderSurfaceId, CbssRenderSurfaceBinding](),
+      pixelScale: 1.0'f32,
       diagnostics: Diagnostics(items: @[]),
       computed: false,
       hasViewport: false
     )
+    let owner = allocated
+    allocated.surfacePaintProvider = proc(
+        surfaceValue: uint64;
+        node: NodeId;
+        bounds: Rect;
+        opacity: float32
+    ): seq[PaintCommand] =
+      let binding = owner.surfaceBinding(surfaceValue)
+      if not binding.isNil:
+        result = binding.committedCanvas.paintCommands(
+          node, bounds, opacity, resolveBounds = false
+        )
+    result = allocated
   except CatchableError:
+    if not allocated.isNil:
+      `=destroy`(allocated[])
+      dealloc(allocated)
     result = nil
 
 proc cbssContextDestroy(context: CbssContextHandle) {.
     exportc: "cbss_context_destroy", cdecl, dynlib.} =
   if context.isNil:
     return
+  context.computed = false
+  context.surfaces.unmountAllSurfaces()
+  context.surfacePaintProvider = nil
   `=destroy`(context[])
   dealloc(context)
 
@@ -582,6 +1224,8 @@ proc cbssContextReset(context: CbssContextHandle): int32 {.
   if context.isNil:
     return CbssInvalidHandle
   try:
+    context.computed = false
+    context.surfaces.unmountAllSurfaces()
     context.tree = initTree()
     context.sheets.setLen(0)
     context.appliedStyles.setLen(0)
@@ -592,6 +1236,7 @@ proc cbssContextReset(context: CbssContextHandle): int32 {.
     context.scroll = initScrollState()
     context.interaction = initInteractionState()
     context.eventBindings.setLen(0)
+    context.pixelScale = 1.0'f32
     context.diagnostics.items.setLen(0)
     context.lastError = ""
     context.computed = false
@@ -768,6 +1413,527 @@ proc cbssContextAddImage(
   except CatchableError as error:
     context.setError(error.msg)
     CbssNodeNone
+
+proc cbssContextRegisterRenderSurface(
+    context: CbssContextHandle;
+    name: cstring;
+    callback: CbssRenderSurfaceCallback;
+    userData: pointer;
+    output: ptr uint64
+): int32 {.exportc: "cbss_context_register_render_surface", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if callback.isNil or output.isNil:
+    return CbssInvalidArgument
+  output[] = 0'u64
+  try:
+    let binding = CbssRenderSurfaceBinding(
+      context: context,
+      surface: RenderSurfaceId(0),
+      mountedNode: CbssNodeNone,
+      callback: callback,
+      userData: userData,
+      canvas: newCanvas2D(),
+      committedCanvas: newCanvas2D(),
+      committedCanvasRevision: 1,
+      publishedRevision: 0
+    )
+    let surface = context.surfaces.registerSurface(
+      binding.cRenderSurfaceDescriptor(fromCString(name))
+    )
+    binding.surface = surface
+    context.surfaceBindings[surface] = binding
+    output[] = surface.renderSurfaceIdValue
+    CbssOk
+  except CatchableError as error:
+    context.setError(error.msg)
+    CbssInternalError
+
+proc cbssContextUnregisterRenderSurface(
+    context: CbssContextHandle;
+    surfaceValue: uint64
+): int32 {.exportc: "cbss_context_unregister_render_surface", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if surfaceValue == 0:
+    return CbssInvalidArgument
+  let surface = RenderSurfaceId(surfaceValue)
+  if not context.surfaces.hasSurface(surface):
+    return CbssOutOfRange
+  for node in context.tree.nodes.mitems:
+    if node.renderSurfaceId == some(surfaceValue):
+      node.renderSurfaceId = none(uint64)
+  discard context.surfaces.unregisterSurface(surface)
+  context.surfaceBindings.del(surface)
+  context.invalidate()
+  CbssOk
+
+proc cbssContextAddRenderSurface(
+    context: CbssContextHandle;
+    parent: uint32;
+    surfaceValue: uint64;
+    identifier: cstring
+): uint32 {.exportc: "cbss_context_add_render_surface", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssNodeNone
+  let surface = RenderSurfaceId(surfaceValue)
+  if surfaceValue == 0 or not context.surfaces.hasSurface(surface):
+    context.setError("render surface is not registered")
+    return CbssNodeNone
+  if parent == CbssNodeNone:
+    if context.tree.root.isSome:
+      context.setError("a CBSS context can have only one root node")
+      return CbssNodeNone
+  elif not context.validNode(parent):
+    context.setError("invalid parent node")
+    return CbssNodeNone
+  for node in context.tree.nodes:
+    if node.alive and node.renderSurfaceId == some(surfaceValue):
+      context.setError("render surface is already assigned to a node")
+      return CbssNodeNone
+  try:
+    let id = context.tree.addRenderSurfaceBox(
+      surfaceValue,
+      parent =
+        if parent == CbssNodeNone: none(NodeId)
+        else: some(parent.nodeId),
+      id = fromCString(identifier)
+    )
+    context.invalidate()
+    id.nodeRawValue()
+  except CatchableError as error:
+    context.setError(error.msg)
+    CbssNodeNone
+
+proc cbssRenderSurfaceUpdate(
+    context: CbssContextHandle;
+    surfaceValue, revision: uint64
+): int32 {.exportc: "cbss_render_surface_update", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  let surface = RenderSurfaceId(surfaceValue)
+  if surfaceValue == 0 or not context.surfaces.hasSurface(surface):
+    return CbssOutOfRange
+  let binding = context.surfaceBinding(surfaceValue)
+  if not binding.isNil:
+    binding.publishedRevision = revision
+  discard context.surfaces.updateSurface(surface, revision)
+  CbssOk
+
+proc cbssRenderSurfaceRequestFrame(
+    context: CbssContextHandle;
+    surfaceValue: uint64
+): int32 {.exportc: "cbss_render_surface_request_frame", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  let surface = RenderSurfaceId(surfaceValue)
+  if surfaceValue == 0 or not context.surfaces.hasSurface(surface):
+    return CbssOutOfRange
+  if not context.surfaces.requestSurfaceFrame(surface):
+    return CbssInvalidArgument
+  CbssOk
+
+proc cbssContextRunRenderSurfaceFrames(
+    context: CbssContextHandle;
+    nowSeconds: cdouble;
+    outputCount: ptr uint32
+): int32 {.exportc: "cbss_context_run_render_surface_frames", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  try:
+    let count = context.surfaces.runSurfaceFrames(nowSeconds)
+    if not outputCount.isNil:
+      outputCount[] = uint32(min(count, int(high(uint32))))
+    CbssOk
+  except ValueError as error:
+    context.setError(error.msg)
+    CbssInvalidArgument
+  except CatchableError as error:
+    context.setError(error.msg)
+    CbssInternalError
+
+proc cbssContextNeedsRenderSurfaceFrame(
+    context: CbssContextHandle
+): uint8 {.exportc: "cbss_context_needs_render_surface_frame", cdecl, dynlib.} =
+  if context.isNil:
+    return 0
+  uint8(ord(context.surfaces.needsSurfaceFrame()))
+
+proc cbssRenderSurfaceSetDeviceAvailable(
+    context: CbssContextHandle;
+    surfaceValue: uint64;
+    available: uint8
+): int32 {.exportc: "cbss_render_surface_set_device_available", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  let surface = RenderSurfaceId(surfaceValue)
+  if surfaceValue == 0 or not context.surfaces.hasSurface(surface):
+    return CbssOutOfRange
+  let changed =
+    if available != 0:
+      context.surfaces.restoreSurfaceDevice(surface)
+    else:
+      context.surfaces.loseSurfaceDevice(surface)
+  if not changed:
+    return CbssInvalidArgument
+  CbssOk
+
+proc cbssRenderSurfaceCanvasClear(
+    context: CbssContextHandle;
+    surfaceValue: uint64
+): int32 {.exportc: "cbss_render_surface_canvas_clear", cdecl, dynlib.} =
+  let checked = context.checkedSurfaceCanvas(surfaceValue)
+  if checked.status != CbssOk:
+    return checked.status
+  guardedCanvasMutation(context):
+    checked.binding.canvas.clear()
+
+proc cbssRenderSurfaceCanvasSave(
+    context: CbssContextHandle;
+    surfaceValue: uint64
+): int32 {.exportc: "cbss_render_surface_canvas_save", cdecl, dynlib.} =
+  let checked = context.checkedSurfaceCanvas(surfaceValue)
+  if checked.status != CbssOk:
+    return checked.status
+  guardedCanvasMutation(context):
+    checked.binding.canvas.save()
+
+proc cbssRenderSurfaceCanvasRestore(
+    context: CbssContextHandle;
+    surfaceValue: uint64
+): int32 {.exportc: "cbss_render_surface_canvas_restore", cdecl, dynlib.} =
+  let checked = context.checkedSurfaceCanvas(surfaceValue)
+  if checked.status != CbssOk:
+    return checked.status
+  guardedCanvasMutation(context):
+    checked.binding.canvas.restore()
+
+proc cbssRenderSurfaceCanvasTransform(
+    context: CbssContextHandle;
+    surfaceValue: uint64;
+    transform: CbssAffineTransformC
+): int32 {.exportc: "cbss_render_surface_canvas_transform", cdecl, dynlib.} =
+  let checked = context.checkedSurfaceCanvas(surfaceValue)
+  if checked.status != CbssOk:
+    return checked.status
+  let values = [
+    transform.m11, transform.m12, transform.m21,
+    transform.m22, transform.tx, transform.ty
+  ]
+  for value in values:
+    if not value.finite:
+      return CbssInvalidArgument
+  guardedCanvasMutation(context):
+    checked.binding.canvas.transform(transform.toAffine)
+
+proc cbssRenderSurfaceCanvasPushClip(
+    context: CbssContextHandle;
+    surfaceValue: uint64;
+    bounds: CbssRectC;
+    radius: cfloat
+): int32 {.exportc: "cbss_render_surface_canvas_push_clip", cdecl, dynlib.} =
+  let checked = context.checkedSurfaceCanvas(surfaceValue)
+  if checked.status != CbssOk:
+    return checked.status
+  if not bounds.validRect or not radius.finite or radius < 0:
+    return CbssInvalidArgument
+  guardedCanvasMutation(context):
+    checked.binding.canvas.pushClip(bounds.toRect, radius)
+
+proc cbssRenderSurfaceCanvasPopClip(
+    context: CbssContextHandle;
+    surfaceValue: uint64
+): int32 {.exportc: "cbss_render_surface_canvas_pop_clip", cdecl, dynlib.} =
+  let checked = context.checkedSurfaceCanvas(surfaceValue)
+  if checked.status != CbssOk:
+    return checked.status
+  guardedCanvasMutation(context):
+    checked.binding.canvas.popClip()
+
+proc cbssRenderSurfaceCanvasBeginLayer(
+    context: CbssContextHandle;
+    surfaceValue: uint64;
+    bounds: CbssRectC;
+    opacity: cfloat;
+    compositeMode: uint32
+): int32 {.exportc: "cbss_render_surface_canvas_begin_layer", cdecl, dynlib.} =
+  let checked = context.checkedSurfaceCanvas(surfaceValue)
+  if checked.status != CbssOk:
+    return checked.status
+  let mode = compositeMode.layerCompositeModeFromC
+  if not bounds.validRect or not opacity.finite or opacity < 0 or opacity > 1 or
+      mode.isNone:
+    return CbssInvalidArgument
+  guardedCanvasMutation(context):
+    checked.binding.canvas.beginLayer(bounds.toRect, opacity, mode.get)
+
+proc cbssRenderSurfaceCanvasEndLayer(
+    context: CbssContextHandle;
+    surfaceValue: uint64
+): int32 {.exportc: "cbss_render_surface_canvas_end_layer", cdecl, dynlib.} =
+  let checked = context.checkedSurfaceCanvas(surfaceValue)
+  if checked.status != CbssOk:
+    return checked.status
+  guardedCanvasMutation(context):
+    checked.binding.canvas.endLayer()
+
+proc cbssRenderSurfaceCanvasFillRect(
+    context: CbssContextHandle;
+    surfaceValue: uint64;
+    bounds: CbssRectC;
+    color: CbssColorC;
+    radius: cfloat
+): int32 {.exportc: "cbss_render_surface_canvas_fill_rect", cdecl, dynlib.} =
+  let checked = context.checkedSurfaceCanvas(surfaceValue)
+  if checked.status != CbssOk:
+    return checked.status
+  if not bounds.validRect or not color.validColor or
+      not radius.finite or radius < 0:
+    return CbssInvalidArgument
+  guardedCanvasMutation(context):
+    checked.binding.canvas.fillRect(bounds.toRect, color.toColor, radius)
+
+proc cbssRenderSurfaceCanvasFillLinearGradient(
+    context: CbssContextHandle;
+    surfaceValue: uint64;
+    bounds: CbssRectC;
+    angle: cfloat;
+    interpolationSpace: uint32;
+    stops: ptr CbssGradientStopC;
+    stopCount: uint32;
+    radius: cfloat
+): int32 {.
+    exportc: "cbss_render_surface_canvas_fill_linear_gradient", cdecl, dynlib.} =
+  let checked = context.checkedSurfaceCanvas(surfaceValue)
+  if checked.status != CbssOk:
+    return checked.status
+  let gradientSpace = interpolationSpace.interpolationSpaceFromC
+  if not bounds.validRect or not angle.finite or not radius.finite or radius < 0 or
+      gradientSpace.isNone or stops.isNil or stopCount == 0 or stopCount > 4_096:
+    return CbssInvalidArgument
+  guardedCanvasMutation(context):
+    let values = cast[ptr UncheckedArray[CbssGradientStopC]](stops)
+    var gradientStops = newSeqOfCap[color.GradientStop](int(stopCount))
+    for index in 0 ..< int(stopCount):
+      let stop = values[index]
+      if not stop.color.validColor or not stop.offset.finite:
+        return CbssInvalidArgument
+      gradientStops.add colorStop(stop.color.toColor, stop.offset)
+    checked.binding.canvas.fillLinearGradient(
+      bounds.toRect,
+      computed_style_types.LinearGradient(
+        angle: angle,
+        interpolationSpace: gradientSpace.get,
+        stops: gradientStops
+      ),
+      radius
+    )
+
+proc cbssRenderSurfaceCanvasStrokeRect(
+    context: CbssContextHandle;
+    surfaceValue: uint64;
+    bounds: CbssRectC;
+    color: CbssColorC;
+    width, radius: cfloat
+): int32 {.exportc: "cbss_render_surface_canvas_stroke_rect", cdecl, dynlib.} =
+  let checked = context.checkedSurfaceCanvas(surfaceValue)
+  if checked.status != CbssOk:
+    return checked.status
+  if not bounds.validRect or not color.validColor or not width.finite or
+      not radius.finite or width <= 0 or radius < 0:
+    return CbssInvalidArgument
+  guardedCanvasMutation(context):
+    checked.binding.canvas.strokeRect(
+      bounds.toRect, color.toColor, width, radius
+    )
+
+proc pathFromC(
+    segments: ptr CbssPathSegmentC;
+    segmentCount: uint32
+): Option[Path2D] =
+  if segments.isNil or segmentCount == 0 or segmentCount > 1_048_576:
+    return none(Path2D)
+  let values = cast[ptr UncheckedArray[CbssPathSegmentC]](segments)
+  var path = initPath2D()
+  for index in 0 ..< int(segmentCount):
+    let segment = values[index]
+    let endpoint = vec2(segment.endpointX, segment.endpointY)
+    let control1 = vec2(segment.control1X, segment.control1Y)
+    let control2 = vec2(segment.control2X, segment.control2Y)
+    case segment.kind
+    of 0:
+      if not segment.endpointX.finite or not segment.endpointY.finite:
+        return none(Path2D)
+      path.moveTo(endpoint)
+    of 1:
+      if not segment.endpointX.finite or not segment.endpointY.finite:
+        return none(Path2D)
+      path.lineTo(endpoint)
+    of 2:
+      if not segment.control1X.finite or not segment.control1Y.finite or
+          not segment.endpointX.finite or not segment.endpointY.finite:
+        return none(Path2D)
+      path.quadraticCurveTo(control1, endpoint)
+    of 3:
+      if not segment.control1X.finite or not segment.control1Y.finite or
+          not segment.control2X.finite or not segment.control2Y.finite or
+          not segment.endpointX.finite or not segment.endpointY.finite:
+        return none(Path2D)
+      path.bezierCurveTo(control1, control2, endpoint)
+    of 4:
+      path.closePath()
+    else:
+      return none(Path2D)
+  some(path)
+
+proc cbssRenderSurfaceCanvasStrokePath(
+    context: CbssContextHandle;
+    surfaceValue: uint64;
+    segments: ptr CbssPathSegmentC;
+    segmentCount: uint32;
+    color: CbssColorC;
+    width: cfloat;
+    lineCap, lineJoin: uint32;
+    miterLimit: cfloat
+): int32 {.exportc: "cbss_render_surface_canvas_stroke_path", cdecl, dynlib.} =
+  let checked = context.checkedSurfaceCanvas(surfaceValue)
+  if checked.status != CbssOk:
+    return checked.status
+  if not color.validColor or not width.finite or width <= 0 or
+      not miterLimit.finite or miterLimit < 1:
+    return CbssInvalidArgument
+  let cap = lineCap.strokeLineCapFromC
+  let join = lineJoin.strokeLineJoinFromC
+  if cap.isNone or join.isNone:
+    return CbssInvalidArgument
+  guardedCanvasMutation(context):
+    let path = pathFromC(segments, segmentCount)
+    if path.isNone:
+      return CbssInvalidArgument
+    checked.binding.canvas.strokePath(
+      path.get, color.toColor, width, cap.get, join.get, miterLimit
+    )
+
+proc textStyleFromC(
+    value: ptr CbssTextStyleC;
+    fontFamily: cstring
+): tuple[valid: bool, style: computed_style_types.ComputedTextStyle] =
+  result.valid = true
+  if not value.isNil:
+    if (value.flags and not CbssTextFlagsMask) != 0:
+      return (false, computed_style_types.ComputedTextStyle())
+    if (value.flags and CbssTextHasFontSize) != 0:
+      if not value.fontSize.finite or value.fontSize <= 0:
+        return (false, computed_style_types.ComputedTextStyle())
+      result.style.fontSize = some(value.fontSize)
+    if (value.flags and CbssTextHasLineHeight) != 0:
+      if not value.lineHeight.finite or value.lineHeight <= 0:
+        return (false, computed_style_types.ComputedTextStyle())
+      result.style.lineHeight = some(value.lineHeight)
+    if (value.flags and CbssTextHasFontWeight) != 0:
+      if not value.fontWeight.finite or value.fontWeight <= 0:
+        return (false, computed_style_types.ComputedTextStyle())
+      result.style.fontWeight = some(value.fontWeight)
+    if (value.flags and CbssTextHasLetterSpacing) != 0:
+      if not value.letterSpacing.finite:
+        return (false, computed_style_types.ComputedTextStyle())
+      result.style.letterSpacing = some(value.letterSpacing)
+    if (value.flags and CbssTextHasFontStyle) != 0:
+      if value.fontStyle > uint32(ord(high(computed_style_types.FontStyle))):
+        return (false, computed_style_types.ComputedTextStyle())
+      result.style.fontStyle = some(computed_style_types.FontStyle(value.fontStyle))
+  let family = fromCString(fontFamily).strip()
+  if family.len > 0:
+    result.style.fontFamily = some(family)
+    result.style.fontFamilies = @[family]
+
+proc cbssRenderSurfaceCanvasDrawText(
+    context: CbssContextHandle;
+    surfaceValue: uint64;
+    text: cstring;
+    x, y: cfloat;
+    color: CbssColorC;
+    style: ptr CbssTextStyleC;
+    fontFamily: cstring;
+    maxWidth: cfloat;
+    hasMaxWidth: uint8
+): int32 {.exportc: "cbss_render_surface_canvas_draw_text", cdecl, dynlib.} =
+  let checked = context.checkedSurfaceCanvas(surfaceValue)
+  if checked.status != CbssOk:
+    return checked.status
+  if text.isNil or not x.finite or not y.finite or not color.validColor or
+      (hasMaxWidth != 0 and
+      (not maxWidth.finite or maxWidth <= 0)):
+    return CbssInvalidArgument
+  guardedCanvasMutation(context):
+    let convertedStyle = textStyleFromC(style, fontFamily)
+    if not convertedStyle.valid:
+      return CbssInvalidArgument
+    checked.binding.canvas.drawText(
+      fromCString(text), vec2(x, y), color.toColor, convertedStyle.style,
+      if hasMaxWidth != 0: some(maxWidth.float32) else: none(float32)
+    )
+
+proc cbssRenderSurfaceCanvasDrawImage(
+    context: CbssContextHandle;
+    surfaceValue: uint64;
+    source: cstring;
+    bounds: CbssRectC;
+    opacity: cfloat
+): int32 {.exportc: "cbss_render_surface_canvas_draw_image", cdecl, dynlib.} =
+  let checked = context.checkedSurfaceCanvas(surfaceValue)
+  if checked.status != CbssOk:
+    return checked.status
+  if source.isNil or not bounds.validRect or not opacity.finite or
+      opacity < 0 or opacity > 1:
+    return CbssInvalidArgument
+  guardedCanvasMutation(context):
+    let sourceValue = fromCString(source)
+    if sourceValue.len == 0:
+      return CbssInvalidArgument
+    checked.binding.canvas.drawImage(sourceValue, bounds.toRect, opacity)
+
+proc cbssRenderSurfaceCanvasCommit(
+    context: CbssContextHandle;
+    surfaceValue: uint64;
+    outputRevision: ptr uint64
+): int32 {.exportc: "cbss_render_surface_canvas_commit", cdecl, dynlib.} =
+  let checked = context.checkedSurfaceCanvas(surfaceValue)
+  if checked.status != CbssOk:
+    return checked.status
+  guardedCanvasMutation(context):
+    let binding = checked.binding
+    if binding.canvas.revision != binding.committedCanvasRevision:
+      let snapshot = binding.canvas.copyCanvasCommands()
+      binding.committedCanvas.commands = snapshot
+      binding.committedCanvas.revision = binding.canvas.revision
+      binding.committedCanvasRevision = binding.canvas.revision
+      if binding.publishedRevision == high(uint64):
+        binding.publishedRevision = 1
+      else:
+        inc binding.publishedRevision
+      discard context.surfaces.updateSurface(
+        binding.surface, binding.publishedRevision
+      )
+      if context.computed:
+        context.refreshPresentation()
+    if not outputRevision.isNil:
+      outputRevision[] = binding.publishedRevision
+
+proc cbssContextSetPixelScale(
+    context: CbssContextHandle;
+    pixelScale: cfloat
+): int32 {.exportc: "cbss_context_set_pixel_scale", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if pixelScale.classify in {fcNan, fcInf, fcNegInf} or pixelScale <= 0:
+    return CbssInvalidArgument
+  if context.pixelScale == pixelScale:
+    return CbssOk
+  context.pixelScale = pixelScale
+  if context.computed:
+    context.refreshPresentation()
+  CbssOk
 
 proc cbssNodeSetText(
     context: CbssContextHandle;
@@ -1079,6 +2245,158 @@ proc cbssStyleClear(style: CbssStyleHandle): int32 {.
   style.declarations.setLen(0)
   CbssOk
 
+proc cbssColorValueCreate(
+    space: uint32;
+    first, second, third, alpha: cfloat;
+    missingMask: uint32;
+    output: ptr CbssColorValueHandle
+): int32 {.exportc: "cbss_color_value_create", cdecl, dynlib.} =
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  let authoredSpace = space.colorSpaceFromC
+  if authoredSpace.isNone or (missingMask and not CbssColorMissingMask) != 0:
+    return CbssInvalidArgument
+  ensureNimRuntime()
+  try:
+    let value = colorIn(
+      authoredSpace.get,
+      first,
+      second,
+      third,
+      alpha.float64,
+      missingMask.toMissingComponents
+    )
+    let handle = create(CbssColorValueObj)
+    handle[] = CbssColorValueObj(kind: ccvValue, value: value)
+    output[] = handle
+    CbssOk
+  except CatchableError:
+    CbssInvalidArgument
+
+proc cbssColorValueCurrent(
+    output: ptr CbssColorValueHandle
+): int32 {.exportc: "cbss_color_value_current", cdecl, dynlib.} =
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  ensureNimRuntime()
+  try:
+    let handle = create(CbssColorValueObj)
+    handle[] = CbssColorValueObj(kind: ccvValue, value: currentColor())
+    output[] = handle
+    CbssOk
+  except CatchableError:
+    CbssInternalError
+
+proc cbssColorValueParse(
+    input: cstring;
+    output: ptr CbssColorValueHandle;
+    errorBuffer: cstring;
+    errorCapacity: uint32
+): int32 {.exportc: "cbss_color_value_parse", cdecl, dynlib.} =
+  if output.isNil or input.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  ensureNimRuntime()
+  try:
+    let parsed = parseColor(fromCString(input))
+    if not parsed.isOk:
+      if parsed.error.isSome:
+        discard copyString(parsed.error.get.message, errorBuffer, errorCapacity)
+      return CbssInvalidArgument
+    let handle = create(CbssColorValueObj)
+    handle[] = CbssColorValueObj(kind: ccvValue, value: parsed.value.get)
+    output[] = handle
+    CbssOk
+  except CatchableError:
+    CbssInternalError
+
+proc cbssColorMixParse(
+    input: cstring;
+    output: ptr CbssColorValueHandle;
+    errorBuffer: cstring;
+    errorCapacity: uint32
+): int32 {.exportc: "cbss_color_mix_parse", cdecl, dynlib.} =
+  if output.isNil or input.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  ensureNimRuntime()
+  try:
+    let parsed = parseColorMix(fromCString(input))
+    if not parsed.isOk:
+      if parsed.error.isSome:
+        discard copyString(parsed.error.get.message, errorBuffer, errorCapacity)
+      return CbssInvalidArgument
+    let handle = create(CbssColorValueObj)
+    handle[] = CbssColorValueObj(kind: ccvMix, mix: parsed.value.get)
+    output[] = handle
+    CbssOk
+  except CatchableError:
+    CbssInternalError
+
+proc cbssColorMixCreate(
+    first, second: CbssColorValueHandle;
+    interpolationSpace, flags: uint32;
+    firstPercentage, secondPercentage: cfloat;
+    output: ptr CbssColorValueHandle
+): int32 {.exportc: "cbss_color_mix_create", cdecl, dynlib.} =
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  let mixingSpace = interpolationSpace.interpolationSpaceFromC
+  if first.isNil or second.isNil or first.kind != ccvValue or
+      second.kind != ccvValue or mixingSpace.isNone or
+      (flags and not CbssColorMixFlagsMask) != 0:
+    return CbssInvalidArgument
+  ensureNimRuntime()
+  try:
+    let firstWeight =
+      if (flags and CbssColorMixHasFirstPercentage) != 0:
+        some(firstPercentage.float64)
+      else:
+        none(float64)
+    let secondWeight =
+      if (flags and CbssColorMixHasSecondPercentage) != 0:
+        some(secondPercentage.float64)
+      else:
+        none(float64)
+    let mix = normalizedColorMix(
+      first.colorValueOf,
+      second.colorValueOf,
+      firstWeight,
+      secondWeight,
+      mixingSpace.get
+    )
+    let handle = create(CbssColorValueObj)
+    handle[] = CbssColorValueObj(kind: ccvMix, mix: mix)
+    output[] = handle
+    CbssOk
+  except CatchableError:
+    CbssInvalidArgument
+
+proc cbssColorValueResolve(
+    value: CbssColorValueHandle;
+    current: CbssColorC;
+    output: ptr CbssColorC
+): int32 {.exportc: "cbss_color_value_resolve", cdecl, dynlib.} =
+  if value.isNil or output.isNil:
+    return CbssInvalidArgument
+  try:
+    output[] = value.resolveColor(
+      rgba(current.r, current.g, current.b, current.a)
+    ).toColor
+    CbssOk
+  except CatchableError:
+    CbssInternalError
+
+proc cbssColorValueDestroy(value: CbssColorValueHandle) {.
+    exportc: "cbss_color_value_destroy", cdecl, dynlib.} =
+  if value.isNil:
+    return
+  `=destroy`(value[])
+  dealloc(value)
+
 proc cbssStyleSetLength(
     style: CbssStyleHandle;
     property: cstring;
@@ -1131,6 +2449,21 @@ proc cbssStyleSetColor(
   style.putDeclaration(
     input.name, colorValue(rgba(color.r, color.g, color.b, color.a))
   )
+  CbssOk
+
+proc cbssStyleSetColorValue(
+    style: CbssStyleHandle;
+    property: cstring;
+    value: CbssColorValueHandle
+): int32 {.exportc: "cbss_style_set_color_value", cdecl, dynlib.} =
+  let input = checkedStyleInput(style, property)
+  if input.status != CbssOk or value.isNil:
+    return if input.status != CbssOk: input.status else: CbssInvalidArgument
+  case value.kind
+  of ccvValue:
+    style.putDeclaration(input.name, colorValue(value.value))
+  of ccvMix:
+    style.putDeclaration(input.name, colorValue(value.mix))
   CbssOk
 
 proc cbssStyleSetColorPair(
@@ -1223,6 +2556,39 @@ proc cbssStyleSetShadow(
   style.putDeclaration(input.name, value)
   CbssOk
 
+proc setLinearGradient(
+    style: CbssStyleHandle;
+    property: cstring;
+    angle: cfloat;
+    stops: ptr CbssGradientStopC;
+    stopCount, interpolationSpace: uint32
+): int32 =
+  let input = checkedStyleInput(style, property)
+  if input.status != CbssOk:
+    return input.status
+  let gradientSpace = interpolationSpace.interpolationSpaceFromC
+  if stops.isNil or stopCount == 0 or stopCount > 4_096 or
+      gradientSpace.isNone:
+    return CbssInvalidArgument
+  let values = cast[ptr UncheckedArray[CbssGradientStopC]](stops)
+  var gradientStops = newSeqOfCap[GradientValueStop](int(stopCount))
+  for index in 0 ..< int(stopCount):
+    let stop = values[index]
+    gradientStops.add gradientValueStop(colorStop(
+      rgba(stop.color.r, stop.color.g, stop.color.b, stop.color.a),
+      stop.offset
+    ))
+  style.putDeclaration(
+    input.name,
+    StyleValue(
+      kind: svLinearGradient,
+      gradientAngle: angle,
+      gradientInterpolationSpace: gradientSpace.get,
+      gradientStops: gradientStops
+    )
+  )
+  CbssOk
+
 proc cbssStyleSetLinearGradient(
     style: CbssStyleHandle;
     property: cstring;
@@ -1230,24 +2596,57 @@ proc cbssStyleSetLinearGradient(
     stops: ptr CbssGradientStopC;
     stopCount: uint32
 ): int32 {.exportc: "cbss_style_set_linear_gradient", cdecl, dynlib.} =
+  setLinearGradient(
+    style, property, angle, stops, stopCount, cisSrgb.interpolationSpaceToC
+  )
+
+proc cbssStyleSetLinearGradientIn(
+    style: CbssStyleHandle;
+    property: cstring;
+    angle: cfloat;
+    interpolationSpace: uint32;
+    stops: ptr CbssGradientStopC;
+    stopCount: uint32
+): int32 {.exportc: "cbss_style_set_linear_gradient_in", cdecl, dynlib.} =
+  setLinearGradient(
+    style, property, angle, stops, stopCount, interpolationSpace
+  )
+
+proc cbssStyleSetLinearGradientColorValues(
+    style: CbssStyleHandle;
+    property: cstring;
+    angle: cfloat;
+    interpolationSpace: uint32;
+    stops: ptr CbssColorValueGradientStopC;
+    stopCount: uint32
+): int32 {.exportc: "cbss_style_set_linear_gradient_color_values", cdecl,
+    dynlib.} =
   let input = checkedStyleInput(style, property)
   if input.status != CbssOk:
     return input.status
-  if stops.isNil or stopCount == 0 or stopCount > 4_096:
+  let gradientSpace = interpolationSpace.interpolationSpaceFromC
+  if stops.isNil or stopCount == 0 or stopCount > 4_096 or
+      gradientSpace.isNone:
     return CbssInvalidArgument
-  let values = cast[ptr UncheckedArray[CbssGradientStopC]](stops)
-  var gradientStops = newSeqOfCap[GradientStop](int(stopCount))
+
+  let values = cast[ptr UncheckedArray[CbssColorValueGradientStopC]](stops)
+  var gradientStops = newSeqOfCap[GradientValueStop](int(stopCount))
   for index in 0 ..< int(stopCount):
     let stop = values[index]
-    gradientStops.add colorStop(
-      rgba(stop.color.r, stop.color.g, stop.color.b, stop.color.a),
-      stop.offset
-    )
+    if stop.color.isNil:
+      return CbssInvalidArgument
+    case stop.color.kind
+    of ccvValue:
+      gradientStops.add colorStop(stop.color.value, stop.offset)
+    of ccvMix:
+      gradientStops.add colorStop(stop.color.mix, stop.offset)
+
   style.putDeclaration(
     input.name,
     StyleValue(
       kind: svLinearGradient,
       gradientAngle: angle,
+      gradientInterpolationSpace: gradientSpace.get,
       gradientStops: gradientStops
     )
   )
@@ -1257,9 +2656,9 @@ proc toTransformOperation(
     value: CbssTransformOperationC;
     output: var TransformOperationValue
 ): int32 =
-  if value.kind > uint32(ord(high(TransformOperationKind))):
+  if value.kind > uint32(ord(high(style_value.TransformOperationKind))):
     return CbssInvalidArgument
-  output.kind = TransformOperationKind(value.kind)
+  output.kind = style_value.TransformOperationKind(value.kind)
   case output.kind
   of tokTranslate:
     if ((value.flags and CbssTransformHasX) != 0 and
@@ -1507,7 +2906,7 @@ proc cbssContextPaintCommand(
   let command = context.commands[int(index)]
   let value = command.commandString()
   output[] = CbssPaintCommandC(
-    kind: uint32(ord(command.kind)),
+    kind: command.commandKindToC(),
     owner:
       if command.owner.isSome: command.owner.get.nodeRawValue()
       else: CbssNodeNone,
@@ -1525,10 +2924,21 @@ proc cbssContextPaintCommand(
   of pcFillLinearGradient:
     output.value0 = command.gradient.angle
     output.value1 = cfloat(command.gradient.stops.len)
+    output.value2 = cfloat(
+      command.gradient.interpolationSpace.interpolationSpaceToC
+    )
   of pcStrokeRect:
     output.value0 = command.strokeWidth
+  of pcStrokePath:
+    output.value0 = command.pathWidth
+    output.value1 = cfloat(ord(command.pathLineCap))
+    output.value2 = cfloat(ord(command.pathLineJoin))
+    output.value3 = command.pathMiterLimit
   of pcDrawImage:
     output.value0 = command.imageOpacity
+  of pcPushLayer:
+    output.value0 = command.layerOpacity
+    output.value1 = cfloat(ord(command.layerCompositeMode))
   else:
     discard
   CbssOk
@@ -1543,6 +2953,69 @@ proc cbssPaintCommandString(
       uint64(index) >= uint64(context.commands.len):
     return 0
   copyString(context.commands[int(index)].commandString(), buffer, capacity)
+
+proc cbssPaintCommandTransform(
+    context: CbssContextHandle;
+    index: uint32;
+    output: ptr CbssAffineTransformC
+): int32 {.exportc: "cbss_paint_command_transform", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if output.isNil or not context.computed:
+    return CbssInvalidArgument
+  if uint64(index) >= uint64(context.commands.len):
+    return CbssOutOfRange
+  let command = context.commands[int(index)]
+  if command.kind != pcPushTransform:
+    return CbssInvalidArgument
+  output[] = CbssAffineTransformC(
+    m11: command.transform.m11,
+    m12: command.transform.m12,
+    m21: command.transform.m21,
+    m22: command.transform.m22,
+    tx: command.transform.tx,
+    ty: command.transform.ty
+  )
+  CbssOk
+
+proc cbssPaintCommandPathSegmentCount(
+    context: CbssContextHandle;
+    index: uint32
+): uint32 {.exportc: "cbss_paint_command_path_segment_count", cdecl, dynlib.} =
+  if context.isNil or not context.computed or
+      uint64(index) >= uint64(context.commands.len):
+    return 0
+  let command = context.commands[int(index)]
+  if command.kind != pcStrokePath:
+    return 0
+  uint32(min(command.path.segments.len, int(high(uint32))))
+
+proc cbssPaintCommandPathSegment(
+    context: CbssContextHandle;
+    commandIndex, segmentIndex: uint32;
+    output: ptr CbssPathSegmentC
+): int32 {.exportc: "cbss_paint_command_path_segment", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if output.isNil or not context.computed or
+      uint64(commandIndex) >= uint64(context.commands.len):
+    return CbssInvalidArgument
+  let command = context.commands[int(commandIndex)]
+  if command.kind != pcStrokePath:
+    return CbssInvalidArgument
+  if uint64(segmentIndex) >= uint64(command.path.segments.len):
+    return CbssOutOfRange
+  let segment = command.path.segments[int(segmentIndex)]
+  output[] = CbssPathSegmentC(
+    kind: uint32(ord(segment.kind)),
+    control1X: segment.control1.x,
+    control1Y: segment.control1.y,
+    control2X: segment.control2.x,
+    control2Y: segment.control2.y,
+    endpointX: segment.endpoint.x,
+    endpointY: segment.endpoint.y
+  )
+  CbssOk
 
 proc cbssPaintCommandTextStyle(
     context: CbssContextHandle;
@@ -1671,7 +3144,7 @@ proc cbssContextDispatchInput(
 ): int32 {.exportc: "cbss_context_dispatch_input", cdecl, dynlib.} =
   if context.isNil:
     return CbssInvalidHandle
-  if input.isNil or input.kind > uint32(ord(high(InputEventKind))):
+  if input.isNil or not input[].validInputEvent():
     return CbssInvalidArgument
   if (input.flags and CbssInputHasPosition) != 0 and not context.computed:
     context.setError("positioned input requires a computed context")
@@ -1782,7 +3255,7 @@ proc cbssContextEmitEvent(
   if context.isNil:
     return CbssInvalidHandle
   if not context.validNode(node) or input.isNil or
-      input.kind > uint32(ord(high(InputEventKind))):
+      not input[].validInputEvent():
     return CbssInvalidArgument
   try:
     let event = input[].inputEvent()

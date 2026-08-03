@@ -7,6 +7,86 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-03
+
+### Added
+
+- Added typed `CBSSComponent` authoring with ordinary Nim `render(self)`
+  procedures, checked scoped `ui` composition, automatic Style DI,
+  component-owned event slots, ARC retention, lifecycle hooks, and
+  transactional mount rollback.
+- Added typed CSS Color 4-inspired authored values and strict serialized
+  parsing for hexadecimal, named, RGB/HSL, HWB, Lab/LCH, Oklab/Oklch, and
+  predefined `color()` spaces with byte-offset diagnostics.
+- Added typed mouse, touch, and pen metadata across SDL3 input, normal event
+  dispatch, Canvas/RenderSurface-local callbacks, and C ABI version
+  `0x00010005`, including source timestamps and capability-masked pressure,
+  tilt, rotation, distance,
+  slider, eraser, button, proximity, and stable-in-process device data.
+- Added typed and serialized `color-mix()` values with CSS percentage
+  normalization, delayed `currentColor` resolution, strict diagnostics, and
+  direct integration with solid color, border, and shadow declarations.
+- Implemented CSS missing-component carry-forward for sRGB, linear-sRGB, and
+  Oklab interpolation, including analogous component sets and alpha handling.
+- Added explicit sRGB, linear-sRGB, and Oklab linear-gradient interpolation
+  through a shared SDL3/PPM sampler with premultiplied alpha and cache-safe
+  interpolation-space identity.
+- Moved raster gradient hot loops to prepared, resolution-bounded lookup
+  tables, avoiding repeated color-space conversion and gamut mapping for every
+  output pixel.
+- Added C ABI 1.1 opaque authored-color handles for typed spaces,
+  `currentColor`, CSS color parsing, `color-mix()`, explicit resolution, and
+  copied style application while retaining the existing `CbssColor` layout.
+- Added mixed resolved/authored linear-gradient stops, including wide-gamut
+  colors, `currentColor`, and color mixes resolved at style-computation time.
+  The C ABI exposes the same behavior through copied opaque color-value stops.
+- Added pinned Chrome 150 browser comparison fixtures for CSS Color 4 inputs,
+  color mixes, alpha composition, wide-gamut conversion, and actual CSS
+  swatches, with strict RGBA8 checks and an explicit Rec.2020 divergence record.
+- Added the versioned RenderSurface lifecycle with retained placement,
+  local-coordinate input, explicit frame requests, visibility and device
+  lifecycle callbacks, and deterministic cleanup.
+- Added the first retained `Canvas2D` host integrated with normal `UiRoot`
+  construction and the canonical paint stream. Canvas content is constrained
+  to the Box content area and supports rectangles, gradients, strokes, text,
+  images, and nested clips without rebuilding the UI tree.
+- Added a deterministic animation clock with CSS timing functions, direction,
+  fill, iteration, reduced-motion handling, dirty-domain scheduling, and typed
+  float and color keyframes.
+- Added a shared presentation-coordinate contract for scroll translation,
+  overflow clipping, inherited opacity, paint, hit testing, and surface
+  placement, with cross-subsystem regression coverage.
+- Exposed the RenderSurface lifecycle through the C ABI with Box attachment,
+  local input, DPI-aware resize, requested frames, visibility, device recovery,
+  and deterministic unmount coverage in shared and static C consumers.
+- Added an interactive Version 0.3 SDL3 demo for retained Canvas animation,
+  local pointer input, Oklab gradients, and authored wide-gamut colors.
+- Added retained open and closed Canvas paths with adaptive quadratic/cubic
+  curves, configurable cap/join styles, shared SDL3/headless rendering,
+  clipping, opacity, and Canvas-local coordinates.
+- Added one affine coordinate contract for resolved Box transforms and
+  retained Canvas transforms across paint, exact hit testing, transformed
+  clips, RenderSurface input, SDL3 composition, and headless rendering.
+- Added bounded Canvas offscreen layers with explicit opacity, source-over,
+  copy, and additive composition across SDL3 and the alpha-aware PPM reference
+  backend, including append-only C ABI paint kinds and performance gates.
+- Added a retained C ABI Canvas adapter for registered RenderSurfaces. Foreign
+  libraries can submit local transforms, clips, layers, rectangles, gradients,
+  paths, text, and images, then publish one paint-only display-list update
+  without recomputing style or layout.
+- Added required Linux x86_64, Windows x86_64, and macOS arm64 portable CI
+  lanes covering ARC tests, public modules, non-window examples, C ABI builds,
+  and both native Rust bridges.
+- Extended the release-mode ARC lifecycle Valgrind gate to cover typed
+  component retention, events, mount, subtree disposal, and unmount hooks.
+
+### Fixed
+
+- Corrected `step-start` to jump at the zero endpoint and rejected non-finite
+  Canvas target frame rates before they can enter the scheduler.
+- Prevented transformed PPM rectangles from alpha-compositing shared triangle
+  edges twice.
+
 ## [0.2.0] - 2026-08-01
 
 ### Added

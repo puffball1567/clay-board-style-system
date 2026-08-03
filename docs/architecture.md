@@ -625,13 +625,15 @@ rule(target(saveButton), [
 ])
 ```
 
-For nested UI, `UiRoot` should provide block-style builders so the source
+For nested UI, `UiRoot` provides block-style builders so the source
 indentation mirrors the UI tree. This keeps parent management out of ordinary
 application code while still producing explicit `NodeId` values internally.
-Complex UIs should still be split into component-like procedures that receive
-`UiRoot` and optional params, then return a `NodeHandle`. This keeps the
-declarative shape of TSX components without requiring a TSX parser or a browser
-DOM.
+Complex UIs are split into typed `CBSSComponent` subtypes with ordinary Nim
+`render(self)` procedures. The checked `ui` render context supplies the current
+root, `ui.mount()` composes child components, and `ui.box(self, ...)` registers
+the component root. This keeps a declarative component shape without requiring
+a TSX parser, a browser DOM, an untyped macro, or a virtual DOM. The complete
+authoring contract is documented in [component-authoring.md](component-authoring.md).
 
 Component files should normally own their own styles and events. Parent
 components should place child components, not wire their internal events. When a

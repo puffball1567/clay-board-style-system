@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "engine": "Google Chrome",
+  "engineVersion": "150.0.0.0",
+  "platform": "Linux x86_64",
+  "pixelBoundary": "CanvasRenderingContext2D/getImageData/srgb/rgba8",
+  "cases": [
+    {"name":"hex-short","kind":"color","input":"#369","backdrop":null,"rgba8":[51,102,153,255]},
+    {"name":"hex-alpha","kind":"color","input":"#3698","backdrop":null,"rgba8":[51,101,154,136]},
+    {"name":"named","kind":"color","input":"rebeccapurple","backdrop":null,"rgba8":[102,51,153,255]},
+    {"name":"transparent","kind":"color","input":"transparent","backdrop":null,"rgba8":[0,0,0,0]},
+    {"name":"modern-rgb","kind":"color","input":"rgb(12 140 230 / 72%)","backdrop":null,"rgba8":[12,140,230,184]},
+    {"name":"modern-hsl","kind":"color","input":"hsl(210 80% 48% / 65%)","backdrop":null,"rgba8":[25,121,220,166]},
+    {"name":"hwb","kind":"color","input":"hwb(30 12% 18% / 75%)","backdrop":null,"rgba8":[210,120,31,191]},
+    {"name":"lab","kind":"color","input":"lab(62% 35 -42 / 80%)","backdrop":null,"rgba8":[182,128,225,204]},
+    {"name":"lch","kind":"color","input":"lch(70% 56 48deg / 90%)","backdrop":null,"rgba8":[246,142,96,230]},
+    {"name":"oklab","kind":"color","input":"oklab(70% 0.1 -0.12 / 85%)","backdrop":null,"rgba8":[188,128,230,217]},
+    {"name":"oklch","kind":"color","input":"oklch(68% 0.19 260deg / 80%)","backdrop":null,"rgba8":[76,148,255,204]},
+    {"name":"display-p3","kind":"color","input":"color(display-p3 0.92 0.18 0.08 / 90%)","backdrop":null,"rgba8":[255,0,0,230]},
+    {"name":"a98-rgb","kind":"color","input":"color(a98-rgb 0.22 0.68 0.33)","backdrop":null,"rgba8":[0,175,76,255]},
+    {"name":"prophoto-rgb","kind":"color","input":"color(prophoto-rgb 0.38 0.25 0.61)","backdrop":null,"rgba8":[115,69,181,255]},
+    {"name":"rec2020","kind":"color","input":"color(rec2020 0.12 0.66 0.32)","backdrop":null,"rgba8":[0,186,83,255],"comparison":"known-browser-divergence","cbssRgba8":[0,173,53,255],"note":"Chrome 150 output differs from the CSS Color 4 BT.1886 2.4 transfer used by CBSS"},
+    {"name":"xyz-d50","kind":"color","input":"color(xyz-d50 0.3 0.35 0.2)","backdrop":null,"rgba8":[143,166,130,255]},
+    {"name":"xyz-d65","kind":"color","input":"color(xyz-d65 0.3 0.35 0.2)","backdrop":null,"rgba8":[156,165,110,255]},
+    {"name":"missing-component","kind":"color","input":"oklab(60% none 0.1)","backdrop":null,"rgba8":[151,125,48,255]},
+    {"name":"mix-srgb","kind":"mix","input":"color-mix(in srgb, red 25%, blue 75%)","backdrop":null,"rgba8":[64,0,191,255]},
+    {"name":"mix-linear","kind":"mix","input":"color-mix(in srgb-linear, red 25%, blue 75%)","backdrop":null,"rgba8":[137,0,225,255]},
+    {"name":"mix-oklab","kind":"mix","input":"color-mix(in oklab, red 25%, blue 75%)","backdrop":null,"rgba8":[81,71,210,255]},
+    {"name":"alpha-over-white","kind":"color","input":"rgb(240 20 80 / 35%)","backdrop":"white","rgba8":[250,173,194,255]},
+    {"name":"p3-alpha-over-dark","kind":"color","input":"color(display-p3 0.9 0.3 0.1 / 45%)","backdrop":"rgb(20 30 45)","rgba8":[123,42,25,255]}
+  ]
+}
