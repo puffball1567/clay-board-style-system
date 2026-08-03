@@ -108,6 +108,7 @@ jobs:
           nim check --mm:arc --path:src src/clay_board_style_system.nim
           nim check --mm:arc --path:src examples/paint_demo.nim
           nim check --mm:arc --path:src examples/render_demo.nim
+          nim check --mm:arc --path:src examples/component_demo.nim
 
       - name: Build shared and static C ABI libraries
         run: |

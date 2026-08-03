@@ -1,6 +1,6 @@
 # Render Surfaces And Canvas
 
-Status: `Version 0.3 development API`
+Status: `Version 0.3 API`
 
 CBSS render surfaces let a retained drawing module occupy the content area of
 an ordinary styled Box. CBSS owns layout, padding, borders, clipping, opacity,
@@ -147,8 +147,7 @@ are ignored so a surface cannot corrupt the surrounding CBSS clip stack.
 
 ## Current Limits
 
-The Version 0.3 contract is still in development. The following are not yet
-runtime-complete:
+The following capabilities are outside the Version 0.3 runtime contract:
 
 - GPU/shared-texture surface paths.
 

@@ -31,7 +31,7 @@ import clay_board_style_system/input/events
 import clay_board_style_system/input/pointer
 import clay_board_style_system/paint/[paint, paint_command, path_geometry]
 import clay_board_style_system/runtime/[accessibility, button, checkbox,
-    animation_clock, canvas, details, dialog, fieldset, focus, form,
+    animation_clock, canvas, component, details, dialog, fieldset, focus, form,
     frame_scheduler, image,
     invalidation, label, link, navigation, navigation_focus,
     navigation_transition, navigation_screen_host, platform_links, progress,
@@ -78,6 +78,7 @@ export accessibility
 export animation_clock
 export button
 export canvas
+export component
 export checkbox
 export details
 export dialog
