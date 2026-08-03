@@ -722,6 +722,58 @@ suite "input events":
 
     check seen == @[iekPointerDown, iekTouchStart, iekPointerUp, iekTouchEnd, iekClick]
 
+  test "touch pointer metadata survives pointer-compatible dispatch":
+    var tree = initTree()
+    let root = tree.addBox(id = "root")
+    let target = tree.addBox(parent = some(root), id = "target")
+    let regions = @[
+      HitRegion(node: root, rect: rect(0, 0, 100, 40), zIndex: 0),
+      HitRegion(node: target, rect: rect(10, 8, 60, 20), zIndex: 1)
+    ]
+    var state = initInteractionState()
+    var registry = initEventRegistry()
+    var pointerSamples: seq[PointerData]
+    var touchSamples: seq[PointerData]
+
+    registry.onPointerMove(target, proc(event: DispatchResult): bool =
+      check event.event.pointer.isSome
+      pointerSamples.add event.event.pointer.get
+      false
+    )
+    registry.onTouchMove(target, proc(event: DispatchResult): bool =
+      check event.event.pointer.isSome
+      touchSamples.add event.event.pointer.get
+      false
+    )
+
+    let dispatches = state.processInput(
+      tree,
+      regions,
+      touchMoveEvent(
+        vec2(12, 10), vec2(2, 1), pressure = 0.375, deviceId = 42
+      )
+    )
+    discard registry.handle(dispatches)
+
+    check pointerSamples.len == 1
+    check touchSamples.len == 1
+    for sample in [pointerSamples[0], touchSamples[0]]:
+      check sample.device == pdkTouch
+      check sample.deviceId == 42
+      check paPressure in sample.axes
+      check abs(sample.pressure - 0.375) < 0.0001
+      check sample.contact
+      check sample.inProximity
+
+  test "touch release retains a supported zero pressure value":
+    let released = touchEndEvent(vec2(2, 3), deviceId = 9)
+    check released.pointer.isSome
+    check released.pointer.get.device == pdkTouch
+    check released.pointer.get.deviceId == 9
+    check paPressure in released.pointer.get.axes
+    check released.pointer.get.pressure == 0
+    check not released.pointer.get.contact
+
   test "js and ts style event slots can be registered":
     var registry = initEventRegistry()
     let node = NodeId(1)

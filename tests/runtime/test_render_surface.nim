@@ -187,6 +187,42 @@ suite "render surface lifecycle":
     check not inputs[^1].inside
     check inputs[^1].captured
 
+  test "local input preserves pen identity capabilities and axis values":
+    var registry = initRenderSurfaceRegistry()
+    var received: RenderSurfaceInput
+    var receivedInput = false
+    let id = registry.registerSurface(RenderSurfaceDescriptor(
+      callbacks: RenderSurfaceCallbacks(
+        onInput: proc(event: RenderSurfaceInput): bool =
+          received = event
+          receivedInput = true
+          true
+      )
+    ))
+    registry.mountSurface(id, NodeId(1), placement())
+    let pen = PointerData(
+      device: pdkPenDirect,
+      deviceId: 77,
+      axes: {paPressure, paTiltX, paTiltY, paRotation},
+      pressure: 0.625,
+      tiltX: -18,
+      tiltY: 11,
+      rotation: 42,
+      buttons: 2,
+      contact: true,
+      primary: true,
+      eraser: true,
+      inProximity: true
+    )
+
+    check registry.dispatchSurfaceInput(
+      id, pointerMoveEvent(vec2(36, 47), some(pen))
+    )
+    check receivedInput
+    check received.localPosition == some(vec2(26, 27))
+    check received.event.pointer.isSome
+    check received.event.pointer.get == pen
+
   test "device loss and restoration have deterministic visibility ordering":
     var registry = initRenderSurfaceRegistry()
     var events: seq[string]

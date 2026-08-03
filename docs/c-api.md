@@ -23,7 +23,7 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x00010004` supports:
+ABI version `0x00010005` supports:
 
 - Opaque context and style handles.
 - Generation-checked node handles plus box, text, and image node creation.
@@ -49,7 +49,13 @@ ABI version `0x00010004` supports:
   update with one `cbss_render_surface_canvas_commit`.
 - Hit testing.
 - C callbacks for all CBSS event kinds, including bubbling through ancestors.
-- Pointer, touch, keyboard, text, wheel, and component-event dispatch.
+- Pointer, touch, pen, keyboard, text, wheel, and component-event dispatch.
+- Optional pointer-device metadata with stable-in-process device IDs, contact,
+  button, eraser, and proximity state. A capability bitmask distinguishes an
+  unavailable pen axis from a supported axis whose value is zero; timestamps,
+  pressure,
+  tangential pressure, x/y tilt, rotation, distance, and slider values cross
+  both ordinary event callbacks and RenderSurface input callbacks.
 - Hover, active, focus, focus-visible, pointer-capture, and focus-scope state.
 - Tab and Shift+Tab focus traversal.
 - Retained scrolling and scrollbar interaction without layout recomputation.

@@ -573,6 +573,8 @@ proc bindRenderSurfaceEvents(root: UiRoot; node: NodeHandle; surface: RenderSurf
     iekCompositionStart, iekCompositionUpdate, iekCompositionEnd,
     iekCopy, iekCut, iekPaste,
     iekTouchStart, iekTouchMove, iekTouchEnd, iekTouchCancel,
+    iekPenProximityIn, iekPenProximityOut,
+    iekPenButtonDown, iekPenButtonUp,
     iekDragStart, iekDrag, iekDragEnd, iekDragEnter, iekDragOver,
     iekDragLeave, iekDrop
   }
@@ -1211,6 +1213,10 @@ handleEventSlot(`onPointerMove=`, iekPointerMove)
 handleEventSlot(`onPointerOut=`, iekPointerOut)
 handleEventSlot(`onPointerOver=`, iekPointerOver)
 handleEventSlot(`onPointerUp=`, iekPointerUp)
+handleEventSlot(`onPenButtonDown=`, iekPenButtonDown)
+handleEventSlot(`onPenButtonUp=`, iekPenButtonUp)
+handleEventSlot(`onPenProximityIn=`, iekPenProximityIn)
+handleEventSlot(`onPenProximityOut=`, iekPenProximityOut)
 handleEventSlot(`onProgress=`, iekProgress)
 handleEventSlot(`onRateChange=`, iekRateChange)
 handleEventSlot(`onReset=`, iekReset)

@@ -95,7 +95,45 @@ type
     iekTransitionEnd,
     iekVolumeChange,
     iekWaiting,
-    iekWheel
+    iekWheel,
+    iekPenProximityIn,
+    iekPenProximityOut,
+    iekPenButtonDown,
+    iekPenButtonUp
+
+  PointerDeviceKind* = enum
+    pdkMouse,
+    pdkTouch,
+    pdkPenUnknown,
+    pdkPenDirect,
+    pdkPenIndirect
+
+  PointerAxis* = enum
+    paPressure,
+    paTangentialPressure,
+    paTiltX,
+    paTiltY,
+    paRotation,
+    paDistance,
+    paSlider
+
+  PointerData* = object
+    ## Device IDs are stable only for the current process. `axes` separates an
+    ## unsupported value from a supported axis whose current value is zero.
+    device*: PointerDeviceKind
+    deviceId*: uint64
+    axes*: set[PointerAxis]
+    pressure*: float32
+    tangentialPressure*: float32
+    tiltX*, tiltY*: float32
+    rotation*: float32
+    distance*: float32
+    slider*: float32
+    buttons*: uint32
+    contact*: bool
+    primary*: bool
+    eraser*: bool
+    inProximity*: bool
 
   EventDispatchMode* = enum
     edmBackendInput,
@@ -104,11 +142,13 @@ type
 
   InputEvent* = object
     kind*: InputEventKind
+    timestamp*: uint64
     position*: Option[Vec2]
     button*: Option[int]
     key*: Option[string]
     text*: Option[string]
     delta*: Option[Vec2]
+    pointer*: Option[PointerData]
     focusOwner*: Option[NodeId]
     focusSerial*: int
     ctrlKey*: bool
@@ -171,6 +211,8 @@ proc dispatchMode*(kind: InputEventKind): EventDispatchMode =
   of iekPointerMove, iekPointerDown, iekPointerUp,
      iekKeyDown, iekKeyUp, iekTextInput, iekWheel,
      iekResize,
+     iekPenProximityIn, iekPenProximityOut,
+     iekPenButtonDown, iekPenButtonUp,
      iekTouchCancel, iekTouchEnd, iekTouchMove, iekTouchStart:
     edmBackendInput
   of iekClick,
@@ -213,14 +255,64 @@ proc textEvent*(kind: InputEventKind; text: string): InputEvent =
 proc positionedEvent*(kind: InputEventKind; position: Vec2; button = 0): InputEvent =
   InputEvent(kind: kind, position: some(position), button: some(button))
 
-proc pointerMoveEvent*(position: Vec2): InputEvent =
-  InputEvent(kind: iekPointerMove, position: some(position))
+proc pointerMoveEvent*(
+    position: Vec2;
+    pointer = none(PointerData);
+    timestamp = 0'u64
+): InputEvent =
+  InputEvent(
+    kind: iekPointerMove,
+    timestamp: timestamp,
+    position: some(position),
+    pointer: pointer
+  )
 
-proc pointerDownEvent*(position: Vec2; button = 0): InputEvent =
-  InputEvent(kind: iekPointerDown, position: some(position), button: some(button))
+proc pointerDownEvent*(
+    position: Vec2;
+    button = 0;
+    pointer = none(PointerData);
+    timestamp = 0'u64
+): InputEvent =
+  InputEvent(
+    kind: iekPointerDown,
+    timestamp: timestamp,
+    position: some(position),
+    button: some(button),
+    pointer: pointer
+  )
 
-proc pointerUpEvent*(position: Vec2; button = 0): InputEvent =
-  InputEvent(kind: iekPointerUp, position: some(position), button: some(button))
+proc pointerUpEvent*(
+    position: Vec2;
+    button = 0;
+    pointer = none(PointerData);
+    timestamp = 0'u64
+): InputEvent =
+  InputEvent(
+    kind: iekPointerUp,
+    timestamp: timestamp,
+    position: some(position),
+    button: some(button),
+    pointer: pointer
+  )
+
+proc penProximityEvent*(inside: bool; pointer: PointerData): InputEvent =
+  InputEvent(
+    kind: if inside: iekPenProximityIn else: iekPenProximityOut,
+    pointer: some(pointer)
+  )
+
+proc penButtonEvent*(
+    down: bool;
+    position: Vec2;
+    button: int;
+    pointer: PointerData
+): InputEvent =
+  InputEvent(
+    kind: if down: iekPenButtonDown else: iekPenButtonUp,
+    position: some(position),
+    button: some(button),
+    pointer: some(pointer)
+  )
 
 proc clickEvent*(position: Vec2; button = 0): InputEvent =
   InputEvent(kind: iekClick, position: some(position), button: some(button))
@@ -246,30 +338,77 @@ proc mouseUpEvent*(position: Vec2; button = 0): InputEvent =
 proc wheelEvent*(position: Vec2; delta = vec2(0, 0)): InputEvent =
   InputEvent(kind: iekWheel, position: some(position), delta: some(delta))
 
-proc touchStartEvent*(position: Vec2): InputEvent =
-  InputEvent(kind: iekTouchStart, position: some(position))
+proc touchPointerData*(
+    deviceId: uint64;
+    pressure: float32;
+    contact: bool
+): PointerData =
+  let boundedPressure =
+    if pressure.classify in {fcNan, fcInf, fcNegInf}: 0.0'f32
+    else: clamp(pressure, 0.0'f32, 1.0'f32)
+  PointerData(
+    device: pdkTouch,
+    deviceId: deviceId,
+    axes: {paPressure},
+    pressure: boundedPressure,
+    contact: contact,
+    primary: true,
+    inProximity: contact
+  )
 
-proc touchMoveEvent*(position: Vec2; delta = vec2(0, 0)): InputEvent =
-  InputEvent(kind: iekTouchMove, position: some(position), delta: some(delta))
+proc touchStartEvent*(
+    position: Vec2;
+    pressure = 1.0'f32;
+    deviceId = 0'u64
+): InputEvent =
+  InputEvent(
+    kind: iekTouchStart,
+    position: some(position),
+    pointer: some(touchPointerData(deviceId, pressure, true))
+  )
 
-proc touchEndEvent*(position: Vec2): InputEvent =
-  InputEvent(kind: iekTouchEnd, position: some(position))
+proc touchMoveEvent*(
+    position: Vec2;
+    delta = vec2(0, 0);
+    pressure = 1.0'f32;
+    deviceId = 0'u64
+): InputEvent =
+  InputEvent(
+    kind: iekTouchMove,
+    position: some(position),
+    delta: some(delta),
+    pointer: some(touchPointerData(deviceId, pressure, true))
+  )
 
-proc touchCancelEvent*(position: Vec2): InputEvent =
-  InputEvent(kind: iekTouchCancel, position: some(position))
+proc touchEndEvent*(position: Vec2; deviceId = 0'u64): InputEvent =
+  InputEvent(
+    kind: iekTouchEnd,
+    position: some(position),
+    pointer: some(touchPointerData(deviceId, 0, false))
+  )
+
+proc touchCancelEvent*(position: Vec2; deviceId = 0'u64): InputEvent =
+  InputEvent(
+    kind: iekTouchCancel,
+    position: some(position),
+    pointer: some(touchPointerData(deviceId, 0, false))
+  )
 
 proc pointerEventForTouch(event: InputEvent): InputEvent =
+  result = event
   case event.kind
   of iekTouchStart:
-    InputEvent(kind: iekPointerDown, position: event.position, button: some(0), delta: event.delta)
+    result.kind = iekPointerDown
+    result.button = some(0)
   of iekTouchMove:
-    InputEvent(kind: iekPointerMove, position: event.position, delta: event.delta)
+    result.kind = iekPointerMove
   of iekTouchEnd:
-    InputEvent(kind: iekPointerUp, position: event.position, button: some(0), delta: event.delta)
+    result.kind = iekPointerUp
+    result.button = some(0)
   of iekTouchCancel:
-    InputEvent(kind: iekPointerCancel, position: event.position, delta: event.delta)
+    result.kind = iekPointerCancel
   else:
-    event
+    discard
 
 proc keyEvent(
     kind: InputEventKind;
@@ -547,6 +686,10 @@ registerEventSlot(onMouseOver, iekMouseOver)
 registerEventSlot(onMouseUp, iekMouseUp)
 registerEventSlot(onPause, iekPause)
 registerEventSlot(onPaste, iekPaste)
+registerEventSlot(onPenButtonDown, iekPenButtonDown)
+registerEventSlot(onPenButtonUp, iekPenButtonUp)
+registerEventSlot(onPenProximityIn, iekPenProximityIn)
+registerEventSlot(onPenProximityOut, iekPenProximityOut)
 registerEventSlot(onPlay, iekPlay)
 registerEventSlot(onPlaying, iekPlaying)
 registerEventSlot(onPointerCancel, iekPointerCancel)

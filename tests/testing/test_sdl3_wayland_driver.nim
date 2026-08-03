@@ -479,3 +479,74 @@ suite "SDL3 Wayland integration driver":
       renderAfter = false
     )
     check driver.headless.value(byId("name")) == "+"
+
+  test "SDL pointer conversion preserves pen axes and native extension events":
+    let pen = PointerData(
+      device: pdkPenUnknown,
+      deviceId: 1234,
+      axes: {paPressure, paTangentialPressure, paTiltX, paDistance},
+      pressure: 0.75,
+      tangentialPressure: -0.25,
+      tiltX: 31,
+      distance: 0.2,
+      buttons: 3,
+      contact: true,
+      eraser: true,
+      inProximity: true
+    )
+    let motion = Sdl3Event(
+      kind: sekPointerMove,
+      timestamp: 9,
+      pointer: some(pen),
+      x: 40,
+      y: 25
+    ).pointerInputEvent()
+    check motion.isSome
+    check motion.get.kind == iekPointerMove
+    check motion.get.timestamp == 9
+    check motion.get.position == some(vec2(40, 25))
+    check motion.get.pointer == some(pen)
+
+    let proximity = Sdl3Event(
+      kind: sekPenProximityIn,
+      timestamp: 10,
+      pointer: some(pen)
+    ).pointerInputEvent()
+    check proximity.isSome
+    check proximity.get.kind == iekPenProximityIn
+    check proximity.get.timestamp == 10
+    check proximity.get.pointer == some(pen)
+
+    let barrel = Sdl3Event(
+      kind: sekPenButtonDown,
+      timestamp: 11,
+      pointer: some(pen),
+      penButton: 2,
+      penButtonX: 41,
+      penButtonY: 26
+    ).pointerInputEvent()
+    check barrel.isSome
+    check barrel.get.kind == iekPenButtonDown
+    check barrel.get.timestamp == 11
+    check barrel.get.position == some(vec2(41, 26))
+    check barrel.get.button == some(2)
+    check barrel.get.pointer == some(pen)
+
+  test "SDL pointer conversion preserves touch pressure and device identity":
+    let touch = touchPointerData(91, 0.4, true)
+    let converted = Sdl3Event(
+      kind: sekTouchMove,
+      timestamp: 12,
+      pointer: some(touch),
+      touchX: 17,
+      touchY: 23,
+      touchDx: 2,
+      touchDy: -3
+    ).pointerInputEvent()
+
+    check converted.isSome
+    check converted.get.kind == iekTouchMove
+    check converted.get.timestamp == 12
+    check converted.get.position == some(vec2(17, 23))
+    check converted.get.delta == some(vec2(2, -3))
+    check converted.get.pointer == some(touch)

@@ -1,6 +1,6 @@
 #include "cbss.h"
 
-_Static_assert(CBSS_ABI_VERSION == 0x00010004u, "unexpected CBSS ABI version");
+_Static_assert(CBSS_ABI_VERSION == 0x00010005u, "unexpected CBSS ABI version");
 
 #include <assert.h>
 #include <stddef.h>
@@ -25,9 +25,11 @@ _Static_assert(sizeof(CbssColorValueGradientStop) == 16,
                "CbssColorValueGradientStop ABI changed");
 _Static_assert(sizeof(CbssTransformOperation) == 36,
                "CbssTransformOperation ABI changed");
-_Static_assert(sizeof(CbssInputEvent) == 48,
+_Static_assert(sizeof(CbssPointerData) == 56,
+               "CbssPointerData ABI changed");
+_Static_assert(sizeof(CbssInputEvent) == 112,
                "CbssInputEvent ABI changed");
-_Static_assert(sizeof(CbssEvent) == 64, "CbssEvent ABI changed");
+_Static_assert(sizeof(CbssEvent) == 128, "CbssEvent ABI changed");
 _Static_assert(sizeof(CbssDispatchSummary) == 12,
                "CbssDispatchSummary ABI changed");
 _Static_assert(sizeof(CbssScrollMetrics) == 36,
@@ -36,7 +38,7 @@ _Static_assert(sizeof(CbssAccessibility) == 32,
                "CbssAccessibility ABI changed");
 _Static_assert(sizeof(CbssRenderSurfacePlacement) == 40,
                "CbssRenderSurfacePlacement ABI changed");
-_Static_assert(sizeof(CbssRenderSurfaceEvent) == 168,
+_Static_assert(sizeof(CbssRenderSurfaceEvent) == 232,
                "CbssRenderSurfaceEvent ABI changed");
 _Static_assert(offsetof(CbssPaintCommand, string_bytes) == 60,
                "CbssPaintCommand ABI changed");
@@ -48,6 +50,7 @@ typedef struct CallbackState {
   int root_clicks;
   int focus_events;
   int text_events;
+  int pen_events;
 } CallbackState;
 
 typedef struct SurfaceState {
@@ -65,6 +68,7 @@ typedef struct SurfaceState {
   float local_x;
   float local_y;
   int draw_on_mount;
+  int pen_inputs;
 } SurfaceState;
 
 static uint32_t handle_surface(
@@ -104,6 +108,17 @@ static uint32_t handle_surface(
         assert((event->flags & CBSS_SURFACE_INSIDE) != 0);
         state->local_x = event->local_x;
         state->local_y = event->local_y;
+      }
+      if ((event->input.flags & CBSS_INPUT_HAS_POINTER) != 0) {
+        ++state->pen_inputs;
+        assert(event->input.pointer.device == CBSS_POINTER_PEN_DIRECT);
+        assert(event->input.timestamp == 9001);
+        assert(event->input.pointer.device_id == 77);
+        assert((event->input.pointer.axes & CBSS_POINTER_AXIS_PRESSURE) != 0);
+        assert((event->input.pointer.axes & CBSS_POINTER_AXIS_TILT_X) != 0);
+        assert(fabsf(event->input.pointer.pressure - 0.625f) < 0.001f);
+        assert(fabsf(event->input.pointer.tilt_x + 18.0f) < 0.001f);
+        assert(event->input.pointer.eraser == 1);
       }
       return CBSS_SURFACE_HANDLED;
     case CBSS_SURFACE_FRAME:
@@ -161,6 +176,14 @@ static uint8_t handle_event(
     assert((event->flags & CBSS_EVENT_HAS_TEXT) != 0);
     assert(strcmp(event->text, "x") == 0);
     ++state->text_events;
+  } else if (event->kind == CBSS_EVENT_PEN_BUTTON_DOWN) {
+    assert((event->flags & CBSS_EVENT_HAS_POINTER) != 0);
+    assert(event->pointer.device == CBSS_POINTER_PEN_DIRECT);
+    assert(event->timestamp == 9002);
+    assert(event->pointer.device_id == 77);
+    assert((event->pointer.axes & CBSS_POINTER_AXIS_PRESSURE) != 0);
+    assert(fabsf(event->pointer.pressure - 0.625f) < 0.001f);
+    ++state->pen_events;
   }
   return 0;
 }
@@ -504,6 +527,9 @@ int main(void) {
       context, child, CBSS_EVENT_INPUT, handle_event, &callback_state));
   require_ok(context, cbss_node_set_event_handler(
       context, child, CBSS_EVENT_CHANGE, handle_event, &callback_state));
+  require_ok(context, cbss_node_set_event_handler(
+      context, child, CBSS_EVENT_PEN_BUTTON_DOWN,
+      handle_event, &callback_state));
 
   CbssPathSegment surface_path[] = {
       {.kind = CBSS_PATH_MOVE_TO, .endpoint_x = 1.0f, .endpoint_y = 1.0f},
@@ -574,9 +600,21 @@ int main(void) {
       context, surface_node, &surface_rect));
   CbssInputEvent surface_pointer = {
       .kind = CBSS_EVENT_POINTER_MOVE,
-      .flags = CBSS_INPUT_HAS_POSITION,
+      .flags = CBSS_INPUT_HAS_POSITION | CBSS_INPUT_HAS_POINTER,
       .x = surface_rect.x + 4.0f,
-      .y = surface_rect.y + 5.0f
+      .y = surface_rect.y + 5.0f,
+      .timestamp = 9001,
+      .pointer = {
+          .device = CBSS_POINTER_PEN_DIRECT,
+          .axes = CBSS_POINTER_AXIS_PRESSURE | CBSS_POINTER_AXIS_TILT_X,
+          .device_id = 77,
+          .pressure = 0.625f,
+          .tilt_x = -18.0f,
+          .contact = 1,
+          .primary = 1,
+          .eraser = 1,
+          .in_proximity = 1
+      }
   };
   CbssDispatchSummary surface_dispatch;
   require_ok(context, cbss_context_dispatch_input(
@@ -585,6 +623,7 @@ int main(void) {
   assert(surface_state.inputs >= 1);
   assert(fabsf(surface_state.local_x - 4.0f) < 0.01f);
   assert(fabsf(surface_state.local_y - 5.0f) < 0.01f);
+  assert(surface_state.pen_inputs == 1);
 
   require_ok(context, cbss_context_recompute(context));
   require_ok(context, cbss_context_set_pixel_scale(context, 2.0f));
@@ -805,6 +844,35 @@ int main(void) {
   assert(cbss_context_focused_node(context) == child);
   assert(callback_state.focus_events == 1);
   require_ok(context, cbss_context_recompute(context));
+
+  CbssInputEvent pen_button = {
+      .kind = CBSS_EVENT_PEN_BUTTON_DOWN,
+      .flags = CBSS_INPUT_HAS_POSITION | CBSS_INPUT_HAS_BUTTON |
+               CBSS_INPUT_HAS_POINTER,
+      .button = 2,
+      .x = 12.0f,
+      .y = 12.0f,
+      .timestamp = 9002,
+      .pointer = {
+          .device = CBSS_POINTER_PEN_DIRECT,
+          .axes = CBSS_POINTER_AXIS_PRESSURE | CBSS_POINTER_AXIS_TILT_X,
+          .device_id = 77,
+          .pressure = 0.625f,
+          .tilt_x = -18.0f,
+          .buttons = 2,
+          .contact = 1,
+          .primary = 1,
+          .in_proximity = 1
+      }
+  };
+  require_ok(context, cbss_context_emit_event(
+      context, child, &pen_button, &dispatch));
+  assert(callback_state.pen_events == 1);
+
+  CbssInputEvent invalid_pen = pen_button;
+  invalid_pen.pointer.pressure = NAN;
+  assert(cbss_context_emit_event(
+      context, child, &invalid_pen, &dispatch) == CBSS_INVALID_ARGUMENT);
 
   CbssInputEvent pointer_up = pointer_down;
   pointer_up.kind = CBSS_EVENT_POINTER_UP;

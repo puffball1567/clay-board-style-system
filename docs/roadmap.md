@@ -694,7 +694,7 @@ is played, captured, mixed, or recorded.
 
 ## Pen, Touch, And Expressive Input
 
-Status: `Planned`
+Status: `In progress`
 
 CBSS should support pen input as more than mouse emulation. A stylus can still
 participate in ordinary pointer interaction, while Canvas, drawing controls,
@@ -702,6 +702,15 @@ and applications that need it can receive the richer pen data without losing
 the common event model.
 
 Planned work:
+
+- Implemented on the Version 0.3 development line: one typed pointer metadata
+  contract shared by mouse, touch, and pen; source timestamps;
+  stable-in-process device identity;
+  optional pressure, tangential pressure, x/y tilt, rotation, distance, and
+  slider axes; contact, buttons, eraser, and proximity state; SDL3 event
+  conversion; Canvas/RenderSurface-local routing; C ABI transport; and
+  deterministic injected-event tests. Axis availability is explicit and no
+  unsupported value is fabricated.
 
 - A typed `PenEvent` carrying stable-in-session device identity, local and
   window coordinates, contact state, buttons, eraser-tip state, and timestamp.

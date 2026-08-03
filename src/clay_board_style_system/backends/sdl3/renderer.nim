@@ -2,6 +2,7 @@ import std/[hashes, math, options, os, strutils, tables]
 
 import ../../assets/asset_resolver
 import ../../core/[color, computed_style, geometry, gradient_sampling, node]
+import ../../input/events
 import ../../paint/[paint_command, path_geometry]
 import ../../text/[cosmic_text_engine, font_registry, text_engine]
 import ../../vendor/sdl3
@@ -135,10 +136,15 @@ type
     sekTouchStart,
     sekTouchMove,
     sekTouchEnd,
-    sekTouchCancel
+    sekTouchCancel,
+    sekPenProximityIn,
+    sekPenProximityOut,
+    sekPenButtonDown,
+    sekPenButtonUp
 
   Sdl3Event* = object
     timestamp*: uint64
+    pointer*: Option[PointerData]
     case kind*: Sdl3EventKind
     of sekQuit, sekExpose:
       discard
@@ -165,6 +171,15 @@ type
       wheelX*, wheelY*, wheelMouseX*, wheelMouseY*: float32
     of sekTouchStart, sekTouchMove, sekTouchEnd, sekTouchCancel:
       touchX*, touchY*, touchDx*, touchDy*: float32
+    of sekPenProximityIn, sekPenProximityOut:
+      discard
+    of sekPenButtonDown, sekPenButtonUp:
+      penButton*: int
+      penButtonX*, penButtonY*: float32
+
+  Sdl3PenDeviceState = object
+    pointer: PointerData
+    position: Vec2
 
   Sdl3Renderer* = object
     window*: pointer
@@ -199,6 +214,7 @@ type
     transformTextureCacheBytes: uint64
     frameId: uint64
     pendingEvents: seq[Sdl3Event]
+    penStates: Table[SDL_PenID, Sdl3PenDeviceState]
     captureNextFrame: bool
     capturedFrame: Option[Sdl3CapturedFrame]
     composing: bool
@@ -257,6 +273,69 @@ proc scrollDelta*(event: Sdl3Event; pixelsPerStep = DefaultWheelStepPixels): Vec
   # SDL reports positive vertical values away from the user. UI scroll
   # offsets grow toward the document end, so the coordinate is inverted once.
   vec2(-event.wheelX * pixelsPerStep, -event.wheelY * pixelsPerStep)
+
+proc pointerInputEvent*(event: Sdl3Event): Option[InputEvent] =
+  ## Converts SDL pointer-family events without losing optional device axes.
+  ## Keyboard, text, window, and wheel events remain explicit at the host.
+  case event.kind
+  of sekPointerMove:
+    result = some(pointerMoveEvent(vec2(event.x, event.y), event.pointer))
+  of sekPointerDown:
+    result = some(pointerDownEvent(
+      vec2(event.buttonX, event.buttonY), event.button, event.pointer
+    ))
+  of sekPointerUp:
+    result = some(pointerUpEvent(
+      vec2(event.buttonX, event.buttonY), event.button, event.pointer
+    ))
+  of sekTouchStart:
+    result = some(InputEvent(
+      kind: iekTouchStart,
+      position: some(vec2(event.touchX, event.touchY)),
+      pointer: event.pointer
+    ))
+  of sekTouchMove:
+    result = some(InputEvent(
+      kind: iekTouchMove,
+      position: some(vec2(event.touchX, event.touchY)),
+      delta: some(vec2(event.touchDx, event.touchDy)),
+      pointer: event.pointer
+    ))
+  of sekTouchEnd:
+    result = some(InputEvent(
+      kind: iekTouchEnd,
+      position: some(vec2(event.touchX, event.touchY)),
+      pointer: event.pointer
+    ))
+  of sekTouchCancel:
+    result = some(InputEvent(
+      kind: iekTouchCancel,
+      position: some(vec2(event.touchX, event.touchY)),
+      pointer: event.pointer
+    ))
+  of sekPenProximityIn, sekPenProximityOut:
+    if event.pointer.isSome:
+      result = some(penProximityEvent(
+        event.kind == sekPenProximityIn, event.pointer.get
+      ))
+    else:
+      result = none(InputEvent)
+  of sekPenButtonDown, sekPenButtonUp:
+    if event.pointer.isSome:
+      result = some(penButtonEvent(
+        event.kind == sekPenButtonDown,
+        vec2(event.penButtonX, event.penButtonY),
+        event.penButton,
+        event.pointer.get
+      ))
+    else:
+      result = none(InputEvent)
+  else:
+    result = none(InputEvent)
+  if result.isSome:
+    var converted = result.get
+    converted.timestamp = event.timestamp
+    result = some(converted)
 
 proc sdlError(message: string): ref CatchableError =
   let err = $SDL3.getError()
@@ -435,6 +514,7 @@ proc initSdl3Renderer*(
   result.imageCacheIndex = initTable[Hash, seq[int]]()
   result.roundedTextureCacheIndex = initTable[Hash, seq[int]]()
   result.shadowTextureCacheIndex = initTable[Hash, seq[int]]()
+  result.penStates = initTable[SDL_PenID, Sdl3PenDeviceState]()
   result.textCacheLimit = 256
   result.imageCacheLimit = 128
   result.roundedTextureCacheLimit = 128
@@ -673,6 +753,61 @@ proc touchPoint(target: Sdl3Renderer; x, y: cfloat): Vec2 =
   let viewport = target.windowSize()
   vec2(x.float32 * viewport.w, y.float32 * viewport.h)
 
+const
+  sdlPenInputDown = 1'u32 shl 0
+  sdlPenInputButtonMask = 0x1f'u32 shl 1
+  sdlPenInputEraserTip = 1'u32 shl 30
+  sdlPenInputInProximity = 1'u32 shl 31
+
+proc penState(
+    target: var Sdl3Renderer;
+    deviceId: SDL_PenID
+): var Sdl3PenDeviceState =
+  target.penStates.mgetOrPut(
+    deviceId,
+    Sdl3PenDeviceState(pointer: PointerData(
+      device: pdkPenUnknown,
+      deviceId: uint64(deviceId),
+      primary: true
+    ))
+  )
+
+proc applyPenFlags*(pointer: var PointerData; flags: SDL_PenInputFlags) =
+  let value = uint32(flags)
+  pointer.contact = (value and sdlPenInputDown) != 0
+  pointer.buttons = (value and sdlPenInputButtonMask) shr 1
+  pointer.eraser = (value and sdlPenInputEraserTip) != 0
+  pointer.inProximity = pointer.contact or
+    (value and sdlPenInputInProximity) != 0
+
+proc applyPenAxis*(pointer: var PointerData; axis: SDL_PenAxis; value: float32) =
+  if value.classify in {fcNan, fcInf, fcNegInf}:
+    return
+  case axis
+  of SDL_PEN_AXIS_PRESSURE:
+    pointer.axes.incl paPressure
+    pointer.pressure = clamp(value, 0.0'f32, 1.0'f32)
+  of SDL_PEN_AXIS_XTILT:
+    pointer.axes.incl paTiltX
+    pointer.tiltX = clamp(value, -90.0'f32, 90.0'f32)
+  of SDL_PEN_AXIS_YTILT:
+    pointer.axes.incl paTiltY
+    pointer.tiltY = clamp(value, -90.0'f32, 90.0'f32)
+  of SDL_PEN_AXIS_DISTANCE:
+    pointer.axes.incl paDistance
+    pointer.distance = clamp(value, 0.0'f32, 1.0'f32)
+  of SDL_PEN_AXIS_ROTATION:
+    pointer.axes.incl paRotation
+    pointer.rotation = clamp(value, -180.0'f32, 180.0'f32)
+  of SDL_PEN_AXIS_SLIDER:
+    pointer.axes.incl paSlider
+    pointer.slider = clamp(value, 0.0'f32, 1.0'f32)
+  of SDL_PEN_AXIS_TANGENTIAL_PRESSURE:
+    pointer.axes.incl paTangentialPressure
+    pointer.tangentialPressure = clamp(value, -1.0'f32, 1.0'f32)
+  of SDL_PEN_AXIS_COUNT:
+    discard
+
 proc printableKey(keycode: SDL_Keycode): string =
   let value = int(keycode)
   case value
@@ -779,24 +914,52 @@ proc pollEventFromRaw(
       # Reapply the cached application cursor when control returns to content.
       target.reapplyActiveCursor()
     of SDL_EVENT_MOUSE_MOTION:
-      event = Sdl3Event(kind: sekPointerMove, timestamp: raw.motion.timestamp, x: raw.motion.x.float32, y: raw.motion.y.float32)
+      if raw.motion.which in [SDL_TOUCH_MOUSEID, SDL_PEN_MOUSEID]:
+        continue
+      event = Sdl3Event(
+        kind: sekPointerMove,
+        timestamp: raw.motion.timestamp,
+        x: raw.motion.x.float32,
+        y: raw.motion.y.float32,
+        pointer: some(PointerData(device: pdkMouse, primary: true))
+      )
       return true
     of SDL_EVENT_MOUSE_BUTTON_DOWN:
+      if raw.button.which in [SDL_TOUCH_MOUSEID, SDL_PEN_MOUSEID]:
+        continue
       event = Sdl3Event(
         kind: sekPointerDown,
         timestamp: raw.button.timestamp,
         button: int(raw.button.button),
         buttonX: raw.button.x.float32,
-        buttonY: raw.button.y.float32
+        buttonY: raw.button.y.float32,
+        pointer: some(PointerData(
+          device: pdkMouse,
+          buttons:
+            if raw.button.button >= 1 and raw.button.button <= 32:
+              1'u32 shl (uint32(raw.button.button) - 1)
+            else:
+              0'u32,
+          contact: true,
+          primary: true,
+          inProximity: true
+        ))
       )
       return true
     of SDL_EVENT_MOUSE_BUTTON_UP:
+      if raw.button.which in [SDL_TOUCH_MOUSEID, SDL_PEN_MOUSEID]:
+        continue
       event = Sdl3Event(
         kind: sekPointerUp,
         timestamp: raw.button.timestamp,
         button: int(raw.button.button),
         buttonX: raw.button.x.float32,
-        buttonY: raw.button.y.float32
+        buttonY: raw.button.y.float32,
+        pointer: some(PointerData(
+          device: pdkMouse,
+          primary: true,
+          inProximity: true
+        ))
       )
       return true
     of SDL_EVENT_KEY_DOWN:
@@ -878,21 +1041,170 @@ proc pollEventFromRaw(
       )
       return true
     of SDL_EVENT_FINGER_DOWN:
+      if raw.tfinger.touchID in [SDL_MOUSE_TOUCHID, SDL_PEN_TOUCHID]:
+        continue
       let point = target.touchPoint(raw.tfinger.x, raw.tfinger.y)
-      event = Sdl3Event(kind: sekTouchStart, timestamp: raw.tfinger.timestamp, touchX: point.x, touchY: point.y, touchDx: 0, touchDy: 0)
+      event = Sdl3Event(
+        kind: sekTouchStart,
+        timestamp: raw.tfinger.timestamp,
+        touchX: point.x,
+        touchY: point.y,
+        touchDx: 0,
+        touchDy: 0,
+        pointer: some(touchPointerData(
+          uint64(raw.tfinger.fingerID), raw.tfinger.pressure, true
+        ))
+      )
       return true
     of SDL_EVENT_FINGER_MOTION:
+      if raw.tfinger.touchID in [SDL_MOUSE_TOUCHID, SDL_PEN_TOUCHID]:
+        continue
       let point = target.touchPoint(raw.tfinger.x, raw.tfinger.y)
       let delta = target.touchPoint(raw.tfinger.dx, raw.tfinger.dy)
-      event = Sdl3Event(kind: sekTouchMove, timestamp: raw.tfinger.timestamp, touchX: point.x, touchY: point.y, touchDx: delta.x, touchDy: delta.y)
+      event = Sdl3Event(
+        kind: sekTouchMove,
+        timestamp: raw.tfinger.timestamp,
+        touchX: point.x,
+        touchY: point.y,
+        touchDx: delta.x,
+        touchDy: delta.y,
+        pointer: some(touchPointerData(
+          uint64(raw.tfinger.fingerID), raw.tfinger.pressure, true
+        ))
+      )
       return true
     of SDL_EVENT_FINGER_UP:
+      if raw.tfinger.touchID in [SDL_MOUSE_TOUCHID, SDL_PEN_TOUCHID]:
+        continue
       let point = target.touchPoint(raw.tfinger.x, raw.tfinger.y)
-      event = Sdl3Event(kind: sekTouchEnd, timestamp: raw.tfinger.timestamp, touchX: point.x, touchY: point.y, touchDx: 0, touchDy: 0)
+      event = Sdl3Event(
+        kind: sekTouchEnd,
+        timestamp: raw.tfinger.timestamp,
+        touchX: point.x,
+        touchY: point.y,
+        touchDx: 0,
+        touchDy: 0,
+        pointer: some(touchPointerData(
+          uint64(raw.tfinger.fingerID), 0, false
+        ))
+      )
       return true
     of SDL_EVENT_FINGER_CANCELED:
+      if raw.tfinger.touchID in [SDL_MOUSE_TOUCHID, SDL_PEN_TOUCHID]:
+        continue
       let point = target.touchPoint(raw.tfinger.x, raw.tfinger.y)
-      event = Sdl3Event(kind: sekTouchCancel, timestamp: raw.tfinger.timestamp, touchX: point.x, touchY: point.y, touchDx: 0, touchDy: 0)
+      event = Sdl3Event(
+        kind: sekTouchCancel,
+        timestamp: raw.tfinger.timestamp,
+        touchX: point.x,
+        touchY: point.y,
+        touchDx: 0,
+        touchDy: 0,
+        pointer: some(touchPointerData(
+          uint64(raw.tfinger.fingerID), 0, false
+        ))
+      )
+      return true
+    of SDL_EVENT_PEN_PROXIMITY_IN, SDL_EVENT_PEN_PROXIMITY_OUT:
+      let deviceId = raw.pproximity.which
+      var state = target.penState(deviceId)
+      let inside = SDL_EventType(raw.`type`) == SDL_EVENT_PEN_PROXIMITY_IN
+      state.pointer.inProximity = inside
+      if not inside:
+        state.pointer.contact = false
+        state.pointer.pressure = 0
+      else:
+        target.penStates[deviceId] = state
+      event = Sdl3Event(
+        kind: if inside: sekPenProximityIn else: sekPenProximityOut,
+        timestamp: raw.pproximity.timestamp,
+        pointer: some(state.pointer)
+      )
+      if not inside:
+        target.penStates.del(deviceId)
+      return true
+    of SDL_EVENT_PEN_DOWN, SDL_EVENT_PEN_UP:
+      var state = target.penState(raw.ptouch.which)
+      state.position = vec2(raw.ptouch.x, raw.ptouch.y)
+      state.pointer.applyPenFlags(raw.ptouch.pen_state)
+      state.pointer.contact = raw.ptouch.down
+      state.pointer.eraser = raw.ptouch.eraser or state.pointer.eraser
+      state.pointer.inProximity = true
+      if not state.pointer.contact and paPressure in state.pointer.axes:
+        state.pointer.pressure = 0
+      target.penStates[raw.ptouch.which] = state
+      if raw.ptouch.down:
+        event = Sdl3Event(
+          kind: sekPointerDown,
+          timestamp: raw.ptouch.timestamp,
+          button: 0,
+          buttonX: state.position.x,
+          buttonY: state.position.y,
+          pointer: some(state.pointer)
+        )
+      else:
+        event = Sdl3Event(
+          kind: sekPointerUp,
+          timestamp: raw.ptouch.timestamp,
+          button: 0,
+          buttonX: state.position.x,
+          buttonY: state.position.y,
+          pointer: some(state.pointer)
+        )
+      return true
+    of SDL_EVENT_PEN_MOTION:
+      var state = target.penState(raw.pmotion.which)
+      state.position = vec2(raw.pmotion.x, raw.pmotion.y)
+      state.pointer.applyPenFlags(raw.pmotion.pen_state)
+      state.pointer.inProximity = true
+      target.penStates[raw.pmotion.which] = state
+      event = Sdl3Event(
+        kind: sekPointerMove,
+        timestamp: raw.pmotion.timestamp,
+        x: state.position.x,
+        y: state.position.y,
+        pointer: some(state.pointer)
+      )
+      return true
+    of SDL_EVENT_PEN_AXIS:
+      var state = target.penState(raw.paxis.which)
+      state.position = vec2(raw.paxis.x, raw.paxis.y)
+      state.pointer.applyPenFlags(raw.paxis.pen_state)
+      state.pointer.applyPenAxis(raw.paxis.axis, raw.paxis.value)
+      state.pointer.inProximity = true
+      target.penStates[raw.paxis.which] = state
+      event = Sdl3Event(
+        kind: sekPointerMove,
+        timestamp: raw.paxis.timestamp,
+        x: state.position.x,
+        y: state.position.y,
+        pointer: some(state.pointer)
+      )
+      return true
+    of SDL_EVENT_PEN_BUTTON_DOWN, SDL_EVENT_PEN_BUTTON_UP:
+      var state = target.penState(raw.pbutton.which)
+      state.position = vec2(raw.pbutton.x, raw.pbutton.y)
+      state.pointer.applyPenFlags(raw.pbutton.pen_state)
+      state.pointer.inProximity = true
+      target.penStates[raw.pbutton.which] = state
+      if raw.pbutton.down:
+        event = Sdl3Event(
+          kind: sekPenButtonDown,
+          timestamp: raw.pbutton.timestamp,
+          penButton: int(raw.pbutton.button),
+          penButtonX: state.position.x,
+          penButtonY: state.position.y,
+          pointer: some(state.pointer)
+        )
+      else:
+        event = Sdl3Event(
+          kind: sekPenButtonUp,
+          timestamp: raw.pbutton.timestamp,
+          penButton: int(raw.pbutton.button),
+          penButtonX: state.position.x,
+          penButtonY: state.position.y,
+          pointer: some(state.pointer)
+        )
       return true
     else:
       discard
