@@ -303,10 +303,15 @@ Implementation progress:
   SDL3 reuses compact high-DPI textures and the PPM reference backend verifies
   alpha composition pixel by pixel. The append-only C ABI exposes layer paint
   kinds and composition metadata.
-- Remaining Version 0.3 visual work: expose drawing adapters beyond the
-  existing C ABI lifecycle and complete the final SDL3, headless, performance,
-  memory, and platform release gates. Three-dimensional transforms, filters,
-  and full CSS blend/isolation semantics remain later work.
+- Implemented on the Version 0.3 development line: the C ABI RenderSurface
+  Canvas adapter accepts retained transforms, clips, layers, rectangles,
+  gradients, paths, text, and images in local coordinates. One explicit commit
+  publishes the complete display-list update without style resolution or
+  layout, including safe mount-callback reentrancy and revision synchronization.
+- Remaining Version 0.3 visual work: complete the final SDL3, headless,
+  performance, memory, and platform release gates. Three-dimensional
+  transforms, filters, shared GPU targets, CPU pixel-buffer surfaces, and full
+  CSS blend/isolation semantics remain later work.
 
 ## Version 0.4 - Complete Unit Resolution
 

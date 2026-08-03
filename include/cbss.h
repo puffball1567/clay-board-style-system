@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define CBSS_ABI_VERSION 0x00010003u
+#define CBSS_ABI_VERSION 0x00010004u
 #define CBSS_NODE_NONE UINT32_MAX
 
 typedef struct CbssContext CbssContext;
@@ -617,6 +617,49 @@ CBSS_API uint8_t cbss_context_needs_render_surface_frame(
     CbssContext *context);
 CBSS_API CbssStatus cbss_render_surface_set_device_available(
     CbssContext *context, uint64_t surface, uint8_t available);
+CBSS_API CbssStatus cbss_render_surface_canvas_clear(
+    CbssContext *context, uint64_t surface);
+CBSS_API CbssStatus cbss_render_surface_canvas_save(
+    CbssContext *context, uint64_t surface);
+CBSS_API CbssStatus cbss_render_surface_canvas_restore(
+    CbssContext *context, uint64_t surface);
+CBSS_API CbssStatus cbss_render_surface_canvas_transform(
+    CbssContext *context, uint64_t surface,
+    CbssAffineTransform transform);
+CBSS_API CbssStatus cbss_render_surface_canvas_push_clip(
+    CbssContext *context, uint64_t surface,
+    CbssRect bounds, float radius);
+CBSS_API CbssStatus cbss_render_surface_canvas_pop_clip(
+    CbssContext *context, uint64_t surface);
+CBSS_API CbssStatus cbss_render_surface_canvas_begin_layer(
+    CbssContext *context, uint64_t surface, CbssRect bounds,
+    float opacity, uint32_t composite_mode);
+CBSS_API CbssStatus cbss_render_surface_canvas_end_layer(
+    CbssContext *context, uint64_t surface);
+CBSS_API CbssStatus cbss_render_surface_canvas_fill_rect(
+    CbssContext *context, uint64_t surface, CbssRect bounds,
+    CbssColor color, float radius);
+CBSS_API CbssStatus cbss_render_surface_canvas_fill_linear_gradient(
+    CbssContext *context, uint64_t surface, CbssRect bounds,
+    float angle, uint32_t interpolation_space,
+    const CbssGradientStop *stops, uint32_t stop_count, float radius);
+CBSS_API CbssStatus cbss_render_surface_canvas_stroke_rect(
+    CbssContext *context, uint64_t surface, CbssRect bounds,
+    CbssColor color, float width, float radius);
+CBSS_API CbssStatus cbss_render_surface_canvas_stroke_path(
+    CbssContext *context, uint64_t surface,
+    const CbssPathSegment *segments, uint32_t segment_count,
+    CbssColor color, float width, uint32_t line_cap,
+    uint32_t line_join, float miter_limit);
+CBSS_API CbssStatus cbss_render_surface_canvas_draw_text(
+    CbssContext *context, uint64_t surface, const char *text,
+    float x, float y, CbssColor color, const CbssTextStyle *style,
+    const char *font_family, float max_width, uint8_t has_max_width);
+CBSS_API CbssStatus cbss_render_surface_canvas_draw_image(
+    CbssContext *context, uint64_t surface, const char *source,
+    CbssRect bounds, float opacity);
+CBSS_API CbssStatus cbss_render_surface_canvas_commit(
+    CbssContext *context, uint64_t surface, uint64_t *output_revision);
 CBSS_API CbssStatus cbss_context_set_pixel_scale(
     CbssContext *context, float pixel_scale);
 

@@ -79,8 +79,11 @@ position.
 
 The same lifecycle is available to foreign-language hosts through
 `include/cbss.h`. A `CbssRenderSurfaceCallback` receives the versioned event
-union, while the host retains ownership of its renderer and resources. See
-[c-api.md](c-api.md#render-surfaces) for the C event-loop contract.
+union. A registered surface also owns a retained Canvas adapter, so foreign
+libraries can submit canonical local drawing commands and publish them with
+one paint-only commit without accessing renderer internals. See
+[c-api.md](c-api.md#rendersurface-canvas-adapter) for the drawing contract and
+[c-api.md](c-api.md#render-surfaces) for the event-loop contract.
 
 ## Frame Scheduling
 
@@ -147,7 +150,6 @@ are ignored so a surface cannot corrupt the surrounding CBSS clip stack.
 The Version 0.3 contract is still in development. The following are not yet
 runtime-complete:
 
-- C ABI drawing commands beyond the implemented RenderSurface lifecycle; and
 - GPU/shared-texture surface paths.
 
 Resolved box transforms and Canvas-authored transforms use one affine command

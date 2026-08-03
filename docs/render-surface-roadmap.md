@@ -68,11 +68,11 @@ same lifecycle is now exposed through the C ABI and exercised by both shared
 and static C consumers.
 
 Phase 1 is not complete. Retained open and closed paths, adaptive quadratic
-and cubic curves, and configurable line caps/joins now use the shared SDL3 and
-headless paint stream. Save/restore transforms, blend modes, offscreen
-surfaces, runtime application of CSS-inspired transforms, C ABI surface
-drawing adapters beyond lifecycle, and final performance gates remain
-required. The interactive SDL3 Canvas/color demo is available through
+and cubic curves, configurable line caps/joins, save/restore transforms,
+bounded composition layers, and the C ABI Canvas drawing adapter now use the
+shared SDL3 and headless paint stream. Final release performance, memory, and
+platform gates remain required. The interactive SDL3 Canvas/color demo is
+available through
 `nimble v03CanvasDemo`. See
 [render-surfaces.md](render-surfaces.md) for the implemented contract.
 

@@ -23,7 +23,7 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x00010003` supports:
+ABI version `0x00010004` supports:
 
 - Opaque context and style handles.
 - Generation-checked node handles plus box, text, and image node creation.
@@ -44,6 +44,9 @@ ABI version `0x00010003` supports:
 - Append-only bounded layer paint scopes. `CBSS_PAINT_PUSH_LAYER` stores bounds
   in `rect`, opacity in `value0`, and `CbssLayerCompositeMode` in `value1`;
   `CBSS_PAINT_POP_LAYER` closes the scope.
+- A retained Canvas drawing adapter on every registered RenderSurface. Foreign
+  libraries append local drawing commands and publish the complete display-list
+  update with one `cbss_render_surface_canvas_commit`.
 - Hit testing.
 - C callbacks for all CBSS event kinds, including bubbling through ancestors.
 - Pointer, touch, keyboard, text, wheel, and component-event dispatch.
@@ -113,8 +116,41 @@ Hosts call `cbss_render_surface_request_frame` when new work arrives and
 `cbss_context_needs_render_surface_frame` lets an event loop remain blocked
 while no visible surface needs work. Set the output scale with
 `cbss_context_set_pixel_scale`; a size change is delivered before subsequent
-drawing. External rendering remains host-owned in this ABI slice; the callback
-does not expose SDL renderer internals.
+drawing. The callback does not expose SDL renderer internals.
+
+## RenderSurface Canvas Adapter
+
+Every registered surface owns a private retained Canvas display list. The
+`cbss_render_surface_canvas_*` functions modify that list in surface-local
+coordinates without exposing Nim, SDL3, renderer, texture, or allocation types
+across the ABI.
+
+A normal update is transactional at the presentation boundary:
+
+1. call `cbss_render_surface_canvas_clear` when replacing the previous list;
+2. append drawing and scope commands;
+3. call `cbss_render_surface_canvas_commit` once.
+
+Command appends do not recompute style or layout and do not alter the visible
+paint snapshot before commit. Commit publishes a new surface
+revision, issues the ordinary RenderSurface update callback when mounted, and
+refreshes only presentation data when the context has already been computed.
+Calling commit again without a Canvas mutation is a no-op and returns the same
+revision.
+
+The adapter accepts save/restore, affine transforms, rectangular clips,
+bounded composition layers, rectangles, gradients, retained path strokes,
+text, and images. All pointer arrays are copied during the call. Caller-owned
+arrays and strings need remain valid only until the function returns. Invalid
+handles, unknown enums, non-finite coordinates, negative dimensions, and
+unusable widths are rejected before they enter the retained list. Scope
+balancing follows the Nim Canvas contract: unmatched closes are safe no-ops
+and dangling scopes are closed at the paint boundary.
+
+This is the language-neutral path for chart, visualization, game, and other
+drawing libraries that can emit canonical CBSS Canvas commands. Shared GPU
+targets and CPU pixel buffers are separate future capabilities with explicit
+ownership and synchronization contracts.
 
 ## Ownership
 
