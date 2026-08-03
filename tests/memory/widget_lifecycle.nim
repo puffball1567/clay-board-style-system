@@ -8,6 +8,27 @@ type LifecycleScreen = enum
   lcsHome,
   lcsDetails
 
+type MemoryComponent = ref object of CBSSComponent
+  clicks: ref int
+  mounts: ref int
+  unmounts: ref int
+
+proc render(self: MemoryComponent) =
+  proc handleClick(event: DispatchResult): bool =
+    inc self.clicks[]
+    return true
+
+  ui.box(self):
+    ui.text("Typed component")
+
+  self.onClick = handleClick
+
+method onMount(self: MemoryComponent) =
+  inc self.mounts[]
+
+method onUnmount(self: MemoryComponent) =
+  inc self.unmounts[]
+
 proc exerciseWidgetLifecycle() =
   for iteration in 0 ..< lifecycleIterations:
     let navigator = initStackNavigator(lcsHome)
@@ -181,5 +202,19 @@ proc exerciseWidgetLifecycle() =
       discard ui.mountDefaultContextMenu(imageParent)
       doAssert ui.showDefaultContextMenu(some(contextTarget.nodeId), vec2(8, 8))
       discard ui.closeDefaultContextMenu()
+
+      let componentClicks = new int
+      let componentMounts = new int
+      let componentUnmounts = new int
+      let component = ui.mount(MemoryComponent(
+        clicks: componentClicks,
+        mounts: componentMounts,
+        unmounts: componentUnmounts
+      ))
+      doAssert componentMounts[] == 1
+      doAssert component.node.emit(InputEvent(kind: iekClick))
+      doAssert componentClicks[] == 1
+      doAssert ui.disposeSubtree(component.node, interaction)
+      doAssert componentUnmounts[] == 1
 
 exerciseWidgetLifecycle()

@@ -7,8 +7,17 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-03
+
 ### Added
 
+- Added typed `CBSSComponent` authoring with ordinary Nim `render(self)`
+  procedures, checked scoped `ui` composition, automatic Style DI,
+  component-owned event slots, ARC retention, lifecycle hooks, and
+  transactional mount rollback.
+- Added typed CSS Color 4-inspired authored values and strict serialized
+  parsing for hexadecimal, named, RGB/HSL, HWB, Lab/LCH, Oklab/Oklch, and
+  predefined `color()` spaces with byte-offset diagnostics.
 - Added typed mouse, touch, and pen metadata across SDL3 input, normal event
   dispatch, Canvas/RenderSurface-local callbacks, and C ABI version
   `0x00010005`, including source timestamps and capability-masked pressure,
@@ -55,6 +64,9 @@ release. Before 1.0, minor releases may contain public API changes.
 - Added retained open and closed Canvas paths with adaptive quadratic/cubic
   curves, configurable cap/join styles, shared SDL3/headless rendering,
   clipping, opacity, and Canvas-local coordinates.
+- Added one affine coordinate contract for resolved Box transforms and
+  retained Canvas transforms across paint, exact hit testing, transformed
+  clips, RenderSurface input, SDL3 composition, and headless rendering.
 - Added bounded Canvas offscreen layers with explicit opacity, source-over,
   copy, and additive composition across SDL3 and the alpha-aware PPM reference
   backend, including append-only C ABI paint kinds and performance gates.
@@ -62,6 +74,11 @@ release. Before 1.0, minor releases may contain public API changes.
   libraries can submit local transforms, clips, layers, rectangles, gradients,
   paths, text, and images, then publish one paint-only display-list update
   without recomputing style or layout.
+- Added required Linux x86_64, Windows x86_64, and macOS arm64 portable CI
+  lanes covering ARC tests, public modules, non-window examples, C ABI builds,
+  and both native Rust bridges.
+- Extended the release-mode ARC lifecycle Valgrind gate to cover typed
+  component retention, events, mount, subtree disposal, and unmount hooks.
 
 ### Fixed
 

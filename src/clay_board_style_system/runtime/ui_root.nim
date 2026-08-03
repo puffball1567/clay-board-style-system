@@ -20,10 +20,17 @@ type
   ClipboardTextProvider* = proc(): string {.closure.}
   ClipboardTextWriter* = proc(text: string) {.closure.}
   PopupCloser* = proc(target: Option[NodeId]): bool {.closure.}
+  ComponentRetention* = ref RootObj
+  ComponentUnmountCallback* = proc(component: ComponentRetention) {.nimcall.}
 
   PopupCloserBinding = object
     owner: NodeId
     callback: PopupCloser
+
+  MountedComponentBinding = object
+    owner: NodeId
+    component: ComponentRetention
+    callback: ComponentUnmountCallback
 
   ContextMenuAction* = enum
     cmaCut,
@@ -68,6 +75,7 @@ type
     clipboardTextCache: string
     clipboardTextCached: bool
     popupClosers*: seq[PopupCloserBinding]
+    mountedComponents: seq[MountedComponentBinding]
     focusRequestPending*: bool
     focusRequestTarget*: Option[NodeId]
     parentStack: seq[NodeId]
@@ -107,6 +115,7 @@ proc initUiRoot*(): UiRoot =
     clipboardTextCache: "",
     clipboardTextCached: false,
     popupClosers: @[],
+    mountedComponents: @[],
     focusRequestPending: false,
     focusRequestTarget: none(NodeId),
     parentStack: @[],
@@ -177,6 +186,39 @@ proc closeOpenPopups*(root: UiRoot; target: Option[NodeId]): bool =
   for binding in root.popupClosers:
     if binding.callback(target):
       result = true
+
+proc retainMountedComponent*(
+    root: UiRoot;
+    owner: NodeHandle;
+    component: ComponentRetention;
+    callback: ComponentUnmountCallback
+) =
+  if owner.root != root or not root.tree.isValid(owner.id):
+    raise newException(ValueError, "component root does not belong to this UiRoot")
+  if callback.isNil:
+    raise newException(ValueError, "component unmount callback cannot be nil")
+  if component.isNil:
+    raise newException(ValueError, "mounted component cannot be nil")
+  for binding in root.mountedComponents:
+    if binding.owner == owner.id:
+      raise newException(ValueError, "component root is already retained")
+  root.mountedComponents.add MountedComponentBinding(
+    owner: owner.id,
+    component: component,
+    callback: callback
+  )
+
+proc takeComponentUnmountCallbacks(
+    root: UiRoot;
+    removed: HashSet[NodeId]
+): seq[MountedComponentBinding] =
+  var retained = newSeqOfCap[MountedComponentBinding](root.mountedComponents.len)
+  for binding in root.mountedComponents:
+    if binding.owner in removed:
+      result.add binding
+    else:
+      retained.add binding
+  root.mountedComponents = retained
 
 proc uiStyle*(declarations: openArray[Declaration]): UiStyle =
   UiStyle(declarations: @declarations)
@@ -388,6 +430,7 @@ proc disposeSubtree*(
       pending.add child
 
   root.clearInteractionTargets(interaction, removed)
+  let componentUnmountCallbacks = root.takeComponentUnmountCallbacks(removed)
   discard root.events.removeEventHandlers(removed)
   root.removeSubtreeStyles(removed)
   root.scroll.clearNodes(removedIds)
@@ -436,6 +479,16 @@ proc disposeSubtree*(
     root.defaultContextMenuItemNodes = retainedItems
 
   discard root.tree.disposeSubtree(subtree.id)
+
+  var unmountFailure: ref CatchableError
+  for binding in componentUnmountCallbacks:
+    try:
+      binding.callback(binding.component)
+    except CatchableError as error:
+      if unmountFailure.isNil:
+        unmountFailure = error
+  if not unmountFailure.isNil:
+    raise unmountFailure
   true
 
 proc defaultContextMenuItems*(): seq[ContextMenuItem] =

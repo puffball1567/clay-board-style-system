@@ -145,7 +145,7 @@ SDL3 demos were also reviewed interactively before release.
 
 ## Version 0.3 - Visual Foundation And Color
 
-Status: `In progress`
+Status: `Released in 0.3.0`
 
 Version 0.3 establishes the public visual-surface foundation that independent
 libraries can build on. CBSS owns the host contract, placement, composition,
@@ -156,6 +156,27 @@ are optional modules shipped within CBSS.
 
 Planned capabilities:
 
+- Add a type-oriented Nim component authoring layer that remains ordinary Nim
+  and preserves LSP completion, navigation, rename, and static checking. Public
+  examples use `CBSSComponent` subtypes, `render(self)`,
+  `ui.mount(Component(...))`, and `ui.box(self, ownedStyle = ...)`; they do not
+  depend on an uppercase proc convention, an untyped component macro, an
+  implicit `result` variable, or command-call syntax without parentheses.
+- Make component Style DI automatic at the component-root boundary. The caller
+  supplies the inherited `style` field, the component supplies `ownedStyle`,
+  and CBSS applies the documented component-owned conflict precedence without
+  requiring authors to write `injected + owned` expressions in every render
+  proc.
+- Provide an imported `ui` authoring facade backed by a checked, nested render
+  context rather than a process-global `UiRoot`. `ui.mount()` establishes and
+  restores the active root synchronously, supports nested components and
+  separate roots, retains mounted component instances under ARC, and reports
+  use outside a render scope as an authoring error.
+- Keep `render(self)` as retained initial construction, not virtual-DOM-style
+  replay. Later state changes update stable nodes and dirty domains. Mount and
+  subtree disposal own deterministic component retention and unmount hooks so
+  a discarded `ui.mount(...)` return value cannot prematurely free component
+  state.
 - Make the color subsystem semantically compatible with the supported CSS
   Color 4 surface described below, including hexadecimal, named, RGB, HSL,
   HWB, Lab/LCH, Oklab/Oklch, alpha, interpolation, gamut handling,
@@ -195,6 +216,11 @@ not bundle image assets or make a chart/widget catalogue part of its core
 release.
 
 Implementation progress:
+
+- Implemented in Version 0.3: typed `CBSSComponent` authoring with ordinary
+  Nim `render(self)` procedures, checked nested `ui` contexts, automatic Style
+  DI with component-owned conflict precedence, root event properties, ARC
+  retention, deterministic lifecycle hooks, and transactional rollback.
 
 - Implemented on the Version 0.3 development line: authored color-space
   values, conversion to the current SDR sRGB paint boundary, explicit gamut
@@ -308,10 +334,10 @@ Implementation progress:
   gradients, paths, text, and images in local coordinates. One explicit commit
   publishes the complete display-list update without style resolution or
   layout, including safe mount-callback reentrancy and revision synchronization.
-- Remaining Version 0.3 visual work: complete the final SDL3, headless,
-  performance, memory, and platform release gates. Three-dimensional
-  transforms, filters, shared GPU targets, CPU pixel-buffer surfaces, and full
-  CSS blend/isolation semantics remain later work.
+- Version 0.3 release gates cover SDL3 and headless rendering, performance,
+  ARC and C ABI memory checks, portable CI, and real-window Wayland scenarios.
+  Three-dimensional transforms, filters, shared GPU targets, CPU pixel-buffer
+  surfaces, and full CSS blend/isolation semantics remain later work.
 
 ## Version 0.4 - Complete Unit Resolution
 
