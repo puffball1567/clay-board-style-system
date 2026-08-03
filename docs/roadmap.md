@@ -56,8 +56,8 @@ This work is a Version 0.2 release gate:
   Internal handlers capture only the state and stable identifiers they need,
   and receive root-scoped services from dispatch-time context.
 - Audit every reference control and widget, including buttons, checkboxes,
-  dialogs, details, forms, labels, list boxes, command menus, radio sets,
-  select boxes, sliders, tabs, text inputs, and textareas.
+  switches, dialogs, details, forms, labels, list boxes, command menus, radio
+  sets, select boxes, sliders, tabs, text inputs, and textareas.
 - Keep SDL windows, renderers, textures, font systems, native bridge contexts,
   and future GPU resources behind explicit `close`/`destroy` ownership. A
   cycle collector is not a substitute for native-resource lifecycle APIs.

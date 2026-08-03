@@ -73,11 +73,15 @@ nimble test
 nimble sdl3Demo
 ```
 
-Version 0.3 includes focused Canvas/color and typed component demos:
+Version 0.3.1 includes focused Canvas/color and typed component demos. The full
+SDL3 demo also includes interactive, independently styled Switch controls. A
+standalone Canvas demo shows event-driven continuous animation without
+relayout or an idle polling loop:
 
 ```sh
 nimble v03CanvasDemo
 nimble componentDemo
+nimble loadingIndicatorDemo
 ```
 
 ![Native navigation demo](sample/ClayBoardStyleSystem_navigation_demo_preview.gif)
@@ -117,11 +121,11 @@ static library build commands are listed in
 
 ## Release Status
 
-Version 0.3 is the current Linux x86_64 developer preview. It is suitable for
+Version 0.3.1 is the current Linux x86_64 developer preview. It is suitable for
 evaluating the API, building GUI libraries, and contributing runtime
 capabilities. Public APIs may still change before 1.0.
 
-Version 0.3 adds CSS Color 4-inspired authored colors and mixing, retained
+Version 0.3.1 includes CSS Color 4-inspired authored colors and mixing, retained
 Canvas drawing, RenderSurface lifecycle and C ABI integration, deterministic
 keyframe animation, affine Box and Canvas transforms, offscreen composition
 layers, rich pen input, and typed Nim component authoring with Style DI. The
@@ -129,6 +133,12 @@ Canvas path is shared by SDL3 and the deterministic headless reference
 renderer. See the [Canvas guide](docs/render-surfaces.md),
 [component guide](docs/component-authoring.md), and
 [product roadmap](docs/roadmap.md).
+
+The reference-control layer now includes a semantic Switch with injectable
+base and checked-state Styles, an idle-aware reversible `ease` transition,
+pointer and keyboard activation, disabled and fieldset behavior, reduced-motion
+handling, and accessibility semantics. It remains replaceable by GUI libraries
+built on CBSS rather than imposing a product design system.
 
 Current boundaries:
 

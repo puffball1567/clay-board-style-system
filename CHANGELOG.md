@@ -7,6 +7,22 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-04
+
+### Added
+
+- Added a semantic, style-injectable `Switch` reference control with pointer,
+  Space/Enter, disabled, fieldset, input/change, accessibility, AT-SPI,
+  headless-driver, and ARC lifecycle coverage. Its transform-positioned thumb
+  and checked-track overlay use an idle-aware, reversible 180ms `ease`
+  transition with reduced-motion support.
+- Added interactive dark and light Switch examples to the full SDL3 demo with
+  headless layout and activation regression tests.
+- Added a standalone Canvas loading-indicator demo that continuously animates
+  only its retained drawing surface while the surrounding UI remains static.
+- Extended the append-only C ABI accessibility role vocabulary with Switch in
+  ABI version `0x00010006`.
+
 ## [0.3.0] - 2026-08-03
 
 ### Added

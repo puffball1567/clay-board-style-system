@@ -23,7 +23,7 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x00010005` supports:
+ABI version `0x00010006` supports:
 
 - Opaque context and style handles.
 - Generation-checked node handles plus box, text, and image node creation.
@@ -62,7 +62,7 @@ ABI version `0x00010005` supports:
 - Versioned RenderSurface registration, Box attachment, placement, local input,
   explicit frame requests, pixel-scale resize, visibility, device recovery,
   and deterministic unmount callbacks.
-- Accessibility role, including semantic links, name, description, value,
+- Accessibility roles, including semantic links and switches, name, description, value,
   range, relation, and hidden state queries for platform adapters.
 - Structured diagnostics and a context error message.
 

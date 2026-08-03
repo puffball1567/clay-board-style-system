@@ -29,7 +29,7 @@ libraries practical.
 | HTML element tree | `UiRoot`, Boxes, text, controls, and component constructors | Runtime | CBSS uses Nim construction syntax rather than parsing HTML. |
 | Semantic document structure | roles, accessible names, state, labels, and relationships | In progress | The runtime model belongs in CBSS; operating-system accessibility export must be completed per platform. |
 | HTML custom elements | Nim modules exporting components, styles, and behavior | Runtime | Packages define their own components without a global tag registry. |
-| HTML forms | text input, textarea, select, checkbox, radio, range, buttons, focus, and events | Runtime | Form behavior is native and typed, not HTML form submission. |
+| HTML forms | text input, textarea, select, checkbox, switch, radio, range, buttons, focus, and events | Runtime | Form behavior is native and typed, not HTML form submission. |
 | Constraint validation | typed validation state, validity messages, and native form policy | Planned | Core provides reusable control semantics; applications own business validation rules. |
 | Links and document navigation | native `Link` and navigation stack | Planned | In-process destinations replace browser document navigation. |
 | Canvas | first-class CBSS Canvas and 2D drawing context | Planned | Must behave as a normal CBSS box with clipping, focus, and retained rendering. |

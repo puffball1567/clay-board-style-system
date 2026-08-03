@@ -115,6 +115,10 @@ proc exerciseWidgetLifecycle() =
       let checkbox = ui.checkbox("Enabled")
       discard checkbox.container.emit(InputEvent(kind: iekClick))
 
+      let switchControl = ui.switch("Live updates")
+      discard switchControl.container.emit(InputEvent(kind: iekClick))
+      doAssert switchControl.checked()
+
       let details = ui.details("Details", "Lifecycle body")
       discard details.summaryNode.emit(InputEvent(kind: iekClick))
       details.setOpen(false)

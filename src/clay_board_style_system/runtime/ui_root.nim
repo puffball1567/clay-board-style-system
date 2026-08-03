@@ -1,4 +1,4 @@
-import std/[hashes, math, options, sets, tables]
+import std/[algorithm, hashes, math, options, sets, tables]
 
 import ../core/[color, declaration, geometry, node, rule, selector, style_value]
 import ../core/style_resolver
@@ -9,6 +9,7 @@ import ../layout/scroll_state
 import ../paint/paint
 import ../paint/paint_command
 import ../text/[font_registry, text_engine]
+import ./animation_clock
 import ./canvas
 import ./frame_scheduler
 import ./invalidation
@@ -76,6 +77,8 @@ type
     clipboardTextCached: bool
     popupClosers*: seq[PopupCloserBinding]
     mountedComponents: seq[MountedComponentBinding]
+    animations: AnimationClock
+    animationOwners: Table[AnimationId, NodeId]
     focusRequestPending*: bool
     focusRequestTarget*: Option[NodeId]
     parentStack: seq[NodeId]
@@ -116,6 +119,8 @@ proc initUiRoot*(): UiRoot =
     clipboardTextCached: false,
     popupClosers: @[],
     mountedComponents: @[],
+    animations: initAnimationClock(),
+    animationOwners: initTable[AnimationId, NodeId](),
     focusRequestPending: false,
     focusRequestTarget: none(NodeId),
     parentStack: @[],
@@ -144,6 +149,60 @@ proc configureClipboardTextProvider*(root: UiRoot; provider: ClipboardTextProvid
 
 proc configureClipboardTextWriter*(root: UiRoot; writer: ClipboardTextWriter) =
   root.clipboardTextWriter = writer
+
+proc startOwnedAnimation*(
+    root: UiRoot;
+    owner: NodeHandle;
+    spec: AnimationSpec;
+    nowSeconds: float64
+): AnimationId =
+  if owner.root != root or not root.tree.isValid(owner.id):
+    raise newException(ValueError, "animation owner is not active in this UiRoot")
+  result = root.animations.startAnimation(spec, nowSeconds)
+  root.animationOwners[result] = owner.id
+
+proc cancelOwnedAnimation*(root: UiRoot; id: AnimationId): bool {.discardable.} =
+  root.animationOwners.del(id)
+  root.animations.cancelAnimation(id)
+
+proc tickOwnedAnimations*(
+    root: UiRoot;
+    scheduler: var FrameScheduler;
+    nowSeconds: float64
+): int {.discardable.} =
+  var stale: seq[AnimationId]
+  for id, owner in root.animationOwners.pairs:
+    if not root.tree.isValid(owner):
+      stale.add id
+  for id in stale:
+    discard root.cancelOwnedAnimation(id)
+
+  result = root.animations.tickAnimations(scheduler, nowSeconds)
+  var completed: seq[AnimationId]
+  for id in root.animationOwners.keys:
+    if not root.animations.hasAnimation(id):
+      completed.add id
+  for id in completed:
+    root.animationOwners.del(id)
+
+proc scheduleOwnedAnimations*(
+    root: UiRoot;
+    scheduler: var FrameScheduler;
+    nowSeconds: float64
+) =
+  if root.animations.hasActiveAnimations():
+    scheduler.requestDeadline(nowSeconds + root.animations.targetFrameInterval)
+
+proc activeAnimationOwners*(root: UiRoot): seq[NodeId] =
+  for id, owner in root.animationOwners.pairs:
+    if root.animations.hasAnimation(id) and root.tree.isValid(owner):
+      result.add owner
+  result.sort(proc(a, b: NodeId): int =
+    cmp(a.nodeRawValue(), b.nodeRawValue())
+  )
+
+proc setReducedMotion*(root: UiRoot; enabled: bool) =
+  root.animations.reducedMotion = enabled
 
 proc invalidateClipboardText*(root: UiRoot) =
   ## Call this when the host knows an external clipboard owner may have changed.
@@ -430,6 +489,12 @@ proc disposeSubtree*(
       pending.add child
 
   root.clearInteractionTargets(interaction, removed)
+  var removedAnimations: seq[AnimationId]
+  for id, owner in root.animationOwners.pairs:
+    if owner in removed:
+      removedAnimations.add id
+  for id in removedAnimations:
+    discard root.cancelOwnedAnimation(id)
   let componentUnmountCallbacks = root.takeComponentUnmountCallbacks(removed)
   discard root.events.removeEventHandlers(removed)
   root.removeSubtreeStyles(removed)
