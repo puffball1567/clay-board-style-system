@@ -1,5 +1,7 @@
 #include "cbss.h"
 
+_Static_assert(CBSS_ABI_VERSION == 0x00010004u, "unexpected CBSS ABI version");
+
 #include <assert.h>
 #include <stddef.h>
 #include <math.h>
@@ -62,6 +64,7 @@ typedef struct SurfaceState {
   int unmounts;
   float local_x;
   float local_y;
+  int draw_on_mount;
 } SurfaceState;
 
 static uint32_t handle_surface(
@@ -77,6 +80,16 @@ static uint32_t handle_surface(
       state->node = event->node;
       assert((event->flags & CBSS_SURFACE_VISIBLE) != 0);
       assert(event->placement.bounds.w > 0.0f);
+      if (state->draw_on_mount) {
+        uint64_t revision = 0;
+        assert(cbss_render_surface_canvas_fill_rect(
+            context, state->surface,
+            (CbssRect){20.0f, 16.0f, 4.0f, 4.0f},
+            (CbssColor){1.0f, 1.0f, 0.0f, 1.0f}, 0.0f) == CBSS_OK);
+        assert(cbss_render_surface_canvas_commit(
+            context, state->surface, &revision) == CBSS_OK);
+        assert(revision == 2);
+      }
       break;
     case CBSS_SURFACE_UPDATE:
       ++state->updates;
@@ -169,7 +182,7 @@ int main(void) {
   assert(child_style != NULL);
   assert(surface_style != NULL);
 
-  SurfaceState surface_state = {0};
+  SurfaceState surface_state = {.draw_on_mount = 1};
   assert(cbss_context_register_render_surface(
       context, "invalid", NULL, NULL,
       &surface_state.surface) == CBSS_INVALID_ARGUMENT);
@@ -182,6 +195,82 @@ int main(void) {
   assert(surface_state.surface != 0);
   assert(cbss_render_surface_request_frame(
       context, UINT64_MAX) == CBSS_OUT_OF_RANGE);
+  assert(cbss_render_surface_canvas_clear(
+      context, UINT64_MAX) == CBSS_OUT_OF_RANGE);
+  assert(cbss_render_surface_canvas_clear(
+      NULL, surface_state.surface) == CBSS_INVALID_HANDLE);
+  assert(cbss_render_surface_canvas_commit(
+      NULL, surface_state.surface, NULL) == CBSS_INVALID_HANDLE);
+  assert(cbss_render_surface_canvas_fill_rect(
+      context, surface_state.surface,
+      (CbssRect){0.0f, 0.0f, NAN, 10.0f},
+      (CbssColor){1.0f, 0.0f, 0.0f, 1.0f}, 0.0f) ==
+      CBSS_INVALID_ARGUMENT);
+  assert(cbss_render_surface_canvas_fill_rect(
+      context, surface_state.surface,
+      (CbssRect){0.0f, 0.0f, 10.0f, 10.0f},
+      (CbssColor){NAN, 0.0f, 0.0f, 1.0f}, 0.0f) ==
+      CBSS_INVALID_ARGUMENT);
+  assert(cbss_render_surface_canvas_transform(
+      context, surface_state.surface,
+      (CbssAffineTransform){1.0f, 0.0f, 0.0f, NAN, 0.0f, 0.0f}) ==
+      CBSS_INVALID_ARGUMENT);
+  assert(cbss_render_surface_canvas_push_clip(
+      context, surface_state.surface,
+      (CbssRect){0.0f, 0.0f, 10.0f, 10.0f}, -1.0f) ==
+      CBSS_INVALID_ARGUMENT);
+  assert(cbss_render_surface_canvas_begin_layer(
+      context, surface_state.surface,
+      (CbssRect){0.0f, 0.0f, 10.0f, 10.0f},
+      1.0f, UINT32_MAX) == CBSS_INVALID_ARGUMENT);
+  assert(cbss_render_surface_canvas_begin_layer(
+      context, surface_state.surface,
+      (CbssRect){0.0f, 0.0f, 10.0f, 10.0f},
+      1.01f, CBSS_LAYER_SOURCE_OVER) == CBSS_INVALID_ARGUMENT);
+  assert(cbss_render_surface_canvas_fill_linear_gradient(
+      context, surface_state.surface,
+      (CbssRect){0.0f, 0.0f, 10.0f, 10.0f}, 0.0f,
+      CBSS_COLOR_INTERPOLATE_SRGB, NULL, 1, 0.0f) ==
+      CBSS_INVALID_ARGUMENT);
+  CbssGradientStop invalid_canvas_stop = {
+      {1.0f, 0.0f, 0.0f, 1.0f}, NAN
+  };
+  assert(cbss_render_surface_canvas_fill_linear_gradient(
+      context, surface_state.surface,
+      (CbssRect){0.0f, 0.0f, 10.0f, 10.0f}, 0.0f,
+      CBSS_COLOR_INTERPOLATE_SRGB, &invalid_canvas_stop, 1, 0.0f) ==
+      CBSS_INVALID_ARGUMENT);
+  assert(cbss_render_surface_canvas_stroke_rect(
+      context, surface_state.surface,
+      (CbssRect){0.0f, 0.0f, 10.0f, 10.0f},
+      (CbssColor){1.0f, 0.0f, 0.0f, 1.0f}, 0.0f, 0.0f) ==
+      CBSS_INVALID_ARGUMENT);
+  CbssPathSegment invalid_canvas_path = {
+      .kind = UINT32_MAX,
+      .endpoint_x = 1.0f,
+      .endpoint_y = 1.0f
+  };
+  assert(cbss_render_surface_canvas_stroke_path(
+      context, surface_state.surface, &invalid_canvas_path, 1,
+      (CbssColor){1.0f, 0.0f, 0.0f, 1.0f}, 1.0f,
+      CBSS_STROKE_CAP_BUTT, CBSS_STROKE_JOIN_MITER, 4.0f) ==
+      CBSS_INVALID_ARGUMENT);
+  CbssTextStyle invalid_canvas_text_style = {
+      .flags = 1u << 31
+  };
+  assert(cbss_render_surface_canvas_draw_text(
+      context, surface_state.surface, "invalid", 0.0f, 0.0f,
+      (CbssColor){1.0f, 1.0f, 1.0f, 1.0f},
+      &invalid_canvas_text_style, NULL, 0.0f, 0) ==
+      CBSS_INVALID_ARGUMENT);
+  assert(cbss_render_surface_canvas_draw_image(
+      context, surface_state.surface, "",
+      (CbssRect){0.0f, 0.0f, 10.0f, 10.0f}, 1.0f) ==
+      CBSS_INVALID_ARGUMENT);
+  assert(cbss_render_surface_canvas_draw_image(
+      context, surface_state.surface, "invalid.png",
+      (CbssRect){0.0f, 0.0f, 10.0f, 10.0f}, 1.1f) ==
+      CBSS_INVALID_ARGUMENT);
   assert(cbss_context_set_pixel_scale(context, 0.0f) == CBSS_INVALID_ARGUMENT);
   assert(cbss_context_set_pixel_scale(context, NAN) == CBSS_INVALID_ARGUMENT);
 
@@ -415,6 +504,67 @@ int main(void) {
       context, child, CBSS_EVENT_INPUT, handle_event, &callback_state));
   require_ok(context, cbss_node_set_event_handler(
       context, child, CBSS_EVENT_CHANGE, handle_event, &callback_state));
+
+  CbssPathSegment surface_path[] = {
+      {.kind = CBSS_PATH_MOVE_TO, .endpoint_x = 1.0f, .endpoint_y = 1.0f},
+      {.kind = CBSS_PATH_LINE_TO, .endpoint_x = 12.0f, .endpoint_y = 8.0f}
+  };
+  CbssTextStyle surface_text_style = {
+      .flags = CBSS_TEXT_HAS_FONT_SIZE | CBSS_TEXT_HAS_FONT_WEIGHT,
+      .font_size = 12.0f,
+      .font_weight = 600.0f
+  };
+  require_ok(context, cbss_render_surface_canvas_clear(
+      context, surface_state.surface));
+  require_ok(context, cbss_render_surface_canvas_save(
+      context, surface_state.surface));
+  require_ok(context, cbss_render_surface_canvas_transform(
+      context, surface_state.surface,
+      (CbssAffineTransform){1.0f, 0.0f, 0.0f, 1.0f, 2.0f, 3.0f}));
+  require_ok(context, cbss_render_surface_canvas_begin_layer(
+      context, surface_state.surface,
+      (CbssRect){0.0f, 0.0f, 28.0f, 22.0f},
+      0.75f, CBSS_LAYER_SOURCE_OVER));
+  require_ok(context, cbss_render_surface_canvas_push_clip(
+      context, surface_state.surface,
+      (CbssRect){0.0f, 0.0f, 28.0f, 22.0f}, 2.0f));
+  require_ok(context, cbss_render_surface_canvas_fill_rect(
+      context, surface_state.surface,
+      (CbssRect){1.0f, 1.0f, 12.0f, 8.0f},
+      (CbssColor){1.0f, 0.0f, 0.0f, 1.0f}, 1.0f));
+  require_ok(context, cbss_render_surface_canvas_fill_linear_gradient(
+      context, surface_state.surface,
+      (CbssRect){13.0f, 1.0f, 12.0f, 8.0f}, 90.0f,
+      CBSS_COLOR_INTERPOLATE_OKLAB, gradient, 2, 1.0f));
+  require_ok(context, cbss_render_surface_canvas_stroke_rect(
+      context, surface_state.surface,
+      (CbssRect){1.0f, 10.0f, 12.0f, 8.0f},
+      (CbssColor){0.0f, 1.0f, 0.0f, 1.0f}, 1.0f, 1.0f));
+  require_ok(context, cbss_render_surface_canvas_stroke_path(
+      context, surface_state.surface, surface_path, 2,
+      (CbssColor){0.0f, 0.0f, 1.0f, 1.0f}, 1.0f,
+      CBSS_STROKE_CAP_ROUND, CBSS_STROKE_JOIN_ROUND, 4.0f));
+  require_ok(context, cbss_render_surface_canvas_draw_text(
+      context, surface_state.surface, "Surface", 2.0f, 18.0f,
+      (CbssColor){1.0f, 1.0f, 1.0f, 1.0f},
+      &surface_text_style, "sans-serif", 24.0f, 1));
+  require_ok(context, cbss_render_surface_canvas_draw_image(
+      context, surface_state.surface, "surface.png",
+      (CbssRect){16.0f, 10.0f, 8.0f, 8.0f}, 0.8f));
+  require_ok(context, cbss_render_surface_canvas_pop_clip(
+      context, surface_state.surface));
+  require_ok(context, cbss_render_surface_canvas_end_layer(
+      context, surface_state.surface));
+  require_ok(context, cbss_render_surface_canvas_restore(
+      context, surface_state.surface));
+  uint64_t canvas_revision = 0;
+  require_ok(context, cbss_render_surface_canvas_commit(
+      context, surface_state.surface, &canvas_revision));
+  assert(canvas_revision == 1);
+  uint64_t unchanged_canvas_revision = 0;
+  require_ok(context, cbss_render_surface_canvas_commit(
+      context, surface_state.surface, &unchanged_canvas_revision));
+  assert(unchanged_canvas_revision == canvas_revision);
   require_ok(context, cbss_context_compute(context, 200.0f, 80.0f));
   assert(surface_state.mounts == 1);
   assert(surface_state.node == surface_node);
@@ -506,14 +656,28 @@ int main(void) {
   int found_gradient = 0;
   int found_transform_push = 0;
   int found_transform_pop = 0;
+  int found_surface_fill = 0;
+  int found_surface_gradient = 0;
+  int found_surface_path = 0;
+  int found_surface_text = 0;
+  int found_surface_image = 0;
+  int found_surface_layer = 0;
   for (uint32_t i = 0; i < command_count; ++i) {
     CbssPaintCommand command;
     require_ok(context, cbss_context_paint_command(context, i, &command));
     if (command.kind == CBSS_PAINT_DRAW_TEXT) {
       char text[32];
-      assert(cbss_paint_command_string(context, i, text, sizeof(text)) == 5);
-      assert(strcmp(text, "C ABI") == 0);
-      found_text = 1;
+      uint32_t text_bytes = cbss_paint_command_string(
+          context, i, text, sizeof(text));
+      if (command.owner == surface_node) {
+        assert(text_bytes == 7);
+        assert(strcmp(text, "Surface") == 0);
+        found_surface_text = 1;
+      } else {
+        assert(text_bytes == 5);
+        assert(strcmp(text, "C ABI") == 0);
+        found_text = 1;
+      }
     } else if (command.kind == CBSS_PAINT_FILL_LINEAR_GRADIENT) {
       assert(fabsf(command.value0 - 90.0f) < 0.01f);
       assert((uint32_t)command.value1 == 2);
@@ -524,13 +688,19 @@ int main(void) {
           context, i, 0, &first_stop));
       require_ok(context, cbss_paint_command_gradient_stop(
           context, i, 1, &second_stop));
-      assert(fabsf(first_stop.color.r - expected_gradient_p3.r) < 0.002f);
-      assert(fabsf(first_stop.color.g - expected_gradient_p3.g) < 0.002f);
-      assert(fabsf(first_stop.color.b - expected_gradient_p3.b) < 0.002f);
-      assert(fabsf(second_stop.color.r - 0.85f) < 0.002f);
-      assert(fabsf(second_stop.color.g - 0.75f) < 0.002f);
-      assert(fabsf(second_stop.color.b - 0.65f) < 0.002f);
-      found_gradient = 1;
+      if (command.owner == surface_node) {
+        assert(fabsf(first_stop.color.r - 0.1f) < 0.002f);
+        assert(fabsf(second_stop.color.r - 0.3f) < 0.002f);
+        found_surface_gradient = 1;
+      } else {
+        assert(fabsf(first_stop.color.r - expected_gradient_p3.r) < 0.002f);
+        assert(fabsf(first_stop.color.g - expected_gradient_p3.g) < 0.002f);
+        assert(fabsf(first_stop.color.b - expected_gradient_p3.b) < 0.002f);
+        assert(fabsf(second_stop.color.r - 0.85f) < 0.002f);
+        assert(fabsf(second_stop.color.g - 0.75f) < 0.002f);
+        assert(fabsf(second_stop.color.b - 0.65f) < 0.002f);
+        found_gradient = 1;
+      }
     } else if (command.kind == CBSS_PAINT_PUSH_TRANSFORM) {
       CbssAffineTransform transform;
       require_ok(context, cbss_paint_command_transform(
@@ -539,8 +709,10 @@ int main(void) {
       assert(fabsf(transform.m12) < 0.001f);
       assert(fabsf(transform.m21) < 0.001f);
       assert(fabsf(transform.m22 - 1.0f) < 0.001f);
-      assert(fabsf(transform.tx - 1.0f) < 0.001f);
-      assert(fabsf(transform.ty) < 0.001f);
+      assert((fabsf(transform.tx - 1.0f) < 0.001f &&
+              fabsf(transform.ty) < 0.001f) ||
+             (fabsf(transform.tx - 2.0f) < 0.001f &&
+              fabsf(transform.ty - 3.0f) < 0.001f));
       found_transform_push = 1;
     } else if (command.kind == CBSS_PAINT_POP_TRANSFORM) {
       CbssAffineTransform transform;
@@ -551,12 +723,72 @@ int main(void) {
       assert(cbss_paint_command_path_segment(context, i, 0, &segment) ==
              CBSS_INVALID_ARGUMENT);
       found_transform_pop = 1;
+    } else if (command.kind == CBSS_PAINT_FILL_RECT &&
+               command.owner == surface_node) {
+      assert(fabsf(command.color.r - 1.0f) < 0.001f);
+      found_surface_fill = 1;
+    } else if (command.kind == CBSS_PAINT_STROKE_PATH &&
+               command.owner == surface_node) {
+      assert(cbss_paint_command_path_segment_count(context, i) == 2);
+      found_surface_path = 1;
+    } else if (command.kind == CBSS_PAINT_DRAW_IMAGE &&
+               command.owner == surface_node) {
+      char source[32];
+      assert(cbss_paint_command_string(
+          context, i, source, sizeof(source)) == 11);
+      assert(strcmp(source, "surface.png") == 0);
+      found_surface_image = 1;
+    } else if (command.kind == CBSS_PAINT_PUSH_LAYER) {
+      assert(fabsf(command.value0 - 0.75f) < 0.001f);
+      found_surface_layer = 1;
     }
   }
   assert(found_text);
   assert(found_gradient);
   assert(found_transform_push);
   assert(found_transform_pop);
+  assert(found_surface_fill);
+  assert(found_surface_gradient);
+  assert(found_surface_path);
+  assert(found_surface_text);
+  assert(found_surface_image);
+  assert(found_surface_layer);
+
+  require_ok(context, cbss_render_surface_canvas_clear(
+      context, surface_state.surface));
+  require_ok(context, cbss_render_surface_canvas_fill_rect(
+      context, surface_state.surface,
+      (CbssRect){0.0f, 0.0f, 10.0f, 10.0f},
+      (CbssColor){0.0f, 0.0f, 1.0f, 1.0f}, 0.0f));
+  require_ok(context, cbss_context_recompute(context));
+  int old_surface_snapshot_still_visible = 0;
+  command_count = cbss_context_paint_command_count(context);
+  for (uint32_t i = 0; i < command_count; ++i) {
+    CbssPaintCommand command;
+    require_ok(context, cbss_context_paint_command(context, i, &command));
+    if (command.kind == CBSS_PAINT_DRAW_IMAGE &&
+        command.owner == surface_node) {
+      old_surface_snapshot_still_visible = 1;
+    }
+  }
+  assert(old_surface_snapshot_still_visible);
+  require_ok(context, cbss_render_surface_canvas_commit(
+      context, surface_state.surface, &canvas_revision));
+  assert(canvas_revision == 8);
+  assert(!cbss_context_needs_compute(context));
+  int found_updated_surface_fill = 0;
+  command_count = cbss_context_paint_command_count(context);
+  for (uint32_t i = 0; i < command_count; ++i) {
+    CbssPaintCommand command;
+    require_ok(context, cbss_context_paint_command(context, i, &command));
+    if (command.kind == CBSS_PAINT_FILL_RECT &&
+        command.owner == surface_node && command.color.b > 0.99f) {
+      found_updated_surface_fill = 1;
+    }
+    assert(!(command.kind == CBSS_PAINT_DRAW_IMAGE &&
+             command.owner == surface_node));
+  }
+  assert(found_updated_surface_fill);
 
   CbssDispatchSummary dispatch;
   CbssInputEvent pointer_down = {

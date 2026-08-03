@@ -53,6 +53,10 @@ release. Before 1.0, minor releases may contain public API changes.
 - Added bounded Canvas offscreen layers with explicit opacity, source-over,
   copy, and additive composition across SDL3 and the alpha-aware PPM reference
   backend, including append-only C ABI paint kinds and performance gates.
+- Added a retained C ABI Canvas adapter for registered RenderSurfaces. Foreign
+  libraries can submit local transforms, clips, layers, rectangles, gradients,
+  paths, text, and images, then publish one paint-only display-list update
+  without recomputing style or layout.
 
 ### Fixed
 
