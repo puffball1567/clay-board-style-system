@@ -21,7 +21,11 @@ const
   sdlWindowHidden = SDL_WindowFlags(0x0000000000000008'u64)
   sdlWindowResizable = SDL_WindowFlags(0x0000000000000020'u64)
   sdlWindowHighPixelDensity = SDL_WindowFlags(0x0000000000002000'u64)
+  sdlBlendModeNone = SDL_BlendMode(0x00000000'u32)
   sdlBlendModeBlend = SDL_BlendMode(0x00000001'u32)
+  sdlBlendModeAdd = SDL_BlendMode(0x00000002'u32)
+  sdlBlendModeBlendPremultiplied = SDL_BlendMode(0x00000010'u32)
+  sdlBlendModeAddPremultiplied = SDL_BlendMode(0x00000020'u32)
   sdlTextureAccessStatic = SDL_TEXTUREACCESS_STATIC
   sdlTextureAccessTarget = SDL_TEXTUREACCESS_TARGET
   defaultTextCacheBytes = 64'u64 * 1024 * 1024
@@ -95,6 +99,8 @@ type
     sourceBounds: Rect
     pixelWidth, pixelHeight: int
     textureCacheIndex: int
+    opacity: float32
+    compositeMode: LayerCompositeMode
     valid: bool
     hasContent: bool
 
@@ -200,6 +206,7 @@ type
     textInputRunning: bool
     textInputArea: Option[Rect]
     textInputCursor: int
+    premultipliedLayerBlend: bool
     cursorCache: array[CursorKind, pointer]
     ownsCursor: array[CursorKind, bool]
     activeCursor: CursorKind
@@ -415,6 +422,9 @@ proc initSdl3Renderer*(
     SDL3.quit()
     raise sdlError("SDL3 window and renderer creation failed")
   discard SDL3.setRenderDrawBlendMode(result.renderer, sdlBlendModeBlend)
+  let rendererName = SDL3.getRendererName(result.renderer)
+  result.premultipliedLayerBlend =
+    not rendererName.isNil and $rendererName != "software"
   if not SDL3.showWindow(result.window):
     SDL3.destroyRenderer(result.renderer)
     SDL3.destroyWindow(result.window)
@@ -1027,11 +1037,11 @@ proc prepareRenderPlan(commands: openArray[PaintCommand]): seq[Sdl3PreparedComma
   var transformClipStacks: seq[seq[Sdl3ClipRegion]]
   for command in commands:
     case command.kind
-    of pcPushTransform:
+    of pcPushTransform, pcPushLayer:
       result.add Sdl3PreparedCommand(command: command)
       transformClipStacks.add clipStack
       clipStack = @[]
-    of pcPopTransform:
+    of pcPopTransform, pcPopLayer:
       result.add Sdl3PreparedCommand(command: command)
       if transformClipStacks.len > 0:
         clipStack = transformClipStacks.pop()
@@ -1068,7 +1078,9 @@ proc translated(command: PaintCommand; offset: Vec2): PaintCommand =
   case result.kind
   of pcPushTransform:
     result.transformBounds = result.transformBounds.translated(offset)
-  of pcPopTransform, pcPopClip:
+  of pcPushLayer:
+    result.layerBounds = result.layerBounds.translated(offset)
+  of pcPopTransform, pcPopLayer, pcPopClip:
     discard
   of pcPushClip:
     result.clipRect = result.clipRect.translated(offset)
@@ -1167,20 +1179,28 @@ proc evictTransformTextureCacheIfNeeded(target: var Sdl3Renderer) =
     )
     target.transformTextureCache.delete(victim)
 
-proc beginTransformLayer(
+proc beginOffscreenLayer(
     target: var Sdl3Renderer;
-    command: PaintCommand;
+    requestedBounds: Rect;
+    transform: Affine2D;
+    opacity: float32;
+    compositeMode: LayerCompositeMode;
+    padding: float32;
     layers: var seq[Sdl3TransformLayer]
 ) =
-  var sourceBounds = command.transformBounds
+  for existing in layers:
+    if not existing.valid:
+      layers.add Sdl3TransformLayer(valid: false)
+      return
+  var sourceBounds = requestedBounds
   if sourceBounds.isEmpty:
     let viewport = target.windowSize()
     sourceBounds = rect(0, 0, viewport.w, viewport.h)
   sourceBounds = rect(
-    floor(sourceBounds.x) - 1.0'f32,
-    floor(sourceBounds.y) - 1.0'f32,
-    ceil(sourceBounds.x + sourceBounds.w) - floor(sourceBounds.x) + 2.0'f32,
-    ceil(sourceBounds.y + sourceBounds.h) - floor(sourceBounds.y) + 2.0'f32
+    floor(sourceBounds.x) - padding,
+    floor(sourceBounds.y) - padding,
+    ceil(sourceBounds.x + sourceBounds.w) - floor(sourceBounds.x) + padding * 2.0'f32,
+    ceil(sourceBounds.y + sourceBounds.h) - floor(sourceBounds.y) + padding * 2.0'f32
   )
   let scale = target.pixelScale()
   let width = max(1, int(ceil(sourceBounds.w * scale)))
@@ -1191,11 +1211,13 @@ proc beginTransformLayer(
     texture: texture,
     previousTarget: SDL3.getRenderTarget(target.renderer),
     previousClips: target.clipStack,
-    transform: command.transform,
+    transform: transform,
     sourceBounds: sourceBounds,
     pixelWidth: width,
     pixelHeight: height,
     textureCacheIndex: acquired.index,
+    opacity: clamp(opacity, 0.0'f32, 1.0'f32),
+    compositeMode: compositeMode,
     valid: not texture.isNil
   )
   layers.add layer
@@ -1212,26 +1234,106 @@ proc beginTransformLayer(
   discard SDL3.setRenderDrawColor(target.renderer, 0, 0, 0, 0)
   discard SDL3.renderClear(target.renderer)
 
+proc beginTransformLayer(
+    target: var Sdl3Renderer;
+    command: PaintCommand;
+    layers: var seq[Sdl3TransformLayer]
+) =
+  target.beginOffscreenLayer(
+    command.transformBounds,
+    command.transform,
+    1.0'f32,
+    lcmSourceOver,
+    1.0'f32,
+    layers
+  )
+
+proc beginCompositeLayer(
+    target: var Sdl3Renderer;
+    command: PaintCommand;
+    layers: var seq[Sdl3TransformLayer]
+) =
+  target.beginOffscreenLayer(
+    command.layerBounds,
+    identityAffine2D(),
+    command.layerOpacity,
+    command.layerCompositeMode,
+    0.0'f32,
+    layers
+  )
+
 proc markTransformContent(layers: var seq[Sdl3TransformLayer]) =
   for index in countdown(layers.high, 0):
     if layers[index].valid:
       layers[index].hasContent = true
       return
 
+proc renderingSuppressed(layers: openArray[Sdl3TransformLayer]): bool =
+  ## Allocation failure must not turn an isolated scope into direct drawing on
+  ## its parent. That would silently change both opacity and composition.
+  for layer in layers:
+    if not layer.valid:
+      return true
+  false
+
+proc supportsPremultipliedBlend(target: Sdl3Renderer): bool =
+  target.premultipliedLayerBlend
+
+proc sdlBlendMode(
+    compositeMode: LayerCompositeMode;
+    premultiplied: bool
+): SDL_BlendMode =
+  case compositeMode
+  of lcmSourceOver:
+    if premultiplied: sdlBlendModeBlendPremultiplied
+    else: sdlBlendModeBlend
+  of lcmCopy:
+    sdlBlendModeNone
+  of lcmAdditive:
+    if premultiplied: sdlBlendModeAddPremultiplied
+    else: sdlBlendModeAdd
+
+proc configureLayerTexture(
+    texture: pointer;
+    opacity: float32;
+    compositeMode: LayerCompositeMode;
+    premultiplied: bool
+) =
+  let resolvedOpacity = clamp(opacity, 0.0'f32, 1.0'f32)
+  let colorMultiplier = if premultiplied: resolvedOpacity else: 1.0'f32
+  discard SDL3.setTextureColorModFloat(
+    texture, cfloat(colorMultiplier), cfloat(colorMultiplier),
+    cfloat(colorMultiplier)
+  )
+  discard SDL3.setTextureAlphaModFloat(texture, cfloat(resolvedOpacity))
+  discard SDL3.setTextureBlendMode(
+    texture, compositeMode.sdlBlendMode(premultiplied)
+  )
+
+proc resetLayerTexture(texture: pointer) =
+  discard SDL3.setTextureColorModFloat(texture, 1, 1, 1)
+  discard SDL3.setTextureAlphaModFloat(texture, 1)
+  discard SDL3.setTextureBlendMode(texture, sdlBlendModeBlend)
+
 proc renderAffineLayer(
     target: var Sdl3Renderer;
     texture: pointer;
     source: var SDL_FRect;
-    origin, right, down: Vec2
+    origin, right, down: Vec2;
+    opacity: float32;
+    compositeMode: LayerCompositeMode
 ) =
+  let premultiplied = target.supportsPremultipliedBlend()
   if not target.hasRoundedClip():
     var sdlOrigin = SDL_FPoint(x: cfloat(origin.x), y: cfloat(origin.y))
     var sdlRight = SDL_FPoint(x: cfloat(right.x), y: cfloat(right.y))
     var sdlDown = SDL_FPoint(x: cfloat(down.x), y: cfloat(down.y))
+    texture.configureLayerTexture(opacity, compositeMode, premultiplied)
     discard SDL3.renderTextureAffine(
       target.renderer, texture, addr source,
       addr sdlOrigin, addr sdlRight, addr sdlDown
     )
+    texture.resetLayerTexture()
     return
 
   let fourth = vec2(right.x + down.x - origin.x, right.y + down.y - origin.y)
@@ -1252,10 +1354,12 @@ proc renderAffineLayer(
     var sdlOrigin = SDL_FPoint(x: cfloat(origin.x), y: cfloat(origin.y))
     var sdlRight = SDL_FPoint(x: cfloat(right.x), y: cfloat(right.y))
     var sdlDown = SDL_FPoint(x: cfloat(down.x), y: cfloat(down.y))
+    texture.configureLayerTexture(opacity, compositeMode, premultiplied)
     discard SDL3.renderTextureAffine(
       target.renderer, texture, addr source,
       addr sdlOrigin, addr sdlRight, addr sdlDown
     )
+    texture.resetLayerTexture()
     return
 
   let previousTarget = SDL3.getRenderTarget(target.renderer)
@@ -1277,10 +1381,12 @@ proc renderAffineLayer(
   var localDown = SDL_FPoint(
     x: cfloat(down.x - bounds.x), y: cfloat(down.y - bounds.y)
   )
+  texture.configureLayerTexture(1.0'f32, lcmSourceOver, premultiplied)
   discard SDL3.renderTextureAffine(
     target.renderer, texture, addr source,
     addr localOrigin, addr localRight, addr localDown
   )
+  texture.resetLayerTexture()
 
   discard SDL3.setRenderTarget(target.renderer, previousTarget)
   target.renderer.setClip(target.effectiveClipBounds())
@@ -1288,9 +1394,11 @@ proc renderAffineLayer(
     x: 0, y: 0, w: cfloat(width), h: cfloat(height)
   )
   var destination = bounds.toSdl
+  clippedTexture.configureLayerTexture(opacity, compositeMode, premultiplied)
   target.renderTextureClippedWith(
     clippedTexture, clippedSource, destination, target.clipStack
   )
+  clippedTexture.resetLayerTexture()
   target.releaseTransformTexture(clipped.index)
 
 proc endTransformLayer(
@@ -1306,7 +1414,7 @@ proc endTransformLayer(
   discard SDL3.setRenderTarget(target.renderer, layer.previousTarget)
   target.clipStack = layer.previousClips
   target.renderer.setClip(target.effectiveClipBounds())
-  if layer.hasContent:
+  if layer.hasContent or layer.compositeMode == lcmCopy:
     let destinationOffset = layers.activeTransformOffset()
     let topLeft = layer.transform.transformPoint(
       vec2(layer.sourceBounds.x, layer.sourceBounds.y)
@@ -1320,7 +1428,10 @@ proc endTransformLayer(
     var source = SDL_FRect(
       x: 0, y: 0, w: cfloat(layer.pixelWidth), h: cfloat(layer.pixelHeight)
     )
-    target.renderAffineLayer(layer.texture, source, topLeft, topRight, bottomLeft)
+    target.renderAffineLayer(
+      layer.texture, source, topLeft, topRight, bottomLeft,
+      layer.opacity, layer.compositeMode
+    )
     layers.markTransformContent()
   target.releaseTransformTexture(layer.textureCacheIndex)
 
@@ -2474,13 +2585,21 @@ proc render*(target: var Sdl3Renderer; commands: openArray[PaintCommand]; clearC
     if sourceCommand.kind == pcPushTransform:
       target.beginTransformLayer(sourceCommand, transformLayers)
       continue
+    if sourceCommand.kind == pcPushLayer:
+      target.beginCompositeLayer(sourceCommand, transformLayers)
+      continue
     if sourceCommand.kind == pcPopTransform:
       target.endTransformLayer(transformLayers)
+      continue
+    if sourceCommand.kind == pcPopLayer:
+      target.endTransformLayer(transformLayers)
+      continue
+    if transformLayers.renderingSuppressed():
       continue
     let prepared = sourcePrepared.localPreparedCommand(transformLayers)
     let command = prepared.command
     case command.kind
-    of pcPushTransform, pcPopTransform:
+    of pcPushTransform, pcPopTransform, pcPushLayer, pcPopLayer:
       discard # Handled before localization.
     of pcPushClip:
       target.clipStack.add command.clipRegion()
@@ -2664,13 +2783,21 @@ proc render*(
     if sourceCommand.kind == pcPushTransform:
       target.beginTransformLayer(sourceCommand, transformLayers)
       continue
+    if sourceCommand.kind == pcPushLayer:
+      target.beginCompositeLayer(sourceCommand, transformLayers)
+      continue
     if sourceCommand.kind == pcPopTransform:
       target.endTransformLayer(transformLayers)
+      continue
+    if sourceCommand.kind == pcPopLayer:
+      target.endTransformLayer(transformLayers)
+      continue
+    if transformLayers.renderingSuppressed():
       continue
     let prepared = sourcePrepared.localPreparedCommand(transformLayers)
     let command = prepared.command
     case command.kind
-    of pcPushTransform, pcPopTransform:
+    of pcPushTransform, pcPopTransform, pcPushLayer, pcPopLayer:
       discard # Handled before localization.
     of pcPushClip:
       target.clipStack.add command.clipRegion()
@@ -2722,8 +2849,16 @@ proc renderPreparedCommand(
   if sourceCommand.kind == pcPushTransform:
     target.beginTransformLayer(sourceCommand, transformLayers)
     return
+  if sourceCommand.kind == pcPushLayer:
+    target.beginCompositeLayer(sourceCommand, transformLayers)
+    return
   if sourceCommand.kind == pcPopTransform:
     target.endTransformLayer(transformLayers)
+    return
+  if sourceCommand.kind == pcPopLayer:
+    target.endTransformLayer(transformLayers)
+    return
+  if transformLayers.renderingSuppressed():
     return
   let localPrepared = prepared.localPreparedCommand(transformLayers)
   let command = localPrepared.command
@@ -2737,7 +2872,7 @@ proc renderPreparedCommand(
     elif skipDynamic: not isDynamic
     else: true
   case command.kind
-  of pcPushTransform, pcPopTransform:
+  of pcPushTransform, pcPopTransform, pcPushLayer, pcPopLayer:
     discard
   of pcPushClip:
     target.clipStack.add command.clipRegion()

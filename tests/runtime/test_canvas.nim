@@ -189,6 +189,46 @@ suite "standard canvas surface":
     check commands[4].kind == pcPopTransform
     check commands[5].kind == pcFillRect
 
+  test "bounded layers compose and restore in strict LIFO order":
+    let drawing = newCanvas2D()
+    drawing.save()
+    drawing.beginLayer(
+      rect(2, 3, 30, 20), opacity = 0.6, compositeMode = lcmAdditive
+    )
+    drawing.fillRect(rect(4, 5, 10, 8), rgb(1, 0, 0))
+    drawing.translate(3, 4)
+    drawing.fillRect(rect(1, 1, 2, 2), rgb(0, 1, 0))
+    drawing.restore()
+
+    let commands = drawing.paintCommands(NodeId(4), rect(10, 20, 80, 60))
+    check commands.len == 6
+    check commands[0].kind == pcPushLayer
+    check commands[0].layerBounds == rect(12, 23, 30, 20)
+    check abs(commands[0].layerOpacity - 0.6) < 0.0001
+    check commands[0].layerCompositeMode == lcmAdditive
+    check commands[1].kind == pcFillRect
+    check commands[2].kind == pcPushTransform
+    check commands[3].kind == pcFillRect
+    check commands[4].kind == pcPopTransform
+    check commands[5].kind == pcPopLayer
+
+  test "invalid layers are ignored and dangling layers close safely":
+    let drawing = newCanvas2D()
+    let initialRevision = drawing.revision
+    drawing.beginLayer(rect(0, 0, 0, 20))
+    drawing.beginLayer(rect(NaN.float32, 0, 20, 20))
+    check drawing.revision == initialRevision
+
+    drawing.endLayer()
+    drawing.saveLayer(rect(1, 2, 10, 8), opacity = 3)
+    drawing.fillRect(rect(1, 2, 3, 4), rgb(1, 1, 1))
+    let commands = drawing.paintCommands(NodeId(5), rect(7, 9, 20, 20))
+    check commands.len == 3
+    check commands[0].kind == pcPushLayer
+    check commands[0].layerOpacity == 1
+    check commands[1].kind == pcFillRect
+    check commands[2].kind == pcPopLayer
+
   test "canvas safely balances dangling scopes and rejects invalid transforms":
     let drawing = newCanvas2D()
     let initialRevision = drawing.revision

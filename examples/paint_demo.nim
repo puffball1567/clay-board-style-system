@@ -62,6 +62,10 @@ proc main() =
       echo &"  PushTransform matrix=({transform.m11:.2f}, {transform.m12:.2f}, {transform.m21:.2f}, {transform.m22:.2f}, {transform.tx:.1f}, {transform.ty:.1f})"
     of pcPopTransform:
       echo "  PopTransform"
+    of pcPushLayer:
+      echo &"  PushLayer bounds=({command.layerBounds.x:.1f}, {command.layerBounds.y:.1f}, {command.layerBounds.w:.1f}, {command.layerBounds.h:.1f}) opacity={command.layerOpacity:.2f} composite={command.layerCompositeMode}"
+    of pcPopLayer:
+      echo "  PopLayer"
     of pcBoxShadow:
       echo &"  BoxShadow rect=({command.shadowRect.x:.1f}, {command.shadowRect.y:.1f}, {command.shadowRect.w:.1f}, {command.shadowRect.h:.1f}) offset=({command.shadowOffsetX:.1f}, {command.shadowOffsetY:.1f}) blur={command.shadowBlur:.1f} spread={command.shadowSpread:.1f} radius={command.shadowRadius:.1f} color={command.shadowColor}"
     of pcFillRect:

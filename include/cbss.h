@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define CBSS_ABI_VERSION 0x00010002u
+#define CBSS_ABI_VERSION 0x00010003u
 #define CBSS_NODE_NONE UINT32_MAX
 
 typedef struct CbssContext CbssContext;
@@ -266,8 +266,16 @@ typedef enum CbssPaintKind {
   CBSS_PAINT_DRAW_IMAGE = 7,
   CBSS_PAINT_STROKE_PATH = 8,
   CBSS_PAINT_PUSH_TRANSFORM = 9,
-  CBSS_PAINT_POP_TRANSFORM = 10
+  CBSS_PAINT_POP_TRANSFORM = 10,
+  CBSS_PAINT_PUSH_LAYER = 11,
+  CBSS_PAINT_POP_LAYER = 12
 } CbssPaintKind;
+
+typedef enum CbssLayerCompositeMode {
+  CBSS_LAYER_SOURCE_OVER = 0,
+  CBSS_LAYER_COPY = 1,
+  CBSS_LAYER_ADDITIVE = 2
+} CbssLayerCompositeMode;
 
 typedef enum CbssPathSegmentKind {
   CBSS_PATH_MOVE_TO = 0,
@@ -380,6 +388,7 @@ typedef struct CbssHitResult {
  * STROKE_RECT: width
  * STROKE_PATH: width, line_cap, line_join, miter_limit
  * DRAW_IMAGE: opacity
+ * PUSH_LAYER: opacity, layer_composite_mode
  */
 typedef struct CbssPaintCommand {
   uint32_t kind;

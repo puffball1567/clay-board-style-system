@@ -23,7 +23,7 @@ proc ensureNimRuntime() {.inline.} =
     NimMain()
 
 const
-  CbssAbiVersion* = 0x0001_0002'u32
+  CbssAbiVersion* = 0x0001_0003'u32
   CbssNodeNone* = high(uint32)
 
   CbssOk* = 0'i32
@@ -441,11 +441,15 @@ proc commandKindToC(command: PaintCommand): uint32 =
   of pcStrokePath: 8
   of pcPushTransform: 9
   of pcPopTransform: 10
+  of pcPushLayer: 11
+  of pcPopLayer: 12
 
 proc commandRect(command: PaintCommand): Rect =
   case command.kind
-  of pcPushTransform, pcPopTransform:
+  of pcPushTransform, pcPopTransform, pcPopLayer:
     rect(0, 0, 0, 0)
+  of pcPushLayer:
+    command.layerBounds
   of pcPushClip:
     command.clipRect
   of pcPopClip:
@@ -2299,6 +2303,9 @@ proc cbssContextPaintCommand(
     output.value3 = command.pathMiterLimit
   of pcDrawImage:
     output.value0 = command.imageOpacity
+  of pcPushLayer:
+    output.value0 = command.layerOpacity
+    output.value1 = cfloat(ord(command.layerCompositeMode))
   else:
     discard
   CbssOk

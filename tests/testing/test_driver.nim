@@ -728,6 +728,36 @@ suite "CBSS headless test driver":
     check driver.snapshot().contains("layout:\n")
     check driver.snapshot().contains("\npaint:\n")
 
+  test "driver includes Canvas layer scopes in text and structured snapshots":
+    let ui = initUiRoot()
+    let drawing = newCanvas2D()
+    drawing.beginLayer(
+      rect(2, 3, 20, 12), opacity = 0.4,
+      compositeMode = lcmAdditive
+    )
+    drawing.fillRect(rect(2, 3, 20, 12), rgb(1, 0, 0))
+    drawing.endLayer()
+    discard ui.canvas(
+      drawing,
+      uiStyle([decl("width", px(40)), decl("height", px(30))]),
+      id = "layered-canvas"
+    )
+
+    let driver = initCbssTestDriver(ui, size(80, 60))
+    check driver.paintCommandCount(pcPushLayer) == 1
+    check driver.paintCommandCount(pcPopLayer) == 1
+    check driver.paintSnapshot().contains(
+      "push-layer 2.0,3.0,20.0,12.0 opacity=0.4 composite=lcmAdditive"
+    )
+    let paint = driver.structuredSnapshotJson()["paint"]
+    var foundLayer = false
+    for entry in paint:
+      if entry["kind"].getStr() == "pcPushLayer":
+        check abs(entry["opacity"].getFloat() - 0.4) < 0.0001
+        check entry["compositeMode"].getStr() == "lcmAdditive"
+        foundLayer = true
+    check foundLayer
+
   test "driver exposes debug reports and snapshot diffs":
     let driver = initCbssTestDriver(buildControlsUi, size(320, 240))
 

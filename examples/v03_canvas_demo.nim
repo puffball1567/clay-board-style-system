@@ -131,6 +131,22 @@ proc drawSignal(canvas: Canvas2D; now: float64; pointer: Vec2) =
     rect(-15, -3, 30, 6), rgba(0.48, 0.96, 0.90, 0.72), radius = 3
   )
   canvas.restore()
+  canvas.beginLayer(
+    rect(markerX - 18, markerY - 18, 52, 52),
+    opacity = 0.42,
+    compositeMode = lcmAdditive
+  )
+  canvas.fillRect(
+    rect(markerX - 12, markerY - 12, 40, 40),
+    rgba(0.18, 0.72, 0.84, 0.72),
+    radius = 20
+  )
+  canvas.fillRect(
+    rect(markerX - 4, markerY - 4, 24, 24),
+    rgba(0.48, 0.96, 0.90, 0.88),
+    radius = 12
+  )
+  canvas.endLayer()
   canvas.fillRect(
     rect(markerX, markerY, 16, 16), rgba(1, 1, 1, 0.92), radius = 8
   )

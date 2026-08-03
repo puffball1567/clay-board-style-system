@@ -116,6 +116,25 @@ values are rejected without changing the revision. Placement converts local
 matrices at the Canvas Box origin, so ancestor transforms, scrolling, and DPI
 do not require rebuilding the retained list.
 
+`beginLayer(bounds, opacity, compositeMode)` and `endLayer()` delimit an
+explicit bounded offscreen composition scope. `saveLayer` and `restoreLayer`
+are equivalent aliases. Version 0.3 guarantees three renderer-neutral modes:
+
+- `lcmSourceOver`: alpha-composite the completed layer over its destination;
+- `lcmCopy`: replace only the declared bounds, including transparent pixels;
+- `lcmAdditive`: add source color to the destination while preserving its
+  alpha.
+
+Bounds must be finite and non-empty, and opacity is clamped to `[0, 1]`.
+Scopes restore in strict LIFO order with transforms and clips. A dangling layer
+is closed at the paint boundary; an unmatched pop is ignored. SDL3 allocates a
+compact high-DPI render target from the existing transform-texture cache, while
+the PPM backend is the deterministic alpha-correct reference implementation.
+SDL3's software renderer lacks premultiplied texture composition, so it uses
+the closest built-in mode; production hardware renderer paths preserve the
+defined alpha result. Allocation failure suppresses the isolated scope instead
+of silently drawing it into the parent with different composition semantics.
+
 Every effective mutation increments the Canvas revision. A frame callback may
 replace only the Canvas commands without rebuilding or resolving the
 surrounding UI tree.
@@ -128,7 +147,6 @@ are ignored so a surface cannot corrupt the surrounding CBSS clip stack.
 The Version 0.3 contract is still in development. The following are not yet
 runtime-complete:
 
-- Canvas blend modes and explicit offscreen surfaces;
 - C ABI drawing commands beyond the implemented RenderSurface lifecycle; and
 - GPU/shared-texture surface paths.
 

@@ -222,8 +222,12 @@ proc refresh*(driver: CbssTestDriver) =
   driver.styles = resolveTreeStyles(driver.ui.tree, driver.ui.styleSheets(), defaultProperties(), driver.diagnostics)
   driver.layout = computeLayout(driver.ui.tree, driver.styles, driver.viewport, driver.ui.textEngine, driver.ui.fonts)
   driver.ui.scroll.syncScrollState(driver.ui.tree, driver.styles, driver.layout)
+  driver.ui.syncRenderSurfaces(driver.styles, driver.layout)
   driver.hitRegions = buildHitRegions(driver.ui.tree, driver.layout, driver.styles, driver.ui.scroll)
-  driver.paintCommands = buildPaintCommands(driver.ui.tree, driver.styles, driver.layout, driver.ui.scroll)
+  driver.paintCommands = buildPaintCommands(
+    driver.ui.tree, driver.styles, driver.layout, driver.ui.scroll,
+    driver.ui.canvasPaintProvider()
+  )
 
 proc setViewport*(driver: CbssTestDriver; viewport: Size) =
   driver.rememberAction("setViewport " & $viewport.w & "x" & $viewport.h)
@@ -938,6 +942,12 @@ proc paintSnapshot*(driver: CbssTestDriver): string =
       lines.add "push-transform"
     of pcPopTransform:
       lines.add "pop-transform"
+    of pcPushLayer:
+      lines.add "push-layer " & rectSnapshot(command.layerBounds) &
+        " opacity=" & $command.layerOpacity &
+        " composite=" & $command.layerCompositeMode
+    of pcPopLayer:
+      lines.add "pop-layer"
     of pcPushClip:
       lines.add "push-clip " & rectSnapshot(command.clipRect)
     of pcPopClip:
@@ -1050,6 +1060,12 @@ proc structuredSnapshotJson*(driver: CbssTestDriver): JsonNode =
         command.transform.tx, command.transform.ty
       ]
     of pcPopTransform:
+      discard
+    of pcPushLayer:
+      entry["rect"] = rectJson(command.layerBounds)
+      entry["opacity"] = %command.layerOpacity
+      entry["compositeMode"] = %($command.layerCompositeMode)
+    of pcPopLayer:
       discard
     of pcPushClip:
       entry["rect"] = rectJson(command.clipRect)

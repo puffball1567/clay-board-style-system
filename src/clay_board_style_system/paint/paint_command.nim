@@ -3,9 +3,16 @@ import ../core/[color, computed_style, geometry, node]
 import ./path_geometry
 
 type
+  LayerCompositeMode* = enum
+    lcmSourceOver,
+    lcmCopy,
+    lcmAdditive
+
   PaintCommandKind* = enum
     pcPushTransform,
     pcPopTransform,
+    pcPushLayer,
+    pcPopLayer,
     pcPushClip,
     pcPopClip,
     pcBoxShadow,
@@ -23,6 +30,12 @@ type
       transform*: Affine2D
       transformBounds*: Rect
     of pcPopTransform:
+      discard
+    of pcPushLayer:
+      layerBounds*: Rect
+      layerOpacity*: float32
+      layerCompositeMode*: LayerCompositeMode
+    of pcPopLayer:
       discard
     of pcPushClip:
       clipRect*: Rect
@@ -77,6 +90,21 @@ proc pushTransform*(transform: Affine2D; bounds = rect(0, 0, 0, 0)): PaintComman
 
 proc popTransform*(): PaintCommand =
   PaintCommand(kind: pcPopTransform)
+
+proc pushLayer*(
+    bounds: Rect;
+    opacity = 1.0'f32;
+    compositeMode = lcmSourceOver
+): PaintCommand =
+  PaintCommand(
+    kind: pcPushLayer,
+    layerBounds: bounds,
+    layerOpacity: clamp(opacity, 0.0'f32, 1.0'f32),
+    layerCompositeMode: compositeMode
+  )
+
+proc popLayer*(): PaintCommand =
+  PaintCommand(kind: pcPopLayer)
 
 type TransformBoundsFrame = object
   commandIndex: int
@@ -136,7 +164,9 @@ proc visualBounds(command: PaintCommand): Option[Rect] =
     some(rect(command.position.x, command.position.y, width, lineHeight * lineCount.float32))
   of pcDrawImage:
     some(command.imageRect)
-  of pcPushTransform, pcPopTransform, pcPushClip, pcPopClip:
+  of pcPushLayer:
+    some(command.layerBounds)
+  of pcPushTransform, pcPopTransform, pcPopLayer, pcPushClip, pcPopClip:
     none(Rect)
 
 proc resolveTransformBounds*(commands: var seq[PaintCommand]) =
