@@ -349,6 +349,7 @@ proc main() =
 
     let now = epochTime()
     discard ui.runRenderSurfaceFrames(scheduler, now, 60)
+    scheduler.markDirty(ui.consumeInvalidation().domains)
     let dirty = scheduler.consumeDirty()
     if ddStyle in dirty or ddLayout in dirty:
       frame = ui.buildFrame(viewport)

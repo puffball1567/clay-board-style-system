@@ -656,6 +656,8 @@ proc layoutNode(
   let orderedChildren = node.childrenInLayoutOrder(styles)
   for child in orderedChildren:
     let childStyle {.cursor.} = styles.styles[child.nodeIndex]
+    if childStyle.layout.display == dkNone:
+      continue
     if childStyle.isAbsolute:
       let firstBox = output.boxes.len
       let childSize = layoutNode(

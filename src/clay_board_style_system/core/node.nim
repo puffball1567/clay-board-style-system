@@ -88,6 +88,7 @@ type
     tabIndex*: int
     focusDelegate*: Option[NodeId]
     inert*: bool
+    flowCollapsed*: bool
 
   Tree* = object
     root*: Option[NodeId]
@@ -345,12 +346,30 @@ proc setInert*(tree: var Tree; id: NodeId; inert = true) =
     return
   tree.nodes[id.nodeIndex].inert = inert
 
+proc setFlowCollapsed*(tree: var Tree; id: NodeId; collapsed = true) =
+  ## A collapsed flow root stays mounted at its stable sibling position while
+  ## contributing nothing to layout, paint, hit testing, focus, or semantics.
+  if not tree.isValid(id):
+    return
+  tree.nodes[id.nodeIndex].flowCollapsed = collapsed
+
+proc isFlowCollapsed*(tree: Tree; id: NodeId): bool =
+  if not tree.isValid(id):
+    return true
+  var current = some(id)
+  while current.isSome:
+    if tree.nodes[current.get.nodeIndex].flowCollapsed:
+      return true
+    current = tree.nodes[current.get.nodeIndex].parent
+  false
+
 proc isInert*(tree: Tree; id: NodeId): bool =
   if not tree.isValid(id):
     return true
   var current = some(id)
   while current.isSome:
-    if tree.nodes[current.get.nodeIndex].inert:
+    if tree.nodes[current.get.nodeIndex].inert or
+        tree.nodes[current.get.nodeIndex].flowCollapsed:
       return true
     current = tree.nodes[current.get.nodeIndex].parent
   false
@@ -423,6 +442,7 @@ proc isAccessibleHidden*(tree: Tree; id: NodeId): bool =
   var current = some(id)
   while current.isSome:
     if tree.nodes[current.get.nodeIndex].inert or
+        tree.nodes[current.get.nodeIndex].flowCollapsed or
         tree.semantics[current.get.nodeIndex].hidden:
       return true
     current = tree.nodes[current.get.nodeIndex].parent

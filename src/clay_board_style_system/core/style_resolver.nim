@@ -243,6 +243,8 @@ proc resolveNode(
       style.image.objectFit = parent.get.image.objectFit
     if style.image.objectPosition.isNone:
       style.image.objectPosition = parent.get.image.objectPosition
+  if node.flowCollapsed:
+    style.layout.display = dkNone
   result.styles[id.nodeIndex] = style
 
   for child in node.children:

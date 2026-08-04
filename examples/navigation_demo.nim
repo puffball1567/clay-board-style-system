@@ -679,6 +679,7 @@ proc main() =
       scheduler.clearDeadline()
       discard host.advanceTransition(scheduler, now)
     discard host.sync(interaction, scheduler, now)
+    scheduler.markDirty(ui.consumeInvalidation().domains)
 
     let dirty = scheduler.consumeDirty()
     if dirty != {}:

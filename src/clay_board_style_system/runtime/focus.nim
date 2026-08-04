@@ -99,9 +99,12 @@ proc normalizeFocus*(
 
 proc reconcileFocus*(ui: UiRoot; state: var InteractionState): bool =
   let request = ui.takeFocusRequest()
-  if not request.pending:
-    return false
-  ui.setFocus(state, request.target, focusVisible = true)
+  if request.pending:
+    return ui.setFocus(state, request.target, focusVisible = true)
+  if state.focusedTarget.isSome and
+      not ui.tree.isFocusable(state.focusedTarget.get):
+    return ui.setFocus(state, state.focusedTarget, focusVisible = true)
+  false
 
 proc moveFocus*(ui: UiRoot; state: var InteractionState; direction: int): bool =
   let targets = ui.focusTargets()

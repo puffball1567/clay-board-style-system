@@ -50,6 +50,15 @@ type
   HookContextHost = ref object of CBSSComponent
     child: HookContextComponent
 
+  ConditionalPanel = ref object of CBSSComponent
+    renders: ref int
+    clicks: ref int
+
+  ConditionalFlowHost = ref object of CBSSComponent
+    panel: ConditionalPanel
+    before: NodeHandle
+    after: NodeHandle
+
 proc saveButtonStyle(): UiStyle =
   uiStyle([
     decl("width", px(96)),
@@ -162,6 +171,33 @@ proc render(self: HookContextHost) =
   ui.box(self):
     ui.mount(self.child)
 
+proc render(self: ConditionalPanel) =
+  inc self.renders[]
+  ui.box(self, ownedStyle = uiStyle([
+    decl("height", px(30)),
+    decl("background-color", rgb(0.2, 0.4, 0.7))
+  ])):
+    ui.text("Conditional content")
+
+  self.node.setFocusable()
+  self.node.setAccessibleRole(arGroup)
+  self.node.setAccessibleName("Conditional panel")
+  self.onClick = proc(event: DispatchResult): bool =
+    inc self.clicks[]
+    true
+
+proc render(self: ConditionalFlowHost) =
+  ui.box(self, ownedStyle = uiStyle([
+    decl("width", px(100)),
+    decl("flex-direction", keyword("column")),
+    decl("gap", px(8))
+  ])):
+    ui.box(self.before, uiStyle([decl("height", px(10))])):
+      discard
+    ui.mount(self.panel)
+    ui.box(self.after, uiStyle([decl("height", px(10))])):
+      discard
+
 proc resolvedStyles(root: UiRoot): ResolvedTree =
   var diagnostics: Diagnostics
   result = resolveTreeStyles(
@@ -177,7 +213,137 @@ proc aliveNodeCount(tree: Tree): int =
     if node.alive:
       inc result
 
+proc rectFor(layout: LayoutResult; node: NodeId): Option[Rect] =
+  for box in layout.boxes:
+    if box.node == node:
+      return some(box.rect)
+  none(Rect)
+
+proc componentFrame(root: UiRoot): tuple[styles: ResolvedTree, layout: LayoutResult] =
+  result.styles = root.resolvedStyles()
+  result.layout = computeLayout(root.tree, result.styles, size(100, 120))
+
+proc applyInvalidation(
+    root: UiRoot;
+    invalidation: UiInvalidation;
+    frame: var tuple[styles: ResolvedTree, layout: LayoutResult]
+) =
+  var diagnostics: Diagnostics
+  for dirtyRoot in invalidation.roots:
+    check resolveSubtreeStyles(
+      root.tree,
+      dirtyRoot,
+      root.styleSheets(),
+      defaultProperties(),
+      diagnostics,
+      frame.styles
+    )
+    check relayoutSubtree(
+      root.tree,
+      frame.styles,
+      dirtyRoot,
+      frame.layout,
+      root.textEngine,
+      root.fonts
+    )
+  check not diagnostics.hasErrors
+
 suite "typed component authoring":
+  test "conditional components collapse and materialize in stable normal flow":
+    let root = initUiRoot()
+    let renders = new int
+    let clicks = new int
+    let panel = ConditionalPanel(renders: renders, clicks: clicks)
+    check panel.setMaterialized(false)
+    let host = root.mount(ConditionalFlowHost(panel: panel))
+
+    check not panel.materialized
+    check renders[] == 1
+    check root.tree.nodes[host.node.id.nodeIndex].children == @[
+      host.before.id, panel.node.id, host.after.id
+    ]
+
+    var frame = root.componentFrame()
+    check frame.styles.styles[panel.node.id.nodeIndex].layout.display == dkNone
+    check frame.layout.rectFor(panel.node.id).isNone
+    check frame.layout.rectFor(host.after.id).get.y == 18
+    for region in buildHitRegions(root.tree, frame.layout, frame.styles):
+      check region.node != panel.node.id
+    for command in buildPaintCommands(root.tree, frame.styles, frame.layout):
+      check command.owner != some(panel.node.id)
+    check panel.node.id notin root.focusTargets()
+    check not root.events.emit(root.tree, panel.node.id, iekClick)
+    check clicks[] == 0
+    for semantic in root.accessibilityTree():
+      check semantic.node != panel.node.id
+
+    check panel.setMaterialized(true)
+    let materializedInvalidation = root.consumeInvalidation()
+    check materializedInvalidation.domains == {ddStyle, ddLayout, ddPaint, ddHit}
+    check materializedInvalidation.roots == @[host.node.id]
+    root.applyInvalidation(materializedInvalidation, frame)
+    check frame.styles.styles[panel.node.id.nodeIndex].layout.display != dkNone
+    check frame.layout.rectFor(panel.node.id).get.y == 18
+    check frame.layout.rectFor(host.after.id).get.y == 56
+    var panelHit = false
+    for region in buildHitRegions(root.tree, frame.layout, frame.styles):
+      if region.node == panel.node.id:
+        panelHit = true
+    check panelHit
+    var panelPaint = false
+    for command in buildPaintCommands(root.tree, frame.styles, frame.layout):
+      if command.owner == some(panel.node.id):
+        panelPaint = true
+    check panelPaint
+    check panel.node.id in root.focusTargets()
+    check root.events.emit(root.tree, panel.node.id, iekClick)
+    check clicks[] == 1
+    var exposed = false
+    for semantic in root.accessibilityTree():
+      if semantic.node == panel.node.id:
+        exposed = true
+    check exposed
+    check renders[] == 1
+
+    var interaction = initInteractionState()
+    check root.setFocus(interaction, some(panel.node.id), focusVisible = true)
+
+    check not panel.setMaterialized(true)
+    check not root.hasPendingInvalidation
+    check panel.setMaterialized(false)
+    let collapsedInvalidation = root.consumeInvalidation()
+    check collapsedInvalidation.domains == {ddStyle, ddLayout, ddPaint, ddHit}
+    check collapsedInvalidation.roots == @[host.node.id]
+    root.applyInvalidation(collapsedInvalidation, frame)
+    check frame.layout.rectFor(panel.node.id).isNone
+    check frame.layout.rectFor(host.after.id).get.y == 18
+    check root.reconcileFocus(interaction)
+    check interaction.focusedTarget.isNone
+    check renders[] == 1
+
+    for cycle in 0 ..< 4:
+      check panel.setMaterialized(true)
+      root.applyInvalidation(root.consumeInvalidation(), frame)
+      check frame.layout.rectFor(host.after.id).get.y == 56
+      check panel.setMaterialized(false)
+      root.applyInvalidation(root.consumeInvalidation(), frame)
+      check frame.layout.rectFor(host.after.id).get.y == 18
+    check renders[] == 1
+
+  test "pre-mount flow state is retained across deterministic unmount and remount":
+    let root = initUiRoot()
+    let panel = ConditionalPanel(renders: new int, clicks: new int)
+    discard panel.setMaterialized(false)
+    discard root.mount(panel)
+    check root.tree.isFlowCollapsed(panel.node.id)
+
+    var interaction = initInteractionState()
+    check root.disposeSubtree(panel.node, interaction)
+    check not panel.materialized
+    discard root.mount(panel)
+    check root.tree.isFlowCollapsed(panel.node.id)
+    check panel.renders[] == 2
+
   test "component types mount with ordinary Nim syntax":
     let root = initUiRoot()
     let clicks = new int

@@ -3874,6 +3874,11 @@ proc main() =
       ui.clearCaretBlinkSheet(caretBlinkSheetIndex)
 
     discard ui.tickOwnedAnimations(scheduler, epochTime())
+    let componentInvalidation = ui.consumeInvalidation()
+    let hasComponentInvalidation = componentInvalidation.roots.len > 0
+    scheduler.markDirty(componentInvalidation.domains)
+    for root in componentInvalidation.roots:
+      dirtyStyleRoots.addDirtyRoot(some(root))
     let demoDirty = demo.consumeDirty()
     if demoDirty:
       scheduler.markDirty({ddStyle, ddLayout, ddPaint, ddHit})
@@ -3897,6 +3902,16 @@ proc main() =
       )
       frameDirty = true
       staticLayerDirty = true
+    elif hasComponentInvalidation and not needsFrame and
+        ddResource notin dirtyDomains:
+      let frameStart = epochTime()
+      repaintDirtySubtrees(ui, frame, dirtyStyleRoots, textEngine, fonts)
+      ui.tracePerf(
+        "repaintDirtySubtrees component ms=" & elapsedMs(frameStart) &
+        " roots=" & $dirtyStyleRoots.len
+      )
+      frameDirty = true
+      staticLayerDirty = true
     elif ({ddStyle, ddLayout, ddHit, ddResource} * dirtyDomains) != {}:
       let frameStart = epochTime()
       frame = buildFrame(ui, viewport, textEngine, fonts)
@@ -3910,9 +3925,7 @@ proc main() =
       staticLayerDirty = true
     elif dirtyDomains != {}:
       let frameStart = epochTime()
-      if dirtyStyleRoots.len > 0:
-        repaintDirtySubtrees(ui, frame, dirtyStyleRoots, textEngine, fonts)
-      elif not staticLayerDirty and
+      if not staticLayerDirty and
           inputState.focusedTarget.isSome and
           ui.isTextInputTarget(inputState.focusedTarget.get):
         repaintTextControlFrame(ui, frame, inputState.focusedTarget.get, textEngine, fonts)

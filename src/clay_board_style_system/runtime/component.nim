@@ -1,4 +1,8 @@
+import std/options
+
+import ../core/node
 import ../input/events
+import ./invalidation
 import ./ui_root
 
 type
@@ -10,11 +14,16 @@ type
     cmsMounted,
     cmsUnmounted
 
+  ComponentFlowState* = enum
+    cfsMaterialized,
+    cfsCollapsed
+
   CBSSComponent* = ref object of RootObj
     style*: UiStyle
     rootNode: NodeHandle
     ownerRoot {.cursor.}: UiRoot
     mountState: ComponentMountState
+    flowState: ComponentFlowState
 
 type RenderContextFrame = object
   root {.cursor.}: UiRoot
@@ -41,6 +50,32 @@ proc state*(self: CBSSComponent): ComponentMountState =
 proc mounted*(self: CBSSComponent): bool =
   not self.isNil and self.mountState == cmsMounted and self.rootNode.valid
 
+proc materialized*(self: CBSSComponent): bool =
+  not self.isNil and self.flowState == cfsMaterialized
+
+proc setMaterialized*(self: CBSSComponent; materialized: bool): bool {.discardable.} =
+  ## Keep the component mounted at a stable sibling position while allowing its
+  ## library-owned state to contribute either a normal flow item or no item.
+  if self.isNil:
+    raise newException(ComponentContextError, "component cannot be nil")
+  let nextState = if materialized: cfsMaterialized else: cfsCollapsed
+  if self.flowState == nextState:
+    return false
+  self.flowState = nextState
+  if self.rootNode.valid:
+    self.rootNode.root.tree.setFlowCollapsed(
+      self.rootNode.id,
+      nextState == cfsCollapsed
+    )
+  if self.mountState == cmsMounted and not self.ownerRoot.isNil:
+    let parent = self.ownerRoot.tree.nodes[self.rootNode.id.nodeIndex].parent
+    let layoutRoot = if parent.isSome: parent.get else: self.rootNode.id
+    self.ownerRoot.invalidate(
+      layoutRoot,
+      {ddStyle, ddLayout, ddPaint, ddHit}
+    )
+  true
+
 proc node*(self: CBSSComponent): lent NodeHandle =
   if self.isNil or not self.rootNode.valid:
     raise newException(ComponentContextError, "component does not have a mounted root node")
@@ -61,6 +96,7 @@ proc beginRoot(root: UiRoot; self: CBSSComponent; handle: NodeHandle) =
   if handle.root != root or not handle.valid:
     raise newException(ComponentContextError, "component root belongs to another UiRoot")
   self.rootNode = handle
+  root.tree.setFlowCollapsed(handle.id, self.flowState == cfsCollapsed)
 
 template box*(
     root: UiRoot;

@@ -48,6 +48,10 @@ type
   UiStyle* = object
     declarations*: seq[Declaration]
 
+  UiInvalidation* = object
+    domains*: set[DirtyDomain]
+    roots*: seq[NodeId]
+
   AppliedStyleKey = object
     node: NodeId
     states: set[ElementState]
@@ -79,6 +83,8 @@ type
     mountedComponents: seq[MountedComponentBinding]
     animations: AnimationClock
     animationOwners: Table[AnimationId, NodeId]
+    pendingInvalidation: InvalidationState
+    pendingInvalidationRoots: seq[NodeId]
     focusRequestPending*: bool
     focusRequestTarget*: Option[NodeId]
     parentStack: seq[NodeId]
@@ -121,11 +127,48 @@ proc initUiRoot*(): UiRoot =
     mountedComponents: @[],
     animations: initAnimationClock(),
     animationOwners: initTable[AnimationId, NodeId](),
+    pendingInvalidation: initInvalidationState(),
+    pendingInvalidationRoots: @[],
     focusRequestPending: false,
     focusRequestTarget: none(NodeId),
     parentStack: @[],
     fieldsetStack: @[]
   )
+
+proc invalidate*(root: UiRoot; domain: DirtyDomain) =
+  if not root.isNil:
+    root.pendingInvalidation.markDirty(domain)
+
+proc invalidate*(root: UiRoot; domains: set[DirtyDomain]) =
+  if not root.isNil:
+    root.pendingInvalidation.markDirty(domains)
+
+proc invalidate*(root: UiRoot; target: NodeId; domains: set[DirtyDomain]) =
+  if root.isNil or not root.tree.isValid(target):
+    return
+  root.pendingInvalidation.markDirty(domains)
+  var index = 0
+  while index < root.pendingInvalidationRoots.len:
+    let existing = root.pendingInvalidationRoots[index]
+    if root.tree.isDescendantOrSelf(target, existing):
+      return
+    if root.tree.isDescendantOrSelf(existing, target):
+      root.pendingInvalidationRoots.delete(index)
+      continue
+    inc index
+  root.pendingInvalidationRoots.add target
+
+proc hasPendingInvalidation*(root: UiRoot): bool =
+  not root.isNil and root.pendingInvalidation.dirty()
+
+proc consumeInvalidation*(root: UiRoot): UiInvalidation =
+  if root.isNil:
+    return UiInvalidation()
+  result = UiInvalidation(
+    domains: root.pendingInvalidation.consumeDirty(),
+    roots: root.pendingInvalidationRoots
+  )
+  root.pendingInvalidationRoots = @[]
 
 proc requestFocus*(root: UiRoot; target: Option[NodeId]) =
   ## Event handlers do not own InteractionState. Queue one deterministic focus

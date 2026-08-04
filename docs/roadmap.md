@@ -371,7 +371,7 @@ Planned capabilities:
 
 ### Transparent Conditional Component Flow
 
-Status: `Planned`
+Status: `Implemented on the Version 0.4 development line`
 
 A component library must be able to occupy a declarative position between
 ordinary siblings even when its content becomes available asynchronously. The
@@ -417,6 +417,16 @@ Release tests cover row and column flow, Flex gaps, intrinsic and constrained
 sizes, repeated asynchronous show/hide cycles, sibling order, focus transfer,
 event isolation, accessibility exposure, subtree disposal, and bounded dirty
 work on large trees.
+
+The retained implementation uses the component root itself as the stable flow
+position. `setMaterialized(false)` maps that root to an internal collapsed
+state rather than disposing it or replaying `render`. The collapsed subtree is
+excluded consistently from computed layout, intrinsic measurement, Flex gap
+accounting, paint, hit testing, focus, event dispatch, and accessibility
+export. A state change queues style/layout/paint/hit invalidation together with
+the nearest containing flow root, allowing hosts with retained frame data to
+use subtree style resolution and relayout. Async workers must hand results back
+to the UI thread before mutating a component or its `UiRoot`.
 
 ## Authoring Value Model And Ergonomics
 
