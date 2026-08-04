@@ -228,6 +228,7 @@ proc refresh*(driver: CbssTestDriver) =
     driver.ui.tree, driver.styles, driver.layout, driver.ui.scroll,
     driver.ui.canvasPaintProvider()
   )
+  discard driver.ui.consumeInvalidation()
 
 proc setViewport*(driver: CbssTestDriver; viewport: Size) =
   driver.rememberAction("setViewport " & $viewport.w & "x" & $viewport.h)

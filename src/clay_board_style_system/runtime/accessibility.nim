@@ -68,6 +68,8 @@ proc accessibilityTree*(tree: Tree): seq[AccessibleNode] =
     if activeId.isNone:
       continue
     let id = activeId.get
+    if tree.isFlowCollapsed(id):
+      continue
     let info = tree.semanticInfo(id)
     if info.role == arNone:
       continue
