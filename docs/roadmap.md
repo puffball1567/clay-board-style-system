@@ -187,8 +187,10 @@ Planned capabilities:
   image processing. Pixie remains behind CBSS color, paint, cache, and C ABI
   contracts and must not redefine their semantics.
 - Publish a versioned `CanvasHost` / `RenderSurface` lifecycle contract for
-  independent Nim modules and C ABI adapters: mount, update, resize, input,
-  frame request, visibility, device-loss, unmount, and deterministic cleanup.
+  independent Nim modules: mount, update, resize, input, frame request,
+  visibility, device-loss, unmount, and deterministic cleanup. A Nim module
+  may privately adapt a foreign library over its C ABI, but the published CBSS
+  extension remains a normal Nim package.
 - Provide the first standard 2D Canvas host on the SDL3 renderer path, with
   local coordinates, clipping, opacity, stacking, pointer blocking, and
   retained static content consistent with an ordinary CBSS Box.
