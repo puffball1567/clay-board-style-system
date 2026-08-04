@@ -23,6 +23,12 @@ release. Before 1.0, minor releases may contain public API changes.
 - Extended the append-only C ABI accessibility role vocabulary with Switch in
   ABI version `0x00010006`.
 
+### Changed
+
+- Reworked the README around the user-facing value, current typed component
+  API, demo media, measured performance, installation paths, release scope,
+  and documentation map.
+
 ## [0.3.0] - 2026-08-03
 
 ### Added
