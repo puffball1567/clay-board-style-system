@@ -106,6 +106,26 @@ suite "AT-SPI platform-neutral adapter":
     check not ui.performAtspiAction(snapshot, objectPathFor(disabled.container.nodeId))
     check saves == 1
 
+  test "switch maps to a toggle button with checked state and activation":
+    let ui = initUiRoot()
+    let app = ui.box(fixedStyle(300, 100))
+    ui.pushParent(app)
+    let live = ui.switch("Live updates", style = fixedStyle(140, 32))
+    ui.popParent()
+
+    var snapshot = ui.buildAtspiSnapshot(ui.layoutFor(), "Switch")
+    let path = objectPathFor(live.container.nodeId)
+    let before = snapshot.nodeAt(path).get
+    check before.role == atrToggleButton
+    check before.actions == @["activate"]
+    check atsChecked notin before.states
+
+    check ui.performAtspiAction(snapshot, path)
+    check live.checked()
+    snapshot = ui.buildAtspiSnapshot(ui.layoutFor(), "Switch")
+    check atsChecked in snapshot.nodeAt(path).get.states
+    check snapshot.nodeAt(path).get.value == "true"
+
   test "hidden and inert controls cannot be activated through stale snapshots":
     let ui = initUiRoot()
     let app = ui.box(fixedStyle(300, 100))

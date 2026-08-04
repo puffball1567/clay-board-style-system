@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define CBSS_ABI_VERSION 0x00010005u
+#define CBSS_ABI_VERSION 0x00010006u
 #define CBSS_NODE_NONE UINT32_MAX
 
 typedef struct CbssContext CbssContext;
@@ -259,7 +259,8 @@ typedef enum CbssAccessibleRole {
   CBSS_ROLE_GROUP = 18,
   CBSS_ROLE_IMAGE = 19,
   CBSS_ROLE_STATIC_TEXT = 20,
-  CBSS_ROLE_LINK = 21
+  CBSS_ROLE_LINK = 21,
+  CBSS_ROLE_SWITCH = 22
 } CbssAccessibleRole;
 
 typedef enum CbssHitKind {

@@ -2,7 +2,7 @@ import std/options
 
 import ../core/node
 import ../input/events
-import ./[checkbox, radio, text_input, textarea]
+import ./[checkbox, radio, switch, text_input, textarea]
 import ./ui_root
 
 type
@@ -142,6 +142,18 @@ proc label*(
     root: UiRoot;
     text: string;
     target: CheckboxHandle;
+    disabled = false;
+    style = UiStyle();
+    textStyle = UiStyle();
+    id = "";
+    groups: openArray[string] = ["label"]
+): LabelHandle {.discardable.} =
+  root.label(text, target = some(target.container), disabled = disabled, style = style, textStyle = textStyle, id = id, groups = groups)
+
+proc label*(
+    root: UiRoot;
+    text: string;
+    target: SwitchHandle;
     disabled = false;
     style = UiStyle();
     textStyle = UiStyle();

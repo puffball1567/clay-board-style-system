@@ -36,7 +36,7 @@ import clay_board_style_system/runtime/[accessibility, button, checkbox,
     invalidation, label, link, navigation, navigation_focus,
     navigation_transition, navigation_screen_host, platform_links, progress,
     providers, radio, render_surface, select_box, slider, state_runtime,
-    text_input, textarea, ui_root]
+    switch, text_input, textarea, ui_root]
 import clay_board_style_system/runtime/widgets/[command_menu, list_box, tabs]
 import clay_board_style_system/text/[cosmic_text_engine, font_registry, text_engine]
 import clay_board_style_system/design_source/model
@@ -105,6 +105,7 @@ export select_box
 export slider
 export state_runtime
 export tabs
+export switch
 export text_input
 export textarea
 export ui_root
