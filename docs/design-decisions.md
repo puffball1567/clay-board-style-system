@@ -474,3 +474,30 @@ owns interaction state, event derivation and bubbling, focus traversal,
 pointer capture, retained scrolling, and recomputation signals. Foreign
 callbacks use C function pointers plus host-owned `user_data`; Nim closures
 remain internal.
+
+## D21 — The extension ecosystem uses Nim packages (Adopted)
+
+**Context.** CBSS needs the low-friction composition that made Web libraries
+successful: an application imports an independently maintained library and
+mounts its component without copying the UI runtime or learning the library's
+internal renderer. A language-neutral plugin SDK would make Rust, C, and C++
+equal authoring targets, but it would also create a second package model,
+duplicate lifecycle and tooling work, and weaken the goal of making Nim the
+natural language for native GUI development.
+
+**Decision.** Public CBSS components, design systems, charts, widgets, themes,
+and render-surface extensions are distributed as ordinary Nim modules and
+Nimble packages. Their consumer-facing entry point is Nim and participates in
+Nim's type system, ARC ownership, documentation, compiler checks, and LSP
+tooling. Application code imports the extension package, not a foreign binary
+or a language-specific CBSS SDK.
+
+A Nim package may privately call an existing C, C++, or Rust library through a
+stable C ABI. The adapter owns all linking, conversion, panic/exception
+containment, thread rules, and cleanup, and exposes a normal Nim component or
+`RenderSurface` API. CBSS will not define a generic foreign plugin descriptor,
+dynamic Rust/C++ extension loader, or parallel non-Nim plugin registry.
+
+D20 remains unchanged: CBSS's versioned C ABI is the boundary through which an
+application written in another language may consume the CBSS runtime. It is
+not the authoring and distribution model for the CBSS extension ecosystem.
