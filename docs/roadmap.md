@@ -341,14 +341,17 @@ Implementation progress:
   Three-dimensional transforms, filters, shared GPU targets, CPU pixel-buffer
   surfaces, and full CSS blend/isolation semantics remain later work.
 
-## Version 0.4 - Complete Unit Resolution
+## Version 0.4 - Complete Unit Resolution And Component Flow
 
 Status: `Partially implemented`
 
-Version 0.4 completes the typed unit model across supported properties. The
-goal is not merely to parse more values: every supported unit/property pair
-must have a defined resolution context, a computed-value result, diagnostics,
-and tests.
+Version 0.4 completes the typed unit model across supported properties and
+makes conditionally materialized components behave like ordinary flow
+children. The unit goal is not merely to parse more values: every supported
+unit/property pair must have a defined resolution context, a computed-value
+result, diagnostics, and tests. The component-flow goal is to let application
+code mount a component at its intended location without exposing coordinates,
+layout placeholders, or conditional-rendering machinery.
 
 Planned capabilities:
 
@@ -365,6 +368,55 @@ Planned capabilities:
   unit syntactically without an executable layout meaning.
 - Add cross-property unit-resolution tests, resize tests, and diagnostics for
   unsupported combinations.
+
+### Transparent Conditional Component Flow
+
+Status: `Planned`
+
+A component library must be able to occupy a declarative position between
+ordinary siblings even when its content becomes available asynchronously. The
+application-facing form remains an ordinary mount:
+
+```nim
+ui.mount(A())
+ui.mount(RemotePanel(source))
+ui.mount(C())
+```
+
+`RemotePanel` may initially produce no visible content and later materialize B
+at the same sibling position. Application code must not need to declare a
+slot, select a target by class or ID, calculate coordinates, or manually write
+a conditional rendering branch for this lifecycle.
+
+Required behavior:
+
+- `ui.mount(component)` records a stable insertion position internally. The
+  public component API does not expose that anchor as required authoring
+  syntax.
+- An empty or unavailable component contributes no width, height, intrinsic
+  size, margin, flex item, or `gap`. It is also absent from paint, hit testing,
+  focus order, input dispatch, and the exposed accessibility tree.
+- When content becomes available, it enters normal Box/Flex flow at the
+  original mount position. Its measured size reserves space and moves later
+  siblings without overlap or application-authored coordinates.
+- Clearing or hiding the content collapses that space and restores the sibling
+  flow. Repeated materialize/clear cycles preserve order and deterministic
+  component lifecycle behavior.
+- The mounted component or library owns its asynchronous/loading state. The
+  application consumes it as a normal component and is not required to know
+  that conditional materialization occurs internally.
+- Materialization invalidates only the affected style, layout, paint, hit-test,
+  focus, and accessibility domains. It must not replay unrelated components or
+  rebuild the whole UI tree.
+- Existing `display: none` exclusion semantics remain valid, including the
+  absence of phantom Flex gaps. A lower-level insertion/slot mechanism may
+  exist internally or as an advanced API, but it is not the primary user
+  contract.
+
+Release tests cover row and column flow, Flex gaps, intrinsic and constrained
+sizes, repeated asynchronous show/hide cycles, sibling order, focus transfer,
+event isolation, accessibility exposure, subtree disposal, and bounded dirty
+work on large trees.
 
 ## Authoring Value Model And Ergonomics
 
