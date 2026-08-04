@@ -7,6 +7,19 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-08-04
+
+### Changed
+
+- Defined the public extension ecosystem as Nim-first: independent component,
+  chart, theme, widget, and design-system packages expose ordinary Nim APIs,
+  while foreign implementations remain encapsulated behind Nim adapters.
+- Expanded the Version 0.4 roadmap with transparent conditional component
+  flow. Ordinary `ui.mount(component)` placement will retain an internal flow
+  position, consume no layout space while empty, and materialize into normal
+  Box/Flex flow without exposing slots, selectors, or coordinates to
+  application code.
+
 ## [0.3.1] - 2026-08-04
 
 ### Added

@@ -155,7 +155,7 @@ cbss_configure system
 The selection is written to the application's ignored `.cbss/` directory.
 CBSS does not ship native runtime binaries inside its Nimble package.
 
-## What Version 0.3.1 Contains
+## What Version 0.3.2 Contains
 
 - Typed `CBSSComponent` authoring, nested composition, Style DI, lifecycle
   hooks, and transactional mount rollback.
@@ -181,7 +181,7 @@ Accepting a value as metadata does not mean that layout or paint consumes it.
 
 ## Current Boundaries
 
-Version 0.3.1 is a developer preview. Public APIs may change before 1.0.
+Version 0.3.2 is a developer preview. Public APIs may change before 1.0.
 
 - Linux x86_64 with SDL3 is the only Tier 1 runtime target.
 - Windows and macOS native runtime validation is incomplete.

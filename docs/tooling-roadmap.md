@@ -338,6 +338,14 @@ experience is:
 - plugins can expose styles that users import, merge, and override;
 - the CLI keeps `nim.cfg`, plugin paths, and generated facade files consistent.
 
+The public plugin and component ecosystem is Nim-only. Every distributable
+CBSS extension has a Nim module as its entry point and participates in ordinary
+Nim import, type checking, ARC ownership, documentation, and tooling. A Nim
+package may privately bind a C, C++, or Rust implementation where that is useful,
+but the foreign implementation is a package detail: CBSS does not define a
+language-neutral plugin descriptor, a Rust plugin SDK, or a second package model
+beside Nimble modules.
+
 This approach keeps CBSS close to the role browsers play for Web UI libraries:
 the shared runtime provides style, layout, paint, text, and events, while
 independent libraries provide charts, widgets, themes, and application-specific
@@ -347,12 +355,11 @@ UI systems on top of that runtime.
 
 Status: `Planned`
 
-The shared runtime must also let an independently developed Nim library or C
-ABI library render inside an application view without depending on a particular
-GUI library, theme, renderer implementation, or private CBSS module. This
-contract is more important than any individual chart, map, media, or
-game-surface library: it is what makes those libraries composable in the first
-place.
+The shared runtime must also let an independently developed Nim library render
+inside an application view without depending on a particular GUI library,
+theme, renderer implementation, or private CBSS module. This contract is more
+important than any individual chart, map, media, or game-surface library: it is
+what makes those libraries composable in the first place.
 
 The Web analogue is a library receiving a DOM or Canvas host and mounting its
 own rendering into that host. CBSS uses a typed `RenderSurface` or `CanvasHost`
@@ -415,15 +422,15 @@ Dynamic loading is not required for the initial model. Normal Nim imports and
 compile-time dependency resolution are sufficient, provided every library in
 the application is built against the same compatible CBSS public contract.
 
-### External And FFI Surfaces
+### Nim Adapters For External Libraries
 
-The same contract must support a library that was not written in Nim. An
-`ExternalSurface` lets CBSS host an independently rendered or independently
-laid-out subsystem inside a normal Box. For example, a Clay adapter can receive
-the resolved Box size and local input coordinates, run Clay for its interior,
-and submit its result through the surface contract. CBSS continues to own the
-outer box's placement, clipping, opacity, transform, stacking, focus boundary,
-and relationship to surrounding UI.
+The same contract lets a Nim package adapt a library that was not written in
+Nim. An `ExternalSurface` lets the adapter host an independently rendered or
+independently laid-out subsystem inside a normal Box. For example, a Nim Clay
+adapter can receive the resolved Box size and local input coordinates, run Clay
+for its interior, and submit its result through the surface contract. CBSS
+continues to own the outer box's placement, clipping, opacity, transform,
+stacking, focus boundary, and relationship to surrounding UI.
 
 ```nim
 import cbss_clay
@@ -432,15 +439,18 @@ ui.box(panelStyle):
   claySurface(clayView)
 ```
 
-The application need not import Clay directly. `cbss_clay` owns the one-time
-adapter, linking, conversion, and lifecycle work; its consumer sees a normal
-CBSS component or mounts it into an explicit `RenderSurface` host.
+The application need not import Clay directly. `cbss_clay` is a Nim package
+that owns the one-time adapter, linking, conversion, and lifecycle work; its
+consumer sees a normal CBSS component or mounts it into an explicit
+`RenderSurface` host.
 
-The C ABI form must use opaque handles and a versioned surface descriptor or
-vtable. It must cover only explicit operations such as create, mount, resize,
-paint/command submission, input delivery, visibility, device loss/recovery,
-and unmount/destroy. It must not expose Nim object layouts, renderer-private
-pointers, or arbitrary cross-language closures.
+When such an adapter crosses an FFI boundary, it uses that dependency's stable
+C ABI with opaque handles, explicit ownership, contained exceptions or panics,
+and deterministic destruction. Those details remain inside the Nim package.
+CBSS does not standardize a foreign plugin entry point or dynamically load a
+Rust/C/C++ extension as a first-class package. This is separate from CBSS's own
+versioned C ABI, which remains the supported boundary for applications written
+in other languages to consume the CBSS runtime.
 
 The thread boundary is equally explicit: a surface may prepare data on worker
 threads, but CBSS tree mutation, input dispatch, mount/unmount, and graphics
@@ -449,9 +459,9 @@ through queued updates or immutable command/data buffers.
 
 An external surface owns only its interior. It cannot bypass the host clip,
 draw above modal content, consume unrelated input, or force continuous frames
-without an explicit frame request. This makes a Clay view, a C++ chart engine,
-a Rust renderer, a video decoder, or an engine viewport composable with the
-same native GUI tree rather than a separate windowing system.
+without an explicit frame request. This lets a Nim adapter make a Clay view,
+native chart engine, video decoder, or engine viewport composable with the same
+native GUI tree rather than a separate windowing system.
 
 ### External Game Surface Contract
 
@@ -812,5 +822,8 @@ model.
 - Plugins should not vendor a private copy of CBSS.
 - Dynamic plugin loading is not required for the first plugin model; Nim modules
   and project templates are enough for the initial workflow.
+- A language-neutral plugin SDK or a parallel Rust/C++ extension ecosystem is
+  not a goal. Published CBSS extensions use Nim entry points; foreign code may
+  remain an implementation detail behind them.
 - The test driver should not try to become a general-purpose browser automation
   compatibility layer.
