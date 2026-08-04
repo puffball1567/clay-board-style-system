@@ -267,11 +267,12 @@ proc addScrollbars(
     output: var seq[PaintCommand];
     nodeRect: Rect;
     style: ComputedStyle;
+    padding: EdgeSizes;
     metrics: ScrollMetrics;
     opacity: float32;
     owner: NodeId
 ) =
-  let geometry = scrollbarGeometry(nodeRect, style, metrics)
+  let geometry = scrollbarGeometry(nodeRect, style, padding, metrics)
   if geometry.horizontal.isNone and geometry.vertical.isNone:
     return
   let thickness = style.scrollbarThickness()
@@ -315,7 +316,8 @@ proc paintNode(
   let boxIndex = boxIndices.boxIndexFor(id)
   if boxIndex < 0:
     return
-  let nodeRect = layout.boxes[boxIndex].rect.translated(translation)
+  let item = layout.boxes[boxIndex]
+  let nodeRect = item.rect.translated(translation)
 
   let style {.cursor.} = styles.styles[id.nodeIndex]
   if not overlayPass and node.parent.isSome and style.layout.zIndex > 0:
@@ -330,7 +332,7 @@ proc paintNode(
   if opacity <= 0.0'f32:
     return
 
-  let ownTransform = resolvedTransform(style, nodeRect)
+  let ownTransform = resolvedTransform(style, nodeRect, item.padding)
   let transformed = not ownTransform.isIdentity
   if transformed:
     output.add pushTransform(ownTransform)
@@ -417,10 +419,12 @@ proc paintNode(
     output.add drawImage(id, node.imageSource, nodeRect, opacity, style.image)
 
   if needsClip:
-    output.add pushClip(overflowClipRect(nodeRect, style), style.box.borderRadius)
+    output.add pushClip(
+      overflowClipRect(nodeRect, style, item.padding), style.box.borderRadius
+    )
 
   if node.renderSurfaceId.isSome and not surfaceProvider.isNil:
-    let contentRect = presentedContentBounds(nodeRect, style)
+    let contentRect = presentedContentBounds(nodeRect, style, item.padding)
     output.add pushClip(contentRect, style.box.borderRadius)
     for command in surfaceProvider(
         node.renderSurfaceId.get, id, contentRect, opacity):
@@ -443,7 +447,9 @@ proc paintNode(
 
   let scrollMetrics = scroll.metricsFor(id)
   if node.kind == nkBox and scrollMetrics.isSome:
-    output.addScrollbars(nodeRect, style, scrollMetrics.get, opacity, id)
+    output.addScrollbars(
+      nodeRect, style, item.padding, scrollMetrics.get, opacity, id
+    )
 
   if needsClip:
     output.add popClip()
@@ -506,7 +512,8 @@ proc pushAncestorPaintContext(
     if tree.nodes[ancestor.node.nodeIndex].kind == nkBox and
         style.clipsOverflow():
       output.add pushClip(
-        overflowClipRect(ancestor.sourceBounds, style), style.box.borderRadius
+        overflowClipRect(ancestor.sourceBounds, style, ancestor.padding),
+        style.box.borderRadius
       )
       inc scope.clipCount
     result.scopes.add scope

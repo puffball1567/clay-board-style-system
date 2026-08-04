@@ -101,7 +101,9 @@ proc addHitRegions(
     return
 
   let nodeRect = item.rect.translated(translation)
-  let worldTransform = inheritedTransform * resolvedTransform(style, nodeRect)
+  let worldTransform = inheritedTransform * resolvedTransform(
+    style, nodeRect, item.padding
+  )
   let nodeShape = transformedRect(nodeRect, worldTransform)
   var visibleRect = nodeShape.bounds
   if inheritedClip.isSome:
@@ -124,7 +126,7 @@ proc addHitRegions(
   var childClip = inheritedClip
   var childClipShapes = inheritedClipShapes
   if tree.nodes[id.nodeIndex].kind == nkBox and style.clipsOverflow():
-    let ownClipSource = overflowClipRect(nodeRect, style)
+    let ownClipSource = overflowClipRect(nodeRect, style, item.padding)
     let ownClipShape = transformedRect(ownClipSource, worldTransform)
     let ownClip = ownClipShape.bounds
     childClipShapes.add ownClipShape
