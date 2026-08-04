@@ -1,5 +1,6 @@
 import std/options
 import ../core/[computed_style, declaration, diagnostics, property, style_value]
+import ./length_resolution
 
 type InsetEdge = enum
   ieTop,
@@ -7,18 +8,11 @@ type InsetEdge = enum
   ieBottom,
   ieLeft
 
-proc resolveInset(value: StyleValue; property: string; diagnostics: var Diagnostics): Option[LengthValue] =
-  if value.kind != svLength:
-    diagnostics.addError(property, property & " requires a length value")
+proc resolveInset(value: StyleValue; env: ResolveEnv; property: string;
+    diagnostics: var Diagnostics): Option[LengthValue] =
+  if value.kind == svLength and value.length.kind == ukAuto:
     return none(LengthValue)
-  case value.length.kind
-  of ukPx, ukPercent:
-    some(value.length)
-  of ukAuto:
-    none(LengthValue)
-  else:
-    diagnostics.addError(property, property & " supports px, percentage, or auto")
-    none(LengthValue)
+  normalizeLength(value, env, property, {ukPercent}, diagnostics)
 
 proc applyPosition(
     style: var ComputedStyle;
@@ -157,7 +151,7 @@ proc applyInset(
       return
     style.setInset(
       declaration.property,
-      resolveInset(declaration.operation.value.get, declaration.property, diagnostics)
+      resolveInset(declaration.operation.value.get, env, declaration.property, diagnostics)
     )
   of mmInitial, mmUnset:
     style.setInset(declaration.property, none(LengthValue))

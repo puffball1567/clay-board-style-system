@@ -1,3 +1,5 @@
+import std/options
+
 import clay_board_style_system
 import clay_board_style_system/generated/default_properties
 
@@ -52,7 +54,8 @@ proc main() =
     root.tree,
     root.styleSheets(),
     defaultProperties(),
-    diagnostics
+    diagnostics,
+    viewportSize = some(size(320, 80))
   )
   doAssert not diagnostics.hasErrors
   let layout = computeLayout(root.tree, styles, size(320, 80))

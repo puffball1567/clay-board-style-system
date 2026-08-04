@@ -219,7 +219,13 @@ proc matches(tree: Tree; id: NodeId; query: CbssQuery): bool =
 
 proc refresh*(driver: CbssTestDriver) =
   driver.diagnostics = Diagnostics()
-  driver.styles = resolveTreeStyles(driver.ui.tree, driver.ui.styleSheets(), defaultProperties(), driver.diagnostics)
+  driver.styles = resolveTreeStyles(
+    driver.ui.tree,
+    driver.ui.styleSheets(),
+    defaultProperties(),
+    driver.diagnostics,
+    viewportSize = some(driver.viewport)
+  )
   driver.layout = computeLayout(driver.ui.tree, driver.styles, driver.viewport, driver.ui.textEngine, driver.ui.fonts)
   driver.ui.scroll.syncScrollState(driver.ui.tree, driver.styles, driver.layout)
   driver.ui.syncRenderSurfaces(driver.styles, driver.layout)

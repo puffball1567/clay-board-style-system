@@ -245,6 +245,19 @@ cbss_style_destroy(style);
 cbss_context_destroy(ui);
 ```
 
+Viewport-relative units use the viewport passed to `cbss_context_compute` and
+are recomputed on every later compute with a different size:
+
+```c
+cbss_style_set_length(style, "width", CBSS_UNIT_VW, 50.0f);
+cbss_style_set_length(style, "height", CBSS_UNIT_VH, 25.0f);
+cbss_context_compute(ui, 1280.0f, 720.0f);
+```
+
+`CBSS_UNIT_VMIN` uses the smaller viewport dimension and `CBSS_UNIT_VMAX` uses
+the larger one. The original unit enum values `0` through `10` remain stable;
+the viewport units are appended as values `11` through `14`.
+
 Shared libraries initialize the Nim runtime when loaded. Static libraries
 initialize it lazily on the first context or style creation, so consumers do
 not call `NimMain` or another Nim-specific entry point.

@@ -31,7 +31,12 @@ type
     ukMaxContent,
     ukFitContent,
     ukAuto,
-    ukNone
+    ukNone,
+    ## Keep new public units appended: UnitKind ordinals are part of the C ABI.
+    ukVw,
+    ukVh,
+    ukVmin,
+    ukVmax
 
   LengthValue* = object
     kind*: UnitKind
@@ -124,6 +129,22 @@ proc em*(value: SomeNumber): StyleValue =
 
 proc rem*(value: SomeNumber): StyleValue =
   StyleValue(kind: svLength, length: LengthValue(kind: ukRem,
+      value: value.float32))
+
+proc vw*(value: SomeNumber): StyleValue =
+  StyleValue(kind: svLength, length: LengthValue(kind: ukVw,
+      value: value.float32))
+
+proc vh*(value: SomeNumber): StyleValue =
+  StyleValue(kind: svLength, length: LengthValue(kind: ukVh,
+      value: value.float32))
+
+proc vmin*(value: SomeNumber): StyleValue =
+  StyleValue(kind: svLength, length: LengthValue(kind: ukVmin,
+      value: value.float32))
+
+proc vmax*(value: SomeNumber): StyleValue =
+  StyleValue(kind: svLength, length: LengthValue(kind: ukVmax,
       value: value.float32))
 
 proc fill*(): StyleValue =

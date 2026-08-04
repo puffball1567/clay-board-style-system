@@ -1,5 +1,6 @@
 import std/[options, strutils]
 import ../core/[computed_style, declaration, diagnostics, property, style_value]
+import ./length_resolution
 
 proc fixedLength(value: Option[float32]): Option[LengthValue] =
   if value.isSome:
@@ -46,14 +47,9 @@ proc setGapValue(style: var ComputedStyle; property: string; value: Option[Lengt
   else:
     discard
 
-proc parsedGap(value: StyleValue; property: string; diagnostics: var Diagnostics): Option[LengthValue] =
-  if value.kind != svLength:
-    diagnostics.addError(property, property & " requires a length value")
-    return none(LengthValue)
-  if value.length.kind notin {ukPx, ukPercent}:
-    diagnostics.addError(property, property & " supports px or percentage values")
-    return none(LengthValue)
-  some(value.length)
+proc parsedGap(value: StyleValue; env: ResolveEnv; property: string;
+    diagnostics: var Diagnostics): Option[LengthValue] =
+  normalizeLength(value, env, property, {ukPercent}, diagnostics)
 
 proc flexBasisValue(style: ComputedStyle): Option[LengthValue] =
   if not style.layout.sizing.isNil and style.layout.sizing.flexBasis.isSome:
@@ -214,7 +210,7 @@ proc applyGap(
     if declaration.operation.value.isNone:
       diagnostics.addError(declaration.property, "gap requires a length value")
       return
-    style.setGapValue("gap", parsedGap(declaration.operation.value.get, declaration.property, diagnostics))
+    style.setGapValue("gap", parsedGap(declaration.operation.value.get, env, declaration.property, diagnostics))
   of mmInitial, mmUnset:
     style.setGapValue("gap", none(LengthValue))
   of mmInherit:
@@ -238,7 +234,7 @@ proc applyAxisGap(
       return
     style.setGapValue(
       declaration.property,
-      parsedGap(declaration.operation.value.get, declaration.property, diagnostics)
+      parsedGap(declaration.operation.value.get, env, declaration.property, diagnostics)
     )
   of mmInitial, mmUnset:
     style.setGapValue(declaration.property, none(LengthValue))
@@ -303,15 +299,15 @@ proc applyFlexBasis(
     if value.kind != svLength:
       diagnostics.addError(declaration.property, "flex-basis requires a length value or auto")
       return
-    if value.length.kind notin {
-        ukPx, ukPercent, ukContent, ukMinContent, ukMaxContent, ukFitContent, ukAuto
-    }:
-      diagnostics.addError(declaration.property, "unsupported flex-basis sizing value")
+    let normalized = normalizeLength(value, env, declaration.property, {
+      ukPercent, ukContent, ukMinContent, ukMaxContent, ukFitContent, ukAuto
+    }, diagnostics)
+    if normalized.isNone:
       return
-    if value.length.kind == ukAuto:
+    if normalized.get.kind == ukAuto:
       style.setFlexBasisValue(none(LengthValue))
     else:
-      style.setFlexBasisValue(some(value.length))
+      style.setFlexBasisValue(normalized)
   of mmInitial, mmUnset:
     style.setFlexBasisValue(none(LengthValue))
   of mmInherit:
@@ -341,17 +337,17 @@ proc applyFlex(
       style.layout.flexShrink = 1
       style.setFlexBasisValue(none(LengthValue))
     of svLength:
-      if value.length.kind notin {
-          ukPx, ukPercent, ukContent, ukMinContent, ukMaxContent, ukFitContent, ukAuto
-      }:
-        diagnostics.addError(declaration.property, "unsupported flex-basis value in flex shorthand")
+      let normalized = normalizeLength(value, env, declaration.property, {
+        ukPercent, ukContent, ukMinContent, ukMaxContent, ukFitContent, ukAuto
+      }, diagnostics)
+      if normalized.isNone:
         return
       style.layout.flexGrow = 1
       style.layout.flexShrink = 1
-      if value.length.kind == ukAuto:
+      if normalized.get.kind == ukAuto:
         style.setFlexBasisValue(none(LengthValue))
       else:
-        style.setFlexBasisValue(some(value.length))
+        style.setFlexBasisValue(normalized)
     of svKeyword:
       case value.keyword
       of "none":

@@ -1,16 +1,7 @@
 import std/options
 import ../core/[color, computed_style, declaration, diagnostics, property,
     style_color, style_value]
-
-proc resolvePx(value: StyleValue; property: string;
-    diagnostics: var Diagnostics): Option[float32] =
-  if value.kind != svLength:
-    diagnostics.addError(property, property & " requires a length value")
-    return none(float32)
-  if value.length.kind != ukPx:
-    diagnostics.addError(property, "only px is supported for initial border implementation")
-    return none(float32)
-  some(value.length.value)
+import ./length_resolution
 
 proc setBorderWidth(style: var ComputedStyle; property: string;
     value: float32) =
@@ -69,8 +60,8 @@ proc applyBorderWidth(
     if declaration.operation.value.isNone:
       diagnostics.addError(declaration.property, "border-width requires a value")
       return
-    let resolved = resolvePx(declaration.operation.value.get,
-        declaration.property, diagnostics)
+    let resolved = resolveAbsoluteLength(declaration.operation.value.get,
+        env, declaration.property, diagnostics)
     if resolved.isSome:
       style.setBorderWidth(declaration.property, resolved.get)
   of mmInitial, mmUnset:
@@ -129,8 +120,8 @@ proc applyBorderRadius(
     if declaration.operation.value.isNone:
       diagnostics.addError(declaration.property, "border-radius requires a value")
       return
-    let resolved = resolvePx(declaration.operation.value.get,
-        declaration.property, diagnostics)
+    let resolved = resolveAbsoluteLength(declaration.operation.value.get,
+        env, declaration.property, diagnostics)
     if resolved.isSome:
       style.setBorderRadius(declaration.property, resolved.get)
   of mmInitial, mmUnset:
@@ -363,7 +354,7 @@ proc applyStructuredBorder(
 
   if value.borderWidth.isSome:
     let width = StyleValue(kind: svLength, length: value.borderWidth.get)
-    let resolved = resolvePx(width, property, diagnostics)
+    let resolved = resolveAbsoluteLength(width, env, property, diagnostics)
     if resolved.isSome:
       style.setBorderWidth(widthProperty, resolved.get)
 
@@ -390,7 +381,8 @@ proc applyBorderShorthand(
     let value = declaration.operation.value.get
     case value.kind
     of svLength:
-      let resolved = resolvePx(value, declaration.property, diagnostics)
+      let resolved = resolveAbsoluteLength(value, env, declaration.property,
+          diagnostics)
       if resolved.isSome:
         style.setBorderWidth(widthProperty, resolved.get)
     of svColor:

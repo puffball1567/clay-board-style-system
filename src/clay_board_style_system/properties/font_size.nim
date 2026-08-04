@@ -6,6 +6,7 @@ import ../core/[
   property,
   style_value
 ]
+import ./length_resolution
 
 proc resolveLength(value: StyleValue; env: ResolveEnv; property: string; diagnostics: var Diagnostics): Option[float32] =
   if value.kind != svLength:
@@ -13,29 +14,14 @@ proc resolveLength(value: StyleValue; env: ResolveEnv; property: string; diagnos
     return none(float32)
 
   case value.length.kind
-  of ukPx:
-    some(value.length.value)
   of ukPercent:
     if env.parent.isSome and env.parent.get.text.fontSize.isSome:
       some(env.parent.get.text.fontSize.get * value.length.value / 100.0'f32)
     else:
       diagnostics.addError(property, "percent font-size requires parent font-size")
       none(float32)
-  of ukEm:
-    if env.currentFontSize.isSome:
-      some(env.currentFontSize.get * value.length.value)
-    else:
-      diagnostics.addError(property, "em font-size requires current font-size")
-      none(float32)
-  of ukRem:
-    if env.rootFontSize.isSome:
-      some(env.rootFontSize.get * value.length.value)
-    else:
-      diagnostics.addError(property, "rem font-size requires root font-size")
-      none(float32)
   else:
-    diagnostics.addError(property, "unsupported font-size unit")
-    none(float32)
+    resolveAbsoluteLength(value, env, property, diagnostics)
 
 proc applyFontSize(
     style: var ComputedStyle;

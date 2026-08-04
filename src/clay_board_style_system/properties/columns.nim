@@ -1,6 +1,7 @@
 import std/options
 import ../core/[color, computed_style, declaration, diagnostics, property,
     style_color, style_value]
+import ./length_resolution
 
 proc setColumnKeyword(style: var ComputedStyle; property: string; value: Option[string]) =
   style.ensureColumns()
@@ -101,15 +102,13 @@ proc applyColumnLength(
 ) =
   case declaration.operation.mode
   of mmOverwrite:
-    if declaration.operation.value.isNone or
-        declaration.operation.value.get.kind != svLength:
-      diagnostics.addError(declaration.property, declaration.property & " requires a px length value")
+    if declaration.operation.value.isNone:
+      diagnostics.addError(declaration.property, declaration.property & " requires a length value")
       return
-    let length = declaration.operation.value.get.length
-    if length.kind != ukPx:
-      diagnostics.addError(declaration.property, declaration.property & " only supports px lengths")
-      return
-    style.setColumnLength(declaration.property, some(length.value))
+    let resolved = resolveAbsoluteLength(declaration.operation.value.get,
+        env, declaration.property, diagnostics)
+    if resolved.isSome:
+      style.setColumnLength(declaration.property, resolved)
   of mmInitial, mmUnset:
     style.setColumnLength(declaration.property, none(float32))
   of mmInherit:

@@ -2802,7 +2802,8 @@ proc cbssContextCompute(
       context.tree,
       context.sheets,
       defaultProperties(),
-      context.diagnostics
+      context.diagnostics,
+      viewportSize = some(size(width, height))
     )
     if context.diagnostics.hasErrors:
       var messages: seq[string]

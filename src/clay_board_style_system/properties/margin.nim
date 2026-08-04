@@ -6,30 +6,7 @@ import ../core/[
   property,
   style_value
 ]
-
-proc resolveLength(value: StyleValue; env: ResolveEnv; property: string; diagnostics: var Diagnostics): Option[float32] =
-  if value.kind != svLength:
-    diagnostics.addError(property, "margin requires a length value")
-    return none(float32)
-
-  case value.length.kind
-  of ukPx:
-    some(value.length.value)
-  of ukEm:
-    if env.currentFontSize.isSome:
-      some(env.currentFontSize.get * value.length.value)
-    else:
-      diagnostics.addError(property, "em margin requires current font-size")
-      none(float32)
-  of ukRem:
-    if env.rootFontSize.isSome:
-      some(env.rootFontSize.get * value.length.value)
-    else:
-      diagnostics.addError(property, "rem margin requires root font-size")
-      none(float32)
-  else:
-    diagnostics.addError(property, "unsupported margin unit")
-    none(float32)
+import ./length_resolution
 
 proc currentMargin(style: ComputedStyle; env: ResolveEnv): Option[EdgeSizes] =
   if style.box.margin.isSome:
@@ -92,7 +69,7 @@ proc applyMargin(
     if declaration.operation.value.isNone:
       diagnostics.addError(declaration.property, "margin requires a value")
       return
-    let resolved = resolveLength(declaration.operation.value.get, env, declaration.property, diagnostics)
+    let resolved = resolveAbsoluteLength(declaration.operation.value.get, env, declaration.property, diagnostics)
     if resolved.isSome:
       style.box.margin = some(edges(resolved.get))
   of mmInherit:
@@ -110,7 +87,7 @@ proc applyMargin(
     if base.isNone:
       diagnostics.addError(declaration.property, "relative margin requires existing or parent margin")
       return
-    let delta = resolveLength(declaration.operation.value.get, env, declaration.property, diagnostics)
+    let delta = resolveAbsoluteLength(declaration.operation.value.get, env, declaration.property, diagnostics)
     if delta.isSome:
       let b = base.get
       let d = delta.get
@@ -129,7 +106,7 @@ proc applyMarginSide(
     if declaration.operation.value.isNone:
       diagnostics.addError(declaration.property, declaration.property & " requires a value")
       return
-    let resolved = resolveLength(declaration.operation.value.get, env, declaration.property, diagnostics)
+    let resolved = resolveAbsoluteLength(declaration.operation.value.get, env, declaration.property, diagnostics)
     if resolved.isSome:
       var current =
         if style.box.margin.isSome: style.box.margin.get
@@ -159,7 +136,7 @@ proc applyMarginSide(
     if base.isNone:
       diagnostics.addError(declaration.property, "relative " & declaration.property & " requires existing or parent margin")
       return
-    let delta = resolveLength(declaration.operation.value.get, env, declaration.property, diagnostics)
+    let delta = resolveAbsoluteLength(declaration.operation.value.get, env, declaration.property, diagnostics)
     if delta.isSome:
       var current = base.get
       current.setSide(declaration.property, current.sideValue(declaration.property) + delta.get)

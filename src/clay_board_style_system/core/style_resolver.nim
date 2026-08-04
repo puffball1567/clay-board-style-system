@@ -3,6 +3,7 @@ import ./[
   computed_style,
   declaration,
   diagnostics,
+  geometry,
   node,
   property,
   registry,
@@ -14,6 +15,7 @@ import ./[
 type
   ResolvedTree* = object
     styles*: seq[ComputedStyle]
+    viewportSize*: Option[Size]
 
   IndexedRule = object
     sheetIndex: int
@@ -136,6 +138,7 @@ proc resolveNode(
     registry: PropertyRegistry;
     parent: ComputedStyleRef;
     rootFontSize: float32;
+    viewportSize: Option[Size];
     diagnostics: var Diagnostics;
     result: var ResolvedTree
 ) =
@@ -150,7 +153,8 @@ proc resolveNode(
   let fontEnv = ResolveEnv(
     parent: parent,
     rootFontSize: some(rootFontSize),
-    currentFontSize: some(inheritedFontSize)
+    currentFontSize: some(inheritedFontSize),
+    viewportSize: viewportSize
   )
   let resolvedFont = resolveStyles(fontContext, registry, fontEnv, diagnostics)
   let currentFontSize =
@@ -164,7 +168,8 @@ proc resolveNode(
   let env = ResolveEnv(
     parent: parent,
     rootFontSize: some(effectiveRootFontSize),
-    currentFontSize: some(currentFontSize)
+    currentFontSize: some(currentFontSize),
+    viewportSize: viewportSize
   )
   let remainingContext = context.contextForProperty("font-size",
       keepMatches = false)
@@ -257,6 +262,7 @@ proc resolveNode(
       registry,
       computedStyleRef(result.styles[id.nodeIndex]),
       effectiveRootFontSize,
+      viewportSize,
       diagnostics,
       result
     )
@@ -267,8 +273,10 @@ proc resolveTreeStyles*(
     registry: PropertyRegistry;
     diagnostics: var Diagnostics;
     baseContext = initStyleContext();
-    rootFontSize = 16.0'f32
+    rootFontSize = 16.0'f32;
+    viewportSize = none(Size)
 ): ResolvedTree =
+  result.viewportSize = viewportSize
   result.styles = newSeq[ComputedStyle](tree.nodes.len)
   if tree.root.isSome:
     let ruleIndex = buildRuleIndex(tree, sheets)
@@ -281,6 +289,7 @@ proc resolveTreeStyles*(
       registry,
       ComputedStyleRef(),
       rootFontSize,
+      viewportSize,
       diagnostics,
       result
     )
@@ -292,7 +301,8 @@ proc resolveSubtreeStyles*(
     registry: PropertyRegistry;
     diagnostics: var Diagnostics;
     resolved: var ResolvedTree;
-    baseContext = initStyleContext()
+    baseContext = initStyleContext();
+    viewportSize = none(Size)
 ): bool =
   ## Re-resolve a stable subtree while preserving computed styles elsewhere.
   ## Callers must use full resolution when ancestors or global sheets changed.
@@ -309,6 +319,9 @@ proc resolveSubtreeStyles*(
       resolved.styles[tree.root.get.nodeIndex].text.fontSize.get
     else:
       16.0'f32
+  let effectiveViewport =
+    if viewportSize.isSome: viewportSize else: resolved.viewportSize
+  resolved.viewportSize = effectiveViewport
   let ruleIndex = buildRuleIndex(tree, sheets)
   resolveNode(
     tree,
@@ -319,6 +332,7 @@ proc resolveSubtreeStyles*(
     registry,
     parentStyle,
     rootFontSize,
+    effectiveViewport,
     diagnostics,
     resolved
   )

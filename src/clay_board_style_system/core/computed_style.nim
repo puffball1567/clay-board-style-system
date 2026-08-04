@@ -318,7 +318,11 @@ type
     cukMaxContent,
     cukFitContent,
     cukAuto,
-    cukNone
+    cukNone,
+    cukVw,
+    cukVh,
+    cukVmin,
+    cukVmax
 
   ComputedLength* = object
     kind*: ComputedUnitKind
