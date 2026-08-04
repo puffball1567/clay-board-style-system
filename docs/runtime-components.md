@@ -104,6 +104,40 @@ when disabled, and emits `onInput` followed by `onChange` only when the checked
 value actually changes. User code can assign `checkbox.onChange = handler` or
 read the current value with `checkbox.checked()`.
 
+`runtime/switch.nim` provides a semantic boolean switch for settings that take
+effect immediately. It owns a track and transform-positioned thumb, exposes the
+dedicated Switch accessibility role, supports pointer plus Space/Enter
+activation, and follows the same `onInput` then `onChange` value contract as
+Checkbox. The thumb transform and checked-track overlay opacity use a default
+180ms `ease` transition. Reversing while active continues from the sampled
+visual position rather than jumping to an endpoint. Base, track, thumb, label,
+checked-track, and checked-thumb styles are all injectable; higher-level GUI
+libraries can therefore replace the reference appearance without replacing the
+control behavior.
+
+```nim
+let liveUpdates = ui.switch(
+  "Live updates",
+  checked = true,
+  transitionDurationSeconds = 0.18,
+  transitionTiming = easeTiming(),
+  checkedTrackStyle = uiStyle([
+    decl("background-color", colorValue(rgb(0.20, 0.66, 0.52)))
+  ])
+)
+
+liveUpdates.onChange = proc(event: DispatchResult): bool =
+  echo liveUpdates.checked()
+  false
+```
+
+Hosts call `ui.tickOwnedAnimations(scheduler, nowSeconds)` once per event-loop
+pass and `ui.scheduleOwnedAnimations(scheduler, nowSeconds)` after rebuilding
+their wait deadline. No animation means no deadline and the host can remain
+blocked in `SDL_WaitEvent`. `ui.setReducedMotion(true)` makes nonessential
+control motion complete on its next tick. Owned animations are canceled when
+their component subtree is disposed.
+
 `runtime/radio.nim` provides a small exclusive-choice component around
 `RadioSet`. The set stores the selected value and updates peer radios directly,
 without relying on CSS-like id/class matching. This keeps radio exclusivity as

@@ -11,6 +11,28 @@ proc containsRect(outerRect, innerRect: Rect; tolerance = 0.5'f32): bool =
     innerRect.y + innerRect.h <= outerRect.y + outerRect.h + tolerance
 
 suite "SDL3 demo layout regressions":
+  test "switches render inside their rows without overlapping adjacent radios":
+    let harness = initDemoHarness()
+    let driver = initCbssTestDriver(buildDemoHarnessUi(harness), size(1200, 980))
+
+    let live = driver.rectFor(byId("demo-live-switch"))
+    let edit = driver.rectFor(byId("demo-edit-radio"))
+    let online = driver.rectFor(byId("demo-online-switch"))
+    let view = driver.rectFor(byId("demo-alt-view-radio"))
+
+    check live.isSome
+    check edit.isSome
+    check online.isSome
+    check view.isSome
+    check live.get.x + live.get.w <= edit.get.x
+    check online.get.x + online.get.w <= view.get.x
+
+    check driver.value(byId("demo-live-switch")) == "true"
+    check driver.click(byId("demo-live-switch"))
+    check driver.value(byId("demo-live-switch")) == "false"
+    check driver.click(byId("demo-live-switch"))
+    check driver.value(byId("demo-live-switch")) == "true"
+
   test "command menu and absolute badge stay inside their visual parents":
     let harness = initDemoHarness()
     let driver = initCbssTestDriver(buildDemoHarnessUi(harness), size(1200, 980))

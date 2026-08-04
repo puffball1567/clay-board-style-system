@@ -13,12 +13,14 @@ suite "accessibility semantics":
     let ui = initUiRoot()
     let button = ui.button("Save", groups = [])
     let checkbox = ui.checkbox("Remember", groups = [])
+    let switchControl = ui.switch("Live updates", groups = [])
     let input = ui.textInput(TextInputParams(value: "draft"), groups = [])
     let slider = ui.slider(value = 25, min = 0, max = 100, groups = [])
     let semantics = ui.accessibilityTree()
 
     let buttonNode = semantics.accessibleNodeFor(button.container.nodeId)
     let checkboxNode = semantics.accessibleNodeFor(checkbox.container.nodeId)
+    let switchNode = semantics.accessibleNodeFor(switchControl.container.nodeId)
     let inputNode = semantics.accessibleNodeFor(input.container.nodeId)
     let sliderNode = semantics.accessibleNodeFor(slider.container.nodeId)
 
@@ -27,6 +29,9 @@ suite "accessibility semantics":
     check buttonNode.get.name == "Save"
     check checkboxNode.get.role == arCheckBox
     check checkboxNode.get.name == "Remember"
+    check switchNode.get.role == arSwitch
+    check switchNode.get.name == "Live updates"
+    check switchNode.get.value == "false"
     check inputNode.get.role == arTextBox
     check inputNode.get.value == "draft"
     check sliderNode.get.role == arSlider
@@ -37,16 +42,19 @@ suite "accessibility semantics":
   test "semantic values and states follow control updates":
     let ui = initUiRoot()
     let checkbox = ui.checkbox("Remember")
+    let switchControl = ui.switch("Live updates")
     let disclosure = ui.details("Advanced", "Settings")
     let slider = ui.slider(value = 1, min = 0, max = 10)
 
     checkbox.setChecked(true)
     checkbox.setDisabled(true)
+    switchControl.setChecked(true)
     disclosure.setOpen(true)
     slider.setValue(7)
 
     let semantics = ui.accessibilityTree()
     let checkboxNode = semantics.accessibleNodeFor(checkbox.container.nodeId).get
+    let switchNode = semantics.accessibleNodeFor(switchControl.container.nodeId).get
     let disclosureNode = semantics.accessibleNodeFor(disclosure.summaryNode.nodeId).get
     let sliderNode = semantics.accessibleNodeFor(slider.container.nodeId).get
 
@@ -54,6 +62,8 @@ suite "accessibility semantics":
     check esChecked in checkboxNode.states
     check esDisabled in checkboxNode.states
     check not checkboxNode.focusable
+    check switchNode.value == "true"
+    check esChecked in switchNode.states
     check disclosureNode.role == arDisclosure
     check disclosureNode.value == "expanded"
     check esOpen in disclosureNode.states

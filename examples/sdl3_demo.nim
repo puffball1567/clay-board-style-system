@@ -1642,9 +1642,20 @@ proc ControlsPanel(
         markerStyle = choiceMarkerStyle(),
         labelStyle = choiceLabelStyle()
       )
+      ui.switch(
+        "Live",
+        checked = true,
+        style = choiceStyle(),
+        labelStyle = choiceLabelStyle(),
+        checkedTrackStyle = uiStyle([
+          decl("background-color", colorValue(rgb(0.24, 0.68, 0.58))),
+          decl("border-color", colorValue(rgb(0.33, 0.82, 0.69)))
+        ]),
+        id = "demo-live-switch"
+      )
       let mode = initRadioSet("edit")
-      ui.radio(mode, "Edit", "edit", style = choiceStyle(), markerStyle = radioMarkerStyle(), labelStyle = choiceLabelStyle())
-      ui.radio(mode, "Preview", "preview", style = choiceStyle(), markerStyle = radioMarkerStyle(), labelStyle = choiceLabelStyle())
+      ui.radio(mode, "Edit", "edit", style = choiceStyle(), markerStyle = radioMarkerStyle(), labelStyle = choiceLabelStyle(), id = "demo-edit-radio")
+      ui.radio(mode, "Preview", "preview", style = choiceStyle(), markerStyle = radioMarkerStyle(), labelStyle = choiceLabelStyle(), id = "demo-preview-radio")
 
     ui.box(controlRowStyle()):
       ui.text("slider", controlLabelStyle())
@@ -1726,9 +1737,21 @@ proc AltControlsPanel(
         labelStyle = altTextStyle(),
         groups = ["checkbox-alt"]
       )
+      ui.switch(
+        "Online",
+        checked = true,
+        style = altChoiceStyle(),
+        labelStyle = altTextStyle(),
+        checkedTrackStyle = uiStyle([
+          decl("background-color", colorValue(rgb(0.12, 0.45, 0.78))),
+          decl("border-color", colorValue(rgb(0.08, 0.34, 0.64)))
+        ]),
+        id = "demo-online-switch",
+        groups = ["switch-alt"]
+      )
       let mode = initRadioSet("view")
-      ui.radio(mode, "View", "view", style = altChoiceStyle(), markerStyle = altRadioMarkerStyle(), labelStyle = altTextStyle(), groups = ["radio-alt"])
-      ui.radio(mode, "Edit", "edit", style = altChoiceStyle(), markerStyle = altRadioMarkerStyle(), labelStyle = altTextStyle(), groups = ["radio-alt"])
+      ui.radio(mode, "View", "view", style = altChoiceStyle(), markerStyle = altRadioMarkerStyle(), labelStyle = altTextStyle(), id = "demo-alt-view-radio", groups = ["radio-alt"])
+      ui.radio(mode, "Edit", "edit", style = altChoiceStyle(), markerStyle = altRadioMarkerStyle(), labelStyle = altTextStyle(), id = "demo-alt-edit-radio", groups = ["radio-alt"])
 
     ui.box(altRowStyle()):
       ui.text("range", altLabelStyle())
@@ -2999,6 +3022,7 @@ proc main() =
   var frameDirty = true
   var staticLayerDirty = true
   var layeredTextTarget = none(NodeId)
+  var layeredAnimationRoots: seq[NodeId] = @[]
   var pendingTextInput = none(PendingTextInput)
   var compositionTarget = none(CompositionInput)
   var compositionText = ""
@@ -3849,6 +3873,7 @@ proc main() =
       caretSolidUntil = 0.0
       ui.clearCaretBlinkSheet(caretBlinkSheetIndex)
 
+    discard ui.tickOwnedAnimations(scheduler, epochTime())
     let demoDirty = demo.consumeDirty()
     if demoDirty:
       scheduler.markDirty({ddStyle, ddLayout, ddPaint, ddHit})
@@ -3912,6 +3937,10 @@ proc main() =
       if dynamicTarget != layeredTextTarget:
         staticLayerDirty = true
         layeredTextTarget = dynamicTarget
+      let animationRoots = ui.activeAnimationOwners()
+      if animationRoots != layeredAnimationRoots:
+        staticLayerDirty = true
+        layeredAnimationRoots = animationRoots
       let scrollDynamicNodes =
         if frame.scrollDynamicTarget.isSome:
           ui.subtreeNodes(frame.scrollDynamicTarget.get)
@@ -3920,6 +3949,18 @@ proc main() =
       let textCoveredByScroll =
         dynamicTarget.isSome and scrollDynamicNodes.containsNode(dynamicTarget.get)
       var dynamicNodes = scrollDynamicNodes
+      var animationDynamicCommands: seq[PaintCommand] = @[]
+      for root in animationRoots:
+        for node in ui.subtreeNodes(root):
+          if not dynamicNodes.containsNode(node):
+            dynamicNodes.add node
+        animationDynamicCommands.add buildPaintCommandsForSubtree(
+          ui.tree,
+          frame.styles,
+          frame.layout,
+          root,
+          ui.scroll
+        )
       if dynamicTarget.isSome and not textCoveredByScroll:
         dynamicNodes.add ui.textControlDynamicNodes(dynamicTarget.get)
       # Focused text controls are excluded from the retained static texture.
@@ -3935,11 +3976,13 @@ proc main() =
           ui.scroll
         )
       var dynamicCommands = newSeqOfCap[PaintCommand](
-        frame.dynamicCommands.len + frame.scrollDynamicCommands.len
+        frame.dynamicCommands.len + frame.scrollDynamicCommands.len +
+          animationDynamicCommands.len
       )
       if not textCoveredByScroll:
         dynamicCommands.add frame.dynamicCommands
       dynamicCommands.add frame.scrollDynamicCommands
+      dynamicCommands.add animationDynamicCommands
       let renderStart = epochTime()
       when defined(cbssTracePerf):
         echo "[perf-detail] render begin static=", staticLayerDirty,
@@ -3994,6 +4037,7 @@ proc main() =
         scheduler.requestDeadline(nextCaretBlinkAt)
     if textFocusDiscardMode != tfdNone:
       scheduler.requestDeadline(idleNow + 0.001)
+    ui.scheduleOwnedAnimations(scheduler, idleNow)
 
     if running and queuedEvents.len == 0 and not frameDirty and not pendingFrame:
       var waitedEvent: Sdl3Event

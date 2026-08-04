@@ -59,6 +59,7 @@ proc buildControlsUi(): UiRoot =
       id = "size"
     )
     discard result.checkbox("Remember", id = "remember")
+    discard result.switch("Live updates", id = "live-updates")
     discard result.slider(
       value = 25,
       min = 0,
@@ -446,6 +447,15 @@ suite "CBSS headless test driver":
     check not driver.isChecked(byId("radio-basic"))
     check driver.isChecked(byId("radio-advanced"))
     check driver.value(byId("radio-advanced")) == "advanced"
+
+  test "driver can inspect and toggle a semantic switch":
+    let driver = initCbssTestDriver(buildControlsUi, size(360, 360))
+
+    check driver.attribute(byId("live-updates"), "label") == some("Live updates")
+    check not driver.isChecked(byId("live-updates"))
+    check driver.toggle(byId("live-updates"))
+    check driver.isChecked(byId("live-updates"))
+    check driver.value(byId("live-updates")) == "true"
 
   test "driver can drag slider and inspect synchronized value":
     let driver = initCbssTestDriver(buildControlsUi, size(360, 320))

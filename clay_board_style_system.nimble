@@ -1,4 +1,4 @@
-version       = "0.3.0"
+version       = "0.3.1"
 author        = "Clay Board Style System contributors"
 description   = "A CSS-inspired primitive engine for native GUI toolkits"
 license       = "Apache-2.0"
@@ -51,6 +51,9 @@ task checkExamples, "Type-check every example in each supported link configurati
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_v03_canvas -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/v03_canvas_demo.nim"
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_v03_canvas_system -d:cbssSdl3LinkMode=system examples/v03_canvas_demo.nim"
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_v03_canvas_custom -d:cbssSdl3LinkMode=custom -d:cbssRuntimeRoot=vendor/sdl3 examples/v03_canvas_demo.nim"
+  exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_loading_indicator -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/loading_indicator_demo.nim"
+  exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_loading_indicator_system -d:cbssSdl3LinkMode=system examples/loading_indicator_demo.nim"
+  exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_loading_indicator_custom -d:cbssSdl3LinkMode=custom -d:cbssRuntimeRoot=vendor/sdl3 examples/loading_indicator_demo.nim"
 
 task buildCAbiShared, "Build the shared CBSS C ABI library":
   exec "nim c --app:lib --mm:arc -d:release --path:src --nimcache:/tmp/clay_board_style_system_c_api_shared_nimcache --out:/tmp/libcbss.so src/cbss_c_api.nim"
@@ -116,6 +119,11 @@ task v03CanvasDemo, "Run the Version 0.3 Canvas and color demo":
   exec "cargo build --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml"
   exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
   exec "env LD_LIBRARY_PATH=native/cosmic_text_bridge/target/release:native/image_bridge/target/release nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_v03_canvas_demo_nimcache --out:/tmp/clay_board_style_system_v03_canvas_demo examples/v03_canvas_demo.nim"
+
+task loadingIndicatorDemo, "Run the Canvas loading indicator demo":
+  exec "cargo build --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml"
+  exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
+  exec "env LD_LIBRARY_PATH=native/cosmic_text_bridge/target/release:native/image_bridge/target/release nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_loading_indicator_demo_nimcache --out:/tmp/clay_board_style_system_loading_indicator_demo examples/loading_indicator_demo.nim"
 
 task buildCosmicTextBridge, "Build the Rust cosmic-text C ABI bridge":
   exec "cargo build --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml"

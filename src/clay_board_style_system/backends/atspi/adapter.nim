@@ -28,7 +28,8 @@ type
     atrDialog,
     atrImage,
     atrStatic,
-    atrLink
+    atrLink,
+    atrToggleButton
 
   AtspiState* = enum
     atsActive,
@@ -124,11 +125,12 @@ proc roleFor(role: AccessibleRole): AtspiRole =
   of arImage: atrImage
   of arStaticText: atrStatic
   of arLink: atrLink
+  of arSwitch: atrToggleButton
   of arNone, arGeneric, arGroup: atrPanel
 
 proc actionsFor(role: AccessibleRole): seq[string] =
   case role
-  of arButton, arCheckBox, arRadio, arComboBox, arOption, arDisclosure,
+  of arButton, arCheckBox, arRadio, arComboBox, arOption, arDisclosure, arSwitch,
       arListItem, arTab, arLink:
     @["activate"]
   else:
