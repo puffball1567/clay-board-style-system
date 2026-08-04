@@ -36,6 +36,7 @@ type
     altTabStatusText: Option[NodeId]
 
   FrameData = object
+    viewport: Size
     styles: ResolvedTree
     layout: LayoutResult
     commands: seq[PaintCommand]
@@ -2138,7 +2139,13 @@ proc buildFrame(
     fonts: FontRegistry
 ): FrameData =
   var diagnostics: Diagnostics
-  let styles = resolveTreeStyles(ui.tree, ui.styleSheets(), defaultProperties(), diagnostics)
+  let styles = resolveTreeStyles(
+    ui.tree,
+    ui.styleSheets(),
+    defaultProperties(),
+    diagnostics,
+    viewportSize = some(viewport)
+  )
   if diagnostics.hasErrors:
     for item in diagnostics.items:
       echo item.property, ": ", item.message
@@ -2147,6 +2154,7 @@ proc buildFrame(
   let layout = computeLayout(ui.tree, styles, viewport, textEngine, fonts)
   ui.scroll.syncScrollState(ui.tree, styles, layout)
   FrameData(
+    viewport: viewport,
     styles: styles,
     layout: layout,
     commands: buildPaintCommands(ui.tree, styles, layout, ui.scroll),
@@ -2160,7 +2168,13 @@ proc buildFrame(
 
 proc repaintFrame(ui: UiRoot; frame: var FrameData) =
   var diagnostics: Diagnostics
-  let styles = resolveTreeStyles(ui.tree, ui.styleSheets(), defaultProperties(), diagnostics)
+  let styles = resolveTreeStyles(
+    ui.tree,
+    ui.styleSheets(),
+    defaultProperties(),
+    diagnostics,
+    viewportSize = some(frame.viewport)
+  )
   if diagnostics.hasErrors:
     for item in diagnostics.items:
       echo item.property, ": ", item.message
@@ -2241,9 +2255,16 @@ proc repaintTextControlFrame(
       sheets,
       defaultProperties(),
       diagnostics,
-      frame.styles
+      frame.styles,
+      viewportSize = some(frame.viewport)
   ):
-    frame.styles = resolveTreeStyles(ui.tree, sheets, defaultProperties(), diagnostics)
+    frame.styles = resolveTreeStyles(
+      ui.tree,
+      sheets,
+      defaultProperties(),
+      diagnostics,
+      viewportSize = some(frame.viewport)
+    )
   when defined(cbssTracePerf):
     echo "[perf-detail] text styles ms=", elapsedMs(styleStart), " target=", target.nodeIndex
   if diagnostics.hasErrors:
@@ -2285,7 +2306,8 @@ proc repaintDirtySubtrees(
       sheets,
       defaultProperties(),
       diagnostics,
-      frame.styles
+      frame.styles,
+      viewportSize = some(frame.viewport)
     )
   when defined(cbssTracePerf):
     echo "[perf-detail] dirty styles ms=", elapsedMs(styleStart), " roots=", roots.len

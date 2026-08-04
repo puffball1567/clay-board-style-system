@@ -1,6 +1,7 @@
 import std/options
 import ../core/[color, computed_style, declaration, diagnostics, property,
     style_color, style_value]
+import ./length_resolution
 
 proc clampOpacity(value: float32): float32 =
   max(0.0'f32, min(1.0'f32, value))
@@ -166,13 +167,6 @@ let printColorAdjustProperty* = PropertyImpl(name: "print-color-adjust",
     apply: applyPrintColorAdjust)
 let willChangeProperty* = PropertyImpl(name: "will-change",
     apply: applyWillChange)
-
-proc resolvePx(value: StyleValue; property: string;
-    diagnostics: var Diagnostics): Option[float32] =
-  if value.kind != svLength or value.length.kind != ukPx:
-    diagnostics.addError(property, property & " requires a px length value")
-    return none(float32)
-  some(value.length.value)
 
 proc applyScrollbarWidth(
     style: var ComputedStyle;
@@ -401,8 +395,8 @@ proc applyOverflowClipMargin(
     if declaration.operation.value.isNone:
       diagnostics.addError(declaration.property, "overflow-clip-margin requires a length value")
       return
-    let resolved = resolvePx(declaration.operation.value.get,
-        declaration.property, diagnostics)
+    let resolved = resolveAbsoluteLength(declaration.operation.value.get,
+        env, declaration.property, diagnostics)
     if resolved.isSome:
       style.visual.overflowClipMargin = resolved
   of mmInitial, mmUnset:

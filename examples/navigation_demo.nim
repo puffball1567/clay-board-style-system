@@ -28,7 +28,8 @@ proc buildFrame(ui: UiRoot; viewport: Size): DemoFrame =
     ui.tree,
     ui.styleSheets(),
     defaultProperties(),
-    diagnostics
+    diagnostics,
+    viewportSize = some(viewport)
   )
   if diagnostics.hasErrors:
     for item in diagnostics.items:

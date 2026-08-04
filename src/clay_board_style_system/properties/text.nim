@@ -1,6 +1,7 @@
 import std/[options, strutils]
 import ../core/[color, computed_style, declaration, diagnostics, property,
     style_color, style_value]
+import ./length_resolution
 
 proc requireKeyword(declaration: Declaration;
     diagnostics: var Diagnostics): Option[string] =
@@ -406,10 +407,10 @@ proc applyLineHeight(
     let value = declaration.operation.value.get
     case value.kind
     of svLength:
-      if value.length.kind != ukPx:
-        diagnostics.addError(declaration.property, "only px is supported for initial line-height implementation")
-        return
-      style.text.lineHeight = some(value.length.value)
+      let resolved = resolveAbsoluteLength(value, env, declaration.property,
+          diagnostics)
+      if resolved.isSome:
+        style.text.lineHeight = resolved
     of svNumber:
       let base = style.baseFontSize(env)
       if base.isNone:
@@ -539,17 +540,6 @@ proc applyWhiteSpace(
   of mmRelative:
     diagnostics.addError(declaration.property, "white-space does not support relative merge")
 
-proc resolvePx(value: StyleValue; property: string;
-    diagnostics: var Diagnostics): Option[float32] =
-  if value.kind != svLength:
-    diagnostics.addError(property, property & " requires a length value")
-    return none(float32)
-  if value.length.kind != ukPx:
-    diagnostics.addError(property, "only px is supported for initial " &
-        property & " implementation")
-    return none(float32)
-  some(value.length.value)
-
 proc applyTextOverflow(
     style: var ComputedStyle;
     declaration: Declaration;
@@ -660,7 +650,8 @@ proc applyTextSpacing(
       if declaration.property == "letter-spacing": style.text.letterSpacing = some(0.0'f32)
       else: style.text.wordSpacing = some(0.0'f32)
       return
-    let resolved = resolvePx(value, declaration.property, diagnostics)
+    let resolved = resolveAbsoluteLength(value, env, declaration.property,
+        diagnostics)
     if resolved.isSome:
       if declaration.property == "letter-spacing": style.text.letterSpacing = resolved
       else: style.text.wordSpacing = resolved
@@ -763,7 +754,8 @@ proc applyTextDecorationThickness(
     if value.kind == svKeyword and value.keyword == "auto":
       style.text.textDecorationThickness = none(float32)
       return
-    style.text.textDecorationThickness = resolvePx(value, declaration.property, diagnostics)
+    style.text.textDecorationThickness = resolveAbsoluteLength(value, env,
+        declaration.property, diagnostics)
   of mmInitial, mmUnset:
     style.text.textDecorationThickness = none(float32)
   of mmInherit:
@@ -793,7 +785,7 @@ proc applyTextDecoration(
     of svColor:
       style.text.textDecorationColor = value.resolveStyleColor(style, env)
     of svLength:
-      style.text.textDecorationThickness = resolvePx(value,
+      style.text.textDecorationThickness = resolveAbsoluteLength(value, env,
           declaration.property, diagnostics)
     else:
       diagnostics.addError(declaration.property, "text-decoration supports line keywords, color, or thickness initially")
@@ -831,18 +823,29 @@ proc applyTextShadow(
     if value.kind != svShadow:
       diagnostics.addError(declaration.property, "text-shadow requires a structured shadow value or none")
       return
-    if value.shadowOffsetX.kind != ukPx or value.shadowOffsetY.kind != ukPx:
-      diagnostics.addError(declaration.property, "only px offsets are supported for text-shadow")
+    let offsetX = resolveAbsoluteLength(value.shadowOffsetX, env,
+        declaration.property, diagnostics)
+    let offsetY = resolveAbsoluteLength(value.shadowOffsetY, env,
+        declaration.property, diagnostics)
+    if offsetX.isNone or offsetY.isNone:
       return
     var blur = 0.0'f32
     var spread = 0.0'f32
-    if value.shadowBlur.isSome and value.shadowBlur.get.kind == ukPx:
-      blur = value.shadowBlur.get.value
-    if value.shadowSpread.isSome and value.shadowSpread.get.kind == ukPx:
-      spread = value.shadowSpread.get.value
+    if value.shadowBlur.isSome:
+      let resolved = resolveAbsoluteLength(value.shadowBlur.get, env,
+          declaration.property, diagnostics)
+      if resolved.isNone:
+        return
+      blur = resolved.get
+    if value.shadowSpread.isSome:
+      let resolved = resolveAbsoluteLength(value.shadowSpread.get, env,
+          declaration.property, diagnostics)
+      if resolved.isNone:
+        return
+      spread = resolved.get
     style.text.textShadow = some(BoxShadow(
-      offsetX: value.shadowOffsetX.value,
-      offsetY: value.shadowOffsetY.value,
+      offsetX: offsetX.get,
+      offsetY: offsetY.get,
       blur: blur,
       spread: spread,
       color: value.resolveShadowColor(style, env)
@@ -890,8 +893,9 @@ proc applyTextIndent(
     if declaration.operation.value.isNone:
       diagnostics.addError(declaration.property, "text-indent requires a value")
       return
-    style.text.textIndent = resolvePx(declaration.operation.value.get,
-        declaration.property, diagnostics)
+    style.text.textIndent = resolveAbsoluteLength(
+        declaration.operation.value.get, env, declaration.property,
+        diagnostics)
   of mmInitial, mmUnset:
     style.text.textIndent = some(0.0'f32)
   of mmInherit:
@@ -1014,12 +1018,12 @@ proc applyTabSize(
     of svNumber:
       style.text.tabSize = some(max(0.0'f32, value.number))
     of svLength:
-      if value.length.kind == ukPx:
-        style.text.tabSize = some(max(0.0'f32, value.length.value))
-      else:
-        diagnostics.addError(declaration.property, "tab-size only supports number or px")
+      let resolved = resolveAbsoluteLength(value, env, declaration.property,
+          diagnostics)
+      if resolved.isSome:
+        style.text.tabSize = some(max(0.0'f32, resolved.get))
     else:
-      diagnostics.addError(declaration.property, "tab-size requires a number or px length")
+      diagnostics.addError(declaration.property, "tab-size requires a number or length")
   of mmInitial, mmUnset:
     style.text.tabSize = some(8.0'f32)
   of mmInherit:
@@ -1290,11 +1294,11 @@ proc applyTextLengthMetadata(
     let value = declaration.operation.value.get
     case value.kind
     of svLength:
-      if value.length.kind in {ukPx, ukPercent}:
+      let resolved = normalizeLength(value, env, declaration.property,
+          {ukPercent}, diagnostics)
+      if resolved.isSome:
         style.setTextLengthMetadata(declaration.property, some(
-            value.length.value))
-      else:
-        diagnostics.addError(declaration.property, declaration.property & " only supports px or percent lengths")
+            resolved.get.value))
     of svNumber:
       style.setTextLengthMetadata(declaration.property, some(value.number))
     of svKeyword:

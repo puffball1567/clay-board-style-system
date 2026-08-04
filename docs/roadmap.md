@@ -369,6 +369,23 @@ Planned capabilities:
 - Add cross-property unit-resolution tests, resize tests, and diagnostics for
   unsupported combinations.
 
+### Viewport-Relative Units
+
+Status: `Implemented on the Version 0.4 development line`
+
+The typed `vw`, `vh`, `vmin`, and `vmax` constructors resolve against an
+explicit viewport supplied by the host. Window resize invalidation recomputes
+their pixel values deterministically; resolving them without a viewport emits
+a diagnostic instead of silently producing a zero or stale value.
+
+The shared resolver is connected to supported dimensions and constraints,
+spacing, flex gaps and basis, positioning, transforms, borders and radii,
+outlines and shadows, background sizing and positioning, columns, text
+metrics and decoration lengths, vector coordinates, and overflow clip margins.
+The C ABI appends matching unit tags without changing the ordinals of existing
+tags. Percentages remain a separate unit-resolution task because they require
+property-specific containing-block or box references rather than the viewport.
+
 ### Transparent Conditional Component Flow
 
 Status: `Implemented on the Version 0.4 development line`

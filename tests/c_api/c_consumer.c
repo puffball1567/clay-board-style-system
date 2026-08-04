@@ -936,6 +936,35 @@ int main(void) {
   cbss_style_destroy(invalid_style);
   cbss_context_destroy(invalid_context);
 
+  CbssContext *viewport_context = cbss_context_create();
+  CbssStyle *viewport_style = cbss_style_create();
+  assert(viewport_context != NULL);
+  assert(viewport_style != NULL);
+  uint32_t viewport_root = cbss_context_add_box(
+      viewport_context, CBSS_NODE_NONE, "viewport-root");
+  assert(viewport_root != CBSS_NODE_NONE);
+  assert(cbss_style_set_length(
+      viewport_style, "width", CBSS_UNIT_VW, 50.0f) == CBSS_OK);
+  assert(cbss_style_set_length(
+      viewport_style, "height", CBSS_UNIT_VH, 25.0f) == CBSS_OK);
+  require_ok(viewport_context, cbss_node_apply_style(
+      viewport_context, viewport_root, viewport_style, 0, 0));
+  require_ok(viewport_context, cbss_context_compute(
+      viewport_context, 800.0f, 400.0f));
+  CbssRect viewport_rect;
+  require_ok(viewport_context, cbss_node_layout_rect(
+      viewport_context, viewport_root, &viewport_rect));
+  assert(fabsf(viewport_rect.w - 400.0f) < 0.01f);
+  assert(fabsf(viewport_rect.h - 100.0f) < 0.01f);
+  require_ok(viewport_context, cbss_context_compute(
+      viewport_context, 1000.0f, 800.0f));
+  require_ok(viewport_context, cbss_node_layout_rect(
+      viewport_context, viewport_root, &viewport_rect));
+  assert(fabsf(viewport_rect.w - 500.0f) < 0.01f);
+  assert(fabsf(viewport_rect.h - 200.0f) < 0.01f);
+  cbss_style_destroy(viewport_style);
+  cbss_context_destroy(viewport_context);
+
   CbssContext *scroll_context = cbss_context_create();
   CbssStyle *scroll_style = cbss_style_create();
   CbssStyle *content_style = cbss_style_create();

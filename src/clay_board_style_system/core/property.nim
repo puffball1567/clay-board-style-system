@@ -2,7 +2,8 @@ import std/options
 import ./[
   computed_style,
   declaration,
-  diagnostics
+  diagnostics,
+  geometry
 ]
 
 type
@@ -13,6 +14,7 @@ type
     parent*: ComputedStyleRef
     rootFontSize*: Option[float32]
     currentFontSize*: Option[float32]
+    viewportSize*: Option[Size]
 
   PropertyApplyProc* = proc(
     style: var ComputedStyle;

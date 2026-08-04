@@ -41,7 +41,13 @@ proc main() =
   ])
 
   var diagnostics: Diagnostics
-  let styles = resolveTreeStyles(tree, [sheet], defaultProperties(), diagnostics)
+  let styles = resolveTreeStyles(
+    tree,
+    [sheet],
+    defaultProperties(),
+    diagnostics,
+    viewportSize = some(size(300, 80))
+  )
   if diagnostics.hasErrors:
     for item in diagnostics.items:
       echo item.property, ": ", item.message

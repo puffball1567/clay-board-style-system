@@ -264,7 +264,13 @@ proc buildFrame(
     fonts: FontRegistry
 ): CbssSdl3Frame =
   result.diagnostics = Diagnostics()
-  result.styles = resolveTreeStyles(ui.tree, ui.styleSheets(), defaultProperties(), result.diagnostics)
+  result.styles = resolveTreeStyles(
+    ui.tree,
+    ui.styleSheets(),
+    defaultProperties(),
+    result.diagnostics,
+    viewportSize = some(viewport)
+  )
   result.layout = computeLayout(ui.tree, result.styles, viewport, textEngine, fonts)
   ui.scroll.syncScrollState(ui.tree, result.styles, result.layout)
   result.commands = buildPaintCommands(ui.tree, result.styles, result.layout, ui.scroll)

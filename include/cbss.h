@@ -45,7 +45,11 @@ typedef enum CbssUnit {
   CBSS_UNIT_MAX_CONTENT = 7,
   CBSS_UNIT_FIT_CONTENT = 8,
   CBSS_UNIT_AUTO = 9,
-  CBSS_UNIT_NONE = 10
+  CBSS_UNIT_NONE = 10,
+  CBSS_UNIT_VW = 11,
+  CBSS_UNIT_VH = 12,
+  CBSS_UNIT_VMIN = 13,
+  CBSS_UNIT_VMAX = 14
 } CbssUnit;
 
 typedef enum CbssNodeState {

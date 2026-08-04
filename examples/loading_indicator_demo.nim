@@ -18,7 +18,11 @@ const
 proc buildFrame(ui: UiRoot; viewport: Size): DemoFrame =
   var diagnostics: Diagnostics
   result.styles = resolveTreeStyles(
-    ui.tree, ui.styleSheets(), defaultProperties(), diagnostics
+    ui.tree,
+    ui.styleSheets(),
+    defaultProperties(),
+    diagnostics,
+    viewportSize = some(viewport)
   )
   if diagnostics.hasErrors:
     for item in diagnostics.items:
