@@ -115,7 +115,7 @@ suite "design source model":
       ]),
       placement = sipAfterGenerated,
       priority = 10,
-      condition = some(minWidth(900))
+      condition = some(minViewportWidth(900))
     )
 
     var diagnostics: Diagnostics

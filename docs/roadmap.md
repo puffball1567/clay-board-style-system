@@ -465,7 +465,7 @@ to the UI thread before mutating a component or its `UiRoot`.
 
 ## Authoring Value Model And Ergonomics
 
-Status: `Planned`
+Status: `Partially implemented on the Version 0.4 development line`
 
 CBSS should keep its typed, CSS-inspired value model while making common
 authoring forms concise. This work is separate from CSS compatibility: a value
@@ -541,6 +541,21 @@ Planned work:
   phase; renderer boundaries receive resolved floating-point coordinates.
 - Reject or diagnose a unit/property combination that CBSS cannot resolve.
   Constructing a value must not silently produce a no-op.
+
+The initial typed declaration API is implemented for dimensions and
+constraints, positioned offsets, margin and padding, Flex gaps and basis,
+border widths and radii, and font size. Bare numeric values in those APIs are
+stored as explicit pixel lengths; every API also accepts an explicit
+`StyleValue`, preserving `%`, `em`, `rem`, viewport, and intrinsic units.
+Property-specific unitless overloads cover line-height multipliers, opacity,
+Flex grow/shrink factors, font weight, order, and z-index. Integer-only APIs
+for order and z-index reject fractional shorthand at compile time. The generic
+`decl(...)` path remains unchanged and never infers units.
+
+The design-source viewport-condition conveniences are named
+`minViewportWidth(...)` and `maxViewportWidth(...)`. This keeps their return
+type and purpose explicit while reserving `minWidth(...)` and `maxWidth(...)`
+for style declarations in the umbrella authoring API.
 
 ### Colors
 

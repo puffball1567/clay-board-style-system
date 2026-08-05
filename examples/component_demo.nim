@@ -13,9 +13,9 @@ type
 
 proc saveButtonStyle(): UiStyle =
   uiStyle([
-    decl("width", px(112)),
-    decl("height", px(40)),
-    decl("padding", px(10)),
+    width(112),
+    height(40),
+    padding(10),
     decl("background-color", oklch(0.62, 0.16, 250))
   ])
 
@@ -31,9 +31,9 @@ proc render(self: SaveButton) =
 
 proc render(self: Toolbar) =
   ui.box(self, ownedStyle = uiStyle([
-    decl("width", px(320)),
-    decl("padding", px(12)),
-    decl("gap", px(8)),
+    width(320),
+    padding(12),
+    gap(8),
     decl("flex-direction", keyword("row"))
   ])):
     ui.text("Project")
@@ -45,7 +45,7 @@ proc main() =
   let saveButton = SaveButton(
     label: "Save",
     saved: saved,
-    style: uiStyle([decl("height", px(48))])
+    style: uiStyle([height(48)])
   )
   let toolbar = root.mount(Toolbar(saveButton: saveButton))
 
