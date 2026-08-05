@@ -12,6 +12,8 @@ suite "viewport-relative unit resolution":
     check ord(ukVh) == 12
     check ord(ukVmin) == 13
     check ord(ukVmax) == 14
+    check ord(ukLh) == 15
+    check ord(ukRlh) == 16
 
   test "constructors retain typed viewport-relative intent":
     check vw(12.5).length == LengthValue(kind: ukVw, value: 12.5)

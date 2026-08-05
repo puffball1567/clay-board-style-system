@@ -18,6 +18,8 @@ proc unitName(kind: UnitKind): string =
   of ukVh: "vh"
   of ukVmin: "vmin"
   of ukVmax: "vmax"
+  of ukLh: "lh"
+  of ukRlh: "rlh"
 
 proc resolveContextualLength(
     length: LengthValue;
@@ -38,6 +40,16 @@ proc resolveContextualLength(
       diagnostics.addError(property, "rem requires a root font-size")
       return none(float32)
     some(env.rootFontSize.get * length.value)
+  of ukLh:
+    if env.currentLineHeight.isNone:
+      diagnostics.addError(property, "lh requires a current line-height")
+      return none(float32)
+    some(env.currentLineHeight.get * length.value)
+  of ukRlh:
+    if env.rootLineHeight.isNone:
+      diagnostics.addError(property, "rlh requires a root line-height")
+      return none(float32)
+    some(env.rootLineHeight.get * length.value)
   of ukVw, ukVh, ukVmin, ukVmax:
     if env.viewportSize.isNone:
       diagnostics.addError(property, length.kind.unitName &
@@ -77,7 +89,9 @@ proc normalizeLength*(
   )
   if resolved.isSome:
     return some(LengthValue(kind: ukPx, value: resolved.get))
-  if value.length.kind notin {ukEm, ukRem, ukVw, ukVh, ukVmin, ukVmax}:
+  if value.length.kind notin {
+      ukEm, ukRem, ukVw, ukVh, ukVmin, ukVmax, ukLh, ukRlh
+  }:
     diagnostics.addError(property, property & " does not support " &
       value.length.kind.unitName)
   none(LengthValue)
@@ -91,7 +105,9 @@ proc resolveAbsoluteLength*(
   let resolved = resolveContextualLength(length, env, property, diagnostics)
   if resolved.isSome:
     return resolved
-  if length.kind notin {ukEm, ukRem, ukVw, ukVh, ukVmin, ukVmax}:
+  if length.kind notin {
+      ukEm, ukRem, ukVw, ukVh, ukVmin, ukVmax, ukLh, ukRlh
+  }:
     diagnostics.addError(property, property & " does not support " &
       length.kind.unitName)
   none(float32)

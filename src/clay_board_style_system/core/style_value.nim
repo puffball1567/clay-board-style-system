@@ -36,7 +36,9 @@ type
     ukVw,
     ukVh,
     ukVmin,
-    ukVmax
+    ukVmax,
+    ukLh,
+    ukRlh
 
   LengthValue* = object
     kind*: UnitKind
@@ -145,6 +147,14 @@ proc vmin*(value: SomeNumber): StyleValue =
 
 proc vmax*(value: SomeNumber): StyleValue =
   StyleValue(kind: svLength, length: LengthValue(kind: ukVmax,
+      value: value.float32))
+
+proc lh*(value: SomeNumber): StyleValue =
+  StyleValue(kind: svLength, length: LengthValue(kind: ukLh,
+      value: value.float32))
+
+proc rlh*(value: SomeNumber): StyleValue =
+  StyleValue(kind: svLength, length: LengthValue(kind: ukRlh,
       value: value.float32))
 
 proc fill*(): StyleValue =

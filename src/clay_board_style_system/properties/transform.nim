@@ -35,6 +35,10 @@ proc toComputedLength(value: LengthValue): ComputedLength =
     ComputedLength(kind: cukVmin, value: value.value)
   of ukVmax:
     ComputedLength(kind: cukVmax, value: value.value)
+  of ukLh:
+    ComputedLength(kind: cukLh, value: value.value)
+  of ukRlh:
+    ComputedLength(kind: cukRlh, value: value.value)
 
 proc toResolvedComputedLength(value: Option[LengthValue]; env: ResolveEnv;
     property: string; diagnostics: var Diagnostics): Option[ComputedLength] =

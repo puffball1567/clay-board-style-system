@@ -324,7 +324,9 @@ type
     cukVw,
     cukVh,
     cukVmin,
-    cukVmax
+    cukVmax,
+    cukLh,
+    cukRlh
 
   ComputedLength* = object
     kind*: ComputedUnitKind

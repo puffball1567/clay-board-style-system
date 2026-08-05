@@ -419,18 +419,31 @@ proc applyLineHeight(
       style.text.lineHeight = some(base.get * value.number)
     of svKeyword:
       if value.keyword == "normal":
-        style.text.lineHeight = none(float32)
+        let base = style.baseFontSize(env)
+        if base.isNone:
+          diagnostics.addError(declaration.property,
+            "normal line-height requires font-size")
+          return
+        style.text.lineHeight = some(base.get * 1.2'f32)
       else:
         diagnostics.addError(declaration.property, "unsupported line-height keyword")
     else:
       diagnostics.addError(declaration.property, "line-height requires a length, number, or normal")
-  of mmInitial, mmUnset:
-    style.text.lineHeight = none(float32)
-  of mmInherit:
-    if env.parent.isSome:
+  of mmInitial:
+    let base = style.baseFontSize(env)
+    if base.isNone:
+      diagnostics.addError(declaration.property,
+        "initial line-height requires font-size")
+      return
+    style.text.lineHeight = some(base.get * 1.2'f32)
+  of mmUnset, mmInherit:
+    if env.parent.isSome and env.parent.get.text.lineHeight.isSome:
       style.text.lineHeight = env.parent.get.text.lineHeight
+    elif env.currentLineHeight.isSome:
+      style.text.lineHeight = env.currentLineHeight
     else:
-      diagnostics.addError(declaration.property, "cannot inherit line-height without parent")
+      diagnostics.addError(declaration.property,
+        "cannot inherit line-height without parent line-height")
   of mmRelative:
     diagnostics.addError(declaration.property, "line-height relative merge is not implemented yet")
 

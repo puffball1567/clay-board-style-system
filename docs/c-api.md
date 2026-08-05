@@ -23,13 +23,15 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x00010006` supports:
+ABI version `0x00010007` supports:
 
 - Opaque context and style handles.
 - Generation-checked node handles plus box, text, and image node creation.
 - Groups, attributes, pseudo-state flags, and accessibility semantics.
 - Typed length, number, keyword, color, color-pair, border, shadow, gradient,
   and transform declarations.
+- Append-only `lh` and `rlh` unit tags, resolved against the current and root
+  computed line heights without changing existing unit ordinals.
 - Opaque authored-color handles for typed color spaces, `currentColor`,
   serialized CSS colors, and `color-mix()`, without changing the stable
   16-byte resolved `CbssColor` value.

@@ -1,6 +1,6 @@
 #include "cbss.h"
 
-_Static_assert(CBSS_ABI_VERSION == 0x00010006u, "unexpected CBSS ABI version");
+_Static_assert(CBSS_ABI_VERSION == 0x00010007u, "unexpected CBSS ABI version");
 _Static_assert(CBSS_ROLE_SWITCH == 22, "unexpected switch role value");
 
 #include <assert.h>
@@ -964,6 +964,43 @@ int main(void) {
   assert(fabsf(viewport_rect.h - 200.0f) < 0.01f);
   cbss_style_destroy(viewport_style);
   cbss_context_destroy(viewport_context);
+
+  CbssContext *line_height_context = cbss_context_create();
+  CbssStyle *line_height_root_style = cbss_style_create();
+  CbssStyle *line_height_child_style = cbss_style_create();
+  assert(line_height_context != NULL);
+  assert(line_height_root_style != NULL);
+  assert(line_height_child_style != NULL);
+  uint32_t line_height_root = cbss_context_add_box(
+      line_height_context, CBSS_NODE_NONE, "line-height-root");
+  uint32_t line_height_child = cbss_context_add_box(
+      line_height_context, line_height_root, "line-height-child");
+  assert(line_height_root != CBSS_NODE_NONE);
+  assert(line_height_child != CBSS_NODE_NONE);
+  assert(cbss_style_set_length(
+      line_height_root_style, "width", CBSS_UNIT_PX, 200.0f) == CBSS_OK);
+  assert(cbss_style_set_length(
+      line_height_root_style, "height", CBSS_UNIT_PX, 100.0f) == CBSS_OK);
+  assert(cbss_style_set_length(
+      line_height_root_style, "line-height", CBSS_UNIT_PX, 24.0f) == CBSS_OK);
+  assert(cbss_style_set_length(
+      line_height_child_style, "width", CBSS_UNIT_LH, 2.0f) == CBSS_OK);
+  assert(cbss_style_set_length(
+      line_height_child_style, "height", CBSS_UNIT_RLH, 3.0f) == CBSS_OK);
+  require_ok(line_height_context, cbss_node_apply_style(
+      line_height_context, line_height_root, line_height_root_style, 0, 0));
+  require_ok(line_height_context, cbss_node_apply_style(
+      line_height_context, line_height_child, line_height_child_style, 0, 0));
+  require_ok(line_height_context, cbss_context_compute(
+      line_height_context, 200.0f, 100.0f));
+  CbssRect line_height_rect;
+  require_ok(line_height_context, cbss_node_layout_rect(
+      line_height_context, line_height_child, &line_height_rect));
+  assert(fabsf(line_height_rect.w - 48.0f) < 0.01f);
+  assert(fabsf(line_height_rect.h - 72.0f) < 0.01f);
+  cbss_style_destroy(line_height_child_style);
+  cbss_style_destroy(line_height_root_style);
+  cbss_context_destroy(line_height_context);
 
   CbssContext *scroll_context = cbss_context_create();
   CbssStyle *scroll_style = cbss_style_create();
