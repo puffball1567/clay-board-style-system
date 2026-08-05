@@ -1,9 +1,76 @@
 import std/[options, strutils, unittest]
 
 import clay_board_style_system
+import clay_board_style_system/generated/default_properties
 import clay_board_style_system/text/cosmic_text_engine
 
 suite "cosmic text engine":
+  test "reports font-relative metrics through the versioned bridge":
+    var fonts = initFontRegistry()
+    var cosmic = initCosmicTextEngine(fonts)
+    defer:
+      cosmic.close()
+
+    let engine = cosmic.textEngine()
+    let style = ComputedTextStyle(
+      fontSize: some(20.0'f32),
+      fontFamilies: @["sans-serif"]
+    )
+    let metrics = engine.fontMetrics(TextFontMetricsInput(
+      style: style,
+      fonts: fonts
+    ))
+    let zero = engine.measure(TextMeasureInput(
+      text: "0",
+      style: style,
+      maxWidth: none(float32),
+      fonts: fonts
+    ))
+
+    check metrics.version == fontUnitMetricsVersion
+    check metrics.xHeight > 0
+    check metrics.xHeight <= 20
+    check metrics.zeroAdvance > 0
+    check abs(metrics.zeroAdvance - zero.w) < 0.01
+
+  test "resolves ex and ch with the installed cosmic-text metrics provider":
+    var fonts = initFontRegistry()
+    var cosmic = initCosmicTextEngine(fonts)
+    defer:
+      cosmic.close()
+
+    let engine = cosmic.textEngine()
+    let style = ComputedTextStyle(
+      fontSize: some(20.0'f32),
+      fontFamilies: @["sans-serif"]
+    )
+    let metrics = engine.fontMetrics(TextFontMetricsInput(
+      style: style,
+      fonts: fonts
+    ))
+    var tree = initTree()
+    let root = tree.addBox(id = "root")
+    let sheet = styleSheet([rule(target(root), [
+      decl("font-size", px(20)),
+      decl("font-family", keyword("sans-serif")),
+      decl("width", ex(2)),
+      decl("height", ch(3))
+    ])])
+    var diagnostics: Diagnostics
+    let resolved = resolveTreeStyles(
+      tree,
+      [sheet],
+      defaultProperties(),
+      diagnostics,
+      fontMetricsResolver = engine.fontMetricsResolver(fonts)
+    )
+
+    check not diagnostics.hasErrors
+    check abs(resolved.styles[root.nodeIndex].layout.width.get -
+      metrics.xHeight * 2) < 0.01
+    check abs(resolved.styles[root.nodeIndex].layout.height.get -
+      metrics.zeroAdvance * 3) < 0.01
+
   test "measures text through cosmic-text bridge":
     var fonts = initFontRegistry()
     var cosmic = initCosmicTextEngine(fonts)

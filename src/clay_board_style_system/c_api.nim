@@ -24,7 +24,7 @@ proc ensureNimRuntime() {.inline.} =
     NimMain()
 
 const
-  CbssAbiVersion* = 0x0001_0007'u32
+  CbssAbiVersion* = 0x0001_0008'u32
   CbssNodeNone* = high(uint32)
 
   CbssOk* = 0'i32

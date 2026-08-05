@@ -1941,7 +1941,7 @@ Text service:
 ```
 
 The initial implementation exposes a small `TextEngine` interface for layout
-measurement:
+measurement, caret and hit-test geometry, and versioned font-unit metrics:
 
 ```text
 src/clay_board_style_system/text/text_engine.nim
@@ -1957,6 +1957,29 @@ Applications can enable system font discovery, register bundled font files, add
 memory-backed fonts, and define fallback families. `font-family` resolves to an
 ordered family list, not just a single string, so a text engine can perform
 CSS-like fallback without exposing browser concepts in the core API.
+
+`ex` and `ch` resolution does not make the style resolver depend on a concrete
+font library. A `FontUnitMetricsResolver` receives the resolved text style and
+returns the selected font's x-height and `0` glyph advance. `TextEngine` can
+produce this resolver for a fixed `FontRegistry`:
+
+```nim
+let metrics = textEngine.fontMetricsResolver(fonts)
+let resolved = resolveTreeStyles(
+  tree,
+  sheets,
+  defaultProperties(),
+  diagnostics,
+  fontMetricsResolver = metrics
+)
+```
+
+The contract is versioned and rejects non-positive, non-finite, or incompatible
+results. Missing metrics use the CSS-defined `0.5em` fallback. The cosmic-text
+adapter caches results by font configuration so repeated nodes do not reshape
+the `0` glyph or reopen font data. Root variants `rex` and `rch` are established
+from the root text style and remain stable during descendant and subtree
+resolution.
 
 The default engine matches SDL3 debug text behavior so the current demo remains
 stable. Higher quality text engines should be added as adapters, not wired into

@@ -552,13 +552,19 @@ Flex grow/shrink factors, font weight, order, and z-index. Integer-only APIs
 for order and z-index reject fractional shorthand at compile time. The generic
 `decl(...)` path remains unchanged and never infers units.
 
-The Version 0.4 development line also implements `lh` and `rlh`. Resolution is
+The Version 0.4 development line also implements `lh`, `rlh`, `ex`, `ch`,
+`rex`, and `rch`. Resolution is
 ordered as font size, line height, then dependent properties. In `font-*` and
 `line-height` declarations these units use the parent metrics to avoid a
 cycle; other properties use the current element and root computed line
 heights. Standalone resolution without those contexts emits a diagnostic.
-Font-glyph metric units such as `ex` and `ch` remain pending the versioned text
-engine metrics contract.
+Font-glyph units use a versioned, injectable text-engine metrics contract.
+The cosmic-text adapter reports the selected font's x-height and the shaped
+advance of the `0` glyph, with results cached by resolved font configuration.
+When no metrics provider is installed, or a provider cannot return a valid
+metric, CBSS applies the CSS Values fallback of `0.5em`. This keeps the core
+independent from cosmic-text while preserving deterministic headless and C ABI
+behavior.
 
 The design-source viewport-condition conveniences are named
 `minViewportWidth(...)` and `maxViewportWidth(...)`. This keeps their return

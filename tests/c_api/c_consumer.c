@@ -1,6 +1,6 @@
 #include "cbss.h"
 
-_Static_assert(CBSS_ABI_VERSION == 0x00010007u, "unexpected CBSS ABI version");
+_Static_assert(CBSS_ABI_VERSION == 0x00010008u, "unexpected CBSS ABI version");
 _Static_assert(CBSS_ROLE_SWITCH == 22, "unexpected switch role value");
 
 #include <assert.h>
@@ -1001,6 +1001,31 @@ int main(void) {
   cbss_style_destroy(line_height_child_style);
   cbss_style_destroy(line_height_root_style);
   cbss_context_destroy(line_height_context);
+
+  CbssContext *font_unit_context = cbss_context_create();
+  CbssStyle *font_unit_style = cbss_style_create();
+  assert(font_unit_context != NULL);
+  assert(font_unit_style != NULL);
+  uint32_t font_unit_root = cbss_context_add_box(
+      font_unit_context, CBSS_NODE_NONE, "font-unit-root");
+  assert(font_unit_root != CBSS_NODE_NONE);
+  assert(cbss_style_set_length(
+      font_unit_style, "font-size", CBSS_UNIT_PX, 20.0f) == CBSS_OK);
+  assert(cbss_style_set_length(
+      font_unit_style, "width", CBSS_UNIT_EX, 4.0f) == CBSS_OK);
+  assert(cbss_style_set_length(
+      font_unit_style, "height", CBSS_UNIT_CH, 3.0f) == CBSS_OK);
+  require_ok(font_unit_context, cbss_node_apply_style(
+      font_unit_context, font_unit_root, font_unit_style, 0, 0));
+  require_ok(font_unit_context, cbss_context_compute(
+      font_unit_context, 200.0f, 100.0f));
+  CbssRect font_unit_rect;
+  require_ok(font_unit_context, cbss_node_layout_rect(
+      font_unit_context, font_unit_root, &font_unit_rect));
+  assert(fabsf(font_unit_rect.w - 40.0f) < 0.01f);
+  assert(fabsf(font_unit_rect.h - 30.0f) < 0.01f);
+  cbss_style_destroy(font_unit_style);
+  cbss_context_destroy(font_unit_context);
 
   CbssContext *scroll_context = cbss_context_create();
   CbssStyle *scroll_style = cbss_style_create();
