@@ -73,6 +73,8 @@ Typed property helpers make common declarations concise: a bare number in a
 dimensional helper expands to pixels, while `percent(...)`, `em(...)`,
 `rem(...)`, and viewport-unit constructors preserve explicit intent. The
 low-level `decl(...)` API remains available for generated and extension styles.
+Closed keyword sets use typed enums, such as `flexDirection(fdRow)` and
+`overflow(omAuto)`, instead of requiring stringly typed authoring.
 
 The component owns its behavior and required style. A caller can inject
 additional style through the inherited `style` field, while the component wins

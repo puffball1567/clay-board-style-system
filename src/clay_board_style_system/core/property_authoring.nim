@@ -1,4 +1,4 @@
-import ./[declaration, style_value]
+import ./[computed_style, declaration, style_value]
 
 template defineLengthProperty(name: untyped; propertyName: static[string]) =
   proc name*(value: StyleValue; sourceOrder = 0): Declaration {.inline.} =
@@ -108,3 +108,142 @@ defineNumberProperty(flexShrink, "flex-shrink")
 defineNumberProperty(fontWeight, "font-weight")
 defineIntegerProperty(order, "order")
 defineIntegerProperty(zIndex, "z-index")
+
+proc display*(value: DisplayKind; sourceOrder = 0): Declaration =
+  let authored = case value
+    of dkFlex: "flex"
+    of dkNone: "none"
+  decl("display", keyword(authored), sourceOrder)
+
+proc flexDirection*(value: FlexDirection; sourceOrder = 0): Declaration =
+  let authored = case value
+    of fdRow: "row"
+    of fdColumn: "column"
+  decl("flex-direction", keyword(authored), sourceOrder)
+
+proc flexWrap*(value: FlexWrap; sourceOrder = 0): Declaration =
+  let authored = case value
+    of fwNoWrap: "nowrap"
+    of fwWrap: "wrap"
+    of fwWrapReverse: "wrap-reverse"
+  decl("flex-wrap", keyword(authored), sourceOrder)
+
+proc alignItems*(value: AlignItems; sourceOrder = 0): Declaration =
+  let authored = case value
+    of aiStart: "start"
+    of aiCenter: "center"
+    of aiEnd: "end"
+    of aiStretch: "stretch"
+  decl("align-items", keyword(authored), sourceOrder)
+
+proc alignSelf*(value: AlignItems; sourceOrder = 0): Declaration =
+  let authored = case value
+    of aiStart: "start"
+    of aiCenter: "center"
+    of aiEnd: "end"
+    of aiStretch: "stretch"
+  decl("align-self", keyword(authored), sourceOrder)
+
+proc contentAlignmentKeyword(value: JustifyContent): string =
+  case value
+  of jcStart: "start"
+  of jcCenter: "center"
+  of jcEnd: "end"
+  of jcSpaceBetween: "space-between"
+
+proc alignContent*(value: JustifyContent; sourceOrder = 0): Declaration =
+  decl("align-content", keyword(value.contentAlignmentKeyword), sourceOrder)
+
+proc justifyContent*(value: JustifyContent; sourceOrder = 0): Declaration =
+  decl("justify-content", keyword(value.contentAlignmentKeyword), sourceOrder)
+
+proc selfAlignmentKeyword(value: SelfAlignment): string =
+  case value
+  of saStart: "start"
+  of saCenter: "center"
+  of saEnd: "end"
+  of saStretch: "stretch"
+
+proc justifyItems*(value: SelfAlignment; sourceOrder = 0): Declaration =
+  decl("justify-items", keyword(value.selfAlignmentKeyword), sourceOrder)
+
+proc justifySelf*(value: SelfAlignment; sourceOrder = 0): Declaration =
+  decl("justify-self", keyword(value.selfAlignmentKeyword), sourceOrder)
+
+proc position*(value: PositionKind; sourceOrder = 0): Declaration =
+  let authored = case value
+    of pkStatic: "static"
+    of pkRelative: "relative"
+    of pkAbsolute: "absolute"
+  decl("position", keyword(authored), sourceOrder)
+
+proc boxSizing*(value: BoxSizing; sourceOrder = 0): Declaration =
+  let authored = case value
+    of bsContentBox: "content-box"
+    of bsBorderBox: "border-box"
+  decl("box-sizing", keyword(authored), sourceOrder)
+
+proc overflowKeyword(value: OverflowMode): string =
+  case value
+  of omVisible: "visible"
+  of omHidden: "hidden"
+  of omClip: "clip"
+  of omAuto: "auto"
+  of omScroll: "scroll"
+
+proc overflow*(value: OverflowMode; sourceOrder = 0): Declaration =
+  decl("overflow", keyword(value.overflowKeyword), sourceOrder)
+
+proc overflowX*(value: OverflowMode; sourceOrder = 0): Declaration =
+  decl("overflow-x", keyword(value.overflowKeyword), sourceOrder)
+
+proc overflowY*(value: OverflowMode; sourceOrder = 0): Declaration =
+  decl("overflow-y", keyword(value.overflowKeyword), sourceOrder)
+
+proc pointerEvents*(value: PointerEvents; sourceOrder = 0): Declaration =
+  let authored = case value
+    of peAuto: "auto"
+    of peNone: "none"
+  decl("pointer-events", keyword(authored), sourceOrder)
+
+proc cursor*(value: CursorKind; sourceOrder = 0): Declaration =
+  let authored = case value
+    of ckAuto: "auto"
+    of ckDefault: "default"
+    of ckPointer: "pointer"
+    of ckText: "text"
+    of ckMove: "move"
+    of ckNotAllowed: "not-allowed"
+  decl("cursor", keyword(authored), sourceOrder)
+
+proc userSelect*(value: UserSelect; sourceOrder = 0): Declaration =
+  let authored = case value
+    of usAuto: "auto"
+    of usNone: "none"
+    of usText: "text"
+    of usAll: "all"
+  decl("user-select", keyword(authored), sourceOrder)
+
+proc resize*(value: ResizeKind; sourceOrder = 0): Declaration =
+  let authored = case value
+    of rkNone: "none"
+    of rkBoth: "both"
+    of rkHorizontal: "horizontal"
+    of rkVertical: "vertical"
+  decl("resize", keyword(authored), sourceOrder)
+
+proc fontStyle*(value: FontStyle; sourceOrder = 0): Declaration =
+  let authored = case value
+    of fsNormal: "normal"
+    of fsItalic: "italic"
+    of fsOblique: "oblique"
+  decl("font-style", keyword(authored), sourceOrder)
+
+proc textAlign*(value: TextAlign; sourceOrder = 0): Declaration =
+  let authored = case value
+    of taStart: "start"
+    of taLeft: "left"
+    of taCenter: "center"
+    of taRight: "right"
+    of taEnd: "end"
+  decl("text-align", keyword(authored), sourceOrder)

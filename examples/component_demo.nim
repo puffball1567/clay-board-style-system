@@ -34,7 +34,7 @@ proc render(self: Toolbar) =
     width(320),
     padding(12),
     gap(8),
-    decl("flex-direction", keyword("row"))
+    flexDirection(fdRow)
   ])):
     ui.text("Project")
     ui.mount(self.saveButton)

@@ -8,6 +8,11 @@ proc authoredValue(declaration: Declaration): StyleValue =
   check declaration.operation.value.isSome
   declaration.operation.value.get
 
+proc authoredKeyword(declaration: Declaration): string =
+  let value = declaration.authoredValue
+  check value.kind == svKeyword
+  value.keyword
+
 suite "typed property authoring":
   test "every dimensional helper maps to its documented property":
     let declarations = [
@@ -173,3 +178,99 @@ suite "typed property authoring":
       doAssert compiles(lineHeight(px(20)))
       doAssert not compiles(width("12px"))
       doAssert not compiles(zIndex(1.5))
+
+  test "closed value helpers map enums to validated keywords":
+    let declarations = [
+      display(dkNone),
+      flexDirection(fdRow),
+      flexWrap(fwWrapReverse),
+      alignItems(aiCenter),
+      alignSelf(aiEnd),
+      alignContent(jcSpaceBetween),
+      justifyContent(jcEnd),
+      justifyItems(saStretch),
+      justifySelf(saStart),
+      position(pkAbsolute),
+      boxSizing(bsBorderBox),
+      overflow(omHidden),
+      overflowX(omAuto),
+      overflowY(omScroll),
+      pointerEvents(peNone),
+      cursor(ckNotAllowed),
+      userSelect(usAll),
+      resize(rkVertical),
+      fontStyle(fsOblique),
+      textAlign(taRight)
+    ]
+
+    check declarations.mapIt(it.property) == [
+      "display", "flex-direction", "flex-wrap", "align-items", "align-self",
+      "align-content", "justify-content", "justify-items", "justify-self",
+      "position", "box-sizing", "overflow", "overflow-x", "overflow-y",
+      "pointer-events", "cursor", "user-select", "resize", "font-style",
+      "text-align"
+    ]
+    check declarations.mapIt(it.authoredKeyword) == [
+      "none", "row", "wrap-reverse", "center", "end", "space-between",
+      "end", "stretch", "start", "absolute", "border-box", "hidden",
+      "auto", "scroll", "none", "not-allowed", "all", "vertical",
+      "oblique", "right"
+    ]
+
+  test "typed closed values resolve through their property implementations":
+    var tree = initTree()
+    let root = tree.addBox(id = "root")
+    let sheet = styleSheet([rule(target(root), [
+      display(dkFlex),
+      flexDirection(fdRow),
+      flexWrap(fwWrapReverse),
+      alignItems(aiCenter),
+      alignSelf(aiEnd),
+      alignContent(jcSpaceBetween),
+      justifyContent(jcEnd),
+      justifyItems(saStretch),
+      justifySelf(saCenter),
+      position(pkAbsolute),
+      boxSizing(bsBorderBox),
+      overflowX(omAuto),
+      overflowY(omScroll),
+      pointerEvents(peNone),
+      cursor(ckPointer),
+      userSelect(usAll),
+      resize(rkVertical),
+      fontStyle(fsItalic),
+      textAlign(taRight)
+    ])])
+    var diagnostics: Diagnostics
+    let resolved = resolveTreeStyles(
+      tree, [sheet], defaultProperties(), diagnostics
+    )
+    let style = resolved.styles[root.nodeIndex]
+
+    check not diagnostics.hasErrors
+    check style.layout.display == dkFlex
+    check style.layout.direction == fdRow
+    check style.layout.flexWrap == fwWrapReverse
+    check style.layout.alignItems == aiCenter
+    check style.layout.alignSelf == some(aiEnd)
+    check style.layout.alignContent == jcSpaceBetween
+    check style.layout.justifyContent == jcEnd
+    check style.layout.justifyItems == some(saStretch)
+    check style.layout.justifySelf == some(saCenter)
+    check style.layout.position == pkAbsolute
+    check style.layout.boxSizing == bsBorderBox
+    check style.layout.overflowX == omAuto
+    check style.layout.overflowY == omScroll
+    check style.visual.pointerEvents == peNone
+    check style.visual.cursor == some(ckPointer)
+    check style.visual.userSelect == some(usAll)
+    check style.visual.resize == rkVertical
+    check style.text.fontStyle == some(fsItalic)
+    check style.text.textAlign == some(taRight)
+
+  test "closed value helpers reject strings and unrelated enums":
+    static:
+      doAssert compiles(flexDirection(fdRow))
+      doAssert compiles(overflow(omAuto))
+      doAssert not compiles(flexDirection("row"))
+      doAssert not compiles(flexDirection(omAuto))

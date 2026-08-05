@@ -693,6 +693,8 @@ callers depend only on the versioned CBSS ABI.
 
 ### Keywords And Closed Value Sets
 
+Status: `Partially implemented on the Version 0.4 development line`
+
 `keyword(...)` remains the extensible lower-level representation for
 property-specific values that are not yet closed or may expand over time. It
 should not be the preferred surface for common, closed sets such as flex
@@ -705,6 +707,13 @@ Planned work:
   supported metadata use cases.
 - Validate keywords against the property that consumes them and report
   unsupported values instead of accepting and ignoring them.
+
+The initial typed surface accepts existing CBSS enums for display, Flex
+direction and wrapping, alignment, positioning, box sizing, overflow, pointer
+events, cursor, selection, resize, font style, and text alignment. These
+helpers serialize to the same validated property operations as the lower-level
+keyword path, so they add LSP completion and compile-time type checking without
+creating a second runtime representation.
 
 ## GPU Canvas Capability
 
