@@ -386,6 +386,24 @@ The C ABI appends matching unit tags without changing the ordinals of existing
 tags. Percentages remain a separate unit-resolution task because they require
 property-specific containing-block or box references rather than the viewport.
 
+### Percentage Box Spacing
+
+Status: `Implemented on the Version 0.4 development line`
+
+`padding`, `margin`, their physical sides, and their current logical aliases
+accept typed percentage values. As in CSS horizontal writing mode, percentages
+on every side resolve against the containing block's inline width; vertical
+padding and margins therefore do not use the containing height. Negative
+padding is clamped to zero, while negative margins retain their sign.
+
+Percentage intent remains typed through style resolution and inheritance, then
+is resolved during layout when the containing width is known. The resulting
+used padding is stored with the layout box and shared by paint clipping,
+scrollbar geometry, hit testing, transforms, and embedded render surfaces.
+Pixel-only spacing keeps the allocation-free hot path. During intrinsic
+measurement, unresolved percentages contribute zero so they do not create a
+cyclic content-size dependency.
+
 ### Transparent Conditional Component Flow
 
 Status: `Implemented on the Version 0.4 development line`

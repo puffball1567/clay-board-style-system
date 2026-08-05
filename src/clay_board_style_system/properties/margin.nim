@@ -8,6 +8,111 @@ import ../core/[
 ]
 import ./length_resolution
 
+proc setSide(edges: var EdgeSizes; property: string; value: float32)
+
+proc setMarginSpec(style: var ComputedStyle; property: string;
+    value: Option[LengthValue]) =
+  if value.isSome:
+    style.ensureSizing()
+  if style.layout.sizing.isNil:
+    return
+  case property
+  of "margin":
+    style.layout.sizing.marginTop = value
+    style.layout.sizing.marginRight = value
+    style.layout.sizing.marginBottom = value
+    style.layout.sizing.marginLeft = value
+  of "margin-top", "margin-block-start":
+    style.layout.sizing.marginTop = value
+  of "margin-right", "margin-inline-end":
+    style.layout.sizing.marginRight = value
+  of "margin-bottom", "margin-block-end":
+    style.layout.sizing.marginBottom = value
+  of "margin-left", "margin-inline-start":
+    style.layout.sizing.marginLeft = value
+  of "margin-inline":
+    style.layout.sizing.marginLeft = value
+    style.layout.sizing.marginRight = value
+  of "margin-block":
+    style.layout.sizing.marginTop = value
+    style.layout.sizing.marginBottom = value
+  else:
+    discard
+
+proc marginSpec(style: ComputedStyle; property: string): Option[LengthValue] =
+  if style.layout.sizing.isNil:
+    return none(LengthValue)
+  case property
+  of "margin-top", "margin-block-start":
+    style.layout.sizing.marginTop
+  of "margin-right", "margin-inline-end":
+    style.layout.sizing.marginRight
+  of "margin-bottom", "margin-block-end":
+    style.layout.sizing.marginBottom
+  of "margin-left", "margin-inline-start":
+    style.layout.sizing.marginLeft
+  else:
+    none(LengthValue)
+
+proc hasMarginSpec(style: ComputedStyle; property: string): bool =
+  if style.layout.sizing.isNil:
+    return false
+  case property
+  of "margin":
+    style.layout.sizing.marginTop.isSome or
+      style.layout.sizing.marginRight.isSome or
+      style.layout.sizing.marginBottom.isSome or
+      style.layout.sizing.marginLeft.isSome
+  of "margin-inline":
+    style.layout.sizing.marginLeft.isSome or
+      style.layout.sizing.marginRight.isSome
+  of "margin-block":
+    style.layout.sizing.marginTop.isSome or
+      style.layout.sizing.marginBottom.isSome
+  else:
+    style.marginSpec(property).isSome
+
+proc applyMarginLength(style: var ComputedStyle; property: string;
+    length: LengthValue) =
+  let value = if length.kind == ukPx: length.value else: 0.0'f32
+  if property == "margin":
+    style.box.margin = some(edges(value))
+  else:
+    var current =
+      if style.box.margin.isSome: style.box.margin.get
+      else: edges(0)
+    current.setSide(property, value)
+    style.box.margin = some(current)
+  style.setMarginSpec(property,
+    if length.kind == ukPercent: some(length) else: none(LengthValue))
+
+proc inheritMarginSpecs(style: var ComputedStyle; parent: ComputedStyle) =
+  if parent.layout.sizing.isNil:
+    style.setMarginSpec("margin", none(LengthValue))
+    return
+  style.setMarginSpec("margin-top", parent.layout.sizing.marginTop)
+  style.setMarginSpec("margin-right", parent.layout.sizing.marginRight)
+  style.setMarginSpec("margin-bottom", parent.layout.sizing.marginBottom)
+  style.setMarginSpec("margin-left", parent.layout.sizing.marginLeft)
+
+proc inheritMarginSpec(style: var ComputedStyle; parent: ComputedStyle;
+    property: string) =
+  case property
+  of "margin-inline":
+    style.setMarginSpec("margin-left", parent.marginSpec("margin-left"))
+    style.setMarginSpec("margin-right", parent.marginSpec("margin-right"))
+  of "margin-block":
+    style.setMarginSpec("margin-top", parent.marginSpec("margin-top"))
+    style.setMarginSpec("margin-bottom", parent.marginSpec("margin-bottom"))
+  else:
+    style.setMarginSpec(property, parent.marginSpec(property))
+
+proc currentMarginHasSpec(style: ComputedStyle; env: ResolveEnv;
+    property: string): bool =
+  if style.box.margin.isSome:
+    return style.hasMarginSpec(property)
+  env.parent.isSome and env.parent.get.hasMarginSpec(property)
+
 proc currentMargin(style: ComputedStyle; env: ResolveEnv): Option[EdgeSizes] =
   if style.box.margin.isSome:
     return style.box.margin
@@ -69,16 +174,19 @@ proc applyMargin(
     if declaration.operation.value.isNone:
       diagnostics.addError(declaration.property, "margin requires a value")
       return
-    let resolved = resolveAbsoluteLength(declaration.operation.value.get, env, declaration.property, diagnostics)
+    let resolved = normalizeLength(declaration.operation.value.get, env,
+        declaration.property, {ukPercent}, diagnostics)
     if resolved.isSome:
-      style.box.margin = some(edges(resolved.get))
+      style.applyMarginLength(declaration.property, resolved.get)
   of mmInherit:
     if env.parent.isSome and env.parent.get.box.margin.isSome:
       style.box.margin = env.parent.get.box.margin
+      style.inheritMarginSpecs(env.parent.get)
     else:
       diagnostics.addError(declaration.property, "cannot inherit margin without parent margin")
   of mmInitial, mmUnset:
     style.box.margin = some(edges(0))
+    style.setMarginSpec("margin", none(LengthValue))
   of mmRelative:
     if declaration.operation.value.isNone:
       diagnostics.addError(declaration.property, "relative margin requires a value")
@@ -86,6 +194,10 @@ proc applyMargin(
     let base = currentMargin(style, env)
     if base.isNone:
       diagnostics.addError(declaration.property, "relative margin requires existing or parent margin")
+      return
+    if style.currentMarginHasSpec(env, declaration.property):
+      diagnostics.addError(declaration.property,
+          "relative margin requires a resolved absolute base")
       return
     let delta = resolveAbsoluteLength(declaration.operation.value.get, env, declaration.property, diagnostics)
     if delta.isSome:
@@ -106,13 +218,10 @@ proc applyMarginSide(
     if declaration.operation.value.isNone:
       diagnostics.addError(declaration.property, declaration.property & " requires a value")
       return
-    let resolved = resolveAbsoluteLength(declaration.operation.value.get, env, declaration.property, diagnostics)
+    let resolved = normalizeLength(declaration.operation.value.get, env,
+        declaration.property, {ukPercent}, diagnostics)
     if resolved.isSome:
-      var current =
-        if style.box.margin.isSome: style.box.margin.get
-        else: edges(0)
-      current.setSide(declaration.property, resolved.get)
-      style.box.margin = some(current)
+      style.applyMarginLength(declaration.property, resolved.get)
   of mmInherit:
     if env.parent.isSome and env.parent.get.box.margin.isSome:
       var current =
@@ -120,6 +229,7 @@ proc applyMarginSide(
         else: edges(0)
       current.copySide(declaration.property, env.parent.get.box.margin.get)
       style.box.margin = some(current)
+      style.inheritMarginSpec(env.parent.get, declaration.property)
     else:
       diagnostics.addError(declaration.property, "cannot inherit " & declaration.property & " without parent margin")
   of mmInitial, mmUnset:
@@ -128,6 +238,7 @@ proc applyMarginSide(
       else: edges(0)
     current.setSide(declaration.property, 0)
     style.box.margin = some(current)
+    style.setMarginSpec(declaration.property, none(LengthValue))
   of mmRelative:
     if declaration.operation.value.isNone:
       diagnostics.addError(declaration.property, "relative " & declaration.property & " requires a value")
@@ -135,6 +246,10 @@ proc applyMarginSide(
     let base = currentMargin(style, env)
     if base.isNone:
       diagnostics.addError(declaration.property, "relative " & declaration.property & " requires existing or parent margin")
+      return
+    if style.currentMarginHasSpec(env, declaration.property):
+      diagnostics.addError(declaration.property,
+          "relative margin requires a resolved absolute base")
       return
     let delta = resolveAbsoluteLength(declaration.operation.value.get, env, declaration.property, diagnostics)
     if delta.isSome:

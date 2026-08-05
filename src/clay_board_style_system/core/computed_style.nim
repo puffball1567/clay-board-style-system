@@ -161,6 +161,8 @@ type
     gap*, rowGap*, columnGap*: Option[LengthValue]
     flexBasis*: Option[LengthValue]
     insetTop*, insetRight*, insetBottom*, insetLeft*: Option[LengthValue]
+    paddingTop*, paddingRight*, paddingBottom*, paddingLeft*: Option[LengthValue]
+    marginTop*, marginRight*, marginBottom*, marginLeft*: Option[LengthValue]
 
   PointerEvents* = enum
     peAuto,
