@@ -27,7 +27,8 @@ suite "percentage box spacing":
       ]),
       rule(target(child), [
         decl("width", percent(100)),
-        decl("height", px(20))
+        decl("height", px(20)),
+        decl("flex-shrink", number(0))
       ])
     ])
     var diagnostics: Diagnostics
