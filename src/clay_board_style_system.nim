@@ -13,6 +13,7 @@ import clay_board_style_system/core/[
   gradient_sampling,
   node,
   property,
+  property_authoring,
   registry,
   rule,
   selector,
@@ -56,6 +57,7 @@ export geometry
 export gradient_sampling
 export node
 export property
+export property_authoring
 export registry
 export rule
 export selector

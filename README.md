@@ -49,9 +49,9 @@ type SaveButton = ref object of CBSSComponent
 
 proc saveButtonStyle(): UiStyle =
   uiStyle([
-    decl("width", px(112)),
-    decl("height", px(40)),
-    decl("padding", px(10)),
+    width(112),
+    height(40),
+    padding(10),
     decl("background-color", oklch(0.62, 0.16, 250))
   ])
 
@@ -68,6 +68,11 @@ proc render(self: SaveButton) =
 let app = initUiRoot()
 app.mount(SaveButton(label: "Save"))
 ```
+
+Typed property helpers make common declarations concise: a bare number in a
+dimensional helper expands to pixels, while `percent(...)`, `em(...)`,
+`rem(...)`, and viewport-unit constructors preserve explicit intent. The
+low-level `decl(...)` API remains available for generated and extension styles.
 
 The component owns its behavior and required style. A caller can inject
 additional style through the inherited `style` field, while the component wins
