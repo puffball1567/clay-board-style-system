@@ -20,7 +20,7 @@ proc resolvedLength(
   of cukRem:
     some(rootFontSize * length.value)
   of cukFill, cukContent, cukMinContent, cukMaxContent, cukFitContent,
-      cukAuto, cukNone, cukVw, cukVh, cukVmin, cukVmax:
+      cukAuto, cukNone, cukVw, cukVh, cukVmin, cukVmax, cukLh, cukRlh:
     none(float32)
 
 proc transformReferenceBounds*(

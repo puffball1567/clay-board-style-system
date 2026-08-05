@@ -552,6 +552,14 @@ Flex grow/shrink factors, font weight, order, and z-index. Integer-only APIs
 for order and z-index reject fractional shorthand at compile time. The generic
 `decl(...)` path remains unchanged and never infers units.
 
+The Version 0.4 development line also implements `lh` and `rlh`. Resolution is
+ordered as font size, line height, then dependent properties. In `font-*` and
+`line-height` declarations these units use the parent metrics to avoid a
+cycle; other properties use the current element and root computed line
+heights. Standalone resolution without those contexts emits a diagnostic.
+Font-glyph metric units such as `ex` and `ch` remain pending the versioned text
+engine metrics contract.
+
 The design-source viewport-condition conveniences are named
 `minViewportWidth(...)` and `maxViewportWidth(...)`. This keeps their return
 type and purpose explicit while reserving `minWidth(...)` and `maxWidth(...)`

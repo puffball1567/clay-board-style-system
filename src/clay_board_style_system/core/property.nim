@@ -14,6 +14,8 @@ type
     parent*: ComputedStyleRef
     rootFontSize*: Option[float32]
     currentFontSize*: Option[float32]
+    rootLineHeight*: Option[float32]
+    currentLineHeight*: Option[float32]
     viewportSize*: Option[Size]
 
   PropertyApplyProc* = proc(

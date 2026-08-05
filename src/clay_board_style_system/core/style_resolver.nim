@@ -121,13 +121,19 @@ proc matchingContext(
   for item in matched:
     result.addDeclaration item.declaration
 
-proc contextForProperty(context: StyleContext; property: string;
-    keepMatches: bool): StyleContext =
-  ## Font-relative units need a resolved font size before other declarations.
-  result = initStyleContext()
+proc partitionFontContexts(context: StyleContext): tuple[
+    fontSize, lineHeight, remaining: StyleContext] =
+  result.fontSize = initStyleContext()
+  result.lineHeight = initStyleContext()
+  result.remaining = initStyleContext()
   for declaration in context.declarations:
-    if (declaration.property == property) == keepMatches:
-      result.addDeclaration declaration
+    case declaration.property
+    of "font-size":
+      result.fontSize.addDeclaration declaration
+    of "line-height":
+      result.lineHeight.addDeclaration declaration
+    else:
+      result.remaining.addDeclaration declaration
 
 proc resolveNode(
     tree: Tree;
@@ -138,6 +144,7 @@ proc resolveNode(
     registry: PropertyRegistry;
     parent: ComputedStyleRef;
     rootFontSize: float32;
+    rootLineHeight: float32;
     viewportSize: Option[Size];
     diagnostics: var Diagnostics;
     result: var ResolvedTree
@@ -149,14 +156,27 @@ proc resolveNode(
       parent.get.text.fontSize.get
     else:
       rootFontSize
-  let fontContext = context.contextForProperty("font-size", keepMatches = true)
+  let inheritsNormalLineHeight =
+    parent.isNone or parent.get.text.lineHeight.isNone
+  let inheritedLineHeight =
+    if parent.isSome and parent.get.text.lineHeight.isSome:
+      parent.get.text.lineHeight.get
+    elif parent.isSome and parent.get.text.fontSize.isSome:
+      parent.get.text.fontSize.get * 1.2'f32
+    else:
+      rootLineHeight
+  let fontContexts = context.partitionFontContexts()
   let fontEnv = ResolveEnv(
     parent: parent,
     rootFontSize: some(rootFontSize),
     currentFontSize: some(inheritedFontSize),
+    rootLineHeight: some(rootLineHeight),
+    currentLineHeight: some(inheritedLineHeight),
     viewportSize: viewportSize
   )
-  let resolvedFont = resolveStyles(fontContext, registry, fontEnv, diagnostics)
+  let resolvedFont = resolveStyles(
+    fontContexts.fontSize, registry, fontEnv, diagnostics
+  )
   let currentFontSize =
     if resolvedFont.text.fontSize.isSome:
       resolvedFont.text.fontSize.get
@@ -165,16 +185,46 @@ proc resolveNode(
   let effectiveRootFontSize =
     if parent.isSome: rootFontSize
     else: currentFontSize
+  let hasLocalLineHeight = fontContexts.lineHeight.declarations.len > 0
+  var currentLineHeight =
+    if inheritsNormalLineHeight:
+      currentFontSize * 1.2'f32
+    else:
+      inheritedLineHeight
+  var storedLineHeight =
+    if parent.isSome: parent.get.text.lineHeight
+    else: none(float32)
+  if hasLocalLineHeight:
+    let lineHeightEnv = ResolveEnv(
+      parent: parent,
+      rootFontSize: some(effectiveRootFontSize),
+      currentFontSize: some(currentFontSize),
+      rootLineHeight: some(rootLineHeight),
+      currentLineHeight: some(inheritedLineHeight),
+      viewportSize: viewportSize
+    )
+    let resolvedLineHeight = resolveStyles(
+      fontContexts.lineHeight, registry, lineHeightEnv, diagnostics
+    )
+    if resolvedLineHeight.text.lineHeight.isSome:
+      currentLineHeight = resolvedLineHeight.text.lineHeight.get
+    storedLineHeight = resolvedLineHeight.text.lineHeight
+  let effectiveRootLineHeight =
+    if parent.isSome: rootLineHeight
+    else: currentLineHeight
   let env = ResolveEnv(
     parent: parent,
     rootFontSize: some(effectiveRootFontSize),
     currentFontSize: some(currentFontSize),
+    rootLineHeight: some(effectiveRootLineHeight),
+    currentLineHeight: some(currentLineHeight),
     viewportSize: viewportSize
   )
-  let remainingContext = context.contextForProperty("font-size",
-      keepMatches = false)
-  var style = resolveStyles(remainingContext, registry, env, diagnostics)
+  var style = resolveStyles(
+    fontContexts.remaining, registry, env, diagnostics
+  )
   style.text.fontSize = some(currentFontSize)
+  style.text.lineHeight = storedLineHeight
   if parent.isSome:
     if style.text.color.isNone:
       style.text.color = parent.get.text.color
@@ -262,6 +312,7 @@ proc resolveNode(
       registry,
       computedStyleRef(result.styles[id.nodeIndex]),
       effectiveRootFontSize,
+      effectiveRootLineHeight,
       viewportSize,
       diagnostics,
       result
@@ -289,6 +340,7 @@ proc resolveTreeStyles*(
       registry,
       ComputedStyleRef(),
       rootFontSize,
+      rootFontSize * 1.2'f32,
       viewportSize,
       diagnostics,
       result
@@ -319,6 +371,12 @@ proc resolveSubtreeStyles*(
       resolved.styles[tree.root.get.nodeIndex].text.fontSize.get
     else:
       16.0'f32
+  let rootLineHeight =
+    if tree.root.isSome and resolved.styles[
+        tree.root.get.nodeIndex].text.lineHeight.isSome:
+      resolved.styles[tree.root.get.nodeIndex].text.lineHeight.get
+    else:
+      rootFontSize * 1.2'f32
   let effectiveViewport =
     if viewportSize.isSome: viewportSize else: resolved.viewportSize
   resolved.viewportSize = effectiveViewport
@@ -332,6 +390,7 @@ proc resolveSubtreeStyles*(
     registry,
     parentStyle,
     rootFontSize,
+    rootLineHeight,
     effectiveViewport,
     diagnostics,
     resolved
