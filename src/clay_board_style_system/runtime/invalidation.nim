@@ -1,13 +1,8 @@
-type
-  DirtyDomain* = enum
-    ddStyle,
-    ddLayout,
-    ddPaint,
-    ddHit,
-    ddText,
-    ddResource,
-    ddAnimation
+import ../core/dirty_domain
 
+export dirty_domain
+
+type
   InvalidationState* = object
     domains*: set[DirtyDomain]
 

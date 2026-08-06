@@ -85,8 +85,13 @@ type
     animationOwners: Table[AnimationId, NodeId]
     pendingInvalidation: InvalidationState
     pendingInvalidationRoots: seq[NodeId]
+    eventActionPool: seq[EventActionQueue]
     focusRequestPending*: bool
     focusRequestTarget*: Option[NodeId]
+    pointerRequestPending: bool
+    pointerRequestAction: EventPointerCaptureAction
+    pointerRequestTarget: Option[NodeId]
+    frameRequestPending: bool
     parentStack: seq[NodeId]
     fieldsetStack: seq[FieldsetRegister]
 
@@ -129,8 +134,13 @@ proc initUiRoot*(): UiRoot =
     animationOwners: initTable[AnimationId, NodeId](),
     pendingInvalidation: initInvalidationState(),
     pendingInvalidationRoots: @[],
+    eventActionPool: @[],
     focusRequestPending: false,
     focusRequestTarget: none(NodeId),
+    pointerRequestPending: false,
+    pointerRequestAction: epcaNone,
+    pointerRequestTarget: none(NodeId),
+    frameRequestPending: false,
     parentStack: @[],
     fieldsetStack: @[]
   )
@@ -169,6 +179,116 @@ proc consumeInvalidation*(root: UiRoot): UiInvalidation =
     roots: root.pendingInvalidationRoots
   )
   root.pendingInvalidationRoots = @[]
+
+proc requestFocus*(root: UiRoot; target: Option[NodeId])
+
+proc acquireEventActions(root: UiRoot): tuple[
+    actions: EventActionQueue,
+    generation: uint64
+] =
+  let reuse =
+    if root.eventActionPool.len > 0: root.eventActionPool.pop()
+    else: nil
+  beginEventActions(reuse)
+
+proc applyEventActions(root: UiRoot; snapshot: EventActionSnapshot) =
+  if snapshot.focusPending and
+      (snapshot.focusTarget.isNone or
+       root.tree.isValid(snapshot.focusTarget.get)):
+    root.requestFocus(snapshot.focusTarget)
+
+  if snapshot.pointerAction != epcaNone:
+    let validTarget = snapshot.pointerTarget.isSome and
+      root.tree.isValid(snapshot.pointerTarget.get)
+    if snapshot.pointerAction == epcaRelease or validTarget:
+      root.pointerRequestPending = true
+      root.pointerRequestAction = snapshot.pointerAction
+      root.pointerRequestTarget = snapshot.pointerTarget
+
+  for request in snapshot.invalidations:
+    if request.target.isSome:
+      if root.tree.isValid(request.target.get):
+        root.invalidate(request.target.get, request.domains)
+    else:
+      root.invalidate(request.domains)
+
+  if snapshot.frameRequested:
+    root.frameRequestPending = true
+    root.invalidate(ddAnimation)
+
+proc dispatchEvent*(
+    root: UiRoot;
+    dispatch: DispatchResult
+): EventOutcome =
+  if root.isNil:
+    return ignoredEvent()
+  let scope = root.acquireEventActions()
+  let scopedDispatch = dispatch.withEventActions(
+    scope.actions,
+    scope.generation
+  )
+  var snapshot: EventActionSnapshot
+  try:
+    result = root.events.dispatchEvent(root.tree, scopedDispatch)
+    snapshot = finishEventActions(scope.actions, scope.generation)
+  except:
+    discard finishEventActions(scope.actions, scope.generation)
+    root.eventActionPool.add scope.actions
+    raise
+  root.eventActionPool.add scope.actions
+  root.applyEventActions(snapshot)
+
+proc dispatchEvents*(
+    root: UiRoot;
+    dispatches: openArray[DispatchResult]
+): EventOutcome =
+  for dispatch in dispatches:
+    result.mergeOutcome(root.dispatchEvent(dispatch))
+
+proc handleEvent*(root: UiRoot; dispatch: DispatchResult): bool =
+  root.dispatchEvent(dispatch).handled
+
+proc handleEvents*(
+    root: UiRoot;
+    dispatches: openArray[DispatchResult]
+): bool =
+  root.dispatchEvents(dispatches).handled
+
+proc takeFrameRequest*(root: UiRoot): bool =
+  if root.isNil:
+    return false
+  result = root.frameRequestPending
+  root.frameRequestPending = false
+
+proc reconcilePointerCapture*(
+    root: UiRoot;
+    interaction: var InteractionState
+): EventOutcome =
+  if root.isNil or not root.pointerRequestPending:
+    return ignoredEvent()
+  let action = root.pointerRequestAction
+  let target = root.pointerRequestTarget
+  root.pointerRequestPending = false
+  root.pointerRequestAction = epcaNone
+  root.pointerRequestTarget = none(NodeId)
+
+  case action
+  of epcaCapture:
+    if target.isNone or not root.tree.isValid(target.get) or
+        interaction.pointerCaptureTarget == target:
+      return ignoredEvent()
+    let released = interaction.releasePointer()
+    if released.isSome:
+      result.mergeOutcome(root.dispatchEvent(released.get))
+    result.mergeOutcome(root.dispatchEvent(
+      interaction.capturePointer(target.get)
+    ))
+  of epcaRelease:
+    let released = interaction.releasePointer()
+    if released.isSome:
+      result.mergeOutcome(root.dispatchEvent(released.get))
+  of epcaNone:
+    discard
 
 proc requestFocus*(root: UiRoot; target: Option[NodeId]) =
   ## Event handlers do not own InteractionState. Queue one deterministic focus
@@ -565,6 +685,10 @@ proc disposeSubtree*(
   if root.focusRequestTarget.isSome and root.focusRequestTarget.get in removed:
     root.focusRequestPending = false
     root.focusRequestTarget = none(NodeId)
+  if root.pointerRequestTarget.isSome and root.pointerRequestTarget.get in removed:
+    root.pointerRequestPending = false
+    root.pointerRequestAction = epcaNone
+    root.pointerRequestTarget = none(NodeId)
   if root.defaultContextMenuTarget.isSome and
       root.defaultContextMenuTarget.get in removed:
     root.defaultContextMenuTarget = none(NodeId)
@@ -741,7 +865,7 @@ proc bindRenderSurfaceEvents(root: UiRoot; node: NodeHandle; surface: RenderSurf
   }
   for kind in surfaceInputEventKinds:
     let eventKind = kind
-    root.events.addInternalEventHandler(node.id, eventKind, proc(event: DispatchResult): bool =
+    root.events.addInternalEventHandler(node.id, eventKind, proc(event: DispatchResult): EventOutcome =
       if not target.valid:
         return false
       target.root.surfaces.dispatchSurfaceInput(
@@ -1134,18 +1258,21 @@ proc mountDefaultContextMenu*(
     root.tree.setState(node.id, esDisabled, item.disabled)
     root.defaultContextMenuItemNodes.add node.id
     let captured = item
-    root.events.addInternalEventHandler(node.id, iekPointerDown, proc(event: DispatchResult): bool =
-      menu.root.dispatchDefaultContextMenuAction(captured)
+    root.events.addInternalEventHandler(node.id, iekPointerDown, proc(event: DispatchResult): EventOutcome =
+      if menu.root.dispatchDefaultContextMenuAction(captured):
+        handledEvent()
+      else:
+        ignoredEvent()
     )
-    root.events.addInternalEventHandler(node.id, iekClick, proc(event: DispatchResult): bool =
-      true
+    root.events.addInternalEventHandler(node.id, iekClick, proc(event: DispatchResult): EventOutcome =
+      handledEvent()
     )
 
-  root.events.addInternalEventHandler(result.id, iekKeyDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(result.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
     if event.event.key.isSome and event.event.key.get == "Escape":
       discard menu.root.closeDefaultContextMenu()
-      return true
-    false
+      return handledEvent()
+    ignoredEvent()
   )
 
 proc imageNode*(
@@ -1297,10 +1424,31 @@ proc applyFocusVisibleStyle*(handle: NodeHandle; style: UiStyle; priority = 0) =
   handle.root.applyFocusVisibleStyle(handle, style, priority = priority)
 
 proc emit*(handle: NodeHandle; event: InputEvent; local = none(Vec2)): bool =
-  handle.root.events.emit(handle.root.tree, handle.id, event, local)
+  handle.root.dispatchEvent(DispatchResult(
+    target: some(handle.id),
+    local: local,
+    event: event
+  )).handled
 
 proc emit*(handle: NodeHandle; kind: InputEventKind; local = none(Vec2)): bool =
-  handle.root.events.emit(handle.root.tree, handle.id, kind, local)
+  handle.emit(InputEvent(kind: kind), local)
+
+proc subscribe*(
+    handle: NodeHandle;
+    kind: InputEventKind;
+    handler: EventHandler
+): EventSubscription =
+  if not handle.valid():
+    raise newException(ValueError, "cannot subscribe to an inactive node")
+  handle.root.events.subscribe(handle.id, kind, handler)
+
+proc unsubscribe*(
+    handle: NodeHandle;
+    subscription: EventSubscription
+): bool {.discardable.} =
+  if not handle.valid() or subscription.node != handle.id:
+    return false
+  handle.root.events.removeEventHandler(subscription)
 
 template handleEventSlot(setterName: untyped; kindValue: InputEventKind) =
   proc setterName*(handle: NodeHandle; handler: EventHandler) =

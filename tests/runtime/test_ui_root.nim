@@ -47,7 +47,7 @@ suite "ui root handles":
     ui.text(saveButton, "Save")
 
     var clicked = false
-    saveButton.onClick = proc(event: DispatchResult): bool =
+    saveButton.onClick = proc(event: DispatchResult): EventOutcome =
       clicked = true
       true
 
@@ -66,11 +66,11 @@ suite "ui root handles":
     let saveButton = ui.box(groups = ["button"])
     var calls: seq[string] = @[]
 
-    saveButton.onClick = proc(event: DispatchResult): bool =
+    saveButton.onClick = proc(event: DispatchResult): EventOutcome =
       calls.add "first"
       true
 
-    saveButton.onClick = proc(event: DispatchResult): bool =
+    saveButton.onClick = proc(event: DispatchResult): EventOutcome =
       calls.add "second"
       true
 
@@ -91,17 +91,17 @@ suite "ui root handles":
     var changed = ""
     var submitted = false
 
-    input.onInput = proc(event: DispatchResult): bool =
+    input.onInput = proc(event: DispatchResult): EventOutcome =
       if event.event.text.isSome:
         typing = event.event.text.get
       true
 
-    input.onChange = proc(event: DispatchResult): bool =
+    input.onChange = proc(event: DispatchResult): EventOutcome =
       if event.event.text.isSome:
         changed = event.event.text.get
       true
 
-    input.onSubmit = proc(event: DispatchResult): bool =
+    input.onSubmit = proc(event: DispatchResult): EventOutcome =
       submitted = true
       true
 
@@ -222,7 +222,7 @@ suite "ui root handles":
             ui.text("Save")
             ui.text("Ctrl+S", groups = ["shortcut"])
 
-    saveButton.onClick = proc(event: DispatchResult): bool =
+    saveButton.onClick = proc(event: DispatchResult): EventOutcome =
       true
 
     check ui.tree.root == some(app.nodeId)
@@ -268,7 +268,7 @@ suite "ui root handles":
         ])
       ])
 
-    proc onSave(event: DispatchResult): bool =
+    proc onSave(event: DispatchResult): EventOutcome =
       true
 
     proc SaveButton(ui: UiRoot; style = saveButtonStyle()): NodeHandle {.discardable.} =

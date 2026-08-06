@@ -22,7 +22,7 @@ suite "details component":
     let panel = ui.details("More", "Body")
     var toggles = 0
 
-    panel.onToggle = proc(event: DispatchResult): bool =
+    panel.onToggle = proc(event: DispatchResult): EventOutcome =
       inc toggles
       false
 
@@ -50,7 +50,7 @@ suite "details component":
     let panel = ui.details("More", "Body")
     var toggles = 0
 
-    panel.onToggle = proc(event: DispatchResult): bool =
+    panel.onToggle = proc(event: DispatchResult): EventOutcome =
       inc toggles
       false
 
@@ -120,7 +120,7 @@ suite "details component":
     let panel = ui.details("More", "Body", disabled = true)
     var toggled = false
 
-    panel.onToggle = proc(event: DispatchResult): bool =
+    panel.onToggle = proc(event: DispatchResult): EventOutcome =
       toggled = true
       false
 
@@ -136,7 +136,7 @@ suite "details component":
     let panel = ui.details("More", "Body")
     var toggled = false
 
-    panel.onToggle = proc(event: DispatchResult): bool =
+    panel.onToggle = proc(event: DispatchResult): EventOutcome =
       toggled = true
       false
 

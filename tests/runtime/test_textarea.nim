@@ -71,7 +71,7 @@ suite "textarea element":
     let area = ui.textArea(TextAreaParams(value: "hello"))
     var seen: seq[string] = @[]
 
-    area.container.onChange = proc(event: DispatchResult): bool =
+    area.container.onChange = proc(event: DispatchResult): EventOutcome =
       seen.add area.value()
       false
 
@@ -108,7 +108,7 @@ suite "textarea element":
     let area = ui.textArea(TextAreaParams(value: "a"))
     var seen: seq[string] = @[]
 
-    area.container.onInput = proc(event: DispatchResult): bool =
+    area.container.onInput = proc(event: DispatchResult): EventOutcome =
       seen.add area.value()
       false
 
@@ -330,7 +330,7 @@ suite "textarea element":
         ])
       )
       let area = result.area
-      area.container.onInput = proc(event: DispatchResult): bool =
+      area.container.onInput = proc(event: DispatchResult): EventOutcome =
         if event.event.text.isSome:
           value = event.event.text.get
         false
@@ -658,17 +658,18 @@ suite "textarea element":
     var copied = ""
     var changed = ""
 
-    area.container.onCopy = proc(event: DispatchResult): bool =
-      copied = area.takeClipboardText()
+    area.container.onCopy = proc(event: DispatchResult): EventOutcome =
+      copied = area.selectedText()
       false
 
-    area.container.onChange = proc(event: DispatchResult): bool =
+    area.container.onChange = proc(event: DispatchResult): EventOutcome =
       changed = area.value()
       false
 
     area.setSelection(6, 12)
     discard area.container.emit(copyEvent())
     check copied == "second"
+    check area.takeClipboardText() == "second"
 
     discard area.container.emit(cutEvent())
     check area.value() == "first\n\nthird"
@@ -958,11 +959,11 @@ suite "textarea element":
     var copied = ""
     var changed = false
 
-    area.container.onCopy = proc(event: DispatchResult): bool =
-      copied = area.takeClipboardText()
+    area.container.onCopy = proc(event: DispatchResult): EventOutcome =
+      copied = area.selectedText()
       false
 
-    area.container.onChange = proc(event: DispatchResult): bool =
+    area.container.onChange = proc(event: DispatchResult): EventOutcome =
       changed = true
       false
 
@@ -1154,7 +1155,7 @@ suite "textarea element":
     ))
     var resized = 0
 
-    area.onResize = proc(event: DispatchResult): bool =
+    area.onResize = proc(event: DispatchResult): EventOutcome =
       inc resized
       false
 

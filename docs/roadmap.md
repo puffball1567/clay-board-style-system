@@ -342,17 +342,21 @@ Implementation progress:
   Three-dimensional transforms, filters, shared GPU targets, CPU pixel-buffer
   surfaces, and full CSS blend/isolation semantics remain later work.
 
-## Version 0.4 - Complete Unit Resolution And Component Flow
+## Version 0.4 - Units, Component Flow, And Open Event Contracts
 
 Status: `Partially implemented`
 
-Version 0.4 completes the typed unit model across supported properties and
-makes conditionally materialized components behave like ordinary flow
-children. The unit goal is not merely to parse more values: every supported
+Version 0.4 completes the typed unit model across supported properties, makes
+conditionally materialized components behave like ordinary flow children, and
+turns events into a stable connection contract for independently developed Nim
+UI libraries. The unit goal is not merely to parse more values: every supported
 unit/property pair must have a defined resolution context, a computed-value
 result, diagnostics, and tests. The component-flow goal is to let application
 code mount a component at its intended location without exposing coordinates,
-layout placeholders, or conditional-rendering machinery.
+layout placeholders, or conditional-rendering machinery. The event goal is to
+keep intrinsic UI behavior, application callbacks, and library observers
+separate without making one component language or widget implementation the
+only integration surface.
 
 Planned capabilities:
 
@@ -369,6 +373,10 @@ Planned capabilities:
   unit syntactically without an executable layout meaning.
 - Add cross-property unit-resolution tests, resize tests, and diagnostics for
   unsupported combinations.
+- Complete the open event contract described below, including explicit event
+  outcomes, correct target identity, deterministic default actions, removable
+  subscriptions, typed library signals, ARC-safe dispatch services, and the
+  same observable semantics through Nim and the C ABI.
 
 ### Viewport-Relative Units
 
@@ -464,9 +472,123 @@ the nearest containing flow root, allowing hosts with retained frame data to
 use subtree style resolution and relayout. Async workers must hand results back
 to the UI thread before mutating a component or its `UiRoot`.
 
+### Open Event Contract And Library Isolation
+
+Status: `In progress on the Version 0.4 development line`
+
+Implemented on this line: independent `EventOutcome` flags; stable `target`,
+`currentTarget`, and phase data; precondition/user-observer/default ordering;
+propagation-bounded default actions; replaceable public slots; removable,
+subtree-owned subscriptions; typed library `Signal[T]`; dispatch-scoped,
+non-owning focus, pointer-capture, invalidation, and frame actions;
+allocation-free alias iteration; indexed dispatch with a large
+unrelated-listener performance gate; one runtime `EventDefinition` table for
+producer, payload, alias, propagation, and ABI metadata; and C ABI `0x0001000C`
+parity using the same event registry, including additive C subscriptions and
+explicit removal. ARC/ORC tests cover stale action capabilities, dispatch-time
+removal, repeated listener churn, and subtree disposal. Shared/static C
+consumers and Valgrind coverage exercise the foreign-language boundary. A
+dedicated 500-root ARC lifecycle gate also covers temporary root captures that
+are broken by dispatch-time unsubscription; Valgrind reports no retained
+allocations.
+
+Remaining before this section is complete: generate the named Nim setters and
+committed C declarations from the event-definition source rather than auditing
+those surfaces separately; and migrate the remaining compatibility Boolean returns to explicit outcomes
+where their intent is not purely handled or ignored.
+
+CBSS must provide the event equivalent of its shared style and layout model: an
+independently maintained component, chart, control, or design-system package
+must be able to participate without modifying CBSS core, depending on another
+library's internal widget implementation, or taking ownership of the
+application's business logic. The ordinary component syntax remains concise:
+
+```nim
+saveButton.onClick = onSave
+```
+
+Assignment remains replacement-oriented for the component's public event slot.
+The runtime contract underneath that syntax must distinguish preconditions,
+application handling, default UI behavior, propagation, and observers.
+
+Required behavior:
+
+- Dispatch has three explicit stages: CBSS preconditions such as `disabled` and
+  `inert`; the public user handler and permitted observers; then the control's
+  intrinsic default action such as toggle, selection, expansion, or keyboard
+  activation. A default action runs only when it has not been prevented.
+- A typed result replaces the overloaded Boolean convention. At minimum it
+  distinguishes `handled`, `stopPropagation`, and `preventDefault`; consuming
+  one synthesized event must not accidentally suppress unrelated later events.
+- Every dispatched event preserves the original hit or focus `target` and
+  exposes a separate `currentTarget` while traversing ancestors. Event phase,
+  local-coordinate validity, bubbling, and cancelability are explicit metadata.
+- Non-bubbling kinds, including enter/leave and other kinds defined as local,
+  remain on their intended target. Bubbling and capture behavior are properties
+  of the event definition, not incidental consequences of walking every parent.
+- Standard JavaScript/TypeScript-style slots remain the primary names for
+  standard UI events. Data-rich library output that is not a standard event
+  uses a typed Nim signal or callback contract rather than adding an untyped
+  string or forcing every library-specific payload into `InputEvent`.
+- Public assignment provides one replaceable handler slot. Deliberately
+  additive observation returns an `EventSubscription` with explicit removal,
+  an owning component or node, and automatic detachment during subtree disposal.
+  A library can therefore add and remove behavior without accumulating stale
+  callbacks on a stable node.
+- Event handlers receive dispatch-scoped, non-owning UI actions for operations
+  such as focus requests, pointer capture, invalidation, and frame requests.
+  The documented safe path must not require a closure to retain `UiRoot`, and
+  ARC tests must detect `UiRoot -> EventRegistry -> closure -> UiRoot` cycles.
+- One declarative event-definition table owns event kind, producer class,
+  payload shape, aliases, bubbling, cancelability, public setters, and C ABI
+  mapping. An event with no producer is either omitted from the supported
+  surface or explicitly identified as manually emitted/component-provided.
+- Event aliases and traversal use allocation-free iteration on pointer, pen,
+  touch, wheel, and keyboard hot paths. Nim and C ABI registries use indexed
+  lookup rather than scanning every binding for each ancestor.
+- The Nim and C APIs expose equivalent `target`, `currentTarget`, outcome, and
+  propagation semantics. A language adapter must not observe a materially
+  different event model from a native Nim component.
+
+CBSS owns focus, disabled behavior, activation mechanics, selection, expansion,
+and other reusable UI behavior. The callback owns what an activation means to
+the application, including persistence, backend calls, navigation policy, and
+other business logic. A component may package its own handler internally, but a
+parent is not required to receive and forward an event bundle merely to place
+that component.
+
+This is an architectural difference from a QML-style integration model, not a
+claim that QML lacks signals or extension mechanisms. CBSS deliberately avoids
+making its UI declaration syntax the sole object, event, and library ABI.
+Independent packages compose through ordinary Nim types and one stable CBSS
+runtime contract; style ownership, event ownership, and business logic remain
+separable.
+
+Version 0.4 release tests must cover user/default ordering, prevention without
+unintended propagation changes, original and current targets, local and
+non-bubbling events, nested component isolation, handler replacement, additive
+subscription removal, disposal during dispatch, late callbacks, ARC/ORC
+lifecycle behavior, C ABI parity, and bounded work with large listener sets.
+Tests that currently encode internal-before-user ordering or universal bubbling
+must be corrected as part of this work rather than preserved as compatibility.
+
 ### UI Data Interchange: Blob, Form Data, And Streams
 
-Status: `Planned on the Version 0.4 development line`
+Status: `Partially implemented on the Version 0.4 development line`
+
+Implemented on this line: immutable in-memory `Blob` snapshots with advisory
+MIME metadata, bounded reads, slices, and explicit materialization limits;
+ordered immutable `FormData` with repeated names and Blob-backed values;
+TextInput, TextArea, Select, Checkbox, and Radio registration through
+`form.register(name, control)`; collection diagnostics for disposed or
+value-less fields; and C ABI `0x0001000C` Blob handles with retain/release,
+bounded reads, and a 64 MiB eager-allocation ceiling. ARC/ORC value and form
+tests plus shared/static C consumers and Valgrind cover this slice.
+
+Remaining: typed FileInput and host-authorized file/provider Blob sources,
+submit-event snapshot transport across both Nim and C contracts, FormData C
+ABI/adapters, and the bounded asynchronous stream bridge with cancellation,
+backpressure, UI-thread delivery, and disposal races.
 
 CBSS will define transport-neutral data contracts for UI operations that need
 binary values, form snapshots, or progressively produced data. These contracts
@@ -564,11 +686,10 @@ network-facing producers and FormData request encoding. Media and image
 features may build adapters on this bridge while retaining their own resource
 and scheduling policies.
 
-The first implementation slice should establish Blob ownership and FormData
-snapshots before adding the asynchronous stream bridge. Public API work is
-gated on ARC lifecycle tests, C ABI ownership tests, bounded-memory stress
-tests, cancellation races, and proof that idle streams do not force continuous
-frames.
+The first implementation slice establishes Blob ownership and FormData
+snapshots before the asynchronous stream bridge. Further public API work is
+gated on bounded-memory stress tests, cancellation races, and proof that idle
+streams do not force continuous frames.
 
 ## Authoring Value Model And Ergonomics
 
@@ -846,6 +967,14 @@ processing, and other custom drawing workloads; it is not a second renderer
 for normal CBSS buttons, text, or style properties. Normal UI retains one
 canonical visual contract.
 
+The related ordinary-UI WGSL goal keeps that canonical contract: CBSS performs
+CPU-owned Style resolution, layout, text shaping, and normal paint first, then
+lets a typed GPU Style effect paint under, over, mask, or filter a bounded
+retained element/layer texture. It does not require a GPU-specific Button or a
+second interpretation of Flex, text, events, or accessibility. Static CPU
+content remains baked while an animated WGSL overlay runs, so shader-only
+frames do not repeat layout, shaping, or unrelated paint work.
+
 The initial implementation target is the SDL3 GPU API, with explicit resource,
 swapchain, shader, synchronization, resize, and device-loss ownership rules.
 `wgpu-native` is also a planned optional CBSS GPU Canvas backend for workloads
@@ -863,9 +992,28 @@ device-loss, and shutdown rules. Different GPU APIs use bounded CPU staging by
 default; platform-specific external-memory sharing is optional and never an
 implicit requirement.
 
+The wgpu profile additionally requires one canonical low-level Nim binding and
+one exact `wgpu-native` runtime version per process. A versioned `GpuHost`
+supports either a CBSS-owned Device/Queue or a compatible application-owned
+Device/Queue borrowed by CBSS; ownership is never inferred. CBSS remains the
+single Surface/Present owner for its window in both modes. Independent Nim GPU
+packages retain cross-frame pipelines, buffers, textures, and shaders through
+budgeted owner-specific resource namespaces and submit work through the shared
+frame scheduler rather than creating another swapchain or hidden queue policy.
+Release qualification includes a same-process real-GPU fixture combining CBSS
+Motion/WGSL rendering and an independent compute package on one Device, Queue,
+and Swapchain, including device loss, cancellation, teardown order, version
+mismatch, and GPU-memory limits.
+
 The complete staged plan, including GPU Canvas composition, visualization APIs,
-application compute coexistence, game UI, and external engine integration, is
-maintained in [render-surface-roadmap.md](render-surface-roadmap.md).
+application compute coexistence, game UI, external engine integration, and
+WGSL-backed Custom Styles, is maintained in
+[render-surface-roadmap.md](render-surface-roadmap.md). The Custom Style target
+ends at declaratively attaching packaged WGSL paint to a CPU-defined CBSS
+element and composing it through the existing Style, layout, clip, state, and
+invalidation model. Shader-derived event geometry is a separate exploratory
+track, not a default cost or a Version 0.4 release gate; ordinary elements and
+Custom Styles retain their logical Box/transform hit path.
 
 ## Motion, Transform, And Native Visual Surfaces
 
@@ -993,6 +1141,17 @@ This track extends the browser CSS-plus-Canvas/WebGPU authoring model instead
 of reproducing JavaScript's main-thread limitations. Its product value depends
 on hiding scheduling, batching, synchronization, and backend details behind a
 Web-like import-and-mount experience for Nim authors.
+
+The corresponding complex-game design treats CBSS as the frontend and
+presentation owner rather than the gameplay engine. Fixed-step Nim simulation,
+ECS, physics, AI, persistence, and networking publish bounded immutable scene
+snapshots; a data-oriented Visual Scene batches tiles, sprites, particles,
+chart-like marks, and other repeated objects without creating one CBSS Node per
+item. CBSS composes that CPU/WGSL-rendered scene with its HUD, controls, dialogs,
+accessibility UI, and one final presentation owner. The detailed 2D target,
+thread/snapshot boundary, interaction model, batching rules, and separate 3D
+integration boundary are specified in
+[render-surface-roadmap.md](render-surface-roadmap.md#complex-game-frontend-architecture).
 
 ### Sprites And Tile Maps
 

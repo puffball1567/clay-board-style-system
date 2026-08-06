@@ -9,7 +9,7 @@ suite "label element":
     let caption = ui.label("Accept terms", target = some(accept.container))
     var changed = false
 
-    accept.onChange = proc(event: DispatchResult): bool =
+    accept.onChange = proc(event: DispatchResult): EventOutcome =
       changed = true
       false
 

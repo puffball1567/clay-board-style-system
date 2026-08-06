@@ -3,6 +3,7 @@ import std/[options, strutils]
 import ../core/[color, computed_style, declaration, geometry, node, rule, selector, style_value]
 import ../input/events
 import ../text/text_engine
+import ./form
 import ./ui_root
 
 const textEdgeSlack = 2.0'f32
@@ -60,6 +61,9 @@ type
     textNode*: NodeHandle
     caretNode*: NodeHandle
     state*: TextInputState
+
+proc register*(form: FormHandle; name: string; input: TextInputHandle) =
+  form.registerField(input.container, name, ffText)
 
 proc clampCaret(state: TextInputState) =
   if state.caret < 0:
@@ -1037,11 +1041,11 @@ proc textInput*(
     input.setDisabled(ownDisabled or disabled)
   )
 
-  root.events.addInternalEventHandler(input.container.id, iekFocus, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekFocus, proc(event: DispatchResult): EventOutcome =
     input.focus()
     false
   )
-  root.events.addInternalEventHandler(input.container.id, iekPointerDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekPointerDown, proc(event: DispatchResult): EventOutcome =
     if input.state.disabled:
       input.state.selecting = false
       return true
@@ -1052,7 +1056,7 @@ proc textInput*(
       input.moveCaretToPoint(event.local.get, extendSelection = event.event.shiftKey)
     false
   )
-  root.events.addInternalEventHandler(input.container.id, iekPointerMove, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekPointerMove, proc(event: DispatchResult): EventOutcome =
     if input.state.disabled:
       input.state.selecting = false
       return true
@@ -1060,7 +1064,7 @@ proc textInput*(
       input.moveCaretToPoint(event.local.get, extendSelection = true)
     false
   )
-  root.events.addInternalEventHandler(input.container.id, iekDrag, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekDrag, proc(event: DispatchResult): EventOutcome =
     if input.state.disabled:
       input.state.selecting = false
       return true
@@ -1068,19 +1072,19 @@ proc textInput*(
       input.moveCaretToPoint(event.local.get, extendSelection = true)
     false
   )
-  root.events.addInternalEventHandler(input.container.id, iekPointerUp, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekPointerUp, proc(event: DispatchResult): EventOutcome =
     input.state.selecting = false
     false
   )
-  root.events.addInternalEventHandler(input.container.id, iekDragEnd, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekDragEnd, proc(event: DispatchResult): EventOutcome =
     input.state.selecting = false
     false
   )
-  root.events.addInternalEventHandler(input.container.id, iekBlur, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekBlur, proc(event: DispatchResult): EventOutcome =
     input.blur()
     false
   )
-  root.events.addInternalEventHandler(input.container.id, iekTextInput, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekTextInput, proc(event: DispatchResult): EventOutcome =
     if input.state.disabled or input.state.readOnly:
       return true
     if event.event.text.isSome:
@@ -1093,24 +1097,24 @@ proc textInput*(
         return true
     false
   )
-  root.events.addInternalEventHandler(input.container.id, iekPaste, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekPaste, proc(event: DispatchResult): EventOutcome =
     if input.state.disabled or input.state.readOnly:
       return true
     if event.event.text.isSome:
       input.insertText(event.event.text.get, emitValue = true)
     false
   )
-  root.events.addInternalEventHandler(input.container.id, iekCopy, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekCopy, proc(event: DispatchResult): EventOutcome =
     input.requestClipboardWrite(input.selectedText())
     false
   )
-  root.events.addInternalEventHandler(input.container.id, iekCut, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekCut, proc(event: DispatchResult): EventOutcome =
     input.requestClipboardWrite(input.selectedText())
     if not input.state.readOnly and input.deleteSelection():
       input.emitValueEvents()
     false
   )
-  root.events.addInternalEventHandler(input.container.id, iekCompositionStart, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekCompositionStart, proc(event: DispatchResult): EventOutcome =
     let text =
       if event.event.text.isSome: event.event.text.get
       else: ""
@@ -1124,7 +1128,7 @@ proc textInput*(
     input.setVisibleText()
     true
   )
-  root.events.addInternalEventHandler(input.container.id, iekCompositionUpdate, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekCompositionUpdate, proc(event: DispatchResult): EventOutcome =
     let text =
       if event.event.text.isSome: event.event.text.get
       else: ""
@@ -1138,7 +1142,7 @@ proc textInput*(
     input.setVisibleText()
     true
   )
-  root.events.addInternalEventHandler(input.container.id, iekCompositionEnd, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekCompositionEnd, proc(event: DispatchResult): EventOutcome =
     if not input.state.composingActive and input.state.composingText.len == 0:
       return false
     input.state.pendingFallbackText = ""
@@ -1149,7 +1153,7 @@ proc textInput*(
     input.setVisibleText()
     true
   )
-  root.events.addInternalEventHandler(input.container.id, iekKeyDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
     if input.state.disabled:
       return false
     if event.event.key.isNone:

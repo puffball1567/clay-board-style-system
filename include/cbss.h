@@ -17,12 +17,15 @@
 extern "C" {
 #endif
 
-#define CBSS_ABI_VERSION 0x00010008u
+#define CBSS_ABI_VERSION 0x0001000Cu
 #define CBSS_NODE_NONE UINT32_MAX
+#define CBSS_MAX_EAGER_BLOB_BYTES (64ull * 1024ull * 1024ull)
 
 typedef struct CbssContext CbssContext;
 typedef struct CbssStyle CbssStyle;
 typedef struct CbssColorValue CbssColorValue;
+typedef struct CbssBlob CbssBlob;
+typedef uint64_t CbssEventSubscription;
 
 typedef int32_t CbssStatus;
 enum {
@@ -214,7 +217,17 @@ enum {
   CBSS_EVENT_HAS_BUTTON = 1u << 3,
   CBSS_EVENT_HAS_KEY = 1u << 4,
   CBSS_EVENT_HAS_TEXT = 1u << 5,
-  CBSS_EVENT_HAS_POINTER = 1u << 6
+  CBSS_EVENT_HAS_POINTER = 1u << 6,
+  CBSS_EVENT_BUBBLES = 1u << 7,
+  CBSS_EVENT_CANCELABLE = 1u << 8,
+  CBSS_EVENT_PHASE_TARGET = 1u << 9,
+  CBSS_EVENT_PHASE_BUBBLE = 1u << 10
+};
+
+enum {
+  CBSS_EVENT_OUTCOME_HANDLED = 1u << 0,
+  CBSS_EVENT_OUTCOME_STOP_PROPAGATION = 1u << 1,
+  CBSS_EVENT_OUTCOME_PREVENT_DEFAULT = 1u << 2
 };
 
 enum {
@@ -538,6 +551,7 @@ typedef struct CbssDispatchSummary {
   uint32_t target;
   uint32_t dispatch_count;
   uint8_t handled;
+  uint8_t outcome;
   uint8_t needs_compute;
   uint8_t paint_changed;
   uint8_t focus_changed;
@@ -619,6 +633,7 @@ typedef struct CbssRenderSurfaceEvent {
   CbssInputEvent input;
 } CbssRenderSurfaceEvent;
 
+/* Return a bitwise combination of CBSS_EVENT_OUTCOME_* values. */
 typedef uint8_t (*CbssEventCallback)(
     CbssContext *context, const CbssEvent *event, void *user_data);
 typedef uint32_t (*CbssRenderSurfaceCallback)(
@@ -626,6 +641,18 @@ typedef uint32_t (*CbssRenderSurfaceCallback)(
     void *user_data);
 
 CBSS_API uint32_t cbss_abi_version(void);
+
+CBSS_API CbssStatus cbss_blob_create(
+    const uint8_t *bytes, uint64_t length, const char *mime_type,
+    CbssBlob **output);
+CBSS_API CbssStatus cbss_blob_retain(CbssBlob *blob);
+CBSS_API void cbss_blob_release(CbssBlob *blob);
+CBSS_API uint64_t cbss_blob_size(const CbssBlob *blob);
+CBSS_API uint32_t cbss_blob_mime_type(
+    const CbssBlob *blob, char *buffer, uint32_t capacity);
+CBSS_API CbssStatus cbss_blob_read(
+    const CbssBlob *blob, uint64_t offset, uint8_t *output,
+    uint32_t capacity, uint32_t *output_read);
 
 CBSS_API CbssContext *cbss_context_create(void);
 CBSS_API void cbss_context_destroy(CbssContext *context);
@@ -759,6 +786,12 @@ CBSS_API CbssStatus cbss_node_set_focusable(
 CBSS_API CbssStatus cbss_node_set_event_handler(
     CbssContext *context, uint32_t node, uint32_t kind,
     CbssEventCallback callback, void *user_data);
+CBSS_API CbssStatus cbss_node_subscribe_event(
+    CbssContext *context, uint32_t node, uint32_t kind,
+    CbssEventCallback callback, void *user_data,
+    CbssEventSubscription *output_subscription);
+CBSS_API CbssStatus cbss_context_unsubscribe_event(
+    CbssContext *context, CbssEventSubscription subscription);
 
 CBSS_API CbssStatus cbss_color_value_create(
     uint32_t space, float first, float second, float third, float alpha,

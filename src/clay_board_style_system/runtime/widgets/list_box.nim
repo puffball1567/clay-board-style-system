@@ -107,7 +107,7 @@ proc `onInput=`*(listBox: ListBoxHandle; handler: EventHandler) =
   listBox.container.onInput = handler
 
 proc itemClickHandler(listBox: ListBoxHandle; itemIndex: int): EventHandler =
-  proc(event: DispatchResult): bool =
+  proc(event: DispatchResult): EventOutcome =
     if listBox.state.disabled:
       return true
     listBox.setSelectedIndex(itemIndex, emitEvents = true)
@@ -146,7 +146,7 @@ proc listBox*(
   for index, node in listBox.itemNodes:
     root.events.addInternalEventHandler(node.id, iekClick, itemClickHandler(listBox, index))
 
-  root.events.addInternalEventHandler(listBox.container.id, iekKeyDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(listBox.container.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
     if listBox.state.disabled:
       return true
     if event.event.key.isNone:

@@ -57,10 +57,10 @@ suite "inert subtrees":
     let child = ui.box(parent = some(parent))
     var childCalls = 0
     var parentCalls = 0
-    child.onClick = proc(event: DispatchResult): bool =
+    child.onClick = proc(event: DispatchResult): EventOutcome =
       inc childCalls
       false
-    parent.onClick = proc(event: DispatchResult): bool =
+    parent.onClick = proc(event: DispatchResult): EventOutcome =
       inc parentCalls
       true
 

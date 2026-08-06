@@ -79,13 +79,16 @@ let contact = ui.fieldset("Contact"):
 `runtime/button.nim` provides the first minimal click component. It owns the
 label node, disabled state, disabled click suppression, and keyboard activation
 through Enter and Space. User code can still assign `button.onClick = handler`,
-but disabled behavior remains component-owned and runs before user handlers.
+while disabled and inert checks remain runtime preconditions. User handlers run
+before the button's intrinsic activation action and may prevent that action
+without stopping propagation.
 
 `runtime/link.nim` provides the semantic navigation primitive. It owns pointer
 activation, Enter-key activation, focusability, disabled suppression, and the
 accessible Link role while leaving all visual styling to injected CBSS styles.
 It pushes an application-defined typed destination through an injected
-`Navigator`; optional user `onClick` behavior runs after internal navigation.
+`Navigator`; optional user `onClick` behavior runs before internal navigation
+and may prevent it through the typed event outcome.
 Space is not Link activation. The application-owned navigator must outlive its
 mounted links because links keep a non-owning ARC cursor to it.
 
@@ -126,9 +129,9 @@ let liveUpdates = ui.switch(
   ])
 )
 
-liveUpdates.onChange = proc(event: DispatchResult): bool =
+liveUpdates.onChange = proc(event: DispatchResult): EventOutcome =
   echo liveUpdates.checked()
-  false
+  ignoredEvent()
 ```
 
 Hosts call `ui.tickOwnedAnimations(scheduler, nowSeconds)` once per event-loop

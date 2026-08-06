@@ -203,6 +203,19 @@ template componentEventSlot(setterName: untyped; kindValue: InputEventKind) =
   proc setterName*(self: CBSSComponent; handler: EventHandler) =
     self.node().root.events.setEventHandler(self.node().id, kindValue, handler)
 
+proc subscribe*(
+    self: CBSSComponent;
+    kind: InputEventKind;
+    handler: EventHandler
+): EventSubscription =
+  self.node().subscribe(kind, handler)
+
+proc unsubscribe*(
+    self: CBSSComponent;
+    subscription: EventSubscription
+): bool {.discardable.} =
+  self.node().unsubscribe(subscription)
+
 componentEventSlot(`onAbort=`, iekAbort)
 componentEventSlot(`onAnimationEnd=`, iekAnimationEnd)
 componentEventSlot(`onAnimationIteration=`, iekAnimationIteration)

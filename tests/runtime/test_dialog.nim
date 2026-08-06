@@ -8,7 +8,7 @@ suite "dialog component":
     let confirm = ui.dialog(title = "Confirm", body = "Continue?")
     var shown = false
 
-    confirm.onShow = proc(event: DispatchResult): bool =
+    confirm.onShow = proc(event: DispatchResult): EventOutcome =
       shown = true
       false
 
@@ -27,7 +27,7 @@ suite "dialog component":
     let confirm = ui.dialog(title = "Confirm", body = "Continue?", open = true)
     var closed = false
 
-    confirm.onClose = proc(event: DispatchResult): bool =
+    confirm.onClose = proc(event: DispatchResult): EventOutcome =
       closed = true
       false
 
@@ -42,11 +42,11 @@ suite "dialog component":
     let confirm = ui.dialog(open = true)
     var seen: seq[InputEventKind] = @[]
 
-    confirm.onCancel = proc(event: DispatchResult): bool =
+    confirm.onCancel = proc(event: DispatchResult): EventOutcome =
       seen.add event.event.kind
       false
 
-    confirm.onClose = proc(event: DispatchResult): bool =
+    confirm.onClose = proc(event: DispatchResult): EventOutcome =
       seen.add event.event.kind
       false
 
@@ -61,7 +61,7 @@ suite "dialog component":
     let confirm = ui.dialog(open = true)
     var canceled = false
 
-    confirm.onCancel = proc(event: DispatchResult): bool =
+    confirm.onCancel = proc(event: DispatchResult): EventOutcome =
       canceled = true
       false
 
@@ -75,7 +75,7 @@ suite "dialog component":
     let confirm = ui.dialog()
     var keySeen = false
 
-    confirm.container.onKeyDown = proc(event: DispatchResult): bool =
+    confirm.container.onKeyDown = proc(event: DispatchResult): EventOutcome =
       keySeen = true
       false
 

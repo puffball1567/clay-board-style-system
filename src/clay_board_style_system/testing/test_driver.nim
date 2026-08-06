@@ -522,7 +522,8 @@ proc handleDispatches(driver: CbssTestDriver; dispatches: var seq[DispatchResult
         driver.refresh()
         return true
       discard driver.ui.normalizeFocus(driver.input, dispatch.target)
-  result = driver.ui.events.handle(driver.ui.tree, dispatches)
+  result = driver.ui.handleEvents(dispatches)
+  discard driver.ui.reconcilePointerCapture(driver.input)
   discard driver.ui.reconcileFocus(driver.input)
   driver.refresh()
 
@@ -701,10 +702,10 @@ proc sendFocused*(driver: CbssTestDriver; event: InputEvent): bool =
       return false
   var dispatchEvent = owned
   dispatchEvent.focusOwner = none(NodeId)
-  result = driver.ui.events.handle(
-    driver.ui.tree,
+  result = driver.ui.handleEvent(
     DispatchResult(target: driver.input.focusedTarget, local: none(Vec2), event: dispatchEvent)
   )
+  discard driver.ui.reconcilePointerCapture(driver.input)
   discard driver.ui.reconcileFocus(driver.input)
   driver.lastDispatches = @[DispatchResult(target: driver.input.focusedTarget, local: none(Vec2), event: dispatchEvent)]
   driver.refresh()

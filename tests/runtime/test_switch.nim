@@ -19,10 +19,10 @@ suite "switch component":
     let live = ui.switch("Live updates")
     var seen: seq[tuple[kind: InputEventKind, value: string]] = @[]
 
-    live.onInput = proc(event: DispatchResult): bool =
+    live.onInput = proc(event: DispatchResult): EventOutcome =
       seen.add (event.event.kind, event.event.text.get(""))
       false
-    live.onChange = proc(event: DispatchResult): bool =
+    live.onChange = proc(event: DispatchResult): EventOutcome =
       seen.add (event.event.kind, event.event.text.get(""))
       false
 
@@ -41,7 +41,7 @@ suite "switch component":
     let live = ui.switch("Live updates")
     var changes = 0
 
-    live.onChange = proc(event: DispatchResult): bool =
+    live.onChange = proc(event: DispatchResult): EventOutcome =
       inc changes
       false
 
@@ -61,7 +61,7 @@ suite "switch component":
     let live = ui.switch("Live updates")
     var clicks = 0
 
-    live.onClick = proc(event: DispatchResult): bool =
+    live.onClick = proc(event: DispatchResult): EventOutcome =
       inc clicks
       false
 
@@ -91,10 +91,10 @@ suite "switch component":
     var clicked = false
     var changed = false
 
-    live.onClick = proc(event: DispatchResult): bool =
+    live.onClick = proc(event: DispatchResult): EventOutcome =
       clicked = true
       false
-    live.onChange = proc(event: DispatchResult): bool =
+    live.onChange = proc(event: DispatchResult): EventOutcome =
       changed = true
       false
 

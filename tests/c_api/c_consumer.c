@@ -1,6 +1,6 @@
 #include "cbss.h"
 
-_Static_assert(CBSS_ABI_VERSION == 0x00010008u, "unexpected CBSS ABI version");
+_Static_assert(CBSS_ABI_VERSION == 0x0001000Cu, "unexpected CBSS ABI version");
 _Static_assert(CBSS_ROLE_SWITCH == 22, "unexpected switch role value");
 
 #include <assert.h>
@@ -31,7 +31,7 @@ _Static_assert(sizeof(CbssPointerData) == 56,
 _Static_assert(sizeof(CbssInputEvent) == 112,
                "CbssInputEvent ABI changed");
 _Static_assert(sizeof(CbssEvent) == 128, "CbssEvent ABI changed");
-_Static_assert(sizeof(CbssDispatchSummary) == 12,
+_Static_assert(sizeof(CbssDispatchSummary) == 16,
                "CbssDispatchSummary ABI changed");
 _Static_assert(sizeof(CbssScrollMetrics) == 36,
                "CbssScrollMetrics ABI changed");
@@ -52,7 +52,13 @@ typedef struct CallbackState {
   int focus_events;
   int text_events;
   int pen_events;
+  int stop_child_click;
 } CallbackState;
+
+typedef struct ObserverState {
+  uint32_t child;
+  int clicks;
+} ObserverState;
 
 typedef struct SurfaceState {
   uint64_t surface;
@@ -161,10 +167,23 @@ static uint8_t handle_event(
   CallbackState *state = user_data;
   assert(event->target != CBSS_NODE_NONE);
   if (event->kind == CBSS_EVENT_CLICK) {
+    assert((event->flags & CBSS_EVENT_BUBBLES) != 0);
+    assert((event->flags & CBSS_EVENT_CANCELABLE) != 0);
+    if (event->target == event->current_target) {
+      assert((event->flags & CBSS_EVENT_PHASE_TARGET) != 0);
+      assert((event->flags & CBSS_EVENT_PHASE_BUBBLE) == 0);
+    } else {
+      assert((event->flags & CBSS_EVENT_PHASE_TARGET) == 0);
+      assert((event->flags & CBSS_EVENT_PHASE_BUBBLE) != 0);
+    }
     if (event->current_target == state->child) {
       ++state->child_clicks;
       require_ok(context, cbss_node_set_text(
           context, state->label, "Clicked from C"));
+      if (state->stop_child_click) {
+        return CBSS_EVENT_OUTCOME_HANDLED |
+               CBSS_EVENT_OUTCOME_STOP_PROPAGATION;
+      }
     } else {
       ++state->root_clicks;
     }
@@ -189,6 +208,16 @@ static uint8_t handle_event(
   return 0;
 }
 
+static uint8_t observe_click(
+    CbssContext *context, const CbssEvent *event, void *user_data) {
+  ObserverState *state = user_data;
+  assert(context != NULL);
+  assert(event->kind == CBSS_EVENT_CLICK);
+  assert(event->current_target == state->child);
+  ++state->clicks;
+  return 0;
+}
+
 int main(void) {
   assert(cbss_abi_version() == CBSS_ABI_VERSION);
   assert(CBSS_PAINT_PUSH_LAYER == 11);
@@ -196,6 +225,34 @@ int main(void) {
   assert(CBSS_LAYER_SOURCE_OVER == 0);
   assert(CBSS_LAYER_COPY == 1);
   assert(CBSS_LAYER_ADDITIVE == 2);
+
+  uint8_t blob_source[] = {1, 2, 3, 4};
+  CbssBlob *blob = NULL;
+  assert(cbss_blob_create(
+      blob_source, sizeof(blob_source), "application/example", &blob) ==
+      CBSS_OK);
+  assert(blob != NULL);
+  blob_source[0] = 99;
+  assert(cbss_blob_size(blob) == 4);
+  char blob_mime[32];
+  assert(cbss_blob_mime_type(blob, blob_mime, sizeof(blob_mime)) == 19);
+  assert(strcmp(blob_mime, "application/example") == 0);
+  uint8_t blob_bytes[4] = {0};
+  uint32_t blob_read = 0;
+  assert(cbss_blob_read(blob, 1, blob_bytes, 2, &blob_read) == CBSS_OK);
+  assert(blob_read == 2);
+  assert(blob_bytes[0] == 2 && blob_bytes[1] == 3);
+  assert(cbss_blob_read(blob, 5, blob_bytes, 2, &blob_read) ==
+      CBSS_OUT_OF_RANGE);
+  assert(cbss_blob_retain(blob) == CBSS_OK);
+  cbss_blob_release(blob);
+  assert(cbss_blob_size(blob) == 4);
+  cbss_blob_release(blob);
+
+  assert(cbss_blob_create(NULL, 1, NULL, &blob) == CBSS_INVALID_ARGUMENT);
+  assert(cbss_blob_create(
+      blob_source, CBSS_MAX_EAGER_BLOB_BYTES + 1, NULL, &blob) ==
+      CBSS_OUT_OF_RANGE);
 
   CbssContext *context = cbss_context_create();
   CbssStyle *root_style = cbss_style_create();
@@ -513,6 +570,8 @@ int main(void) {
       .label = label,
       .child = child
   };
+  ObserverState observer_state = {.child = child};
+  CbssEventSubscription click_observer = 0;
   require_ok(context, cbss_node_set_event_handler(
       context, child, CBSS_EVENT_CLICK, handle_event, &callback_state));
   require_ok(context, cbss_node_set_event_handler(
@@ -531,6 +590,10 @@ int main(void) {
   require_ok(context, cbss_node_set_event_handler(
       context, child, CBSS_EVENT_PEN_BUTTON_DOWN,
       handle_event, &callback_state));
+  require_ok(context, cbss_node_subscribe_event(
+      context, child, CBSS_EVENT_CLICK, observe_click, &observer_state,
+      &click_observer));
+  assert(click_observer != 0);
 
   CbssPathSegment surface_path[] = {
       {.kind = CBSS_PATH_MOVE_TO, .endpoint_x = 1.0f, .endpoint_y = 1.0f},
@@ -881,8 +944,27 @@ int main(void) {
       context, &pointer_up, &dispatch));
   assert(callback_state.child_clicks == 1);
   assert(callback_state.root_clicks == 1);
+  assert(observer_state.clicks == 1);
   assert(dispatch.needs_compute);
   require_ok(context, cbss_context_recompute(context));
+
+  require_ok(context, cbss_context_unsubscribe_event(
+      context, click_observer));
+  assert(cbss_context_unsubscribe_event(
+      context, click_observer) == CBSS_INVALID_ARGUMENT);
+
+  callback_state.stop_child_click = 1;
+  CbssInputEvent direct_click = {.kind = CBSS_EVENT_CLICK};
+  require_ok(context, cbss_context_emit_event(
+      context, child, &direct_click, &dispatch));
+  assert(callback_state.child_clicks == 2);
+  assert(callback_state.root_clicks == 1);
+  assert(observer_state.clicks == 1);
+  assert(dispatch.handled);
+  assert((dispatch.outcome & CBSS_EVENT_OUTCOME_HANDLED) != 0);
+  assert((dispatch.outcome & CBSS_EVENT_OUTCOME_STOP_PROPAGATION) != 0);
+  assert((dispatch.outcome & CBSS_EVENT_OUTCOME_PREVENT_DEFAULT) == 0);
+  callback_state.stop_child_click = 0;
 
   CbssInputEvent text_input = {
       .kind = CBSS_EVENT_TEXT_INPUT,
@@ -891,7 +973,7 @@ int main(void) {
   };
   require_ok(context, cbss_context_dispatch_input(
       context, &text_input, &dispatch));
-  assert(callback_state.text_events == 4);
+  assert(callback_state.text_events == 2);
 
   CbssInputEvent tab = {
       .kind = CBSS_EVENT_KEY_DOWN,

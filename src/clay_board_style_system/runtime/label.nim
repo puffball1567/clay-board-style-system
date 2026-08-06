@@ -103,10 +103,10 @@ proc label*(
 
   let label = result
 
-  root.events.addInternalEventHandler(label.container.id, iekClick, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(label.container.id, iekClick, proc(event: DispatchResult): EventOutcome =
     label.activateTarget()
   )
-  root.events.addInternalEventHandler(label.container.id, iekKeyDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(label.container.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
     if label.state.disabled:
       return true
     if event.event.key.isSome:

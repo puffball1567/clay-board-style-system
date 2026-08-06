@@ -116,7 +116,7 @@ proc `onChange=`*(menu: CommandMenuHandle; handler: EventHandler) =
   menu.container.onChange = handler
 
 proc commandMenuItemClickHandler(menu: CommandMenuHandle; itemIndex: int): EventHandler =
-  proc(event: DispatchResult): bool =
+  proc(event: DispatchResult): EventOutcome =
     if menu.state.disabled or not menu.state.open:
       return true
     if itemIndex < 0 or itemIndex >= menu.state.items.len:
@@ -155,7 +155,7 @@ proc commandMenu*(
   for index, node in menu.itemNodes:
     root.events.addInternalEventHandler(node.id, iekClick, commandMenuItemClickHandler(menu, index))
 
-  root.events.addInternalEventHandler(menu.container.id, iekKeyDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(menu.container.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
     if menu.state.disabled or not menu.state.open:
       return true
     if event.event.key.isNone:

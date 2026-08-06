@@ -2,6 +2,7 @@ import std/options
 
 import ../core/[color, declaration, node, style_value]
 import ../input/events
+import ./form
 import ./ui_root
 
 type
@@ -29,6 +30,9 @@ type
   RadioHandle* = object
     state*: RadioState
     radioSet*: RadioSet
+
+proc register*(form: FormHandle; name: string; radio: RadioHandle) =
+  form.registerField(radio.state.container, name, ffCheckable)
 
 proc initRadioSet*(selectedValue = ""): RadioSet =
   RadioSet(selectedValue: selectedValue, items: @[])
@@ -182,19 +186,19 @@ proc radio*(
     radio.setDisabled(ownDisabled or disabled)
   )
 
-  root.events.addInternalEventHandler(radio.container.id, iekClick, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(radio.container.id, iekClick, proc(event: DispatchResult): EventOutcome =
     if radio.state.disabled:
       return true
     radio.select()
     false
   )
-  root.events.addInternalEventHandler(radio.container.id, iekPointerDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(radio.container.id, iekPointerDown, proc(event: DispatchResult): EventOutcome =
     if radio.state.disabled:
       return true
     radio.select()
     true
   )
-  root.events.addInternalEventHandler(radio.container.id, iekKeyDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(radio.container.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
     if radio.state.disabled:
       return true
     if event.event.key.isSome:

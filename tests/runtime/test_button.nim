@@ -9,7 +9,7 @@ suite "button component":
     let run = ui.button("Run")
     var clicked = false
 
-    run.onClick = proc(event: DispatchResult): bool =
+    run.onClick = proc(event: DispatchResult): EventOutcome =
       clicked = true
       true
 
@@ -22,7 +22,7 @@ suite "button component":
     let run = ui.button(ButtonParams(label: "Run", disabled: true))
     var clicked = false
 
-    run.onClick = proc(event: DispatchResult): bool =
+    run.onClick = proc(event: DispatchResult): EventOutcome =
       clicked = true
       true
 
@@ -49,7 +49,7 @@ suite "button component":
     let run = ui.button("Run")
     var clicked = 0
 
-    run.onClick = proc(event: DispatchResult): bool =
+    run.onClick = proc(event: DispatchResult): EventOutcome =
       inc clicked
       true
 
@@ -64,11 +64,11 @@ suite "button component":
     var clicked = false
     var keySeen = false
 
-    run.onClick = proc(event: DispatchResult): bool =
+    run.onClick = proc(event: DispatchResult): EventOutcome =
       clicked = true
       true
 
-    run.container.onKeyDown = proc(event: DispatchResult): bool =
+    run.container.onKeyDown = proc(event: DispatchResult): EventOutcome =
       keySeen = true
       true
 

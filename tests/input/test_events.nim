@@ -21,7 +21,7 @@ suite "input events":
     let button = NodeId(1)
     var clicks = 0
     var registry = initEventRegistry()
-    registry.onClick(button, proc(event: DispatchResult): bool =
+    registry.onClick(button, proc(event: DispatchResult): EventOutcome =
       inc clicks
       true
     )
@@ -40,11 +40,11 @@ suite "input events":
     var calls: seq[string] = @[]
     var registry = initEventRegistry()
 
-    registry.setEventHandler(button, iekClick, proc(event: DispatchResult): bool =
+    registry.setEventHandler(button, iekClick, proc(event: DispatchResult): EventOutcome =
       calls.add "first"
       true
     )
-    registry.setEventHandler(button, iekClick, proc(event: DispatchResult): bool =
+    registry.setEventHandler(button, iekClick, proc(event: DispatchResult): EventOutcome =
       calls.add "second"
       true
     )
@@ -64,11 +64,11 @@ suite "input events":
     var calls: seq[string] = @[]
     var registry = initEventRegistry()
 
-    registry.addInternalEventHandler(button, iekClick, proc(event: DispatchResult): bool =
+    registry.addInternalEventHandler(button, iekClick, proc(event: DispatchResult): EventOutcome =
       calls.add "internal"
       false
     )
-    registry.setEventHandler(button, iekClick, proc(event: DispatchResult): bool =
+    registry.setEventHandler(button, iekClick, proc(event: DispatchResult): EventOutcome =
       calls.add "user"
       true
     )
@@ -80,7 +80,35 @@ suite "input events":
     ))
 
     check handled
-    check calls == @["internal", "user"]
+    check calls == @["user", "internal"]
+    check registry.bindings.len == 2
+
+  test "public slot replacement preserves additive observers":
+    let button = NodeId(1)
+    var calls: seq[string] = @[]
+    var registry = initEventRegistry()
+
+    discard registry.subscribe(button, iekClick,
+      proc(event: DispatchResult): EventOutcome =
+        calls.add "observer"
+        ignoredEvent()
+    )
+    registry.setEventHandler(button, iekClick,
+      proc(event: DispatchResult): EventOutcome =
+        calls.add "first-public"
+        ignoredEvent()
+    )
+    registry.setEventHandler(button, iekClick,
+      proc(event: DispatchResult): EventOutcome =
+        calls.add "second-public"
+        handledEvent()
+    )
+
+    check registry.handle(DispatchResult(
+      target: some(button),
+      event: clickEvent(vec2(0, 0))
+    ))
+    check calls == @["second-public", "observer"]
     check registry.bindings.len == 2
 
   test "registry slot procs remain additive listeners":
@@ -88,11 +116,11 @@ suite "input events":
     var calls: seq[string] = @[]
     var registry = initEventRegistry()
 
-    registry.onClick(button, proc(event: DispatchResult): bool =
+    registry.onClick(button, proc(event: DispatchResult): EventOutcome =
       calls.add "first"
       false
     )
-    registry.onClick(button, proc(event: DispatchResult): bool =
+    registry.onClick(button, proc(event: DispatchResult): EventOutcome =
       calls.add "second"
       true
     )
@@ -104,7 +132,7 @@ suite "input events":
     ))
 
     check handled
-    check calls == @["second"]
+    check calls == @["first", "second"]
     check registry.bindings.len == 2
 
   test "onClick can dispatch to an external store":
@@ -125,7 +153,7 @@ suite "input events":
     let button = NodeId(2)
     var store = Store(actions: @[])
     var registry = initEventRegistry()
-    registry.onClick(button, proc(event: DispatchResult): bool =
+    registry.onClick(button, proc(event: DispatchResult): EventOutcome =
       store.dispatch(Action(kind: akSaveClicked, node: event.target.get))
       true
     )
@@ -148,9 +176,11 @@ suite "input events":
     var registry = initEventRegistry()
     var clicked = false
 
-    registry.onClick(button, proc(event: DispatchResult): bool =
+    registry.onClick(button, proc(event: DispatchResult): EventOutcome =
       clicked = true
-      check event.target == some(button)
+      check event.target == some(label)
+      check event.currentTarget == some(button)
+      check event.phase == epBubble
       check event.local.isNone
       true
     )
@@ -163,6 +193,181 @@ suite "input events":
 
     check handled
     check clicked
+
+  test "preventDefault suppresses intrinsic action without stopping bubbling":
+    var tree = initTree()
+    let parent = tree.addBox(id = "parent")
+    let control = tree.addBox(parent = some(parent), id = "control")
+    var registry = initEventRegistry()
+    var calls: seq[string] = @[]
+
+    registry.onClick(control, proc(event: DispatchResult): EventOutcome =
+      calls.add "user"
+      preventedEvent()
+    )
+    registry.onClick(parent, proc(event: DispatchResult): EventOutcome =
+      calls.add "parent"
+      ignoredEvent()
+    )
+    registry.addInternalEventHandler(control, iekClick,
+      proc(event: DispatchResult): EventOutcome =
+        calls.add "default"
+        handledEvent()
+    )
+    registry.addInternalEventHandler(parent, iekClick,
+      proc(event: DispatchResult): EventOutcome =
+        calls.add "parent-default"
+        handledEvent()
+    )
+
+    let outcome = registry.dispatchEvent(tree, DispatchResult(
+      target: some(control),
+      local: some(vec2(2, 3)),
+      event: clickEvent(vec2(12, 13))
+    ))
+
+    check outcome.handled
+    check outcome.preventDefault
+    check not outcome.stopPropagation
+    check calls == @["user", "parent"]
+
+  test "stopPropagation retains the target default action":
+    var tree = initTree()
+    let parent = tree.addBox(id = "parent")
+    let control = tree.addBox(parent = some(parent), id = "control")
+    var registry = initEventRegistry()
+    var calls: seq[string] = @[]
+
+    registry.onClick(control, proc(event: DispatchResult): EventOutcome =
+      calls.add "user"
+      stoppedEvent()
+    )
+    registry.onClick(parent, proc(event: DispatchResult): EventOutcome =
+      calls.add "parent"
+      ignoredEvent()
+    )
+    registry.addInternalEventHandler(control, iekClick,
+      proc(event: DispatchResult): EventOutcome =
+        calls.add "default"
+        handledEvent()
+    )
+
+    let outcome = registry.dispatchEvent(tree, DispatchResult(
+      target: some(control),
+      event: clickEvent(vec2(1, 1))
+    ))
+
+    check outcome.handled
+    check outcome.stopPropagation
+    check not outcome.preventDefault
+    check calls == @["user", "default"]
+
+  test "non-bubbling events remain on the original target":
+    var tree = initTree()
+    let parent = tree.addBox(id = "parent")
+    let child = tree.addBox(parent = some(parent), id = "child")
+    var registry = initEventRegistry()
+    var calls: seq[string] = @[]
+
+    registry.onFocus(child, proc(event: DispatchResult): EventOutcome =
+      calls.add "child"
+      check event.target == some(child)
+      check event.currentTarget == some(child)
+      check event.phase == epTarget
+      handledEvent()
+    )
+    registry.onFocus(parent, proc(event: DispatchResult): EventOutcome =
+      calls.add "parent"
+      handledEvent()
+    )
+
+    check registry.handle(tree, DispatchResult(
+      target: some(child),
+      event: event(iekFocus)
+    ))
+    check calls == @["child"]
+
+  test "subscriptions can be removed without disturbing other listeners":
+    let button = NodeId(1)
+    var registry = initEventRegistry()
+    var calls: seq[string] = @[]
+    let removed = registry.subscribe(button, iekClick,
+      proc(event: DispatchResult): EventOutcome =
+        calls.add "removed"
+        handledEvent()
+    )
+    discard registry.subscribe(button, iekClick,
+      proc(event: DispatchResult): EventOutcome =
+        calls.add "kept"
+        handledEvent()
+    )
+
+    check registry.removeEventHandler(removed)
+    check not registry.removeEventHandler(removed)
+    check registry.handle(DispatchResult(
+      target: some(button),
+      event: clickEvent(vec2(0, 0))
+    ))
+    check calls == @["kept"]
+
+  test "removal during dispatch does not shift or invoke stale bindings":
+    let button = NodeId(1)
+    var registry = initEventRegistry()
+    let registryPtr = addr registry
+    var removed: EventSubscription
+    var calls: seq[string] = @[]
+
+    discard registry.subscribe(button, iekClick,
+      proc(event: DispatchResult): EventOutcome =
+        calls.add "first"
+        check registryPtr[].removeEventHandler(removed)
+        ignoredEvent()
+    )
+    removed = registry.subscribe(button, iekClick,
+      proc(event: DispatchResult): EventOutcome =
+        calls.add "removed"
+        handledEvent()
+    )
+    discard registry.subscribe(button, iekClick,
+      proc(event: DispatchResult): EventOutcome =
+        calls.add "last"
+        handledEvent()
+    )
+
+    check registry.handle(DispatchResult(
+      target: some(button),
+      event: clickEvent(vec2(0, 0))
+    ))
+    check calls == @["first", "last"]
+    check registry.bindings.len == 2
+
+  test "repeated dispatch-time subscription removal remains bounded":
+    let button = NodeId(1)
+    var registry = initEventRegistry()
+    let registryPtr = addr registry
+    var stableCalls = 0
+
+    discard registry.subscribe(button, iekClick,
+      proc(event: DispatchResult): EventOutcome =
+        inc stableCalls
+        ignoredEvent()
+    )
+
+    for iteration in 0 ..< 1_000:
+      var transient: EventSubscription
+      transient = registry.subscribe(button, iekClick,
+        proc(event: DispatchResult): EventOutcome =
+          check registryPtr[].removeEventHandler(transient)
+          handledEvent()
+      )
+
+      check registry.handle(DispatchResult(
+        target: some(button),
+        event: clickEvent(vec2(float32(iteration mod 10), 0))
+      ))
+      check registry.bindings.len == 1
+
+    check stableCalls == 1_000
 
   test "unhandled event returns false":
     var registry = initEventRegistry()
@@ -178,7 +383,7 @@ suite "input events":
     var registry = initEventRegistry()
     var sawShortcut = false
 
-    registry.onKeyDown(NodeId(1), proc(event: DispatchResult): bool =
+    registry.onKeyDown(NodeId(1), proc(event: DispatchResult): EventOutcome =
       check event.event.kind == iekKeyDown
       check event.event.key == some("s")
       check event.event.ctrlKey
@@ -201,7 +406,7 @@ suite "input events":
   test "onChange dispatches standard change events":
     var registry = initEventRegistry()
     var changed = ""
-    registry.onChange(NodeId(1), proc(event: DispatchResult): bool =
+    registry.onChange(NodeId(1), proc(event: DispatchResult): EventOutcome =
       if event.event.text.isSome:
         changed = event.event.text.get
       true
@@ -219,7 +424,7 @@ suite "input events":
   test "onInput dispatches standard input events":
     var registry = initEventRegistry()
     var value = ""
-    registry.onInput(NodeId(1), proc(event: DispatchResult): bool =
+    registry.onInput(NodeId(1), proc(event: DispatchResult): EventOutcome =
       if event.event.text.isSome:
         value = event.event.text.get
       true
@@ -234,11 +439,11 @@ suite "input events":
     check handled
     check value == "typing"
 
-  test "text input drives before input input and change handlers":
+  test "raw text input drives only pre-mutation handlers":
     var registry = initEventRegistry()
     let node = NodeId(1)
     var seen: seq[InputEventKind] = @[]
-    let handler = proc(event: DispatchResult): bool =
+    let handler = proc(event: DispatchResult): EventOutcome =
       seen.add event.event.kind
       false
 
@@ -252,12 +457,12 @@ suite "input events":
       local: none(Vec2),
       event: textInputEvent("a")
     ))
-    check seen == @[iekBeforeInput, iekTextInput, iekInput, iekChange]
+    check seen == @[iekBeforeInput, iekTextInput]
 
   test "mouse slots are synthesized from pointer events":
     var registry = initEventRegistry()
     var received = 0
-    registry.onMouseDown(NodeId(1), proc(event: DispatchResult): bool =
+    registry.onMouseDown(NodeId(1), proc(event: DispatchResult): EventOutcome =
       check event.event.kind == iekMouseDown
       inc received
       true
@@ -276,12 +481,12 @@ suite "input events":
     var registry = initEventRegistry()
     var wheeled = false
     var scrolled = false
-    registry.onWheel(NodeId(1), proc(event: DispatchResult): bool =
+    registry.onWheel(NodeId(1), proc(event: DispatchResult): EventOutcome =
       check event.event.kind == iekWheel
       wheeled = true
       false
     )
-    registry.onScroll(NodeId(1), proc(event: DispatchResult): bool =
+    registry.onScroll(NodeId(1), proc(event: DispatchResult): EventOutcome =
       scrolled = true
       true
     )
@@ -317,7 +522,7 @@ suite "input events":
     var registry = initEventRegistry()
     var ended = false
 
-    registry.onScrollEnd(panel, proc(event: DispatchResult): bool =
+    registry.onScrollEnd(panel, proc(event: DispatchResult): EventOutcome =
       check event.event.kind == iekScrollEnd
       ended = true
       true
@@ -337,7 +542,7 @@ suite "input events":
   test "component events can be emitted explicitly":
     var registry = initEventRegistry()
     var submitted = false
-    registry.onSubmit(NodeId(1), proc(event: DispatchResult): bool =
+    registry.onSubmit(NodeId(1), proc(event: DispatchResult): EventOutcome =
       check event.event.kind == iekSubmit
       submitted = true
       true
@@ -361,7 +566,7 @@ suite "input events":
     var pasted = ""
     var composition = ""
 
-    let collect = proc(event: DispatchResult): bool =
+    let collect = proc(event: DispatchResult): EventOutcome =
       seen.add event.event.kind
       if event.event.kind == iekPaste and event.event.text.isSome:
         pasted = event.event.text.get
@@ -426,7 +631,7 @@ suite "input events":
     let other = NodeId(2)
     var seen = false
 
-    registry.onTextInput(other, proc(event: DispatchResult): bool =
+    registry.onTextInput(other, proc(event: DispatchResult): EventOutcome =
       seen = true
       false
     )
@@ -442,7 +647,7 @@ suite "input events":
   test "event dispatch modes expose non-backend event requirements":
     var registry = initEventRegistry()
     let node = NodeId(1)
-    let handler = proc(event: DispatchResult): bool = true
+    let handler = proc(event: DispatchResult): EventOutcome = true
 
     registry.onClick(node, handler)
     registry.onSubmit(node, handler)
@@ -454,6 +659,31 @@ suite "input events":
     check dispatchMode(iekResize) == edmBackendInput
     check registry.bindingsNeedingComponentDispatch().len == 1
     check registry.bindingsNeedingComponentDispatch()[0].kind == iekSubmit
+
+  test "event definitions are complete and expose stable ABI metadata":
+    var abiCodes: seq[uint32]
+    for kind in InputEventKind:
+      let definition = kind.eventDefinition
+      check definition.abiCode == uint32(ord(kind))
+      check definition.abiCode notin abiCodes
+      check definition.aliasCount <= uint8(definition.aliases.len)
+      abiCodes.add definition.abiCode
+
+    check iekPointerDown.eventDefinition.producer == edmBackendInput
+    check iekClick.eventDefinition.producer == edmCoreSynthetic
+    check iekSubmit.eventDefinition.producer == edmComponentDispatch
+    check not iekPointerEnter.eventDefinition.bubbles
+    check not iekResize.eventDefinition.cancelable
+    check iekPointerMove.eventDefinition.payload ==
+      {epfPosition, epfButton, epfPointer}
+    check iekWheel.eventDefinition.payload ==
+      {epfPosition, epfDelta, epfPointer}
+    check iekTextInput.eventDefinition.payload ==
+      {epfText, epfFocusOwnership}
+    check iekPointerDown.eventDefinition.aliasCount == 2
+    check iekPointerDown.eventDefinition.aliases ==
+      [iekMouseDown, iekPointerDown]
+    check iekSubmit.eventDefinition.aliasCount == 0
 
   test "processInput synthesizes enter leave and focus events":
     var tree = initTree()
@@ -469,12 +699,12 @@ suite "input events":
     var entered = false
     var focused = false
 
-    registry.onMouseEnter(button, proc(event: DispatchResult): bool =
+    registry.onMouseEnter(button, proc(event: DispatchResult): EventOutcome =
       check event.event.kind == iekMouseEnter
       entered = true
       true
     )
-    registry.onFocus(button, proc(event: DispatchResult): bool =
+    registry.onFocus(button, proc(event: DispatchResult): EventOutcome =
       focused = true
       true
     )
@@ -510,15 +740,15 @@ suite "input events":
     var registry = initEventRegistry()
     var seen: seq[InputEventKind] = @[]
 
-    registry.onFocus(first, proc(event: DispatchResult): bool =
+    registry.onFocus(first, proc(event: DispatchResult): EventOutcome =
       seen.add event.event.kind
       false
     )
-    registry.onBlur(first, proc(event: DispatchResult): bool =
+    registry.onBlur(first, proc(event: DispatchResult): EventOutcome =
       seen.add event.event.kind
       false
     )
-    registry.onFocus(second, proc(event: DispatchResult): bool =
+    registry.onFocus(second, proc(event: DispatchResult): EventOutcome =
       seen.add event.event.kind
       false
     )
@@ -545,11 +775,11 @@ suite "input events":
     var contextMenu = false
     var doubleClicked = false
 
-    registry.onContextMenu(button, proc(event: DispatchResult): bool =
+    registry.onContextMenu(button, proc(event: DispatchResult): EventOutcome =
       contextMenu = true
       true
     )
-    registry.onDoubleClick(button, proc(event: DispatchResult): bool =
+    registry.onDoubleClick(button, proc(event: DispatchResult): EventOutcome =
       doubleClicked = true
       true
     )
@@ -581,12 +811,12 @@ suite "input events":
     var seen: seq[InputEventKind] = @[]
     var dragLocal = none(Vec2)
 
-    let collect = proc(event: DispatchResult): bool =
+    let collect = proc(event: DispatchResult): EventOutcome =
       seen.add event.event.kind
       false
 
     registry.onDragStart(source, collect)
-    registry.onDrag(source, proc(event: DispatchResult): bool =
+    registry.onDrag(source, proc(event: DispatchResult): EventOutcome =
       seen.add event.event.kind
       dragLocal = event.local
       false
@@ -667,16 +897,16 @@ suite "input events":
     var registry = initEventRegistry()
     var seen: seq[InputEventKind] = @[]
 
-    registry.onGotPointerCapture(captured, proc(event: DispatchResult): bool =
+    registry.onGotPointerCapture(captured, proc(event: DispatchResult): EventOutcome =
       seen.add event.event.kind
       true
     )
-    registry.onPointerMove(captured, proc(event: DispatchResult): bool =
+    registry.onPointerMove(captured, proc(event: DispatchResult): EventOutcome =
       check event.target == some(captured)
       seen.add event.event.kind
       true
     )
-    registry.onLostPointerCapture(captured, proc(event: DispatchResult): bool =
+    registry.onLostPointerCapture(captured, proc(event: DispatchResult): EventOutcome =
       seen.add event.event.kind
       true
     )
@@ -705,7 +935,7 @@ suite "input events":
     var registry = initEventRegistry()
     var seen: seq[InputEventKind] = @[]
 
-    let collect = proc(event: DispatchResult): bool =
+    let collect = proc(event: DispatchResult): EventOutcome =
       seen.add event.event.kind
       false
 
@@ -735,12 +965,12 @@ suite "input events":
     var pointerSamples: seq[PointerData]
     var touchSamples: seq[PointerData]
 
-    registry.onPointerMove(target, proc(event: DispatchResult): bool =
+    registry.onPointerMove(target, proc(event: DispatchResult): EventOutcome =
       check event.event.pointer.isSome
       pointerSamples.add event.event.pointer.get
       false
     )
-    registry.onTouchMove(target, proc(event: DispatchResult): bool =
+    registry.onTouchMove(target, proc(event: DispatchResult): EventOutcome =
       check event.event.pointer.isSome
       touchSamples.add event.event.pointer.get
       false
@@ -777,7 +1007,7 @@ suite "input events":
   test "js and ts style event slots can be registered":
     var registry = initEventRegistry()
     let node = NodeId(1)
-    let handler = proc(event: DispatchResult): bool = true
+    let handler = proc(event: DispatchResult): EventOutcome = true
 
     template attach(registrar: untyped) =
       registry.registrar(node, handler)
@@ -891,7 +1121,7 @@ suite "input events":
     var state = initInteractionState()
     var clicks = 0
     var registry = initEventRegistry()
-    registry.onClick(button, proc(event: DispatchResult): bool =
+    registry.onClick(button, proc(event: DispatchResult): EventOutcome =
       inc clicks
       true
     )
@@ -927,7 +1157,7 @@ suite "input events":
     var state = initInteractionState()
     var registry = initEventRegistry()
     var clicks = 0
-    registry.onClick(button, proc(event: DispatchResult): bool =
+    registry.onClick(button, proc(event: DispatchResult): EventOutcome =
       inc clicks
       true
     )

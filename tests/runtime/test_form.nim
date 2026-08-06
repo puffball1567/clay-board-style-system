@@ -8,7 +8,7 @@ suite "form component":
     let login = ui.form()
     var submitted = false
 
-    login.onSubmit = proc(event: DispatchResult): bool =
+    login.onSubmit = proc(event: DispatchResult): EventOutcome =
       submitted = true
       false
 
@@ -22,11 +22,11 @@ suite "form component":
     var submitted = false
     var invalid = false
 
-    login.onSubmit = proc(event: DispatchResult): bool =
+    login.onSubmit = proc(event: DispatchResult): EventOutcome =
       submitted = true
       false
 
-    login.onInvalid = proc(event: DispatchResult): bool =
+    login.onInvalid = proc(event: DispatchResult): EventOutcome =
       invalid = true
       false
 
@@ -41,7 +41,7 @@ suite "form component":
     let login = ui.form()
     var reset = false
 
-    login.onReset = proc(event: DispatchResult): bool =
+    login.onReset = proc(event: DispatchResult): EventOutcome =
       reset = true
       false
 
@@ -54,15 +54,15 @@ suite "form component":
     let login = ui.form(disabled = true, valid = false)
     var seen = false
 
-    login.onSubmit = proc(event: DispatchResult): bool =
+    login.onSubmit = proc(event: DispatchResult): EventOutcome =
       seen = true
       false
 
-    login.onInvalid = proc(event: DispatchResult): bool =
+    login.onInvalid = proc(event: DispatchResult): EventOutcome =
       seen = true
       false
 
-    login.onReset = proc(event: DispatchResult): bool =
+    login.onReset = proc(event: DispatchResult): EventOutcome =
       seen = true
       false
 
@@ -85,3 +85,91 @@ suite "form component":
     check login.disabled()
     check not login.submit()
     check esDisabled in ui.tree.nodes[login.container.nodeId.nodeIndex].states
+
+  test "collectData snapshots ordered descendant control values":
+    let ui = initUiRoot()
+    let login = ui.form()
+    ui.pushParent(login.container)
+    let username = ui.textInput(TextInputParams(value: "Ada"))
+    let notes = ui.textArea(TextAreaParams(value: "First line"))
+    let role = ui.selectBox(
+      [
+        SelectOption(label: "Reader", value: "reader"),
+        SelectOption(label: "Editor", value: "editor")
+      ],
+      selectedValue = "editor"
+    )
+    let remember = ui.checkbox(CheckboxParams(
+      label: "Remember",
+      checked: true
+    ))
+    let disabled = ui.textInput(TextInputParams(
+      value: "not submitted",
+      disabled: true
+    ))
+    ui.popParent()
+
+    login.register("account", username)
+    login.register("notes", notes)
+    login.register("role", role)
+    login.register("remember", remember)
+    login.register("ignored", disabled)
+
+    let collection = login.collectData()
+
+    check collection.diagnostics.len == 0
+    check collection.data.len == 4
+    check collection.data[0].name == "account"
+    check collection.data[0].text == "Ada"
+    check collection.data[1].text == "First line"
+    check collection.data[2].text == "editor"
+    check collection.data[3].text == "true"
+
+    username.setValue("Grace")
+    check collection.data[0].text == "Ada"
+    check login.collectData().data[0].text == "Grace"
+
+  test "checkable fields submit only their checked value":
+    let ui = initUiRoot()
+    let preferences = ui.form()
+    let choices = initRadioSet("compact")
+    ui.pushParent(preferences.container)
+    let compact = ui.radio(choices, "Compact", "compact")
+    let spacious = ui.radio(choices, "Spacious", "spacious")
+    let unchecked = ui.checkbox("Optional")
+    ui.popParent()
+
+    preferences.register("density", compact)
+    preferences.register("density", spacious)
+    preferences.register("optional", unchecked)
+
+    let initial = preferences.collectData()
+    check initial.data.len == 1
+    check initial.data[0].name == "density"
+    check initial.data[0].text == "compact"
+
+    spacious.select(emitEvents = false)
+    let changed = preferences.collectData()
+    check changed.data.len == 1
+    check changed.data[0].text == "spacious"
+
+  test "registration rejects unrelated nodes and reports disposed fields":
+    let ui = initUiRoot()
+    let login = ui.form()
+    let outside = ui.textInput(TextInputParams(value: "outside"))
+    ui.pushParent(login.container)
+    let temporary = ui.textInput(TextInputParams(value: "temporary"))
+    ui.popParent()
+
+    expect ValueError:
+      login.register("outside", outside)
+
+    login.register("temporary", temporary)
+    var interaction = initInteractionState()
+    check ui.disposeSubtree(temporary.container, interaction)
+    let collection = login.collectData()
+
+    check collection.data.isEmpty
+    check collection.diagnostics.len == 1
+    check collection.diagnostics[0].kind == fddDisposedField
+    check collection.diagnostics[0].name == "temporary"
