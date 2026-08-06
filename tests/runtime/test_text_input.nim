@@ -81,11 +81,11 @@ suite "text input component":
     var inputValue = ""
     var changedValue = ""
 
-    input.container.onInput = proc(event: DispatchResult): bool =
+    input.container.onInput = proc(event: DispatchResult): EventOutcome =
       inputValue = input.value()
       false
 
-    input.container.onChange = proc(event: DispatchResult): bool =
+    input.container.onChange = proc(event: DispatchResult): EventOutcome =
       changedValue = input.value()
       false
 
@@ -96,16 +96,36 @@ suite "text input component":
     check changedValue == "Ab"
     check ui.tree.nodes[input.textNode.nodeId.nodeIndex].text == "Ab"
 
+  test "preventing before input suppresses mutation and value events":
+    let ui = initUiRoot()
+    let input = ui.textInput(TextInputParams(value: "A"))
+    var valueEvents = 0
+
+    input.container.onBeforeInput = proc(
+        event: DispatchResult
+    ): EventOutcome =
+      preventedEvent()
+    input.container.onInput = proc(event: DispatchResult): EventOutcome =
+      inc valueEvents
+      ignoredEvent()
+    input.container.onChange = proc(event: DispatchResult): EventOutcome =
+      inc valueEvents
+      ignoredEvent()
+
+    check input.container.emit(textInputEvent("b"))
+    check input.value() == "A"
+    check valueEvents == 0
+
   test "backspace updates value and emits value events":
     let ui = initUiRoot()
     let input = ui.textInput(TextInputParams(value: "abc"))
     var seen: seq[string] = @[]
 
-    input.container.onInput = proc(event: DispatchResult): bool =
+    input.container.onInput = proc(event: DispatchResult): EventOutcome =
       seen.add input.value()
       false
 
-    input.container.onChange = proc(event: DispatchResult): bool =
+    input.container.onChange = proc(event: DispatchResult): EventOutcome =
       seen.add input.value()
       false
 
@@ -121,11 +141,11 @@ suite "text input component":
     var inputEvents = 0
     var changeEvents = 0
 
-    input.container.onInput = proc(event: DispatchResult): bool =
+    input.container.onInput = proc(event: DispatchResult): EventOutcome =
       inc inputEvents
       false
 
-    input.container.onChange = proc(event: DispatchResult): bool =
+    input.container.onChange = proc(event: DispatchResult): EventOutcome =
       inc changeEvents
       false
 
@@ -234,7 +254,7 @@ suite "text input component":
     let input = ui.textInput(TextInputParams(value: "hello"))
     var changed = ""
 
-    input.container.onChange = proc(event: DispatchResult): bool =
+    input.container.onChange = proc(event: DispatchResult): EventOutcome =
       changed = input.value()
       false
 
@@ -363,7 +383,7 @@ suite "text input component":
         ])
       )
       let input = result.input
-      input.container.onInput = proc(event: DispatchResult): bool =
+      input.container.onInput = proc(event: DispatchResult): EventOutcome =
         if event.event.text.isSome:
           value = event.event.text.get
         false
@@ -415,8 +435,8 @@ suite "text input component":
     let input = ui.textInput(TextInputParams(value: "copy me"))
     var copied = ""
 
-    input.container.onCopy = proc(event: DispatchResult): bool =
-      copied = input.takeClipboardText()
+    input.container.onCopy = proc(event: DispatchResult): EventOutcome =
+      copied = input.selectedText()
       false
 
     discard input.container.emit(keyDownEvent("a", ctrlKey = true))
@@ -424,6 +444,7 @@ suite "text input component":
 
     discard input.container.emit(copyEvent())
     check copied == "copy me"
+    check input.takeClipboardText() == "copy me"
     check input.value() == "copy me"
 
   test "cut removes selected text and emits value events":
@@ -432,11 +453,11 @@ suite "text input component":
     var clipboard = ""
     var changed = ""
 
-    input.container.onCut = proc(event: DispatchResult): bool =
-      clipboard = input.takeClipboardText()
+    input.container.onCut = proc(event: DispatchResult): EventOutcome =
+      clipboard = input.selectedText()
       false
 
-    input.container.onChange = proc(event: DispatchResult): bool =
+    input.container.onChange = proc(event: DispatchResult): EventOutcome =
       changed = input.value()
       false
 
@@ -444,9 +465,22 @@ suite "text input component":
     discard input.container.emit(cutEvent())
 
     check clipboard == "this"
+    check input.takeClipboardText() == "this"
     check input.value() == "cut "
     check changed == "cut "
     check input.selectedText() == ""
+
+  test "preventing cut keeps the selection and skips clipboard default":
+    let ui = initUiRoot()
+    let input = ui.textInput(TextInputParams(value: "keep this"))
+    input.setSelection(5, 9)
+    input.container.onCut = proc(event: DispatchResult): EventOutcome =
+      preventedEvent()
+
+    check input.container.emit(cutEvent())
+    check input.value() == "keep this"
+    check input.selectedText() == "this"
+    check input.takeClipboardText() == ""
 
   test "cut clears fallback and composition state":
     let ui = initUiRoot()
@@ -468,7 +502,7 @@ suite "text input component":
     let input = ui.textInput(TextInputParams(value: "abc"))
     var selected = false
 
-    input.container.onSelect = proc(event: DispatchResult): bool =
+    input.container.onSelect = proc(event: DispatchResult): EventOutcome =
       selected = true
       false
 
@@ -770,11 +804,11 @@ suite "text input component":
     var copied = ""
     var changed = false
 
-    input.container.onCopy = proc(event: DispatchResult): bool =
-      copied = input.takeClipboardText()
+    input.container.onCopy = proc(event: DispatchResult): EventOutcome =
+      copied = input.selectedText()
       false
 
-    input.container.onChange = proc(event: DispatchResult): bool =
+    input.container.onChange = proc(event: DispatchResult): EventOutcome =
       changed = true
       false
 

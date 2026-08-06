@@ -501,3 +501,76 @@ dynamic Rust/C++ extension loader, or parallel non-Nim plugin registry.
 D20 remains unchanged: CBSS's versioned C ABI is the boundary through which an
 application written in another language may consume the CBSS runtime. It is
 not the authoring and distribution model for the CBSS extension ecosystem.
+
+## D22 — Events are an open runtime contract, not a widget-private protocol (Adopted)
+
+**Context.** D17 assigns reusable UI mechanics to CBSS and application meaning
+to callbacks. D21 allows independent Nim packages to provide components,
+charts, controls, and design systems. Those decisions do not hold if an
+internal widget handler can silently suppress the public handler, bubbling
+replaces the original target, a Boolean conflates default prevention with
+propagation, or additive listeners cannot be removed independently.
+
+The relevant distinction from a QML-style system is architectural rather than
+syntactic. QML has signals and extension mechanisms; CBSS's decision is that its
+declaration syntax will not also become the sole component object model, event
+protocol, and extension ABI. Ordinary Nim types and packages remain first-class
+on both sides of the runtime boundary.
+
+**Decision.** Version 0.4 completes D9 and exposes one stable event contract to
+Nim components and C ABI consumers:
+
+- dispatch separates invariant preconditions, public handlers and observers,
+  and preventable intrinsic default actions;
+- event outcomes distinguish handling, propagation stopping, and default
+  prevention;
+- original `target`, traversal `currentTarget`, phase, bubbling, cancelability,
+  and local-coordinate validity are represented explicitly;
+- public property assignment remains replacement-oriented, while additive
+  listeners use owned, removable subscriptions with automatic disposal;
+- standard event names remain closed and predictable, while library-specific
+  semantic output uses typed Nim signals or callbacks rather than string event
+  names or core-enum growth;
+- dispatch-time UI services avoid strong `UiRoot` captures in the documented
+  ARC-safe path; and
+- event metadata, generated API surfaces, hot-path lookup, and observable
+  semantics remain aligned across Nim and the C ABI.
+
+CBSS controls may implement focus, disabled behavior, keyboard activation,
+selection, expansion, and similar UI mechanics. They do not own the business
+operation invoked by a public handler. Independent libraries can therefore
+compose behavior without replacing CBSS internals or requiring parents to wire
+their children's event bundles.
+
+## D23 — One wgpu provider and explicit shared-device ownership (Adopted)
+
+**Context.** A WGSL Custom Style renderer and an independent in-process Nim
+compute or visualization package may need the same physical GPU, Device, Queue,
+and frame dependency graph. Allowing each package to vendor its own generated
+wgpu binding or native runtime risks ABI mismatch and duplicate initialization.
+Frame-only callbacks also cannot express persistent pipelines, buffers, or
+textures safely.
+
+**Decision.** A wgpu-enabled process resolves one canonical low-level Nim
+binding package and one exact compatible `wgpu-native` runtime. Every
+in-process package uses that provider; duplicate private bindings or runtime
+instances are unsupported in the shared-device path.
+
+A versioned `GpuHost` explicitly operates in CBSS-owned or application-borrowed
+mode. Owned mode gives CBSS deterministic Instance/Adapter/Device/Queue
+destruction. Borrowed mode requires the application-owned objects to outlive all
+CBSS attachments and prohibits CBSS from destroying them. CBSS remains the sole
+Surface acquisition and Present owner for each CBSS window in both modes.
+
+Independent packages receive owner-specific, budgeted persistent resource
+namespaces plus frame-scoped submission capabilities. Persistent resources may
+survive frames; encoders, passes, swapchain textures, and temporary mappings may
+not. Device generation, loss, restoration, cancellation, dependency order, and
+teardown are part of the contract rather than application convention.
+
+The release gate includes one same-process fixture combining CBSS Motion/WGSL
+rendering and an independent Nim compute package on a single runtime, Device,
+Queue, and Swapchain. Mock coverage alone is insufficient; the supported Linux
+wgpu profile also runs on a real GPU and verifies device loss, shutdown order,
+in-flight cancellation, duplicate/version rejection, and enforced GPU-memory
+budgets.

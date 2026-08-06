@@ -107,7 +107,7 @@ proc `onInput=`*(tabs: TabsHandle; handler: EventHandler) =
   tabs.container.onInput = handler
 
 proc tabClickHandler(tabs: TabsHandle; tabIndex: int): EventHandler =
-  proc(event: DispatchResult): bool =
+  proc(event: DispatchResult): EventOutcome =
     if tabs.state.disabled:
       return true
     tabs.setSelectedIndex(tabIndex, emitEvents = true)
@@ -147,7 +147,7 @@ proc tabs*(
   for index, node in tabs.tabNodes:
     root.events.addInternalEventHandler(node.id, iekClick, tabClickHandler(tabs, index))
 
-  root.events.addInternalEventHandler(tabs.container.id, iekKeyDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(tabs.container.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
     if tabs.state.disabled:
       return true
     if event.event.key.isNone:

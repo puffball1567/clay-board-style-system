@@ -1,4 +1,4 @@
-import std/unittest
+import std/[options, unittest]
 
 import clay_board_style_system
 
@@ -9,11 +9,11 @@ suite "checkbox component":
     var inputValue = ""
     var changeValue = ""
 
-    remember.onInput = proc(event: DispatchResult): bool =
+    remember.onInput = proc(event: DispatchResult): EventOutcome =
       inputValue = $remember.checked()
       false
 
-    remember.onChange = proc(event: DispatchResult): bool =
+    remember.onChange = proc(event: DispatchResult): EventOutcome =
       changeValue = $remember.checked()
       false
 
@@ -43,7 +43,7 @@ suite "checkbox component":
     let remember = ui.checkbox("Remember")
     var changed = false
 
-    remember.onChange = proc(event: DispatchResult): bool =
+    remember.onChange = proc(event: DispatchResult): EventOutcome =
       changed = true
       false
 
@@ -58,11 +58,11 @@ suite "checkbox component":
     let remember = ui.checkbox("Remember")
     var seen: seq[InputEventKind] = @[]
 
-    remember.onInput = proc(event: DispatchResult): bool =
+    remember.onInput = proc(event: DispatchResult): EventOutcome =
       seen.add event.event.kind
       false
 
-    remember.onChange = proc(event: DispatchResult): bool =
+    remember.onChange = proc(event: DispatchResult): EventOutcome =
       seen.add event.event.kind
       false
 
@@ -75,7 +75,7 @@ suite "checkbox component":
     let remember = ui.checkbox("Remember")
     var clicked = 0
 
-    remember.onClick = proc(event: DispatchResult): bool =
+    remember.onClick = proc(event: DispatchResult): EventOutcome =
       inc clicked
       false
 
@@ -91,11 +91,11 @@ suite "checkbox component":
     var changed = false
     var clicked = false
 
-    remember.onChange = proc(event: DispatchResult): bool =
+    remember.onChange = proc(event: DispatchResult): EventOutcome =
       changed = true
       false
 
-    remember.onClick = proc(event: DispatchResult): bool =
+    remember.onClick = proc(event: DispatchResult): EventOutcome =
       clicked = true
       false
 
@@ -118,6 +118,21 @@ suite "checkbox component":
     remember.setDisabled(false)
     check not remember.disabled()
     check esDisabled notin ui.tree.nodes[remember.container.nodeId.nodeIndex].states
+
+  test "preventDefault keeps the checked state unchanged":
+    let ui = initUiRoot()
+    let remember = ui.checkbox("Remember")
+
+    remember.onClick = proc(event: DispatchResult): EventOutcome =
+      preventedEvent()
+
+    let outcome = ui.events.dispatchEvent(ui.tree, DispatchResult(
+      target: some(remember.container.nodeId),
+      event: clickEvent(vec2(0, 0))
+    ))
+
+    check not remember.checked()
+    check outcome.preventDefault
 
   test "setLabel updates visible label":
     let ui = initUiRoot()

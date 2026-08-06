@@ -307,7 +307,7 @@ proc main() =
       let dispatches = interaction.processInput(
         ui.tree, frame.regions, input.get, ui.scroll
       )
-      discard ui.events.handle(ui.tree, dispatches)
+      discard ui.handleEvents(dispatches)
       scheduler.markDirty({ddStyle, ddPaint, ddHit})
     of sekPointerDown:
       let input = event.pointerInputEvent()
@@ -316,7 +316,7 @@ proc main() =
       let dispatches = interaction.processInput(
         ui.tree, frame.regions, input.get, ui.scroll
       )
-      discard ui.events.handle(ui.tree, dispatches)
+      discard ui.handleEvents(dispatches)
       scheduler.markDirty({ddStyle, ddPaint, ddHit})
     of sekPointerUp:
       let input = event.pointerInputEvent()
@@ -325,7 +325,7 @@ proc main() =
       let dispatches = interaction.processInput(
         ui.tree, frame.regions, input.get, ui.scroll
       )
-      discard ui.events.handle(ui.tree, dispatches)
+      discard ui.handleEvents(dispatches)
       scheduler.markDirty({ddStyle, ddPaint, ddHit})
     of sekTouchStart, sekTouchMove, sekTouchEnd, sekTouchCancel,
        sekPenProximityIn, sekPenProximityOut,
@@ -335,10 +335,11 @@ proc main() =
         let dispatches = interaction.processInput(
           ui.tree, frame.regions, input.get, ui.scroll
         )
-        discard ui.events.handle(ui.tree, dispatches)
+        discard ui.handleEvents(dispatches)
         scheduler.markDirty({ddStyle, ddPaint, ddHit})
     else:
       discard
+    discard ui.reconcilePointerCapture(interaction)
 
   var queued = none(Sdl3Event)
   while running:

@@ -2,6 +2,7 @@ import std/options
 
 import ../core/[color, declaration, node, style_value]
 import ../input/events
+import ./form
 import ./ui_root
 
 type
@@ -22,6 +23,9 @@ type
     indicatorNode*: NodeHandle
     labelNode*: NodeHandle
     state*: CheckboxState
+
+proc register*(form: FormHandle; name: string; checkbox: CheckboxHandle) =
+  form.registerField(checkbox.container, name, ffCheckable)
 
 proc updateMarker(checkbox: CheckboxHandle) =
   if not checkbox.container.valid():
@@ -153,13 +157,13 @@ proc checkbox*(
     checkbox.setDisabled(ownDisabled or disabled)
   )
 
-  root.events.addInternalEventHandler(checkbox.container.id, iekClick, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(checkbox.container.id, iekClick, proc(event: DispatchResult): EventOutcome =
     if checkbox.state.disabled:
       return true
     checkbox.toggle()
     false
   )
-  root.events.addInternalEventHandler(checkbox.container.id, iekKeyDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(checkbox.container.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
     if checkbox.state.disabled:
       return true
     if event.event.key.isSome:

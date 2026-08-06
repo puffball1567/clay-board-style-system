@@ -26,11 +26,11 @@ suite "select box component":
     var inputValue = ""
     var changeValue = ""
 
-    size.onInput = proc(event: DispatchResult): bool =
+    size.onInput = proc(event: DispatchResult): EventOutcome =
       inputValue = size.selectedValue()
       false
 
-    size.onChange = proc(event: DispatchResult): bool =
+    size.onChange = proc(event: DispatchResult): EventOutcome =
       changeValue = size.selectedValue()
       false
 
@@ -57,7 +57,7 @@ suite "select box component":
     let size = ui.selectBox(options())
     var toggled = 0
 
-    size.onToggle = proc(event: DispatchResult): bool =
+    size.onToggle = proc(event: DispatchResult): EventOutcome =
       inc toggled
       false
 
@@ -320,7 +320,7 @@ suite "select box component":
     ]))
     ui.popParent()
     var underClicked = false
-    under.onPointerDown = proc(event: DispatchResult): bool =
+    under.onPointerDown = proc(event: DispatchResult): EventOutcome =
       underClicked = true
       false
     select.setOpen(true)
@@ -343,7 +343,7 @@ suite "select box component":
     let size = ui.selectBox(options(), selectedValue = "medium")
     var changes: seq[string] = @[]
 
-    size.onChange = proc(event: DispatchResult): bool =
+    size.onChange = proc(event: DispatchResult): EventOutcome =
       changes.add size.selectedValue()
       false
 
@@ -359,11 +359,11 @@ suite "select box component":
     var changed = false
     var clicked = false
 
-    size.onChange = proc(event: DispatchResult): bool =
+    size.onChange = proc(event: DispatchResult): EventOutcome =
       changed = true
       false
 
-    size.onClick = proc(event: DispatchResult): bool =
+    size.onClick = proc(event: DispatchResult): EventOutcome =
       clicked = true
       false
 
@@ -385,7 +385,7 @@ suite "select box component":
     ], selectedValue = "small")
     var changed = false
 
-    size.onChange = proc(event: DispatchResult): bool =
+    size.onChange = proc(event: DispatchResult): EventOutcome =
       changed = true
       false
 
@@ -400,7 +400,7 @@ suite "select box component":
     let size = ui.selectBox(options())
     var changed = false
 
-    size.onChange = proc(event: DispatchResult): bool =
+    size.onChange = proc(event: DispatchResult): EventOutcome =
       changed = true
       false
 
@@ -414,7 +414,7 @@ suite "select box component":
     let size = ui.selectBox(options(), selectedValue = "small")
     var toggled = false
 
-    size.onToggle = proc(event: DispatchResult): bool =
+    size.onToggle = proc(event: DispatchResult): EventOutcome =
       toggled = true
       false
 
@@ -433,7 +433,7 @@ suite "select box component":
     let outside = ui.box()
     var toggles = 0
 
-    size.onToggle = proc(event: DispatchResult): bool =
+    size.onToggle = proc(event: DispatchResult): EventOutcome =
       inc toggles
       false
 

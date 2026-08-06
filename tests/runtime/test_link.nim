@@ -15,7 +15,7 @@ suite "link primitive":
     let ui = initUiRoot()
     let settings = ui.link(navigator, lsSettings, "Settings")
     var clicked = false
-    settings.onClick = proc(event: DispatchResult): bool =
+    settings.onClick = proc(event: DispatchResult): EventOutcome =
       clicked = true
       true
 
@@ -25,17 +25,18 @@ suite "link primitive":
     check navigator.currentDestination() == some(lsSettings)
     check navigator.canGoBack()
 
-  test "navigation completes before the user click handler runs":
+  test "navigation default runs after the user click handler":
     let navigator = initStackNavigator(lsHome)
     let ui = initUiRoot()
     let settings = ui.link(navigator, lsSettings, "Settings")
     var destinationSeenByHandler = lsHome
-    settings.onClick = proc(event: DispatchResult): bool =
+    settings.onClick = proc(event: DispatchResult): EventOutcome =
       destinationSeenByHandler = navigator.currentDestination().get
       false
 
-    check not settings.container.emit(InputEvent(kind: iekClick))
-    check destinationSeenByHandler == lsSettings
+    check settings.container.emit(InputEvent(kind: iekClick))
+    check destinationSeenByHandler == lsHome
+    check navigator.currentDestination() == some(lsSettings)
 
   test "assigning onClick replaces only the public handler":
     let navigator = initStackNavigator(lsHome)
@@ -43,10 +44,10 @@ suite "link primitive":
     let settings = ui.link(navigator, lsSettings, "Settings")
     var firstCalls = 0
     var secondCalls = 0
-    settings.onClick = proc(event: DispatchResult): bool =
+    settings.onClick = proc(event: DispatchResult): EventOutcome =
       inc firstCalls
       true
-    settings.onClick = proc(event: DispatchResult): bool =
+    settings.onClick = proc(event: DispatchResult): EventOutcome =
       inc secondCalls
       true
 
@@ -77,12 +78,12 @@ suite "link primitive":
       disabled = true
     )
     var clicked = false
-    settings.onClick = proc(event: DispatchResult): bool =
+    settings.onClick = proc(event: DispatchResult): EventOutcome =
       clicked = true
       true
 
-    check settings.container.emit(InputEvent(kind: iekClick))
-    check settings.container.emit(keyDownEvent("Enter"))
+    check not settings.container.emit(InputEvent(kind: iekClick))
+    check not settings.container.emit(keyDownEvent("Enter"))
 
     check not clicked
     check navigator.currentDestination() == some(lsHome)

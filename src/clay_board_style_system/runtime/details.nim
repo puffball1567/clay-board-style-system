@@ -144,18 +144,18 @@ proc details*(
 
   let details = result
 
-  root.events.addInternalEventHandler(details.summaryNode.id, iekClick, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(details.summaryNode.id, iekClick, proc(event: DispatchResult): EventOutcome =
     if details.state.disabled:
       return true
     details.toggle()
     true
   )
-  root.events.addInternalEventHandler(details.summaryNode.id, iekPointerDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(details.summaryNode.id, iekPointerDown, proc(event: DispatchResult): EventOutcome =
     if details.state.disabled:
       return true
     false
   )
-  root.events.addInternalEventHandler(details.summaryNode.id, iekKeyDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(details.summaryNode.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
     if details.state.disabled:
       return true
     if event.event.key.isSome:

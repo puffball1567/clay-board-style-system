@@ -1,4 +1,4 @@
-import std/[algorithm, math, options, strutils, tables]
+import std/[algorithm, atomics, math, options, strutils, tables]
 
 import ./core/[color, color_conversion, color_mix, color_mix_parser,
   color_parser, color_value, declaration, diagnostics, geometry, node, rule,
@@ -24,7 +24,9 @@ proc ensureNimRuntime() {.inline.} =
     NimMain()
 
 const
-  CbssAbiVersion* = 0x0001_0008'u32
+  CbssAbiVersion* = 0x0001_000C'u32
+  CbssMaxEagerBlobBytes* = 64'u64 * 1024'u64 * 1024'u64
+  CbssMaxBlobMimeBytes* = 1024
   CbssNodeNone* = high(uint32)
 
   CbssOk* = 0'i32
@@ -55,6 +57,14 @@ const
   CbssEventHasKey* = 1'u32 shl 4
   CbssEventHasText* = 1'u32 shl 5
   CbssEventHasPointer* = 1'u32 shl 6
+  CbssEventBubbles* = 1'u32 shl 7
+  CbssEventCancelable* = 1'u32 shl 8
+  CbssEventPhaseTarget* = 1'u32 shl 9
+  CbssEventPhaseBubble* = 1'u32 shl 10
+
+  CbssEventOutcomeHandled* = 1'u8 shl 0
+  CbssEventOutcomeStopPropagation* = 1'u8 shl 1
+  CbssEventOutcomePreventDefault* = 1'u8 shl 2
 
   CbssPointerAxisPressure* = 1'u32 shl 0
   CbssPointerAxisTangentialPressure* = 1'u32 shl 1
@@ -190,7 +200,7 @@ type
 
   CbssDispatchSummaryC* {.bycopy.} = object
     target*, dispatchCount*: uint32
-    handled*, needsCompute*, paintChanged*, focusChanged*: uint8
+    handled*, outcome*, needsCompute*, paintChanged*, focusChanged*: uint8
 
   CbssScrollMetricsC* {.bycopy.} = object
     offsetX*, offsetY*: cfloat
@@ -224,6 +234,7 @@ type
   CbssContextHandle* = ptr CbssContextObj
   CbssStyleHandle* = ptr CbssStyleObj
   CbssColorValueHandle* = ptr CbssColorValueObj
+  CbssBlobHandle* = ptr CbssBlobObj
   CbssEventCallback* = proc(
     context: CbssContextHandle;
     event: ptr CbssEventC;
@@ -234,12 +245,6 @@ type
     event: ptr CbssRenderSurfaceEventC;
     userData: pointer
   ): uint32 {.cdecl.}
-
-  CbssEventBinding = object
-    node: NodeId
-    kind: InputEventKind
-    callback: CbssEventCallback
-    userData: pointer
 
   CbssRenderSurfaceBinding = ref object
     context: CbssContextHandle
@@ -269,7 +274,8 @@ type
     hits: seq[HitRegion]
     scroll: ScrollState
     interaction: InteractionState
-    eventBindings: seq[CbssEventBinding]
+    events: EventRegistry
+    eventSubscriptions: Table[uint64, EventSubscription]
     surfaces: RenderSurfaceRegistry
     surfaceBindings: Table[RenderSurfaceId, CbssRenderSurfaceBinding]
     surfacePaintProvider: SurfacePaintProvider
@@ -296,6 +302,13 @@ type
     of ccvMix:
       mix: ColorMixValue
 
+  CbssBlobObj = object
+    bytes: pointer
+    length: uint64
+    mimeBytes: pointer
+    mimeLength: uint32
+    references: Atomic[uint32]
+
 static:
   doAssert sizeof(CbssRectC) == 16
   doAssert sizeof(CbssColorC) == 16
@@ -310,7 +323,7 @@ static:
   doAssert sizeof(CbssPointerDataC) == 56
   doAssert sizeof(CbssInputEventC) == 112
   doAssert sizeof(CbssEventC) == 128
-  doAssert sizeof(CbssDispatchSummaryC) == 12
+  doAssert sizeof(CbssDispatchSummaryC) == 16
   doAssert sizeof(CbssScrollMetricsC) == 36
   doAssert sizeof(CbssAccessibilityC) == 32
   doAssert sizeof(CbssRenderSurfacePlacementC) == 40
@@ -977,6 +990,17 @@ proc eventFlags(dispatch: DispatchResult; includeLocal: bool): uint32 =
     result = result or CbssEventHasText
   if dispatch.event.pointer.isSome:
     result = result or CbssEventHasPointer
+  if dispatch.event.kind.bubbles:
+    result = result or CbssEventBubbles
+  if dispatch.event.kind.cancelable:
+    result = result or CbssEventCancelable
+  case dispatch.phase
+  of epTarget:
+    result = result or CbssEventPhaseTarget
+  of epBubble:
+    result = result or CbssEventPhaseBubble
+  else:
+    discard
 
 proc callbackEvent(
     dispatch: DispatchResult;
@@ -984,7 +1008,7 @@ proc callbackEvent(
 ): CbssEventC =
   let includeLocal = currentTarget == originalTarget
   result = CbssEventC(
-    kind: uint32(ord(dispatch.event.kind)),
+    kind: dispatch.event.kind.eventDefinition.abiCode,
     target: originalTarget.nodeRawValue(),
     currentTarget: currentTarget.nodeRawValue(),
     flags: dispatch.eventFlags(includeLocal),
@@ -1012,58 +1036,32 @@ proc callbackEvent(
   if dispatch.event.pointer.isSome:
     result.pointer = dispatch.event.pointer.get.pointerDataC()
 
-proc effectiveEventKinds(kind: InputEventKind): seq[InputEventKind] =
-  case kind
-  of iekPointerMove:
-    @[iekMouseMove, iekPointerMove]
-  of iekPointerDown:
-    @[iekMouseDown, iekPointerDown]
-  of iekPointerUp:
-    @[iekMouseUp, iekPointerUp]
-  of iekPointerEnter:
-    @[iekMouseEnter, iekPointerEnter]
-  of iekPointerLeave:
-    @[iekMouseLeave, iekPointerLeave]
-  of iekPointerOver:
-    @[iekMouseOver, iekPointerOver]
-  of iekPointerOut:
-    @[iekMouseOut, iekPointerOut]
-  of iekTextInput:
-    @[iekBeforeInput, iekTextInput, iekInput, iekChange]
-  else:
-    @[kind]
+proc callbackOutcome(value: uint8): EventOutcome =
+  EventOutcome(
+    handled: (value and CbssEventOutcomeHandled) != 0,
+    stopPropagation: (value and CbssEventOutcomeStopPropagation) != 0,
+    preventDefault: (value and CbssEventOutcomePreventDefault) != 0
+  )
+
+proc cEventHandler(
+    context: CbssContextHandle;
+    callback: CbssEventCallback;
+    userData: pointer
+): EventHandler =
+  result = proc(dispatch: DispatchResult): EventOutcome =
+    if callback.isNil or dispatch.target.isNone or
+        dispatch.currentTarget.isNone:
+      return ignoredEvent()
+    var event = dispatch.callbackEvent(
+      dispatch.target.get, dispatch.currentTarget.get
+    )
+    callbackOutcome(callback(context, addr event, userData))
 
 proc invokeCallbacks(
     context: CbssContextHandle;
     dispatch: DispatchResult
-): bool =
-  if dispatch.target.isNone:
-    return false
-  let originalTarget = dispatch.target.get
-  var current = some(originalTarget)
-  while current.isSome:
-    let currentTarget = current.get
-    let parent =
-      if currentTarget.nodeIndex >= 0 and
-          currentTarget.nodeIndex < context.tree.nodes.len:
-        context.tree.nodes[currentTarget.nodeIndex].parent
-      else:
-        none(NodeId)
-    for kind in dispatch.event.kind.effectiveEventKinds:
-      if context.eventBindings.len > 0:
-        for index in countdown(context.eventBindings.high, 0):
-          let binding = context.eventBindings[index]
-          if binding.node == currentTarget and binding.kind == kind and
-              not binding.callback.isNil:
-            var effectiveDispatch = dispatch
-            effectiveDispatch.event.kind = kind
-            var event = effectiveDispatch.callbackEvent(
-              originalTarget, currentTarget
-            )
-            if binding.callback(context, addr event, binding.userData) != 0:
-              return true
-            break
-    current = parent
+): EventOutcome =
+  context.events.dispatchEvent(context.tree, dispatch)
 
 proc invokeRenderSurface(
     context: CbssContextHandle;
@@ -1087,13 +1085,12 @@ proc invokeRenderSurface(
 proc dispatchAll(
     context: CbssContextHandle;
     dispatches: openArray[DispatchResult]
-): tuple[handled: bool, count: int] =
+): tuple[outcome: EventOutcome, count: int] =
   for dispatch in dispatches:
     inc result.count
-    if context.invokeCallbacks(dispatch):
-      result.handled = true
+    result.outcome.mergeOutcome(context.invokeCallbacks(dispatch))
     if context.invokeRenderSurface(dispatch):
-      result.handled = true
+      result.outcome.handled = true
 
 type
   FocusOrderEntry = object
@@ -1158,13 +1155,122 @@ proc setContextFocus(
   let dispatched = context.dispatchAll(dispatches)
   result = (
     changed: true,
-    handled: dispatched.handled,
+    handled: dispatched.outcome.handled,
     dispatchCount: dispatched.count
   )
 
 proc cbssAbiVersion(): uint32 {.
     exportc: "cbss_abi_version", cdecl, dynlib, raises: [].} =
   CbssAbiVersion
+
+proc cbssBlobCreate(
+    bytes: pointer;
+    length: uint64;
+    mimeType: cstring;
+    output: ptr CbssBlobHandle
+): int32 {.exportc: "cbss_blob_create", cdecl, dynlib.} =
+  ensureNimRuntime()
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  if length > 0 and bytes.isNil:
+    return CbssInvalidArgument
+  if length > CbssMaxEagerBlobBytes or length > uint64(high(int)):
+    return CbssOutOfRange
+
+  let mimeLength = if mimeType.isNil: 0 else: mimeType.len
+  if mimeLength > CbssMaxBlobMimeBytes:
+    return CbssOutOfRange
+
+  let allocated = cast[CbssBlobHandle](allocShared0(sizeof(CbssBlobObj)))
+  if allocated.isNil:
+    return CbssInternalError
+  if length > 0:
+    allocated.bytes = allocShared(int(length))
+    if allocated.bytes.isNil:
+      deallocShared(allocated)
+      return CbssInternalError
+    copyMem(allocated.bytes, bytes, int(length))
+  if mimeLength > 0:
+    allocated.mimeBytes = allocShared(mimeLength + 1)
+    if allocated.mimeBytes.isNil:
+      if not allocated.bytes.isNil:
+        deallocShared(allocated.bytes)
+      deallocShared(allocated)
+      return CbssInternalError
+    copyMem(allocated.mimeBytes, mimeType, mimeLength)
+    cast[ptr UncheckedArray[char]](allocated.mimeBytes)[mimeLength] = '\0'
+  allocated.length = length
+  allocated.mimeLength = uint32(mimeLength)
+  allocated.references.store(1)
+  output[] = allocated
+  CbssOk
+
+proc cbssBlobRetain(blob: CbssBlobHandle): int32 {.
+    exportc: "cbss_blob_retain", cdecl, dynlib.} =
+  if blob.isNil:
+    return CbssInvalidHandle
+  var current = blob.references.load()
+  while current > 0 and current < high(uint32):
+    var expected = current
+    if blob.references.compareExchange(expected, current + 1):
+      return CbssOk
+    current = expected
+  if current == high(uint32): CbssOutOfRange else: CbssInvalidHandle
+
+proc cbssBlobRelease(blob: CbssBlobHandle) {.
+    exportc: "cbss_blob_release", cdecl, dynlib.} =
+  if blob.isNil:
+    return
+  let previous = blob.references.fetchSub(1)
+  if previous != 1:
+    return
+  if not blob.bytes.isNil:
+    deallocShared(blob.bytes)
+  if not blob.mimeBytes.isNil:
+    deallocShared(blob.mimeBytes)
+  deallocShared(blob)
+
+proc cbssBlobSize(blob: CbssBlobHandle): uint64 {.
+    exportc: "cbss_blob_size", cdecl, dynlib, raises: [].} =
+  if blob.isNil: 0'u64 else: blob.length
+
+proc cbssBlobMimeType(
+    blob: CbssBlobHandle;
+    buffer: cstring;
+    capacity: uint32
+): uint32 {.exportc: "cbss_blob_mime_type", cdecl, dynlib.} =
+  if blob.isNil:
+    return 0
+  result = blob.mimeLength
+  if buffer.isNil or capacity == 0:
+    return
+  let copyLength = min(int(blob.mimeLength), int(capacity) - 1)
+  if copyLength > 0:
+    copyMem(buffer, blob.mimeBytes, copyLength)
+  cast[ptr UncheckedArray[char]](buffer)[copyLength] = '\0'
+
+proc cbssBlobRead(
+    blob: CbssBlobHandle;
+    offset: uint64;
+    output: pointer;
+    capacity: uint32;
+    outputRead: ptr uint32
+): int32 {.exportc: "cbss_blob_read", cdecl, dynlib.} =
+  if blob.isNil:
+    return CbssInvalidHandle
+  if outputRead.isNil or (capacity > 0 and output.isNil):
+    return CbssInvalidArgument
+  outputRead[] = 0
+  if offset > blob.length:
+    return CbssOutOfRange
+  let available = blob.length - offset
+  let count = min(available, uint64(capacity))
+  if count > 0:
+    let source = cast[ptr UncheckedArray[byte]](blob.bytes)
+    copyMem(output, unsafeAddr source[int(offset)], int(count))
+  outputRead[] = uint32(count)
+  CbssOk
 
 proc cbssContextCreate(): CbssContextHandle {.
     exportc: "cbss_context_create", cdecl, dynlib.} =
@@ -1182,7 +1288,8 @@ proc cbssContextCreate(): CbssContextHandle {.
       hits: @[],
       scroll: initScrollState(),
       interaction: initInteractionState(),
-      eventBindings: @[],
+      events: initEventRegistry(),
+      eventSubscriptions: initTable[uint64, EventSubscription](),
       surfaces: initRenderSurfaceRegistry(),
       surfaceBindings: initTable[RenderSurfaceId, CbssRenderSurfaceBinding](),
       pixelScale: 1.0'f32,
@@ -1235,7 +1342,8 @@ proc cbssContextReset(context: CbssContextHandle): int32 {.
     context.hits.setLen(0)
     context.scroll = initScrollState()
     context.interaction = initInteractionState()
-    context.eventBindings.setLen(0)
+    context.events = initEventRegistry()
+    context.eventSubscriptions.clear()
     context.pixelScale = 1.0'f32
     context.diagnostics.items.setLen(0)
     context.lastError = ""
@@ -2204,22 +2312,52 @@ proc cbssNodeSetEventHandler(
       kind > uint32(ord(high(InputEventKind))):
     return CbssInvalidArgument
   let eventKind = InputEventKind(kind)
-  for index in 0 ..< context.eventBindings.len:
-    if context.eventBindings[index].node == node.nodeId and
-        context.eventBindings[index].kind == eventKind:
-      if callback.isNil:
-        context.eventBindings.delete(index)
-      else:
-        context.eventBindings[index].callback = callback
-        context.eventBindings[index].userData = userData
-      return CbssOk
-  if not callback.isNil:
-    context.eventBindings.add CbssEventBinding(
-      node: node.nodeId,
-      kind: eventKind,
-      callback: callback,
-      userData: userData
+  if callback.isNil:
+    discard context.events.clearEventHandler(node.nodeId, eventKind)
+  else:
+    context.events.setEventHandler(
+      node.nodeId,
+      eventKind,
+      cEventHandler(context, callback, userData)
     )
+  CbssOk
+
+proc cbssNodeSubscribeEvent(
+    context: CbssContextHandle;
+    node, kind: uint32;
+    callback: CbssEventCallback;
+    userData: pointer;
+    outputSubscription: ptr uint64
+): int32 {.exportc: "cbss_node_subscribe_event", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if outputSubscription.isNil or callback.isNil or
+      not context.validNode(node) or
+      kind > uint32(ord(high(InputEventKind))):
+    return CbssInvalidArgument
+  outputSubscription[] = 0
+  let subscription = context.events.subscribe(
+    node.nodeId,
+    InputEventKind(kind),
+    cEventHandler(context, callback, userData)
+  )
+  context.eventSubscriptions[subscription.id] = subscription
+  outputSubscription[] = subscription.id
+  CbssOk
+
+proc cbssContextUnsubscribeEvent(
+    context: CbssContextHandle;
+    subscriptionId: uint64
+): int32 {.exportc: "cbss_context_unsubscribe_event", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if subscriptionId == 0 or subscriptionId notin context.eventSubscriptions:
+    return CbssInvalidArgument
+  let subscription = context.eventSubscriptions[subscriptionId]
+  if not context.events.removeEventHandler(subscription):
+    context.eventSubscriptions.del(subscriptionId)
+    return CbssInvalidArgument
+  context.eventSubscriptions.del(subscriptionId)
   CbssOk
 
 proc cbssStyleCreate(): CbssStyleHandle {.
@@ -3123,7 +3261,8 @@ proc writeDispatchSummary(
     output: ptr CbssDispatchSummaryC;
     target: Option[NodeId];
     dispatchCount: int;
-    handled, needsCompute, paintChanged, focusChanged: bool
+    outcome: EventOutcome;
+    needsCompute, paintChanged, focusChanged: bool
 ) =
   if output.isNil:
     return
@@ -3132,7 +3271,11 @@ proc writeDispatchSummary(
       if target.isSome: target.get.nodeRawValue()
       else: CbssNodeNone,
     dispatchCount: uint32(min(dispatchCount, int(high(uint32)))),
-    handled: uint8(ord(handled)),
+    handled: uint8(ord(outcome.handled)),
+    outcome:
+      (if outcome.handled: CbssEventOutcomeHandled else: 0'u8) or
+      (if outcome.stopPropagation: CbssEventOutcomeStopPropagation else: 0'u8) or
+      (if outcome.preventDefault: CbssEventOutcomePreventDefault else: 0'u8),
     needsCompute: uint8(ord(needsCompute)),
     paintChanged: uint8(ord(paintChanged)),
     focusChanged: uint8(ord(focusChanged))
@@ -3198,11 +3341,11 @@ proc cbssContextDispatchInput(
       context.invalidate()
 
     let dispatched = context.dispatchAll(dispatches)
-    var handled = dispatched.handled
+    var outcome = dispatched.outcome
     var dispatchCount = dispatched.count
 
     if event.kind == iekKeyDown and event.key.isSome and
-        event.key.get.toLowerAscii() == "tab" and not handled:
+        event.key.get.toLowerAscii() == "tab" and not outcome.handled:
       let targets = context.focusTargets()
       if targets.len > 0:
         var currentIndex = -1
@@ -3221,7 +3364,8 @@ proc cbssContextDispatchInput(
         let focusResult = context.setContextFocus(
           some(targets[nextIndex]), focusVisible = true
         )
-        handled = handled or focusResult.handled or focusResult.changed
+        outcome.handled = outcome.handled or
+          focusResult.handled or focusResult.changed
         dispatchCount += focusResult.dispatchCount
 
     let scrollChanged = oldScrollRevision != context.scroll.revision
@@ -3237,7 +3381,7 @@ proc cbssContextDispatchInput(
       output,
       target,
       dispatchCount,
-      handled,
+      outcome,
       not context.computed,
       scrollChanged and context.computed,
       oldFocused != context.interaction.focusedTarget
@@ -3273,12 +3417,12 @@ proc cbssContextEmitEvent(
             event.position.get.y - region.localOrigin.get.y
           ))
           break
-    let handled = context.invokeCallbacks(dispatch)
+    let outcome = context.invokeCallbacks(dispatch)
     writeDispatchSummary(
       output,
       some(node.nodeId),
       1,
-      handled,
+      outcome,
       not context.computed,
       false,
       false

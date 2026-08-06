@@ -351,7 +351,7 @@ proc switch*(
   root.events.addInternalEventHandler(
     control.container.id,
     iekFocus,
-    proc(event: DispatchResult): bool =
+    proc(event: DispatchResult): EventOutcome =
       let focusVisible =
         esFocusVisible in control.root.tree.nodes[control.container.id.nodeIndex].states
       control.trackNode.setState(esFocusVisible, focusVisible)
@@ -360,14 +360,14 @@ proc switch*(
   root.events.addInternalEventHandler(
     control.container.id,
     iekBlur,
-    proc(event: DispatchResult): bool =
+    proc(event: DispatchResult): EventOutcome =
       control.trackNode.setState(esFocusVisible, false)
       false
   )
   root.events.addInternalEventHandler(
     control.container.id,
     iekClick,
-    proc(event: DispatchResult): bool =
+    proc(event: DispatchResult): EventOutcome =
       if control.state.disabled:
         return true
       control.toggle()
@@ -376,7 +376,7 @@ proc switch*(
   root.events.addInternalEventHandler(
     control.container.id,
     iekKeyDown,
-    proc(event: DispatchResult): bool =
+    proc(event: DispatchResult): EventOutcome =
       if control.state.disabled:
         return true
       if event.event.key.isSome and event.event.key.get in ["Enter", " "]:

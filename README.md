@@ -56,9 +56,9 @@ proc saveButtonStyle(): UiStyle =
   ])
 
 proc render(self: SaveButton) =
-  proc onSave(event: DispatchResult): bool =
+  proc onSave(event: DispatchResult): EventOutcome =
     echo "Saved"
-    return true
+    return handledEvent()
 
   ui.box(self, ownedStyle = saveButtonStyle()):
     ui.text(self.label)
@@ -102,7 +102,7 @@ The exact workloads, machine-local interpretation, budgets, and regression
 gates are documented in [Performance Model](docs/performance-model.md) and can
 be run with `nimble bench`.
 
-The discovered ARC suite currently covers 84 independently compiled test
+The discovered ARC suite currently covers 90 independently compiled test
 files. The same suite and public examples also run under ORC as a compatibility
 gate, so applications may select either `--mm:arc` or `--mm:orc`. ARC remains
 the stricter ownership baseline. Separate Valgrind gates exercise the complete
@@ -283,6 +283,8 @@ construction, ownership, callbacks, versioning, and static/shared linking.
 | Architecture and boundaries | [Architecture](docs/architecture.md) |
 | Performance budgets | [Performance Model](docs/performance-model.md) |
 | Components and Style DI | [Component Authoring](docs/component-authoring.md) |
+| Events and typed signals | [Events](docs/events.md) |
+| Blob, FormData, and Streams | [UI Data Interchange](docs/data-interchange.md) |
 | Canvas and custom drawing | [Render Surfaces](docs/render-surfaces.md) |
 | Navigation and Link | [Navigation](docs/navigation.md) |
 | Color model | [Color](docs/color.md) |

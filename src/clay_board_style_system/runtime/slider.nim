@@ -165,13 +165,13 @@ proc slider*(
 
   let slider = result
 
-  root.events.addInternalEventHandler(slider.container.id, iekClick, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(slider.container.id, iekClick, proc(event: DispatchResult): EventOutcome =
     if slider.state.disabled:
       return true
     slider.setValueFromLocal(event.local)
     false
   )
-  root.events.addInternalEventHandler(slider.container.id, iekPointerDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(slider.container.id, iekPointerDown, proc(event: DispatchResult): EventOutcome =
     if slider.state.disabled:
       return true
     slider.state.dragging = true
@@ -179,7 +179,7 @@ proc slider*(
     slider.syncVisibleState()
     false
   )
-  root.events.addInternalEventHandler(slider.container.id, iekPointerMove, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(slider.container.id, iekPointerMove, proc(event: DispatchResult): EventOutcome =
     if slider.state.disabled:
       return true
     if slider.state.dragging:
@@ -187,14 +187,14 @@ proc slider*(
       return false
     false
   )
-  root.events.addInternalEventHandler(slider.container.id, iekPointerUp, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(slider.container.id, iekPointerUp, proc(event: DispatchResult): EventOutcome =
     if slider.state.disabled:
       return true
     slider.state.dragging = false
     slider.syncVisibleState()
     false
   )
-  root.events.addInternalEventHandler(slider.container.id, iekKeyDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(slider.container.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
     if slider.state.disabled:
       return true
     if event.event.key.isNone:

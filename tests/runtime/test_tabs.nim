@@ -24,11 +24,11 @@ suite "tabs component":
     var inputValue = ""
     var changeValue = ""
 
-    editor.onInput = proc(event: DispatchResult): bool =
+    editor.onInput = proc(event: DispatchResult): EventOutcome =
       inputValue = editor.selectedValue()
       false
 
-    editor.onChange = proc(event: DispatchResult): bool =
+    editor.onChange = proc(event: DispatchResult): EventOutcome =
       changeValue = editor.selectedValue()
       false
 
@@ -57,7 +57,7 @@ suite "tabs component":
     ], selectedValue = "preview")
     var changed = false
 
-    editor.onChange = proc(event: DispatchResult): bool =
+    editor.onChange = proc(event: DispatchResult): EventOutcome =
       changed = true
       false
 
@@ -74,7 +74,7 @@ suite "tabs component":
     let editor = ui.tabs(tabItems(), selectedValue = "preview", disabled = true)
     var changed = false
 
-    editor.onChange = proc(event: DispatchResult): bool =
+    editor.onChange = proc(event: DispatchResult): EventOutcome =
       changed = true
       false
 
@@ -90,7 +90,7 @@ suite "tabs component":
     let editor = ui.tabs(tabItems())
     var changed = false
 
-    editor.onChange = proc(event: DispatchResult): bool =
+    editor.onChange = proc(event: DispatchResult): EventOutcome =
       changed = true
       false
 

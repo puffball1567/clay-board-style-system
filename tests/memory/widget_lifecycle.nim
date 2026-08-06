@@ -14,7 +14,7 @@ type MemoryComponent = ref object of CBSSComponent
   unmounts: ref int
 
 proc render(self: MemoryComponent) =
-  proc handleClick(event: DispatchResult): bool =
+  proc handleClick(event: DispatchResult): EventOutcome =
     inc self.clicks[]
     return true
 
@@ -45,10 +45,10 @@ proc exerciseWidgetLifecycle() =
       let ui = initUiRoot()
 
       let button = ui.button("Run " & $iteration)
-      button.onClick = proc(event: DispatchResult): bool =
+      button.onClick = proc(event: DispatchResult): EventOutcome =
         button.setLabel("Replaced")
         false
-      button.onClick = proc(event: DispatchResult): bool =
+      button.onClick = proc(event: DispatchResult): EventOutcome =
         button.setLabel("Handled")
         true
       discard button.container.emit(InputEvent(kind: iekClick))

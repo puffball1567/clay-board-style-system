@@ -20,7 +20,7 @@ proc saveButtonStyle(): UiStyle =
   ])
 
 proc render(self: SaveButton) =
-  proc onSave(event: DispatchResult): bool =
+  proc onSave(event: DispatchResult): EventOutcome =
     self.saved[] = true
     return true
 

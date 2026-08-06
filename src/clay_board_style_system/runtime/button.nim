@@ -58,10 +58,10 @@ proc button*(
 
   let button = result
 
-  root.events.addInternalEventHandler(button.container.id, iekClick, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(button.container.id, iekClick, proc(event: DispatchResult): EventOutcome =
     button.state.disabled
   )
-  root.events.addInternalEventHandler(button.container.id, iekKeyDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(button.container.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
     if button.state.disabled:
       return true
     if event.event.key.isSome:

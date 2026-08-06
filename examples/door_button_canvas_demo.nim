@@ -241,7 +241,7 @@ proc doorButton(
   ui.events.addInternalEventHandler(
     button.button.container.id,
     iekPointerEnter,
-    proc(event: DispatchResult): bool =
+    proc(event: DispatchResult): EventOutcome =
       button.state.hovered = true
       button.updateVisualTarget()
       false
@@ -249,7 +249,7 @@ proc doorButton(
   ui.events.addInternalEventHandler(
     button.button.container.id,
     iekPointerLeave,
-    proc(event: DispatchResult): bool =
+    proc(event: DispatchResult): EventOutcome =
       button.state.hovered = false
       button.updateVisualTarget()
       false
@@ -257,7 +257,7 @@ proc doorButton(
   ui.events.addInternalEventHandler(
     button.button.container.id,
     iekPointerDown,
-    proc(event: DispatchResult): bool =
+    proc(event: DispatchResult): EventOutcome =
       button.state.keyboardFocused = false
       button.updateVisualTarget()
       false
@@ -265,7 +265,7 @@ proc doorButton(
   ui.events.addInternalEventHandler(
     button.button.container.id,
     iekFocus,
-    proc(event: DispatchResult): bool =
+    proc(event: DispatchResult): EventOutcome =
       button.state.keyboardFocused =
         esFocusVisible in button.button.root.tree.nodes[
           button.button.container.id.nodeIndex
@@ -276,7 +276,7 @@ proc doorButton(
   ui.events.addInternalEventHandler(
     button.button.container.id,
     iekBlur,
-    proc(event: DispatchResult): bool =
+    proc(event: DispatchResult): EventOutcome =
       button.state.keyboardFocused = false
       button.updateVisualTarget()
       false
@@ -392,7 +392,7 @@ proc main() =
       let dispatches = interaction.processInput(
         ui.tree, frame.regions, pointerMoveEvent(point), ui.scroll
       )
-      discard ui.events.handle(ui.tree, dispatches)
+      discard ui.handleEvents(dispatches)
       scheduler.markDirty({ddStyle, ddPaint, ddHit})
     of sekPointerDown:
       let point = vec2(event.buttonX, event.buttonY)
@@ -405,7 +405,7 @@ proc main() =
         pointerDownEvent(point, event.button),
         ui.scroll
       )
-      discard ui.events.handle(ui.tree, dispatches)
+      discard ui.handleEvents(dispatches)
       scheduler.markDirty({ddStyle, ddPaint, ddHit})
     of sekPointerUp:
       let point = vec2(event.buttonX, event.buttonY)
@@ -415,7 +415,7 @@ proc main() =
         pointerUpEvent(point, event.button),
         ui.scroll
       )
-      discard ui.events.handle(ui.tree, dispatches)
+      discard ui.handleEvents(dispatches)
       discard ui.reconcileFocus(interaction)
       scheduler.markDirty({ddStyle, ddPaint, ddHit})
     of sekKeyDown:
@@ -440,6 +440,7 @@ proc main() =
       ))
     else:
       discard
+    discard ui.reconcilePointerCapture(interaction)
 
   var queued = none(Sdl3Event)
   while running:

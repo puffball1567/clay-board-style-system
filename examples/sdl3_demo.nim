@@ -1553,7 +1553,7 @@ proc addButtonStateOverrides(ui: UiRoot; button: ButtonHandle) =
 proc RunButton(ui: UiRoot; onRun: proc() {.closure.}; style = primaryButtonStyle()): ButtonHandle {.discardable.} =
   result = ui.button("Run", style = style)
   ui.addButtonStateOverrides(result)
-  proc handleRun(event: DispatchResult): bool =
+  proc handleRun(event: DispatchResult): EventOutcome =
     onRun()
     true
 
@@ -1607,7 +1607,7 @@ proc DemoTextInput(ui: UiRoot; state: DemoState; valueDispatch: DispatchProc[Dem
     id = "hero-input"
   )
 
-  result.container.onInput = proc(event: DispatchResult): bool =
+  result.container.onInput = proc(event: DispatchResult): EventOutcome =
     if event.event.text.isSome:
       valueDispatch(DemoAction(kind: dakHeroInputChanged, value: event.event.text.get))
     false
@@ -1694,7 +1694,7 @@ proc ControlsPanel(
         style = tabsStyle(),
         tabStyle = tabStyle()
       )
-      demoTabs.onChange = proc(event: DispatchResult): bool =
+      demoTabs.onChange = proc(event: DispatchResult): EventOutcome =
         let value = demoTabs.selectedValue()
         valueDispatch(DemoAction(kind: dakTabSelected, value: value))
         ui.syncTabStatusText(refs, value)
@@ -1791,7 +1791,7 @@ proc AltControlsPanel(
         tabStyle = altTabStyle(),
         tabGroups = ["tab-alt"]
       )
-      demoTabs.onChange = proc(event: DispatchResult): bool =
+      demoTabs.onChange = proc(event: DispatchResult): EventOutcome =
         let value = demoTabs.selectedValue()
         valueDispatch(DemoAction(kind: dakAltTabSelected, value: value))
         ui.syncAltTabStatusText(refs, value)
@@ -1859,7 +1859,7 @@ proc ComponentCatalog(
           textStyle = compactInputValueStyle(),
           id = "catalog-input"
         )
-        compact.container.onInput = proc(event: DispatchResult): bool =
+        compact.container.onInput = proc(event: DispatchResult): EventOutcome =
           if event.event.text.isSome:
             valueDispatch(DemoAction(kind: dakCatalogInputChanged, value: event.event.text.get))
           false
@@ -1882,7 +1882,7 @@ proc ComponentCatalog(
           textStyle = textAreaValueStyle(),
           id = "catalog-textarea"
         )
-        area.container.onInput = proc(event: DispatchResult): bool =
+        area.container.onInput = proc(event: DispatchResult): EventOutcome =
           if event.event.text.isSome:
             valueDispatch(DemoAction(kind: dakCatalogTextareaChanged, value: event.event.text.get))
           false
@@ -1975,7 +1975,7 @@ proc ComponentCatalog(
             textStyle = compactInputValueStyle(),
             id = "form-name-input"
           )
-          nameInput.container.onInput = proc(event: DispatchResult): bool =
+          nameInput.container.onInput = proc(event: DispatchResult): EventOutcome =
             if event.event.text.isSome:
               valueDispatch(DemoAction(kind: dakFormNameChanged, value: event.event.text.get))
             false
@@ -3158,7 +3158,7 @@ proc main() =
           pointerMoveEvent(point, event.pointer, event.timestamp), ui.scroll
         )
         ui.normalizeTextControlDispatches(frame.regions, dispatches)
-        discard ui.events.handle(ui.tree, dispatches)
+        discard ui.handleEvents(dispatches)
         if ui.scroll.revision != scrollRevision:
           retainedScrollPaintPending = true
           frameDirty = true
@@ -3193,7 +3193,7 @@ proc main() =
           needsFrame = true
           continue
         if ui.isContextMenuHit(hitTarget):
-          discard ui.events.handle(ui.tree, DispatchResult(
+          discard ui.handleEvent(DispatchResult(
             target: hitTarget,
             local:
               if hit.isSome: some(hit.get.local)
@@ -3215,7 +3215,7 @@ proc main() =
               point, event.button, event.pointer, event.timestamp
             ), ui.scroll
           )
-          discard ui.events.handle(ui.tree, dispatches)
+          discard ui.handleEvents(dispatches)
           if ui.scroll.revision != scrollRevision:
             retainedScrollPaintPending = true
             frameDirty = true
@@ -3239,7 +3239,7 @@ proc main() =
           ), ui.scroll
         )
         ui.normalizeTextControlDispatches(frame.regions, dispatches)
-        discard ui.events.handle(ui.tree, dispatches)
+        discard ui.handleEvents(dispatches)
         ui.normalizeTextControlFocus(inputState, normalizedHitTarget)
         dirtyStyleRoots.addDirtyRoot(inputState.focusedTarget)
         if textHit.isSome:
@@ -3307,7 +3307,7 @@ proc main() =
           if hit.isSome: some(hit.get.node)
           else: none(NodeId)
         if ui.isContextMenuHit(hitTarget):
-          discard ui.events.handle(ui.tree, DispatchResult(
+          discard ui.handleEvent(DispatchResult(
             target: hitTarget,
             local:
               if hit.isSome: some(hit.get.local)
@@ -3334,7 +3334,7 @@ proc main() =
           ), ui.scroll
         )
         ui.normalizeTextControlDispatches(frame.regions, dispatches)
-        discard ui.events.handle(ui.tree, dispatches)
+        discard ui.handleEvents(dispatches)
         if scrollbarPointer:
           continue
         staticLayerDirty = true
@@ -3793,7 +3793,7 @@ proc main() =
             inputState.processInput(ui.tree, frame.regions, wheel)
           else:
             inputState.processInput(ui.tree, frame.regions, wheel, ui.scroll)
-        let handled = ui.events.handle(ui.tree, dispatches)
+        let handled = ui.handleEvents(dispatches)
         if ui.scroll.revision != scrollRevision:
           retainedScrollPaintPending = true
           frameDirty = true
@@ -3809,7 +3809,7 @@ proc main() =
         let input = event.pointerInputEvent()
         if input.isSome:
           let dispatches = inputState.processInput(ui.tree, frame.regions, input.get)
-          discard ui.events.handle(ui.tree, dispatches)
+          discard ui.handleEvents(dispatches)
         paintOnlyDirty = true
       of sekTouchMove:
         staticLayerDirty = true
@@ -3818,21 +3818,21 @@ proc main() =
           let dispatches = inputState.processInput(
             ui.tree, frame.regions, input.get
           )
-          discard ui.events.handle(ui.tree, dispatches)
+          discard ui.handleEvents(dispatches)
         paintOnlyDirty = true
       of sekTouchEnd:
         staticLayerDirty = true
         let input = event.pointerInputEvent()
         if input.isSome:
           let dispatches = inputState.processInput(ui.tree, frame.regions, input.get)
-          discard ui.events.handle(ui.tree, dispatches)
+          discard ui.handleEvents(dispatches)
         paintOnlyDirty = true
       of sekTouchCancel:
         staticLayerDirty = true
         let input = event.pointerInputEvent()
         if input.isSome:
           let dispatches = inputState.processInput(ui.tree, frame.regions, input.get)
-          discard ui.events.handle(ui.tree, dispatches)
+          discard ui.handleEvents(dispatches)
         paintOnlyDirty = true
       of sekPenProximityIn, sekPenProximityOut,
          sekPenButtonDown, sekPenButtonUp:
@@ -3841,8 +3841,9 @@ proc main() =
           let dispatches = inputState.processInput(
             ui.tree, frame.regions, input.get, ui.scroll
           )
-          discard ui.events.handle(ui.tree, dispatches)
+          discard ui.handleEvents(dispatches)
         paintOnlyDirty = true
+      discard ui.reconcilePointerCapture(inputState)
       if ui.reconcileFocus(inputState):
         staticLayerDirty = true
         paintOnlyDirty = true
@@ -3871,7 +3872,7 @@ proc main() =
       let scrollRevision = ui.scroll.revision
       let scrollEndDispatches = inputState.finishScroll(ui.scroll)
       if scrollEndDispatches.len > 0:
-        discard ui.events.handle(ui.tree, scrollEndDispatches)
+        discard ui.handleEvents(scrollEndDispatches)
       if ui.scroll.revision != scrollRevision:
         finishScrollFrame(ui, frame)
         staticLayerDirty = true

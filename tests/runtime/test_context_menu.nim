@@ -36,7 +36,7 @@ suite "default context menu":
     let target = ui.box(parent = some(root))
     var copied = false
 
-    ui.events.onCopy(target.nodeId, proc(event: DispatchResult): bool =
+    ui.events.onCopy(target.nodeId, proc(event: DispatchResult): EventOutcome =
       copied = true
       true
     )
@@ -56,7 +56,7 @@ suite "default context menu":
     var pasted = ""
 
     ui.configureClipboardTextProvider(proc(): string = "from-clipboard")
-    ui.events.onPaste(target.nodeId, proc(event: DispatchResult): bool =
+    ui.events.onPaste(target.nodeId, proc(event: DispatchResult): EventOutcome =
       if event.event.text.isSome:
         pasted = event.event.text.get
       true
@@ -75,7 +75,7 @@ suite "default context menu":
     let target = ui.box(parent = some(root))
     var copied = false
 
-    ui.events.onCopy(target.nodeId, proc(event: DispatchResult): bool =
+    ui.events.onCopy(target.nodeId, proc(event: DispatchResult): EventOutcome =
       copied = true
       true
     )

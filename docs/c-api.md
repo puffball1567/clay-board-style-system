@@ -23,9 +23,12 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x00010008` supports:
+ABI version `0x0001000C` supports:
 
 - Opaque context and style handles.
+- Atomically reference-counted immutable Blob handles with advisory MIME
+  metadata, bounded reads into host buffers, and a 64 MiB eager-construction
+  limit. Blob storage does not expose Nim-managed pointers.
 - Generation-checked node handles plus box, text, and image node creation.
 - Groups, attributes, pseudo-state flags, and accessibility semantics.
 - Typed length, number, keyword, color, color-pair, border, shadow, gradient,
@@ -51,8 +54,13 @@ ABI version `0x00010008` supports:
   libraries append local drawing commands and publish the complete display-list
   update with one `cbss_render_surface_canvas_commit`.
 - Hit testing.
-- C callbacks for all CBSS event kinds, including bubbling through ancestors.
+- Replaceable C callbacks and removable additive subscriptions for all CBSS
+  event kinds, including bubbling through ancestors.
 - Pointer, touch, pen, keyboard, text, wheel, and component-event dispatch.
+- Stable event `target`/`current_target`, target and bubble phase flags,
+  bubbling/cancelability metadata, and independent handled,
+  stop-propagation, and prevent-default callback result bits. Dispatch summaries
+  retain the legacy `handled` byte and expose the complete bitset as `outcome`.
 - Optional pointer-device metadata with stable-in-process device IDs, contact,
   button, eraser, and proximity state. A capability bitmask distinguishes an
   unavailable pen axis from a supported axis whose value is zero; timestamps,
@@ -100,7 +108,13 @@ uses `cbss_context_compute` with the new dimensions.
 
 Event handlers are installed with `cbss_node_set_event_handler`. Reinstalling
 the same node/event pair replaces the callback; passing a null callback removes
-it. Returning nonzero stops propagation to ancestors for that dispatch.
+it. Independent observers use `cbss_node_subscribe_event`, retain the returned
+`CbssEventSubscription`, and remove it with
+`cbss_context_unsubscribe_event`. The callback returns a bitwise combination of
+`CBSS_EVENT_OUTCOME_*`:
+`HANDLED` records handling, `STOP_PROPAGATION` stops traversal after the current
+target, and `PREVENT_DEFAULT` suppresses a cancelable intrinsic action when the
+hosted component defines one. Returning `1` remains the handled-only form.
 Callbacks may update nodes and styles, but must not destroy or reset the
 context currently dispatching. The callback and `user_data` remain owned by the
 host.

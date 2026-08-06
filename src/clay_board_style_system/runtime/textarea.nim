@@ -3,6 +3,7 @@ import std/[algorithm, options, strutils]
 import ../core/[color, computed_style, declaration, geometry, node, rule, selector, style_value]
 import ../input/events
 import ../text/text_engine
+import ./form
 import ./ui_root
 
 const textEdgeSlack = 2.0'f32
@@ -101,6 +102,9 @@ type
     scrollbarThumb*: NodeHandle
     resizeHandle*: NodeHandle
     state*: TextAreaState
+
+proc register*(form: FormHandle; name: string; area: TextAreaHandle) =
+  form.registerField(area.container, name, ffText)
 
 proc displayText(state: TextAreaState): string =
   if state.value.len == 0 and
@@ -1620,11 +1624,11 @@ proc textArea*(
     area.setDisabled(ownDisabled or disabled)
   )
 
-  root.events.addInternalEventHandler(area.container.id, iekFocus, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(area.container.id, iekFocus, proc(event: DispatchResult): EventOutcome =
     area.focus()
     false
   )
-  root.events.addInternalEventHandler(area.container.id, iekPointerDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(area.container.id, iekPointerDown, proc(event: DispatchResult): EventOutcome =
     if area.state.disabled:
       area.state.selecting = false
       return true
@@ -1635,7 +1639,7 @@ proc textArea*(
       area.moveCaretToPoint(event.local.get, extendSelection = event.event.shiftKey)
     false
   )
-  root.events.addInternalEventHandler(area.container.id, iekPointerMove, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(area.container.id, iekPointerMove, proc(event: DispatchResult): EventOutcome =
     if area.state.disabled:
       area.state.selecting = false
       return true
@@ -1643,7 +1647,7 @@ proc textArea*(
       area.moveCaretToPoint(event.local.get, extendSelection = true)
     false
   )
-  root.events.addInternalEventHandler(area.container.id, iekDrag, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(area.container.id, iekDrag, proc(event: DispatchResult): EventOutcome =
     if area.state.disabled:
       area.state.selecting = false
       return true
@@ -1651,25 +1655,25 @@ proc textArea*(
       area.moveCaretToPoint(event.local.get, extendSelection = true)
     false
   )
-  root.events.addInternalEventHandler(area.container.id, iekPointerUp, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(area.container.id, iekPointerUp, proc(event: DispatchResult): EventOutcome =
     area.state.selecting = false
     false
   )
-  root.events.addInternalEventHandler(area.container.id, iekDragEnd, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(area.container.id, iekDragEnd, proc(event: DispatchResult): EventOutcome =
     area.state.selecting = false
     false
   )
-  root.events.addInternalEventHandler(area.container.id, iekWheel, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(area.container.id, iekWheel, proc(event: DispatchResult): EventOutcome =
     if event.event.delta.isNone:
       return false
     area.scrollBy(event.event.delta.get.y)
     true
   )
-  root.events.addInternalEventHandler(area.container.id, iekScrollEnd, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(area.container.id, iekScrollEnd, proc(event: DispatchResult): EventOutcome =
     area.finishScroll()
     true
   )
-  root.events.addInternalEventHandler(area.scrollbarThumb.id, iekPointerDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(area.scrollbarThumb.id, iekPointerDown, proc(event: DispatchResult): EventOutcome =
     if event.event.position.isNone:
       return true
     area.state.scrollbarDragging = true
@@ -1677,7 +1681,7 @@ proc textArea*(
     area.state.scrollbarDragStartScrollY = area.state.scrollY
     true
   )
-  root.events.addInternalEventHandler(area.scrollbarThumb.id, iekPointerMove, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(area.scrollbarThumb.id, iekPointerMove, proc(event: DispatchResult): EventOutcome =
     if not area.state.scrollbarDragging or event.event.position.isNone:
       return false
     let lines = area.caretLines()
@@ -1694,12 +1698,12 @@ proc textArea*(
     area.scrollBy(nextScroll - area.state.scrollY)
     true
   )
-  root.events.addInternalEventHandler(area.scrollbarThumb.id, iekPointerUp, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(area.scrollbarThumb.id, iekPointerUp, proc(event: DispatchResult): EventOutcome =
     let wasDragging = area.state.scrollbarDragging
     area.state.scrollbarDragging = false
     wasDragging
   )
-  root.events.addInternalEventHandler(area.scrollbarTrack.id, iekPointerDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(area.scrollbarTrack.id, iekPointerDown, proc(event: DispatchResult): EventOutcome =
     if event.target.isSome and event.target.get == area.scrollbarThumb.nodeId:
       return false
     if event.local.isNone:
@@ -1715,11 +1719,11 @@ proc textArea*(
       area.scrollBy(area.visibleTextHeight().get)
     true
   )
-  root.events.addInternalEventHandler(area.container.id, iekBlur, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(area.container.id, iekBlur, proc(event: DispatchResult): EventOutcome =
     area.blur()
     false
   )
-  root.events.addInternalEventHandler(area.container.id, iekTextInput, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(area.container.id, iekTextInput, proc(event: DispatchResult): EventOutcome =
     if area.state.disabled or area.state.readOnly:
       return true
     if event.event.text.isSome:
@@ -1732,24 +1736,24 @@ proc textArea*(
         return true
     false
   )
-  root.events.addInternalEventHandler(area.container.id, iekPaste, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(area.container.id, iekPaste, proc(event: DispatchResult): EventOutcome =
     if area.state.disabled or area.state.readOnly:
       return true
     if event.event.text.isSome:
       area.insertText(event.event.text.get.normalizePastedText(), emitValue = true)
     false
   )
-  root.events.addInternalEventHandler(area.container.id, iekCopy, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(area.container.id, iekCopy, proc(event: DispatchResult): EventOutcome =
     area.requestClipboardWrite(area.selectedText())
     false
   )
-  root.events.addInternalEventHandler(area.container.id, iekCut, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(area.container.id, iekCut, proc(event: DispatchResult): EventOutcome =
     area.requestClipboardWrite(area.selectedText())
     if not area.state.readOnly and area.deleteSelection():
       area.emitValueEvents()
     false
   )
-  root.events.addInternalEventHandler(area.container.id, iekCompositionStart, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(area.container.id, iekCompositionStart, proc(event: DispatchResult): EventOutcome =
     let text =
       if event.event.text.isSome: event.event.text.get
       else: ""
@@ -1763,7 +1767,7 @@ proc textArea*(
     area.setVisibleText()
     true
   )
-  root.events.addInternalEventHandler(area.container.id, iekCompositionUpdate, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(area.container.id, iekCompositionUpdate, proc(event: DispatchResult): EventOutcome =
     let text =
       if event.event.text.isSome: event.event.text.get
       else: ""
@@ -1777,7 +1781,7 @@ proc textArea*(
     area.setVisibleText()
     true
   )
-  root.events.addInternalEventHandler(area.container.id, iekCompositionEnd, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(area.container.id, iekCompositionEnd, proc(event: DispatchResult): EventOutcome =
     if not area.state.composingActive and area.state.composingText.len == 0:
       return false
     area.state.pendingFallbackText = ""
@@ -1788,7 +1792,7 @@ proc textArea*(
     area.setVisibleText()
     true
   )
-  root.events.addInternalEventHandler(area.container.id, iekKeyDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(area.container.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
     if area.state.disabled:
       return false
     if event.event.key.isNone:
@@ -1905,7 +1909,7 @@ proc textArea*(
         return true
     false
   )
-  root.events.addInternalEventHandler(area.resizeHandle.id, iekPointerDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(area.resizeHandle.id, iekPointerDown, proc(event: DispatchResult): EventOutcome =
     if area.state.disabled:
       area.state.resizing = false
       return true
@@ -1922,7 +1926,7 @@ proc textArea*(
     area.syncResizeStyle()
     true
   )
-  root.events.addInternalEventHandler(area.resizeHandle.id, iekPointerMove, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(area.resizeHandle.id, iekPointerMove, proc(event: DispatchResult): EventOutcome =
     if not area.state.resizing or event.local.isNone:
       return false
     let delta = vec2(
@@ -1942,7 +1946,7 @@ proc textArea*(
     area.setSize(nextWidth, nextHeight, emitEvent = true)
     true
   )
-  root.events.addInternalEventHandler(area.resizeHandle.id, iekPointerUp, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(area.resizeHandle.id, iekPointerUp, proc(event: DispatchResult): EventOutcome =
     if area.state.resizing:
       area.state.resizing = false
       area.syncResizeStyle()

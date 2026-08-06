@@ -2,6 +2,7 @@ import std/options
 
 import ../core/[declaration, node, style_value]
 import ../input/events
+import ./form
 import ./ui_root
 
 type
@@ -30,6 +31,9 @@ type
     panelNode*: NodeHandle
     optionNodes*: seq[NodeHandle]
     state*: SelectState
+
+proc register*(form: FormHandle; name: string; select: SelectHandle) =
+  form.registerField(select.container, name, ffText)
 
 proc selectedLabel(select: SelectHandle): string =
   if select.state.selectedIndex >= 0 and select.state.selectedIndex < select.state.options.len:
@@ -163,7 +167,7 @@ proc containsTarget(select: SelectHandle; target: Option[NodeId]): bool =
   false
 
 proc optionClickHandler(select: SelectHandle; optionIndex: int): EventHandler =
-  proc(event: DispatchResult): bool =
+  proc(event: DispatchResult): EventOutcome =
     if select.state.disabled:
       return true
     if optionIndex < 0 or optionIndex >= select.state.options.len:
@@ -244,7 +248,7 @@ proc selectBox*(
     true
   )
 
-  root.events.addInternalEventHandler(select.container.id, iekClick, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(select.container.id, iekClick, proc(event: DispatchResult): EventOutcome =
     if select.state.disabled:
       return true
     if event.event.position.isSome:
@@ -252,17 +256,17 @@ proc selectBox*(
     select.toggleOpen()
     false
   )
-  root.events.addInternalEventHandler(select.container.id, iekPointerDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(select.container.id, iekPointerDown, proc(event: DispatchResult): EventOutcome =
     if select.state.disabled:
       return true
     select.toggleOpen()
     true
   )
-  root.events.addInternalEventHandler(select.container.id, iekBlur, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(select.container.id, iekBlur, proc(event: DispatchResult): EventOutcome =
     select.setOpen(false, emitToggle = true)
     false
   )
-  root.events.addInternalEventHandler(select.container.id, iekKeyDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(select.container.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
     if select.state.disabled:
       return true
     if event.event.key.isNone:

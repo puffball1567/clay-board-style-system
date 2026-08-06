@@ -66,7 +66,7 @@ proc saveButtonStyle(): UiStyle =
   ])
 
 proc render(self: SaveButton) =
-  proc onSave(event: DispatchResult): bool =
+  proc onSave(event: DispatchResult): EventOutcome =
     inc self.clicks[]
     return true
 
@@ -129,11 +129,11 @@ proc render(self: DoubleRootComponent) =
     ui.text("second")
 
 proc render(self: EventComponent) =
-  proc handleChange(event: DispatchResult): bool =
+  proc handleChange(event: DispatchResult): EventOutcome =
     inc self.changes[]
     return true
 
-  proc handleKeyDown(event: DispatchResult): bool =
+  proc handleKeyDown(event: DispatchResult): EventOutcome =
     inc self.keyDowns[]
     return true
 
@@ -182,7 +182,7 @@ proc render(self: ConditionalPanel) =
   self.node.setFocusable()
   self.node.setAccessibleRole(arGroup)
   self.node.setAccessibleName("Conditional panel")
-  self.onClick = proc(event: DispatchResult): bool =
+  self.onClick = proc(event: DispatchResult): EventOutcome =
     inc self.clicks[]
     true
 
