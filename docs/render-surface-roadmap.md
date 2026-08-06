@@ -318,6 +318,50 @@ remaining behind the same Canvas composition, input, and lifecycle contract.
 It is not a prerequisite for the standard Canvas roadmap, and it must not
 change the canonical renderer for ordinary CBSS UI.
 
+### Application GPU Compute Coexistence
+
+An application backend may use the same physical GPU for inference, image or
+signal processing, simulation, encoding preparation, or other general-purpose
+compute. CBSS must not assume that its Canvas renderer is the process-wide or
+machine-wide exclusive GPU owner.
+
+The integration model depends on the process and API boundary:
+
+- A separate backend process owns its own GPU device and queues. It transfers
+  only bounded results, Blob data, or immutable stream snapshots to the CBSS
+  process. API contexts cannot conflict across the process boundary, although
+  applications remain responsible for GPU memory, bandwidth, thermal, and
+  scheduling budgets shared by the physical device.
+- An in-process backend using a different GPU API owns an isolated device by
+  default. Its portable exchange path is a bounded CPU staging buffer. Raw
+  texture, external-memory, and semaphore exchange is an optional
+  platform-specific adapter and is never assumed merely because both APIs use
+  the same physical GPU.
+- An in-process backend using the selected CBSS GPU API may receive a
+  host-owned compute submission capability. It registers work with the shared
+  frame scheduler instead of creating a second swapchain owner or submitting
+  unsynchronized work behind CBSS.
+
+The shared submission contract must provide:
+
+- exactly one window swapchain and present owner;
+- explicit device, queue, command-buffer, resource, and fence ownership;
+- scoped compute and copy submission that cannot retain a frame encoder after
+  its callback returns;
+- resource namespaces, memory budgets, upload limits, and per-frame work
+  budgets so backend compute cannot starve UI presentation;
+- declared dependencies between compute output and Canvas consumption without
+  blocking the UI thread for an unbounded fence wait;
+- device-loss and shutdown notification delivered to every registered owner;
+  and
+- deterministic mock scheduling tests that do not require GPU hardware.
+
+CBSS does not become a general-purpose compute framework. Application logic
+owns kernels, data, retry policy, and result meaning. CBSS owns only the GPU
+composition and scheduling boundary needed to coexist safely in one process.
+Backend-specific device handles remain opaque across the C ABI and are absent
+from the standard CPU/SDL 2D capability profile.
+
 ## Phase 4: Game UI Workflow
 
 Status: `Planned`

@@ -42,9 +42,10 @@ Released capabilities:
 ### ARC Ownership And Widget Lifecycle
 
 Version 0.2 must also close the ownership gap between the documented ARC
-model and the reference-control implementation. ARC remains CBSS's release
-memory model. ORC compatibility may be tested as a safety net, but cycle
-collection must not be used to hide an ownership cycle in the runtime.
+model and the reference-control implementation. ARC remains CBSS's strict
+release-verification baseline. ORC compatibility is tested as a safety net,
+but cycle collection must not be used to hide an ownership cycle in the
+runtime.
 
 This work is a Version 0.2 release gate:
 
@@ -853,9 +854,18 @@ camera-frame effects, tile maps, and game scenes. It remains behind the same
 Canvas contract and must not create a second renderer-specific interpretation
 of ordinary CBSS UI properties.
 
+CBSS will not claim exclusive ownership of the machine's GPU. A separate
+backend process may own an independent compute device and return bounded Blob,
+Stream, or immutable snapshot results. An in-process backend using the selected
+GPU API may register compute work through a host-owned submission capability,
+with one present owner and explicit queue, resource, fence, memory-budget,
+device-loss, and shutdown rules. Different GPU APIs use bounded CPU staging by
+default; platform-specific external-memory sharing is optional and never an
+implicit requirement.
+
 The complete staged plan, including GPU Canvas composition, visualization APIs,
-game UI, and external engine integration, is maintained in
-[render-surface-roadmap.md](render-surface-roadmap.md).
+application compute coexistence, game UI, and external engine integration, is
+maintained in [render-surface-roadmap.md](render-surface-roadmap.md).
 
 ## Motion, Transform, And Native Visual Surfaces
 
