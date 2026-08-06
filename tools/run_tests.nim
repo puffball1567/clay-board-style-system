@@ -30,10 +30,21 @@ proc artifactName(path: string): string =
       result[index] = '_'
 
 proc main() =
-  let portable = paramCount() == 1 and paramStr(1) == "--portable"
-  if paramCount() > 1 or (paramCount() == 1 and not portable):
-    stderr.writeLine("Usage: run_tests [--portable]")
-    quit(QuitFailure)
+  var portable = false
+  var memoryModel = "arc"
+  for argument in commandLineParams():
+    case argument
+    of "--portable":
+      portable = true
+    of "--memory:arc":
+      memoryModel = "arc"
+    of "--memory:orc":
+      memoryModel = "orc"
+    else:
+      stderr.writeLine(
+        "Usage: run_tests [--portable] [--memory:arc|--memory:orc]"
+      )
+      quit(QuitFailure)
 
   let repoRoot = currentSourcePath().parentDir().parentDir()
   let testsRoot = repoRoot / "tests"
@@ -63,7 +74,7 @@ proc main() =
     let name = relative.artifactName()
     var arguments = @[
       "nim", "c", "-r",
-      "--mm:arc",
+      "--mm:" & memoryModel,
       "--path:" & (repoRoot / "src"),
     ]
     if relative.startsWith("tests/perf/"):
@@ -90,7 +101,7 @@ proc main() =
       stderr.writeLine("FAILED: " & relative)
       quit(execution.exitCode)
 
-  let profile = if portable: "portable" else: "full"
+  let profile = (if portable: "portable" else: "full") & ", " & memoryModel
   stdout.writeLine(
     "\nPassed " & $tests.len & " discovered test files (" & profile & " profile)."
   )

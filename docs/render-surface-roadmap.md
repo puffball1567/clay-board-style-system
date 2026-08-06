@@ -212,6 +212,72 @@ and less common orientations can be added after the JSON/orthogonal path is
 stable. These modules remain opt-in imports so ordinary CBSS GUI applications
 do not pull game-oriented code or assets into their build.
 
+## Motion Scene Dependency Track
+
+Status: `Planned after declarative transition binding`
+
+GPU Canvas is not limited to displaying frames completed elsewhere. CBSS will
+also provide a retained Motion Scene whose visual objects are evaluated and
+drawn by the CBSS Canvas pipeline. This is the primary path for simultaneously
+animated shapes, text, images, particles, sprites, chart marks, and procedural
+visuals. External Nim code may calculate object data, but the resulting scene
+participates in CBSS composition, clipping, frame scheduling, coordinate
+conversion, hit testing, and presentation.
+
+A Motion Scene is internal content of one Canvas layout node. It must not
+inflate the UI tree by creating one Box for every particle, chart point, or
+motion-graphics layer. Scene objects instead use stable typed IDs and
+data-oriented retained storage suitable for CPU chunking, GPU instancing, and
+storage-buffer upload. Optional per-object interaction metadata maps scene
+hits back to CBSS input events without making those objects independent layout
+participants.
+
+The user-facing goal is a Web-like authoring boundary:
+
+```nim
+let scene = motionScene()
+scene.add(titleLayer)
+scene.add(particleField)
+
+ui.gpuCanvas(scene, style = previewStyle())
+```
+
+Application authors do not manage GPU queues, worker channels, swapchain
+ownership, generation counters, or frame fences. Independent Nim libraries
+can expose reusable motion, chart, game, and generative-design objects that
+mount through this contract.
+
+Implementation order:
+
+1. The ordinary-UI declarative transition engine defines the shared clock,
+   interpolation, reversal, cancellation, reduced-motion, and invalidation
+   semantics.
+2. A deterministic CPU reference renderer validates scene snapshots, stable
+   identities, hit testing, frame replacement, and headless output.
+3. The SDL3 GPU backend batches scene data into graphics and compute passes and
+   composites its offscreen result into the Canvas-owned region.
+4. An optional `wgpu-native` backend implements the same contract rather than
+   creating a second public scene model.
+
+The architectural contract is fixed before transition work completes: Canvas
+owns layout and presentation; Motion Scene owns its interior visual objects;
+backend handles remain private; worker results are bounded immutable snapshots;
+and static scenes do not request idle frames.
+
+Deployment remains capability-based. The CPU Canvas and SDL 2D profile does
+not import, link, or package Motion GPU, `wgpu-native`, Pixie, media codecs, or
+shader bundles unless selected by the application. This profile remains the
+baseline for 64-bit Raspberry Pi-class Linux targets. GPU-enabled profiles add
+only the chosen backend and report unsupported devices explicitly instead of
+silently falling back to an unbounded software workload.
+
+Capability selection occurs at compile/configure time. It controls source
+imports, native bridge builds, linker inputs, staged libraries, and assets;
+runtime feature flags alone are insufficient. The project may expose one
+generated `cbss_app` import for ergonomics, but that module re-exports only the
+selected profile. Release CI measures both artifact size and native dependency
+closure for the standard CPU/SDL 2D profile and the target's full profile.
+
 ## Phase 3: SDL3 GPU Canvas Capability
 
 Status: `Planned`
@@ -251,6 +317,50 @@ visualization, camera-frame effects, tile-map rendering, and game scenes while
 remaining behind the same Canvas composition, input, and lifecycle contract.
 It is not a prerequisite for the standard Canvas roadmap, and it must not
 change the canonical renderer for ordinary CBSS UI.
+
+### Application GPU Compute Coexistence
+
+An application backend may use the same physical GPU for inference, image or
+signal processing, simulation, encoding preparation, or other general-purpose
+compute. CBSS must not assume that its Canvas renderer is the process-wide or
+machine-wide exclusive GPU owner.
+
+The integration model depends on the process and API boundary:
+
+- A separate backend process owns its own GPU device and queues. It transfers
+  only bounded results, Blob data, or immutable stream snapshots to the CBSS
+  process. API contexts cannot conflict across the process boundary, although
+  applications remain responsible for GPU memory, bandwidth, thermal, and
+  scheduling budgets shared by the physical device.
+- An in-process backend using a different GPU API owns an isolated device by
+  default. Its portable exchange path is a bounded CPU staging buffer. Raw
+  texture, external-memory, and semaphore exchange is an optional
+  platform-specific adapter and is never assumed merely because both APIs use
+  the same physical GPU.
+- An in-process backend using the selected CBSS GPU API may receive a
+  host-owned compute submission capability. It registers work with the shared
+  frame scheduler instead of creating a second swapchain owner or submitting
+  unsynchronized work behind CBSS.
+
+The shared submission contract must provide:
+
+- exactly one window swapchain and present owner;
+- explicit device, queue, command-buffer, resource, and fence ownership;
+- scoped compute and copy submission that cannot retain a frame encoder after
+  its callback returns;
+- resource namespaces, memory budgets, upload limits, and per-frame work
+  budgets so backend compute cannot starve UI presentation;
+- declared dependencies between compute output and Canvas consumption without
+  blocking the UI thread for an unbounded fence wait;
+- device-loss and shutdown notification delivered to every registered owner;
+  and
+- deterministic mock scheduling tests that do not require GPU hardware.
+
+CBSS does not become a general-purpose compute framework. Application logic
+owns kernels, data, retry policy, and result meaning. CBSS owns only the GPU
+composition and scheduling boundary needed to coexist safely in one process.
+Backend-specific device handles remain opaque across the C ABI and are absent
+from the standard CPU/SDL 2D capability profile.
 
 ## Phase 4: Game UI Workflow
 

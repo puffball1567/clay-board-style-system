@@ -144,7 +144,12 @@ clay_board_style_system
 The public project name can remain human-readable, but Nim modules should use
 the package spelling above.
 
-CBSS should prefer Nim ARC-compatible ownership patterns:
+Applications may compile CBSS with either `--mm:arc` or `--mm:orc`. CBSS uses
+ARC-compatible ownership as the stricter design and release-verification
+baseline; the ORC test lane verifies application compatibility rather than
+hiding cycles in CBSS-owned state.
+
+CBSS should therefore prefer Nim ARC-compatible ownership patterns:
 
 - Value objects where practical
 - `seq`-backed arenas for trees and computed results

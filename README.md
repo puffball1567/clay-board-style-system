@@ -102,9 +102,11 @@ The exact workloads, machine-local interpretation, budgets, and regression
 gates are documented in [Performance Model](docs/performance-model.md) and can
 be run with `nimble bench`.
 
-The discovered ARC suite currently covers 79 independently compiled test
-files. Separate Valgrind gates exercise the complete reference-control graph
-and both shared and static C ABI consumers.
+The discovered ARC suite currently covers 84 independently compiled test
+files. The same suite and public examples also run under ORC as a compatibility
+gate, so applications may select either `--mm:arc` or `--mm:orc`. ARC remains
+the stricter ownership baseline. Separate Valgrind gates exercise the complete
+reference-control graph and both shared and static C ABI consumers.
 
 ## Try It
 
@@ -294,16 +296,18 @@ construction, ownership, callbacks, versioning, and static/shared linking.
 
 ```sh
 nimble test
+nimble testOrc
 nimble checkExamples
+nimble checkExamplesOrc
 nimble bench
 nimble testWidgetLifecycleValgrind
 nimble testCAbiValgrind
 ```
 
-The full test task discovers and independently compiles ARC tests. CI also
-checks portable public modules on Linux, Windows, and macOS, builds shared and
-static C ABI artifacts, tests both Rust bridges, verifies source-only package
-installation, and runs release hygiene checks.
+The full test tasks discover and independently compile the suite under ARC and
+ORC. CI also checks portable public modules on Linux, Windows, and macOS,
+builds shared and static C ABI artifacts, tests both Rust bridges, verifies
+source-only package installation, and runs release hygiene checks.
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before changing a public boundary or hot
 path. Properties, elements, backends, and reference controls are separated so
