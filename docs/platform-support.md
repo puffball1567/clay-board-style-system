@@ -17,11 +17,12 @@ as supported release targets.
 
 The portable CI lane runs the platform-neutral ARC tests, checks the public
 module and non-window examples, builds the shared and static C ABI libraries,
-and tests the Rust text and image bridges on Linux, Windows, and macOS. It
-deliberately excludes SDL3-window, Wayland, bundled-runtime, and platform
-accessibility tests. This catches source, ABI-build, memory-model, and native
-bridge portability regressions without presenting compilation as real-device
-GUI validation.
+and tests the Rust text and image bridges on Linux, Windows, and macOS. A
+separate Linux lane runs the discovered suite and public examples under ORC so
+applications can select either Nim memory model. It deliberately excludes
+SDL3-window, Wayland, bundled-runtime, and platform accessibility tests. This
+catches source, ABI-build, memory-model, and native bridge portability
+regressions without presenting compilation as real-device GUI validation.
 
 ## SDL3 Policy
 

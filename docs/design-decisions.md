@@ -188,10 +188,10 @@ or reduced to the documented generator input — one binding copy only
   Wayland tests, performance benchmarks, and the cosmic-text integration test
   remain explicit opt-in tasks because they require a display, release-mode
   timing, or a prebuilt native bridge.
-- CI runs `nimble check`, the discovered ARC suite, example checks for all
-  three SDL3 link modes, and locked Cargo bridge tests/builds. Release hygiene
-  checks verify required notices, SDL3 symlinks, and the absence of unrelated
-  native binaries.
+- CI runs `nimble check`, the discovered ARC suite, the same suite and public
+  examples under ORC, ARC example checks for all three SDL3 link modes, and
+  locked Cargo bridge tests/builds. Release hygiene checks verify required
+  notices, SDL3 symlinks, and the absence of unrelated native binaries.
 - A root `LICENSE` (Apache-2.0) is added, plus SDL3/cosmic-text third-party
   notices alongside the existing image-rs notice. The explicit contributor
   patent grant is appropriate for a shared native UI foundation intended for

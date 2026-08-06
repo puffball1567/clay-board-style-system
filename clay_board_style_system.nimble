@@ -37,6 +37,10 @@ task test, "Run the test suite":
   exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
   exec "nim c -r --mm:arc --nimcache:/tmp/clay_board_style_system_test_runner_nimcache --out:/tmp/clay_board_style_system_test_runner tools/run_tests.nim"
 
+task testOrc, "Run the test suite under ORC":
+  exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
+  exec "nim c -r --mm:orc --nimcache:/tmp/clay_board_style_system_orc_test_runner_nimcache --out:/tmp/clay_board_style_system_orc_test_runner tools/run_tests.nim --memory:orc"
+
 task checkExamples, "Type-check every example in each supported link configuration":
   exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_paint examples/paint_demo.nim"
@@ -57,6 +61,18 @@ task checkExamples, "Type-check every example in each supported link configurati
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_door_button_canvas -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/door_button_canvas_demo.nim"
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_door_button_canvas_system -d:cbssSdl3LinkMode=system examples/door_button_canvas_demo.nim"
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_door_button_canvas_custom -d:cbssSdl3LinkMode=custom -d:cbssRuntimeRoot=vendor/sdl3 examples/door_button_canvas_demo.nim"
+
+task checkExamplesOrc, "Type-check public examples under ORC":
+  exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
+  exec "nim check --mm:orc --path:src --nimcache:/tmp/clay_board_style_system_orc_check_public src/clay_board_style_system.nim"
+  exec "nim check --mm:orc --path:src --nimcache:/tmp/clay_board_style_system_orc_check_paint examples/paint_demo.nim"
+  exec "nim check --mm:orc --path:src --nimcache:/tmp/clay_board_style_system_orc_check_render examples/render_demo.nim"
+  exec "nim check --mm:orc --path:src --nimcache:/tmp/clay_board_style_system_orc_check_component examples/component_demo.nim"
+  exec "nim check --mm:orc --path:src --nimcache:/tmp/clay_board_style_system_orc_check_sdl3 -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/sdl3_demo.nim"
+  exec "nim check --mm:orc --path:src --nimcache:/tmp/clay_board_style_system_orc_check_navigation -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/navigation_demo.nim"
+  exec "nim check --mm:orc --path:src --nimcache:/tmp/clay_board_style_system_orc_check_v03_canvas -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/v03_canvas_demo.nim"
+  exec "nim check --mm:orc --path:src --nimcache:/tmp/clay_board_style_system_orc_check_loading_indicator -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/loading_indicator_demo.nim"
+  exec "nim check --mm:orc --path:src --nimcache:/tmp/clay_board_style_system_orc_check_door_button_canvas -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/door_button_canvas_demo.nim"
 
 task buildCAbiShared, "Build the shared CBSS C ABI library":
   exec "nim c --app:lib --mm:arc -d:release --path:src --nimcache:/tmp/clay_board_style_system_c_api_shared_nimcache --out:/tmp/libcbss.so src/cbss_c_api.nim"
