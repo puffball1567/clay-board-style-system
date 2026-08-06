@@ -570,7 +570,7 @@ suite "retained navigation screen host":
       ui.pushParent(currentRoot)
       currentButton = ui.button("Replacement")
       ui.popParent()
-      currentButton.onClick = proc(event: DispatchResult): EventOutcome = true
+      currentButton.onClick = proc(event: DispatchResult): EventOutcome = stoppedEvent()
       check host.replaceScreen(
         hsHome,
         currentRoot,

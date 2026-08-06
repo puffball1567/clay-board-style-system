@@ -250,7 +250,7 @@ suite "dynamic subtree disposal":
         uiStyle([decl("height", px(30))]),
         priority = 2
       )
-      action.onClick = proc(event: DispatchResult): EventOutcome = true
+      action.onClick = proc(event: DispatchResult): EventOutcome = stoppedEvent()
       maximumNodes = max(maximumNodes, ui.tree.nodes.len)
       maximumStyles = max(maximumStyles, ui.componentStyles.len)
       check ui.disposeSubtree(panel, interaction)

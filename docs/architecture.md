@@ -621,9 +621,9 @@ in a lightweight handle. A handle keeps direct identity while allowing familiar
 assignments such as:
 
 ```nim
-saveButton.onClick = proc(event: DispatchResult): bool =
+saveButton.onClick = proc(event: DispatchResult): EventOutcome =
   dispatch(Action(kind: SaveClicked))
-  true
+  handledEvent()
 
 rule(target(saveButton), [
   decl("background-color", colorValue(rgb(0.1, 0.35, 0.6)))
@@ -802,9 +802,9 @@ node even when hit testing would target another node. Capture emits
 The component dispatch path is still a real firing path:
 
 ```nim
-submitButton.onClick = proc(event: DispatchResult): bool =
+submitButton.onClick = proc(event: DispatchResult): EventOutcome =
   discard form.emit(iekSubmit)
-  true
+  handledEvent()
 ```
 
 If an event name is public, CBSS should provide one of these paths. Deprecated
@@ -1713,13 +1713,14 @@ ARC lifetime surprises. A GUI layer can maintain a separate handler table:
 
 ```nim
 type
-  EventHandler* = proc(event: DispatchResult): bool {.closure.}
+  EventHandler* = proc(event: DispatchResult): EventOutcome {.closure.}
 
 handlerTable[NodeId] = EventHandler
 ```
 
-The boolean return can mean "handled". A higher layer may then stop its own
-propagation, trigger a style recompute, or enqueue application commands.
+The result independently records handled state, propagation control, and
+default-action prevention. A higher layer may also enqueue application
+commands without conflating those effects.
 
 Pseudo-selectors such as `:hover`, `:active`, and `:focus` should be represented
 as node state flags. Event dispatch updates those flags; selectors only read
@@ -1734,15 +1735,15 @@ UI runtimes can choose their own model:
 ```nim
 # React-like local state:
 var count = 0
-handlers.onClick(button, proc(event: DispatchResult): bool =
+handlers.onClick(button, proc(event: DispatchResult): EventOutcome =
   inc count
-  true
+  handledEvent()
 )
 
 # Redux-like external store:
-handlers.onClick(button, proc(event: DispatchResult): bool =
+handlers.onClick(button, proc(event: DispatchResult): EventOutcome =
   appStore.dispatch(Action(kind: SaveClicked, node: event.target.get))
-  true
+  handledEvent()
 )
 ```
 
@@ -1781,21 +1782,21 @@ keeps CBSS usable with several state styles:
 ```nim
 # Local closure state
 var open = false
-handlers.onClick(toggleButton, proc(event: DispatchResult): bool =
+handlers.onClick(toggleButton, proc(event: DispatchResult): EventOutcome =
   open = not open
-  true
+  handledEvent()
 )
 
 # Reducer/store state
-handlers.onClick(saveButton, proc(event: DispatchResult): bool =
+handlers.onClick(saveButton, proc(event: DispatchResult): EventOutcome =
   appStore.dispatch(SaveClicked())
-  true
+  handledEvent()
 )
 
 # Signal/atom style
-handlers.onClick(toggleButton, proc(event: DispatchResult): bool =
+handlers.onClick(toggleButton, proc(event: DispatchResult): EventOutcome =
   expandedSignal.set(not expandedSignal.get())
-  true
+  handledEvent()
 )
 ```
 

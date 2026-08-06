@@ -156,6 +156,8 @@ type
     cancelable*: bool
     aliases*: array[2, InputEventKind]
     aliasCount*: uint8
+    publicNames*: array[2, string]
+    publicNameCount*: uint8
     abiCode*: uint32
 
   EventPhase* = enum
@@ -448,12 +450,18 @@ proc requestFrame*(dispatch: DispatchResult): bool {.discardable.} =
 
 func buildEventDefinitions(): array[InputEventKind, EventDefinition] =
   for kind in InputEventKind:
+    let enumName = $kind
     result[kind] = EventDefinition(
       producer: edmComponentDispatch,
       bubbles: true,
       cancelable: true,
+      publicNames: ["on" & enumName[3 .. ^1], ""],
+      publicNameCount: 1,
       abiCode: uint32(ord(kind))
     )
+
+  result[iekDoubleClick].publicNames = ["onDoubleClick", "onDblClick"]
+  result[iekDoubleClick].publicNameCount = 2
 
   for kind in {
     iekPointerMove, iekPointerDown, iekPointerUp,
@@ -538,6 +546,14 @@ const eventDefinitions* = buildEventDefinitions()
 
 func eventDefinition*(kind: InputEventKind): EventDefinition {.inline.} =
   eventDefinitions[kind]
+
+func primaryEventName*(kind: InputEventKind): string {.inline.} =
+  kind.eventDefinition.publicNames[0]
+
+iterator publicEventNames*(kind: InputEventKind): string =
+  let definition = kind.eventDefinition
+  for index in 0 ..< int(definition.publicNameCount):
+    yield definition.publicNames[index]
 
 proc bubbles*(kind: InputEventKind): bool {.inline.} =
   kind.eventDefinition.bubbles
@@ -1048,102 +1064,7 @@ template registerEventSlot(name: untyped; kindValue: InputEventKind) =
   ) =
     registry.addEventHandler(node, kindValue, handler)
 
-registerEventSlot(onAbort, iekAbort)
-registerEventSlot(onAnimationEnd, iekAnimationEnd)
-registerEventSlot(onAnimationIteration, iekAnimationIteration)
-registerEventSlot(onAnimationStart, iekAnimationStart)
-registerEventSlot(onAuxClick, iekAuxClick)
-registerEventSlot(onBeforeInput, iekBeforeInput)
-registerEventSlot(onBlur, iekBlur)
-registerEventSlot(onCancel, iekCancel)
-registerEventSlot(onCanPlay, iekCanPlay)
-registerEventSlot(onCanPlayThrough, iekCanPlayThrough)
-registerEventSlot(onChange, iekChange)
-registerEventSlot(onClick, iekClick)
-registerEventSlot(onClose, iekClose)
-registerEventSlot(onContextMenu, iekContextMenu)
-registerEventSlot(onCopy, iekCopy)
-registerEventSlot(onCueChange, iekCueChange)
-registerEventSlot(onCut, iekCut)
-registerEventSlot(onDblClick, iekDoubleClick)
-registerEventSlot(onDoubleClick, iekDoubleClick)
-registerEventSlot(onCompositionEnd, iekCompositionEnd)
-registerEventSlot(onCompositionStart, iekCompositionStart)
-registerEventSlot(onCompositionUpdate, iekCompositionUpdate)
-registerEventSlot(onDrag, iekDrag)
-registerEventSlot(onDragEnd, iekDragEnd)
-registerEventSlot(onDragEnter, iekDragEnter)
-registerEventSlot(onDragExit, iekDragExit)
-registerEventSlot(onDragLeave, iekDragLeave)
-registerEventSlot(onDragOver, iekDragOver)
-registerEventSlot(onDragStart, iekDragStart)
-registerEventSlot(onDrop, iekDrop)
-registerEventSlot(onDurationChange, iekDurationChange)
-registerEventSlot(onEmptied, iekEmptied)
-registerEventSlot(onEncrypted, iekEncrypted)
-registerEventSlot(onEnded, iekEnded)
-registerEventSlot(onError, iekError)
-registerEventSlot(onFocus, iekFocus)
-registerEventSlot(onFullscreenChange, iekFullscreenChange)
-registerEventSlot(onFullscreenError, iekFullscreenError)
-registerEventSlot(onGotPointerCapture, iekGotPointerCapture)
-registerEventSlot(onInput, iekInput)
-registerEventSlot(onInvalid, iekInvalid)
-registerEventSlot(onKeyDown, iekKeyDown)
-registerEventSlot(onKeyUp, iekKeyUp)
-registerEventSlot(onLoad, iekLoad)
-registerEventSlot(onLoadEnd, iekLoadEnd)
-registerEventSlot(onLoadedData, iekLoadedData)
-registerEventSlot(onLoadedMetadata, iekLoadedMetadata)
-registerEventSlot(onLoadStart, iekLoadStart)
-registerEventSlot(onLostPointerCapture, iekLostPointerCapture)
-registerEventSlot(onMouseDown, iekMouseDown)
-registerEventSlot(onMouseEnter, iekMouseEnter)
-registerEventSlot(onMouseLeave, iekMouseLeave)
-registerEventSlot(onMouseMove, iekMouseMove)
-registerEventSlot(onMouseOut, iekMouseOut)
-registerEventSlot(onMouseOver, iekMouseOver)
-registerEventSlot(onMouseUp, iekMouseUp)
-registerEventSlot(onPause, iekPause)
-registerEventSlot(onPaste, iekPaste)
-registerEventSlot(onPenButtonDown, iekPenButtonDown)
-registerEventSlot(onPenButtonUp, iekPenButtonUp)
-registerEventSlot(onPenProximityIn, iekPenProximityIn)
-registerEventSlot(onPenProximityOut, iekPenProximityOut)
-registerEventSlot(onPlay, iekPlay)
-registerEventSlot(onPlaying, iekPlaying)
-registerEventSlot(onPointerCancel, iekPointerCancel)
-registerEventSlot(onPointerDown, iekPointerDown)
-registerEventSlot(onPointerEnter, iekPointerEnter)
-registerEventSlot(onPointerLeave, iekPointerLeave)
-registerEventSlot(onPointerMove, iekPointerMove)
-registerEventSlot(onPointerOut, iekPointerOut)
-registerEventSlot(onPointerOver, iekPointerOver)
-registerEventSlot(onPointerUp, iekPointerUp)
-registerEventSlot(onProgress, iekProgress)
-registerEventSlot(onRateChange, iekRateChange)
-registerEventSlot(onReset, iekReset)
-registerEventSlot(onResize, iekResize)
-registerEventSlot(onScroll, iekScroll)
-registerEventSlot(onScrollEnd, iekScrollEnd)
-registerEventSlot(onSeeked, iekSeeked)
-registerEventSlot(onSeeking, iekSeeking)
-registerEventSlot(onSelect, iekSelect)
-registerEventSlot(onShow, iekShow)
-registerEventSlot(onStalled, iekStalled)
-registerEventSlot(onSubmit, iekSubmit)
-registerEventSlot(onSuspend, iekSuspend)
-registerEventSlot(onTextInput, iekTextInput)
-registerEventSlot(onTimeUpdate, iekTimeUpdate)
-registerEventSlot(onToggle, iekToggle)
-registerEventSlot(onTouchCancel, iekTouchCancel)
-registerEventSlot(onTouchEnd, iekTouchEnd)
-registerEventSlot(onTouchMove, iekTouchMove)
-registerEventSlot(onTouchStart, iekTouchStart)
-registerEventSlot(onTransitionEnd, iekTransitionEnd)
-registerEventSlot(onVolumeChange, iekVolumeChange)
-registerEventSlot(onWaiting, iekWaiting)
-registerEventSlot(onWheel, iekWheel)
+include "../generated/event_registry_slots.nim"
 
 iterator expandedEventKinds(kind: InputEventKind): InputEventKind =
   let definition = kind.eventDefinition

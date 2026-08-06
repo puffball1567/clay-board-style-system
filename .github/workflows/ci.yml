@@ -33,6 +33,9 @@ jobs:
       - name: Check package metadata
         run: nimble check
 
+      - name: Check generated event surfaces
+        run: nimble checkGeneratedEvents -y
+
       - name: Run discovered ARC tests
         run: nimble test -y
 
