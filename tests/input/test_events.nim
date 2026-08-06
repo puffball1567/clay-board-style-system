@@ -647,7 +647,7 @@ suite "input events":
   test "event dispatch modes expose non-backend event requirements":
     var registry = initEventRegistry()
     let node = NodeId(1)
-    let handler = proc(event: DispatchResult): EventOutcome = true
+    let handler = proc(event: DispatchResult): EventOutcome = stoppedEvent()
 
     registry.onClick(node, handler)
     registry.onSubmit(node, handler)
@@ -1007,7 +1007,7 @@ suite "input events":
   test "js and ts style event slots can be registered":
     var registry = initEventRegistry()
     let node = NodeId(1)
-    let handler = proc(event: DispatchResult): EventOutcome = true
+    let handler = proc(event: DispatchResult): EventOutcome = stoppedEvent()
 
     template attach(registrar: untyped) =
       registry.registrar(node, handler)

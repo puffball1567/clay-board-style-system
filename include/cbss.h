@@ -78,6 +78,7 @@ typedef enum CbssNodeKind {
   CBSS_NODE_IMAGE = 2
 } CbssNodeKind;
 
+/* CBSS_GENERATED_EVENT_KINDS_BEGIN */
 typedef enum CbssEventKind {
   CBSS_EVENT_ABORT = 0,
   CBSS_EVENT_ANIMATION_END = 1,
@@ -175,6 +176,7 @@ typedef enum CbssEventKind {
   CBSS_EVENT_PEN_BUTTON_DOWN = 93,
   CBSS_EVENT_PEN_BUTTON_UP = 94
 } CbssEventKind;
+/* CBSS_GENERATED_EVENT_KINDS_END */
 
 enum {
   CBSS_INPUT_HAS_POSITION = 1u << 0,

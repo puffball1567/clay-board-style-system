@@ -474,7 +474,7 @@ to the UI thread before mutating a component or its `UiRoot`.
 
 ### Open Event Contract And Library Isolation
 
-Status: `In progress on the Version 0.4 development line`
+Status: `Implemented on the Version 0.4 development line`
 
 Implemented on this line: independent `EventOutcome` flags; stable `target`,
 `currentTarget`, and phase data; precondition/user-observer/default ordering;
@@ -490,12 +490,13 @@ removal, repeated listener churn, and subtree disposal. Shared/static C
 consumers and Valgrind coverage exercise the foreign-language boundary. A
 dedicated 500-root ARC lifecycle gate also covers temporary root captures that
 are broken by dispatch-time unsubscription; Valgrind reports no retained
-allocations.
-
-Remaining before this section is complete: generate the named Nim setters and
-committed C declarations from the event-definition source rather than auditing
-those surfaces separately; and migrate the remaining compatibility Boolean returns to explicit outcomes
-where their intent is not purely handled or ignored.
+allocations. Public event names now live in that definition source as well.
+One development-only generator emits the committed EventRegistry, NodeHandle,
+CBSSComponent, and C event-kind surfaces, while CI rejects stale output. All
+first-party handlers use explicit outcomes. The Boolean converter remains only
+as a documented pre-0.4 source-compatibility bridge; Boolean-returning query and
+convenience APIs report only success or handled state and do not encode the
+three independent dispatch effects.
 
 CBSS must provide the event equivalent of its shared style and layout model: an
 independently maintained component, chart, control, or design-system package

@@ -96,6 +96,19 @@ aliases, and C ABI numbers are defined by one `EventDefinition` table. This
 keeps backend input, synthetic events, component events, and foreign-language
 callbacks on the same contract.
 
+The same table owns each public `onX` name. Run
+`nimble checkGeneratedEvents` to verify the committed EventRegistry,
+NodeHandle, CBSSComponent, and C event-kind surfaces. Contributors changing an
+event definition regenerate those files with:
+
+```sh
+nim c -r --mm:arc --path:src tools/generate_events.nim
+```
+
+Product builds import only the generated Nim fragments. The generator and its
+verification code remain development tools and are not linked into CBSS
+applications.
+
 ## Typed Library Signals
 
 Do not add project-specific names to `InputEventKind` merely to carry a custom
