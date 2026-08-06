@@ -134,6 +134,21 @@ proc exerciseWidgetLifecycle() =
       doAssert form.submit()
       doAssert form.reset()
 
+      let uploadForm = ui.form()
+      ui.pushParent(uploadForm.container)
+      let fileInput = ui.fileInput(FileInputParams(multiple: true))
+      ui.popParent()
+      uploadForm.register("attachment", fileInput)
+      fileInput.onClick = proc(event: DispatchResult): EventOutcome =
+        ignoredEvent()
+      fileInput.setFiles([
+        fileInputValue(newBlob([byte iteration]), "lifecycle.bin")
+      ], emitEvents = true)
+      let uploadSnapshot = uploadForm.collectData()
+      doAssert uploadSnapshot.diagnostics.len == 0
+      doAssert uploadSnapshot.data.len == 1
+      fileInput.clear()
+
       let imageParent = ui.box(groups = ["image-parent"])
       let image = ui.image(imageParent, "asset.png", width = 32, height = 32)
       image.setSource("asset-updated.png")

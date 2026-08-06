@@ -53,12 +53,40 @@ disposed registered field or a control without a value produces a diagnostic
 instead of disappearing silently. Editing a control after collection does not
 change an existing snapshot.
 
+`FileInput` uses the same form contract without granting filesystem authority
+to CBSS. The host opens its platform picker, validates the result under its own
+sandbox and size policy, and supplies immutable Blob values:
+
+```nim
+let attachments = ui.fileInput(FileInputParams(
+  accept: @["image/*", ".pdf"],
+  multiple: true
+))
+form.register("attachments", attachments)
+
+attachments.onClick = proc(event: DispatchResult): EventOutcome =
+  let request = attachments.selectionRequest()
+  openHostFilePicker(request) # asynchronous, application-owned integration
+  handledEvent()
+
+# Called later on the UI thread with host-authorized immutable values.
+attachments.setFiles([
+  fileInputValue(selectedBlob, "design.pdf")
+], emitEvents = true)
+```
+
+The `accept` list is an advisory picker hint, not content validation. CBSS never
+turns an untrusted path into a Blob, and FormData snapshots contain no platform
+file handles. A single-file input rejects multiple values; a multiple input
+preserves selection order and emits one Blob entry per selected value.
+
 Request serialization remains outside CBSS. An optional `joubako` adapter may
 translate a snapshot to JSON, NIF, multipart, or another request format.
 
 ## Streams
 
-The bounded asynchronous stream bridge is still planned. It will marshal
+Host-authorized file/provider Blob sources and the bounded asynchronous stream
+bridge are still planned. The bridge will marshal
 immutable chunks and coalesced progress onto the UI thread, cancel delivery on
 component disposal, and return to event-driven idle when no data or animation
 work remains.

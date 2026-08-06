@@ -1,19 +1,28 @@
 import std/options
 
 import ../core/node
-import ../data/form_data
+import ../data/[blob, form_data]
 import ../input/events
 import ./ui_root
 
 type
   FormFieldKind* = enum
     ffText,
-    ffCheckable
+    ffCheckable,
+    ffFile
+
+  FormFileValue* = object
+    blob*: Blob
+    fileName*: string
+
+  FormFileFieldState* = ref object
+    values: seq[FormFileValue]
 
   FormFieldRegistration* = object
     node*: NodeId
     name*: string
     kind*: FormFieldKind
+    fileState: FormFileFieldState
 
   FormDataDiagnosticKind* = enum
     fddDisposedField,
@@ -60,11 +69,33 @@ proc disabled*(form: FormHandle): bool =
 proc valid*(form: FormHandle): bool =
   form.state.valid
 
-proc registerField*(
+proc initFormFileFieldState*(): FormFileFieldState =
+  FormFileFieldState(values: @[])
+
+proc replaceValues*(state: FormFileFieldState; values: openArray[FormFileValue]) =
+  if state.isNil:
+    raise newException(ValueError, "form file field state is not initialized")
+  var replacement = newSeqOfCap[FormFileValue](values.len)
+  for value in values:
+    if not value.blob.isValid:
+      raise newException(ValueError, "form file field Blob value is not initialized")
+    replacement.add value
+  state.values = move(replacement)
+
+proc values*(state: FormFileFieldState): seq[FormFileValue] =
+  if state.isNil:
+    return @[]
+  result = newSeqOfCap[FormFileValue](state.values.len)
+  for value in state.values:
+    result.add value
+
+proc len*(state: FormFileFieldState): int {.inline.} =
+  if state.isNil: 0 else: state.values.len
+
+proc validateFieldRegistration(
     form: FormHandle;
     node: NodeHandle;
-    name: string;
-    kind = ffText
+    name: string
 ) =
   if name.len == 0:
     raise newException(ValueError, "form field name cannot be empty")
@@ -77,10 +108,36 @@ proc registerField*(
   for field in form.state.fields:
     if field.node == node.id:
       raise newException(ValueError, "form field is already registered")
+
+proc registerField*(
+    form: FormHandle;
+    node: NodeHandle;
+    name: string;
+    kind = ffText
+) =
+  if kind == ffFile:
+    raise newException(ValueError, "file fields require registerFileField")
+  form.validateFieldRegistration(node, name)
   form.state.fields.add FormFieldRegistration(
     node: node.id,
     name: name,
     kind: kind
+  )
+
+proc registerFileField*(
+    form: FormHandle;
+    node: NodeHandle;
+    name: string;
+    state: FormFileFieldState
+) =
+  if state.isNil:
+    raise newException(ValueError, "form file field state is not initialized")
+  form.validateFieldRegistration(node, name)
+  form.state.fields.add FormFieldRegistration(
+    node: node.id,
+    name: name,
+    kind: ffFile,
+    fileState: state
   )
 
 proc unregisterField*(form: FormHandle; node: NodeHandle): bool {.discardable.} =
@@ -102,6 +159,10 @@ proc collectData*(form: FormHandle): FormDataCollection =
 
     let node = form.root.tree.nodes[field.node.nodeIndex]
     if esDisabled in node.states:
+      continue
+    if field.kind == ffFile:
+      for value in field.fileState.values:
+        builder.addBlob(field.name, value.blob, value.fileName)
       continue
     if field.kind == ffCheckable:
       let checked = node.attrValue("checked")

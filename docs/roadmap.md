@@ -586,10 +586,16 @@ value-less fields; and C ABI `0x0001000C` Blob handles with retain/release,
 bounded reads, and a 64 MiB eager-allocation ceiling. ARC/ORC value and form
 tests plus shared/static C consumers and Valgrind cover this slice.
 
-Remaining: typed FileInput and host-authorized file/provider Blob sources,
-submit-event snapshot transport across both Nim and C contracts, FormData C
-ABI/adapters, and the bounded asynchronous stream bridge with cancellation,
-backpressure, UI-thread delivery, and disposal races.
+The typed `FileInput` is now implemented as a style-neutral control. It exposes
+single/multiple and advisory accept metadata to an application-owned picker,
+accepts only host-authorized immutable Blob values, emits standard input/change
+events, and contributes ordered Blob entries to immutable FormData snapshots.
+It never opens an arbitrary path or exposes a platform file handle.
+
+Remaining: host-authorized file/provider Blob sources, submit-event snapshot
+transport across both Nim and C contracts, FormData C ABI/adapters, and the
+bounded asynchronous stream bridge with cancellation, backpressure, UI-thread
+delivery, and disposal races.
 
 CBSS will define transport-neutral data contracts for UI operations that need
 binary values, form snapshots, or progressively produced data. These contracts
