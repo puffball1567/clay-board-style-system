@@ -1103,14 +1103,22 @@ Planned work:
   deterministic injected-event tests for routing, pressure curves, and stroke
   generation.
 
-## Version 0.5+ - Ownership Verification Tooling
+## Version 0.5+ - Ownership Contract And Release Verification
 
 Status: `Planned`
 
-CBSS will provide a build and CI verification mode for ARC ownership and native
-resource lifecycles. Static analysis can reject known unsafe ownership shapes,
-but it cannot prove the absence of every runtime leak. The release gate therefore
-combines static contract checks with generated lifecycle probes.
+CBSS will guarantee its own ARC ownership and native-resource lifecycle when an
+application uses the documented safe public API and follows its explicit
+lifecycle rules. This guarantee covers references and resources owned by CBSS;
+it does not claim to validate arbitrary user-created reference graphs, global
+state, raw pointers, or foreign libraries.
+
+ARC is the required release-verification baseline. ORC remains a supported
+compatibility option, but cycle collection must not hide a cycle created by the
+CBSS runtime, an official control, or a documented example. Static analysis can
+reject known unsafe ownership shapes, but it cannot prove the absence of every
+runtime leak. The release gate therefore combines static contract checks with
+generated lifecycle probes.
 
 The static verifier should:
 
@@ -1123,8 +1131,8 @@ The static verifier should:
   unique owners;
 - validate C ABI create/retain/release/destroy contracts against the exported
   ownership manifest; and
-- inspect examples and independently distributed CBSS component packages under
-  the same rules used for the core library.
+- inspect CBSS core, official controls, generated bindings, and documented
+  examples under the same rules.
 
 The dynamic verifier should generate or accept lifecycle scenarios that mount,
 interact with, replace, unmount, cancel, close, and destroy components under
@@ -1133,11 +1141,12 @@ including late callbacks, cancellation races, Blob/provider release, stream
 shutdown, and C ABI consumers. A static pass is not reported as proof of leak
 freedom without the matching runtime lifecycle pass.
 
-This tooling is development-only. Ownership tracing, generated probes,
+This verification is development-only. Ownership tracing, generated probes,
 sanitizer hooks, and verifier implementation code are not imported, linked, or
-packaged into normal application artifacts. Projects may enable a strict build
-gate through a command such as `cbss check --ownership`; CBSS release branches
-and official examples use the strict gate in CI.
+packaged into normal application artifacts. CBSS release branches and official
+examples use the strict gate in CI. An optional checker may help advanced API
+and adapter authors, but correctness of arbitrary application memory management
+is outside the CBSS guarantee.
 
 ## Later Milestones
 
