@@ -258,7 +258,8 @@ proc resolveLength(
     none(float32)
   of ukFill:
     some(max(0.0'f32, reference))
-  of ukEm, ukRem, ukVw, ukVh, ukVmin, ukVmax, ukLh, ukRlh:
+  of ukEm, ukRem, ukVw, ukVh, ukVmin, ukVmax, ukLh, ukRlh,
+      ukEx, ukCh, ukRex, ukRch:
     none(float32)
 
 proc flexMinimumMain(
@@ -324,7 +325,7 @@ proc resolveInsetLength(value: Option[LengthValue]; reference: float32): Option[
     some(reference * value.get.value / 100.0'f32)
   of ukEm, ukRem, ukFill, ukContent, ukMinContent, ukMaxContent,
       ukFitContent, ukAuto, ukNone, ukVw, ukVh, ukVmin, ukVmax, ukLh,
-      ukRlh:
+      ukRlh, ukEx, ukCh, ukRex, ukRch:
     none(float32)
 
 proc resolvedInsets(style: ComputedStyle; containingSize: Size): Insets =

@@ -20,6 +20,10 @@ proc unitName(kind: UnitKind): string =
   of ukVmax: "vmax"
   of ukLh: "lh"
   of ukRlh: "rlh"
+  of ukEx: "ex"
+  of ukCh: "ch"
+  of ukRex: "rex"
+  of ukRch: "rch"
 
 proc resolveContextualLength(
     length: LengthValue;
@@ -50,6 +54,26 @@ proc resolveContextualLength(
       diagnostics.addError(property, "rlh requires a root line-height")
       return none(float32)
     some(env.rootLineHeight.get * length.value)
+  of ukEx:
+    if env.currentXHeight.isNone:
+      diagnostics.addError(property, "ex requires current font metrics")
+      return none(float32)
+    some(env.currentXHeight.get * length.value)
+  of ukCh:
+    if env.currentZeroAdvance.isNone:
+      diagnostics.addError(property, "ch requires current font metrics")
+      return none(float32)
+    some(env.currentZeroAdvance.get * length.value)
+  of ukRex:
+    if env.rootXHeight.isNone:
+      diagnostics.addError(property, "rex requires root font metrics")
+      return none(float32)
+    some(env.rootXHeight.get * length.value)
+  of ukRch:
+    if env.rootZeroAdvance.isNone:
+      diagnostics.addError(property, "rch requires root font metrics")
+      return none(float32)
+    some(env.rootZeroAdvance.get * length.value)
   of ukVw, ukVh, ukVmin, ukVmax:
     if env.viewportSize.isNone:
       diagnostics.addError(property, length.kind.unitName &
@@ -90,7 +114,8 @@ proc normalizeLength*(
   if resolved.isSome:
     return some(LengthValue(kind: ukPx, value: resolved.get))
   if value.length.kind notin {
-      ukEm, ukRem, ukVw, ukVh, ukVmin, ukVmax, ukLh, ukRlh
+      ukEm, ukRem, ukVw, ukVh, ukVmin, ukVmax, ukLh, ukRlh,
+      ukEx, ukCh, ukRex, ukRch
   }:
     diagnostics.addError(property, property & " does not support " &
       value.length.kind.unitName)
@@ -106,7 +131,8 @@ proc resolveAbsoluteLength*(
   if resolved.isSome:
     return resolved
   if length.kind notin {
-      ukEm, ukRem, ukVw, ukVh, ukVmin, ukVmax, ukLh, ukRlh
+      ukEm, ukRem, ukVw, ukVh, ukVmin, ukVmax, ukLh, ukRlh,
+      ukEx, ukCh, ukRex, ukRch
   }:
     diagnostics.addError(property, property & " does not support " &
       length.kind.unitName)

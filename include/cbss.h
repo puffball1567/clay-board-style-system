@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define CBSS_ABI_VERSION 0x00010007u
+#define CBSS_ABI_VERSION 0x00010008u
 #define CBSS_NODE_NONE UINT32_MAX
 
 typedef struct CbssContext CbssContext;
@@ -51,7 +51,11 @@ typedef enum CbssUnit {
   CBSS_UNIT_VMIN = 13,
   CBSS_UNIT_VMAX = 14,
   CBSS_UNIT_LH = 15,
-  CBSS_UNIT_RLH = 16
+  CBSS_UNIT_RLH = 16,
+  CBSS_UNIT_EX = 17,
+  CBSS_UNIT_CH = 18,
+  CBSS_UNIT_REX = 19,
+  CBSS_UNIT_RCH = 20
 } CbssUnit;
 
 typedef enum CbssNodeState {

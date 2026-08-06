@@ -39,6 +39,14 @@ proc toComputedLength(value: LengthValue): ComputedLength =
     ComputedLength(kind: cukLh, value: value.value)
   of ukRlh:
     ComputedLength(kind: cukRlh, value: value.value)
+  of ukEx:
+    ComputedLength(kind: cukEx, value: value.value)
+  of ukCh:
+    ComputedLength(kind: cukCh, value: value.value)
+  of ukRex:
+    ComputedLength(kind: cukRex, value: value.value)
+  of ukRch:
+    ComputedLength(kind: cukRch, value: value.value)
 
 proc toResolvedComputedLength(value: Option[LengthValue]; env: ResolveEnv;
     property: string; diagnostics: var Diagnostics): Option[ComputedLength] =
