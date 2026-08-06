@@ -463,6 +463,112 @@ the nearest containing flow root, allowing hosts with retained frame data to
 use subtree style resolution and relayout. Async workers must hand results back
 to the UI thread before mutating a component or its `UiRoot`.
 
+### UI Data Interchange: Blob, Form Data, And Streams
+
+Status: `Planned on the Version 0.4 development line`
+
+CBSS will define transport-neutral data contracts for UI operations that need
+binary values, form snapshots, or progressively produced data. These contracts
+belong at the UI boundary because images, clipboard content, file drops, file
+inputs, progress indicators, and media surfaces need consistent ownership and
+lifecycle behavior. CBSS does not become an HTTP client, multipart encoder,
+filesystem policy layer, or media decoder by defining them.
+
+#### Blob
+
+A `Blob` represents an immutable binary resource with optional advisory MIME
+metadata. Its source may be owned in-memory bytes, a host-authorized file
+reference, a mapped resource, or a provider exposed through an adapter. A Blob
+must preserve the following rules:
+
+- Managed in-memory bytes use ARC ownership and may be shared without exposing
+  mutable `seq[byte]` storage. Mutation requires producing a new Blob or a new
+  immutable snapshot.
+- Native files, mappings, provider handles, and foreign buffers have explicit
+  close/release behavior. Destruction is deterministic and idempotent; an
+  external resource is never kept alive solely by an accidental closure cycle.
+- A file reference is not an authority grant. Opening it remains subject to the
+  host application's sandbox, permission, path, size, and lifetime policy.
+- MIME type is optional metadata supplied by the producer. Consumers must not
+  trust it for security decisions without validating the content and permitted
+  operation.
+- Size is known when possible and bounded before eager allocation. Consumers
+  may reject oversized data before materializing it in memory.
+- The C ABI exposes opaque Blob handles with explicit retain/release and bounded
+  read operations; Nim-managed pointers and backend-specific objects never
+  cross the ABI.
+
+Images, clipboard payloads, dropped files, form file values, and future media
+sources should reuse this contract rather than inventing unrelated byte owners.
+
+#### Form Data
+
+CBSS form controls may produce a stable, ordered `FormData` snapshot containing
+text values and Blob-backed file values. Collection is a UI responsibility;
+serialization and transport are not. The existing typed controls remain the
+input surface instead of being replaced by one stringly typed HTML-style
+`input(type = ...)` constructor.
+
+- `TextInput`, `TextArea`, `Select`, `Checkbox`, and `Radio` gain a common
+  form-field contract and optional submission `name`. A typed `FileInput`
+  provides one or more Blob values without exposing a platform file handle as
+  ordinary application data.
+- A `Form` registers descendant fields during declarative construction and can
+  produce a snapshot through an API such as `form.collectData()`. A submit
+  event may carry that already-collected snapshot so the handler does not need
+  to walk the UI tree.
+- Collection preserves field order and repeated names. It uses form/control
+  ownership and explicit field names, not CSS selectors or required test IDs.
+- Disabled or otherwise unsuccessful controls follow the documented CBSS form
+  rules. Collection diagnostics identify unsupported control values instead of
+  silently dropping them.
+- A snapshot does not retain live references to mutable controls. Subsequent UI
+  edits do not alter data already handed to application logic.
+- Application logic may consume the snapshot directly. `joubako` may adapt it
+  to JSON, NIF, multipart data, or another supported request representation.
+- Multipart boundaries, content encoding, HTTP requests, authentication,
+  retries, and backend policy remain outside CBSS and belong to `joubako` or
+  the backend application. The `joubako` adapter remains optional and does not
+  become a CBSS dependency.
+
+This division allows `onSubmit` and other UI events to hand application logic a
+complete value snapshot while keeping network and business behavior replaceable.
+
+#### Streams
+
+CBSS will define a consumer-side stream bridge for progressively delivered
+immutable chunks and typed status updates. Producers may perform file reads,
+downloads, backend event delivery, image decoding, or audio/video preparation,
+but they do not mutate the UI tree from a worker thread.
+
+The bridge contract includes:
+
+- explicit open, data, progress, end-of-stream, error, cancellation, and close
+  states with exactly-once terminal behavior;
+- bounded queues and backpressure so a producer cannot grow UI memory without
+  limit when rendering or decoding is slower than input;
+- immutable chunks or ownership-transferred buffers across thread boundaries;
+- marshaling onto the owning UI thread before changing component state,
+  invalidation domains, textures, or render surfaces;
+- coalesced progress and latest-result-wins updates where intermediate states
+  have no semantic value, while ordered data streams preserve chunk order;
+- cancellation and component-disposal integration so an unmounted consumer
+  cannot receive late callbacks; and
+- deterministic fake producers for unit, integration, and E2E tests.
+
+CBSS owns attachment to components, lifecycle cancellation, UI-thread delivery,
+and the resulting invalidation. It does not own sockets, HTTP semantics, retry
+policy, general-purpose worker pools, codecs, or storage. `joubako` supplies
+network-facing producers and FormData request encoding. Media and image
+features may build adapters on this bridge while retaining their own resource
+and scheduling policies.
+
+The first implementation slice should establish Blob ownership and FormData
+snapshots before adding the asynchronous stream bridge. Public API work is
+gated on ARC lifecycle tests, C ABI ownership tests, bounded-memory stress
+tests, cancellation races, and proof that idle streams do not force continuous
+frames.
+
 ## Authoring Value Model And Ergonomics
 
 Status: `Partially implemented on the Version 0.4 development line`
@@ -777,6 +883,107 @@ Current and planned work:
 - Implemented foundation: the animation clock accepts reduced-motion policy;
   platform preference adapters remain planned.
 
+### CSS-Like Motion Scene
+
+Status: `Planned after declarative transition binding`
+
+CBSS will provide a retained Motion Scene inside Canvas for motion graphics,
+generative design, high-density charts, particles, sprites, and other visuals
+whose animated object count should not become an equal number of ordinary UI
+layout nodes. This is more than accepting a completed frame from an external
+renderer: CBSS owns how visual objects are drawn, composed, clipped, layered,
+hit-tested, scheduled, and presented inside the resolved Canvas box.
+
+Application code and independent Nim libraries may own simulation, media
+decoding, physics, effect calculations, procedural data, and business logic.
+They publish typed object data or immutable scene snapshots. CBSS consumes
+those results through its Motion Scene and executes the visible composition.
+
+The intended authoring model combines CSS-inspired visual properties with
+typed native extensions:
+
+- shared properties such as transform, opacity, clip, mask, blend mode,
+  filter, z-order, animation, and keyframes;
+- stable visual-object identities for selection, pointer hit testing,
+  dragging, handles, context menus, and inspection;
+- native motion capabilities such as shaders, uniforms, particles, sprites,
+  cameras, render layers, and compute workloads without pretending that they
+  are standard CSS properties; and
+- ordinary CBSS Boxes, text, controls, and overlays composed around and above
+  the Motion Scene without a second window or WebView.
+
+Dependency order is deliberate:
+
+1. Complete declarative transition and declaration-bound keyframe behavior for
+   ordinary UI. This establishes one clock, interpolation registry, reversal
+   behavior, reduced-motion policy, and dirty-domain contract.
+2. Add a deterministic CPU Motion Scene reference path. It must support
+   batched object storage, stable IDs, snapshot replacement, cancellation, and
+   headless tests without requiring a GPU.
+3. Add an SDL3 GPU execution path using instancing, storage buffers, render
+   passes, compute passes, and offscreen Canvas composition where appropriate.
+4. Add `wgpu-native` as an optional backend behind the same Motion Scene and
+   GPU Canvas contract for applications that require WebGPU/WGSL-oriented
+   shaders and compute.
+5. Add higher-level generative-design and motion-graphics libraries as normal
+   Nim packages rather than hard-coding an After Effects, chart, or game
+   product into CBSS core.
+
+Implementation starts after declarative transitions, but these constraints
+apply immediately so transition work does not close the path:
+
+- UI transitions and Motion Scene tracks use one monotonic time model and
+  compatible typed interpolation rules.
+- GPU handles and backend-specific shader objects do not enter `Node`,
+  `ComputedStyle`, or the public ordinary-UI paint contract.
+- A Canvas remains one layout participant even when its Motion Scene contains
+  many thousands of visual objects.
+- Worker-produced data crosses into the UI as bounded immutable snapshots or
+  buffers; application code does not manage a thread per object.
+- Preview updates may use latest-result-wins replacement, while deterministic
+  export and test paths preserve requested frame order.
+- Continuous frames are requested only while motion or rendering work is
+  active; a static Motion Scene returns to event-driven idle behavior.
+
+Motion, GPU, Pixie, media, and shader packages remain opt-in imports. They are
+not re-exported by the standard umbrella module and are not linked or deployed
+for applications that do not select them. A CPU/SDL 2D profile remains a
+supported build target for 64-bit Raspberry Pi-class Linux systems. GPU
+capability is detected explicitly and has a deterministic CPU fallback or a
+clear diagnostic; installing CBSS source does not imply shipping every native
+backend in the application artifact.
+
+Compile-time capability profiles enforce this boundary rather than relying
+only on linker dead-code elimination. A selected profile controls Nim imports,
+native bridge builds, linker inputs, staged runtime libraries, shaders, codecs,
+and generated assets. Unselected capabilities must be absent from the final
+dependency closure. The configuration tool may generate a project-local
+`cbss_app` entry module so application code retains one stable import while the
+generated module imports and re-exports only the selected capabilities.
+
+The supported profile families are:
+
+- `standard`: ordinary UI, text, SDL 2D, CPU Canvas, events, accessibility
+  semantics, transitions, and the default controls;
+- `motion-cpu`: `standard` plus the deterministic CPU Motion Scene;
+- `motion-sdl-gpu`: Motion Scene and GPU Canvas through the SDL3 GPU backend;
+- `motion-wgpu`: the optional `wgpu-native` implementation of the same public
+  Motion Scene and GPU Canvas contract;
+- separate opt-ins for Pixie effects and media codecs; and
+- `full`: a convenience development/distribution profile that selects every
+  capability supported on the target without changing their public contracts.
+
+CI records stripped release artifact size and native dependency closure for
+representative `standard` and `full` builds. A feature may not silently enter
+`standard`, and unexpected artifact growth is treated as a release regression.
+Runtime memory budgets remain separate because textures, decoded frames, font
+caches, and scene buffers can dominate executable size on small systems.
+
+This track extends the browser CSS-plus-Canvas/WebGPU authoring model instead
+of reproducing JavaScript's main-thread limitations. Its product value depends
+on hiding scheduling, batching, synchronization, and backend details behind a
+Web-like import-and-mount experience for Nim authors.
+
 ### Sprites And Tile Maps
 
 Sprite animation and tile-map drawing are opt-in CBSS game modules, not
@@ -895,6 +1102,42 @@ Planned work:
 - Native device tests where contributors have compatible hardware, alongside
   deterministic injected-event tests for routing, pressure curves, and stroke
   generation.
+
+## Version 0.5+ - Ownership Verification Tooling
+
+Status: `Planned`
+
+CBSS will provide a build and CI verification mode for ARC ownership and native
+resource lifecycles. Static analysis can reject known unsafe ownership shapes,
+but it cannot prove the absence of every runtime leak. The release gate therefore
+combines static contract checks with generated lifecycle probes.
+
+The static verifier should:
+
+- detect strong `UiRoot` back-references in handles or state captured by event,
+  animation, render-surface, and scheduler callbacks;
+- distinguish owning references from explicitly non-owning `{.cursor.}` handles
+  and report a reference whose lifetime is not bounded by an owner;
+- require native resources and foreign-provider handles to declare deterministic,
+  idempotent `close`/`destroy` behavior and reject unsafe implicit copying of
+  unique owners;
+- validate C ABI create/retain/release/destroy contracts against the exported
+  ownership manifest; and
+- inspect examples and independently distributed CBSS component packages under
+  the same rules used for the core library.
+
+The dynamic verifier should generate or accept lifecycle scenarios that mount,
+interact with, replace, unmount, cancel, close, and destroy components under
+`--mm:arc`. CI executes those probes with Valgrind and supported sanitizers,
+including late callbacks, cancellation races, Blob/provider release, stream
+shutdown, and C ABI consumers. A static pass is not reported as proof of leak
+freedom without the matching runtime lifecycle pass.
+
+This tooling is development-only. Ownership tracing, generated probes,
+sanitizer hooks, and verifier implementation code are not imported, linked, or
+packaged into normal application artifacts. Projects may enable a strict build
+gate through a command such as `cbss check --ownership`; CBSS release branches
+and official examples use the strict gate in CI.
 
 ## Later Milestones
 

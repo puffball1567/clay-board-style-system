@@ -212,6 +212,72 @@ and less common orientations can be added after the JSON/orthogonal path is
 stable. These modules remain opt-in imports so ordinary CBSS GUI applications
 do not pull game-oriented code or assets into their build.
 
+## Motion Scene Dependency Track
+
+Status: `Planned after declarative transition binding`
+
+GPU Canvas is not limited to displaying frames completed elsewhere. CBSS will
+also provide a retained Motion Scene whose visual objects are evaluated and
+drawn by the CBSS Canvas pipeline. This is the primary path for simultaneously
+animated shapes, text, images, particles, sprites, chart marks, and procedural
+visuals. External Nim code may calculate object data, but the resulting scene
+participates in CBSS composition, clipping, frame scheduling, coordinate
+conversion, hit testing, and presentation.
+
+A Motion Scene is internal content of one Canvas layout node. It must not
+inflate the UI tree by creating one Box for every particle, chart point, or
+motion-graphics layer. Scene objects instead use stable typed IDs and
+data-oriented retained storage suitable for CPU chunking, GPU instancing, and
+storage-buffer upload. Optional per-object interaction metadata maps scene
+hits back to CBSS input events without making those objects independent layout
+participants.
+
+The user-facing goal is a Web-like authoring boundary:
+
+```nim
+let scene = motionScene()
+scene.add(titleLayer)
+scene.add(particleField)
+
+ui.gpuCanvas(scene, style = previewStyle())
+```
+
+Application authors do not manage GPU queues, worker channels, swapchain
+ownership, generation counters, or frame fences. Independent Nim libraries
+can expose reusable motion, chart, game, and generative-design objects that
+mount through this contract.
+
+Implementation order:
+
+1. The ordinary-UI declarative transition engine defines the shared clock,
+   interpolation, reversal, cancellation, reduced-motion, and invalidation
+   semantics.
+2. A deterministic CPU reference renderer validates scene snapshots, stable
+   identities, hit testing, frame replacement, and headless output.
+3. The SDL3 GPU backend batches scene data into graphics and compute passes and
+   composites its offscreen result into the Canvas-owned region.
+4. An optional `wgpu-native` backend implements the same contract rather than
+   creating a second public scene model.
+
+The architectural contract is fixed before transition work completes: Canvas
+owns layout and presentation; Motion Scene owns its interior visual objects;
+backend handles remain private; worker results are bounded immutable snapshots;
+and static scenes do not request idle frames.
+
+Deployment remains capability-based. The CPU Canvas and SDL 2D profile does
+not import, link, or package Motion GPU, `wgpu-native`, Pixie, media codecs, or
+shader bundles unless selected by the application. This profile remains the
+baseline for 64-bit Raspberry Pi-class Linux targets. GPU-enabled profiles add
+only the chosen backend and report unsupported devices explicitly instead of
+silently falling back to an unbounded software workload.
+
+Capability selection occurs at compile/configure time. It controls source
+imports, native bridge builds, linker inputs, staged libraries, and assets;
+runtime feature flags alone are insufficient. The project may expose one
+generated `cbss_app` import for ergonomics, but that module re-exports only the
+selected profile. Release CI measures both artifact size and native dependency
+closure for the standard CPU/SDL 2D profile and the target's full profile.
+
 ## Phase 3: SDL3 GPU Canvas Capability
 
 Status: `Planned`
