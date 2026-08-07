@@ -3,6 +3,17 @@ import std/[options, sequtils, strutils, unittest]
 import clay_board_style_system
 
 suite "input events":
+  test "legacy boolean outcomes retain their migration semantics":
+    let ignored: EventOutcome = false
+    let stopped: EventOutcome = true
+
+    check not ignored.handled
+    check not ignored.stopPropagation
+    check not ignored.preventDefault
+    check stopped.handled
+    check stopped.stopPropagation
+    check not stopped.preventDefault
+
   test "dispatchInput targets the hit node with local coordinates":
     let root = NodeId(0)
     let button = NodeId(1)

@@ -104,19 +104,19 @@ proc label*(
   let label = result
 
   root.events.addInternalEventHandler(label.container.id, iekClick, proc(event: DispatchResult): EventOutcome =
-    label.activateTarget()
+    if label.activateTarget(): stoppedEvent() else: ignoredEvent()
   )
   root.events.addInternalEventHandler(label.container.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
     if label.state.disabled:
-      return true
+      return stoppedEvent()
     if event.event.key.isSome:
       case event.event.key.get
       of "Enter", " ":
         discard label.container.emit(InputEvent(kind: iekClick))
-        return true
+        return stoppedEvent()
       else:
         discard
-    false
+    ignoredEvent()
   )
 
 proc label*(

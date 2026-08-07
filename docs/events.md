@@ -25,6 +25,14 @@ saveButton.onClick = proc(event: DispatchResult): EventOutcome =
   effects explicitly.
 - `ignoredEvent()` reports no action.
 
+Code written before Version 0.4 may still return `bool` while migrating:
+`true` maps to `stoppedEvent()` and `false` maps to `ignoredEvent()`. This is a
+source-compatibility bridge, not the current event API. New handlers should
+return an explicit outcome so handled state, propagation, and default-action
+suppression cannot be confused. CBSS compiles its runtime and public examples
+with `-d:cbssStrictEventOutcomes` in CI to prevent first-party code from using
+the compatibility conversion. Applications do not need that build flag.
+
 `target` remains the original hit or focus target. `currentTarget` is the node
 whose handler is currently running. `phase` distinguishes target, bubble, and
 default-action dispatch. Local coordinates are valid only on the original

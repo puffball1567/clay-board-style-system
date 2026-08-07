@@ -41,6 +41,18 @@ task test, "Run the test suite":
 task checkGeneratedEvents, "Verify generated Nim and C event surfaces":
   exec "nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_event_generator_nimcache --out:/tmp/clay_board_style_system_event_generator tools/generate_events.nim --check"
 
+task checkExplicitEventOutcomes, "Reject implicit boolean outcomes in first-party event handlers":
+  exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_public src/clay_board_style_system.nim"
+  exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_paint examples/paint_demo.nim"
+  exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_render examples/render_demo.nim"
+  exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_component examples/component_demo.nim"
+  exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_sdl3 -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/sdl3_demo.nim"
+  exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_navigation -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/navigation_demo.nim"
+  exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_v03_canvas -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/v03_canvas_demo.nim"
+  exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_loading_indicator -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/loading_indicator_demo.nim"
+  exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_door_button -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/door_button_canvas_demo.nim"
+  exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_widget_lifecycle tests/memory/widget_lifecycle.nim"
+
 task testOrc, "Run the test suite under ORC":
   exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
   exec "nim c -r --mm:orc --nimcache:/tmp/clay_board_style_system_orc_test_runner_nimcache --out:/tmp/clay_board_style_system_orc_test_runner tools/run_tests.nim --memory:orc"

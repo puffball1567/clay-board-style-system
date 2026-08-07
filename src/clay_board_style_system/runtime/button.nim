@@ -59,19 +59,19 @@ proc button*(
   let button = result
 
   root.events.addInternalEventHandler(button.container.id, iekClick, proc(event: DispatchResult): EventOutcome =
-    button.state.disabled
+    if button.state.disabled: stoppedEvent() else: ignoredEvent()
   )
   root.events.addInternalEventHandler(button.container.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
     if button.state.disabled:
-      return true
+      return stoppedEvent()
     if event.event.key.isSome:
       case event.event.key.get
       of "Enter", " ":
         discard button.container.emit(InputEvent(kind: iekClick))
-        return true
+        return stoppedEvent()
       else:
         discard
-    false
+    ignoredEvent()
   )
 
 proc button*(

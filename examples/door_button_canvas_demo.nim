@@ -244,7 +244,7 @@ proc doorButton(
     proc(event: DispatchResult): EventOutcome =
       button.state.hovered = true
       button.updateVisualTarget()
-      false
+      ignoredEvent()
   )
   ui.events.addInternalEventHandler(
     button.button.container.id,
@@ -252,7 +252,7 @@ proc doorButton(
     proc(event: DispatchResult): EventOutcome =
       button.state.hovered = false
       button.updateVisualTarget()
-      false
+      ignoredEvent()
   )
   ui.events.addInternalEventHandler(
     button.button.container.id,
@@ -260,7 +260,7 @@ proc doorButton(
     proc(event: DispatchResult): EventOutcome =
       button.state.keyboardFocused = false
       button.updateVisualTarget()
-      false
+      ignoredEvent()
   )
   ui.events.addInternalEventHandler(
     button.button.container.id,
@@ -271,7 +271,7 @@ proc doorButton(
           button.button.container.id.nodeIndex
         ].states
       button.updateVisualTarget()
-      false
+      ignoredEvent()
   )
   ui.events.addInternalEventHandler(
     button.button.container.id,
@@ -279,7 +279,7 @@ proc doorButton(
     proc(event: DispatchResult): EventOutcome =
       button.state.keyboardFocused = false
       button.updateVisualTarget()
-      false
+      ignoredEvent()
   )
 
 proc main() =

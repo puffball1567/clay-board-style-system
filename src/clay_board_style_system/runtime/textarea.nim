@@ -1626,295 +1626,295 @@ proc textArea*(
 
   root.events.addInternalEventHandler(area.container.id, iekFocus, proc(event: DispatchResult): EventOutcome =
     area.focus()
-    false
+    ignoredEvent()
   )
   root.events.addInternalEventHandler(area.container.id, iekPointerDown, proc(event: DispatchResult): EventOutcome =
     if area.state.disabled:
       area.state.selecting = false
-      return true
+      return stoppedEvent()
     let button = if event.event.button.isSome: event.event.button.get else: 0
     if button in [0, 1] and event.local.isSome:
       area.focus()
       area.state.selecting = true
       area.moveCaretToPoint(event.local.get, extendSelection = event.event.shiftKey)
-    false
+    ignoredEvent()
   )
   root.events.addInternalEventHandler(area.container.id, iekPointerMove, proc(event: DispatchResult): EventOutcome =
     if area.state.disabled:
       area.state.selecting = false
-      return true
+      return stoppedEvent()
     if area.state.selecting and event.local.isSome:
       area.moveCaretToPoint(event.local.get, extendSelection = true)
-    false
+    ignoredEvent()
   )
   root.events.addInternalEventHandler(area.container.id, iekDrag, proc(event: DispatchResult): EventOutcome =
     if area.state.disabled:
       area.state.selecting = false
-      return true
+      return stoppedEvent()
     if area.state.selecting and event.local.isSome:
       area.moveCaretToPoint(event.local.get, extendSelection = true)
-    false
+    ignoredEvent()
   )
   root.events.addInternalEventHandler(area.container.id, iekPointerUp, proc(event: DispatchResult): EventOutcome =
     area.state.selecting = false
-    false
+    ignoredEvent()
   )
   root.events.addInternalEventHandler(area.container.id, iekDragEnd, proc(event: DispatchResult): EventOutcome =
     area.state.selecting = false
-    false
+    ignoredEvent()
   )
   root.events.addInternalEventHandler(area.container.id, iekWheel, proc(event: DispatchResult): EventOutcome =
     if event.event.delta.isNone:
-      return false
+      return ignoredEvent()
     area.scrollBy(event.event.delta.get.y)
-    true
+    stoppedEvent()
   )
   root.events.addInternalEventHandler(area.container.id, iekScrollEnd, proc(event: DispatchResult): EventOutcome =
     area.finishScroll()
-    true
+    stoppedEvent()
   )
   root.events.addInternalEventHandler(area.scrollbarThumb.id, iekPointerDown, proc(event: DispatchResult): EventOutcome =
     if event.event.position.isNone:
-      return true
+      return stoppedEvent()
     area.state.scrollbarDragging = true
     area.state.scrollbarDragStartY = event.event.position.get.y
     area.state.scrollbarDragStartScrollY = area.state.scrollY
-    true
+    stoppedEvent()
   )
   root.events.addInternalEventHandler(area.scrollbarThumb.id, iekPointerMove, proc(event: DispatchResult): EventOutcome =
     if not area.state.scrollbarDragging or event.event.position.isNone:
-      return false
+      return ignoredEvent()
     let lines = area.caretLines()
     let geometry = area.scrollbarGeometry(lines)
     if geometry.isNone:
       area.state.scrollbarDragging = false
-      return true
+      return stoppedEvent()
     let bar = geometry.get
     let travel = max(0.0'f32, bar.trackHeight - bar.thumbHeight)
     if travel <= 0:
-      return true
+      return stoppedEvent()
     let deltaY = event.event.position.get.y - area.state.scrollbarDragStartY
     let nextScroll = area.state.scrollbarDragStartScrollY + deltaY / travel * bar.maxScroll
     area.scrollBy(nextScroll - area.state.scrollY)
-    true
+    stoppedEvent()
   )
   root.events.addInternalEventHandler(area.scrollbarThumb.id, iekPointerUp, proc(event: DispatchResult): EventOutcome =
     let wasDragging = area.state.scrollbarDragging
     area.state.scrollbarDragging = false
-    wasDragging
+    if wasDragging: stoppedEvent() else: ignoredEvent()
   )
   root.events.addInternalEventHandler(area.scrollbarTrack.id, iekPointerDown, proc(event: DispatchResult): EventOutcome =
     if event.target.isSome and event.target.get == area.scrollbarThumb.nodeId:
-      return false
+      return ignoredEvent()
     if event.local.isNone:
-      return true
+      return stoppedEvent()
     let lines = area.caretLines()
     let geometry = area.scrollbarGeometry(lines)
     if geometry.isNone:
-      return true
+      return stoppedEvent()
     let bar = geometry.get
     if event.local.get.y < bar.thumbTop:
       area.scrollBy(-area.visibleTextHeight().get)
     elif event.local.get.y > bar.thumbTop + bar.thumbHeight:
       area.scrollBy(area.visibleTextHeight().get)
-    true
+    stoppedEvent()
   )
   root.events.addInternalEventHandler(area.container.id, iekBlur, proc(event: DispatchResult): EventOutcome =
     area.blur()
-    false
+    ignoredEvent()
   )
   root.events.addInternalEventHandler(area.container.id, iekTextInput, proc(event: DispatchResult): EventOutcome =
     if area.state.disabled or area.state.readOnly:
-      return true
+      return stoppedEvent()
     if event.event.text.isSome:
       let text = event.event.text.get
       if area.state.pendingFallbackText == text:
         area.state.pendingFallbackText = ""
-        return true
+        return stoppedEvent()
       else:
         area.insertText(text, emitValue = true)
-        return true
-    false
+        return stoppedEvent()
+    ignoredEvent()
   )
   root.events.addInternalEventHandler(area.container.id, iekPaste, proc(event: DispatchResult): EventOutcome =
     if area.state.disabled or area.state.readOnly:
-      return true
+      return stoppedEvent()
     if event.event.text.isSome:
       area.insertText(event.event.text.get.normalizePastedText(), emitValue = true)
-    false
+    ignoredEvent()
   )
   root.events.addInternalEventHandler(area.container.id, iekCopy, proc(event: DispatchResult): EventOutcome =
     area.requestClipboardWrite(area.selectedText())
-    false
+    ignoredEvent()
   )
   root.events.addInternalEventHandler(area.container.id, iekCut, proc(event: DispatchResult): EventOutcome =
     area.requestClipboardWrite(area.selectedText())
     if not area.state.readOnly and area.deleteSelection():
       area.emitValueEvents()
-    false
+    ignoredEvent()
   )
   root.events.addInternalEventHandler(area.container.id, iekCompositionStart, proc(event: DispatchResult): EventOutcome =
     let text =
       if event.event.text.isSome: event.event.text.get
       else: ""
     if area.state.composingActive and area.state.composingText == text:
-      return false
+      return ignoredEvent()
     area.state.pendingFallbackText = ""
     area.state.composingActive = true
     area.state.composingText = text
     area.state.compositionUpdateSeen = false
     area.state.lastCompositionUpdateText = ""
     area.setVisibleText()
-    true
+    stoppedEvent()
   )
   root.events.addInternalEventHandler(area.container.id, iekCompositionUpdate, proc(event: DispatchResult): EventOutcome =
     let text =
       if event.event.text.isSome: event.event.text.get
       else: ""
     if area.state.compositionUpdateSeen and area.state.lastCompositionUpdateText == text:
-      return false
+      return ignoredEvent()
     area.state.pendingFallbackText = ""
     area.state.composingActive = true
     area.state.composingText = text
     area.state.compositionUpdateSeen = true
     area.state.lastCompositionUpdateText = text
     area.setVisibleText()
-    true
+    stoppedEvent()
   )
   root.events.addInternalEventHandler(area.container.id, iekCompositionEnd, proc(event: DispatchResult): EventOutcome =
     if not area.state.composingActive and area.state.composingText.len == 0:
-      return false
+      return ignoredEvent()
     area.state.pendingFallbackText = ""
     area.state.composingActive = false
     area.state.composingText = ""
     area.state.compositionUpdateSeen = false
     area.state.lastCompositionUpdateText = ""
     area.setVisibleText()
-    true
+    stoppedEvent()
   )
   root.events.addInternalEventHandler(area.container.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
     if area.state.disabled:
-      return false
+      return ignoredEvent()
     if event.event.key.isNone:
-      return false
+      return ignoredEvent()
     if event.event.ctrlKey or event.event.metaKey:
       case event.event.key.get.toLowerAscii()
       of "a":
         area.selectAll()
-        return true
+        return stoppedEvent()
       of "c":
         discard area.container.emit(copyEvent())
-        return true
+        return stoppedEvent()
       of "insert":
         discard area.container.emit(copyEvent())
-        return true
+        return stoppedEvent()
       of "x":
         discard area.container.emit(cutEvent())
-        return true
+        return stoppedEvent()
       of "v":
         discard area.container.emit(pasteEvent(area.root.clipboardText()))
-        return true
+        return stoppedEvent()
       of "z":
         let changed =
           if event.event.shiftKey: area.redo()
           else: area.undo()
         if changed:
           area.emitValueEvents()
-          return true
+          return stoppedEvent()
       of "y":
         if area.redo():
           area.emitValueEvents()
-          return true
+          return stoppedEvent()
       of "arrowleft":
         area.moveCaretWordLeft(extendSelection = event.event.shiftKey)
-        return true
+        return stoppedEvent()
       of "arrowright":
         area.moveCaretWordRight(extendSelection = event.event.shiftKey)
-        return true
+        return stoppedEvent()
       of "home":
         area.moveCaretTo(0, extendSelection = event.event.shiftKey)
-        return true
+        return stoppedEvent()
       of "end":
         area.moveCaretTo(area.state.value.len, extendSelection = event.event.shiftKey)
-        return true
+        return stoppedEvent()
       of "pageup":
         area.moveCaretPage(-1, extendSelection = event.event.shiftKey)
-        return true
+        return stoppedEvent()
       of "pagedown":
         area.moveCaretPage(1, extendSelection = event.event.shiftKey)
-        return true
+        return stoppedEvent()
       of "backspace":
         if area.deleteWordBackward():
           area.emitValueEvents()
-          return true
+          return stoppedEvent()
       of "delete":
         if area.deleteWordForward():
           area.emitValueEvents()
-          return true
+          return stoppedEvent()
       else:
         discard
-      return false
+      return ignoredEvent()
     case event.event.key.get
     of "Enter":
       area.insertText("\n", emitValue = true)
-      return true
+      return stoppedEvent()
     of "Backspace":
       if area.deleteComposingBackward():
-        return true
+        return stoppedEvent()
       if area.deleteBackward():
         area.emitValueEvents()
-        return true
+        return stoppedEvent()
     of "Delete":
       if event.event.shiftKey:
         discard area.container.emit(cutEvent())
-        return true
+        return stoppedEvent()
       else:
         if area.deleteForward():
           area.emitValueEvents()
-          return true
+          return stoppedEvent()
     of "Insert":
       if event.event.shiftKey:
         discard area.container.emit(pasteEvent(area.root.clipboardText()))
-        return true
+        return stoppedEvent()
     of "ArrowLeft":
       area.moveCaretLeft(extendSelection = event.event.shiftKey)
-      return true
+      return stoppedEvent()
     of "ArrowRight":
       area.moveCaretRight(extendSelection = event.event.shiftKey)
-      return true
+      return stoppedEvent()
     of "ArrowUp":
       area.moveCaretUp(extendSelection = event.event.shiftKey)
-      return true
+      return stoppedEvent()
     of "ArrowDown":
       area.moveCaretDown(extendSelection = event.event.shiftKey)
-      return true
+      return stoppedEvent()
     of "PageUp":
       area.moveCaretPage(-1, extendSelection = event.event.shiftKey)
-      return true
+      return stoppedEvent()
     of "PageDown":
       area.moveCaretPage(1, extendSelection = event.event.shiftKey)
-      return true
+      return stoppedEvent()
     of "Home":
       area.moveCaretLineStart(extendSelection = event.event.shiftKey)
-      return true
+      return stoppedEvent()
     of "End":
       area.moveCaretLineEnd(extendSelection = event.event.shiftKey)
-      return true
+      return stoppedEvent()
     else:
       let typed = textFromPrintableKey(event.event)
       if typed.len > 0:
         area.insertText(typed)
         area.emitValueEvents()
         area.state.pendingFallbackText = typed
-        return true
-    false
+        return stoppedEvent()
+    ignoredEvent()
   )
   root.events.addInternalEventHandler(area.resizeHandle.id, iekPointerDown, proc(event: DispatchResult): EventOutcome =
     if area.state.disabled:
       area.state.resizing = false
-      return true
+      return stoppedEvent()
     if not area.resizable() or event.local.isNone:
-      return true
+      return stoppedEvent()
     area.state.resizing = true
     area.state.resizeStartPointer = event.local.get
     area.state.resizeStartWidth =
@@ -1924,11 +1924,11 @@ proc textArea*(
       if area.state.height.isSome: area.state.height.get
       else: 0
     area.syncResizeStyle()
-    true
+    stoppedEvent()
   )
   root.events.addInternalEventHandler(area.resizeHandle.id, iekPointerMove, proc(event: DispatchResult): EventOutcome =
     if not area.state.resizing or event.local.isNone:
-      return false
+      return ignoredEvent()
     let delta = vec2(
       event.local.get.x - area.state.resizeStartPointer.x,
       event.local.get.y - area.state.resizeStartPointer.y
@@ -1944,12 +1944,12 @@ proc textArea*(
       else:
         none(float32)
     area.setSize(nextWidth, nextHeight, emitEvent = true)
-    true
+    stoppedEvent()
   )
   root.events.addInternalEventHandler(area.resizeHandle.id, iekPointerUp, proc(event: DispatchResult): EventOutcome =
     if area.state.resizing:
       area.state.resizing = false
       area.syncResizeStyle()
-      return true
-    false
+      return stoppedEvent()
+    ignoredEvent()
   )

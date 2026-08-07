@@ -188,27 +188,27 @@ proc radio*(
 
   root.events.addInternalEventHandler(radio.container.id, iekClick, proc(event: DispatchResult): EventOutcome =
     if radio.state.disabled:
-      return true
+      return stoppedEvent()
     radio.select()
-    false
+    ignoredEvent()
   )
   root.events.addInternalEventHandler(radio.container.id, iekPointerDown, proc(event: DispatchResult): EventOutcome =
     if radio.state.disabled:
-      return true
+      return stoppedEvent()
     radio.select()
-    true
+    stoppedEvent()
   )
   root.events.addInternalEventHandler(radio.container.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
     if radio.state.disabled:
-      return true
+      return stoppedEvent()
     if event.event.key.isSome:
       case event.event.key.get
       of "Enter", " ":
         discard radio.container.emit(InputEvent(kind: iekClick))
-        return true
+        return stoppedEvent()
       else:
         discard
-    false
+    ignoredEvent()
   )
 
 proc radio*(

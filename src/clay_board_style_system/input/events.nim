@@ -301,13 +301,14 @@ proc stoppedEvent*(preventDefault = false): EventOutcome =
 proc preventedEvent*(handled = true): EventOutcome =
   EventOutcome(handled: handled, preventDefault: true)
 
-converter boolToEventOutcome*(value: bool): EventOutcome =
-  ## Source-compatible migration path for pre-0.4 handlers. New code should
-  ## return an explicit EventOutcome whenever propagation or defaults matter.
-  if value:
-    stoppedEvent()
-  else:
-    ignoredEvent()
+when not defined(cbssStrictEventOutcomes):
+  converter boolToEventOutcome*(value: bool): EventOutcome =
+    ## Source-compatible migration path for pre-0.4 handlers. New code should
+    ## return an explicit EventOutcome whenever propagation or defaults matter.
+    if value:
+      stoppedEvent()
+    else:
+      ignoredEvent()
 
 proc mergeOutcome*(result: var EventOutcome; value: EventOutcome) =
   result.handled = result.handled or value.handled

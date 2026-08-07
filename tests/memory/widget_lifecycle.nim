@@ -16,7 +16,7 @@ type MemoryComponent = ref object of CBSSComponent
 proc render(self: MemoryComponent) =
   proc handleClick(event: DispatchResult): EventOutcome =
     inc self.clicks[]
-    return true
+    return stoppedEvent()
 
   ui.box(self):
     ui.text("Typed component")
@@ -47,10 +47,10 @@ proc exerciseWidgetLifecycle() =
       let button = ui.button("Run " & $iteration)
       button.onClick = proc(event: DispatchResult): EventOutcome =
         button.setLabel("Replaced")
-        false
+        ignoredEvent()
       button.onClick = proc(event: DispatchResult): EventOutcome =
         button.setLabel("Handled")
-        true
+        stoppedEvent()
       discard button.container.emit(InputEvent(kind: iekClick))
       discard button.container.emit(keyDownEvent("Enter"))
 

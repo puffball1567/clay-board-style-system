@@ -118,14 +118,14 @@ proc `onChange=`*(menu: CommandMenuHandle; handler: EventHandler) =
 proc commandMenuItemClickHandler(menu: CommandMenuHandle; itemIndex: int): EventHandler =
   proc(event: DispatchResult): EventOutcome =
     if menu.state.disabled or not menu.state.open:
-      return true
+      return stoppedEvent()
     if itemIndex < 0 or itemIndex >= menu.state.items.len:
-      return true
+      return stoppedEvent()
     if menu.state.items[itemIndex].disabled:
-      return true
+      return stoppedEvent()
     menu.setActiveIndex(itemIndex)
     discard menu.activate()
-    true
+    stoppedEvent()
 
 proc commandMenu*(
     root: UiRoot;
@@ -157,25 +157,25 @@ proc commandMenu*(
 
   root.events.addInternalEventHandler(menu.container.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
     if menu.state.disabled or not menu.state.open:
-      return true
+      return stoppedEvent()
     if event.event.key.isNone:
-      return false
+      return ignoredEvent()
     case event.event.key.get
     of "ArrowDown":
       menu.setActiveIndex(menu.nextEnabledIndex(1))
-      return true
+      return stoppedEvent()
     of "ArrowUp":
       menu.setActiveIndex(menu.nextEnabledIndex(-1))
-      return true
+      return stoppedEvent()
     of "Enter", " ":
       discard menu.activate()
-      return true
+      return stoppedEvent()
     of "Escape":
       discard menu.close()
-      return true
+      return stoppedEvent()
     else:
       discard
-    false
+    ignoredEvent()
   )
 
 proc commandMenu*(

@@ -146,32 +146,32 @@ proc details*(
 
   root.events.addInternalEventHandler(details.summaryNode.id, iekClick, proc(event: DispatchResult): EventOutcome =
     if details.state.disabled:
-      return true
+      return stoppedEvent()
     details.toggle()
-    true
+    stoppedEvent()
   )
   root.events.addInternalEventHandler(details.summaryNode.id, iekPointerDown, proc(event: DispatchResult): EventOutcome =
     if details.state.disabled:
-      return true
-    false
+      return stoppedEvent()
+    ignoredEvent()
   )
   root.events.addInternalEventHandler(details.summaryNode.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
     if details.state.disabled:
-      return true
+      return stoppedEvent()
     if event.event.key.isSome:
       case event.event.key.get
       of "Enter", " ":
         details.toggle()
-        return true
+        return stoppedEvent()
       of "ArrowRight":
         details.setOpen(true, emitToggle = true)
-        return true
+        return stoppedEvent()
       of "ArrowLeft":
         details.setOpen(false, emitToggle = true)
-        return true
+        return stoppedEvent()
       else:
         discard
-    false
+    ignoredEvent()
   )
 
 proc details*(
