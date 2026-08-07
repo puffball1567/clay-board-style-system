@@ -108,8 +108,41 @@ remain distinct from payload-free synthetic submit events.
 
 ## Streams
 
-Host-authorized file/provider Blob sources and the bounded asynchronous stream
-bridge are still planned. The bridge will marshal
-immutable chunks and coalesced progress onto the UI thread, cancel delivery on
-component disposal, and return to event-driven idle when no data or animation
-work remains.
+The first stream slice provides a bounded, transport-neutral UI-side state
+machine through `StreamBridge[T]`. It preserves ordered data, coalesces progress
+to the latest pending value, applies both item-count and declared-weight limits,
+and emits open, terminal, cancellation, and close events deterministically:
+
+```nim
+let stream = initStreamBridge[Blob](
+  maxQueuedItems = 8,
+  maxQueuedWeight = 16 * 1024 * 1024
+)
+
+doAssert stream.open()
+case stream.pushData(chunk, chunk.size)
+of sorAccepted:
+  discard
+of sorBackpressure:
+  pauseProducer()
+of sorNotOpen:
+  discard
+
+discard stream.reportProgress(receivedBytes, some(totalBytes))
+discard stream.finish()
+
+for event in stream.drain():
+  applyOnUiThread(event)
+```
+
+Cancellation drops queued data and progress before emitting one cancellation
+event. Closing an active stream cancels it first; closing a completed or failed
+stream preserves its terminal event before close. Late producer offers are
+rejected instead of reaching a disposed consumer.
+
+`StreamBridge` is currently a UI-thread state machine, not a thread-safe
+mailbox. A producer running on another thread must not call it directly. The
+remaining stream work is an ARC-safe worker-to-UI ownership-transfer mailbox,
+component-disposal attachment, scheduler wake-up integration, C ABI transport,
+and host-authorized file/provider Blob sources. None of those paths may expose
+Nim-managed pointers across an ABI or mutate the UI tree from a worker thread.
