@@ -168,10 +168,20 @@ value/max clamping, percentage display, and indeterminate state. Indeterminate
 progress maps to `esActive` so style rules can distinguish ongoing work without
 inventing a new selector mechanism.
 
-`runtime/form.nim` provides a minimal component dispatch path for `onSubmit`,
-`onReset`, and `onInvalid`. It deliberately does not own arbitrary child input
-state yet; it proves the standard event contract and leaves richer validation
-and field aggregation to higher-level form libraries or later CBSS components.
+`runtime/form.nim` owns `onSubmit`, `onReset`, and `onInvalid` dispatch plus
+explicit field registration and immutable `FormData` collection. Text inputs,
+text areas, selects, checkboxes, radios, and file inputs register by handle and
+field name; collection does not require CSS selectors or public ids. Disabled
+and unchecked controls follow the documented form rules, while disposed or
+value-less registrations produce diagnostics instead of being silently lost.
+
+`runtime/file_input.nim` provides a style-neutral file-selection boundary. It
+does not open paths or own a platform picker. User activation gives application
+code a copied `FileSelectionRequest`; the host applies its permission, sandbox,
+content, and size policy, then supplies immutable `Blob` values with
+`setFiles`. Single/multiple constraints, disabled behavior, keyboard
+activation, accessibility value updates, input/change events, and ordered
+FormData entries remain CBSS-owned behavior.
 
 `runtime/dialog.nim` provides an open/close component with `onShow`, `onClose`,
 and `onCancel`. Open state maps to `esActive`; closed state maps to `esDisabled`
