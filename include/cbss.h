@@ -17,14 +17,19 @@
 extern "C" {
 #endif
 
-#define CBSS_ABI_VERSION 0x0001000Cu
+#define CBSS_ABI_VERSION 0x0001000Du
 #define CBSS_NODE_NONE UINT32_MAX
 #define CBSS_MAX_EAGER_BLOB_BYTES (64ull * 1024ull * 1024ull)
+#define CBSS_MAX_FORM_DATA_ENTRIES 65536u
+#define CBSS_MAX_FORM_DATA_NAME_BYTES 65536u
+#define CBSS_MAX_FORM_DATA_TEXT_BYTES (16u * 1024u * 1024u)
 
 typedef struct CbssContext CbssContext;
 typedef struct CbssStyle CbssStyle;
 typedef struct CbssColorValue CbssColorValue;
 typedef struct CbssBlob CbssBlob;
+typedef struct CbssFormDataBuilder CbssFormDataBuilder;
+typedef struct CbssFormData CbssFormData;
 typedef uint64_t CbssEventSubscription;
 
 typedef int32_t CbssStatus;
@@ -36,6 +41,11 @@ enum {
   CBSS_STYLE_ERROR = 4,
   CBSS_INTERNAL_ERROR = 5
 };
+
+typedef enum CbssFormDataValueKind {
+  CBSS_FORM_DATA_TEXT = 0,
+  CBSS_FORM_DATA_BLOB = 1
+} CbssFormDataValueKind;
 
 typedef enum CbssUnit {
   CBSS_UNIT_PX = 0,
@@ -655,6 +665,33 @@ CBSS_API uint32_t cbss_blob_mime_type(
 CBSS_API CbssStatus cbss_blob_read(
     const CbssBlob *blob, uint64_t offset, uint8_t *output,
     uint32_t capacity, uint32_t *output_read);
+
+CBSS_API CbssFormDataBuilder *cbss_form_data_builder_create(void);
+CBSS_API void cbss_form_data_builder_destroy(CbssFormDataBuilder *builder);
+CBSS_API CbssStatus cbss_form_data_builder_add_text(
+    CbssFormDataBuilder *builder, const char *name, const char *value);
+CBSS_API CbssStatus cbss_form_data_builder_add_blob(
+    CbssFormDataBuilder *builder, const char *name, CbssBlob *blob,
+    const char *file_name);
+CBSS_API CbssStatus cbss_form_data_builder_finish(
+    CbssFormDataBuilder *builder, CbssFormData **output);
+CBSS_API CbssStatus cbss_form_data_retain(CbssFormData *data);
+CBSS_API void cbss_form_data_release(CbssFormData *data);
+CBSS_API uint32_t cbss_form_data_length(const CbssFormData *data);
+CBSS_API CbssStatus cbss_form_data_entry_kind(
+    const CbssFormData *data, uint32_t index, uint32_t *output);
+CBSS_API uint32_t cbss_form_data_entry_name(
+    const CbssFormData *data, uint32_t index, char *buffer,
+    uint32_t capacity);
+CBSS_API uint32_t cbss_form_data_entry_text(
+    const CbssFormData *data, uint32_t index, char *buffer,
+    uint32_t capacity);
+CBSS_API uint32_t cbss_form_data_entry_file_name(
+    const CbssFormData *data, uint32_t index, char *buffer,
+    uint32_t capacity);
+/* The returned Blob owns one retained reference and must be released. */
+CBSS_API CbssStatus cbss_form_data_entry_blob(
+    const CbssFormData *data, uint32_t index, CbssBlob **output);
 
 CBSS_API CbssContext *cbss_context_create(void);
 CBSS_API void cbss_context_destroy(CbssContext *context);

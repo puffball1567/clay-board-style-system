@@ -599,10 +599,15 @@ immutable FormData snapshot. The common input event stays compact by allocating
 its managed payload sidecar only for submit events; an intentionally empty form
 remains distinguishable from a synthetic submit event with no snapshot.
 
+C ABI `0x0001000D` now provides a bounded FormData builder plus immutable,
+atomically retained snapshots. It preserves order and repeated names, shares
+Blob handles by reference, uses caller-owned buffers for string queries, and
+releases unfinished builder resources deterministically.
+
 Remaining: host-authorized file/provider Blob sources, submit-event snapshot
-transport across the C contract, FormData C ABI/adapters, and the
-bounded asynchronous stream bridge with cancellation, backpressure, UI-thread
-delivery, and disposal races.
+transport across the C event contract, optional transport adapters, and the
+bounded asynchronous stream bridge with cancellation, backpressure,
+UI-thread delivery, and disposal races.
 
 CBSS will define transport-neutral data contracts for UI operations that need
 binary values, form snapshots, or progressively produced data. These contracts

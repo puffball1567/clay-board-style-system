@@ -24,9 +24,12 @@ proc ensureNimRuntime() {.inline.} =
     NimMain()
 
 const
-  CbssAbiVersion* = 0x0001_000C'u32
+  CbssAbiVersion* = 0x0001_000D'u32
   CbssMaxEagerBlobBytes* = 64'u64 * 1024'u64 * 1024'u64
   CbssMaxBlobMimeBytes* = 1024
+  CbssMaxFormDataEntries* = 65_536
+  CbssMaxFormDataNameBytes* = 65_536
+  CbssMaxFormDataTextBytes* = 16 * 1024 * 1024
   CbssNodeNone* = high(uint32)
 
   CbssOk* = 0'i32
@@ -35,6 +38,9 @@ const
   CbssOutOfRange* = 3'i32
   CbssStyleError* = 4'i32
   CbssInternalError* = 5'i32
+
+  CbssFormDataText* = 0'u32
+  CbssFormDataBlob* = 1'u32
 
   CbssInputHasPosition* = 1'u32 shl 0
   CbssInputHasDelta* = 1'u32 shl 1
@@ -235,6 +241,8 @@ type
   CbssStyleHandle* = ptr CbssStyleObj
   CbssColorValueHandle* = ptr CbssColorValueObj
   CbssBlobHandle* = ptr CbssBlobObj
+  CbssFormDataBuilderHandle* = ptr CbssFormDataBuilderObj
+  CbssFormDataHandle* = ptr CbssFormDataObj
   CbssEventCallback* = proc(
     context: CbssContextHandle;
     event: ptr CbssEventC;
@@ -307,6 +315,25 @@ type
     length: uint64
     mimeBytes: pointer
     mimeLength: uint32
+    references: Atomic[uint32]
+
+  CbssFormDataEntryObj = object
+    nameBytes: pointer
+    nameLength: uint32
+    kind: uint32
+    textBytes: pointer
+    textLength: uint32
+    blob: CbssBlobHandle
+    fileNameBytes: pointer
+    fileNameLength: uint32
+
+  CbssFormDataBuilderObj = object
+    entries: seq[CbssFormDataEntryObj]
+    finished: bool
+
+  CbssFormDataObj = object
+    entries: pointer
+    length: uint32
     references: Atomic[uint32]
 
 static:
@@ -1271,6 +1298,298 @@ proc cbssBlobRead(
     copyMem(output, unsafeAddr source[int(offset)], int(count))
   outputRead[] = uint32(count)
   CbssOk
+
+proc releaseFormDataEntry(entry: var CbssFormDataEntryObj) =
+  if not entry.nameBytes.isNil:
+    deallocShared(entry.nameBytes)
+    entry.nameBytes = nil
+  if not entry.textBytes.isNil:
+    deallocShared(entry.textBytes)
+    entry.textBytes = nil
+  if not entry.fileNameBytes.isNil:
+    deallocShared(entry.fileNameBytes)
+    entry.fileNameBytes = nil
+  if not entry.blob.isNil:
+    cbssBlobRelease(entry.blob)
+    entry.blob = nil
+
+proc releaseFormDataEntries(entries: var seq[CbssFormDataEntryObj]) =
+  for entry in entries.mitems:
+    entry.releaseFormDataEntry()
+  entries.setLen(0)
+
+proc sharedCStringCopy(value: cstring; length: int): pointer =
+  if length <= 0:
+    return nil
+  result = allocShared(length)
+  if not result.isNil:
+    copyMem(result, value, length)
+
+proc copySharedString(
+    bytes: pointer;
+    length: uint32;
+    buffer: cstring;
+    capacity: uint32
+): uint32 =
+  result = length
+  if buffer.isNil or capacity == 0:
+    return
+  let copyLength = min(int(length), int(capacity) - 1)
+  if copyLength > 0:
+    copyMem(buffer, bytes, copyLength)
+  cast[ptr UncheckedArray[char]](buffer)[copyLength] = '\0'
+
+proc boundedCStringLength(value: cstring; maximum: int): int =
+  if value.isNil:
+    return -1
+  let bytes = cast[ptr UncheckedArray[char]](value)
+  while result <= maximum and bytes[result] != '\0':
+    inc result
+
+proc cbssFormDataBuilderCreate(): CbssFormDataBuilderHandle {.
+    exportc: "cbss_form_data_builder_create", cdecl, dynlib.} =
+  ensureNimRuntime()
+  try:
+    result = create(CbssFormDataBuilderObj)
+    result[] = CbssFormDataBuilderObj(entries: @[])
+  except CatchableError:
+    result = nil
+
+proc cbssFormDataBuilderDestroy(builder: CbssFormDataBuilderHandle) {.
+    exportc: "cbss_form_data_builder_destroy", cdecl, dynlib.} =
+  if builder.isNil:
+    return
+  builder.entries.releaseFormDataEntries()
+  `=destroy`(builder[])
+  dealloc(builder)
+
+proc cbssFormDataBuilderAddText(
+    builder: CbssFormDataBuilderHandle;
+    name, value: cstring
+): int32 {.exportc: "cbss_form_data_builder_add_text", cdecl, dynlib.} =
+  if builder.isNil:
+    return CbssInvalidHandle
+  if builder.finished:
+    return CbssInvalidArgument
+  if builder.entries.len >= CbssMaxFormDataEntries:
+    return CbssOutOfRange
+  let nameLength = boundedCStringLength(name, CbssMaxFormDataNameBytes)
+  let valueLength = boundedCStringLength(value, CbssMaxFormDataTextBytes)
+  if nameLength <= 0 or valueLength < 0:
+    return CbssInvalidArgument
+  if nameLength > CbssMaxFormDataNameBytes or
+      valueLength > CbssMaxFormDataTextBytes:
+    return CbssOutOfRange
+  var entry = CbssFormDataEntryObj(
+    nameBytes: sharedCStringCopy(name, nameLength),
+    nameLength: uint32(nameLength),
+    kind: CbssFormDataText,
+    textBytes: sharedCStringCopy(value, valueLength),
+    textLength: uint32(valueLength)
+  )
+  if entry.nameBytes.isNil or (valueLength > 0 and entry.textBytes.isNil):
+    entry.releaseFormDataEntry()
+    return CbssInternalError
+  try:
+    builder.entries.add entry
+    CbssOk
+  except CatchableError:
+    entry.releaseFormDataEntry()
+    CbssInternalError
+
+proc cbssFormDataBuilderAddBlob(
+    builder: CbssFormDataBuilderHandle;
+    name: cstring;
+    blob: CbssBlobHandle;
+    fileName: cstring
+): int32 {.exportc: "cbss_form_data_builder_add_blob", cdecl, dynlib.} =
+  if builder.isNil or blob.isNil:
+    return CbssInvalidHandle
+  if builder.finished:
+    return CbssInvalidArgument
+  if builder.entries.len >= CbssMaxFormDataEntries:
+    return CbssOutOfRange
+  let nameLength = boundedCStringLength(name, CbssMaxFormDataNameBytes)
+  let fileNameLength = boundedCStringLength(
+    fileName, CbssMaxFormDataNameBytes
+  )
+  if nameLength <= 0:
+    return CbssInvalidArgument
+  if nameLength > CbssMaxFormDataNameBytes or
+      fileNameLength > CbssMaxFormDataNameBytes:
+    return CbssOutOfRange
+  let retainStatus = cbssBlobRetain(blob)
+  if retainStatus != CbssOk:
+    return retainStatus
+  var entry = CbssFormDataEntryObj(
+    nameBytes: sharedCStringCopy(name, nameLength),
+    nameLength: uint32(nameLength),
+    kind: CbssFormDataBlob,
+    blob: blob,
+    fileNameBytes:
+      if fileNameLength > 0:
+        sharedCStringCopy(fileName, fileNameLength)
+      else:
+        nil,
+    fileNameLength: uint32(max(fileNameLength, 0))
+  )
+  if entry.nameBytes.isNil or
+      (fileNameLength > 0 and entry.fileNameBytes.isNil):
+    entry.releaseFormDataEntry()
+    return CbssInternalError
+  try:
+    builder.entries.add entry
+    CbssOk
+  except CatchableError:
+    entry.releaseFormDataEntry()
+    CbssInternalError
+
+proc cbssFormDataBuilderFinish(
+    builder: CbssFormDataBuilderHandle;
+    output: ptr CbssFormDataHandle
+): int32 {.exportc: "cbss_form_data_builder_finish", cdecl, dynlib.} =
+  if builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  if builder.finished:
+    return CbssInvalidArgument
+  let snapshot = cast[CbssFormDataHandle](
+    allocShared0(sizeof(CbssFormDataObj))
+  )
+  if snapshot.isNil:
+    return CbssInternalError
+  let count = builder.entries.len
+  if count > 0:
+    snapshot.entries = allocShared(count * sizeof(CbssFormDataEntryObj))
+    if snapshot.entries.isNil:
+      deallocShared(snapshot)
+      return CbssInternalError
+    copyMem(
+      snapshot.entries,
+      unsafeAddr builder.entries[0],
+      count * sizeof(CbssFormDataEntryObj)
+    )
+    for entry in builder.entries.mitems:
+      entry.nameBytes = nil
+      entry.textBytes = nil
+      entry.fileNameBytes = nil
+      entry.blob = nil
+  snapshot.length = uint32(count)
+  snapshot.references.store(1)
+  builder.entries.setLen(0)
+  builder.finished = true
+  output[] = snapshot
+  CbssOk
+
+proc cbssFormDataRetain(data: CbssFormDataHandle): int32 {.
+    exportc: "cbss_form_data_retain", cdecl, dynlib.} =
+  if data.isNil:
+    return CbssInvalidHandle
+  var current = data.references.load()
+  while current > 0 and current < high(uint32):
+    var expected = current
+    if data.references.compareExchange(expected, current + 1):
+      return CbssOk
+    current = expected
+  if current == high(uint32): CbssOutOfRange else: CbssInvalidHandle
+
+proc cbssFormDataRelease(data: CbssFormDataHandle) {.
+    exportc: "cbss_form_data_release", cdecl, dynlib.} =
+  if data.isNil:
+    return
+  let previous = data.references.fetchSub(1)
+  if previous != 1:
+    return
+  if not data.entries.isNil:
+    let entries = cast[ptr UncheckedArray[CbssFormDataEntryObj]](data.entries)
+    for index in 0 ..< int(data.length):
+      entries[index].releaseFormDataEntry()
+    deallocShared(data.entries)
+  deallocShared(data)
+
+proc cbssFormDataLength(data: CbssFormDataHandle): uint32 {.
+    exportc: "cbss_form_data_length", cdecl, dynlib, raises: [].} =
+  if data.isNil: 0'u32 else: data.length
+
+proc cbssFormDataEntryKind(
+    data: CbssFormDataHandle;
+    index: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_form_data_entry_kind", cdecl, dynlib.} =
+  if data.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  if index >= data.length:
+    return CbssOutOfRange
+  let entries = cast[ptr UncheckedArray[CbssFormDataEntryObj]](data.entries)
+  output[] = entries[int(index)].kind
+  CbssOk
+
+proc cbssFormDataEntryName(
+    data: CbssFormDataHandle;
+    index: uint32;
+    buffer: cstring;
+    capacity: uint32
+): uint32 {.exportc: "cbss_form_data_entry_name", cdecl, dynlib.} =
+  if data.isNil or index >= data.length:
+    return 0
+  let entries = cast[ptr UncheckedArray[CbssFormDataEntryObj]](data.entries)
+  let entry = entries[int(index)]
+  copySharedString(entry.nameBytes, entry.nameLength, buffer, capacity)
+
+proc cbssFormDataEntryText(
+    data: CbssFormDataHandle;
+    index: uint32;
+    buffer: cstring;
+    capacity: uint32
+): uint32 {.exportc: "cbss_form_data_entry_text", cdecl, dynlib.} =
+  if data.isNil or index >= data.length:
+    return 0
+  let entries = cast[ptr UncheckedArray[CbssFormDataEntryObj]](data.entries)
+  let entry = entries[int(index)]
+  if entry.kind != CbssFormDataText:
+    return 0
+  copySharedString(entry.textBytes, entry.textLength, buffer, capacity)
+
+proc cbssFormDataEntryFileName(
+    data: CbssFormDataHandle;
+    index: uint32;
+    buffer: cstring;
+    capacity: uint32
+): uint32 {.exportc: "cbss_form_data_entry_file_name", cdecl, dynlib.} =
+  if data.isNil or index >= data.length:
+    return 0
+  let entries = cast[ptr UncheckedArray[CbssFormDataEntryObj]](data.entries)
+  let entry = entries[int(index)]
+  if entry.kind != CbssFormDataBlob:
+    return 0
+  copySharedString(
+    entry.fileNameBytes, entry.fileNameLength, buffer, capacity
+  )
+
+proc cbssFormDataEntryBlob(
+    data: CbssFormDataHandle;
+    index: uint32;
+    output: ptr CbssBlobHandle
+): int32 {.exportc: "cbss_form_data_entry_blob", cdecl, dynlib.} =
+  if data.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  if index >= data.length:
+    return CbssOutOfRange
+  let entries = cast[ptr UncheckedArray[CbssFormDataEntryObj]](data.entries)
+  let entry = entries[int(index)]
+  if entry.kind != CbssFormDataBlob or entry.blob.isNil:
+    return CbssInvalidArgument
+  let status = cbssBlobRetain(entry.blob)
+  if status == CbssOk:
+    output[] = entry.blob
+  status
 
 proc cbssContextCreate(): CbssContextHandle {.
     exportc: "cbss_context_create", cdecl, dynlib.} =

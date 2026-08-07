@@ -91,6 +91,15 @@ preserves selection order and emits one Blob entry per selected value.
 Request serialization remains outside CBSS. An optional `joubako` adapter may
 translate a snapshot to JSON, NIF, multipart, or another request format.
 
+The C ABI exposes a separate `CbssFormDataBuilder` and immutable,
+atomically-reference-counted `CbssFormData` snapshot. Builders preserve entry
+order and repeated names, retain Blob values without copying their bytes, and
+cannot be reused after finishing. Entry string queries use caller-owned bounded
+buffers. A Blob returned by `cbss_form_data_entry_blob` owns one retained
+reference and must be released by the caller. Finished snapshots store their
+entry table and copied strings in shared raw storage, so no Nim-managed pointer
+crosses this ABI boundary.
+
 ## Streams
 
 Host-authorized file/provider Blob sources and the bounded asynchronous stream
