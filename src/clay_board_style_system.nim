@@ -1,5 +1,5 @@
 import clay_board_style_system/assets/asset_resolver
-import clay_board_style_system/data/[blob, form_data]
+import clay_board_style_system/data/[blob, form_data, stream_bridge]
 import clay_board_style_system/core/[
   color,
   color_conversion,
@@ -47,6 +47,7 @@ import clay_board_style_system/backends/atspi/adapter
 export asset_resolver
 export blob
 export form_data
+export stream_bridge
 export color
 export color_conversion
 export color_mix

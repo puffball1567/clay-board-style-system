@@ -611,9 +611,17 @@ empty snapshots remain distinguishable from payload-free synthetic events,
 and callbacks may retain a snapshot beyond dispatch through explicit
 retain/release ownership.
 
+The first bounded stream slice is now implemented as a transport-neutral
+`StreamBridge[T]` UI-thread state machine. It provides deterministic
+open/data/progress/end/error/cancel/close ordering, item and declared-weight
+backpressure, progress coalescing, exact terminal delivery, cancellation that
+drops queued work, late-offer rejection, partial draining, and ARC/ORC stress
+tests. It intentionally does not claim thread safety.
+
 Remaining: host-authorized file/provider Blob sources, optional transport
-adapters, and the bounded asynchronous stream bridge with cancellation,
-backpressure, UI-thread delivery, and disposal races.
+adapters, an ARC-safe worker-to-UI ownership-transfer mailbox, component
+disposal and scheduler wake-up integration, C ABI transport, and cancellation
+race verification.
 
 CBSS will define transport-neutral data contracts for UI operations that need
 binary values, form snapshots, or progressively produced data. These contracts
@@ -711,10 +719,10 @@ network-facing producers and FormData request encoding. Media and image
 features may build adapters on this bridge while retaining their own resource
 and scheduling policies.
 
-The first implementation slice establishes Blob ownership and FormData
-snapshots before the asynchronous stream bridge. Further public API work is
-gated on bounded-memory stress tests, cancellation races, and proof that idle
-streams do not force continuous frames.
+The first stream implementation slice establishes the bounded UI-side state
+machine and deterministic fake-producer surface. Worker-thread delivery remains
+gated on bounded-memory stress tests, cancellation races, explicit ownership
+transfer, and proof that idle streams do not force continuous frames.
 
 ## Authoring Value Model And Ergonomics
 
