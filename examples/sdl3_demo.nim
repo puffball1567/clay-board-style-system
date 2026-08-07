@@ -1555,7 +1555,7 @@ proc RunButton(ui: UiRoot; onRun: proc() {.closure.}; style = primaryButtonStyle
   ui.addButtonStateOverrides(result)
   proc handleRun(event: DispatchResult): EventOutcome =
     onRun()
-    true
+    stoppedEvent()
 
   result.onClick = handleRun
 
@@ -1610,7 +1610,7 @@ proc DemoTextInput(ui: UiRoot; state: DemoState; valueDispatch: DispatchProc[Dem
   result.container.onInput = proc(event: DispatchResult): EventOutcome =
     if event.event.text.isSome:
       valueDispatch(DemoAction(kind: dakHeroInputChanged, value: event.event.text.get))
-    false
+    ignoredEvent()
 
 proc ControlsPanel(
     ui: UiRoot;
@@ -1698,7 +1698,7 @@ proc ControlsPanel(
         let value = demoTabs.selectedValue()
         valueDispatch(DemoAction(kind: dakTabSelected, value: value))
         ui.syncTabStatusText(refs, value)
-        false
+        ignoredEvent()
 
     ui.box(controlRowStyle()):
       ui.text("", controlLabelStyle())
@@ -1795,7 +1795,7 @@ proc AltControlsPanel(
         let value = demoTabs.selectedValue()
         valueDispatch(DemoAction(kind: dakAltTabSelected, value: value))
         ui.syncAltTabStatusText(refs, value)
-        false
+        ignoredEvent()
 
     ui.box(altRowStyle()):
       ui.text("", altLabelStyle())
@@ -1862,7 +1862,7 @@ proc ComponentCatalog(
         compact.container.onInput = proc(event: DispatchResult): EventOutcome =
           if event.event.text.isSome:
             valueDispatch(DemoAction(kind: dakCatalogInputChanged, value: event.event.text.get))
-          false
+          ignoredEvent()
         ui.label("label target", compact, style = choiceStyle(), textStyle = choiceLabelStyle())
       ui.box(catalogRowStyle()):
         ui.text("textarea", catalogLabelStyle())
@@ -1885,7 +1885,7 @@ proc ComponentCatalog(
         area.container.onInput = proc(event: DispatchResult): EventOutcome =
           if event.event.text.isSome:
             valueDispatch(DemoAction(kind: dakCatalogTextareaChanged, value: event.event.text.get))
-          false
+          ignoredEvent()
 
     ui.box(catalogSectionStyle(118)):
       ui.box(catalogSplitRowStyle(96), "command-menu-row"):
@@ -1978,7 +1978,7 @@ proc ComponentCatalog(
           nameInput.container.onInput = proc(event: DispatchResult): EventOutcome =
             if event.event.text.isSome:
               valueDispatch(DemoAction(kind: dakFormNameChanged, value: event.event.text.get))
-            false
+            ignoredEvent()
           ui.label("Name label", nameInput, style = choiceStyle(), textStyle = choiceLabelStyle())
         finally:
           ui.popParent()

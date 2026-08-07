@@ -496,28 +496,28 @@ proc main() =
   backButton.onClick = proc(event: DispatchResult): EventOutcome =
     if not navigator.back():
       statusLabel.setText("History boundary.\nCannot go back.")
-    true
+    stoppedEvent()
   forwardButton.onClick = proc(event: DispatchResult): EventOutcome =
     if not navigator.forward():
       statusLabel.setText("History boundary.\nCannot go forward.")
-    true
+    stoppedEvent()
   docsButton.onClick = proc(event: DispatchResult): EventOutcome =
     let opened = externalUrls.openExternalUrl(
       "https://github.com/puffball1567/clay-board-style-system"
     )
     statusLabel.setText("External URL:\n" & $opened.status)
-    true
+    stoppedEvent()
   overview.deepLinkButton.onClick = proc(event: DispatchResult): EventOutcome =
     let routed = navigator.navigateDeepLink(deepLinks, "cbss-demo://projects")
     statusLabel.setText("Deep link:\n" & $routed.status)
-    true
+    stoppedEvent()
   overview.rebuildButton.onClick = proc(event: DispatchResult): EventOutcome =
     inc settingsRevision
     let replacement = buildSettings(ui, content, settingsRevision)
     if host.replaceScreen(dsSettings, replacement, interaction):
       settingsRoot = replacement
       statusLabel.setText("Settings rebuilt.\nRevision " & $settingsRevision & ".")
-    true
+    stoppedEvent()
 
   navigator.addListener(proc(change: NavigationChange[DemoScreen]) =
     scheduler.markDirty(change.dirtyDomains)

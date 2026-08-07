@@ -867,12 +867,13 @@ proc bindRenderSurfaceEvents(root: UiRoot; node: NodeHandle; surface: RenderSurf
     let eventKind = kind
     root.events.addInternalEventHandler(node.id, eventKind, proc(event: DispatchResult): EventOutcome =
       if not target.valid:
-        return false
-      target.root.surfaces.dispatchSurfaceInput(
+        return ignoredEvent()
+      let handled = target.root.surfaces.dispatchSurfaceInput(
         surface,
         event.event,
         captured = false
       )
+      if handled: stoppedEvent() else: ignoredEvent()
     )
 
 proc canvas*(

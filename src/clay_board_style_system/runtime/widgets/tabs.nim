@@ -109,9 +109,9 @@ proc `onInput=`*(tabs: TabsHandle; handler: EventHandler) =
 proc tabClickHandler(tabs: TabsHandle; tabIndex: int): EventHandler =
   proc(event: DispatchResult): EventOutcome =
     if tabs.state.disabled:
-      return true
+      return stoppedEvent()
     tabs.setSelectedIndex(tabIndex, emitEvents = true)
-    true
+    stoppedEvent()
 
 proc tabs*(
     root: UiRoot;
@@ -149,19 +149,19 @@ proc tabs*(
 
   root.events.addInternalEventHandler(tabs.container.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
     if tabs.state.disabled:
-      return true
+      return stoppedEvent()
     if event.event.key.isNone:
-      return false
+      return ignoredEvent()
     case event.event.key.get
     of "ArrowRight", "ArrowDown":
       tabs.selectNext()
-      return true
+      return stoppedEvent()
     of "ArrowLeft", "ArrowUp":
       tabs.selectPrevious()
-      return true
+      return stoppedEvent()
     else:
       discard
-    false
+    ignoredEvent()
   )
 
 proc tabs*(

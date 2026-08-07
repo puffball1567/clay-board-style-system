@@ -22,7 +22,7 @@ proc saveButtonStyle(): UiStyle =
 proc render(self: SaveButton) =
   proc onSave(event: DispatchResult): EventOutcome =
     self.saved[] = true
-    return true
+    return stoppedEvent()
 
   ui.box(self, ownedStyle = saveButtonStyle()):
     ui.text(self.label)

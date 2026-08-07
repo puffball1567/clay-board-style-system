@@ -169,14 +169,14 @@ proc containsTarget(select: SelectHandle; target: Option[NodeId]): bool =
 proc optionClickHandler(select: SelectHandle; optionIndex: int): EventHandler =
   proc(event: DispatchResult): EventOutcome =
     if select.state.disabled:
-      return true
+      return stoppedEvent()
     if optionIndex < 0 or optionIndex >= select.state.options.len:
-      return true
+      return stoppedEvent()
     if select.state.options[optionIndex].disabled:
-      return true
+      return stoppedEvent()
     select.setSelectedIndex(optionIndex, emitEvents = true)
     select.setOpen(false, emitToggle = true)
-    true
+    stoppedEvent()
 
 proc selectBox*(
     root: UiRoot;
@@ -250,43 +250,43 @@ proc selectBox*(
 
   root.events.addInternalEventHandler(select.container.id, iekClick, proc(event: DispatchResult): EventOutcome =
     if select.state.disabled:
-      return true
+      return stoppedEvent()
     if event.event.position.isSome:
-      return true
+      return stoppedEvent()
     select.toggleOpen()
-    false
+    ignoredEvent()
   )
   root.events.addInternalEventHandler(select.container.id, iekPointerDown, proc(event: DispatchResult): EventOutcome =
     if select.state.disabled:
-      return true
+      return stoppedEvent()
     select.toggleOpen()
-    true
+    stoppedEvent()
   )
   root.events.addInternalEventHandler(select.container.id, iekBlur, proc(event: DispatchResult): EventOutcome =
     select.setOpen(false, emitToggle = true)
-    false
+    ignoredEvent()
   )
   root.events.addInternalEventHandler(select.container.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
     if select.state.disabled:
-      return true
+      return stoppedEvent()
     if event.event.key.isNone:
-      return false
+      return ignoredEvent()
     case event.event.key.get
     of "ArrowDown":
       select.selectNext()
-      return true
+      return stoppedEvent()
     of "ArrowUp":
       select.selectPrevious()
-      return true
+      return stoppedEvent()
     of "Enter", " ":
       select.toggleOpen()
-      return true
+      return stoppedEvent()
     of "Escape":
       select.setOpen(false, emitToggle = true)
-      return true
+      return stoppedEvent()
     else:
       discard
-    false
+    ignoredEvent()
   )
 
   for index, optionNode in select.optionNodes:

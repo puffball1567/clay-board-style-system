@@ -496,7 +496,9 @@ CBSSComponent, and C event-kind surfaces, while CI rejects stale output. All
 first-party handlers use explicit outcomes. The Boolean converter remains only
 as a documented pre-0.4 source-compatibility bridge; Boolean-returning query and
 convenience APIs report only success or handled state and do not encode the
-three independent dispatch effects.
+three independent dispatch effects. A strict compile gate disables that bridge
+while checking the runtime, public module, examples, and lifecycle probe so new
+first-party handlers cannot silently reintroduce ambiguous Boolean outcomes.
 
 CBSS must provide the event equivalent of its shared style and layout model: an
 independently maintained component, chart, control, or design-system package

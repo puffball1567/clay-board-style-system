@@ -159,21 +159,21 @@ proc checkbox*(
 
   root.events.addInternalEventHandler(checkbox.container.id, iekClick, proc(event: DispatchResult): EventOutcome =
     if checkbox.state.disabled:
-      return true
+      return stoppedEvent()
     checkbox.toggle()
-    false
+    ignoredEvent()
   )
   root.events.addInternalEventHandler(checkbox.container.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
     if checkbox.state.disabled:
-      return true
+      return stoppedEvent()
     if event.event.key.isSome:
       case event.event.key.get
       of "Enter", " ":
         discard checkbox.container.emit(InputEvent(kind: iekClick))
-        return true
+        return stoppedEvent()
       else:
         discard
-    false
+    ignoredEvent()
   )
 
 proc checkbox*(

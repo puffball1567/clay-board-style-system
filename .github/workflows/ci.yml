@@ -36,6 +36,9 @@ jobs:
       - name: Check generated event surfaces
         run: nimble checkGeneratedEvents -y
 
+      - name: Check explicit first-party event outcomes
+        run: nimble checkExplicitEventOutcomes -y
+
       - name: Run discovered ARC tests
         run: nimble test -y
 
