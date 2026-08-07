@@ -1,6 +1,6 @@
 #include "cbss.h"
 
-_Static_assert(CBSS_ABI_VERSION == 0x0001000Cu, "unexpected CBSS ABI version");
+_Static_assert(CBSS_ABI_VERSION == 0x0001000Du, "unexpected CBSS ABI version");
 _Static_assert(CBSS_ROLE_SWITCH == 22, "unexpected switch role value");
 
 #include <assert.h>
@@ -253,6 +253,115 @@ int main(void) {
   assert(cbss_blob_create(
       blob_source, CBSS_MAX_EAGER_BLOB_BYTES + 1, NULL, &blob) ==
       CBSS_OUT_OF_RANGE);
+
+  CbssBlob *form_blob = NULL;
+  assert(cbss_blob_create(
+      blob_source, sizeof(blob_source), "application/form-test", &form_blob) ==
+      CBSS_OK);
+  CbssFormDataBuilder *form_builder = cbss_form_data_builder_create();
+  assert(form_builder != NULL);
+  assert(cbss_form_data_builder_add_text(
+      NULL, "field", "value") == CBSS_INVALID_HANDLE);
+  assert(cbss_form_data_builder_add_text(
+      form_builder, NULL, "value") == CBSS_INVALID_ARGUMENT);
+  assert(cbss_form_data_builder_add_text(
+      form_builder, "field", NULL) == CBSS_INVALID_ARGUMENT);
+  assert(cbss_form_data_builder_add_text(
+      form_builder, "tag", "first") == CBSS_OK);
+  assert(cbss_form_data_builder_add_text(
+      form_builder, "title", "Document") == CBSS_OK);
+  assert(cbss_form_data_builder_add_text(
+      form_builder, "tag", "second") == CBSS_OK);
+  assert(cbss_form_data_builder_add_blob(
+      form_builder, "attachment", form_blob, "sample.bin") == CBSS_OK);
+  assert(cbss_form_data_builder_add_text(
+      form_builder, "empty", "") == CBSS_OK);
+  assert(cbss_form_data_builder_add_text(
+      form_builder, "", "invalid") == CBSS_INVALID_ARGUMENT);
+  char oversized_form_name[CBSS_MAX_FORM_DATA_NAME_BYTES + 2];
+  memset(oversized_form_name, 'x', sizeof(oversized_form_name));
+  oversized_form_name[sizeof(oversized_form_name) - 1] = '\0';
+  assert(cbss_form_data_builder_add_text(
+      form_builder, oversized_form_name, "invalid") == CBSS_OUT_OF_RANGE);
+  assert(cbss_form_data_builder_finish(form_builder, NULL) ==
+      CBSS_INVALID_ARGUMENT);
+
+  CbssFormData *form_data = NULL;
+  assert(cbss_form_data_builder_finish(form_builder, &form_data) == CBSS_OK);
+  assert(form_data != NULL);
+  CbssFormData *duplicate_form_data = NULL;
+  assert(cbss_form_data_builder_finish(form_builder, &duplicate_form_data) ==
+      CBSS_INVALID_ARGUMENT);
+  assert(duplicate_form_data == NULL);
+  assert(cbss_form_data_builder_add_text(
+      form_builder, "late", "invalid") == CBSS_INVALID_ARGUMENT);
+  cbss_form_data_builder_destroy(form_builder);
+  cbss_blob_release(form_blob);
+
+  assert(cbss_form_data_length(form_data) == 5);
+  uint32_t form_kind = UINT32_MAX;
+  assert(cbss_form_data_entry_kind(form_data, 0, &form_kind) == CBSS_OK);
+  assert(form_kind == CBSS_FORM_DATA_TEXT);
+  assert(cbss_form_data_entry_kind(form_data, 3, &form_kind) == CBSS_OK);
+  assert(form_kind == CBSS_FORM_DATA_BLOB);
+  assert(cbss_form_data_entry_kind(form_data, 4, &form_kind) ==
+      CBSS_OK);
+  assert(form_kind == CBSS_FORM_DATA_TEXT);
+  assert(cbss_form_data_entry_kind(form_data, 5, &form_kind) ==
+      CBSS_OUT_OF_RANGE);
+  assert(cbss_form_data_entry_kind(form_data, 0, NULL) ==
+      CBSS_INVALID_ARGUMENT);
+
+  char form_string[32];
+  char truncated_name[2];
+  assert(cbss_form_data_entry_name(
+      form_data, 0, truncated_name, sizeof(truncated_name)) == 3);
+  assert(strcmp(truncated_name, "t") == 0);
+  assert(cbss_form_data_entry_name(
+      form_data, 0, form_string, sizeof(form_string)) == 3);
+  assert(strcmp(form_string, "tag") == 0);
+  assert(cbss_form_data_entry_text(
+      form_data, 0, form_string, sizeof(form_string)) == 5);
+  assert(strcmp(form_string, "first") == 0);
+  assert(cbss_form_data_entry_name(
+      form_data, 2, form_string, sizeof(form_string)) == 3);
+  assert(strcmp(form_string, "tag") == 0);
+  assert(cbss_form_data_entry_text(
+      form_data, 2, form_string, sizeof(form_string)) == 6);
+  assert(strcmp(form_string, "second") == 0);
+  assert(cbss_form_data_entry_file_name(
+      form_data, 3, form_string, sizeof(form_string)) == 10);
+  assert(strcmp(form_string, "sample.bin") == 0);
+  assert(cbss_form_data_entry_text(
+      form_data, 3, form_string, sizeof(form_string)) == 0);
+  assert(cbss_form_data_entry_text(
+      form_data, 4, form_string, sizeof(form_string)) == 0);
+
+  CbssBlob *form_entry_blob = NULL;
+  assert(cbss_form_data_entry_blob(
+      form_data, 3, &form_entry_blob) == CBSS_OK);
+  assert(form_entry_blob != NULL);
+  assert(cbss_blob_size(form_entry_blob) == sizeof(blob_source));
+  cbss_blob_release(form_entry_blob);
+  assert(cbss_form_data_entry_blob(
+      form_data, 0, &form_entry_blob) == CBSS_INVALID_ARGUMENT);
+  assert(form_entry_blob == NULL);
+
+  assert(cbss_form_data_retain(form_data) == CBSS_OK);
+  cbss_form_data_release(form_data);
+  assert(cbss_form_data_length(form_data) == 5);
+  cbss_form_data_release(form_data);
+
+  CbssFormDataBuilder *abandoned_builder =
+      cbss_form_data_builder_create();
+  CbssBlob *abandoned_blob = NULL;
+  assert(abandoned_builder != NULL);
+  assert(cbss_blob_create(blob_source, sizeof(blob_source), NULL,
+      &abandoned_blob) == CBSS_OK);
+  assert(cbss_form_data_builder_add_blob(
+      abandoned_builder, "file", abandoned_blob, NULL) == CBSS_OK);
+  cbss_blob_release(abandoned_blob);
+  cbss_form_data_builder_destroy(abandoned_builder);
 
   CbssContext *context = cbss_context_create();
   CbssStyle *root_style = cbss_style_create();

@@ -23,12 +23,16 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x0001000C` supports:
+ABI version `0x0001000D` supports:
 
 - Opaque context and style handles.
 - Atomically reference-counted immutable Blob handles with advisory MIME
   metadata, bounded reads into host buffers, and a 64 MiB eager-construction
   limit. Blob storage does not expose Nim-managed pointers.
+- Ordered immutable FormData handles built through an explicit builder. Text
+  entries preserve repeated names, Blob entries retain shared Blob handles,
+  and every returned Blob owns one reference that the caller releases. Finished
+  snapshots use shared raw storage and expose no Nim-managed pointer.
 - Generation-checked node handles plus box, text, and image node creation.
 - Groups, attributes, pseudo-state flags, and accessibility semantics.
 - Typed length, number, keyword, color, color-pair, border, shadow, gradient,
@@ -193,6 +197,13 @@ ownership and synchronization contracts.
 - `CbssColorValueGradientStop.color` is borrowed only for the duration of
   `cbss_style_set_linear_gradient_color_values`; the setter copies every
   authored value before returning.
+- `cbss_form_data_builder_create` returns one mutable builder. Finishing moves
+  its entries into a new immutable snapshot; the builder must still be
+  destroyed and cannot be reused. Destroying an unfinished builder releases
+  every Blob it retained.
+- `cbss_form_data_builder_add_blob` retains the Blob on success. FormData
+  snapshots use atomic retain/release. `cbss_form_data_entry_blob` returns an
+  additional owning Blob reference, which the caller must release.
 - Node IDs are values owned by their context. `CBSS_NODE_NONE` is never valid.
 - Strings passed into CBSS are copied before the call returns.
 - Strings returned by CBSS are copied into caller-owned buffers. Query with a
