@@ -691,10 +691,22 @@ suite "input events":
       {epfPosition, epfDelta, epfPointer}
     check iekTextInput.eventDefinition.payload ==
       {epfText, epfFocusOwnership}
+    check iekSubmit.eventDefinition.payload == {epfFormData}
     check iekPointerDown.eventDefinition.aliasCount == 2
     check iekPointerDown.eventDefinition.aliases ==
       [iekMouseDown, iekPointerDown]
     check iekSubmit.eventDefinition.aliasCount == 0
+
+  test "submit snapshots are optional and distinguish an empty form":
+    let legacy = event(iekSubmit)
+    check legacy.formData.isNone
+
+    var builder = initFormDataBuilder()
+    let emptySnapshot = builder.finish()
+    let submitted = submitEvent(emptySnapshot)
+    check submitted.kind == iekSubmit
+    check submitted.formData.isSome
+    check submitted.formData.get.isEmpty
 
   test "processInput synthesizes enter leave and focus events":
     var tree = initTree()

@@ -144,10 +144,16 @@ proc exerciseWidgetLifecycle() =
       fileInput.setFiles([
         fileInputValue(newBlob([byte iteration]), "lifecycle.bin")
       ], emitEvents = true)
-      let uploadSnapshot = uploadForm.collectData()
-      doAssert uploadSnapshot.diagnostics.len == 0
-      doAssert uploadSnapshot.data.len == 1
+      var submittedSnapshot = FormData()
+      uploadForm.onSubmit = proc(event: DispatchResult): EventOutcome =
+        doAssert event.formData.isSome
+        submittedSnapshot = event.formData.get
+        ignoredEvent()
+      doAssert uploadForm.submit()
+      doAssert submittedSnapshot.len == 1
+      doAssert submittedSnapshot[0].blob.readAll(1) == @[byte iteration]
       fileInput.clear()
+      doAssert submittedSnapshot[0].blob.readAll(1) == @[byte iteration]
 
       let imageParent = ui.box(groups = ["image-parent"])
       let image = ui.image(imageParent, "asset.png", width = 32, height = 32)

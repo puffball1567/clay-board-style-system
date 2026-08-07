@@ -40,11 +40,12 @@ ui.popParent()
 form.register("email", email)
 form.register("updates", updates)
 
-let collection = form.collectData()
-for diagnostic in collection.diagnostics:
-  echo diagnostic.kind, ": ", diagnostic.name
+form.onSubmit = proc(event: DispatchResult): EventOutcome =
+  let data = event.formData.get
+  sendWithApplicationAdapter(data)
+  handledEvent()
 
-sendWithApplicationAdapter(collection.data)
+discard form.submit()
 ```
 
 TextInput, TextArea, Select, Checkbox, and Radio use the same registration
@@ -52,6 +53,13 @@ surface. Disabled fields and unchecked checkable controls are omitted. A
 disposed registered field or a control without a value produces a diagnostic
 instead of disappearing silently. Editing a control after collection does not
 change an existing snapshot.
+
+`form.submit()` validates first, collects successful controls once, and carries
+that immutable snapshot on its `onSubmit` event. An empty valid form still
+carries an explicitly present empty snapshot. A synthetic `iekSubmit` emitted
+without `submitEvent(data)` has no snapshot, so generic event producers do not
+silently claim that they collected a form. Call `form.collectData()` directly
+when collection diagnostics are needed before submission.
 
 `FileInput` uses the same form contract without granting filesystem authority
 to CBSS. The host opens its platform picker, validates the result under its own

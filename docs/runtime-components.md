@@ -174,6 +174,8 @@ text areas, selects, checkboxes, radios, and file inputs register by handle and
 field name; collection does not require CSS selectors or public ids. Disabled
 and unchecked controls follow the documented form rules, while disposed or
 value-less registrations produce diagnostics instead of being silently lost.
+Successful submission collects once and transports the resulting immutable
+snapshot on the submit event; later control mutations cannot change it.
 
 `runtime/file_input.nim` provides a style-neutral file-selection boundary. It
 does not open paths or own a platform picker. User activation gives application
