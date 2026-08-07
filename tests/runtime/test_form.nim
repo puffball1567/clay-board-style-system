@@ -1,4 +1,4 @@
-import std/unittest
+import std/[options, unittest]
 
 import clay_board_style_system
 
@@ -9,8 +9,10 @@ suite "form component":
     var submitted = false
 
     login.onSubmit = proc(event: DispatchResult): EventOutcome =
+      check event.formData.isSome
+      check event.formData.get.isEmpty
       submitted = true
-      false
+      ignoredEvent()
 
     check login.submit()
     check submitted
@@ -24,11 +26,11 @@ suite "form component":
 
     login.onSubmit = proc(event: DispatchResult): EventOutcome =
       submitted = true
-      false
+      ignoredEvent()
 
     login.onInvalid = proc(event: DispatchResult): EventOutcome =
       invalid = true
-      false
+      ignoredEvent()
 
     check not login.submit()
     check invalid
@@ -43,7 +45,7 @@ suite "form component":
 
     login.onReset = proc(event: DispatchResult): EventOutcome =
       reset = true
-      false
+      ignoredEvent()
 
     check login.reset()
     check reset
@@ -56,15 +58,15 @@ suite "form component":
 
     login.onSubmit = proc(event: DispatchResult): EventOutcome =
       seen = true
-      false
+      ignoredEvent()
 
     login.onInvalid = proc(event: DispatchResult): EventOutcome =
       seen = true
-      false
+      ignoredEvent()
 
     login.onReset = proc(event: DispatchResult): EventOutcome =
       seen = true
-      false
+      ignoredEvent()
 
     check not login.submit()
     check not login.reset()
@@ -128,6 +130,53 @@ suite "form component":
     username.setValue("Grace")
     check collection.data[0].text == "Ada"
     check login.collectData().data[0].text == "Grace"
+
+  test "submit carries one immutable snapshot of successful controls":
+    let ui = initUiRoot()
+    let profile = ui.form()
+    ui.pushParent(profile.container)
+    let name = ui.textInput(TextInputParams(value: "Ada"))
+    let enabled = ui.checkbox("Enabled", checked = true)
+    let omitted = ui.checkbox("Omitted", checked = false)
+    let disabled = ui.textInput(TextInputParams(
+      value: "secret",
+      disabled: true
+    ))
+    ui.popParent()
+    profile.register("name", name)
+    profile.register("enabled", enabled)
+    profile.register("omitted", omitted)
+    profile.register("disabled", disabled)
+
+    var captured = FormData()
+    profile.onSubmit = proc(event: DispatchResult): EventOutcome =
+      check event.formData.isSome
+      captured = event.formData.get
+      name.setValue("Grace")
+      ignoredEvent()
+
+    check profile.submit()
+    check captured.len == 2
+    check captured[0].name == "name"
+    check captured[0].text == "Ada"
+    check captured[1].name == "enabled"
+    check captured[1].text == "true"
+    check profile.collectData().data[0].text == "Grace"
+
+  test "invalid and disabled forms never publish a submit snapshot":
+    let ui = initUiRoot()
+    let invalid = ui.form(valid = false)
+    let disabled = ui.form(disabled = true)
+    var submitEvents = 0
+    let observe = proc(event: DispatchResult): EventOutcome =
+      inc submitEvents
+      ignoredEvent()
+    invalid.onSubmit = observe
+    disabled.onSubmit = observe
+
+    check not invalid.submit()
+    check not disabled.submit()
+    check submitEvents == 0
 
   test "checkable fields submit only their checked value":
     let ui = initUiRoot()

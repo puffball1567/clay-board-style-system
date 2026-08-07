@@ -1,5 +1,6 @@
 import std/[math, options, sets, tables]
 import ../core/[dirty_domain, geometry, node]
+import ../data/form_data
 import ../hit/hit_test
 import ../layout/scroll_state
 
@@ -147,7 +148,8 @@ type
     epfKey,
     epfText,
     epfPointer,
-    epfFocusOwnership
+    epfFocusOwnership,
+    epfFormData
 
   EventDefinition* = object
     producer*: EventDispatchMode
@@ -201,6 +203,11 @@ type
     invalidations: seq[EventInvalidationRequest]
     frameRequested: bool
 
+  InputEventPayload = ref object
+    ## Uncommon managed payloads stay behind one pointer so pointer, keyboard,
+    ## and animation events remain compact on the dispatch hot path.
+    formData: FormData
+
   InputEvent* = object
     kind*: InputEventKind
     timestamp*: uint64
@@ -216,6 +223,7 @@ type
     altKey*: bool
     shiftKey*: bool
     metaKey*: bool
+    payload: InputEventPayload
 
   DispatchResult* = object
     ## `target` is the original hit/focus target for the complete dispatch.
@@ -525,6 +533,7 @@ func buildEventDefinitions(): array[InputEventKind, EventDefinition] =
     iekCompositionUpdate, iekCopy, iekCut, iekInput, iekPaste, iekTextInput
   }:
     result[kind].payload = {epfText, epfFocusOwnership}
+  result[iekSubmit].payload = {epfFormData}
 
   template aliases(kind: InputEventKind; first, second: InputEventKind) =
     result[kind].aliases = [first, second]
@@ -580,6 +589,27 @@ proc needsComponentDispatch*(kind: InputEventKind): bool =
 
 proc event*(kind: InputEventKind): InputEvent =
   InputEvent(kind: kind)
+
+proc submitEvent*(data: FormData): InputEvent =
+  ## Constructs a submit event carrying an immutable form snapshot. A payload
+  ## object is allocated only for events that actually transport FormData.
+  InputEvent(
+    kind: iekSubmit,
+    payload: InputEventPayload(formData: data)
+  )
+
+proc formData*(event: InputEvent): Option[FormData] =
+  ## Returns `some` even for an intentionally empty submitted form. Synthetic
+  ## submit events built only from `iekSubmit` retain their legacy no-payload
+  ## behavior and return `none`.
+  if event.payload.isNil:
+    none(FormData)
+  else:
+    some(event.payload.formData)
+
+proc formData*(dispatch: DispatchResult): Option[FormData] {.inline.} =
+  ## Convenience access for `onSubmit` and additive submit listeners.
+  dispatch.event.formData()
 
 proc textEvent*(kind: InputEventKind; text: string): InputEvent =
   InputEvent(kind: kind, text: some(text))

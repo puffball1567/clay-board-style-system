@@ -594,8 +594,13 @@ accepts only host-authorized immutable Blob values, emits standard input/change
 events, and contributes ordered Blob entries to immutable FormData snapshots.
 It never opens an arbitrary path or exposes a platform file handle.
 
+Submit events on the Nim component surface now carry the already-collected,
+immutable FormData snapshot. The common input event stays compact by allocating
+its managed payload sidecar only for submit events; an intentionally empty form
+remains distinguishable from a synthetic submit event with no snapshot.
+
 Remaining: host-authorized file/provider Blob sources, submit-event snapshot
-transport across both Nim and C contracts, FormData C ABI/adapters, and the
+transport across the C contract, FormData C ABI/adapters, and the
 bounded asynchronous stream bridge with cancellation, backpressure, UI-thread
 delivery, and disposal races.
 

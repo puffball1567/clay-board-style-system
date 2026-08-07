@@ -194,8 +194,9 @@ proc submit*(form: FormHandle): bool =
     inc form.state.invalidCount
     discard form.container.emit(iekInvalid)
     return false
+  let collection = form.collectData()
   inc form.state.submitted
-  discard form.container.emit(iekSubmit)
+  discard form.container.emit(submitEvent(collection.data))
   true
 
 proc reset*(form: FormHandle): bool =
