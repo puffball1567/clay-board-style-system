@@ -3,6 +3,7 @@ import std/[algorithm, atomics, math, options, strutils, tables]
 import ./core/[color, color_conversion, color_mix, color_mix_parser,
   color_parser, color_value, declaration, diagnostics, geometry, node, rule,
   selector, style_resolver, style_value]
+import ./data/[blob, form_data]
 import ./core/computed_style as computed_style_types
 import ./generated/default_properties
 import ./hit/hit_test
@@ -24,7 +25,7 @@ proc ensureNimRuntime() {.inline.} =
     NimMain()
 
 const
-  CbssAbiVersion* = 0x0001_000D'u32
+  CbssAbiVersion* = 0x0001_000E'u32
   CbssMaxEagerBlobBytes* = 64'u64 * 1024'u64 * 1024'u64
   CbssMaxBlobMimeBytes* = 1024
   CbssMaxFormDataEntries* = 65_536
@@ -38,6 +39,7 @@ const
   CbssOutOfRange* = 3'i32
   CbssStyleError* = 4'i32
   CbssInternalError* = 5'i32
+  CbssNotAvailable* = 6'i32
 
   CbssFormDataText* = 0'u32
   CbssFormDataBlob* = 1'u32
@@ -243,9 +245,15 @@ type
   CbssBlobHandle* = ptr CbssBlobObj
   CbssFormDataBuilderHandle* = ptr CbssFormDataBuilderObj
   CbssFormDataHandle* = ptr CbssFormDataObj
+  CbssEventViewHandle* = ptr CbssEventViewObj
   CbssEventCallback* = proc(
     context: CbssContextHandle;
     event: ptr CbssEventC;
+    userData: pointer
+  ): uint8 {.cdecl.}
+  CbssEventViewCallback* = proc(
+    context: CbssContextHandle;
+    view: CbssEventViewHandle;
     userData: pointer
   ): uint8 {.cdecl.}
   CbssRenderSurfaceCallback* = proc(
@@ -335,6 +343,11 @@ type
     entries: pointer
     length: uint32
     references: Atomic[uint32]
+
+  CbssEventViewObj = object
+    event: CbssEventC
+    formData: CbssFormDataHandle
+    formDataStatus: int32
 
 static:
   doAssert sizeof(CbssRectC) == 16
@@ -1325,6 +1338,13 @@ proc sharedCStringCopy(value: cstring; length: int): pointer =
   if not result.isNil:
     copyMem(result, value, length)
 
+proc sharedStringCopy(value: string): pointer =
+  if value.len == 0:
+    return nil
+  result = allocShared(value.len)
+  if not result.isNil:
+    copyMem(result, unsafeAddr value[0], value.len)
+
 proc copySharedString(
     bytes: pointer;
     length: uint32;
@@ -1345,6 +1365,40 @@ proc boundedCStringLength(value: cstring; maximum: int): int =
   let bytes = cast[ptr UncheckedArray[char]](value)
   while result <= maximum and bytes[result] != '\0':
     inc result
+
+proc finishFormDataEntries(
+    entries: var seq[CbssFormDataEntryObj];
+    output: ptr CbssFormDataHandle
+): int32 =
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  let snapshot = cast[CbssFormDataHandle](
+    allocShared0(sizeof(CbssFormDataObj))
+  )
+  if snapshot.isNil:
+    return CbssInternalError
+  let count = entries.len
+  if count > 0:
+    snapshot.entries = allocShared(count * sizeof(CbssFormDataEntryObj))
+    if snapshot.entries.isNil:
+      deallocShared(snapshot)
+      return CbssInternalError
+    copyMem(
+      snapshot.entries,
+      unsafeAddr entries[0],
+      count * sizeof(CbssFormDataEntryObj)
+    )
+    for entry in entries.mitems:
+      entry.nameBytes = nil
+      entry.textBytes = nil
+      entry.fileNameBytes = nil
+      entry.blob = nil
+  snapshot.length = uint32(count)
+  snapshot.references.store(1)
+  entries.setLen(0)
+  output[] = snapshot
+  CbssOk
 
 proc cbssFormDataBuilderCreate(): CbssFormDataBuilderHandle {.
     exportc: "cbss_form_data_builder_create", cdecl, dynlib.} =
@@ -1455,32 +1509,10 @@ proc cbssFormDataBuilderFinish(
   output[] = nil
   if builder.finished:
     return CbssInvalidArgument
-  let snapshot = cast[CbssFormDataHandle](
-    allocShared0(sizeof(CbssFormDataObj))
-  )
-  if snapshot.isNil:
-    return CbssInternalError
-  let count = builder.entries.len
-  if count > 0:
-    snapshot.entries = allocShared(count * sizeof(CbssFormDataEntryObj))
-    if snapshot.entries.isNil:
-      deallocShared(snapshot)
-      return CbssInternalError
-    copyMem(
-      snapshot.entries,
-      unsafeAddr builder.entries[0],
-      count * sizeof(CbssFormDataEntryObj)
-    )
-    for entry in builder.entries.mitems:
-      entry.nameBytes = nil
-      entry.textBytes = nil
-      entry.fileNameBytes = nil
-      entry.blob = nil
-  snapshot.length = uint32(count)
-  snapshot.references.store(1)
-  builder.entries.setLen(0)
+  let status = finishFormDataEntries(builder.entries, output)
+  if status != CbssOk:
+    return status
   builder.finished = true
-  output[] = snapshot
   CbssOk
 
 proc cbssFormDataRetain(data: CbssFormDataHandle): int32 {.
@@ -1590,6 +1622,181 @@ proc cbssFormDataEntryBlob(
   if status == CbssOk:
     output[] = entry.blob
   status
+
+proc cBlobSnapshot(value: Blob; output: ptr CbssBlobHandle): int32 =
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  if not value.isValid:
+    return CbssInvalidArgument
+  if value.size > CbssMaxEagerBlobBytes:
+    return CbssOutOfRange
+  let bytes = value.readAll(int(CbssMaxEagerBlobBytes))
+  let mime = if value.mimeType.isSome: value.mimeType.get else: ""
+  if mime.len > CbssMaxBlobMimeBytes or '\0' in mime:
+    return CbssOutOfRange
+  cbssBlobCreate(
+    if bytes.len > 0: unsafeAddr bytes[0] else: nil,
+    uint64(bytes.len),
+    if mime.len > 0: mime.cstring else: nil,
+    output
+  )
+
+proc cFormDataSnapshot(
+    value: FormData;
+    output: ptr CbssFormDataHandle
+): int32 =
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  if value.len > CbssMaxFormDataEntries:
+    return CbssOutOfRange
+  var converted = newSeqOfCap[CbssFormDataEntryObj](value.len)
+  try:
+    for item in value.items:
+      if item.name.len == 0:
+        converted.releaseFormDataEntries()
+        return CbssInvalidArgument
+      if item.name.len > CbssMaxFormDataNameBytes:
+        converted.releaseFormDataEntries()
+        return CbssOutOfRange
+      var entry = CbssFormDataEntryObj(
+        nameBytes: sharedStringCopy(item.name),
+        nameLength: uint32(item.name.len)
+      )
+      if entry.nameBytes.isNil:
+        entry.releaseFormDataEntry()
+        converted.releaseFormDataEntries()
+        return CbssInternalError
+      case item.kind
+      of fdvText:
+        if item.text.len > CbssMaxFormDataTextBytes:
+          entry.releaseFormDataEntry()
+          converted.releaseFormDataEntries()
+          return CbssOutOfRange
+        entry.kind = CbssFormDataText
+        entry.textBytes = sharedStringCopy(item.text)
+        entry.textLength = uint32(item.text.len)
+        if item.text.len > 0 and entry.textBytes.isNil:
+          entry.releaseFormDataEntry()
+          converted.releaseFormDataEntries()
+          return CbssInternalError
+      of fdvBlob:
+        entry.kind = CbssFormDataBlob
+        let blobStatus = cBlobSnapshot(item.blob, addr entry.blob)
+        if blobStatus != CbssOk:
+          entry.releaseFormDataEntry()
+          converted.releaseFormDataEntries()
+          return blobStatus
+        if item.fileName.isSome:
+          let fileName = item.fileName.get
+          if fileName.len > CbssMaxFormDataNameBytes:
+            entry.releaseFormDataEntry()
+            converted.releaseFormDataEntries()
+            return CbssOutOfRange
+          entry.fileNameBytes = sharedStringCopy(fileName)
+          entry.fileNameLength = uint32(fileName.len)
+          if fileName.len > 0 and entry.fileNameBytes.isNil:
+            entry.releaseFormDataEntry()
+            converted.releaseFormDataEntries()
+            return CbssInternalError
+      converted.add entry
+    finishFormDataEntries(converted, output)
+  except CatchableError:
+    converted.releaseFormDataEntries()
+    CbssInternalError
+
+proc copiedString(bytes: pointer; length: uint32): string =
+  if length == 0:
+    return ""
+  result = newString(int(length))
+  copyMem(addr result[0], bytes, int(length))
+
+proc nimFormDataSnapshot(
+    value: CbssFormDataHandle;
+    output: var FormData
+): int32 =
+  if value.isNil:
+    return CbssInvalidHandle
+  var builder = initFormDataBuilder()
+  try:
+    let entries = cast[ptr UncheckedArray[CbssFormDataEntryObj]](
+      value.entries
+    )
+    for index in 0 ..< int(value.length):
+      let entry = entries[index]
+      let name = copiedString(entry.nameBytes, entry.nameLength)
+      if name.len == 0:
+        return CbssInvalidArgument
+      case entry.kind
+      of CbssFormDataText:
+        builder.addText(name, copiedString(entry.textBytes, entry.textLength))
+      of CbssFormDataBlob:
+        if entry.blob.isNil or entry.blob.length > CbssMaxEagerBlobBytes:
+          return CbssOutOfRange
+        var bytes = newSeq[byte](int(entry.blob.length))
+        if bytes.len > 0:
+          copyMem(addr bytes[0], entry.blob.bytes, bytes.len)
+        let mime = copiedString(entry.blob.mimeBytes, entry.blob.mimeLength)
+        builder.addBlob(
+          name,
+          newBlob(bytes, mime),
+          copiedString(entry.fileNameBytes, entry.fileNameLength)
+        )
+      else:
+        return CbssInvalidArgument
+    output = builder.finish()
+    CbssOk
+  except CatchableError:
+    CbssInternalError
+
+proc cbssEventViewEvent(view: CbssEventViewHandle): ptr CbssEventC {.
+    exportc: "cbss_event_view_event", cdecl, dynlib, raises: [].} =
+  if view.isNil: nil else: addr view.event
+
+proc cbssEventViewFormData(
+    view: CbssEventViewHandle;
+    output: ptr CbssFormDataHandle
+): int32 {.exportc: "cbss_event_view_form_data", cdecl, dynlib.} =
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  if view.isNil:
+    return CbssInvalidHandle
+  if view.formData.isNil:
+    return view.formDataStatus
+  let status = cbssFormDataRetain(view.formData)
+  if status == CbssOk:
+    output[] = view.formData
+  status
+
+proc cEventViewHandler(
+    context: CbssContextHandle;
+    callback: CbssEventViewCallback;
+    userData: pointer
+): EventHandler =
+  result = proc(dispatch: DispatchResult): EventOutcome =
+    if callback.isNil or dispatch.target.isNone or
+        dispatch.currentTarget.isNone:
+      return ignoredEvent()
+    var view = CbssEventViewObj(
+      event: dispatch.callbackEvent(
+        dispatch.target.get, dispatch.currentTarget.get
+      ),
+      formDataStatus: CbssNotAvailable
+    )
+    let payload = dispatch.formData()
+    if payload.isSome:
+      let status = cFormDataSnapshot(payload.get, addr view.formData)
+      view.formDataStatus = status
+      if status != CbssOk:
+        context.setError(
+          "event FormData payload could not cross the C ABI: " & $status
+        )
+    let outcome = callbackOutcome(callback(context, addr view, userData))
+    if not view.formData.isNil:
+      cbssFormDataRelease(view.formData)
+    outcome
 
 proc cbssContextCreate(): CbssContextHandle {.
     exportc: "cbss_context_create", cdecl, dynlib.} =
@@ -2641,6 +2848,28 @@ proc cbssNodeSetEventHandler(
     )
   CbssOk
 
+proc cbssNodeSetEventViewHandler(
+    context: CbssContextHandle;
+    node, kind: uint32;
+    callback: CbssEventViewCallback;
+    userData: pointer
+): int32 {.exportc: "cbss_node_set_event_view_handler", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if not context.validNode(node) or
+      kind > uint32(ord(high(InputEventKind))):
+    return CbssInvalidArgument
+  let eventKind = InputEventKind(kind)
+  if callback.isNil:
+    discard context.events.clearEventHandler(node.nodeId, eventKind)
+  else:
+    context.events.setEventHandler(
+      node.nodeId,
+      eventKind,
+      cEventViewHandler(context, callback, userData)
+    )
+  CbssOk
+
 proc cbssNodeSubscribeEvent(
     context: CbssContextHandle;
     node, kind: uint32;
@@ -2659,6 +2888,29 @@ proc cbssNodeSubscribeEvent(
     node.nodeId,
     InputEventKind(kind),
     cEventHandler(context, callback, userData)
+  )
+  context.eventSubscriptions[subscription.id] = subscription
+  outputSubscription[] = subscription.id
+  CbssOk
+
+proc cbssNodeSubscribeEventView(
+    context: CbssContextHandle;
+    node, kind: uint32;
+    callback: CbssEventViewCallback;
+    userData: pointer;
+    outputSubscription: ptr uint64
+): int32 {.exportc: "cbss_node_subscribe_event_view", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if outputSubscription.isNil or callback.isNil or
+      not context.validNode(node) or
+      kind > uint32(ord(high(InputEventKind))):
+    return CbssInvalidArgument
+  outputSubscription[] = 0
+  let subscription = context.events.subscribe(
+    node.nodeId,
+    InputEventKind(kind),
+    cEventViewHandler(context, callback, userData)
   )
   context.eventSubscriptions[subscription.id] = subscription
   outputSubscription[] = subscription.id
@@ -3710,19 +3962,13 @@ proc cbssContextDispatchInput(
     context.setError(error.msg)
     CbssInternalError
 
-proc cbssContextEmitEvent(
+proc emitAtNode(
     context: CbssContextHandle;
     node: uint32;
-    input: ptr CbssInputEventC;
+    event: InputEvent;
     output: ptr CbssDispatchSummaryC
-): int32 {.exportc: "cbss_context_emit_event", cdecl, dynlib.} =
-  if context.isNil:
-    return CbssInvalidHandle
-  if not context.validNode(node) or input.isNil or
-      not input[].validInputEvent():
-    return CbssInvalidArgument
+): int32 =
   try:
-    let event = input[].inputEvent()
     var dispatch = DispatchResult(
       target: some(node.nodeId),
       local: none(Vec2),
@@ -3750,6 +3996,38 @@ proc cbssContextEmitEvent(
   except CatchableError as error:
     context.setError(error.msg)
     CbssInternalError
+
+proc cbssContextEmitEvent(
+    context: CbssContextHandle;
+    node: uint32;
+    input: ptr CbssInputEventC;
+    output: ptr CbssDispatchSummaryC
+): int32 {.exportc: "cbss_context_emit_event", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if not context.validNode(node) or input.isNil or
+      not input[].validInputEvent():
+    return CbssInvalidArgument
+  context.emitAtNode(node, input[].inputEvent(), output)
+
+proc cbssContextEmitSubmit(
+    context: CbssContextHandle;
+    node: uint32;
+    formData: CbssFormDataHandle;
+    output: ptr CbssDispatchSummaryC
+): int32 {.exportc: "cbss_context_emit_submit", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if not context.validNode(node):
+    return CbssInvalidArgument
+  if formData.isNil:
+    return CbssInvalidHandle
+  var snapshot: FormData
+  let status = nimFormDataSnapshot(formData, snapshot)
+  if status != CbssOk:
+    context.setError("C FormData could not be converted for submit")
+    return status
+  context.emitAtNode(node, submitEvent(snapshot), output)
 
 proc cbssContextFocusedNode(context: CbssContextHandle): uint32 {.
     exportc: "cbss_context_focused_node", cdecl, dynlib.} =

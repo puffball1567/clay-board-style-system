@@ -23,7 +23,7 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x0001000D` supports:
+ABI version `0x0001000E` supports:
 
 - Opaque context and style handles.
 - Atomically reference-counted immutable Blob handles with advisory MIME
@@ -65,6 +65,11 @@ ABI version `0x0001000D` supports:
   bubbling/cancelability metadata, and independent handled,
   stop-propagation, and prevent-default callback result bits. Dispatch summaries
   retain the legacy `handled` byte and expose the complete bitset as `outcome`.
+- An additive opaque `CbssEventView` callback contract for managed event
+  payloads. Existing `CbssEventCallback` signatures and the 128-byte
+  `CbssEvent` layout remain unchanged. Submit views expose an owning retained
+  FormData snapshot, while a synthetic submit without a snapshot reports
+  `CBSS_NOT_AVAILABLE`.
 - Optional pointer-device metadata with stable-in-process device IDs, contact,
   button, eraser, and proximity state. A capability bitmask distinguishes an
   unavailable pen axis from a supported axis whose value is zero; timestamps,
@@ -122,6 +127,17 @@ hosted component defines one. Returning `1` remains the handled-only form.
 Callbacks may update nodes and styles, but must not destroy or reset the
 context currently dispatching. The callback and `user_data` remain owned by the
 host.
+
+Use `cbss_node_set_event_view_handler` or
+`cbss_node_subscribe_event_view` when a callback needs a managed payload. The
+view and the pointer returned by `cbss_event_view_event` are borrowed only for
+that callback. `cbss_event_view_form_data` returns a retained owning handle;
+the caller releases it even when it keeps the snapshot after the callback.
+An intentionally empty submitted form returns `CBSS_OK` and a zero-length
+handle. An event with no FormData returns `CBSS_NOT_AVAILABLE` and a null
+output. `cbss_context_emit_submit` converts an immutable C FormData handle to
+the same Nim submit-event contract used by first-party forms. The older
+`cbss_context_emit_event` can still emit a payload-free synthetic submit.
 
 ## Render Surfaces
 
@@ -204,6 +220,10 @@ ownership and synchronization contracts.
 - `cbss_form_data_builder_add_blob` retains the Blob on success. FormData
   snapshots use atomic retain/release. `cbss_form_data_entry_blob` returns an
   additional owning Blob reference, which the caller must release.
+- `CbssEventView` is callback-scoped and cannot be retained. Its FormData
+  accessor returns a separate retained owning reference. CBSS releases its
+  dispatch reference after the callback, so a successfully returned handle
+  remains valid until the caller releases it.
 - Node IDs are values owned by their context. `CBSS_NODE_NONE` is never valid.
 - Strings passed into CBSS are copied before the call returns.
 - Strings returned by CBSS are copied into caller-owned buffers. Query with a

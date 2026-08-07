@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define CBSS_ABI_VERSION 0x0001000Du
+#define CBSS_ABI_VERSION 0x0001000Eu
 #define CBSS_NODE_NONE UINT32_MAX
 #define CBSS_MAX_EAGER_BLOB_BYTES (64ull * 1024ull * 1024ull)
 #define CBSS_MAX_FORM_DATA_ENTRIES 65536u
@@ -30,6 +30,7 @@ typedef struct CbssColorValue CbssColorValue;
 typedef struct CbssBlob CbssBlob;
 typedef struct CbssFormDataBuilder CbssFormDataBuilder;
 typedef struct CbssFormData CbssFormData;
+typedef struct CbssEventView CbssEventView;
 typedef uint64_t CbssEventSubscription;
 
 typedef int32_t CbssStatus;
@@ -39,7 +40,8 @@ enum {
   CBSS_INVALID_HANDLE = 2,
   CBSS_OUT_OF_RANGE = 3,
   CBSS_STYLE_ERROR = 4,
-  CBSS_INTERNAL_ERROR = 5
+  CBSS_INTERNAL_ERROR = 5,
+  CBSS_NOT_AVAILABLE = 6
 };
 
 typedef enum CbssFormDataValueKind {
@@ -648,6 +650,12 @@ typedef struct CbssRenderSurfaceEvent {
 /* Return a bitwise combination of CBSS_EVENT_OUTCOME_* values. */
 typedef uint8_t (*CbssEventCallback)(
     CbssContext *context, const CbssEvent *event, void *user_data);
+/*
+ * EventView is borrowed for the callback duration. Accessors return either a
+ * borrowed base event or an explicitly retained payload handle.
+ */
+typedef uint8_t (*CbssEventViewCallback)(
+    CbssContext *context, const CbssEventView *view, void *user_data);
 typedef uint32_t (*CbssRenderSurfaceCallback)(
     CbssContext *context, const CbssRenderSurfaceEvent *event,
     void *user_data);
@@ -692,6 +700,13 @@ CBSS_API uint32_t cbss_form_data_entry_file_name(
 /* The returned Blob owns one retained reference and must be released. */
 CBSS_API CbssStatus cbss_form_data_entry_blob(
     const CbssFormData *data, uint32_t index, CbssBlob **output);
+
+/* The returned event pointer is borrowed for the callback duration. */
+CBSS_API const CbssEvent *cbss_event_view_event(
+    const CbssEventView *view);
+/* The returned FormData owns one retained reference and must be released. */
+CBSS_API CbssStatus cbss_event_view_form_data(
+    const CbssEventView *view, CbssFormData **output);
 
 CBSS_API CbssContext *cbss_context_create(void);
 CBSS_API void cbss_context_destroy(CbssContext *context);
@@ -829,6 +844,13 @@ CBSS_API CbssStatus cbss_node_subscribe_event(
     CbssContext *context, uint32_t node, uint32_t kind,
     CbssEventCallback callback, void *user_data,
     CbssEventSubscription *output_subscription);
+CBSS_API CbssStatus cbss_node_set_event_view_handler(
+    CbssContext *context, uint32_t node, uint32_t kind,
+    CbssEventViewCallback callback, void *user_data);
+CBSS_API CbssStatus cbss_node_subscribe_event_view(
+    CbssContext *context, uint32_t node, uint32_t kind,
+    CbssEventViewCallback callback, void *user_data,
+    CbssEventSubscription *output_subscription);
 CBSS_API CbssStatus cbss_context_unsubscribe_event(
     CbssContext *context, CbssEventSubscription subscription);
 
@@ -941,6 +963,9 @@ CBSS_API CbssStatus cbss_context_dispatch_input(
     CbssDispatchSummary *output);
 CBSS_API CbssStatus cbss_context_emit_event(
     CbssContext *context, uint32_t node, const CbssInputEvent *event,
+    CbssDispatchSummary *output);
+CBSS_API CbssStatus cbss_context_emit_submit(
+    CbssContext *context, uint32_t node, const CbssFormData *form_data,
     CbssDispatchSummary *output);
 CBSS_API uint32_t cbss_context_focused_node(CbssContext *context);
 CBSS_API CbssStatus cbss_context_set_focus(

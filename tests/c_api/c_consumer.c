@@ -1,6 +1,6 @@
 #include "cbss.h"
 
-_Static_assert(CBSS_ABI_VERSION == 0x0001000Du, "unexpected CBSS ABI version");
+_Static_assert(CBSS_ABI_VERSION == 0x0001000Eu, "unexpected CBSS ABI version");
 _Static_assert(CBSS_ROLE_SWITCH == 22, "unexpected switch role value");
 
 #include <assert.h>
@@ -59,6 +59,19 @@ typedef struct ObserverState {
   uint32_t child;
   int clicks;
 } ObserverState;
+
+typedef struct EventViewState {
+  uint32_t expected_target;
+  uint32_t expected_current_target;
+  int submit_events;
+  int events_without_payload;
+  int expect_form_data;
+  CbssFormData *retained_form_data;
+} EventViewState;
+
+typedef struct LegacySubmitState {
+  int submit_events;
+} LegacySubmitState;
 
 typedef struct SurfaceState {
   uint64_t surface;
@@ -218,6 +231,40 @@ static uint8_t observe_click(
   return 0;
 }
 
+static uint8_t handle_event_view(
+    CbssContext *context, const CbssEventView *view, void *user_data) {
+  EventViewState *state = user_data;
+  assert(context != NULL);
+  assert(view != NULL);
+  const CbssEvent *event = cbss_event_view_event(view);
+  assert(event != NULL);
+  assert(event->target == state->expected_target);
+  assert(event->current_target == state->expected_current_target);
+  CbssFormData *payload = NULL;
+  if (event->kind == CBSS_EVENT_SUBMIT && state->expect_form_data) {
+    assert(cbss_event_view_form_data(view, &payload) == CBSS_OK);
+    assert(payload != NULL);
+    assert(state->retained_form_data == NULL);
+    state->retained_form_data = payload;
+    ++state->submit_events;
+    return CBSS_EVENT_OUTCOME_HANDLED;
+  }
+  assert(cbss_event_view_form_data(view, &payload) == CBSS_NOT_AVAILABLE);
+  assert(payload == NULL);
+  ++state->events_without_payload;
+  return 0;
+}
+
+static uint8_t handle_legacy_submit(
+    CbssContext *context, const CbssEvent *event, void *user_data) {
+  LegacySubmitState *state = user_data;
+  assert(context != NULL);
+  assert(event != NULL);
+  assert(event->kind == CBSS_EVENT_SUBMIT);
+  ++state->submit_events;
+  return 0;
+}
+
 int main(void) {
   assert(cbss_abi_version() == CBSS_ABI_VERSION);
   assert(CBSS_PAINT_PUSH_LAYER == 11);
@@ -350,7 +397,6 @@ int main(void) {
   assert(cbss_form_data_retain(form_data) == CBSS_OK);
   cbss_form_data_release(form_data);
   assert(cbss_form_data_length(form_data) == 5);
-  cbss_form_data_release(form_data);
 
   CbssFormDataBuilder *abandoned_builder =
       cbss_form_data_builder_create();
@@ -703,6 +749,141 @@ int main(void) {
       context, child, CBSS_EVENT_CLICK, observe_click, &observer_state,
       &click_observer));
   assert(click_observer != 0);
+
+  EventViewState submit_view_state = {
+      .expected_target = child,
+      .expected_current_target = child,
+      .expect_form_data = 1
+  };
+  EventViewState submit_bubble_state = {
+      .expected_target = child,
+      .expected_current_target = root,
+      .expect_form_data = 1
+  };
+  LegacySubmitState legacy_submit_state = {0};
+  CbssEventSubscription submit_bubble_observer = 0;
+  CbssEventSubscription legacy_submit_observer = 0;
+  require_ok(context, cbss_node_set_event_view_handler(
+      context, child, CBSS_EVENT_SUBMIT,
+      handle_event_view, &submit_view_state));
+  require_ok(context, cbss_node_subscribe_event_view(
+      context, root, CBSS_EVENT_SUBMIT,
+      handle_event_view, &submit_bubble_state,
+      &submit_bubble_observer));
+  require_ok(context, cbss_node_subscribe_event(
+      context, child, CBSS_EVENT_SUBMIT,
+      handle_legacy_submit, &legacy_submit_state,
+      &legacy_submit_observer));
+  assert(submit_bubble_observer != 0);
+  assert(legacy_submit_observer != 0);
+
+  assert(cbss_event_view_event(NULL) == NULL);
+  CbssFormData *missing_payload = (CbssFormData *)(uintptr_t)1;
+  assert(cbss_event_view_form_data(NULL, &missing_payload) ==
+      CBSS_INVALID_HANDLE);
+  assert(missing_payload == NULL);
+  assert(cbss_event_view_form_data(NULL, NULL) == CBSS_INVALID_ARGUMENT);
+  assert(cbss_node_set_event_view_handler(
+      NULL, child, CBSS_EVENT_SUBMIT,
+      handle_event_view, &submit_view_state) == CBSS_INVALID_HANDLE);
+  assert(cbss_node_set_event_view_handler(
+      context, CBSS_NODE_NONE, CBSS_EVENT_SUBMIT,
+      handle_event_view, &submit_view_state) == CBSS_INVALID_ARGUMENT);
+  assert(cbss_node_subscribe_event_view(
+      context, child, CBSS_EVENT_SUBMIT, NULL,
+      &submit_view_state, &submit_bubble_observer) == CBSS_INVALID_ARGUMENT);
+
+  EventViewState no_payload_state = {
+      .expected_target = child,
+      .expected_current_target = child
+  };
+  require_ok(context, cbss_node_set_event_view_handler(
+      context, child, CBSS_EVENT_ABORT,
+      handle_event_view, &no_payload_state));
+  CbssInputEvent abort_event = {.kind = CBSS_EVENT_ABORT};
+  CbssDispatchSummary submit_dispatch;
+  require_ok(context, cbss_context_emit_event(
+      context, child, &abort_event, &submit_dispatch));
+  assert(no_payload_state.events_without_payload == 1);
+  require_ok(context, cbss_node_set_event_view_handler(
+      context, child, CBSS_EVENT_ABORT, NULL, NULL));
+
+  assert(cbss_context_emit_submit(
+      NULL, child, form_data, &submit_dispatch) == CBSS_INVALID_HANDLE);
+  assert(cbss_context_emit_submit(
+      context, CBSS_NODE_NONE, form_data,
+      &submit_dispatch) == CBSS_INVALID_ARGUMENT);
+  assert(cbss_context_emit_submit(
+      context, child, NULL, &submit_dispatch) == CBSS_INVALID_HANDLE);
+  require_ok(context, cbss_context_emit_submit(
+      context, child, form_data, &submit_dispatch));
+  assert(submit_dispatch.handled);
+  assert((submit_dispatch.outcome & CBSS_EVENT_OUTCOME_HANDLED) != 0);
+  assert(submit_view_state.submit_events == 1);
+  assert(submit_bubble_state.submit_events == 1);
+  assert(legacy_submit_state.submit_events == 1);
+  assert(submit_view_state.retained_form_data != NULL);
+  assert(submit_bubble_state.retained_form_data != NULL);
+
+  cbss_form_data_release(form_data);
+  form_data = NULL;
+  assert(cbss_form_data_length(
+      submit_view_state.retained_form_data) == 5);
+  assert(cbss_form_data_entry_name(
+      submit_view_state.retained_form_data, 1,
+      form_string, sizeof(form_string)) == 5);
+  assert(strcmp(form_string, "title") == 0);
+  assert(cbss_form_data_entry_text(
+      submit_view_state.retained_form_data, 1,
+      form_string, sizeof(form_string)) == 8);
+  assert(strcmp(form_string, "Document") == 0);
+  assert(cbss_form_data_entry_blob(
+      submit_bubble_state.retained_form_data, 3,
+      &form_entry_blob) == CBSS_OK);
+  assert(cbss_blob_size(form_entry_blob) == sizeof(blob_source));
+  cbss_blob_release(form_entry_blob);
+  form_entry_blob = NULL;
+  cbss_form_data_release(submit_view_state.retained_form_data);
+  cbss_form_data_release(submit_bubble_state.retained_form_data);
+  submit_view_state.retained_form_data = NULL;
+  submit_bubble_state.retained_form_data = NULL;
+
+  CbssFormDataBuilder *empty_form_builder =
+      cbss_form_data_builder_create();
+  CbssFormData *empty_form_data = NULL;
+  assert(empty_form_builder != NULL);
+  assert(cbss_form_data_builder_finish(
+      empty_form_builder, &empty_form_data) == CBSS_OK);
+  cbss_form_data_builder_destroy(empty_form_builder);
+  require_ok(context, cbss_context_emit_submit(
+      context, child, empty_form_data, &submit_dispatch));
+  cbss_form_data_release(empty_form_data);
+  assert(submit_view_state.submit_events == 2);
+  assert(submit_bubble_state.submit_events == 2);
+  assert(cbss_form_data_length(
+      submit_view_state.retained_form_data) == 0);
+  assert(cbss_form_data_length(
+      submit_bubble_state.retained_form_data) == 0);
+  cbss_form_data_release(submit_view_state.retained_form_data);
+  cbss_form_data_release(submit_bubble_state.retained_form_data);
+  submit_view_state.retained_form_data = NULL;
+  submit_bubble_state.retained_form_data = NULL;
+
+  submit_view_state.expect_form_data = 0;
+  submit_bubble_state.expect_form_data = 0;
+  CbssInputEvent synthetic_submit = {.kind = CBSS_EVENT_SUBMIT};
+  require_ok(context, cbss_context_emit_event(
+      context, child, &synthetic_submit, &submit_dispatch));
+  assert(submit_view_state.events_without_payload == 1);
+  assert(submit_bubble_state.events_without_payload == 1);
+  assert(submit_view_state.retained_form_data == NULL);
+  assert(submit_bubble_state.retained_form_data == NULL);
+  require_ok(context, cbss_context_unsubscribe_event(
+      context, submit_bubble_observer));
+  require_ok(context, cbss_context_unsubscribe_event(
+      context, legacy_submit_observer));
+  require_ok(context, cbss_node_set_event_view_handler(
+      context, child, CBSS_EVENT_SUBMIT, NULL, NULL));
 
   CbssPathSegment surface_path[] = {
       {.kind = CBSS_PATH_MOVE_TO, .endpoint_x = 1.0f, .endpoint_y = 1.0f},
