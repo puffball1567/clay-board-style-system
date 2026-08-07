@@ -604,10 +604,16 @@ atomically retained snapshots. It preserves order and repeated names, shares
 Blob handles by reference, uses caller-owned buffers for string queries, and
 releases unfinished builder resources deterministically.
 
-Remaining: host-authorized file/provider Blob sources, submit-event snapshot
-transport across the C event contract, optional transport adapters, and the
-bounded asynchronous stream bridge with cancellation, backpressure,
-UI-thread delivery, and disposal races.
+C ABI `0x0001000E` adds payload-aware EventView handlers and
+`cbss_context_emit_submit` without changing the existing event struct or
+callback signature. Submit payloads preserve ordered text and Blob entries,
+empty snapshots remain distinguishable from payload-free synthetic events,
+and callbacks may retain a snapshot beyond dispatch through explicit
+retain/release ownership.
+
+Remaining: host-authorized file/provider Blob sources, optional transport
+adapters, and the bounded asynchronous stream bridge with cancellation,
+backpressure, UI-thread delivery, and disposal races.
 
 CBSS will define transport-neutral data contracts for UI operations that need
 binary values, form snapshots, or progressively produced data. These contracts

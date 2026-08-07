@@ -100,6 +100,12 @@ reference and must be released by the caller. Finished snapshots store their
 entry table and copied strings in shared raw storage, so no Nim-managed pointer
 crosses this ABI boundary.
 
+ABI `0x0001000E` carries those snapshots through the additive opaque
+`CbssEventView` contract without changing the existing `CbssEvent` layout or
+callback signature. `cbss_context_emit_submit` accepts an immutable C snapshot;
+EventView callbacks retrieve their own retained snapshot reference. Empty forms
+remain distinct from payload-free synthetic submit events.
+
 ## Streams
 
 Host-authorized file/provider Blob sources and the bounded asynchronous stream
