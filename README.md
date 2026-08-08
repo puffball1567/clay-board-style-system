@@ -281,6 +281,7 @@ construction, ownership, callbacks, versioning, and static/shared linking.
 | --- | --- |
 | Product direction | [Roadmap](docs/roadmap.md) |
 | Architecture and boundaries | [Architecture](docs/architecture.md) |
+| API stability and deprecation | [API Stability](docs/api-stability.md) |
 | Performance budgets | [Performance Model](docs/performance-model.md) |
 | Components and Style DI | [Component Authoring](docs/component-authoring.md) |
 | Events and typed signals | [Events](docs/events.md) |

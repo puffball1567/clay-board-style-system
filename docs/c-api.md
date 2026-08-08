@@ -271,6 +271,13 @@ reordering fields, changing an enum value, or changing ownership requires a new
 major ABI. Bindings should compare the major version before constructing a
 context.
 
+Functions with a complete replacement may be annotated with
+`CBSS_DEPRECATED("replacement guidance")`. The annotation produces a compiler
+warning on supported C/C++ compilers but does not remove the symbol or relax
+the major-ABI rule. Product Version 0.x and the C ABI version are separate
+contracts. See [API Stability And Deprecation](api-stability.md) for the staged
+migration policy.
+
 ## Minimal C Example
 
 ```c

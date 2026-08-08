@@ -574,3 +574,29 @@ Queue, and Swapchain. Mock coverage alone is insufficient; the supported Linux
 wgpu profile also runs on a real GPU and verifies device loss, shutdown order,
 in-flight cancellation, duplicate/version rejection, and enforced GPU-memory
 budgets.
+
+## D24 — Public API migration is staged before removal (Adopted)
+
+**Context.** CBSS is pre-1.0 and still needs room to correct public design, but
+unannounced churn makes component packages and foreign-language bindings
+unnecessarily expensive to maintain. The C ABI has an additional risk: a
+header/runtime mismatch can compile successfully and then misread memory.
+
+**Decision.** A product minor release before Version 1.0 may make a necessary
+breaking Nim API change; patch releases do not intentionally do so. When a
+coherent additive replacement is practical, CBSS introduces it first, migrates
+first-party documentation and examples, marks the superseded API with Nim's
+standard `deprecated` pragma, and normally retains it for at least two
+subsequent minor release lines. A narrower API is not deprecated when it still
+has a valid purpose.
+
+The C ABI remains independently versioned. `CBSS_DEPRECATED(message)` can warn
+about a superseded function, but its exported symbol and established ownership
+remain available throughout the current C ABI major. Struct layout, enum value,
+function signature, symbol removal, and ownership changes require a new C ABI
+major regardless of the pre-1.0 product version.
+
+Security, memory-safety, or correctness failures may justify an accelerated
+removal, but the exception and migration must be explicit in release and
+security documentation. The operational checklist and syntax live in
+[API Stability And Deprecation](api-stability.md).

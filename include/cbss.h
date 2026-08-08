@@ -13,6 +13,14 @@
 #  define CBSS_API
 #endif
 
+#if defined(_MSC_VER)
+#  define CBSS_DEPRECATED(message) __declspec(deprecated(message))
+#elif defined(__clang__) || defined(__GNUC__)
+#  define CBSS_DEPRECATED(message) __attribute__((deprecated(message)))
+#else
+#  define CBSS_DEPRECATED(message)
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
