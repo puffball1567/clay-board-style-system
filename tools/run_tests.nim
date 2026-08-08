@@ -79,6 +79,8 @@ proc main() =
     ]
     if relative.startsWith("tests/perf/"):
       arguments.add("-d:release")
+    if relative == "tests/data/test_stream_mailbox_threaded.nim":
+      arguments.add("--threads:on")
     if not portable:
       arguments.add("-d:cbssSdl3LinkMode=bundled")
       arguments.add("-d:cbssRuntimeRoot=" & (repoRoot / "vendor/sdl3"))

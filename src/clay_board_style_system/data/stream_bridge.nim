@@ -112,9 +112,8 @@ proc open*[T](stream: StreamBridge[T]): bool =
   stream.advanceRevision()
   true
 
-proc pushData*[T](
+proc canPushData*[T](
     stream: StreamBridge[T];
-    value: sink T;
     weight: int64
 ): StreamOfferResult =
   if stream.isNil or stream.stateValue != ssOpen:
@@ -125,10 +124,19 @@ proc pushData*[T](
       weight > stream.maxQueuedWeight or
       stream.queuedWeightValue > stream.maxQueuedWeight - weight:
     return sorBackpressure
+  sorAccepted
+
+proc pushData*[T](
+    stream: StreamBridge[T];
+    value: sink T;
+    weight: int64
+): StreamOfferResult =
+  result = stream.canPushData(weight)
+  if result != sorAccepted:
+    return
   stream.queue.add PendingStreamData[T](value: move(value), weight: weight)
   stream.queuedWeightValue += weight
   stream.advanceRevision()
-  sorAccepted
 
 proc reportProgress*[T](
     stream: StreamBridge[T];
