@@ -50,14 +50,38 @@ subsystem.
 
 | Status | Count |
 | --- | ---: |
-| Runtime | 150 |
-| Computed | 84 |
-| Metadata | 193 |
+| Runtime | 162 |
+| Computed | 77 |
+| Metadata | 188 |
 | Planned | 0 |
 | No plan | 238 |
+| Target properties | 427 |
 | Total MDN entries | 665 |
 
+As of 2026-08-08, strict runtime completion is **162 of 427 target
+properties (37.9%)**. A further 77 properties reach computed style, so
+**239 of 427 (56.0%)** have runtime or computed support. All 427 target names
+are accepted by the default registry, but metadata-only acceptance is not
+counted as completed behavior. The 238 `No plan` entries are excluded from the
+implementation target and from both percentages.
+
+The counts above come only from the canonical Full Property Inventory. The
+curated table below repeats frequently used runtime properties for readability
+and must not be added to the totals a second time.
+
+These are property-level counts. Adding another accepted unit, keyword, color
+syntax, or value form improves the listed property's fidelity but does not add
+another property to the numerator. Likewise, Canvas APIs, components, events,
+forms, navigation, and data contracts are CBSS capabilities but are not CSS
+properties and are excluded here. The 2026-08-08 audit reviewed the current
+default registry and the viewport-relative, percentage-spacing,
+line-height-relative, and font-metric-relative unit work using this rule.
+
 ## Initial Implementation Properties
+
+This convenience table contains the 68 P0 properties plus the four
+side-specific border-style variants. All 72 entries also appear in the canonical
+inventory below; they are not additional properties.
 
 | Property | Status | Note |
 | --- | --- | --- |
@@ -133,6 +157,15 @@ subsystem.
 | `white-space` | Runtime | Initial CBSS runtime surface. |
 | `width` | Runtime | Supports px, percentage, auto, and intrinsic sizing values. |
 | `z-index` | Runtime | Initial CBSS runtime surface. |
+
+## CBSS-Specific Extensions
+
+These properties are native CBSS extensions and are excluded from the MDN-based
+427-property target and its completion percentages.
+
+| Property | Status | Note |
+| --- | --- | --- |
+| `scrollbar-visibility` | Runtime | Controls whether retained scrollbars are always visible or visible only while scrolling. |
 
 ## Full Property Inventory
 
