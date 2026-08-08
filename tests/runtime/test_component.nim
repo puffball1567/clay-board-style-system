@@ -59,6 +59,29 @@ type
     before: NodeHandle
     after: NodeHandle
 
+  TestOwnedResource = ref object of ComponentOwnedResource
+    name: string
+    releases: ref seq[string]
+
+  ResourceComponent = ref object of CBSSComponent
+    releases: ref seq[string]
+    first: TestOwnedResource
+    second: TestOwnedResource
+
+  FailingResourceComponent = ref object of CBSSComponent
+    resource: TestOwnedResource
+
+proc releaseTestResource(resource: ComponentOwnedResource) {.raises: [].} =
+  let owned = TestOwnedResource(resource)
+  owned.releases[].add owned.name
+
+proc testOwnedResource(
+    name: string;
+    releases: ref seq[string]
+): TestOwnedResource =
+  result = TestOwnedResource(name: name, releases: releases)
+  result.setReleaseCallback(releaseTestResource)
+
 proc saveButtonStyle(): UiStyle =
   uiStyle([
     decl("width", px(96)),
@@ -197,6 +220,20 @@ proc render(self: ConditionalFlowHost) =
     ui.mount(self.panel)
     ui.box(self.after, uiStyle([decl("height", px(10))])):
       discard
+
+proc render(self: ResourceComponent) =
+  self.first = self.own(testOwnedResource("first", self.releases))
+  self.second = self.own(testOwnedResource("second", self.releases))
+  ui.box(self):
+    ui.text("resources")
+
+method onUnmount(self: ResourceComponent) =
+  self.releases[].add "unmount"
+
+proc render(self: FailingResourceComponent) =
+  self.resource = self.own(testOwnedResource("failed", new seq[string]))
+  ui.box(self):
+    raise newException(ValueError, "resource render failed")
 
 proc resolvedStyles(root: UiRoot): ResolvedTree =
   var diagnostics: Diagnostics
@@ -438,6 +475,33 @@ suite "typed component authoring":
     check not component.mounted
     expect ComponentContextError:
       discard component.node
+
+  test "owned resources release once in reverse order after unmount hooks":
+    let root = initUiRoot()
+    let releases = new seq[string]
+    let component = root.mount(ResourceComponent(releases: releases))
+    check not component.first.disposed
+    check not component.second.disposed
+    check component.own(component.first) == component.first
+    expect ComponentContextError:
+      component.first.setReleaseCallback(releaseTestResource)
+
+    check component.second.dispose()
+    check not component.second.dispose()
+    var interaction = initInteractionState()
+    check root.disposeSubtree(component.node, interaction)
+    check releases[] == @["second", "unmount", "first"]
+    check component.first.disposed
+    check component.second.disposed
+
+  test "render failure releases resources registered before rollback":
+    let root = initUiRoot()
+    let component = FailingResourceComponent()
+    expect ValueError:
+      root.mount(component)
+    check not component.resource.isNil
+    check component.resource.disposed
+    check component.state == cmsCreated
 
   test "disposing a parent unmounts child components before their parent":
     let root = initUiRoot()

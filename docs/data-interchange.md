@@ -179,8 +179,33 @@ until the UI fully drains the mailbox, so streams do not require a polling
 frame loop. The callback is a non-closure C-style function plus raw context; it
 must only post the host wake and must not re-enter or dispose the mailbox.
 
-Remaining stream work is component-disposal attachment, the SDL3 host-loop wake
-adapter and invalidation path, C ABI transport, broader cancellation race
-verification, and host-authorized file/provider Blob sources. None of these
-paths may expose Nim-managed pointers across an ABI or mutate the UI tree from
-a worker thread.
+Components can own the UI side without writing a manual unmount hook:
+
+```nim
+type ResultsPanel = ref object of CBSSComponent
+  results: ComponentStreamBinding[Blob]
+
+method onMount(self: ResultsPanel) =
+  self.results = self.attachStream(
+    Blob,
+    maxQueuedItems = 8,
+    maxQueuedWeight = 16 * 1024 * 1024,
+    dirtyDomains = {ddResource, ddPaint}
+  )
+
+# The host event loop pumps only after a coalesced wake.
+let pumped = panel.results.pump(scheduler, maxMessages = 32)
+for event in panel.results.drain():
+  applyResult(event)
+```
+
+`ComponentStreamBinding` uses the ordinary component-owned resource lifecycle,
+not a stream-specific unmount exception. The component retains the binding;
+subtree disposal closes it exactly once, releases pending payloads, and makes
+escaped worker handles reject later offers. Pumping marks only the configured
+dirty domains and only when the UI-side stream revision actually changes.
+
+Remaining stream work is the SDL3 host-loop wake adapter, C ABI transport,
+broader cancellation race verification, and host-authorized file/provider Blob
+sources. None of these paths may expose Nim-managed pointers across an ABI or
+mutate the UI tree from a worker thread.
