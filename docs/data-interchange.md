@@ -140,9 +140,47 @@ event. Closing an active stream cancels it first; closing a completed or failed
 stream preserves its terminal event before close. Late producer offers are
 rejected instead of reaching a disposed consumer.
 
-`StreamBridge` is currently a UI-thread state machine, not a thread-safe
-mailbox. A producer running on another thread must not call it directly. The
-remaining stream work is an ARC-safe worker-to-UI ownership-transfer mailbox,
-component-disposal attachment, scheduler wake-up integration, C ABI transport,
-and host-authorized file/provider Blob sources. None of those paths may expose
-Nim-managed pointers across an ABI or mutate the UI tree from a worker thread.
+`StreamBridge` remains a UI-thread state machine, not a lock-based shared UI
+object. A producer running on another thread uses `StreamMailbox[T]`:
+
+```nim
+let mailbox = initStreamMailbox[Blob](
+  maxQueuedItems = 8,
+  maxQueuedWeight = 16 * 1024 * 1024
+)
+let source = mailbox.producer()
+
+# `source` may be moved to a worker thread.
+doAssert source.open() == smorAccepted
+case source.pushData(chunk, chunk.size)
+of smorAccepted:
+  discard
+of smorBackpressure:
+  pauseProducer()
+of smorInvalidState, smorDisposed:
+  stopProducer()
+
+# The owning UI thread drains bounded work into its StreamBridge.
+let pumped = mailbox.pumpInto(stream, maxMessages = 32)
+if pumped.changed:
+  invalidateConsumer()
+```
+
+Producer handles use an atomic shared-state lifetime and may cross a thread
+boundary. Managed payloads move into bounded shared channel storage and back to
+the UI thread; they are not copied through a global queue. The mailbox retains
+one UI-side deferred value when `StreamBridge` applies backpressure, and that
+value remains part of the configured item and weight limits. Explicit disposal
+or destruction rejects escaped producer handles and drops queued payloads.
+
+An optional wake callback may post one host-loop wake signal when an empty or
+already-signalled mailbox first needs UI pumping. Repeated offers are coalesced
+until the UI fully drains the mailbox, so streams do not require a polling
+frame loop. The callback is a non-closure C-style function plus raw context; it
+must only post the host wake and must not re-enter or dispose the mailbox.
+
+Remaining stream work is component-disposal attachment, the SDL3 host-loop wake
+adapter and invalidation path, C ABI transport, broader cancellation race
+verification, and host-authorized file/provider Blob sources. None of these
+paths may expose Nim-managed pointers across an ABI or mutate the UI tree from
+a worker thread.

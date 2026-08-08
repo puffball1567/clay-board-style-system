@@ -611,17 +611,24 @@ empty snapshots remain distinguishable from payload-free synthetic events,
 and callbacks may retain a snapshot beyond dispatch through explicit
 retain/release ownership.
 
-The first bounded stream slice is now implemented as a transport-neutral
-`StreamBridge[T]` UI-thread state machine. It provides deterministic
-open/data/progress/end/error/cancel/close ordering, item and declared-weight
-backpressure, progress coalescing, exact terminal delivery, cancellation that
-drops queued work, late-offer rejection, partial draining, and ARC/ORC stress
-tests. It intentionally does not claim thread safety.
+The bounded stream boundary is now implemented as two transport-neutral
+layers. `StreamBridge[T]` is the UI-thread state machine and provides
+deterministic open/data/progress/end/error/cancel/close ordering, item and
+declared-weight backpressure, progress coalescing, exact terminal delivery,
+cancellation that drops queued work, late-offer rejection, partial draining,
+and ARC/ORC stress tests. `StreamMailbox[T]` is the bounded worker-to-UI
+ownership-transfer layer.
+It moves managed values through shared channel storage, uses atomically retained
+producer handles, preserves a backpressured value without copying, coalesces
+host-loop wake requests, invalidates escaped producers during automatic or
+explicit disposal, and has real threaded ARC/ORC transfer tests. UI trees,
+components, and `StreamBridge` remain UI-thread-owned rather than becoming
+lock-based shared objects.
 
 Remaining: host-authorized file/provider Blob sources, optional transport
-adapters, an ARC-safe worker-to-UI ownership-transfer mailbox, component
-disposal and scheduler wake-up integration, C ABI transport, and cancellation
-race verification.
+adapters, component attachment and invalidation integration, SDL3 host-loop
+wake adaptation, C ABI transport, and broader cancellation/disposal race
+verification.
 
 CBSS will define transport-neutral data contracts for UI operations that need
 binary values, form snapshots, or progressively produced data. These contracts
@@ -719,10 +726,13 @@ network-facing producers and FormData request encoding. Media and image
 features may build adapters on this bridge while retaining their own resource
 and scheduling policies.
 
-The first stream implementation slice establishes the bounded UI-side state
-machine and deterministic fake-producer surface. Worker-thread delivery remains
-gated on bounded-memory stress tests, cancellation races, explicit ownership
-transfer, and proof that idle streams do not force continuous frames.
+The implemented stream boundary establishes both the bounded UI-side state
+machine and an explicit worker-to-UI ownership-transfer mailbox. The mailbox
+uses a coalesced host wake callback instead of requesting continuous frames;
+the UI drains it and performs invalidation only when transferred events change
+observable state. Release completion remains gated on component attachment,
+the SDL3 wake adapter, broader cancellation/disposal races, and proof in the
+integrated loop that idle streams keep the application blocked on events.
 
 ## Authoring Value Model And Ergonomics
 

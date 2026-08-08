@@ -190,6 +190,9 @@ jobs:
       - name: Check ARC widget lifecycle
         run: nimble testWidgetLifecycleValgrind -y
 
+      - name: Check threaded ARC stream ownership transfer
+        run: nimble testStreamMailboxValgrind -y
+
       - name: Check shared and static C ABI lifecycles
         run: nimble testCAbiValgrind -y
 
