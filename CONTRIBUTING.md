@@ -14,6 +14,8 @@ Before writing code, skim:
   against these rules.
 - [docs/design-decisions.md](docs/design-decisions.md) — settled decisions and
   component conventions.
+- [docs/api-stability.md](docs/api-stability.md) — compatibility, deprecation,
+  and removal policy for Nim and the C ABI.
 
 ## Branch and Release Workflow
 
@@ -64,6 +66,9 @@ Requirements: Nim ≥ 2.2.0; for the SDL3 demo and text tests, a Rust toolchain
 C ABI changes touch `src/clay_board_style_system/c_api.nim`, `include/cbss.h`,
 and `tests/c_api/c_consumer.c` together. Never expose a Nim-managed type or
 change an existing C struct/function signature without an ABI-version decision.
+Use `CBSS_DEPRECATED("Use ... instead")` only after a complete replacement
+exists. Product Version 0.x does not permit binary-incompatible changes inside
+one C ABI major.
 Use `nimble setupSystem` when the application supplies SDL3, the image bridge,
 and the cosmic-text bridge through its own dynamic-library installation.
 

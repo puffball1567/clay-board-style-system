@@ -148,6 +148,19 @@ jobs:
           nim c --app:lib --mm:arc -d:release --path:src "--nimcache:${{ runner.temp }}/cbss-c-api-shared-cache" "--outdir:${{ runner.temp }}/cbss-c-api" src/cbss_c_api.nim
           nim c --app:staticlib --mm:arc -d:release --path:src "--nimcache:${{ runner.temp }}/cbss-c-api-static-cache" "--outdir:${{ runner.temp }}/cbss-c-api" src/cbss_c_api.nim
 
+      - name: Check C and C++ public headers (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -Iinclude -fsyntax-only tests/c_api/header_consumer.c
+          c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -fsyntax-only tests/c_api/header_consumer.cpp
+
+      - name: Check C and C++ public headers (MSVC-compatible)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          clang-cl /nologo /W4 /WX /c /TC /Iinclude tests\c_api\header_consumer.c /Fo"${{ runner.temp }}\cbss_header_c.obj"
+          clang-cl /nologo /W4 /WX /c /TP /std:c++14 /Iinclude tests\c_api\header_consumer.cpp /Fo"${{ runner.temp }}\cbss_header_cpp.obj"
+
       - name: Test native Rust bridges
         run: |
           cargo test --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml

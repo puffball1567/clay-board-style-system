@@ -98,6 +98,8 @@ task buildCAbiStatic, "Build the static CBSS C ABI library":
 
 task testCAbi, "Build and exercise the shared and static C ABI from C":
   exec "nim c --app:lib --mm:arc -d:release --path:src --nimcache:/tmp/clay_board_style_system_c_api_shared_nimcache --out:/tmp/libcbss.so src/cbss_c_api.nim"
+  exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude -fsyntax-only tests/c_api/header_consumer.c"
+  exec "c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -fsyntax-only tests/c_api/header_consumer.cpp"
   exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/c_consumer.c -L/tmp -Wl,-rpath,/tmp -lcbss -lm -o /tmp/clay_board_style_system_c_consumer_shared"
   exec "/tmp/clay_board_style_system_c_consumer_shared"
   exec "nim c --app:staticlib --mm:arc -d:release --path:src --nimcache:/tmp/clay_board_style_system_c_api_static_nimcache --out:/tmp/libcbss.a src/cbss_c_api.nim"
