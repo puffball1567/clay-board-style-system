@@ -626,9 +626,8 @@ components, and `StreamBridge` remain UI-thread-owned rather than becoming
 lock-based shared objects.
 
 Remaining: host-authorized file/provider Blob sources, optional transport
-adapters, component attachment and invalidation integration, SDL3 host-loop
-wake adaptation, C ABI transport, and broader cancellation/disposal race
-verification.
+adapters, SDL3 host-loop wake adaptation, C ABI transport, and broader
+cancellation/disposal race verification.
 
 CBSS will define transport-neutral data contracts for UI operations that need
 binary values, form snapshots, or progressively produced data. These contracts
@@ -730,9 +729,13 @@ The implemented stream boundary establishes both the bounded UI-side state
 machine and an explicit worker-to-UI ownership-transfer mailbox. The mailbox
 uses a coalesced host wake callback instead of requesting continuous frames;
 the UI drains it and performs invalidation only when transferred events change
-observable state. Release completion remains gated on component attachment,
-the SDL3 wake adapter, broader cancellation/disposal races, and proof in the
-integrated loop that idle streams keep the application blocked on events.
+observable state. `ComponentStreamBinding[T]` now connects that pump to selected
+dirty domains and is retained through the general component-owned resource
+lifecycle. Subtree disposal closes the mailbox, drains retained payloads, and
+rejects escaped producer handles exactly once under ARC and ORC. Release
+completion remains gated on the SDL3 wake adapter, broader cancellation races,
+and proof in the integrated loop that idle streams keep the application blocked
+on events.
 
 ## Authoring Value Model And Ergonomics
 
