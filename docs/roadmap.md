@@ -1064,6 +1064,11 @@ Current and planned work:
 - Implemented: `translate`, `scale`, `rotate`, transform origin, and 2D
   composition order use a single layout, paint, hit-test, clip, and
   RenderSurface coordinate contract. Canvas uses the same affine paint scopes.
+- Complete the 2D vocabulary with typed skew and matrix operations while
+  preserving the same inverse hit-test and transformed-clip contract.
+- Add perspective, perspective origin, `transform-style: preserve-3d`, and
+  `backface-visibility` only as a coherent 3D scene/composition contract;
+  storing these values as transform metadata is not runtime completion.
 - Add declarative transition property, duration, delay, timing-function, and
   interpolation behavior for supported style values.
 - Implemented foundation: typed float/color keyframes and the animation clock
@@ -1349,6 +1354,67 @@ packaged into normal application artifacts. CBSS release branches and official
 examples use the strict gate in CI. An optional checker may help advanced API
 and adapter authors, but correctness of arbitrary application memory management
 is outside the CBSS guarantee.
+
+### CSS Property Runtime Completion
+
+Status: `Version 0.5+ candidate; priority order not yet decided`
+
+The canonical property target remains in
+[css-property-support.md](css-property-support.md), and every targeted property
+has a provisional rank in
+[css-property-implementation-order.md](css-property-implementation-order.md).
+Those ranks are planning input rather than a fixed Version 0.5 execution order.
+The owner may reorder the following work packages after evaluating user
+feedback, subsystem dependencies, and release goals.
+
+A property is not complete merely because the registry accepts its name or
+ComputedStyle preserves its value. Promotion to `Runtime` requires a consumer
+in layout, paint, text, hit testing, input, accessibility, or another visible
+runtime subsystem, together with focused behavior and boundary tests.
+
+Before publishing a new completion percentage, audit every current `Computed`
+entry against the implementation. Existing consumers for `aspect-ratio`,
+`letter-spacing`, `word-spacing`, `order`, `align-self`, and textarea `resize`
+show that the support matrix can conservatively lag the code. The matrix,
+implementation order, default registry, and generated summary remain
+machine-checked, while semantic promotion requires code-and-test review.
+
+Candidate work packages:
+
+- **Box and Flex layout fidelity.** Complete executable `box-sizing`,
+  multi-line `flex-wrap` and `flex-flow`, line distribution through
+  `align-content`, and the remaining item/container alignment properties.
+  Preserve stable intrinsic sizing, min/max constraints, gaps, ordering,
+  percentage resolution, scrolling overflow, and dirty-subtree behavior in
+  both row and column layouts.
+- **Background geometry and composition.** Connect `background-position`,
+  `background-position-x`, `background-position-y`, `background-size`,
+  `background-repeat`, `background-clip`, and `background-origin` to the
+  shared SDL3 and headless paint contract. Then connect attachment and blend
+  behavior without introducing an idle redraw loop or backend-specific style
+  semantics. Linear-gradient support remains the reference image path.
+- **Everyday text behavior.** Finish visible `text-overflow` and ellipsis,
+  `text-transform`, `text-indent`, supported `text-wrap` forms, word breaking,
+  overflow wrapping, and hyphenation behavior. Letter and word spacing remain
+  consistent across measurement, shaping, caret geometry, selection, input,
+  textarea scrolling, and both text backends.
+- **Writing direction and logical geometry.** Replace the current
+  horizontal-LTR physical aliases with explicit `direction`, `unicode-bidi`,
+  and `writing-mode` behavior before claiming general logical-property
+  compatibility. Layout, text shaping, focus traversal, scrolling, and hit
+  geometry must agree on the resulting axes.
+- **Visual effects and advanced text.** Connect `filter`, `backdrop-filter`,
+  masks, blend/isolation behavior, and the remaining decoration and typography
+  properties only through shared paint/text contracts with deterministic
+  headless references. Optional Pixie or GPU implementations must not change
+  authored semantics or make the standard profile depend on them.
+
+Every selected work package includes negative and unsupported-value
+diagnostics, cross-backend reference tests where pixels are affected, and
+performance tests proving that a local property change does not resolve or
+relayout unrelated subtrees. `No plan` properties remain outside these
+candidates unless a later design decision explicitly moves them into the
+target.
 
 ## Later Milestones
 
