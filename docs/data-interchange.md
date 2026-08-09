@@ -232,6 +232,14 @@ returning, so the caller may release the previous raw context immediately after
 detachment. Disposing a mailbox provides the same guarantee while additionally
 rejecting all escaped producer handles.
 
-Remaining stream work is C ABI transport and host-authorized file/provider Blob
-sources. Neither path may expose Nim-managed pointers across an ABI or mutate
-the UI tree from a worker thread.
+C ABI `0x0001000F` now exposes the same bounded transport as a Blob-specialized
+opaque stream. Atomically retained producer handles may cross worker-thread
+boundaries; UI-owned pump/drain calls return ordered events and transfer each
+data Blob as one explicit owning reference. Backpressure, coalesced wakes,
+progress, terminal states, callback replacement, disposal, and late-producer
+rejection are exercised by shared and static C consumers using a real pthread.
+The pthread uses the public attach/detach boundary, including under ORC. No
+Nim-managed pointer crosses the ABI.
+
+Remaining stream work is host-authorized file/provider Blob sources. Those
+sources must not mutate the UI tree from a worker thread.

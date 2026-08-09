@@ -181,7 +181,8 @@ CBSS does not ship native runtime binaries inside its Nimble package.
 - An idle-aware reversible Switch transition and deterministic animation clock
   with reduced-motion support.
 - A versioned C ABI for tree, style, layout, paint, input, events, focus,
-  scrolling, accessibility, Canvas, and diagnostics.
+  scrolling, accessibility, Canvas, diagnostics, and bounded worker-to-UI Blob
+  streams.
 - Headless unit and E2E tooling, screenshot snapshots, optional real-window
   Wayland scenarios, portable CI, and native memory checks.
 
