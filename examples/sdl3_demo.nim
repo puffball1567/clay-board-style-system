@@ -3843,6 +3843,10 @@ proc main() =
           )
           discard ui.handleEvents(dispatches)
         paintOnlyDirty = true
+      of sekStreamWake:
+        # The full demo does not own a stream binding. Applications route this
+        # event through the matching Sdl3StreamWake handle.
+        discard
       discard ui.reconcilePointerCapture(inputState)
       if ui.reconcileFocus(inputState):
         staticLayerDirty = true

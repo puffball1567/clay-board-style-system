@@ -548,6 +548,10 @@ proc dispatchSdlEvent*(
      sekPenButtonDown, sekPenButtonUp:
     let input = event.pointerInputEvent()
     result = input.isSome and driver.headless.sendPointer(input.get)
+  of sekStreamWake:
+    # Stream ownership is application-specific. The integration driver keeps
+    # the wake observable without guessing which typed binding should pump.
+    result = false
   driver.finishSdlDispatch(renderAfter)
 
 proc pollAndDispatch*(driver: Sdl3WaylandDriver; maxEvents = 64; renderAfter = true): int =
