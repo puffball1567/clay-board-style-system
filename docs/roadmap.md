@@ -626,7 +626,7 @@ components, and `StreamBridge` remain UI-thread-owned rather than becoming
 lock-based shared objects.
 
 Remaining: host-authorized file/provider Blob sources, optional transport
-adapters, C ABI transport, and broader cancellation/disposal race verification.
+adapters, and C ABI transport.
 
 CBSS will define transport-neutral data contracts for UI operations that need
 binary values, form snapshots, or progressively produced data. These contracts
@@ -732,11 +732,14 @@ observable state. `ComponentStreamBinding[T]` now connects that pump to selected
 dirty domains and is retained through the general component-owned resource
 lifecycle. Subtree disposal closes the mailbox, drains retained payloads, and
 rejects escaped producer handles exactly once under ARC and ORC. Release
-completion remains gated on broader cancellation races and C ABI transport.
+completion remains gated on C ABI transport.
 The SDL3 adapter now posts a coalesced, integer-token-only user event from the
 worker callback. A real worker test proves that an SDL event loop blocked in
 `SDL_WaitEventTimeout` wakes, routes only the matching binding, preserves stream
 order, marks only configured dirty domains, and returns to an empty event queue.
+Threaded race gates additionally cover simultaneous bounded producers,
+competing finish/fail/cancel offers, disposal during active production, and
+wake-callback replacement while the old raw context is still executing.
 
 ## Authoring Value Model And Ergonomics
 
