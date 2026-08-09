@@ -320,6 +320,13 @@ proc setWakeCallback*[T](
   try:
     if shared.disposed:
       return
+    # Replacing or clearing the callback transfers ownership of the old raw
+    # context back to the caller. Do not return while that context is still in
+    # use by a worker callback.
+    while shared.wakeCallbacksInFlight > 0:
+      wait(shared.wakeIdle, shared.gate)
+      if shared.disposed:
+        return
     shared.wakeCallback = callback
     shared.wakeContext = context
     shared.wakePending = false

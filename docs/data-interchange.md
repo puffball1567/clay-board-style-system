@@ -226,7 +226,12 @@ remain the idle mechanism; receiving `sekStreamWake` only authorizes the UI
 thread to pump the matching binding. Multiple producer offers are coalesced
 until the mailbox has been pumped empty.
 
-Remaining stream work is C ABI transport, broader cancellation race
-verification, and host-authorized file/provider Blob sources. None of these
-paths may expose Nim-managed pointers across an ABI or mutate the UI tree from
-a worker thread.
+Replacing or clearing a wake callback is a context-ownership boundary. The
+operation waits for any callback already executing on a producer thread before
+returning, so the caller may release the previous raw context immediately after
+detachment. Disposing a mailbox provides the same guarantee while additionally
+rejecting all escaped producer handles.
+
+Remaining stream work is C ABI transport and host-authorized file/provider Blob
+sources. Neither path may expose Nim-managed pointers across an ABI or mutate
+the UI tree from a worker thread.
