@@ -193,10 +193,23 @@ method onMount(self: ResultsPanel) =
     dirtyDomains = {ddResource, ddPaint}
   )
 
-# The host event loop pumps only after a coalesced wake.
-let pumped = panel.results.pump(scheduler, maxMessages = 32)
-for event in panel.results.drain():
-  applyResult(event)
+# SDL3 hosts attach once on the UI thread before starting the producer.
+import clay_board_style_system/backends/sdl3/stream_wake
+let resultsWake = panel.results.attachSdl3Wake()
+
+# The normal SDL event loop remains blocked until a coalesced wake arrives.
+if resultsWake.matches(event):
+  let pumped = panel.results.pumpSdl3Wake(
+    resultsWake,
+    event,
+    scheduler,
+    maxMessages = 32
+  )
+  for streamEvent in panel.results.drain():
+    applyResult(streamEvent)
+  # A bounded pump must run again before waiting when work remains.
+  if pumped.pending:
+    discard panel.results.pump(scheduler, maxMessages = 32)
 ```
 
 `ComponentStreamBinding` uses the ordinary component-owned resource lifecycle,
@@ -205,7 +218,15 @@ subtree disposal closes it exactly once, releases pending payloads, and makes
 escaped worker handles reject later offers. Pumping marks only the configured
 dirty domains and only when the UI-side stream revision actually changes.
 
-Remaining stream work is the SDL3 host-loop wake adapter, C ABI transport,
-broader cancellation race verification, and host-authorized file/provider Blob
-sources. None of these paths may expose Nim-managed pointers across an ABI or
-mutate the UI tree from a worker thread.
+The SDL3 adapter reserves one process-wide SDL user-event kind. Each attached
+binding receives an integer token, and worker callbacks put only that token in
+the copied SDL event. No Nim reference, component pointer, mailbox pointer, or
+payload crosses the SDL queue. `SDL_WaitEvent`/`SDL_WaitEventTimeout` therefore
+remain the idle mechanism; receiving `sekStreamWake` only authorizes the UI
+thread to pump the matching binding. Multiple producer offers are coalesced
+until the mailbox has been pumped empty.
+
+Remaining stream work is C ABI transport, broader cancellation race
+verification, and host-authorized file/provider Blob sources. None of these
+paths may expose Nim-managed pointers across an ABI or mutate the UI tree from
+a worker thread.

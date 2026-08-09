@@ -34,6 +34,11 @@ const
   defaultRoundedTextureCacheBytes = 128'u64 * 1024 * 1024
   defaultShadowTextureCacheBytes = 128'u64 * 1024 * 1024
   defaultTransformTextureCacheBytes = 128'u64 * 1024 * 1024
+  sdl3StreamWakeEventCode = 0x43425353'i32
+
+var
+  sdl3StreamWakeEventType: uint32
+  nextSdl3StreamWakeToken = 1'u32
 
 type
   Sdl3ImeUiMode* = enum
@@ -140,7 +145,8 @@ type
     sekPenProximityIn,
     sekPenProximityOut,
     sekPenButtonDown,
-    sekPenButtonUp
+    sekPenButtonUp,
+    sekStreamWake
 
   Sdl3Event* = object
     timestamp*: uint64
@@ -176,6 +182,8 @@ type
     of sekPenButtonDown, sekPenButtonUp:
       penButton*: int
       penButtonX*, penButtonY*: float32
+    of sekStreamWake:
+      wakeToken*: uint32
 
   Sdl3PenDeviceState = object
     pointer: PointerData
@@ -892,6 +900,15 @@ proc pollEventFromRaw(
     raw = firstRaw[]
   while hasRaw or SDL3.pollEvent(addr raw):
     hasRaw = false
+    if sdl3StreamWakeEventType != 0 and
+        raw.`type` == sdl3StreamWakeEventType and
+        raw.user.code == sdl3StreamWakeEventCode:
+      event = Sdl3Event(
+        kind: sekStreamWake,
+        timestamp: raw.user.timestamp,
+        wakeToken: uint32(cast[uint](raw.user.data1))
+      )
+      return true
     case SDL_EventType(raw.`type`)
     of SDL_EVENT_QUIT, SDL_EVENT_WINDOW_CLOSE_REQUESTED:
       event = Sdl3Event(kind: sekQuit, timestamp: raw.common.timestamp)
@@ -1235,6 +1252,34 @@ proc waitEventTimeout*(
 
 proc waitEvent*(target: var Sdl3Renderer; event: var Sdl3Event): bool =
   target.waitEventTimeout(event, -1)
+
+proc registerSdl3StreamWake*(): uint32 =
+  ## Registers one process-wide user event. Call this on the SDL/UI thread
+  ## before handing the resulting callback to a worker-facing mailbox.
+  if sdl3StreamWakeEventType == 0:
+    sdl3StreamWakeEventType = SDL3.registerEvents(1)
+  sdl3StreamWakeEventType
+
+proc allocateSdl3StreamWakeToken*(): uint32 =
+  ## Token allocation is intentionally UI-thread-owned. Only the immutable
+  ## token crosses into worker callbacks.
+  if registerSdl3StreamWake() == 0:
+    return 0
+  result = nextSdl3StreamWakeToken
+  inc nextSdl3StreamWakeToken
+  if nextSdl3StreamWakeToken == 0:
+    nextSdl3StreamWakeToken = 1
+
+proc postSdl3StreamWake*(token: uint32): bool {.gcsafe, raises: [].} =
+  ## SDL copies the event. `data1` contains only an integer token, never a Nim
+  ## object address or an ownership-bearing foreign pointer.
+  if token == 0 or sdl3StreamWakeEventType == 0:
+    return false
+  var raw: SDL_Event
+  raw.user.`type` = sdl3StreamWakeEventType
+  raw.user.code = sdl3StreamWakeEventCode
+  raw.user.data1 = cast[pointer](uint(token))
+  SDL3.pushEvent(addr raw)
 
 proc delay*(ms: int) =
   SDL3.delay(uint32(max(0, ms)))
