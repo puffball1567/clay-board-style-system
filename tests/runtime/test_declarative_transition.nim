@@ -158,6 +158,53 @@ suite "declarative style transitions":
     check foreground.b > 0.4
     check background.r > 0.3 and background.r < 0.8
 
+  test "transition lists cycle values and preserve unknown property positions":
+    var tree = initTree()
+    let root = tree.addBox()
+    var displayed = tree.resolved(root, [
+      decl("opacity", number(0)),
+      decl("background-color", colorValue(rgba(0, 0, 0, 0)))
+    ])
+    let target = tree.resolved(root, [
+      transitionProperties(
+        "future-property", "opacity", "background-color"
+      ),
+      transitionDurations(8.0'f32, 2.0'f32),
+      transitionDelays(0.0'f32, 0.5'f32),
+      transitionTimingFunctions("linear"),
+      decl("opacity", number(1)),
+      decl("background-color", colorValue(rgba(1, 1, 1, 1)))
+    ])
+    var runtime = initDeclarativeTransitionRuntime()
+    var scheduler = initFrameScheduler()
+    runtime.reconcileTransitions(tree, displayed, target, 0)
+    displayed = target
+    discard runtime.applyTransitions(tree, displayed, scheduler, 1)
+
+    # opacity uses index 1: duration 2, delay 0.5. Background uses index 2,
+    # cycling back to duration 8 and delay 0.
+    check abs(displayed.styles[root.nodeIndex].visual.opacity - 0.25) < 0.0001
+    let background = displayed.styles[root.nodeIndex].box.backgroundColor.get
+    check abs(background.a - 0.125) < 0.001
+
+  test "the last matching transition-property entry supplies parameters":
+    var tree = initTree()
+    let root = tree.addBox()
+    var displayed = tree.resolved(root, [decl("opacity", number(0))])
+    let target = tree.resolved(root, [
+      transitionProperties("opacity", "all", "opacity"),
+      transitionDurations(8.0'f32, 4.0'f32, 1.0'f32),
+      transitionTimingFunctions("linear"),
+      decl("opacity", number(1))
+    ])
+    var runtime = initDeclarativeTransitionRuntime()
+    var scheduler = initFrameScheduler()
+    runtime.reconcileTransitions(tree, displayed, target, 0)
+    displayed = target
+    discard runtime.applyTransitions(tree, displayed, scheduler, 0.5)
+
+    check abs(displayed.styles[root.nodeIndex].visual.opacity - 0.5) < 0.0001
+
   test "background none transitions through transparent target color":
     var tree = initTree()
     let root = tree.addBox()

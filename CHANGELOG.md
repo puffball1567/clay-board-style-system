@@ -9,6 +9,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added typed and lower-level list authoring for transition property, duration,
+  delay, timing, and behavior values, with CSS-like index cycling, preserved
+  unknown-property positions, nested-function comma parsing, and last-match
+  parameter selection.
 - Added the first declaration-bound named-keyframe runtime for `opacity`,
   `color`, and `background-color`, including typed registration, duration,
   signed delay, timing, finite/infinite iterations, direction, fill, pause and

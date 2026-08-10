@@ -1113,7 +1113,9 @@ Current and planned work:
   signed delay, timing function, reversal, cancellation, and reduced-motion
   behavior drive `opacity`, `color`, and `background-color`. Sampling is
   proportional to active tracks and does not require style resolution or
-  layout on animation frames. Transform and additional typed values remain.
+  layout on animation frames. Property, duration, delay, timing, and behavior
+  lists cycle by index; unknown property positions are retained and the last
+  matching property entry wins. Transform and additional typed values remain.
 - Implemented first runtime slice: named typed keyframes bind through
   `animation-name`, duration, signed delay, timing function, iteration count,
   direction, fill mode, and play state. `opacity`, `color`, and

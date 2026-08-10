@@ -522,6 +522,53 @@ suite "style context merge":
     check style.animation.animationDuration == 0
     check style.animation.animationDelay == -0.25'f32
 
+  test "transition longhands retain normalized lists for runtime cycling":
+    let context = styleContext([
+      transitionProperties("future-property", "opacity", "background-color"),
+      transitionDurations(2.0'f32, 0.5'f32),
+      transitionDelays(-0.25'f32),
+      transitionTimingFunctions(
+        "cubic-bezier(0.2, 0.8, 0.4, 1)", "linear"
+      ),
+      transitionBehaviors(tbNormal, tbAllowDiscrete)
+    ])
+    var diagnostics: Diagnostics
+    let style = resolveStyles(
+      context, defaultProperties(), ResolveEnv(), diagnostics
+    )
+
+    check not diagnostics.hasErrors
+    check style.animation.transitionProperties == @[
+      "future-property", "opacity", "background-color"
+    ]
+    check style.animation.transitionDurations == @[2.0'f32, 0.5'f32]
+    check style.animation.transitionDelays == @[-0.25'f32]
+    check style.animation.transitionTimingFunctions == @[
+      "cubic-bezier(0.2, 0.8, 0.4, 1)", "linear"
+    ]
+    check style.animation.transitionBehaviors == @[
+      tbNormal, tbAllowDiscrete
+    ]
+    check style.animation.transitionDuration == 2.0'f32
+    check style.animation.transitionDelay == -0.25'f32
+
+  test "transition list diagnostics reject malformed and negative values":
+    for declaration in [
+      decl("transition-property", keyword("opacity,,color")),
+      decl("transition-duration", keyword("1, nope")),
+      decl("transition-duration", keyword("1, -0.5")),
+      decl("transition-timing-function", keyword("linear,")),
+      decl("transition-behavior", keyword("normal, mystery"))
+    ]:
+      var diagnostics: Diagnostics
+      discard resolveStyles(
+        styleContext([declaration]),
+        defaultProperties(),
+        ResolveEnv(),
+        diagnostics
+      )
+      check diagnostics.hasErrors
+
   test "background properties resolve to computed box style":
     let context = styleContext([
       decl("background", colorValue(rgb(0.1, 0.2, 0.3))),
