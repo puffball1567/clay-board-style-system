@@ -69,15 +69,13 @@ task testMotionAsan, "Run declarative transition and keyframe tests under Addres
       let nimcache = sanitizerRoot & "/clay_board_style_system_" & suffix & "_nimcache"
       let artifact = nimcache & "/clay_board_style_system_" & suffix
       let source = "tests/runtime/test_" & testName & ".nim"
+      exec "nim c --forceBuild:on --cc:clang --mm:" & memoryModel & " -d:release -d:useMalloc --debugger:native --path:src --passC:-fsanitize=address --passC:-fno-omit-frame-pointer --passL:-fsanitize=address --nimcache:\"" & nimcache & "\" --out:\"" & artifact & "\" " & source
       when defined(windows):
-        exec "nim c --forceBuild:on --cc:vcc --mm:" & memoryModel & " -d:release -d:useMalloc --debugger:native --path:src --passC:/fsanitize=address --nimcache:\"" & nimcache & "\" --out:\"" & artifact & "\" " & source
         exec "\"" & artifact & ".exe\""
+      elif defined(linux):
+        exec "env ASAN_OPTIONS=detect_leaks=0:halt_on_error=1:abort_on_error=1 \"" & artifact & "\""
       else:
-        exec "nim c --forceBuild:on --cc:clang --mm:" & memoryModel & " -d:release -d:useMalloc --debugger:native --path:src --passC:-fsanitize=address --passC:-fno-omit-frame-pointer --passL:-fsanitize=address --nimcache:\"" & nimcache & "\" --out:\"" & artifact & "\" " & source
-        when defined(linux):
-          exec "env ASAN_OPTIONS=detect_leaks=0:halt_on_error=1:abort_on_error=1 \"" & artifact & "\""
-        else:
-          exec "env ASAN_OPTIONS=halt_on_error=1:abort_on_error=1 \"" & artifact & "\""
+        exec "env ASAN_OPTIONS=halt_on_error=1:abort_on_error=1 \"" & artifact & "\""
 
 task checkExamples, "Type-check every example in each supported link configuration":
   exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
