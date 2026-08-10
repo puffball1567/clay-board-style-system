@@ -7,7 +7,7 @@ import ../input/events
 import ../layout/layout
 import ../layout/scroll_state
 import ../paint/[paint, paint_command, path_geometry]
-import ../runtime/[focus, frame_scheduler, text_focus, ui_root]
+import ../runtime/[focus, frame_scheduler, invalidation, text_focus, ui_root]
 
 type
   CbssQueryKind* = enum
@@ -270,6 +270,10 @@ proc advanceTime*(driver: CbssTestDriver; elapsedSeconds: float64) =
     driver.styles, driver.scheduler, driver.nowSeconds
   )
   if transitionSamples > 0 or animationSamples > 0:
+    if ddHit in driver.scheduler.invalidation.domains:
+      driver.hitRegions = buildHitRegions(
+        driver.ui.tree, driver.layout, driver.styles, driver.ui.scroll
+      )
     driver.paintCommands = buildPaintCommands(
       driver.ui.tree, driver.styles, driver.layout, driver.ui.scroll,
       driver.ui.canvasPaintProvider()

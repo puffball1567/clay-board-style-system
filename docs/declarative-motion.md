@@ -7,7 +7,7 @@ event-driven wait loop.
 
 ## Declarative Transitions
 
-The first runtime slice consumes these existing declarations:
+The runtime consumes these existing declarations:
 
 ```nim
 let resting = uiStyle([
@@ -25,11 +25,13 @@ let active = uiStyle([
 ])
 ```
 
-Supported runtime properties in this slice are:
+Supported runtime properties are:
 
 - `opacity`;
-- `color`; and
-- `background-color`.
+- `color`;
+- `background-color`;
+- typed 2D `transform` operation lists; and
+- individual `translate`, `scale`, and `rotate` values.
 
 Named timing functions, `step-start`, `step-end`, and valid
 `cubic-bezier(...)` values are supported. Negative delays begin partway through
@@ -71,13 +73,15 @@ discard ui.applyStyleAnimations(displayedStyles, scheduler, nowSeconds)
 ```
 
 On later animation deadlines, the host calls only `applyStyleTransitions` and
-`applyStyleAnimations`, then rebuilds affected paint output. It must not resolve
-the full style tree or run layout merely to sample these paint-only tracks.
-Sampling cost is proportional to active tracks, not total tree size.
+`applyStyleAnimations`, then rebuilds affected paint output. Transform tracks
+also request a hit-region rebuild. The host must not resolve the full style
+tree or run layout merely to sample these tracks. Sampling cost is proportional
+to active tracks, not total tree size.
 
 `CbssTestDriver.refresh()` performs the reconciliation automatically.
-`advanceTime(seconds)` advances transition and keyframe paint deterministically
-without re-resolving style, layout, or hit regions.
+`advanceTime(seconds)` advances transition and keyframe presentation
+deterministically without re-resolving style or layout; it rebuilds hit regions
+only when active transform motion requests `ddHit`.
 
 ## Declarative Keyframes
 
@@ -103,8 +107,9 @@ let indicator = ui.box(uiStyle([
 ]))
 ```
 
-The current keyframe runtime animates `opacity`, `color`, and
-`background-color`. It consumes list-valued `animation-name`, duration, signed
+The current keyframe runtime animates `opacity`, `color`, `background-color`,
+and typed 2D `transform`, `translate`, `scale`, and `rotate` values. It consumes
+list-valued `animation-name`, duration, signed
 delay, timing function, iteration count, direction, fill mode, play state, and
 composition. All longhand lists cycle by animation index. Unknown animation
 names retain their positions, so a missing registration does not shift the
@@ -118,14 +123,18 @@ definition removal cancels active tracks.
 
 Keyframe sampling, like transition sampling, is paint-only and proportional to
 active tracks. It does not resolve style, perform layout, or rebuild unrelated
-components on every animation frame.
+components on every animation frame. Transform tracks additionally invalidate
+hit geometry so pointer targeting follows the displayed transform. Compatible
+typed length units interpolate directly; incompatible units or transform-list
+shapes use the defined discrete fallback instead of producing invalid geometry.
 
 ## Remaining Motion Work
 
 This is not yet the complete declaration-driven motion surface. The following
 remain planned:
 
-- transform and other typed interpolable values;
+- additional typed interpolable values beyond the current paint and transform
+  set;
 - additive and accumulative `animation-composition` modes;
 - transition and animation lifecycle event dispatch;
 - discrete-transition policy; and

@@ -1115,15 +1115,17 @@ Current and planned work:
   proportional to active tracks and does not require style resolution or
   layout on animation frames. Property, duration, delay, timing, and behavior
   lists cycle by index; unknown property positions are retained and the last
-  matching property entry wins. Transform and additional typed values remain.
+  matching property entry wins. Typed 2D `transform`, `translate`, `scale`, and
+  `rotate` now interpolate through the shared affine paint/hit contract without
+  relayout; additional typed values remain.
 - Implemented: named typed keyframes bind through list-valued `animation-name`,
   duration, signed delay, timing function, iteration count, direction, fill
   mode, play state, and composition. Lists cycle by animation index, missing
   definitions retain their positions, and multiple tracks on one node progress
   independently. `opacity`, `color`, and `background-color` sample through the
   shared animation clock without per-frame style resolution or layout.
-  Additive composition, lifecycle events, transforms, and further value types
-  remain.
+  Typed 2D transform values share the same paint/hit interpolation path.
+  Additive composition, lifecycle events, and further value types remain.
 - Implemented: frames are scheduled only while timed work, caret blink,
   scrolling motion, or Canvas requests one; idle UI remains event-driven.
 - Implemented foundation: the animation clock accepts reduced-motion policy;

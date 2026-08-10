@@ -57,7 +57,7 @@ libraries practical.
 | Complete color authoring surface | Planned | Hex, named colors, RGB/HSL/HWB, Lab/LCH, Oklab/Oklch, alpha, interpolation, and gamut behavior. |
 | Complete unit resolution | Planned | Explicit units remain canonical; property-specific shorthand is allowed only where unambiguous. |
 | Layering, transforms, clipping, opacity, filters, and blend behavior | In progress / Planned | One paint and hit-test coordinate contract must serve ordinary UI, overlays, Canvas, and animation. |
-| Transitions, keyframes, and animation clock | Runtime / In progress | Paint-only transitions and named keyframes cover opacity and foreground/background colors, including multiple animation names and CSS-like longhand list cycling. Transforms, additive composition, discrete policy, and lifecycle events remain. Continuous frames are requested only while motion is active. |
+| Transitions, keyframes, and animation clock | Runtime / In progress | Paint-only transitions and named keyframes cover opacity, foreground/background colors, and typed 2D transform/translate/scale/rotate, including multiple animation names and CSS-like longhand list cycling. Additive composition, the complete discrete policy, additional values, and lifecycle events remain. Continuous frames are requested only while motion is active. |
 | Media/container queries | Planned | Native viewport, window, device, and application-state conditions replace browser CSS text parsing. |
 | Browser/vendor/legacy CSS compatibility | No plan | CBSS prioritizes modern native behavior over web compatibility debt. |
 

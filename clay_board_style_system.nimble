@@ -63,9 +63,10 @@ task testOrc, "Run the test suite under ORC":
 
 task testMotionAsan, "Run declarative transition and keyframe tests under AddressSanitizer":
   for memoryModel in ["arc", "orc"]:
+    let nimcache = "/tmp/clay_board_style_system_motion_" & memoryModel & "_asan_nimcache"
     for testName in ["declarative_transition", "declarative_keyframes"]:
       let artifact = "/tmp/clay_board_style_system_" & testName & "_" & memoryModel & "_asan"
-      exec "nim c --mm:" & memoryModel & " -d:release -d:useMalloc --debugger:native --path:src --passC:-fsanitize=address --passC:-fno-omit-frame-pointer --passL:-fsanitize=address --nimcache:" & artifact & "_nimcache --out:" & artifact & " tests/runtime/test_" & testName & ".nim"
+      exec "nim c --mm:" & memoryModel & " -d:release -d:useMalloc --debugger:native --path:src --passC:-fsanitize=address --passC:-fno-omit-frame-pointer --passL:-fsanitize=address --nimcache:" & nimcache & " --out:" & artifact & " tests/runtime/test_" & testName & ".nim"
       exec "env ASAN_OPTIONS=detect_leaks=0:halt_on_error=1:abort_on_error=1 " & artifact
 
 task checkExamples, "Type-check every example in each supported link configuration":

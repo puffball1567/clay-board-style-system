@@ -685,7 +685,7 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `reading-order` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `resize` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `right` | Runtime | Supports signed px and percentage offsets against the containing content width. |
-| `rotate` | Runtime | Resolves into the shared 2D affine paint, hit-test, clip, and surface-input contract. |
+| `rotate` | Runtime | Resolves into the shared 2D affine paint, hit-test, clip, and surface-input contract and supports declarative transitions/keyframes. |
 | `row-gap` | Runtime | Supports px and percentage spacing against the container content height. |
 | `ruby-align` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
 | `ruby-merge` | Metadata | Stored as computed text metadata. |
@@ -693,7 +693,7 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `ruby-position` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
 | `rx` | Metadata | Stores number and px length values as computed vector geometry metadata. |
 | `ry` | Metadata | Stores number and px length values as computed vector geometry metadata. |
-| `scale` | Runtime | Resolves into the shared 2D affine paint, hit-test, clip, and surface-input contract. |
+| `scale` | Runtime | Resolves into the shared 2D affine paint, hit-test, clip, and surface-input contract and supports declarative transitions/keyframes. |
 | `scroll-behavior` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `scroll-initial-target` | Metadata | Stored as computed scroll metadata. |
 | `scroll-margin` | No plan | Browser scrolling model property; no initial CBSS support. |
@@ -799,7 +799,7 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `timeline-trigger-source` | Metadata | Stored as computed timeline trigger metadata. |
 | `top` | Runtime | Supports signed px and percentage offsets against the containing content height. |
 | `touch-action` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
-| `transform` | Runtime | Structured 2D transform operations resolve into shared SDL3/headless paint, exact hit-test, clip, and surface-input coordinates. Unsupported raw operations remain diagnostic metadata rather than silently changing paint. |
+| `transform` | Runtime | Structured 2D transform operations resolve into shared SDL3/headless paint, exact hit-test, clip, surface-input, transition, and keyframe coordinates. Unsupported raw operations remain diagnostic metadata rather than silently changing paint. |
 | `transform-box` | Runtime | Selects the source box used to resolve the 2D transform origin. |
 | `transform-origin` | Runtime | Resolves length, percentage, and keyword origins for the shared 2D affine contract. |
 | `transform-style` | Metadata | Supports `flat` and `preserve-3d` metadata. |
@@ -809,7 +809,7 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `transition-duration` | Runtime | Drives paint transitions with CSS-like list cycling for the currently supported interpolable properties. |
 | `transition-property` | Runtime | Selects `opacity`, `color`, and `background-color`, or `all`; unknown names retain list positions and the last matching entry wins. Additional runtime properties remain planned. |
 | `transition-timing-function` | Runtime | Supports named timing functions, step start/end, valid cubic Bezier curves, and CSS-like list cycling for paint transitions. |
-| `translate` | Runtime | Resolves into the shared 2D affine paint, hit-test, clip, and surface-input contract. |
+| `translate` | Runtime | Resolves into the shared 2D affine paint, hit-test, clip, and surface-input contract and supports declarative transitions/keyframes. |
 | `trigger-scope` | Metadata | Stored as computed timeline trigger metadata. |
 | `unicode-bidi` | Metadata | Stored in computed text style; full bidi shaping remains text-engine dependent. |
 | `user-select` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
