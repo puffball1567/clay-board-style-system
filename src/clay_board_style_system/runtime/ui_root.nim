@@ -11,6 +11,7 @@ import ../paint/paint_command
 import ../text/[font_registry, text_engine]
 import ./animation_clock
 import ./canvas
+import ./declarative_transition
 import ./frame_scheduler
 import ./invalidation
 import ./render_surface
@@ -82,6 +83,7 @@ type
     popupClosers*: seq[PopupCloserBinding]
     mountedComponents: seq[MountedComponentBinding]
     animations: AnimationClock
+    transitions: DeclarativeTransitionRuntime
     animationOwners: Table[AnimationId, NodeId]
     pendingInvalidation: InvalidationState
     pendingInvalidationRoots: seq[NodeId]
@@ -131,6 +133,7 @@ proc initUiRoot*(): UiRoot =
     popupClosers: @[],
     mountedComponents: @[],
     animations: initAnimationClock(),
+    transitions: initDeclarativeTransitionRuntime(),
     animationOwners: initTable[AnimationId, NodeId](),
     pendingInvalidation: initInvalidationState(),
     pendingInvalidationRoots: @[],
@@ -366,6 +369,36 @@ proc activeAnimationOwners*(root: UiRoot): seq[NodeId] =
 
 proc setReducedMotion*(root: UiRoot; enabled: bool) =
   root.animations.reducedMotion = enabled
+  root.transitions.reducedMotion = enabled
+  if enabled and root.transitions.hasActiveTransitions:
+    root.invalidate({ddPaint, ddAnimation})
+
+proc reconcileStyleTransitions*(
+    root: UiRoot;
+    displayed, target: ResolvedTree;
+    nowSeconds: float64
+) =
+  if root.isNil:
+    return
+  root.transitions.reconcileTransitions(
+    root.tree, displayed, target, nowSeconds
+  )
+
+proc applyStyleTransitions*(
+    root: UiRoot;
+    styles: var ResolvedTree;
+    scheduler: var FrameScheduler;
+    nowSeconds: float64
+): int {.discardable.} =
+  if root.isNil:
+    return 0
+  root.transitions.applyTransitions(
+    root.tree, styles, scheduler, nowSeconds
+  )
+
+proc activeStyleTransitionCount*(root: UiRoot): int =
+  if root.isNil: 0
+  else: root.transitions.activeTransitionCount()
 
 proc invalidateClipboardText*(root: UiRoot) =
   ## Call this when the host knows an external clipboard owner may have changed.
@@ -658,6 +691,7 @@ proc disposeSubtree*(
       removedAnimations.add id
   for id in removedAnimations:
     discard root.cancelOwnedAnimation(id)
+  discard root.transitions.cancelTransitions(removedIds)
   let componentUnmountCallbacks = root.takeComponentUnmountCallbacks(removed)
   discard root.events.removeEventHandlers(removed)
   root.removeSubtreeStyles(removed)

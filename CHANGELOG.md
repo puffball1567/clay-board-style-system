@@ -9,6 +9,11 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added the first declarative style-transition runtime for `opacity`, `color`,
+  and `background-color`, including timing functions, signed delay, reversal,
+  Oklab color interpolation, reduced motion, subtree cancellation, active-only
+  frame scheduling, and deterministic headless-driver time advancement without
+  per-frame style resolution or layout.
 - Expanded enum-backed property authoring across existing closed text, image,
   background, blending, input, scrolling, transform, transition, and animation
   value sets. These helpers retain the validated keyword runtime path while

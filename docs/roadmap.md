@@ -1090,7 +1090,7 @@ Custom Styles retain their logical Box/transform hit path.
 
 ## Motion, Transform, And Native Visual Surfaces
 
-Status: `Planned`
+Status: `Partially implemented on the Version 0.4 development line`
 
 CBSS should support the CSS-inspired motion and geometric vocabulary needed by
 modern application UI without adopting a browser or a virtual-DOM redraw
@@ -1109,8 +1109,11 @@ Current and planned work:
 - Add perspective, perspective origin, `transform-style: preserve-3d`, and
   `backface-visibility` only as a coherent 3D scene/composition contract;
   storing these values as transform metadata is not runtime completion.
-- Add declarative transition property, duration, delay, timing-function, and
-  interpolation behavior for supported style values.
+- Implemented first runtime slice: declarative `transition-property`, duration,
+  signed delay, timing function, reversal, cancellation, and reduced-motion
+  behavior drive `opacity`, `color`, and `background-color`. Sampling is
+  proportional to active tracks and does not require style resolution or
+  layout on animation frames. Transform and additional typed values remain.
 - Implemented foundation: typed float/color keyframes and the animation clock
   resolve and interpolate deterministically; declaration-driven keyframe
   binding remains planned.
@@ -1118,6 +1121,9 @@ Current and planned work:
   scrolling motion, or Canvas requests one; idle UI remains event-driven.
 - Implemented foundation: the animation clock accepts reduced-motion policy;
   platform preference adapters remain planned.
+
+The current host and test contract is documented in
+[declarative-motion.md](declarative-motion.md).
 
 ### CSS-Like Motion Scene
 

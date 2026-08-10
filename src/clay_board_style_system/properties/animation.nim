@@ -438,7 +438,9 @@ proc applyTransitionTime(
     if declaration.property == "transition-duration":
       style.animation.transitionDuration = max(0.0'f32, value.get)
     else:
-      style.animation.transitionDelay = max(0.0'f32, value.get)
+      # A negative delay starts the transition partway through its active
+      # interval, matching CSS transition timing semantics.
+      style.animation.transitionDelay = value.get
   of mmInitial, mmUnset:
     if declaration.property == "transition-duration":
       style.animation.transitionDuration = 0

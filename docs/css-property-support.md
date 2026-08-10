@@ -41,26 +41,26 @@ Obsolete, legacy, or effectively deprecated CSS features should generally stay
 `No plan` even when browsers still carry them for compatibility. CBSS should spend
 implementation effort on modern native GUI behavior, not web compatibility debt.
 
-Keyframe animation is not excluded. `animation-*` and `transition-*` properties
-are currently `Metadata`: the style layer preserves the intent in a typed form,
-while applying those values to per-frame visual changes remains a later runtime
-subsystem.
+Keyframe animation is not excluded. `animation-*` properties and the remaining
+transition metadata preserve typed intent for later runtime work. Transition
+property, duration, delay, and timing function now drive the first paint-only
+runtime slice documented below.
 
 ## Summary
 
 | Status | Count |
 | --- | ---: |
-| Runtime | 162 |
+| Runtime | 166 |
 | Computed | 77 |
-| Metadata | 188 |
+| Metadata | 184 |
 | Planned | 0 |
 | No plan | 238 |
 | Target properties | 427 |
 | Total MDN entries | 665 |
 
-As of 2026-08-08, strict runtime completion is **162 of 427 target
-properties (37.9%)**. A further 77 properties reach computed style, so
-**239 of 427 (56.0%)** have runtime or computed support. All 427 target names
+As of 2026-08-10, strict runtime completion is **166 of 427 target
+properties (38.9%)**. A further 77 properties reach computed style, so
+**243 of 427 (56.9%)** have runtime or computed support. All 427 target names
 are accepted by the default registry, but metadata-only acceptance is not
 counted as completed behavior. The 238 `No plan` entries are excluded from the
 implementation target and from both percentages.
@@ -805,10 +805,10 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `transform-style` | Metadata | Supports `flat` and `preserve-3d` metadata. |
 | `transition` | Metadata | Stored as transition metadata; runtime subsystem is not complete yet. |
 | `transition-behavior` | Metadata | Stored as transition metadata; runtime subsystem is not complete yet. |
-| `transition-delay` | Metadata | Stored as transition metadata; runtime subsystem is not complete yet. |
-| `transition-duration` | Metadata | Stored as transition metadata; runtime subsystem is not complete yet. |
-| `transition-property` | Metadata | Stored as transition metadata; runtime subsystem is not complete yet. |
-| `transition-timing-function` | Metadata | Stored as transition metadata; runtime subsystem is not complete yet. |
+| `transition-delay` | Runtime | Drives the paint-transition runtime, including negative delay; list cycling remains planned. |
+| `transition-duration` | Runtime | Drives paint transitions for the currently supported interpolable properties. |
+| `transition-property` | Runtime | Selects `opacity`, `color`, and `background-color`, or `all`; additional values remain planned. |
+| `transition-timing-function` | Runtime | Supports the named timing functions, step start/end, and valid cubic Bezier curves for paint transitions. |
 | `translate` | Runtime | Resolves into the shared 2D affine paint, hit-test, clip, and surface-input contract. |
 | `trigger-scope` | Metadata | Stored as computed timeline trigger metadata. |
 | `unicode-bidi` | Metadata | Stored in computed text style; full bidi shaping remains text-engine dependent. |
