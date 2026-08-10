@@ -1,4 +1,4 @@
-import std/[algorithm, atomics, math, options, strutils, tables]
+import std/[algorithm, atomics, locks, math, options, strutils, tables]
 
 import ./core/[color, color_conversion, color_mix, color_mix_parser,
   color_parser, color_value, declaration, diagnostics, geometry, node, rule,
@@ -25,7 +25,7 @@ proc ensureNimRuntime() {.inline.} =
     NimMain()
 
 const
-  CbssAbiVersion* = 0x0001_000F'u32
+  CbssAbiVersion* = 0x0001_0010'u32
   CbssMaxEagerBlobBytes* = 64'u64 * 1024'u64 * 1024'u64
   CbssMaxBlobMimeBytes* = 1024
   CbssMaxFormDataEntries* = 65_536
@@ -286,6 +286,16 @@ type
   CbssStreamWakeCallback* = proc(
     userData: pointer
   ) {.cdecl, gcsafe, raises: [].}
+  CbssBlobProviderReadCallback* = proc(
+    userData: pointer;
+    offset: uint64;
+    output: pointer;
+    capacity: uint32;
+    outputRead: ptr uint32
+  ): int32 {.cdecl, gcsafe, raises: [].}
+  CbssBlobProviderReleaseCallback* = proc(
+    userData: pointer
+  ) {.cdecl, gcsafe, raises: [].}
 
   CbssRenderSurfaceBinding = ref object
     context: CbssContextHandle
@@ -349,6 +359,11 @@ type
     mimeBytes: pointer
     mimeLength: uint32
     references: Atomic[uint32]
+    providerGate: Lock
+    providerRead: CbssBlobProviderReadCallback
+    providerRelease: CbssBlobProviderReleaseCallback
+    providerData: pointer
+    providerBacked: bool
 
   CbssFormDataEntryObj = object
     nameBytes: pointer
@@ -1324,6 +1339,45 @@ proc cbssBlobCreate(
   output[] = allocated
   CbssOk
 
+proc cbssBlobCreateProvider(
+    length: uint64;
+    mimeType: cstring;
+    readCallback: CbssBlobProviderReadCallback;
+    releaseCallback: CbssBlobProviderReleaseCallback;
+    userData: pointer;
+    output: ptr CbssBlobHandle
+): int32 {.exportc: "cbss_blob_create_provider", cdecl, dynlib.} =
+  ensureNimRuntime()
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  if readCallback == nil:
+    return CbssInvalidArgument
+  let mimeLength = if mimeType.isNil: 0 else: mimeType.len
+  if mimeLength > CbssMaxBlobMimeBytes:
+    return CbssOutOfRange
+
+  let allocated = cast[CbssBlobHandle](allocShared0(sizeof(CbssBlobObj)))
+  if allocated.isNil:
+    return CbssInternalError
+  if mimeLength > 0:
+    allocated.mimeBytes = allocShared(mimeLength + 1)
+    if allocated.mimeBytes.isNil:
+      deallocShared(allocated)
+      return CbssInternalError
+    copyMem(allocated.mimeBytes, mimeType, mimeLength)
+    cast[ptr UncheckedArray[char]](allocated.mimeBytes)[mimeLength] = '\0'
+  initLock(allocated.providerGate)
+  allocated.length = length
+  allocated.mimeLength = uint32(mimeLength)
+  allocated.providerRead = readCallback
+  allocated.providerRelease = releaseCallback
+  allocated.providerData = userData
+  allocated.providerBacked = true
+  allocated.references.store(1)
+  output[] = allocated
+  CbssOk
+
 proc retainBlobHandle(blob: CbssBlobHandle): int32 {.raises: [].} =
   if blob.isNil:
     return CbssInvalidHandle
@@ -1345,7 +1399,11 @@ proc releaseBlobHandle(blob: CbssBlobHandle) {.raises: [].} =
   let previous = blob.references.fetchSub(1)
   if previous != 1:
     return
-  if not blob.bytes.isNil:
+  if blob.providerBacked:
+    if blob.providerRelease != nil:
+      blob.providerRelease(blob.providerData)
+    deinitLock(blob.providerGate)
+  elif not blob.bytes.isNil:
     deallocShared(blob.bytes)
   if not blob.mimeBytes.isNil:
     deallocShared(blob.mimeBytes)
@@ -1390,6 +1448,31 @@ proc cbssBlobRead(
     return CbssOutOfRange
   let available = blob.length - offset
   let count = min(available, uint64(capacity))
+  if blob.providerBacked:
+    if count == 0:
+      return CbssOk
+    var providerRead = 0'u32
+    var status = CbssInternalError
+    acquire(blob.providerGate)
+    try:
+      status = blob.providerRead(
+        blob.providerData,
+        offset,
+        output,
+        uint32(count),
+        addr providerRead
+      )
+    finally:
+      release(blob.providerGate)
+    if status != CbssOk:
+      return if status in CbssInvalidArgument .. CbssNotAvailable:
+        status
+      else:
+        CbssInternalError
+    if providerRead > uint32(count):
+      return CbssInternalError
+    outputRead[] = providerRead
+    return CbssOk
   if count > 0:
     let source = cast[ptr UncheckedArray[byte]](blob.bytes)
     copyMem(output, unsafeAddr source[int(offset)], int(count))
