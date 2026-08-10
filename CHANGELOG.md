@@ -7,6 +7,14 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+### Added
+
+- Added C ABI `0x0001000F` bounded Blob streams with UI-owned consumers,
+  atomically retained cross-thread producers, item/byte backpressure,
+  coalesced wake callbacks, ordered pump/drain, explicit Blob ownership,
+  progress and terminal events, foreign-thread attach/detach, and shared/static
+  ARC/ORC pthread consumer coverage.
+
 ## [0.3.2] - 2026-08-04
 
 ### Changed

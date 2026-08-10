@@ -95,28 +95,44 @@ task checkExamplesOrc, "Type-check public examples under ORC":
   exec "nim check --mm:orc --path:src --nimcache:/tmp/clay_board_style_system_orc_check_door_button_canvas -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/door_button_canvas_demo.nim"
 
 task buildCAbiShared, "Build the shared CBSS C ABI library":
-  exec "nim c --app:lib --mm:arc -d:release --path:src --nimcache:/tmp/clay_board_style_system_c_api_shared_nimcache --out:/tmp/libcbss.so src/cbss_c_api.nim"
+  exec "nim c --threads:on --app:lib --mm:arc -d:release --path:src --nimcache:/tmp/clay_board_style_system_c_api_shared_nimcache --out:/tmp/libcbss.so src/cbss_c_api.nim"
 
 task buildCAbiStatic, "Build the static CBSS C ABI library":
-  exec "nim c --app:staticlib --mm:arc -d:release --path:src --nimcache:/tmp/clay_board_style_system_c_api_static_nimcache --out:/tmp/libcbss.a src/cbss_c_api.nim"
+  exec "nim c --threads:on --app:staticlib --mm:arc -d:release --path:src --nimcache:/tmp/clay_board_style_system_c_api_static_nimcache --out:/tmp/libcbss.a src/cbss_c_api.nim"
 
 task testCAbi, "Build and exercise the shared and static C ABI from C":
-  exec "nim c --app:lib --mm:arc -d:release --path:src --nimcache:/tmp/clay_board_style_system_c_api_shared_nimcache --out:/tmp/libcbss.so src/cbss_c_api.nim"
+  exec "nim c --threads:on --app:lib --mm:arc -d:release --path:src --nimcache:/tmp/clay_board_style_system_c_api_shared_nimcache --out:/tmp/libcbss.so src/cbss_c_api.nim"
   exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude -fsyntax-only tests/c_api/header_consumer.c"
   exec "c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -fsyntax-only tests/c_api/header_consumer.cpp"
   exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/c_consumer.c -L/tmp -Wl,-rpath,/tmp -lcbss -lm -o /tmp/clay_board_style_system_c_consumer_shared"
   exec "/tmp/clay_board_style_system_c_consumer_shared"
-  exec "nim c --app:staticlib --mm:arc -d:release --path:src --nimcache:/tmp/clay_board_style_system_c_api_static_nimcache --out:/tmp/libcbss.a src/cbss_c_api.nim"
+  exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/stream_consumer.c -L/tmp -Wl,-rpath,/tmp -lcbss -lm -lpthread -ldl -o /tmp/clay_board_style_system_c_stream_consumer_shared"
+  exec "/tmp/clay_board_style_system_c_stream_consumer_shared"
+  exec "nim c --threads:on --app:staticlib --mm:arc -d:release --path:src --nimcache:/tmp/clay_board_style_system_c_api_static_nimcache --out:/tmp/libcbss.a src/cbss_c_api.nim"
   exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/c_consumer.c /tmp/libcbss.a -lm -lpthread -ldl -o /tmp/clay_board_style_system_c_consumer_static"
   exec "/tmp/clay_board_style_system_c_consumer_static"
+  exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/stream_consumer.c /tmp/libcbss.a -lm -lpthread -ldl -o /tmp/clay_board_style_system_c_stream_consumer_static"
+  exec "/tmp/clay_board_style_system_c_stream_consumer_static"
+
+task testCAbiOrc, "Exercise cross-thread C ABI streams under ORC":
+  exec "nim c --threads:on --app:lib --mm:orc -d:release --path:src --nimcache:/tmp/clay_board_style_system_c_api_orc_shared_nimcache --out:/tmp/libcbss_orc.so src/cbss_c_api.nim"
+  exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/stream_consumer.c -L/tmp -Wl,-rpath,/tmp -l:libcbss_orc.so -lm -lpthread -ldl -o /tmp/clay_board_style_system_c_stream_consumer_orc_shared"
+  exec "/tmp/clay_board_style_system_c_stream_consumer_orc_shared"
+  exec "nim c --threads:on --app:staticlib --mm:orc -d:release --path:src --nimcache:/tmp/clay_board_style_system_c_api_orc_static_nimcache --out:/tmp/libcbss_orc.a src/cbss_c_api.nim"
+  exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/stream_consumer.c /tmp/libcbss_orc.a -lm -lpthread -ldl -o /tmp/clay_board_style_system_c_stream_consumer_orc_static"
+  exec "/tmp/clay_board_style_system_c_stream_consumer_orc_static"
 
 task testCAbiValgrind, "Run shared and static C ABI consumers under Valgrind":
-  exec "nim c --app:lib --mm:arc -d:release -d:useMalloc --path:src --nimcache:/tmp/clay_board_style_system_c_api_valgrind_shared_nimcache --out:/tmp/libcbss.so src/cbss_c_api.nim"
+  exec "nim c --threads:on --app:lib --mm:arc -d:release -d:useMalloc --path:src --nimcache:/tmp/clay_board_style_system_c_api_valgrind_shared_nimcache --out:/tmp/libcbss.so src/cbss_c_api.nim"
   exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/c_consumer.c -L/tmp -Wl,-rpath,/tmp -lcbss -lm -o /tmp/clay_board_style_system_c_consumer_shared"
   exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 /tmp/clay_board_style_system_c_consumer_shared"
-  exec "nim c --app:staticlib --mm:arc -d:release -d:useMalloc --path:src --nimcache:/tmp/clay_board_style_system_c_api_valgrind_static_nimcache --out:/tmp/libcbss.a src/cbss_c_api.nim"
+  exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/stream_consumer.c -L/tmp -Wl,-rpath,/tmp -lcbss -lm -lpthread -ldl -o /tmp/clay_board_style_system_c_stream_consumer_shared"
+  exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 /tmp/clay_board_style_system_c_stream_consumer_shared"
+  exec "nim c --threads:on --app:staticlib --mm:arc -d:release -d:useMalloc --path:src --nimcache:/tmp/clay_board_style_system_c_api_valgrind_static_nimcache --out:/tmp/libcbss.a src/cbss_c_api.nim"
   exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/c_consumer.c /tmp/libcbss.a -lm -lpthread -ldl -o /tmp/clay_board_style_system_c_consumer_static"
   exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 /tmp/clay_board_style_system_c_consumer_static"
+  exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/stream_consumer.c /tmp/libcbss.a -lm -lpthread -ldl -o /tmp/clay_board_style_system_c_stream_consumer_static"
+  exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 /tmp/clay_board_style_system_c_stream_consumer_static"
 
 task testWidgetLifecycleValgrind, "Run ARC widget lifecycle checks under Valgrind":
   exec "nim c --mm:arc -d:release -d:useMalloc --path:src --nimcache:/tmp/clay_board_style_system_widget_lifecycle_nimcache --out:/tmp/clay_board_style_system_widget_lifecycle tests/memory/widget_lifecycle.nim"

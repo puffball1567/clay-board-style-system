@@ -8,5 +8,5 @@ CBSS_DEPRECATED("compile-only C deprecation contract probe")
 CBSS_API void deprecated_c_contract_probe(void);
 
 int main(void) {
-  return CBSS_ABI_VERSION == 0x0001000Eu ? 0 : 1;
+  return CBSS_ABI_VERSION == 0x0001000Fu ? 0 : 1;
 }

@@ -3,7 +3,7 @@ import std/[algorithm, atomics, math, options, strutils, tables]
 import ./core/[color, color_conversion, color_mix, color_mix_parser,
   color_parser, color_value, declaration, diagnostics, geometry, node, rule,
   selector, style_resolver, style_value]
-import ./data/[blob, form_data]
+import ./data/[blob, form_data, stream_bridge, stream_mailbox]
 import ./core/computed_style as computed_style_types
 import ./generated/default_properties
 import ./hit/hit_test
@@ -25,12 +25,13 @@ proc ensureNimRuntime() {.inline.} =
     NimMain()
 
 const
-  CbssAbiVersion* = 0x0001_000E'u32
+  CbssAbiVersion* = 0x0001_000F'u32
   CbssMaxEagerBlobBytes* = 64'u64 * 1024'u64 * 1024'u64
   CbssMaxBlobMimeBytes* = 1024
   CbssMaxFormDataEntries* = 65_536
   CbssMaxFormDataNameBytes* = 65_536
   CbssMaxFormDataTextBytes* = 16 * 1024 * 1024
+  CbssMaxStreamErrorBytes* = 65_536
   CbssNodeNone* = high(uint32)
 
   CbssOk* = 0'i32
@@ -43,6 +44,14 @@ const
 
   CbssFormDataText* = 0'u32
   CbssFormDataBlob* = 1'u32
+
+  CbssStreamOfferAccepted* = 0'u32
+  CbssStreamOfferBackpressure* = 1'u32
+  CbssStreamOfferInvalidState* = 2'u32
+  CbssStreamOfferDisposed* = 3'u32
+  CbssStreamOfferInvalidArgument* = 4'u32
+
+  CbssStreamEventHasTotal* = 1'u32 shl 0
 
   CbssInputHasPosition* = 1'u32 shl 0
   CbssInputHasDelta* = 1'u32 shl 1
@@ -239,6 +248,17 @@ type
     pixelWidth*, pixelHeight*: cfloat
     input*: CbssInputEventC
 
+  CbssStreamPumpResultC* {.bycopy.} = object
+    processed*, rejected*: uint32
+    changed*, backpressured*, pending*: uint8
+
+  CbssStreamEventC* {.bycopy.} = object
+    kind*, flags*: uint32
+    blob*: CbssBlobHandle
+    weight*: uint64
+    completed*, total*: uint64
+    messageBytes*: uint32
+
   CbssContextHandle* = ptr CbssContextObj
   CbssStyleHandle* = ptr CbssStyleObj
   CbssColorValueHandle* = ptr CbssColorValueObj
@@ -246,6 +266,8 @@ type
   CbssFormDataBuilderHandle* = ptr CbssFormDataBuilderObj
   CbssFormDataHandle* = ptr CbssFormDataObj
   CbssEventViewHandle* = ptr CbssEventViewObj
+  CbssBlobStreamHandle* = ptr CbssBlobStreamObj
+  CbssStreamProducerHandle* = ptr CbssStreamProducerObj
   CbssEventCallback* = proc(
     context: CbssContextHandle;
     event: ptr CbssEventC;
@@ -261,6 +283,9 @@ type
     event: ptr CbssRenderSurfaceEventC;
     userData: pointer
   ): uint32 {.cdecl.}
+  CbssStreamWakeCallback* = proc(
+    userData: pointer
+  ) {.cdecl, gcsafe, raises: [].}
 
   CbssRenderSurfaceBinding = ref object
     context: CbssContextHandle
@@ -349,6 +374,18 @@ type
     formData: CbssFormDataHandle
     formDataStatus: int32
 
+  CbssStreamBlobPayload = object
+    blob: CbssBlobHandle
+
+  CbssBlobStreamObj = object
+    mailbox: StreamMailbox[CbssStreamBlobPayload]
+    bridge: StreamBridge[CbssStreamBlobPayload]
+    lastError: string
+
+  CbssStreamProducerObj = object
+    producer: StreamProducer[CbssStreamBlobPayload]
+    references: Atomic[uint32]
+
 static:
   doAssert sizeof(CbssRectC) == 16
   doAssert sizeof(CbssColorC) == 16
@@ -368,6 +405,39 @@ static:
   doAssert sizeof(CbssAccessibilityC) == 32
   doAssert sizeof(CbssRenderSurfacePlacementC) == 40
   doAssert sizeof(CbssRenderSurfaceEventC) == 232
+  doAssert sizeof(CbssStreamPumpResultC) == 12
+  doAssert sizeof(CbssStreamEventC) == 48
+
+proc retainBlobHandle(blob: CbssBlobHandle): int32 {.raises: [].}
+proc releaseBlobHandle(blob: CbssBlobHandle) {.raises: [].}
+proc boundedCStringLength(value: cstring; maximum: int): int
+
+proc `=destroy`(payload: var CbssStreamBlobPayload) =
+  if not payload.blob.isNil:
+    releaseBlobHandle(payload.blob)
+    payload.blob = nil
+
+proc `=copy`(
+    destination: var CbssStreamBlobPayload;
+    source: CbssStreamBlobPayload
+) =
+  if destination.blob == source.blob:
+    return
+  if not source.blob.isNil:
+    discard retainBlobHandle(source.blob)
+  `=destroy`(destination)
+  destination.blob = source.blob
+
+proc `=sink`(
+    destination: var CbssStreamBlobPayload;
+    source: CbssStreamBlobPayload
+) =
+  `=destroy`(destination)
+  destination.blob = source.blob
+
+proc takeBlob(payload: var CbssStreamBlobPayload): CbssBlobHandle =
+  result = payload.blob
+  payload.blob = nil
 
 proc toRect(value: Rect): CbssRectC {.inline.} =
   CbssRectC(x: value.x, y: value.y, w: value.w, h: value.h)
@@ -1203,6 +1273,14 @@ proc cbssAbiVersion(): uint32 {.
     exportc: "cbss_abi_version", cdecl, dynlib, raises: [].} =
   CbssAbiVersion
 
+proc cbssThreadAttach() {.
+    exportc: "cbss_thread_attach", cdecl, dynlib, raises: [].} =
+  setupForeignThreadGc()
+
+proc cbssThreadDetach() {.
+    exportc: "cbss_thread_detach", cdecl, dynlib, raises: [].} =
+  tearDownForeignThreadGc()
+
 proc cbssBlobCreate(
     bytes: pointer;
     length: uint64;
@@ -1246,8 +1324,7 @@ proc cbssBlobCreate(
   output[] = allocated
   CbssOk
 
-proc cbssBlobRetain(blob: CbssBlobHandle): int32 {.
-    exportc: "cbss_blob_retain", cdecl, dynlib.} =
+proc retainBlobHandle(blob: CbssBlobHandle): int32 {.raises: [].} =
   if blob.isNil:
     return CbssInvalidHandle
   var current = blob.references.load()
@@ -1258,8 +1335,11 @@ proc cbssBlobRetain(blob: CbssBlobHandle): int32 {.
     current = expected
   if current == high(uint32): CbssOutOfRange else: CbssInvalidHandle
 
-proc cbssBlobRelease(blob: CbssBlobHandle) {.
-    exportc: "cbss_blob_release", cdecl, dynlib.} =
+proc cbssBlobRetain(blob: CbssBlobHandle): int32 {.
+    exportc: "cbss_blob_retain", cdecl, dynlib, raises: [].} =
+  retainBlobHandle(blob)
+
+proc releaseBlobHandle(blob: CbssBlobHandle) {.raises: [].} =
   if blob.isNil:
     return
   let previous = blob.references.fetchSub(1)
@@ -1270,6 +1350,10 @@ proc cbssBlobRelease(blob: CbssBlobHandle) {.
   if not blob.mimeBytes.isNil:
     deallocShared(blob.mimeBytes)
   deallocShared(blob)
+
+proc cbssBlobRelease(blob: CbssBlobHandle) {.
+    exportc: "cbss_blob_release", cdecl, dynlib, raises: [].} =
+  releaseBlobHandle(blob)
 
 proc cbssBlobSize(blob: CbssBlobHandle): uint64 {.
     exportc: "cbss_blob_size", cdecl, dynlib, raises: [].} =
@@ -1311,6 +1395,248 @@ proc cbssBlobRead(
     copyMem(output, unsafeAddr source[int(offset)], int(count))
   outputRead[] = uint32(count)
   CbssOk
+
+proc toCStreamOffer(value: StreamMailboxOfferResult): uint32 {.inline.} =
+  case value
+  of smorAccepted: CbssStreamOfferAccepted
+  of smorBackpressure: CbssStreamOfferBackpressure
+  of smorInvalidState: CbssStreamOfferInvalidState
+  of smorDisposed: CbssStreamOfferDisposed
+
+proc cbssBlobStreamCreate(
+    maxQueuedItems: uint32;
+    maxQueuedWeight: uint64;
+    output: ptr CbssBlobStreamHandle
+): int32 {.exportc: "cbss_blob_stream_create", cdecl, dynlib.} =
+  ensureNimRuntime()
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  if maxQueuedItems == 0 or uint64(maxQueuedItems) > uint64(high(int)) or
+      maxQueuedWeight == 0 or maxQueuedWeight > uint64(high(int64)):
+    return CbssOutOfRange
+  var stream: CbssBlobStreamHandle
+  try:
+    stream = create(CbssBlobStreamObj)
+    stream.mailbox = initStreamMailbox[CbssStreamBlobPayload](
+      int(maxQueuedItems), int64(maxQueuedWeight)
+    )
+    stream.bridge = initStreamBridge[CbssStreamBlobPayload](
+      int(maxQueuedItems), int64(maxQueuedWeight)
+    )
+    output[] = stream
+    CbssOk
+  except CatchableError:
+    if not stream.isNil:
+      `=destroy`(stream[])
+      dealloc(stream)
+    CbssInternalError
+
+proc cbssBlobStreamDestroy(stream: CbssBlobStreamHandle) {.
+    exportc: "cbss_blob_stream_destroy", cdecl, dynlib.} =
+  if stream.isNil:
+    return
+  discard stream.mailbox.dispose()
+  discard stream.bridge.close()
+  discard stream.bridge.drain()
+  `=destroy`(stream[])
+  dealloc(stream)
+
+proc cbssBlobStreamProducer(
+    stream: CbssBlobStreamHandle;
+    output: ptr CbssStreamProducerHandle
+): int32 {.exportc: "cbss_blob_stream_producer", cdecl, dynlib.} =
+  if stream.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  let allocated = cast[CbssStreamProducerHandle](
+    allocShared0(sizeof(CbssStreamProducerObj))
+  )
+  if allocated.isNil:
+    return CbssInternalError
+  allocated.references.store(1, moRelaxed)
+  allocated.producer = stream.mailbox.producer()
+  output[] = allocated
+  CbssOk
+
+proc cbssStreamProducerRetain(
+    producer: CbssStreamProducerHandle
+): int32 {.exportc: "cbss_stream_producer_retain", cdecl, dynlib.} =
+  if producer.isNil:
+    return CbssInvalidHandle
+  var current = producer.references.load(moRelaxed)
+  while current > 0 and current < high(uint32):
+    var expected = current
+    if producer.references.compareExchange(
+        expected, current + 1, moAcquireRelease, moRelaxed
+    ):
+      return CbssOk
+    current = expected
+  if current == high(uint32): CbssOutOfRange else: CbssInvalidHandle
+
+proc cbssStreamProducerRelease(producer: CbssStreamProducerHandle) {.
+    exportc: "cbss_stream_producer_release", cdecl, dynlib.} =
+  if producer.isNil:
+    return
+  if producer.references.fetchSub(1, moAcquireRelease) != 1:
+    return
+  reset(producer.producer)
+  deallocShared(producer)
+
+proc cbssBlobStreamSetWakeCallback(
+    stream: CbssBlobStreamHandle;
+    callback: CbssStreamWakeCallback;
+    userData: pointer
+): int32 {.exportc: "cbss_blob_stream_set_wake_callback", cdecl, dynlib.} =
+  if stream.isNil:
+    return CbssInvalidHandle
+  stream.mailbox.setWakeCallback(callback, userData)
+  CbssOk
+
+proc cbssStreamProducerState(
+    producer: CbssStreamProducerHandle
+): uint32 {.exportc: "cbss_stream_producer_state", cdecl, dynlib.} =
+  if producer.isNil:
+    return uint32(ssClosed.ord)
+  uint32(producer.producer.state.ord)
+
+proc cbssStreamProducerOpen(
+    producer: CbssStreamProducerHandle
+): uint32 {.exportc: "cbss_stream_producer_open", cdecl, dynlib.} =
+  if producer.isNil:
+    return CbssStreamOfferDisposed
+  producer.producer.open().toCStreamOffer()
+
+proc cbssStreamProducerPushBlob(
+    producer: CbssStreamProducerHandle;
+    blob: CbssBlobHandle;
+    weight: uint64
+): uint32 {.exportc: "cbss_stream_producer_push_blob", cdecl, dynlib.} =
+  if producer.isNil:
+    return CbssStreamOfferDisposed
+  if blob.isNil or weight > uint64(high(int64)):
+    return CbssStreamOfferInvalidArgument
+  if cbssBlobRetain(blob) != CbssOk:
+    return CbssStreamOfferInvalidArgument
+  var payload = CbssStreamBlobPayload(blob: blob)
+  producer.producer.pushData(move(payload), int64(weight)).toCStreamOffer()
+
+proc cbssStreamProducerProgress(
+    producer: CbssStreamProducerHandle;
+    completed, total: uint64;
+    hasTotal: uint8
+): uint32 {.exportc: "cbss_stream_producer_progress", cdecl, dynlib.} =
+  if producer.isNil:
+    return CbssStreamOfferDisposed
+  if hasTotal > 1 or (hasTotal == 1 and completed > total):
+    return CbssStreamOfferInvalidArgument
+  let totalValue = if hasTotal == 1: some(total) else: none(uint64)
+  producer.producer.reportProgress(completed, totalValue).toCStreamOffer()
+
+proc cbssStreamProducerFinish(
+    producer: CbssStreamProducerHandle
+): uint32 {.exportc: "cbss_stream_producer_finish", cdecl, dynlib.} =
+  if producer.isNil:
+    return CbssStreamOfferDisposed
+  producer.producer.finish().toCStreamOffer()
+
+proc cbssStreamProducerFail(
+    producer: CbssStreamProducerHandle;
+    message: cstring
+): uint32 {.exportc: "cbss_stream_producer_fail", cdecl, dynlib.} =
+  if producer.isNil:
+    return CbssStreamOfferDisposed
+  let length = boundedCStringLength(message, CbssMaxStreamErrorBytes)
+  if length <= 0 or length > CbssMaxStreamErrorBytes:
+    return CbssStreamOfferInvalidArgument
+  producer.producer.fail($message).toCStreamOffer()
+
+proc cbssStreamProducerCancel(
+    producer: CbssStreamProducerHandle
+): uint32 {.exportc: "cbss_stream_producer_cancel", cdecl, dynlib.} =
+  if producer.isNil:
+    return CbssStreamOfferDisposed
+  producer.producer.cancel().toCStreamOffer()
+
+proc cbssStreamProducerClose(
+    producer: CbssStreamProducerHandle
+): uint32 {.exportc: "cbss_stream_producer_close", cdecl, dynlib.} =
+  if producer.isNil:
+    return CbssStreamOfferDisposed
+  producer.producer.close().toCStreamOffer()
+
+proc cbssBlobStreamPump(
+    stream: CbssBlobStreamHandle;
+    maxMessages: uint32;
+    output: ptr CbssStreamPumpResultC
+): int32 {.exportc: "cbss_blob_stream_pump", cdecl, dynlib.} =
+  if stream.isNil:
+    return CbssInvalidHandle
+  if output.isNil or maxMessages == 0 or
+      uint64(maxMessages) > uint64(high(int)):
+    return CbssInvalidArgument
+  output[] = default(CbssStreamPumpResultC)
+  let pumped = stream.mailbox.pumpInto(stream.bridge, int(maxMessages))
+  output.processed = uint32(pumped.processed)
+  output.rejected = uint32(pumped.rejected)
+  output.changed = uint8(pumped.changed)
+  output.backpressured = uint8(pumped.backpressured)
+  output.pending = uint8(pumped.pending)
+  CbssOk
+
+proc cbssBlobStreamNext(
+    stream: CbssBlobStreamHandle;
+    output: ptr CbssStreamEventC
+): int32 {.exportc: "cbss_blob_stream_next", cdecl, dynlib.} =
+  if stream.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = default(CbssStreamEventC)
+  var events = stream.bridge.drain(1)
+  if events.len == 0:
+    return CbssNotAvailable
+  var event = move(events[0])
+  output.kind = uint32(event.kind.ord)
+  case event.kind
+  of sekData:
+    output.blob = event.data.takeBlob()
+    output.weight = uint64(event.weight)
+  of sekProgress:
+    output.completed = event.completed
+    if event.total.isSome:
+      output.flags = CbssStreamEventHasTotal
+      output.total = event.total.get
+  of sekError:
+    stream.lastError = move(event.message)
+    output.messageBytes = uint32(stream.lastError.len)
+  else:
+    discard
+  CbssOk
+
+proc cbssBlobStreamErrorMessage(
+    stream: CbssBlobStreamHandle;
+    buffer: cstring;
+    capacity: uint32
+): uint32 {.exportc: "cbss_blob_stream_error_message", cdecl, dynlib.} =
+  if stream.isNil:
+    return 0
+  result = uint32(stream.lastError.len)
+  if buffer.isNil or capacity == 0:
+    return
+  let copyLength = int(min(uint32(stream.lastError.len), capacity - 1))
+  if copyLength > 0:
+    copyMem(buffer, unsafeAddr stream.lastError[0], copyLength)
+  cast[ptr UncheckedArray[char]](buffer)[copyLength] = '\0'
+
+proc cbssBlobStreamHasPending(
+    stream: CbssBlobStreamHandle
+): uint8 {.exportc: "cbss_blob_stream_has_pending", cdecl, dynlib.} =
+  if stream.isNil:
+    return 0
+  uint8(stream.mailbox.hasPending or stream.bridge.hasPending)
 
 proc releaseFormDataEntry(entry: var CbssFormDataEntryObj) =
   if not entry.nameBytes.isNil:

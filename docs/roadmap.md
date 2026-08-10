@@ -625,8 +625,14 @@ explicit disposal, and has real threaded ARC/ORC transfer tests. UI trees,
 components, and `StreamBridge` remain UI-thread-owned rather than becoming
 lock-based shared objects.
 
-Remaining: host-authorized file/provider Blob sources, optional transport
-adapters, and C ABI transport.
+The Blob-specialized C ABI transport is implemented in ABI `0x0001000F` with
+opaque UI and producer handles, bounded item/byte pressure, coalesced wake
+callbacks, ordered pump/drain, explicit Blob ownership transfer, and real
+pthread consumers for shared and static ARC/ORC builds. Foreign workers use an
+explicit runtime attach/detach boundary.
+
+Remaining: host-authorized file/provider Blob sources and optional transport
+adapters.
 
 CBSS will define transport-neutral data contracts for UI operations that need
 binary values, form snapshots, or progressively produced data. These contracts
@@ -731,8 +737,9 @@ the UI drains it and performs invalidation only when transferred events change
 observable state. `ComponentStreamBinding[T]` now connects that pump to selected
 dirty domains and is retained through the general component-owned resource
 lifecycle. Subtree disposal closes the mailbox, drains retained payloads, and
-rejects escaped producer handles exactly once under ARC and ORC. Release
-completion remains gated on C ABI transport.
+rejects escaped producer handles exactly once under ARC and ORC. The C ABI
+transport now exposes the same state machines for immutable Blob chunks without
+exporting managed Nim storage.
 The SDL3 adapter now posts a coalesced, integer-token-only user event from the
 worker callback. A real worker test proves that an SDL event loop blocked in
 `SDL_WaitEventTimeout` wakes, routes only the matching binding, preserves stream

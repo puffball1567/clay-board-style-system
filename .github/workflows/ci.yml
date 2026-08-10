@@ -98,6 +98,9 @@ jobs:
       - name: Check public modules and examples under ORC
         run: nimble checkExamplesOrc -y
 
+      - name: Check cross-thread C ABI streams under ORC
+        run: nimble testCAbiOrc -y
+
   portable:
     name: Portable core (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
@@ -148,8 +151,8 @@ jobs:
 
       - name: Build shared and static C ABI libraries
         run: |
-          nim c --app:lib --mm:arc -d:release --path:src "--nimcache:${{ runner.temp }}/cbss-c-api-shared-cache" "--outdir:${{ runner.temp }}/cbss-c-api" src/cbss_c_api.nim
-          nim c --app:staticlib --mm:arc -d:release --path:src "--nimcache:${{ runner.temp }}/cbss-c-api-static-cache" "--outdir:${{ runner.temp }}/cbss-c-api" src/cbss_c_api.nim
+          nim c --threads:on --app:lib --mm:arc -d:release --path:src "--nimcache:${{ runner.temp }}/cbss-c-api-shared-cache" "--outdir:${{ runner.temp }}/cbss-c-api" src/cbss_c_api.nim
+          nim c --threads:on --app:staticlib --mm:arc -d:release --path:src "--nimcache:${{ runner.temp }}/cbss-c-api-static-cache" "--outdir:${{ runner.temp }}/cbss-c-api" src/cbss_c_api.nim
 
       - name: Check C and C++ public headers (Unix)
         if: runner.os != 'Windows'
