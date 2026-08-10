@@ -9,6 +9,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Expanded enum-backed property authoring across existing closed text, image,
+  background, blending, input, scrolling, transform, transition, and animation
+  value sets. These helpers retain the validated keyword runtime path while
+  adding LSP completion and compile-time rejection of unrelated values.
 - Added C ABI `0x00010010` and Nim host-authorized Blob providers with lazy
   bounded reads, serialized access per Blob, success-only context ownership,
   exactly-once release, and ARC/ORC plus pthread/Valgrind coverage.
