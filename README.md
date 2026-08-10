@@ -310,6 +310,9 @@ nimble checkExamples
 nimble checkExamplesOrc
 nimble bench
 nimble testMotionAsan
+nimble testUbsan
+nimble testLsan
+nimble testTsan
 nimble testWidgetLifecycleValgrind
 nimble testCAbiValgrind
 ```
@@ -319,7 +322,10 @@ ORC. CI also checks portable public modules on Linux, Windows, and macOS,
 builds shared and static C ABI artifacts, tests both Rust bridges, verifies
 source-only package installation, and runs release hygiene checks. Declarative
 motion tests run under AddressSanitizer with ARC and ORC on Linux, Windows, and
-macOS. Valgrind remains a Linux-specific leak and lifecycle gate.
+macOS. UndefinedBehaviorSanitizer covers Linux and macOS; ThreadSanitizer covers
+the same two systems. Standalone LeakSanitizer and Valgrind run on Linux. Other
+platform combinations are omitted when their sanitizer runtime cannot be
+reliably linked and maintained with the CI toolchain.
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before changing a public boundary or hot
 path. Properties, elements, backends, and reference controls are separated so
@@ -340,7 +346,26 @@ component mount and disposal, animations, popup closers, focus, clipboard, and
 text composition. Shared and static C ABI consumers have separate lifecycle
 gates. Valgrind complements the three-platform AddressSanitizer matrix and
 platform integration tests; it does not replace them and is not presented as a
-portable Windows or macOS verifier.
+portable Windows or macOS verifier. UndefinedBehaviorSanitizer checks numeric,
+layout, transform, and motion paths on Linux and macOS. Standalone
+LeakSanitizer checks retained lifecycles on Linux, while ThreadSanitizer checks
+worker-to-UI stream ownership on Linux and macOS. Each sanitizer task runs under
+both ARC and ORC. Windows is covered by the portable suite and ASan instead of
+an unverified UBSan runtime. Sanitizer runtimes are test-only and are never
+linked into release or application artifacts.
+
+| Verification | Linux | Windows | macOS |
+| --- | --- | --- | --- |
+| Portable tests and type checks | Yes | Yes | Yes |
+| LLVM AddressSanitizer | ARC + ORC | ARC + ORC | ARC + ORC |
+| LLVM UndefinedBehaviorSanitizer | ARC + ORC | No (portable + ASan) | ARC + ORC |
+| Standalone LeakSanitizer | ARC + ORC | No (Linux leak gates) | No (Linux leak gates) |
+| LLVM ThreadSanitizer | ARC + ORC | No (Unix TSan gates) | ARC + ORC |
+| Valgrind lifecycle and C ABI | ARC | No (Linux gate) | No (Linux gate) |
+
+Additional sanitizer tasks accept `CBSS_CLANG` when a specific compiler binary
+is required. CI pins Linux to `clang-18`; local runs otherwise use `clang` from
+`PATH`.
 
 ## Name And License
 

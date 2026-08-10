@@ -254,6 +254,124 @@ jobs:
           clang --version
           nimble testMotionAsan -y
 
+  undefined-behavior-sanitizer:
+    name: UBSan (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux x86_64
+            os: ubuntu-latest
+            compiler: clang-18
+          - platform: macOS arm64
+            os: macos-latest
+            compiler: clang
+
+    env:
+      CBSS_CLANG: ${{ matrix.compiler }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nim
+        uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
+        with:
+          nim-version: '2.2.10'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sanitizer toolchain versions
+        run: |
+          nim --version
+          "$CBSS_CLANG" --version
+
+      - name: Verify UBSan runtime availability
+        run: |
+          printf '%s\n' 'int main(void) { return 0; }' > "$RUNNER_TEMP/cbss_ubsan_probe.c"
+          "$CBSS_CLANG" -fsanitize=undefined "$RUNNER_TEMP/cbss_ubsan_probe.c" -o "$RUNNER_TEMP/cbss_ubsan_probe"
+          "$RUNNER_TEMP/cbss_ubsan_probe"
+
+      - name: Check numeric, layout, transform, and motion behavior
+        run: nimble testUbsan -y
+
+  leak-sanitizer:
+    name: LSan (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    env:
+      CBSS_CLANG: clang-18
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux x86_64
+            os: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nim
+        uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
+        with:
+          nim-version: '2.2.10'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sanitizer toolchain versions
+        run: |
+          nim --version
+          "$CBSS_CLANG" --version
+
+      - name: Verify LSan runtime availability
+        run: |
+          printf '%s\n' 'int main(void) { return 0; }' > "$RUNNER_TEMP/cbss_lsan_probe.c"
+          "$CBSS_CLANG" -fsanitize=leak "$RUNNER_TEMP/cbss_lsan_probe.c" -o "$RUNNER_TEMP/cbss_lsan_probe"
+          "$RUNNER_TEMP/cbss_lsan_probe"
+
+      - name: Check retained lifecycles under ARC and ORC
+        run: nimble testLsan -y
+
+  thread-sanitizer:
+    name: TSan (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux x86_64
+            os: ubuntu-latest
+            compiler: clang-18
+          - platform: macOS arm64
+            os: macos-latest
+            compiler: clang
+
+    env:
+      CBSS_CLANG: ${{ matrix.compiler }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nim
+        uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
+        with:
+          nim-version: '2.2.10'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sanitizer toolchain versions
+        run: |
+          nim --version
+          "$CBSS_CLANG" --version
+
+      - name: Verify TSan runtime availability
+        run: |
+          printf '%s\n' 'int main(void) { return 0; }' > "$RUNNER_TEMP/cbss_tsan_probe.c"
+          "$CBSS_CLANG" -fsanitize=thread "$RUNNER_TEMP/cbss_tsan_probe.c" -o "$RUNNER_TEMP/cbss_tsan_probe"
+          "$RUNNER_TEMP/cbss_tsan_probe"
+
+      - name: Check worker-to-UI ownership races under ARC and ORC
+        run: nimble testTsan -y
+
   rust-bridge:
     name: Native Rust bridges
     runs-on: ubuntu-latest

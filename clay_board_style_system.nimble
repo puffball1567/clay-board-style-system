@@ -77,6 +77,63 @@ task testMotionAsan, "Run declarative transition and keyframe tests under Addres
       else:
         exec "env ASAN_OPTIONS=halt_on_error=1:abort_on_error=1 \"" & artifact & "\""
 
+task testUbsan, "Run numeric, layout, transform, and motion tests under UndefinedBehaviorSanitizer":
+  let sanitizerRoot = thisDir() & "/nimcache"
+  let clangExe = getEnv("CBSS_CLANG", "clang")
+  for memoryModel in ["arc", "orc"]:
+    for test in [
+      ("color_conversion", "tests/core/test_color_conversion.nim"),
+      ("flex", "tests/layout/test_flex.nim"),
+      ("transform_geometry", "tests/layout/test_transform_geometry.nim"),
+      ("declarative_transition", "tests/runtime/test_declarative_transition.nim"),
+      ("declarative_keyframes", "tests/runtime/test_declarative_keyframes.nim")
+    ]:
+      let testName = test[0]
+      let testPath = test[1]
+      let suffix = testName & "_" & memoryModel & "_ubsan"
+      let nimcache = sanitizerRoot & "/clay_board_style_system_" & suffix & "_nimcache"
+      let artifact = nimcache & "/clay_board_style_system_" & suffix
+      exec "nim c --forceBuild:on --cc:clang --clang.exe:" & clangExe & " --mm:" & memoryModel & " -d:release -d:useMalloc --debugger:native --path:src --passC:-fsanitize=undefined --passC:-fno-sanitize-recover=all --passC:-fno-omit-frame-pointer --passL:-fsanitize=undefined --nimcache:\"" & nimcache & "\" --out:\"" & artifact & "\" " & testPath
+      when defined(windows):
+        exec "\"" & artifact & ".exe\""
+      else:
+        exec "env UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \"" & artifact & "\""
+
+task testLsan, "Run retained lifecycle tests under LeakSanitizer on Linux":
+  when defined(linux):
+    let sanitizerRoot = thisDir() & "/nimcache"
+    let clangExe = getEnv("CBSS_CLANG", "clang")
+    for memoryModel in ["arc", "orc"]:
+      for test in [
+        ("widget_lifecycle", "tests/memory/widget_lifecycle.nim"),
+        ("event_lifecycle", "tests/memory/event_lifecycle.nim"),
+        ("declarative_transition", "tests/runtime/test_declarative_transition.nim"),
+        ("declarative_keyframes", "tests/runtime/test_declarative_keyframes.nim")
+      ]:
+        let testName = test[0]
+        let testPath = test[1]
+        let suffix = testName & "_" & memoryModel & "_lsan"
+        let nimcache = sanitizerRoot & "/clay_board_style_system_" & suffix & "_nimcache"
+        let artifact = nimcache & "/clay_board_style_system_" & suffix
+        exec "nim c --forceBuild:on --cc:clang --clang.exe:" & clangExe & " --mm:" & memoryModel & " -d:release -d:useMalloc --debugger:native --path:src --passC:-fsanitize=leak --passC:-fno-omit-frame-pointer --passL:-fsanitize=leak --nimcache:\"" & nimcache & "\" --out:\"" & artifact & "\" " & testPath
+        exec "env LSAN_OPTIONS=exitcode=99 \"" & artifact & "\""
+  else:
+    echo "Standalone LeakSanitizer is verified only in the Linux CI lane."
+
+task testTsan, "Run worker-to-UI ownership races under ThreadSanitizer":
+  when defined(linux) or defined(macosx):
+    let sanitizerRoot = thisDir() & "/nimcache"
+    let clangExe = getEnv("CBSS_CLANG", "clang")
+    for memoryModel in ["arc", "orc"]:
+      let suffix = "stream_mailbox_threaded_" & memoryModel & "_tsan"
+      let nimcache = sanitizerRoot & "/clay_board_style_system_" & suffix & "_nimcache"
+      let artifact = nimcache & "/clay_board_style_system_" & suffix
+      let source = "tests/data/test_stream_mailbox_threaded.nim"
+      exec "nim c --forceBuild:on --cc:clang --clang.exe:" & clangExe & " --threads:on --mm:" & memoryModel & " -d:release -d:useMalloc --debugger:native --path:src --passC:-fsanitize=thread --passC:-fno-omit-frame-pointer --passL:-fsanitize=thread --nimcache:\"" & nimcache & "\" --out:\"" & artifact & "\" " & source
+      exec "env TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1 \"" & artifact & "\""
+  else:
+    echo "ThreadSanitizer is not supported by LLVM Clang on this platform."
+
 task checkExamples, "Type-check every example in each supported link configuration":
   exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_paint examples/paint_demo.nim"

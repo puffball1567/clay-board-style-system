@@ -1409,14 +1409,18 @@ All three runners use LLVM Clang instrumentation. The Windows runner obtains
 the native SDK/linker environment from Visual Studio but explicitly places the
 standalone LLVM installation first in `PATH`, so the sanitizer compiler and
 runtime remain the LLVM implementation. AddressSanitizer owns out-of-bounds,
-use-after-free, and double-free detection. The Linux Valgrind lane owns
-deterministic leak and lifecycle checks because Valgrind is not treated as a
-supported portable Windows or current macOS CI runtime. Keeping those
-responsibilities separate also makes the sanitizer command reproducible in
-restricted development environments where LeakSanitizer cannot inspect
-processes. The
-`detect_leaks` ASan option is set only on Linux; it is not passed to the macOS
-or Windows jobs.
+use-after-free, and double-free detection. UndefinedBehaviorSanitizer runs
+numeric, Flex, transform, transition, and keyframe paths on Linux and macOS.
+Standalone LeakSanitizer runs retained widget, event, transition, and keyframe
+lifecycles on Linux. ThreadSanitizer runs the concurrent worker-to-UI stream
+mailbox on Linux and macOS. Windows uses the portable suite and ASan instead of
+requiring sanitizer combinations whose runtime cannot be reliably linked with
+the CI toolchain. Every sanitizer lane exercises ARC and ORC.
+
+The Linux Valgrind lane remains the deterministic lifecycle and C ABI leak gate
+because Valgrind is not treated as a supported portable Windows or current
+macOS CI runtime. The `detect_leaks` ASan option is set only on Linux; neither
+that option nor standalone LSan is passed to macOS or Windows.
 
 This verification is development-only. Ownership tracing, generated probes,
 sanitizer hooks, and verifier implementation code are not imported, linked, or

@@ -9,6 +9,11 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added LLVM UBSan gates for numeric, layout, transform, transition, and
+  keyframe paths on Linux and macOS; a standalone LSan lifecycle gate on Linux;
+  and TSan worker-to-UI ownership gates on Linux and macOS. Every sanitizer task
+  covers both ARC and ORC and remains test-only. Windows retains portable and
+  ASan coverage rather than requiring an unverified UBSan runtime.
 - Added C ABI `0x00010011` and declaration-driven animation/transition
   lifecycle events. `animationstart`, `animationiteration`, `animationend`,
   `animationcancel`, `transitionrun`, `transitionstart`, `transitionend`, and
