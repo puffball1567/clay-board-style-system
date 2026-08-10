@@ -2,6 +2,7 @@
 
 #include <assert.h>
 #include <pthread.h>
+#include <sched.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <string.h>
@@ -17,7 +18,64 @@ typedef struct FailureWorkerArgs {
   CbssStreamProducer *producer;
 } FailureWorkerArgs;
 
+typedef struct BlobProviderProbe {
+  uint8_t bytes[4];
+  uint32_t length;
+  uint32_t reads;
+  uint32_t releases;
+  CbssStatus status;
+  uint8_t exceed_capacity;
+  uint8_t check_serialization;
+  atomic_uint active_reads;
+  atomic_uint overlapping_reads;
+} BlobProviderProbe;
+
+typedef struct ProviderReadWorkerArgs {
+  CbssBlob *blob;
+  atomic_uint *start;
+} ProviderReadWorkerArgs;
+
 static atomic_uint wake_count;
+
+static CbssStatus read_blob_provider(
+    void *user_data, uint64_t offset, uint8_t *output, uint32_t capacity,
+    uint32_t *output_read) {
+  BlobProviderProbe *probe = user_data;
+  ++probe->reads;
+  if (probe->status != CBSS_OK) {
+    return probe->status;
+  }
+  if (probe->exceed_capacity) {
+    *output_read = capacity + 1;
+    return CBSS_OK;
+  }
+  if (probe->check_serialization) {
+    if (atomic_fetch_add_explicit(
+            &probe->active_reads, 1u, memory_order_acq_rel) != 0) {
+      atomic_fetch_add_explicit(
+          &probe->overlapping_reads, 1u, memory_order_relaxed);
+    }
+    sched_yield();
+  }
+  uint32_t available = offset < probe->length
+      ? probe->length - (uint32_t)offset
+      : 0;
+  uint32_t count = available < capacity ? available : capacity;
+  if (count > 0) {
+    memcpy(output, probe->bytes + (uint32_t)offset, count);
+  }
+  *output_read = count;
+  if (probe->check_serialization) {
+    atomic_fetch_sub_explicit(
+        &probe->active_reads, 1u, memory_order_release);
+  }
+  return CBSS_OK;
+}
+
+static void release_blob_provider(void *user_data) {
+  BlobProviderProbe *probe = user_data;
+  ++probe->releases;
+}
 
 static void wake_ui(void *user_data) {
   atomic_uint *count = user_data;
@@ -58,6 +116,23 @@ static void *fail_stream(void *raw_args) {
   return NULL;
 }
 
+static void *read_provider_repeatedly(void *raw_args) {
+  ProviderReadWorkerArgs *args = raw_args;
+  uint8_t output = 0;
+  uint32_t output_read = 0;
+  cbss_thread_attach();
+  while (atomic_load_explicit(args->start, memory_order_acquire) == 0) {
+    sched_yield();
+  }
+  for (uint32_t index = 0; index < 100; ++index) {
+    assert(cbss_blob_read(args->blob, 0, &output, 1, &output_read) == CBSS_OK);
+    assert(output_read == 1 && output == 11);
+  }
+  cbss_blob_release(args->blob);
+  cbss_thread_detach();
+  return NULL;
+}
+
 static void assert_blob(CbssBlob *blob, uint8_t expected) {
   uint8_t byte = 0;
   uint32_t read = 0;
@@ -84,7 +159,47 @@ int main(void) {
   CbssBlob *first = NULL;
   CbssBlob *second = NULL;
   CbssBlob *rejected = NULL;
-  assert(cbss_blob_create(&first_byte, 1, NULL, &first) == CBSS_OK);
+  BlobProviderProbe first_provider = {
+      .bytes = {11}, .length = 1, .status = CBSS_OK};
+  assert(cbss_blob_create_provider(
+             1, NULL, NULL, release_blob_provider, &first_provider, &first) ==
+         CBSS_INVALID_ARGUMENT);
+  assert(first == NULL);
+  assert(cbss_blob_create_provider(
+             1, "application/provider", read_blob_provider,
+             release_blob_provider, &first_provider, &first) == CBSS_OK);
+  assert(cbss_blob_size(first) == 1);
+  char provider_mime[32];
+  assert(cbss_blob_mime_type(first, provider_mime, sizeof(provider_mime)) ==
+         strlen("application/provider"));
+  assert(strcmp(provider_mime, "application/provider") == 0);
+  uint32_t empty_read = 99;
+  assert(cbss_blob_read(first, 1, NULL, 0, &empty_read) == CBSS_OK);
+  assert(empty_read == 0);
+  assert(cbss_blob_read(first, 2, NULL, 0, &empty_read) ==
+         CBSS_OUT_OF_RANGE);
+
+  atomic_uint provider_start = ATOMIC_VAR_INIT(0);
+  atomic_init(&first_provider.active_reads, 0);
+  atomic_init(&first_provider.overlapping_reads, 0);
+  first_provider.check_serialization = 1;
+  assert(cbss_blob_retain(first) == CBSS_OK);
+  assert(cbss_blob_retain(first) == CBSS_OK);
+  ProviderReadWorkerArgs provider_args = {
+      .blob = first, .start = &provider_start};
+  pthread_t provider_workers[2];
+  assert(pthread_create(
+             &provider_workers[0], NULL, read_provider_repeatedly,
+             &provider_args) == 0);
+  assert(pthread_create(
+             &provider_workers[1], NULL, read_provider_repeatedly,
+             &provider_args) == 0);
+  atomic_store_explicit(&provider_start, 1u, memory_order_release);
+  assert(pthread_join(provider_workers[0], NULL) == 0);
+  assert(pthread_join(provider_workers[1], NULL) == 0);
+  assert(atomic_load_explicit(
+             &first_provider.overlapping_reads, memory_order_relaxed) == 0);
+  first_provider.check_serialization = 0;
   assert(cbss_blob_create(&second_byte, 1, NULL, &second) == CBSS_OK);
   assert(cbss_blob_create(&rejected_byte, 1, NULL, &rejected) == CBSS_OK);
 
@@ -183,8 +298,33 @@ int main(void) {
   cbss_blob_stream_destroy(pressure_stream);
 
   cbss_blob_release(first);
+  assert(first_provider.releases == 1);
   cbss_blob_release(second);
   cbss_blob_release(rejected);
+
+  BlobProviderProbe failed_provider = {
+      .bytes = {44},
+      .length = 1,
+      .status = CBSS_NOT_AVAILABLE,
+  };
+  CbssBlob *failed_blob = NULL;
+  assert(cbss_blob_create_provider(
+             1, NULL, read_blob_provider, release_blob_provider,
+             &failed_provider, &failed_blob) == CBSS_OK);
+  uint8_t failed_output = 0;
+  uint32_t failed_read = 99;
+  assert(cbss_blob_read(
+             failed_blob, 0, &failed_output, 1, &failed_read) ==
+         CBSS_NOT_AVAILABLE);
+  assert(failed_read == 0);
+  failed_provider.status = CBSS_OK;
+  failed_provider.exceed_capacity = 1;
+  assert(cbss_blob_read(
+             failed_blob, 0, &failed_output, 1, &failed_read) ==
+         CBSS_INTERNAL_ERROR);
+  assert(failed_read == 0);
+  cbss_blob_release(failed_blob);
+  assert(failed_provider.releases == 1);
 
   CbssBlobStream *failed_stream = NULL;
   CbssStreamProducer *failed_producer = NULL;

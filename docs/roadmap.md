@@ -577,7 +577,7 @@ must be corrected as part of this work rather than preserved as compatibility.
 
 ### UI Data Interchange: Blob, Form Data, And Streams
 
-Status: `Partially implemented on the Version 0.4 development line`
+Status: `Implemented on the Version 0.4 development line; optional adapters remain`
 
 Implemented on this line: immutable in-memory `Blob` snapshots with advisory
 MIME metadata, bounded reads, slices, and explicit materialization limits;
@@ -611,6 +611,12 @@ empty snapshots remain distinguishable from payload-free synthetic events,
 and callbacks may retain a snapshot beyond dispatch through explicit
 retain/release ownership.
 
+C ABI `0x00010010` and the Nim API add host-authorized fixed-size Blob
+providers with lazy bounded reads, per-Blob read serialization, success-only
+context ownership transfer, and exactly-once provider release. This supplies
+the reusable source boundary for files, mappings, decoders, and foreign buffers
+without giving CBSS path-opening authority.
+
 The bounded stream boundary is now implemented as two transport-neutral
 layers. `StreamBridge[T]` is the UI-thread state machine and provides
 deterministic open/data/progress/end/error/cancel/close ordering, item and
@@ -631,8 +637,8 @@ callbacks, ordered pump/drain, explicit Blob ownership transfer, and real
 pthread consumers for shared and static ARC/ORC builds. Foreign workers use an
 explicit runtime attach/detach boundary.
 
-Remaining: host-authorized file/provider Blob sources and optional transport
-adapters.
+Remaining: optional transport-specific adapters. The Blob, FormData, and
+bounded-stream ownership contracts required by those adapters are implemented.
 
 CBSS will define transport-neutral data contracts for UI operations that need
 binary values, form snapshots, or progressively produced data. These contracts

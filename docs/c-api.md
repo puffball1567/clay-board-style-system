@@ -28,12 +28,16 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x0001000F` supports:
+ABI version `0x00010010` supports:
 
 - Opaque context and style handles.
 - Atomically reference-counted immutable Blob handles with advisory MIME
   metadata, bounded reads into host buffers, and a 64 MiB eager-construction
   limit. Blob storage does not expose Nim-managed pointers.
+- Host-authorized fixed-size Blob providers for files, mappings, decoders, and
+  foreign buffers. Provider data is read lazily into caller-owned buffers,
+  reads on one Blob are serialized, and the host context is released exactly
+  once after the final Blob reference.
 - Ordered immutable FormData handles built through an explicit builder. Text
   entries preserve repeated names, Blob entries retain shared Blob handles,
   and every returned Blob owns one reference that the caller releases. Finished
@@ -254,6 +258,11 @@ ownership and synchronization contracts.
 - `CbssColorValueGradientStop.color` is borrowed only for the duration of
   `cbss_style_set_linear_gradient_color_values`; the setter copies every
   authored value before returning.
+- `cbss_blob_create` copies eager input bytes. `cbss_blob_create_provider`
+  instead takes ownership of its `user_data` only on success. Its release
+  callback runs exactly once after the final atomically retained Blob reference
+  and may run on that releasing thread. Reads on one provider Blob are
+  serialized; a provider callback must not release or re-enter its own Blob.
 - `cbss_form_data_builder_create` returns one mutable builder. Finishing moves
   its entries into a new immutable snapshot; the builder must still be
   destroyed and cannot be reused. Destroying an unfinished builder releases
@@ -280,15 +289,17 @@ ownership and synchronization contracts.
 - Output pointers must remain valid only for the duration of their call.
 - `CbssEvent.key` and `CbssEvent.text` are borrowed and valid only during the
   callback.
-- Callback function pointers and `user_data` are borrowed. They must remain
-  valid until replaced, removed, or the context is destroyed.
+- Unless a constructor explicitly transfers ownership, callback function
+  pointers and `user_data` are borrowed. They must remain valid until replaced,
+  removed, or the context is destroyed.
 - RenderSurface event pointers, input strings, and placement data are borrowed
   only for the callback duration. Registration owns no host resource.
 - Unregistering a RenderSurface detaches it from its node and synchronously
   delivers visibility/unmount callbacks before returning.
 
 Context, style, and Blob-stream consumer handles are not internally
-synchronized. A host may use
+synchronized. Blob retain/release is atomic, and reads on one provider Blob are
+serialized as the explicit exceptions. A host may use
 independent contexts on separate threads, but it must serialize access to each
 individual handle. Producer handles are the explicit exception described
 above. Static-library hosts should create their first handle on the

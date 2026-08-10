@@ -232,7 +232,7 @@ returning, so the caller may release the previous raw context immediately after
 detachment. Disposing a mailbox provides the same guarantee while additionally
 rejecting all escaped producer handles.
 
-C ABI `0x0001000F` now exposes the same bounded transport as a Blob-specialized
+C ABI `0x0001000F` exposes the same bounded transport as a Blob-specialized
 opaque stream. Atomically retained producer handles may cross worker-thread
 boundaries; UI-owned pump/drain calls return ordered events and transfer each
 data Blob as one explicit owning reference. Backpressure, coalesced wakes,
@@ -241,5 +241,10 @@ rejection are exercised by shared and static C consumers using a real pthread.
 The pthread uses the public attach/detach boundary, including under ORC. No
 Nim-managed pointer crosses the ABI.
 
-Remaining stream work is host-authorized file/provider Blob sources. Those
-sources must not mutate the UI tree from a worker thread.
+C ABI `0x00010010` and the Nim API add host-authorized fixed-size Blob
+providers. A provider exposes a synchronous bounded read callback rather than
+a path or mutable buffer. CBSS serializes reads on each Blob, writes only to
+caller-owned output buffers, and invokes the release callback once after the
+final Blob reference. Context ownership transfers only when construction
+succeeds. Different providers may execute concurrently, and a provider
+callback must not re-enter its own Blob or mutate the UI tree.

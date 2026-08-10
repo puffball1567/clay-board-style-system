@@ -264,7 +264,10 @@ APIs. Application business logic remains ordinary Nim or an external service.
 
 The public C boundary uses opaque handles, fixed-layout values, explicit
 ownership, status codes, and append-only enums. Nim strings, sequences,
-references, exceptions, and object layouts do not cross the ABI.
+references, exceptions, and object layouts do not cross the ABI. Immutable
+Blob handles support both bounded eager snapshots and host-authorized lazy
+providers, so foreign files, mappings, and decoders can participate without
+exposing raw ownership to CBSS.
 
 ```sh
 nimble buildCAbiShared

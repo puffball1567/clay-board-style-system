@@ -25,7 +25,7 @@
 extern "C" {
 #endif
 
-#define CBSS_ABI_VERSION 0x0001000Fu
+#define CBSS_ABI_VERSION 0x00010010u
 #define CBSS_NODE_NONE UINT32_MAX
 #define CBSS_MAX_EAGER_BLOB_BYTES (64ull * 1024ull * 1024ull)
 #define CBSS_MAX_FORM_DATA_ENTRIES 65536u
@@ -725,6 +725,17 @@ typedef uint32_t (*CbssRenderSurfaceCallback)(
     void *user_data);
 /* Post a host-loop wake only. Do not re-enter or destroy the stream. */
 typedef void (*CbssStreamWakeCallback)(void *user_data);
+/*
+ * Reads at most capacity bytes and writes the actual count to output_read.
+ * The callback is synchronous. CBSS serializes reads for one Blob, but it may
+ * call different providers concurrently. Do not re-enter the same Blob from
+ * its callback. Return a defined CbssStatus; unknown values become
+ * CBSS_INTERNAL_ERROR.
+ */
+typedef CbssStatus (*CbssBlobProviderReadCallback)(
+    void *user_data, uint64_t offset, uint8_t *output, uint32_t capacity,
+    uint32_t *output_read);
+typedef void (*CbssBlobProviderReleaseCallback)(void *user_data);
 
 CBSS_API uint32_t cbss_abi_version(void);
 /*
@@ -736,6 +747,18 @@ CBSS_API void cbss_thread_detach(void);
 
 CBSS_API CbssStatus cbss_blob_create(
     const uint8_t *bytes, uint64_t length, const char *mime_type,
+    CbssBlob **output);
+/*
+ * Defines a host-authorized, fixed-size Blob without eagerly copying its data.
+ * Takes ownership of user_data on success only. The release callback runs
+ * exactly once after the last Blob reference and may run on the thread that
+ * releases that reference. Provider reads are serialized by CBSS. Callbacks
+ * must not release or otherwise re-enter the same Blob.
+ */
+CBSS_API CbssStatus cbss_blob_create_provider(
+    uint64_t length, const char *mime_type,
+    CbssBlobProviderReadCallback read_callback,
+    CbssBlobProviderReleaseCallback release_callback, void *user_data,
     CbssBlob **output);
 CBSS_API CbssStatus cbss_blob_retain(CbssBlob *blob);
 CBSS_API void cbss_blob_release(CbssBlob *blob);

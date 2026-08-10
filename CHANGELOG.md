@@ -9,6 +9,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added C ABI `0x00010010` and Nim host-authorized Blob providers with lazy
+  bounded reads, serialized access per Blob, success-only context ownership,
+  exactly-once release, and ARC/ORC plus pthread/Valgrind coverage.
 - Added C ABI `0x0001000F` bounded Blob streams with UI-owned consumers,
   atomically retained cross-thread producers, item/byte backpressure,
   coalesced wake callbacks, ordered pump/drain, explicit Blob ownership,
