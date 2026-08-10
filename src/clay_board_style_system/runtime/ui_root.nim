@@ -11,6 +11,7 @@ import ../paint/paint_command
 import ../text/[font_registry, text_engine]
 import ./animation_clock
 import ./canvas
+import ./declarative_keyframes
 import ./declarative_transition
 import ./frame_scheduler
 import ./invalidation
@@ -83,6 +84,7 @@ type
     popupClosers*: seq[PopupCloserBinding]
     mountedComponents: seq[MountedComponentBinding]
     animations: AnimationClock
+    keyframes: DeclarativeKeyframeRuntime
     transitions: DeclarativeTransitionRuntime
     animationOwners: Table[AnimationId, NodeId]
     pendingInvalidation: InvalidationState
@@ -133,6 +135,7 @@ proc initUiRoot*(): UiRoot =
     popupClosers: @[],
     mountedComponents: @[],
     animations: initAnimationClock(),
+    keyframes: initDeclarativeKeyframeRuntime(),
     transitions: initDeclarativeTransitionRuntime(),
     animationOwners: initTable[AnimationId, NodeId](),
     pendingInvalidation: initInvalidationState(),
@@ -369,9 +372,44 @@ proc activeAnimationOwners*(root: UiRoot): seq[NodeId] =
 
 proc setReducedMotion*(root: UiRoot; enabled: bool) =
   root.animations.reducedMotion = enabled
+  root.keyframes.setReducedMotion(enabled)
   root.transitions.reducedMotion = enabled
-  if enabled and root.transitions.hasActiveTransitions:
+  if enabled and (root.transitions.hasActiveTransitions or
+      root.keyframes.activeAnimationCount > 0):
     root.invalidate({ddPaint, ddAnimation})
+
+proc registerStyleKeyframes*(root: UiRoot; definition: StyleKeyframes) =
+  if root.isNil:
+    raise newException(ValueError, "cannot register keyframes on a nil UiRoot")
+  root.keyframes.registerStyleKeyframes(definition)
+
+proc unregisterStyleKeyframes*(root: UiRoot; name: string): bool {.discardable.} =
+  not root.isNil and root.keyframes.unregisterStyleKeyframes(name)
+
+proc hasStyleKeyframes*(root: UiRoot; name: string): bool =
+  not root.isNil and root.keyframes.hasStyleKeyframes(name)
+
+proc reconcileStyleAnimations*(
+    root: UiRoot;
+    target: var ResolvedTree;
+    nowSeconds: float64
+) =
+  if not root.isNil:
+    root.keyframes.reconcileAnimations(root.tree, target, nowSeconds)
+
+proc applyStyleAnimations*(
+    root: UiRoot;
+    styles: var ResolvedTree;
+    scheduler: var FrameScheduler;
+    nowSeconds: float64
+): int {.discardable.} =
+  if root.isNil:
+    return 0
+  root.keyframes.applyAnimations(root.tree, styles, scheduler, nowSeconds)
+
+proc activeStyleAnimationCount*(root: UiRoot): int =
+  if root.isNil: 0
+  else: root.keyframes.activeAnimationCount
 
 proc reconcileStyleTransitions*(
     root: UiRoot;
@@ -691,6 +729,7 @@ proc disposeSubtree*(
       removedAnimations.add id
   for id in removedAnimations:
     discard root.cancelOwnedAnimation(id)
+  discard root.keyframes.cancelAnimations(removedIds)
   discard root.transitions.cancelTransitions(removedIds)
   let componentUnmountCallbacks = root.takeComponentUnmountCallbacks(removed)
   discard root.events.removeEventHandlers(removed)

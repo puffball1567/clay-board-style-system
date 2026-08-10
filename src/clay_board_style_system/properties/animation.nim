@@ -84,11 +84,10 @@ proc applyAnimationTime(
     let value = requireNumber(declaration, diagnostics)
     if value.isNone:
       return
-    let seconds = max(0.0'f32, value.get)
     if declaration.property == "animation-duration":
-      style.animation.animationDuration = seconds
+      style.animation.animationDuration = max(0.0'f32, value.get)
     else:
-      style.animation.animationDelay = seconds
+      style.animation.animationDelay = value.get
   of mmInitial, mmUnset:
     if declaration.property == "animation-duration":
       style.animation.animationDuration = 0

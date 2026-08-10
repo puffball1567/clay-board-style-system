@@ -9,6 +9,11 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added the first declaration-bound named-keyframe runtime for `opacity`,
+  `color`, and `background-color`, including typed registration, duration,
+  signed delay, timing, finite/infinite iterations, direction, fill, pause and
+  resume, retained forwards presentation, reduced motion, definition revision,
+  subtree cancellation, and deterministic paint-only test-driver advancement.
 - Added the first declarative style-transition runtime for `opacity`, `color`,
   and `background-color`, including timing functions, signed delay, reversal,
   Oklab color interpolation, reduced motion, subtree cancellation, active-only

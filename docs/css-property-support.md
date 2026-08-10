@@ -41,26 +41,26 @@ Obsolete, legacy, or effectively deprecated CSS features should generally stay
 `No plan` even when browsers still carry them for compatibility. CBSS should spend
 implementation effort on modern native GUI behavior, not web compatibility debt.
 
-Keyframe animation is not excluded. `animation-*` properties and the remaining
-transition metadata preserve typed intent for later runtime work. Transition
-property, duration, delay, and timing function now drive the first paint-only
-runtime slice documented below.
+Keyframe animation is not excluded. The principal `animation-*` longhands and
+transition property, duration, delay, and timing function now drive the first
+paint-only runtime slices. Remaining animation and transition metadata
+preserves typed intent for later runtime work.
 
 ## Summary
 
 | Status | Count |
 | --- | ---: |
-| Runtime | 166 |
+| Runtime | 174 |
 | Computed | 77 |
-| Metadata | 184 |
+| Metadata | 176 |
 | Planned | 0 |
 | No plan | 238 |
 | Target properties | 427 |
 | Total MDN entries | 665 |
 
-As of 2026-08-10, strict runtime completion is **166 of 427 target
-properties (38.9%)**. A further 77 properties reach computed style, so
-**243 of 427 (56.9%)** have runtime or computed support. All 427 target names
+As of 2026-08-10, strict runtime completion is **174 of 427 target
+properties (40.7%)**. A further 77 properties reach computed style, so
+**251 of 427 (58.8%)** have runtime or computed support. All 427 target names
 are accepted by the default registry, but metadata-only acceptance is not
 counted as completed behavior. The 238 `No plan` entries are excluded from the
 implementation target and from both percentages.
@@ -294,18 +294,18 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `anchor-scope` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
 | `animation` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
 | `animation-composition` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
-| `animation-delay` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
-| `animation-direction` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
-| `animation-duration` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
-| `animation-fill-mode` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
-| `animation-iteration-count` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
-| `animation-name` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
-| `animation-play-state` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
+| `animation-delay` | Runtime | Drives named paint keyframes, including negative delays; list cycling remains planned. |
+| `animation-direction` | Runtime | Controls normal, reverse, alternate, and alternate-reverse named keyframe playback. |
+| `animation-duration` | Runtime | Drives the active interval for named paint keyframes. |
+| `animation-fill-mode` | Runtime | Controls backwards sampling and retained forwards presentation for named paint keyframes. |
+| `animation-iteration-count` | Runtime | Supports finite counts and infinite named paint-keyframe playback. |
+| `animation-name` | Runtime | Binds a node to a typed keyframe definition registered on its `UiRoot`; multiple animation names remain planned. |
+| `animation-play-state` | Runtime | Pauses and resumes named paint keyframes without restarting their timeline. |
 | `animation-range` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
 | `animation-range-end` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
 | `animation-range-start` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
 | `animation-timeline` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
-| `animation-timing-function` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
+| `animation-timing-function` | Runtime | Supports named timing functions, step start/end, and valid cubic Bezier curves for named paint keyframes. |
 | `animation-trigger` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
 | `appearance` | Metadata | Stored as computed visual metadata. |
 | `aspect-ratio` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |

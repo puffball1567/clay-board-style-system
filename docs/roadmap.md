@@ -1114,9 +1114,12 @@ Current and planned work:
   behavior drive `opacity`, `color`, and `background-color`. Sampling is
   proportional to active tracks and does not require style resolution or
   layout on animation frames. Transform and additional typed values remain.
-- Implemented foundation: typed float/color keyframes and the animation clock
-  resolve and interpolate deterministically; declaration-driven keyframe
-  binding remains planned.
+- Implemented first runtime slice: named typed keyframes bind through
+  `animation-name`, duration, signed delay, timing function, iteration count,
+  direction, fill mode, and play state. `opacity`, `color`, and
+  `background-color` sample through the shared animation clock without
+  per-frame style resolution or layout. Multiple animation lists, additive
+  composition, lifecycle events, transforms, and further value types remain.
 - Implemented: frames are scheduled only while timed work, caret blink,
   scrolling motion, or Canvas requests one; idle UI remains event-driven.
 - Implemented foundation: the animation clock accepts reduced-motion policy;
