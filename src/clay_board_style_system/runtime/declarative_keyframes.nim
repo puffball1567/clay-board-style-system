@@ -20,6 +20,7 @@ import ./[
   declarative_transition,
   frame_scheduler,
   invalidation,
+  motion_lifecycle,
   transform_interpolation
 ]
 
@@ -96,6 +97,7 @@ type
     tracks: Table[AnimationTrackKey, DeclarativeAnimationTrack]
     completed: Table[AnimationTrackKey, CompletedDeclarativeAnimation]
     clock: AnimationClock
+    lifecycle: MotionLifecycleQueue
     nextDefinitionRevision: uint64
 
 proc `==`(left, right: AnimationSignature): bool =
@@ -173,6 +175,7 @@ proc initDeclarativeKeyframeRuntime*(
     tracks: initTable[AnimationTrackKey, DeclarativeAnimationTrack](),
     completed: initTable[AnimationTrackKey, CompletedDeclarativeAnimation](),
     clock: initAnimationClock(targetFramesPerSecond),
+    lifecycle: initMotionLifecycleQueue(),
     nextDefinitionRevision: 1
   )
 
@@ -189,6 +192,11 @@ proc registerStyleKeyframes*(
   )
   inc runtime.nextDefinitionRevision
 
+proc cancelTrack(
+    runtime: var DeclarativeKeyframeRuntime;
+    key: AnimationTrackKey
+)
+
 proc unregisterStyleKeyframes*(
     runtime: var DeclarativeKeyframeRuntime;
     name: string
@@ -202,8 +210,7 @@ proc unregisterStyleKeyframes*(
     if track.signature.name == normalized:
       activeKeys.add key
   for key in activeKeys:
-    discard runtime.clock.cancelAnimation(runtime.tracks[key].animation)
-    runtime.tracks.del(key)
+    runtime.cancelTrack(key)
   var completedKeys: seq[AnimationTrackKey]
   for key, completed in runtime.completed.pairs:
     if completed.signature.name == normalized:
@@ -469,8 +476,24 @@ proc cancelTrack(
     key: AnimationTrackKey
 ) =
   if key in runtime.tracks:
+    let track = runtime.tracks[key]
+    runtime.lifecycle.add MotionLifecycleEvent(
+      kind: mlkAnimationCancel,
+      node: key.node,
+      name: track.signature.name,
+      elapsedSeconds:
+        if track.sample.initialized:
+          max(0.0, track.sample.value.elapsedSeconds)
+        else:
+          0
+    )
     discard runtime.clock.cancelAnimation(runtime.tracks[key].animation)
     runtime.tracks.del(key)
+
+proc takeLifecycleEvents*(
+    runtime: var DeclarativeKeyframeRuntime
+): seq[MotionLifecycleEvent] =
+  runtime.lifecycle.take()
 
 proc rememberCompletion(
     runtime: var DeclarativeKeyframeRuntime;
@@ -503,6 +526,18 @@ proc startTrack(
     runtime.rememberCompletion(key, signature)
     return
   let sampleState = track.sample
+  let lifecycle = runtime.lifecycle
+  let lifecycleNode = key.node
+  let lifecycleName = signature.name
+  let startElapsed = min(
+    signature.duration.float64,
+    max(0.0, -signature.delay.float64)
+  )
+  let endElapsed =
+    if signature.iterations.isSome:
+      signature.duration.float64 * signature.iterations.get.float64
+    else:
+      0.0
   let dirtyDomains =
     if track.transform.isSome: {ddPaint, ddHit, ddAnimation}
     else: {ddPaint, ddAnimation}
@@ -514,10 +549,36 @@ proc startTrack(
     fillMode = signature.fillMode,
     timing = signature.timing,
     dirtyDomains = dirtyDomains,
-    onSample = proc(sample: AnimationSample) =
+    onSample = (proc(sample: AnimationSample) =
       sampleState.value = sample
       sampleState.pending = true
       sampleState.initialized = true
+    ),
+    onStart = (proc(animation: AnimationId) =
+      lifecycle.add MotionLifecycleEvent(
+        kind: mlkAnimationStart,
+        node: lifecycleNode,
+        name: lifecycleName,
+        elapsedSeconds: startElapsed
+      )
+    ),
+    onIteration = (proc(animation: AnimationId; iteration: uint64) =
+      lifecycle.add MotionLifecycleEvent(
+        kind: mlkAnimationIteration,
+        node: lifecycleNode,
+        name: lifecycleName,
+        elapsedSeconds: signature.duration.float64 * iteration.float64,
+        iteration: iteration
+      )
+    ),
+    onEnd = (proc(animation: AnimationId) =
+      lifecycle.add MotionLifecycleEvent(
+        kind: mlkAnimationEnd,
+        node: lifecycleNode,
+        name: lifecycleName,
+        elapsedSeconds: endElapsed
+      )
+    )
   ), nowSeconds)
   track.animation = animation
   if playState == apsPaused:

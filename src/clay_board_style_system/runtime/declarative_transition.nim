@@ -2,7 +2,8 @@ import std/[hashes, math, options, strutils, tables]
 
 import ../core/[color, color_conversion, computed_style, node, style_resolver]
 import ./[
-  animation_clock, frame_scheduler, invalidation, transform_interpolation
+  animation_clock, frame_scheduler, invalidation, motion_lifecycle,
+  transform_interpolation
 ]
 
 const
@@ -52,6 +53,8 @@ type
     ttkTransform
 
   TransitionTrack = object
+    started: bool
+    lastElapsed: float64
     case kind: TransitionTrackKind
     of ttkNumber:
       number: NumberTransition
@@ -64,6 +67,7 @@ type
     tracks: Table[TransitionKey, TransitionTrack]
     targetFrameInterval*: float64
     reducedMotion*: bool
+    lifecycle: MotionLifecycleQueue
 
   TransitionParameters = object
     duration: float64
@@ -79,6 +83,10 @@ proc hash(value: TransitionKey): Hash =
   result = result !& hash(value.property)
   result = !$result
 
+proc transitionPropertyName*(
+    property: DeclarativeTransitionProperty
+): string
+
 proc initDeclarativeTransitionRuntime*(
     targetFramesPerSecond = defaultTransitionFramesPerSecond
 ): DeclarativeTransitionRuntime =
@@ -89,8 +97,47 @@ proc initDeclarativeTransitionRuntime*(
     )
   DeclarativeTransitionRuntime(
     tracks: initTable[TransitionKey, TransitionTrack](),
-    targetFrameInterval: 1.0 / targetFramesPerSecond
+    targetFrameInterval: 1.0 / targetFramesPerSecond,
+    lifecycle: initMotionLifecycleQueue()
   )
+
+proc queueLifecycle(
+    runtime: DeclarativeTransitionRuntime;
+    key: TransitionKey;
+    kind: MotionLifecycleKind;
+    elapsedSeconds = 0.0
+) =
+  runtime.lifecycle.add MotionLifecycleEvent(
+    kind: kind,
+    node: key.node,
+    name: key.property.transitionPropertyName,
+    elapsedSeconds: elapsedSeconds
+  )
+
+proc cancelTrack(
+    runtime: var DeclarativeTransitionRuntime;
+    key: TransitionKey
+) =
+  if key notin runtime.tracks:
+    return
+  runtime.queueLifecycle(
+    key, mlkTransitionCancel, runtime.tracks[key].lastElapsed
+  )
+  runtime.tracks.del(key)
+
+proc replaceTrack(
+    runtime: var DeclarativeTransitionRuntime;
+    key: TransitionKey;
+    track: TransitionTrack
+) =
+  runtime.cancelTrack(key)
+  runtime.tracks[key] = track
+  runtime.queueLifecycle(key, mlkTransitionRun)
+
+proc takeLifecycleEvents*(
+    runtime: var DeclarativeTransitionRuntime
+): seq[MotionLifecycleEvent] =
+  runtime.lifecycle.take()
 
 proc transitionPropertyName*(property: DeclarativeTransitionProperty): string =
   case property
@@ -267,13 +314,13 @@ proc reconcileNumber(
 ) =
   let parameters = runtime.transitionParameters(targetStyle, key.property)
   if startValue == endValue or parameters.isNone:
-    runtime.tracks.del(key)
+    runtime.cancelTrack(key)
     return
   if key in runtime.tracks and runtime.tracks[key].sameTarget(endValue):
     return
-  runtime.tracks[key] = numberTrack(
+  runtime.replaceTrack(key, numberTrack(
     startValue, endValue, parameters.get, nowSeconds
-  )
+  ))
 
 proc reconcileColor(
     runtime: var DeclarativeTransitionRuntime;
@@ -284,13 +331,13 @@ proc reconcileColor(
 ) =
   let parameters = runtime.transitionParameters(targetStyle, key.property)
   if startValue == endValue or parameters.isNone:
-    runtime.tracks.del(key)
+    runtime.cancelTrack(key)
     return
   if key in runtime.tracks and runtime.tracks[key].sameTarget(endValue):
     return
-  runtime.tracks[key] = colorTrack(
+  runtime.replaceTrack(key, colorTrack(
     startValue, endValue, parameters.get, nowSeconds
-  )
+  ))
 
 proc reconcileTransform(
     runtime: var DeclarativeTransitionRuntime;
@@ -304,14 +351,14 @@ proc reconcileTransform(
   if startValue.sameTransformProperty(endValue, property) or
       parameters.isNone or
       not startValue.canInterpolateTransformStyle(endValue, property):
-    runtime.tracks.del(key)
+    runtime.cancelTrack(key)
     return
   if key in runtime.tracks and
       runtime.tracks[key].sameTarget(endValue, property):
     return
-  runtime.tracks[key] = transformTrack(
+  runtime.replaceTrack(key, transformTrack(
     startValue, endValue, property, parameters.get, nowSeconds
-  )
+  ))
 
 proc reconcileTransitions*(
     runtime: var DeclarativeTransitionRuntime;
@@ -524,11 +571,27 @@ proc applyTransitions*(
 
   var completed: seq[TransitionKey]
   var transformed = false
-  for key, track in runtime.tracks.pairs:
+  for key, track in runtime.tracks.mpairs:
     if not tree.isValid(key.node) or key.node.nodeIndex >= styles.styles.len:
       completed.add key
       continue
     var finished = false
+    let activeStart =
+      case track.kind
+      of ttkNumber: track.number.activeStart
+      of ttkColor: track.color.activeStart
+      of ttkTransform: track.transform.activeStart
+    let duration =
+      case track.kind
+      of ttkNumber: track.number.duration
+      of ttkColor: track.color.duration
+      of ttkTransform: track.transform.duration
+    track.lastElapsed = clamp(nowSeconds - activeStart, 0.0, duration)
+    if not track.started and nowSeconds >= activeStart:
+      track.started = true
+      runtime.queueLifecycle(
+        key, mlkTransitionStart, track.lastElapsed
+      )
     case track.kind
     of ttkNumber:
       if runtime.reducedMotion:
@@ -579,6 +642,7 @@ proc applyTransitions*(
             nowSeconds + runtime.targetFrameInterval
         )
     if finished:
+      runtime.queueLifecycle(key, mlkTransitionEnd, duration)
       completed.add key
     inc result
 
@@ -607,5 +671,5 @@ proc cancelTransitions*(
         removed.add key
         break
   for key in removed:
-    runtime.tracks.del(key)
+    runtime.cancelTrack(key)
   removed.len

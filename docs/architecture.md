@@ -815,6 +815,7 @@ Initial standard slots:
 
 ```text
 onAbort
+onAnimationCancel
 onAnimationEnd
 onAnimationIteration
 onAnimationStart
@@ -902,7 +903,10 @@ onTouchCancel
 onTouchEnd
 onTouchMove
 onTouchStart
+onTransitionCancel
 onTransitionEnd
+onTransitionRun
+onTransitionStart
 onVolumeChange
 onWaiting
 onWheel

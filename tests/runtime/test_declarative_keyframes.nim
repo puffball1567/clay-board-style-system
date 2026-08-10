@@ -405,3 +405,49 @@ suite "declarative style keyframes":
           declarations: @[decl("opacity", number(1))]
         )]
       ))
+
+  test "animation lifecycle events expose name iteration and elapsed time":
+    let ui = initUiRoot()
+    ui.registerStyleKeyframes(styleKeyframes("lifecycle", [
+      styleKeyframe(0, [decl("opacity", number(0))]),
+      styleKeyframe(1, [decl("opacity", number(1))])
+    ]))
+    let panel = ui.box(animationStyle(
+      "lifecycle", duration = 0.5, iterations = 2,
+      fillMode = afForwards
+    ))
+    var observed: seq[string]
+    panel.onAnimationStart = proc(event: DispatchResult): EventOutcome =
+      observed.add "start:" & event.motionName
+      handledEvent()
+    panel.onAnimationIteration = proc(event: DispatchResult): EventOutcome =
+      observed.add "iteration:" & $event.motionIteration
+      handledEvent()
+    panel.onAnimationEnd = proc(event: DispatchResult): EventOutcome =
+      observed.add "end:" & event.motionName
+      check abs(event.motionElapsedSeconds - 1) < 0.0001
+      handledEvent()
+    let driver = initCbssTestDriver(ui, size(200, 100))
+
+    check observed == @["start:lifecycle"]
+    driver.advanceTime(0.5)
+    check observed == @["start:lifecycle", "iteration:1"]
+    driver.advanceTime(0.5)
+    check observed == @[
+      "start:lifecycle", "iteration:1", "end:lifecycle"
+    ]
+
+  test "disposing active keyframes emits animation cancel":
+    let ui = initUiRoot()
+    ui.registerStyleKeyframes(styleKeyframes("cancelled", [
+      styleKeyframe(0, [decl("opacity", number(0))]),
+      styleKeyframe(1, [decl("opacity", number(1))])
+    ]))
+    let panel = ui.box(animationStyle("cancelled", duration = 30))
+    var cancelled = false
+    panel.onAnimationCancel = proc(event: DispatchResult): EventOutcome =
+      cancelled = event.motionName == "cancelled"
+      handledEvent()
+    let driver = initCbssTestDriver(ui, size(200, 100))
+    check ui.disposeSubtree(panel, driver.input)
+    check cancelled

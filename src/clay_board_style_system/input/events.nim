@@ -100,7 +100,12 @@ type
     iekPenProximityIn,
     iekPenProximityOut,
     iekPenButtonDown,
-    iekPenButtonUp
+    iekPenButtonUp,
+    # Append-only: event ABI codes are enum ordinals.
+    iekAnimationCancel,
+    iekTransitionRun,
+    iekTransitionStart,
+    iekTransitionCancel
 
   PointerDeviceKind* = enum
     pdkMouse,
@@ -149,7 +154,8 @@ type
     epfText,
     epfPointer,
     epfFocusOwnership,
-    epfFormData
+    epfFormData,
+    epfMotion
 
   EventDefinition* = object
     producer*: EventDispatchMode
@@ -207,6 +213,9 @@ type
     ## Uncommon managed payloads stay behind one pointer so pointer, keyboard,
     ## and animation events remain compact on the dispatch hot path.
     formData: FormData
+    motionName: string
+    motionElapsedSeconds: float64
+    motionIteration: uint64
 
   InputEvent* = object
     kind*: InputEventKind
@@ -514,6 +523,20 @@ func buildEventDefinitions(): array[InputEventKind, EventDefinition] =
     result[kind].cancelable = false
 
   for kind in {
+    iekAnimationCancel, iekTransitionRun, iekTransitionStart,
+    iekTransitionCancel
+  }:
+    result[kind].producer = edmCoreSynthetic
+    result[kind].cancelable = false
+    result[kind].payload = {epfMotion}
+  for kind in {
+    iekAnimationEnd, iekAnimationIteration, iekAnimationStart,
+    iekTransitionEnd
+  }:
+    result[kind].producer = edmCoreSynthetic
+    result[kind].payload = {epfMotion}
+
+  for kind in {
     iekAuxClick, iekClick, iekContextMenu, iekDoubleClick,
     iekDrag, iekDragEnd, iekDragEnter, iekDragExit, iekDragLeave,
     iekDragOver, iekDragStart, iekDrop,
@@ -610,6 +633,45 @@ proc formData*(event: InputEvent): Option[FormData] =
 proc formData*(dispatch: DispatchResult): Option[FormData] {.inline.} =
   ## Convenience access for `onSubmit` and additive submit listeners.
   dispatch.event.formData()
+
+proc motionEvent*(
+    kind: InputEventKind;
+    name: string;
+    elapsedSeconds: float64;
+    iteration = 0'u64
+): InputEvent =
+  if kind notin {
+      iekAnimationStart, iekAnimationIteration, iekAnimationEnd,
+      iekAnimationCancel, iekTransitionRun, iekTransitionStart,
+      iekTransitionEnd, iekTransitionCancel
+  }:
+    raise newException(ValueError, "motionEvent requires a motion event kind")
+  InputEvent(
+    kind: kind,
+    payload: InputEventPayload(
+      motionName: name,
+      motionElapsedSeconds: elapsedSeconds,
+      motionIteration: iteration
+    )
+  )
+
+proc motionName*(event: InputEvent): string =
+  if event.payload.isNil: "" else: event.payload.motionName
+
+proc motionElapsedSeconds*(event: InputEvent): float64 =
+  if event.payload.isNil: 0 else: event.payload.motionElapsedSeconds
+
+proc motionIteration*(event: InputEvent): uint64 =
+  if event.payload.isNil: 0 else: event.payload.motionIteration
+
+proc motionName*(dispatch: DispatchResult): string {.inline.} =
+  dispatch.event.motionName
+
+proc motionElapsedSeconds*(dispatch: DispatchResult): float64 {.inline.} =
+  dispatch.event.motionElapsedSeconds
+
+proc motionIteration*(dispatch: DispatchResult): uint64 {.inline.} =
+  dispatch.event.motionIteration
 
 proc textEvent*(kind: InputEventKind; text: string): InputEvent =
   InputEvent(kind: kind, text: some(text))

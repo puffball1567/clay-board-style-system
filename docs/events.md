@@ -104,6 +104,13 @@ aliases, and C ABI numbers are defined by one `EventDefinition` table. This
 keeps backend input, synthetic events, component events, and foreign-language
 callbacks on the same contract.
 
+Declarative motion uses this same path. Animation lifecycle handlers can read
+`motionName`, `motionElapsedSeconds`, and `motionIteration`; transition
+lifecycle handlers use the name and elapsed-time fields. The supported event
+set is animation start/iteration/end/cancel and transition run/start/end/cancel.
+These events are non-cancelable notifications. Disposing a subtree dispatches
+its cancellation events before removing its handlers.
+
 The same table owns each public `onX` name. Run
 `nimble checkGeneratedEvents` to verify the committed EventRegistry,
 NodeHandle, CBSSComponent, and C event-kind surfaces. Contributors changing an
