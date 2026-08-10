@@ -27,13 +27,13 @@ module whenever practical.
 | P5 | Vector/SVG-style drawing properties | 29 |
 | P6 | Optimization and engine hints | 1 |
 | Total target | Runtime + computed + metadata + planned properties | 427 |
-| Runtime | Currently affects layout, paint, hit testing, text rendering, or another runtime subsystem | 162 |
+| Runtime | Currently affects layout, paint, hit testing, text rendering, or another runtime subsystem | 166 |
 | Computed | Accepted and resolved, but full runtime behavior is still partial | 77 |
-| Metadata | Preserved for later subsystems or design/tooling interchange | 188 |
+| Metadata | Preserved for later subsystems or design/tooling interchange | 184 |
 | Remaining planned | Not accepted by the current default registry yet | 0 |
 
-As of 2026-08-08, strict runtime completion is **162/427 (37.9%)**.
-Runtime plus computed support is **239/427 (56.0%)**. Metadata-only properties
+As of 2026-08-10, strict runtime completion is **166/427 (38.9%)**.
+Runtime plus computed support is **243/427 (56.9%)**. Metadata-only properties
 remain implementation work even though the default registry accepts them.
 
 ## Ranked Properties
