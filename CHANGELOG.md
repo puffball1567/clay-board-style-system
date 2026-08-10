@@ -9,6 +9,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added declarative transition and keyframe interpolation for typed 2D
+  `transform`, `translate`, `scale`, and `rotate` values. Motion reuses the
+  existing affine paint/hit contract, does not relayout each frame, and marks
+  hit data dirty only while geometry changes.
 - Added multiple declaration-bound animations per node with typed list
   authoring and CSS-like cycling across name, duration, delay, timing,
   iteration count, direction, fill, play state, and composition. Missing

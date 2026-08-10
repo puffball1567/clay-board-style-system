@@ -15,7 +15,13 @@ import ../core/[
   style_value
 ]
 import ../generated/default_properties
-import ./[animation_clock, declarative_transition, frame_scheduler, invalidation]
+import ./[
+  animation_clock,
+  declarative_transition,
+  frame_scheduler,
+  invalidation,
+  transform_interpolation
+]
 
 const declarativeKeyframeApiVersion* = 1'u32
 
@@ -54,6 +60,13 @@ type
   PreparedColorKeyframes = object
     values: seq[PreparedColorKeyframe]
 
+  PreparedTransformKeyframe = object
+    offset: float64
+    value: ComputedTransformStyle
+
+  PreparedTransformKeyframes = object
+    values: seq[PreparedTransformKeyframe]
+
   DeclarativeAnimationSample = ref object
     pending: bool
     initialized: bool
@@ -66,9 +79,11 @@ type
     opacity: Option[FloatKeyframes]
     color: Option[PreparedColorKeyframes]
     backgroundColor: Option[PreparedColorKeyframes]
+    transform: Option[PreparedTransformKeyframes]
     baseOpacity: float32
     baseColor: Option[Color]
     baseBackgroundColor: Option[Color]
+    baseTransform: ComputedTransformStyle
     paused: bool
     pauseAfterFirstTick: bool
 
@@ -111,7 +126,10 @@ proc styleKeyframe*(
       ValueError, "style keyframe offset must be finite and between zero and one"
     )
   for declaration in declarations:
-    if declaration.property notin ["opacity", "color", "background-color"]:
+    if declaration.property notin [
+      "opacity", "color", "background-color", "transform", "translate",
+      "scale", "rotate"
+    ]:
       raise newException(
         ValueError,
         "declarative keyframes do not yet support " & declaration.property
@@ -251,9 +269,28 @@ proc ensureColorEndpoints(
   if values[^1].offset < 1:
     values.add PreparedColorKeyframe(offset: 1, value: prepared)
 
+proc ensureTransformEndpoints(
+    values: var seq[PreparedTransformKeyframe];
+    baseValue: ComputedTransformStyle
+) =
+  if values.len == 0:
+    return
+  if values[0].offset > 0:
+    values.insert(PreparedTransformKeyframe(
+      offset: 0, value: baseValue
+    ), 0)
+  if values[^1].offset < 1:
+    values.add PreparedTransformKeyframe(offset: 1, value: baseValue)
+
 proc containsProperty(step: StyleKeyframe; name: string): bool =
   for declaration in step.declarations:
     if declaration.property == name:
+      return true
+  false
+
+proc containsTransformProperty(step: StyleKeyframe): bool =
+  for declaration in step.declarations:
+    if declaration.property in ["transform", "translate", "scale", "rotate"]:
       return true
   false
 
@@ -266,6 +303,7 @@ proc compileTrack(
   var opacity: seq[FloatKeyframe]
   var foreground: seq[PreparedColorKeyframe]
   var background: seq[PreparedColorKeyframe]
+  var transforms: seq[PreparedTransformKeyframe]
   for step in definition.definition.steps:
     let resolved = base.resolveStepStyle(step, viewportSize)
     if step.containsProperty("opacity"):
@@ -285,23 +323,32 @@ proc compileTrack(
         offset: step.offset,
         value: value.prepareColorInterpolation(cisOklab)
       )
+    if step.containsTransformProperty():
+      transforms.add PreparedTransformKeyframe(
+        offset: step.offset,
+        value: resolved.transform
+      )
 
   opacity.ensureFloatEndpoints(base.visual.opacity)
   foreground.ensureColorEndpoints(base.text.color.get(rgb(0, 0, 0)))
   background.ensureColorEndpoints(
     base.box.backgroundColor.get(rgba(0, 0, 0, 0))
   )
+  transforms.ensureTransformEndpoints(base.transform)
   result.signature = signature
   result.sample = DeclarativeAnimationSample()
   result.baseOpacity = base.visual.opacity
   result.baseColor = base.text.color
   result.baseBackgroundColor = base.box.backgroundColor
+  result.baseTransform = base.transform
   if opacity.len > 0:
     result.opacity = some(floatKeyframes(opacity))
   if foreground.len > 0:
     result.color = some(PreparedColorKeyframes(values: foreground))
   if background.len > 0:
     result.backgroundColor = some(PreparedColorKeyframes(values: background))
+  if transforms.len > 0:
+    result.transform = some(PreparedTransformKeyframes(values: transforms))
 
 proc colorSpan(
     values: openArray[PreparedColorKeyframe];
@@ -335,6 +382,31 @@ proc sample(values: PreparedColorKeyframes; progress: float64): Color =
     values.values[span.right].value,
     span.amount
   )
+
+proc sample(
+    values: PreparedTransformKeyframes;
+    progress: float64
+): ComputedTransformStyle =
+  let value = clamp(progress, 0.0, 1.0)
+  if value <= values.values[0].offset:
+    return values.values[0].value
+  if value >= values.values[^1].offset:
+    return values.values[^1].value
+  for index in 0 ..< values.values.high:
+    let left = values.values[index]
+    let right = values.values[index + 1]
+    if value <= right.offset:
+      let distance = right.offset - left.offset
+      let amount =
+        if distance <= 0: 1.0
+        else: (value - left.offset) / distance
+      let interpolated = interpolateTransformStyle(
+        left.value, right.value, mtpAll, amount.float32
+      )
+      if interpolated.isSome:
+        return interpolated.get
+      return if amount < 0.5: left.value else: right.value
+  values.values[^1].value
 
 proc cycled[T](values: seq[T]; fallback: T; index: int): T =
   if values.len == 0:
@@ -427,10 +499,13 @@ proc startTrack(
     return
   var track = definition.compileTrack(signature, style, viewportSize)
   if track.opacity.isNone and track.color.isNone and
-      track.backgroundColor.isNone:
+      track.backgroundColor.isNone and track.transform.isNone:
     runtime.rememberCompletion(key, signature)
     return
   let sampleState = track.sample
+  let dirtyDomains =
+    if track.transform.isSome: {ddPaint, ddHit, ddAnimation}
+    else: {ddPaint, ddAnimation}
   let animation = runtime.clock.startAnimation(animationSpec(
     durationSeconds = signature.duration,
     delaySeconds = signature.delay,
@@ -438,7 +513,7 @@ proc startTrack(
     direction = signature.direction,
     fillMode = signature.fillMode,
     timing = signature.timing,
-    dirtyDomains = {ddPaint, ddAnimation},
+    dirtyDomains = dirtyDomains,
     onSample = proc(sample: AnimationSample) =
       sampleState.value = sample
       sampleState.pending = true
@@ -526,6 +601,8 @@ proc restoreBase(track: DeclarativeAnimationTrack; style: var ComputedStyle) =
   style.visual.opacity = track.baseOpacity
   style.text.color = track.baseColor
   style.box.backgroundColor = track.baseBackgroundColor
+  if track.transform.isSome:
+    style.transform = track.baseTransform
 
 proc applySample(
     track: DeclarativeAnimationTrack;
@@ -544,6 +621,8 @@ proc applySample(
     style.box.backgroundColor = some(
       track.backgroundColor.get.sample(sample.progress)
     )
+  if track.transform.isSome:
+    style.transform = track.transform.get.sample(sample.progress)
 
 proc applyAnimations*(
     runtime: var DeclarativeKeyframeRuntime;
@@ -590,7 +669,12 @@ proc applyAnimations*(
   for key in completed:
     runtime.tracks.del(key)
   if result > 0:
-    scheduler.markDirty({ddPaint, ddAnimation})
+    var domains = {ddPaint, ddAnimation}
+    for track in runtime.tracks.values:
+      if track.transform.isSome:
+        domains.incl ddHit
+        break
+    scheduler.markDirty(domains)
 
 proc activeAnimationCount*(runtime: DeclarativeKeyframeRuntime): int =
   runtime.tracks.len

@@ -1,4 +1,4 @@
-import std/[math, options, unittest]
+import std/[math, options, sequtils, unittest]
 
 import clay_board_style_system
 import clay_board_style_system/testing/test_driver
@@ -162,6 +162,47 @@ suite "declarative style keyframes":
     ].box.backgroundColor.get
     check background.r > 0.4 and background.b > 0.4
     check ui.activeStyleAnimationCount == 2
+
+  test "typed transform keyframes update paint and hit domains":
+    let ui = initUiRoot()
+    ui.registerStyleKeyframes(styleKeyframes("move", [
+      styleKeyframe(0, [
+        decl("transform", transformValue(
+          translate(px(0), px(0)), rotate(0)
+        ))
+      ]),
+      styleKeyframe(1, [
+        decl("transform", transformValue(
+          translate(px(100), px(20)), rotate(90)
+        ))
+      ])
+    ]))
+    let panel = ui.box(combined([
+      uiStyle([decl("width", px(20)), decl("height", px(20))]),
+      animationStyle("move", fillMode = afForwards)
+    ]))
+    let driver = initCbssTestDriver(ui, size(240, 120))
+    let initialRect = driver.rectFor(panel.id)
+    let initialRegion = driver.hitRegions.filterIt(it.node == panel.id)[0]
+    driver.advanceTime(0.5)
+
+    let transform = driver.styles.styles[
+      panel.id.nodeIndex
+    ].transform.operations
+    check transform.len == 2
+    check abs(transform[0].xLength.get.value - 50) < 0.0001
+    check abs(transform[0].yLength.get.value - 10) < 0.0001
+    check abs(transform[1].angle - 45) < 0.0001
+    check driver.rectFor(panel.id) == initialRect
+    check ddHit in driver.scheduler.invalidation.domains
+    let movedRegion = driver.hitRegions.filterIt(it.node == panel.id)[0]
+    check movedRegion.shape.isSome
+    check initialRegion.shape.isSome
+    check movedRegion.shape.get.transform != initialRegion.shape.get.transform
+    let movedCenter = movedRegion.shape.get.transform.transformPoint(
+      vec2(initialRect.get.w * 0.5, initialRect.get.h * 0.5)
+    )
+    check driver.hitAt(movedCenter) == some(panel.id)
 
   test "missing endpoints use the underlying computed value":
     let ui = initUiRoot()

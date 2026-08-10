@@ -158,6 +158,78 @@ suite "declarative style transitions":
     check foreground.b > 0.4
     check background.r > 0.3 and background.r < 0.8
 
+  test "transform function lists interpolate without relayout":
+    var tree = initTree()
+    let root = tree.addBox()
+    var displayed = tree.resolved(root, [
+      decl("transform", transformValue(translate(px(0), px(0)), rotate(0)))
+    ])
+    let target = tree.resolved(root,
+      transitionMetadata("transform", 1) & @[
+        decl("transform", transformValue(
+          translate(px(100), px(40)), rotate(90)
+        ))
+      ]
+    )
+    var runtime = initDeclarativeTransitionRuntime()
+    var scheduler = initFrameScheduler()
+    runtime.reconcileTransitions(tree, displayed, target, 0)
+    check runtime.activeTransitionCount == 1
+    displayed = target
+    discard runtime.applyTransitions(tree, displayed, scheduler, 0.5)
+
+    let operations = displayed.styles[root.nodeIndex].transform.operations
+    check operations.len == 2
+    check abs(operations[0].xLength.get.value - 50) < 0.0001
+    check abs(operations[0].yLength.get.value - 20) < 0.0001
+    check abs(operations[1].angle - 45) < 0.0001
+    check scheduler.consumeDirty() == {ddPaint, ddHit, ddAnimation}
+
+  test "individual translate scale and rotate transition independently":
+    var tree = initTree()
+    let root = tree.addBox()
+    var displayed = tree.resolved(root, [
+      decl("translate", translate(px(0), px(0))),
+      decl("scale", scale(1)),
+      decl("rotate", rotate(0))
+    ])
+    let target = tree.resolved(root, [
+      transitionProperties("translate", "scale", "rotate"),
+      transitionDurations(1.0'f32),
+      transitionTimingFunctions("linear"),
+      decl("translate", translate(px(80), px(20))),
+      decl("scale", scale(2)),
+      decl("rotate", rotate(90))
+    ])
+    var runtime = initDeclarativeTransitionRuntime()
+    var scheduler = initFrameScheduler()
+    runtime.reconcileTransitions(tree, displayed, target, 0)
+    check runtime.activeTransitionCount == 3
+    displayed = target
+    discard runtime.applyTransitions(tree, displayed, scheduler, 0.5)
+
+    let transform = displayed.styles[root.nodeIndex].transform
+    check abs(transform.translateX.get.value - 40) < 0.0001
+    check abs(transform.translateY.get.value - 10) < 0.0001
+    check abs(transform.scaleX.get - 1.5) < 0.0001
+    check abs(transform.scaleY.get - 1.5) < 0.0001
+    check abs(transform.rotate.get - 45) < 0.0001
+
+  test "incompatible transform units do not create an unsafe track":
+    var tree = initTree()
+    let root = tree.addBox()
+    let displayed = tree.resolved(root, [
+      decl("translate", translate(px(10), px(0)))
+    ])
+    let target = tree.resolved(root,
+      transitionMetadata("translate", 1) & @[
+        decl("translate", translate(percent(50), px(0)))
+      ]
+    )
+    var runtime = initDeclarativeTransitionRuntime()
+    runtime.reconcileTransitions(tree, displayed, target, 0)
+    check runtime.activeTransitionCount == 0
+
   test "transition lists cycle values and preserve unknown property positions":
     var tree = initTree()
     let root = tree.addBox()

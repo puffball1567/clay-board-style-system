@@ -1,7 +1,9 @@
 import std/[hashes, math, options, strutils, tables]
 
 import ../core/[color, color_conversion, computed_style, node, style_resolver]
-import ./[animation_clock, frame_scheduler, invalidation]
+import ./[
+  animation_clock, frame_scheduler, invalidation, transform_interpolation
+]
 
 const
   declarativeTransitionApiVersion* = 1'u32
@@ -11,7 +13,11 @@ type
   DeclarativeTransitionProperty* = enum
     dtpOpacity,
     dtpColor,
-    dtpBackgroundColor
+    dtpBackgroundColor,
+    dtpTransform,
+    dtpTranslate,
+    dtpScale,
+    dtpRotate
 
   TransitionKey = object
     node: NodeId
@@ -32,9 +38,18 @@ type
     duration: float64
     timing: TimingFunction
 
+  TransformTransition = object
+    startValue: ComputedTransformStyle
+    endValue: ComputedTransformStyle
+    property: MotionTransformProperty
+    activeStart: float64
+    duration: float64
+    timing: TimingFunction
+
   TransitionTrackKind = enum
     ttkNumber,
-    ttkColor
+    ttkColor,
+    ttkTransform
 
   TransitionTrack = object
     case kind: TransitionTrackKind
@@ -42,6 +57,8 @@ type
       number: NumberTransition
     of ttkColor:
       color: ColorTransition
+    of ttkTransform:
+      transform: TransformTransition
 
   DeclarativeTransitionRuntime* = object
     tracks: Table[TransitionKey, TransitionTrack]
@@ -80,6 +97,10 @@ proc transitionPropertyName*(property: DeclarativeTransitionProperty): string =
   of dtpOpacity: "opacity"
   of dtpColor: "color"
   of dtpBackgroundColor: "background-color"
+  of dtpTransform: "transform"
+  of dtpTranslate: "translate"
+  of dtpScale: "scale"
+  of dtpRotate: "rotate"
 
 proc parseTimingFunction*(value: string): Option[TimingFunction] =
   let normalized = value.strip.toLowerAscii
@@ -177,6 +198,14 @@ proc sameTarget(
   let prepared = value.get.prepareColorInterpolation(cisOklab)
   track.color.endValue == prepared
 
+proc sameTarget(
+    track: TransitionTrack;
+    value: ComputedTransformStyle;
+    property: MotionTransformProperty
+): bool =
+  track.kind == ttkTransform and track.transform.property == property and
+    track.transform.endValue.sameTransformProperty(value, property)
+
 proc numberTrack(
     startValue, endValue: float32;
     parameters: TransitionParameters;
@@ -209,6 +238,21 @@ proc colorTrack(
     startValue: startColor.prepareColorInterpolation(cisOklab),
     endValue: endColor.prepareColorInterpolation(cisOklab),
     endPresent: endValue.isSome,
+    activeStart: nowSeconds + parameters.delay,
+    duration: parameters.duration,
+    timing: parameters.timing
+  ))
+
+proc transformTrack(
+    startValue, endValue: ComputedTransformStyle;
+    property: MotionTransformProperty;
+    parameters: TransitionParameters;
+    nowSeconds: float64
+): TransitionTrack =
+  TransitionTrack(kind: ttkTransform, transform: TransformTransition(
+    startValue: startValue,
+    endValue: endValue,
+    property: property,
     activeStart: nowSeconds + parameters.delay,
     duration: parameters.duration,
     timing: parameters.timing
@@ -248,6 +292,27 @@ proc reconcileColor(
     startValue, endValue, parameters.get, nowSeconds
   )
 
+proc reconcileTransform(
+    runtime: var DeclarativeTransitionRuntime;
+    key: TransitionKey;
+    property: MotionTransformProperty;
+    startValue, endValue: ComputedTransformStyle;
+    targetStyle: ComputedStyle;
+    nowSeconds: float64
+) =
+  let parameters = runtime.transitionParameters(targetStyle, key.property)
+  if startValue.sameTransformProperty(endValue, property) or
+      parameters.isNone or
+      not startValue.canInterpolateTransformStyle(endValue, property):
+    runtime.tracks.del(key)
+    return
+  if key in runtime.tracks and
+      runtime.tracks[key].sameTarget(endValue, property):
+    return
+  runtime.tracks[key] = transformTrack(
+    startValue, endValue, property, parameters.get, nowSeconds
+  )
+
 proc reconcileTransitions*(
     runtime: var DeclarativeTransitionRuntime;
     tree: Tree;
@@ -273,6 +338,38 @@ proc reconcileTransitions*(
       TransitionKey(node: node.get, property: dtpColor),
       displayedStyle.text.color,
       targetStyle.text.color,
+      targetStyle,
+      nowSeconds
+    )
+    runtime.reconcileTransform(
+      TransitionKey(node: node.get, property: dtpTransform),
+      mtpTransform,
+      displayedStyle.transform,
+      targetStyle.transform,
+      targetStyle,
+      nowSeconds
+    )
+    runtime.reconcileTransform(
+      TransitionKey(node: node.get, property: dtpTranslate),
+      mtpTranslate,
+      displayedStyle.transform,
+      targetStyle.transform,
+      targetStyle,
+      nowSeconds
+    )
+    runtime.reconcileTransform(
+      TransitionKey(node: node.get, property: dtpScale),
+      mtpScale,
+      displayedStyle.transform,
+      targetStyle.transform,
+      targetStyle,
+      nowSeconds
+    )
+    runtime.reconcileTransform(
+      TransitionKey(node: node.get, property: dtpRotate),
+      mtpRotate,
+      displayedStyle.transform,
+      targetStyle.transform,
       targetStyle,
       nowSeconds
     )
@@ -339,6 +436,8 @@ proc applyColor(
     style.box.backgroundColor = value
   of dtpOpacity:
     discard
+  of dtpTransform, dtpTranslate, dtpScale, dtpRotate:
+    discard
   sample.complete
 
 proc finishColor(
@@ -356,6 +455,62 @@ proc finishColor(
     style.box.backgroundColor = value
   of dtpOpacity:
     discard
+  of dtpTransform, dtpTranslate, dtpScale, dtpRotate:
+    discard
+
+proc applyTransform(
+    track: TransformTransition;
+    style: var ComputedStyle;
+    nowSeconds: float64
+): bool =
+  let sample = trackProgress(
+    track.activeStart, track.duration, nowSeconds, track.timing
+  )
+  let value = interpolateTransformStyle(
+    track.startValue,
+    track.endValue,
+    track.property,
+    sample.progress.float32
+  )
+  if value.isSome:
+    case track.property
+    of mtpTransform:
+      style.transform.rawTransform = value.get.rawTransform
+      style.transform.operations = value.get.operations
+    of mtpTranslate:
+      style.transform.translateX = value.get.translateX
+      style.transform.translateY = value.get.translateY
+      style.transform.translateZ = value.get.translateZ
+    of mtpScale:
+      style.transform.scaleX = value.get.scaleX
+      style.transform.scaleY = value.get.scaleY
+      style.transform.scaleZ = value.get.scaleZ
+    of mtpRotate:
+      style.transform.rotate = value.get.rotate
+    of mtpAll:
+      style.transform = value.get
+  sample.complete
+
+proc finishTransform(
+    track: TransformTransition;
+    style: var ComputedStyle
+) =
+  case track.property
+  of mtpTransform:
+    style.transform.rawTransform = track.endValue.rawTransform
+    style.transform.operations = track.endValue.operations
+  of mtpTranslate:
+    style.transform.translateX = track.endValue.translateX
+    style.transform.translateY = track.endValue.translateY
+    style.transform.translateZ = track.endValue.translateZ
+  of mtpScale:
+    style.transform.scaleX = track.endValue.scaleX
+    style.transform.scaleY = track.endValue.scaleY
+    style.transform.scaleZ = track.endValue.scaleZ
+  of mtpRotate:
+    style.transform.rotate = track.endValue.rotate
+  of mtpAll:
+    style.transform = track.endValue
 
 proc applyTransitions*(
     runtime: var DeclarativeTransitionRuntime;
@@ -368,6 +523,7 @@ proc applyTransitions*(
     raise newException(ValueError, "transition time must be finite")
 
   var completed: seq[TransitionKey]
+  var transformed = false
   for key, track in runtime.tracks.pairs:
     if not tree.isValid(key.node) or key.node.nodeIndex >= styles.styles.len:
       completed.add key
@@ -406,6 +562,22 @@ proc applyTransitions*(
           else:
             nowSeconds + runtime.targetFrameInterval
         )
+    of ttkTransform:
+      transformed = true
+      if runtime.reducedMotion:
+        track.transform.finishTransform(styles.styles[key.node.nodeIndex])
+        finished = true
+      else:
+        finished = track.transform.applyTransform(
+          styles.styles[key.node.nodeIndex], nowSeconds
+        )
+      if not finished:
+        scheduler.requestDeadline(
+          if nowSeconds < track.transform.activeStart:
+            track.transform.activeStart
+          else:
+            nowSeconds + runtime.targetFrameInterval
+        )
     if finished:
       completed.add key
     inc result
@@ -413,7 +585,10 @@ proc applyTransitions*(
   for key in completed:
     runtime.tracks.del(key)
   if result > 0:
-    scheduler.markDirty({ddPaint, ddAnimation})
+    scheduler.markDirty(
+      if transformed: {ddPaint, ddHit, ddAnimation}
+      else: {ddPaint, ddAnimation}
+    )
 
 proc activeTransitionCount*(runtime: DeclarativeTransitionRuntime): int =
   runtime.tracks.len
