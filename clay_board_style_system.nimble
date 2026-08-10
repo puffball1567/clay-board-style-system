@@ -61,6 +61,13 @@ task testOrc, "Run the test suite under ORC":
   exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
   exec "nim c -r --mm:orc --nimcache:/tmp/clay_board_style_system_orc_test_runner_nimcache --out:/tmp/clay_board_style_system_orc_test_runner tools/run_tests.nim --memory:orc"
 
+task testMotionAsan, "Run declarative transition and keyframe tests under AddressSanitizer":
+  for memoryModel in ["arc", "orc"]:
+    for testName in ["declarative_transition", "declarative_keyframes"]:
+      let artifact = "/tmp/clay_board_style_system_" & testName & "_" & memoryModel & "_asan"
+      exec "nim c --mm:" & memoryModel & " -d:release -d:useMalloc --debugger:native --path:src --passC:-fsanitize=address --passC:-fno-omit-frame-pointer --passL:-fsanitize=address --nimcache:" & artifact & "_nimcache --out:" & artifact & " tests/runtime/test_" & testName & ".nim"
+      exec "env ASAN_OPTIONS=detect_leaks=0:halt_on_error=1:abort_on_error=1 " & artifact
+
 task checkExamples, "Type-check every example in each supported link configuration":
   exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_paint examples/paint_demo.nim"

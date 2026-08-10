@@ -518,9 +518,67 @@ suite "style context merge":
       context, defaultProperties(), ResolveEnv(), diagnostics
     )
 
-    check not diagnostics.hasErrors
+    check diagnostics.hasErrors
     check style.animation.animationDuration == 0
     check style.animation.animationDelay == -0.25'f32
+
+  test "animation longhands retain normalized lists for runtime cycling":
+    let context = styleContext([
+      animationNames("fade", "tint", "move"),
+      animationDurations(2.0'f32, 0.5'f32),
+      animationDelays(-0.25'f32),
+      animationTimingFunctions(
+        "cubic-bezier(0.2, 0.8, 0.4, 1)", "linear"
+      ),
+      decl("animation-iteration-count", keyword("1, infinite")),
+      animationDirections(adNormal, adAlternate),
+      animationFillModes(afNone, afForwards),
+      animationPlayStates(apsRunning, apsPaused),
+      animationCompositions(acReplace, acAdd)
+    ])
+    var diagnostics: Diagnostics
+    let style = resolveStyles(
+      context, defaultProperties(), ResolveEnv(), diagnostics
+    )
+
+    check not diagnostics.hasErrors
+    check style.animation.animationNames == @["fade", "tint", "move"]
+    check style.animation.animationDurations == @[2.0'f32, 0.5'f32]
+    check style.animation.animationDelays == @[-0.25'f32]
+    check style.animation.animationTimingFunctions == @[
+      "cubic-bezier(0.2, 0.8, 0.4, 1)", "linear"
+    ]
+    check style.animation.animationIterationCounts == @[
+      some(1.0'f32), none(float32)
+    ]
+    check style.animation.animationDirections == @[adNormal, adAlternate]
+    check style.animation.animationFillModes == @[afNone, afForwards]
+    check style.animation.animationPlayStates == @[apsRunning, apsPaused]
+    check style.animation.animationCompositions == @[acReplace, acAdd]
+    check style.animation.animationName == some("fade")
+    check style.animation.animationDuration == 2.0'f32
+    check style.animation.animationIterationCount == some(1.0'f32)
+
+  test "animation list diagnostics reject malformed and invalid values":
+    for declaration in [
+      decl("animation-name", keyword("fade,,move")),
+      decl("animation-name", keyword("none, fade")),
+      decl("animation-duration", keyword("1, nope")),
+      decl("animation-duration", keyword("1, -0.5")),
+      decl("animation-iteration-count", keyword("1, -1")),
+      decl("animation-direction", keyword("normal, sideways")),
+      decl("animation-fill-mode", keyword("both, mystery")),
+      decl("animation-play-state", keyword("running, stopped")),
+      decl("animation-composition", keyword("replace, merge"))
+    ]:
+      var diagnostics: Diagnostics
+      discard resolveStyles(
+        styleContext([declaration]),
+        defaultProperties(),
+        ResolveEnv(),
+        diagnostics
+      )
+      check diagnostics.hasErrors
 
   test "transition longhands retain normalized lists for runtime cycling":
     let context = styleContext([

@@ -9,6 +9,13 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added multiple declaration-bound animations per node with typed list
+  authoring and CSS-like cycling across name, duration, delay, timing,
+  iteration count, direction, fill, play state, and composition. Missing
+  definitions retain their list positions, tracks pause and complete
+  independently, and declaration order determines paint precedence.
+- Added an AddressSanitizer motion gate for declarative transitions and
+  keyframes under both ARC and ORC. Valgrind remains the separate leak gate.
 - Added typed and lower-level list authoring for transition property, duration,
   delay, timing, and behavior values, with CSS-like index cycling, preserved
   unknown-property positions, nested-function comma parsing, and last-match

@@ -95,17 +95,22 @@ ui.registerStyleKeyframes(styleKeyframes("pulse", [
 ]))
 
 let indicator = ui.box(uiStyle([
-  decl("animation-name", keyword("pulse")),
-  decl("animation-duration", number(1.2)),
+  animationNames("pulse"),
+  animationDurations(1.2'f32),
   decl("animation-iteration-count", keyword("infinite")),
   animationDirection(adAlternate),
   animationFillMode(afBoth)
 ]))
 ```
 
-The first keyframe runtime slice animates `opacity`, `color`, and
-`background-color`. It consumes `animation-name`, duration, signed delay,
-timing function, iteration count, direction, fill mode, and play state.
+The current keyframe runtime animates `opacity`, `color`, and
+`background-color`. It consumes list-valued `animation-name`, duration, signed
+delay, timing function, iteration count, direction, fill mode, play state, and
+composition. All longhand lists cycle by animation index. Unknown animation
+names retain their positions, so a missing registration does not shift the
+duration or timing assigned to later names. Multiple tracks on one node pause,
+complete, and retain fill presentation independently; later declared tracks
+have paint precedence when they target the same property.
 Missing zero/one endpoints use the element's underlying computed value.
 Completed forwards/both presentations survive unrelated style refreshes,
 definition replacement restarts the named animation, and subtree disposal or
@@ -121,10 +126,8 @@ This is not yet the complete declaration-driven motion surface. The following
 remain planned:
 
 - transform and other typed interpolable values;
-- multiple comma-separated animations and CSS-like list cycling;
 - additive and accumulative `animation-composition` modes;
 - transition and animation lifecycle event dispatch;
-- list-valued keyframe animation longhands with CSS-like cycling;
 - discrete-transition policy; and
 - platform reduced-motion preference adapters.
 

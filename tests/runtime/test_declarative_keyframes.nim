@@ -77,6 +77,92 @@ suite "declarative style keyframes":
     check foreground.r > 0.4 and foreground.b > 0.4
     check background.r > 0.3 and background.r < 0.8
 
+  test "multiple animation names run independently on one node":
+    let ui = initUiRoot()
+    ui.registerStyleKeyframes(styleKeyframes("fade", [
+      styleKeyframe(0, [decl("opacity", number(0))]),
+      styleKeyframe(1, [decl("opacity", number(1))])
+    ]))
+    ui.registerStyleKeyframes(styleKeyframes("tint", [
+      styleKeyframe(0, [
+        decl("background-color", colorValue(rgb(1, 0, 0)))
+      ]),
+      styleKeyframe(1, [
+        decl("background-color", colorValue(rgb(0, 0, 1)))
+      ])
+    ]))
+    let panel = ui.box(uiStyle([
+      animationNames("fade", "tint"),
+      animationDurations(1.0'f32, 2.0'f32),
+      animationTimingFunctions("linear"),
+      animationFillModes(afForwards)
+    ]))
+    let driver = initCbssTestDriver(ui, size(200, 100))
+
+    check ui.activeStyleAnimationCount == 2
+    driver.advanceTime(1)
+    check driver.styles.styles[panel.id.nodeIndex].visual.opacity == 1
+    let halfway = driver.styles.styles[
+      panel.id.nodeIndex
+    ].box.backgroundColor.get
+    check halfway.r > 0.4 and halfway.b > 0.4
+    check ui.activeStyleAnimationCount == 1
+    driver.advanceTime(1)
+    check ui.activeStyleAnimationCount == 0
+    check driver.styles.styles[
+      panel.id.nodeIndex
+    ].box.backgroundColor.get.b > 0.99
+
+  test "missing definitions preserve animation list positions":
+    let ui = initUiRoot()
+    ui.registerStyleKeyframes(styleKeyframes("fade", [
+      styleKeyframe(0, [decl("opacity", number(0))]),
+      styleKeyframe(1, [decl("opacity", number(1))])
+    ]))
+    let panel = ui.box(uiStyle([
+      animationNames("not-registered", "fade"),
+      animationDurations(30.0'f32, 1.0'f32),
+      animationTimingFunctions("linear"),
+      animationFillModes(afForwards)
+    ]))
+    let driver = initCbssTestDriver(ui, size(200, 100))
+
+    check ui.activeStyleAnimationCount == 1
+    driver.advanceTime(1)
+    check driver.styles.styles[panel.id.nodeIndex].visual.opacity == 1
+    check ui.activeStyleAnimationCount == 0
+
+  test "per-animation play state does not pause sibling tracks":
+    let ui = initUiRoot()
+    ui.registerStyleKeyframes(styleKeyframes("fade", [
+      styleKeyframe(0, [decl("opacity", number(0))]),
+      styleKeyframe(1, [decl("opacity", number(1))])
+    ]))
+    ui.registerStyleKeyframes(styleKeyframes("tint", [
+      styleKeyframe(0, [
+        decl("background-color", colorValue(rgb(1, 0, 0)))
+      ]),
+      styleKeyframe(1, [
+        decl("background-color", colorValue(rgb(0, 0, 1)))
+      ])
+    ]))
+    let panel = ui.box(uiStyle([
+      animationNames("fade", "tint"),
+      animationDurations(2.0'f32),
+      animationTimingFunctions("linear"),
+      animationPlayStates(apsPaused, apsRunning),
+      animationFillModes(afForwards)
+    ]))
+    let driver = initCbssTestDriver(ui, size(200, 100))
+    driver.advanceTime(1)
+
+    check driver.styles.styles[panel.id.nodeIndex].visual.opacity == 0
+    let background = driver.styles.styles[
+      panel.id.nodeIndex
+    ].box.backgroundColor.get
+    check background.r > 0.4 and background.b > 0.4
+    check ui.activeStyleAnimationCount == 2
+
   test "missing endpoints use the underlying computed value":
     let ui = initUiRoot()
     ui.registerStyleKeyframes(styleKeyframes("peak", [

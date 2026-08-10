@@ -1116,12 +1116,14 @@ Current and planned work:
   layout on animation frames. Property, duration, delay, timing, and behavior
   lists cycle by index; unknown property positions are retained and the last
   matching property entry wins. Transform and additional typed values remain.
-- Implemented first runtime slice: named typed keyframes bind through
-  `animation-name`, duration, signed delay, timing function, iteration count,
-  direction, fill mode, and play state. `opacity`, `color`, and
-  `background-color` sample through the shared animation clock without
-  per-frame style resolution or layout. Multiple animation lists, additive
-  composition, lifecycle events, transforms, and further value types remain.
+- Implemented: named typed keyframes bind through list-valued `animation-name`,
+  duration, signed delay, timing function, iteration count, direction, fill
+  mode, play state, and composition. Lists cycle by animation index, missing
+  definitions retain their positions, and multiple tracks on one node progress
+  independently. `opacity`, `color`, and `background-color` sample through the
+  shared animation clock without per-frame style resolution or layout.
+  Additive composition, lifecycle events, transforms, and further value types
+  remain.
 - Implemented: frames are scheduled only while timed work, caret blink,
   scrolling motion, or Canvas requests one; idle UI remains event-driven.
 - Implemented foundation: the animation clock accepts reduced-motion policy;
@@ -1398,6 +1400,13 @@ interact with, replace, unmount, cancel, close, and destroy components under
 including late callbacks, cancellation races, Blob/provider release, stream
 shutdown, and C ABI consumers. A static pass is not reported as proof of leak
 freedom without the matching runtime lifecycle pass.
+
+The Version 0.4 motion gate runs declarative transition and keyframe lifecycle
+tests under AddressSanitizer with both ARC and ORC. AddressSanitizer owns
+out-of-bounds, use-after-free, and double-free detection; the existing Valgrind
+lane owns leak detection. Keeping those responsibilities separate also makes
+the sanitizer command reproducible in restricted development environments
+where LeakSanitizer cannot inspect processes.
 
 This verification is development-only. Ownership tracing, generated probes,
 sanitizer hooks, and verifier implementation code are not imported, linked, or

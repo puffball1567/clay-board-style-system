@@ -294,18 +294,18 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `anchor-scope` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
 | `animation` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
 | `animation-composition` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
-| `animation-delay` | Runtime | Drives named paint keyframes, including negative delays; list cycling remains planned. |
-| `animation-direction` | Runtime | Controls normal, reverse, alternate, and alternate-reverse named keyframe playback. |
-| `animation-duration` | Runtime | Drives the active interval for named paint keyframes. |
-| `animation-fill-mode` | Runtime | Controls backwards sampling and retained forwards presentation for named paint keyframes. |
-| `animation-iteration-count` | Runtime | Supports finite counts and infinite named paint-keyframe playback. |
-| `animation-name` | Runtime | Binds a node to a typed keyframe definition registered on its `UiRoot`; multiple animation names remain planned. |
-| `animation-play-state` | Runtime | Pauses and resumes named paint keyframes without restarting their timeline. |
+| `animation-delay` | Runtime | Drives named paint keyframes, including negative delays and CSS-like list cycling. |
+| `animation-direction` | Runtime | Controls normal, reverse, alternate, and alternate-reverse playback with per-animation list cycling. |
+| `animation-duration` | Runtime | Drives each active interval with per-animation list cycling. |
+| `animation-fill-mode` | Runtime | Controls independent backwards sampling and retained forwards presentation for named keyframes. |
+| `animation-iteration-count` | Runtime | Supports cycled finite counts and infinite named paint-keyframe playback. |
+| `animation-name` | Runtime | Binds one node to one or more typed keyframe definitions registered on its `UiRoot`; missing definitions retain list positions. |
+| `animation-play-state` | Runtime | Independently pauses and resumes named paint keyframes without restarting their timelines. |
 | `animation-range` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
 | `animation-range-end` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
 | `animation-range-start` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
 | `animation-timeline` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
-| `animation-timing-function` | Runtime | Supports named timing functions, step start/end, and valid cubic Bezier curves for named paint keyframes. |
+| `animation-timing-function` | Runtime | Supports cycled named timing functions, step start/end, and valid cubic Bezier curves for named paint keyframes. |
 | `animation-trigger` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
 | `appearance` | Metadata | Stored as computed visual metadata. |
 | `aspect-ratio` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |

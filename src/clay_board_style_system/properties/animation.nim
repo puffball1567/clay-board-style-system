@@ -97,17 +97,56 @@ proc requireNumberList(
     values.add normalized
   some(values)
 
+proc requireIterationList(
+    declaration: Declaration;
+    diagnostics: var Diagnostics
+): Option[seq[Option[float32]]] =
+  if declaration.operation.value.isNone:
+    diagnostics.addError(
+      declaration.property,
+      "animation-iteration-count requires numbers or infinite"
+    )
+    return none(seq[Option[float32]])
+  let value = declaration.operation.value.get
+  let items =
+    case value.kind
+    of svNumber: @[ $value.number ]
+    of svKeyword:
+      let parsed = splitMotionList(value.keyword)
+      if parsed.isNone:
+        diagnostics.addError(
+          declaration.property, "invalid animation iteration list"
+        )
+        return none(seq[Option[float32]])
+      parsed.get
+    else:
+      diagnostics.addError(
+        declaration.property,
+        "animation-iteration-count requires numbers or infinite"
+      )
+      return none(seq[Option[float32]])
+  var resultValues: seq[Option[float32]]
+  for item in items:
+    if item == "infinite":
+      resultValues.add none(float32)
+      continue
+    var parsed: float
+    let consumed = parseFloat(item, parsed)
+    let normalized = parsed.float32
+    if consumed != item.len or parsed.classify in {fcNan, fcInf, fcNegInf} or
+        normalized.classify in {fcNan, fcInf, fcNegInf} or normalized < 0:
+      diagnostics.addError(
+        declaration.property, "invalid animation iteration count"
+      )
+      return none(seq[Option[float32]])
+    resultValues.add some(normalized)
+  some(resultValues)
+
 proc requireKeyword(declaration: Declaration; diagnostics: var Diagnostics): Option[string] =
   if declaration.operation.value.isNone or declaration.operation.value.get.kind != svKeyword:
     diagnostics.addError(declaration.property, declaration.property & " requires a keyword value")
     return none(string)
   some(declaration.operation.value.get.keyword)
-
-proc requireNumber(declaration: Declaration; diagnostics: var Diagnostics): Option[float32] =
-  if declaration.operation.value.isNone or declaration.operation.value.get.kind != svNumber:
-    diagnostics.addError(declaration.property, declaration.property & " requires a number value")
-    return none(float32)
-  some(declaration.operation.value.get.number)
 
 proc applyRawAnimation(
     style: var ComputedStyle;
@@ -136,6 +175,15 @@ proc applyRawAnimation(
     style.animation.animationFillMode = afNone
     style.animation.animationPlayState = apsRunning
     style.animation.animationComposition = acReplace
+    style.animation.animationNames.setLen(0)
+    style.animation.animationDurations.setLen(0)
+    style.animation.animationDelays.setLen(0)
+    style.animation.animationTimingFunctions.setLen(0)
+    style.animation.animationIterationCounts.setLen(0)
+    style.animation.animationDirections.setLen(0)
+    style.animation.animationFillModes.setLen(0)
+    style.animation.animationPlayStates.setLen(0)
+    style.animation.animationCompositions.setLen(0)
   of mmInherit:
     if env.parent.isSome:
       style.animation = env.parent.get.animation
@@ -152,18 +200,27 @@ proc applyAnimationName(
 ) =
   case declaration.operation.mode
   of mmOverwrite:
-    let value = requireKeyword(declaration, diagnostics)
-    if value.isNone:
+    let values = requireKeywordList(declaration, diagnostics)
+    if values.isNone:
       return
-    if value.get == "none":
+    if "none" in values.get and values.get.len != 1:
+      diagnostics.addError(
+        declaration.property, "animation-name cannot mix none with other names"
+      )
+      return
+    if values.get == @["none"]:
       style.animation.animationName = none(string)
+      style.animation.animationNames.setLen(0)
     else:
-      style.animation.animationName = value
+      style.animation.animationName = some(values.get[0])
+      style.animation.animationNames = values.get
   of mmInitial, mmUnset:
     style.animation.animationName = none(string)
+    style.animation.animationNames.setLen(0)
   of mmInherit:
     if env.parent.isSome:
       style.animation.animationName = env.parent.get.animation.animationName
+      style.animation.animationNames = env.parent.get.animation.animationNames
     else:
       diagnostics.addError(declaration.property, "cannot inherit animation-name without parent")
   of mmRelative:
@@ -177,24 +234,36 @@ proc applyAnimationTime(
 ) =
   case declaration.operation.mode
   of mmOverwrite:
-    let value = requireNumber(declaration, diagnostics)
-    if value.isNone:
+    let values = requireNumberList(declaration, diagnostics)
+    if values.isNone:
       return
     if declaration.property == "animation-duration":
-      style.animation.animationDuration = max(0.0'f32, value.get)
+      for value in values.get:
+        if value < 0:
+          diagnostics.addError(
+            declaration.property, "animation-duration values cannot be negative"
+          )
+          return
+      style.animation.animationDurations = values.get
+      style.animation.animationDuration = values.get[0]
     else:
-      style.animation.animationDelay = value.get
+      style.animation.animationDelays = values.get
+      style.animation.animationDelay = values.get[0]
   of mmInitial, mmUnset:
     if declaration.property == "animation-duration":
       style.animation.animationDuration = 0
+      style.animation.animationDurations.setLen(0)
     else:
       style.animation.animationDelay = 0
+      style.animation.animationDelays.setLen(0)
   of mmInherit:
     if env.parent.isSome:
       if declaration.property == "animation-duration":
         style.animation.animationDuration = env.parent.get.animation.animationDuration
+        style.animation.animationDurations = env.parent.get.animation.animationDurations
       else:
         style.animation.animationDelay = env.parent.get.animation.animationDelay
+        style.animation.animationDelays = env.parent.get.animation.animationDelays
     else:
       diagnostics.addError(declaration.property, "cannot inherit " & declaration.property & " without parent")
   of mmRelative:
@@ -208,12 +277,18 @@ proc applyAnimationTimingFunction(
 ) =
   case declaration.operation.mode
   of mmOverwrite:
-    style.animation.animationTimingFunction = requireKeyword(declaration, diagnostics)
+    let values = requireKeywordList(declaration, diagnostics)
+    if values.isNone:
+      return
+    style.animation.animationTimingFunction = some(values.get[0])
+    style.animation.animationTimingFunctions = values.get
   of mmInitial, mmUnset:
     style.animation.animationTimingFunction = some("ease")
+    style.animation.animationTimingFunctions.setLen(0)
   of mmInherit:
     if env.parent.isSome:
       style.animation.animationTimingFunction = env.parent.get.animation.animationTimingFunction
+      style.animation.animationTimingFunctions = env.parent.get.animation.animationTimingFunctions
     else:
       diagnostics.addError(declaration.property, "cannot inherit animation-timing-function without parent")
   of mmRelative:
@@ -227,25 +302,18 @@ proc applyAnimationIterationCount(
 ) =
   case declaration.operation.mode
   of mmOverwrite:
-    if declaration.operation.value.isNone:
-      diagnostics.addError(declaration.property, "animation-iteration-count requires a number or infinite")
+    let values = requireIterationList(declaration, diagnostics)
+    if values.isNone:
       return
-    let value = declaration.operation.value.get
-    case value.kind
-    of svNumber:
-      style.animation.animationIterationCount = some(max(0.0'f32, value.number))
-    of svKeyword:
-      if value.keyword == "infinite":
-        style.animation.animationIterationCount = none(float32)
-      else:
-        diagnostics.addError(declaration.property, "unsupported animation-iteration-count keyword")
-    else:
-      diagnostics.addError(declaration.property, "animation-iteration-count requires a number or infinite")
+    style.animation.animationIterationCount = values.get[0]
+    style.animation.animationIterationCounts = values.get
   of mmInitial, mmUnset:
     style.animation.animationIterationCount = some(1.0'f32)
+    style.animation.animationIterationCounts.setLen(0)
   of mmInherit:
     if env.parent.isSome:
       style.animation.animationIterationCount = env.parent.get.animation.animationIterationCount
+      style.animation.animationIterationCounts = env.parent.get.animation.animationIterationCounts
     else:
       diagnostics.addError(declaration.property, "cannot inherit animation-iteration-count without parent")
   of mmRelative:
@@ -257,26 +325,35 @@ proc applyAnimationDirection(
     env: ResolveEnv;
     diagnostics: var Diagnostics
 ) =
-  if declaration.operation.mode notin {mmOverwrite, mmInitial, mmUnset}:
-    diagnostics.addError(declaration.property, "animation-direction only supports overwrite, initial, and unset")
-    return
   if declaration.operation.mode in {mmInitial, mmUnset}:
     style.animation.animationDirection = adNormal
+    style.animation.animationDirections.setLen(0)
     return
-  let value = requireKeyword(declaration, diagnostics)
-  if value.isNone:
+  if declaration.operation.mode == mmInherit:
+    if env.parent.isSome:
+      style.animation.animationDirection = env.parent.get.animation.animationDirection
+      style.animation.animationDirections = env.parent.get.animation.animationDirections
+    else:
+      diagnostics.addError(declaration.property, "cannot inherit animation-direction without parent")
     return
-  case value.get
-  of "normal":
-    style.animation.animationDirection = adNormal
-  of "reverse":
-    style.animation.animationDirection = adReverse
-  of "alternate":
-    style.animation.animationDirection = adAlternate
-  of "alternate-reverse":
-    style.animation.animationDirection = adAlternateReverse
-  else:
-    diagnostics.addError(declaration.property, "unsupported animation-direction keyword")
+  if declaration.operation.mode == mmRelative:
+    diagnostics.addError(declaration.property, "animation-direction does not support relative merge")
+    return
+  let values = requireKeywordList(declaration, diagnostics)
+  if values.isNone:
+    return
+  var parsed: seq[AnimationDirection]
+  for value in values.get:
+    case value
+    of "normal": parsed.add adNormal
+    of "reverse": parsed.add adReverse
+    of "alternate": parsed.add adAlternate
+    of "alternate-reverse": parsed.add adAlternateReverse
+    else:
+      diagnostics.addError(declaration.property, "unsupported animation-direction keyword")
+      return
+  style.animation.animationDirection = parsed[0]
+  style.animation.animationDirections = parsed
 
 proc applyAnimationFillMode(
     style: var ComputedStyle;
@@ -284,26 +361,35 @@ proc applyAnimationFillMode(
     env: ResolveEnv;
     diagnostics: var Diagnostics
 ) =
-  if declaration.operation.mode notin {mmOverwrite, mmInitial, mmUnset}:
-    diagnostics.addError(declaration.property, "animation-fill-mode only supports overwrite, initial, and unset")
-    return
   if declaration.operation.mode in {mmInitial, mmUnset}:
     style.animation.animationFillMode = afNone
+    style.animation.animationFillModes.setLen(0)
     return
-  let value = requireKeyword(declaration, diagnostics)
-  if value.isNone:
+  if declaration.operation.mode == mmInherit:
+    if env.parent.isSome:
+      style.animation.animationFillMode = env.parent.get.animation.animationFillMode
+      style.animation.animationFillModes = env.parent.get.animation.animationFillModes
+    else:
+      diagnostics.addError(declaration.property, "cannot inherit animation-fill-mode without parent")
     return
-  case value.get
-  of "none":
-    style.animation.animationFillMode = afNone
-  of "forwards":
-    style.animation.animationFillMode = afForwards
-  of "backwards":
-    style.animation.animationFillMode = afBackwards
-  of "both":
-    style.animation.animationFillMode = afBoth
-  else:
-    diagnostics.addError(declaration.property, "unsupported animation-fill-mode keyword")
+  if declaration.operation.mode == mmRelative:
+    diagnostics.addError(declaration.property, "animation-fill-mode does not support relative merge")
+    return
+  let values = requireKeywordList(declaration, diagnostics)
+  if values.isNone:
+    return
+  var parsed: seq[AnimationFillMode]
+  for value in values.get:
+    case value
+    of "none": parsed.add afNone
+    of "forwards": parsed.add afForwards
+    of "backwards": parsed.add afBackwards
+    of "both": parsed.add afBoth
+    else:
+      diagnostics.addError(declaration.property, "unsupported animation-fill-mode keyword")
+      return
+  style.animation.animationFillMode = parsed[0]
+  style.animation.animationFillModes = parsed
 
 proc applyAnimationPlayState(
     style: var ComputedStyle;
@@ -311,22 +397,33 @@ proc applyAnimationPlayState(
     env: ResolveEnv;
     diagnostics: var Diagnostics
 ) =
-  if declaration.operation.mode notin {mmOverwrite, mmInitial, mmUnset}:
-    diagnostics.addError(declaration.property, "animation-play-state only supports overwrite, initial, and unset")
-    return
   if declaration.operation.mode in {mmInitial, mmUnset}:
     style.animation.animationPlayState = apsRunning
+    style.animation.animationPlayStates.setLen(0)
     return
-  let value = requireKeyword(declaration, diagnostics)
-  if value.isNone:
+  if declaration.operation.mode == mmInherit:
+    if env.parent.isSome:
+      style.animation.animationPlayState = env.parent.get.animation.animationPlayState
+      style.animation.animationPlayStates = env.parent.get.animation.animationPlayStates
+    else:
+      diagnostics.addError(declaration.property, "cannot inherit animation-play-state without parent")
     return
-  case value.get
-  of "running":
-    style.animation.animationPlayState = apsRunning
-  of "paused":
-    style.animation.animationPlayState = apsPaused
-  else:
-    diagnostics.addError(declaration.property, "unsupported animation-play-state keyword")
+  if declaration.operation.mode == mmRelative:
+    diagnostics.addError(declaration.property, "animation-play-state does not support relative merge")
+    return
+  let values = requireKeywordList(declaration, diagnostics)
+  if values.isNone:
+    return
+  var parsed: seq[AnimationPlayState]
+  for value in values.get:
+    case value
+    of "running": parsed.add apsRunning
+    of "paused": parsed.add apsPaused
+    else:
+      diagnostics.addError(declaration.property, "unsupported animation-play-state keyword")
+      return
+  style.animation.animationPlayState = parsed[0]
+  style.animation.animationPlayStates = parsed
 
 proc applyAnimationComposition(
     style: var ComputedStyle;
@@ -334,24 +431,34 @@ proc applyAnimationComposition(
     env: ResolveEnv;
     diagnostics: var Diagnostics
 ) =
-  if declaration.operation.mode notin {mmOverwrite, mmInitial, mmUnset}:
-    diagnostics.addError(declaration.property, "animation-composition only supports overwrite, initial, and unset")
-    return
   if declaration.operation.mode in {mmInitial, mmUnset}:
     style.animation.animationComposition = acReplace
+    style.animation.animationCompositions.setLen(0)
     return
-  let value = requireKeyword(declaration, diagnostics)
-  if value.isNone:
+  if declaration.operation.mode == mmInherit:
+    if env.parent.isSome:
+      style.animation.animationComposition = env.parent.get.animation.animationComposition
+      style.animation.animationCompositions = env.parent.get.animation.animationCompositions
+    else:
+      diagnostics.addError(declaration.property, "cannot inherit animation-composition without parent")
     return
-  case value.get
-  of "replace":
-    style.animation.animationComposition = acReplace
-  of "add":
-    style.animation.animationComposition = acAdd
-  of "accumulate":
-    style.animation.animationComposition = acAccumulate
-  else:
-    diagnostics.addError(declaration.property, "unsupported animation-composition keyword")
+  if declaration.operation.mode == mmRelative:
+    diagnostics.addError(declaration.property, "animation-composition does not support relative merge")
+    return
+  let values = requireKeywordList(declaration, diagnostics)
+  if values.isNone:
+    return
+  var parsed: seq[AnimationComposition]
+  for value in values.get:
+    case value
+    of "replace": parsed.add acReplace
+    of "add": parsed.add acAdd
+    of "accumulate": parsed.add acAccumulate
+    else:
+      diagnostics.addError(declaration.property, "unsupported animation-composition keyword")
+      return
+  style.animation.animationComposition = parsed[0]
+  style.animation.animationCompositions = parsed
 
 proc applyAnimationPassthrough(
     style: var ComputedStyle;
