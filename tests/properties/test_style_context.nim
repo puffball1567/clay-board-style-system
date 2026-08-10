@@ -508,6 +508,20 @@ suite "style context merge":
     check style.animation.transitionTimingFunction == some("linear")
     check style.animation.transitionBehavior == tbAllowDiscrete
 
+  test "animation delay preserves a negative authored offset":
+    let context = styleContext([
+      decl("animation-duration", number(-1)),
+      decl("animation-delay", number(-0.25))
+    ])
+    var diagnostics: Diagnostics
+    let style = resolveStyles(
+      context, defaultProperties(), ResolveEnv(), diagnostics
+    )
+
+    check not diagnostics.hasErrors
+    check style.animation.animationDuration == 0
+    check style.animation.animationDelay == -0.25'f32
+
   test "background properties resolve to computed box style":
     let context = styleContext([
       decl("background", colorValue(rgb(0.1, 0.2, 0.3))),

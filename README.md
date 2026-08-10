@@ -198,10 +198,10 @@ Version 0.3.2 is a developer preview. Public APIs may change before 1.0.
 - The semantic accessibility model and platform-neutral AT-SPI adapter exist;
   Linux AT-SPI D-Bus, Windows UIA, and macOS NSAccessibility transports remain
   incomplete.
-- Complete unit resolution, inline rich text, declaration-bound keyframes,
-  additional declarative transition properties, filters, 3D transforms, CPU
-  effects, and GPU Canvas are roadmap work. The first paint-transition runtime
-  supports opacity and foreground/background colors.
+- Complete unit resolution, inline rich text, additional declarative motion
+  properties, filters, 3D transforms, CPU effects, and GPU Canvas are roadmap
+  work. The first paint-transition and named-keyframe runtimes support opacity
+  and foreground/background colors.
 - CBSS intentionally does not reproduce DOM selectors, browser quirks, legacy
   CSS behavior, JavaScript, or a browser security model.
 

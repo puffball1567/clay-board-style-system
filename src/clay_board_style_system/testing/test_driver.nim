@@ -221,7 +221,7 @@ proc matches(tree: Tree; id: NodeId; query: CbssQuery): bool =
 
 proc refresh*(driver: CbssTestDriver) =
   driver.diagnostics = Diagnostics()
-  let targetStyles = resolveTreeStyles(
+  var targetStyles = resolveTreeStyles(
     driver.ui.tree,
     driver.ui.styleSheets(),
     defaultProperties(),
@@ -232,10 +232,14 @@ proc refresh*(driver: CbssTestDriver) =
     driver.ui.reconcileStyleTransitions(
       driver.styles, targetStyles, driver.nowSeconds
     )
+  driver.ui.reconcileStyleAnimations(targetStyles, driver.nowSeconds)
   driver.styles = targetStyles
   driver.scheduler.clearDeadline()
   discard driver.scheduler.consumeDirty()
   discard driver.ui.applyStyleTransitions(
+    driver.styles, driver.scheduler, driver.nowSeconds
+  )
+  discard driver.ui.applyStyleAnimations(
     driver.styles, driver.scheduler, driver.nowSeconds
   )
   driver.layout = computeLayout(driver.ui.tree, driver.styles, driver.viewport, driver.ui.textEngine, driver.ui.fonts)
@@ -259,9 +263,13 @@ proc advanceTime*(driver: CbssTestDriver; elapsedSeconds: float64) =
   driver.nowSeconds += elapsedSeconds
   driver.scheduler.clearDeadline()
   discard driver.scheduler.consumeDirty()
-  if driver.ui.applyStyleTransitions(
+  let transitionSamples = driver.ui.applyStyleTransitions(
       driver.styles, driver.scheduler, driver.nowSeconds
-  ) > 0:
+  )
+  let animationSamples = driver.ui.applyStyleAnimations(
+    driver.styles, driver.scheduler, driver.nowSeconds
+  )
+  if transitionSamples > 0 or animationSamples > 0:
     driver.paintCommands = buildPaintCommands(
       driver.ui.tree, driver.styles, driver.layout, driver.ui.scroll,
       driver.ui.canvasPaintProvider()
