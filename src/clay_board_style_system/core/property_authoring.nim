@@ -1,3 +1,4 @@
+import std/strutils
 import ./[computed_style, declaration, style_value]
 
 template defineLengthProperty(name: untyped; propertyName: static[string]) =
@@ -589,5 +590,30 @@ defineClosedKeywordProperty(
 defineClosedKeywordProperty(
   transitionBehavior, TransitionBehavior, "transition-behavior"
 )
+
+proc transitionProperties*(values: varargs[string]): Declaration =
+  decl("transition-property", keyword((@values).join(", ")))
+
+proc transitionDurations*(values: varargs[float32]): Declaration =
+  var authored: seq[string]
+  for value in values:
+    authored.add $value
+  decl("transition-duration", keyword(authored.join(", ")))
+
+proc transitionDelays*(values: varargs[float32]): Declaration =
+  var authored: seq[string]
+  for value in values:
+    authored.add $value
+  decl("transition-delay", keyword(authored.join(", ")))
+
+proc transitionTimingFunctions*(values: varargs[string]): Declaration =
+  decl("transition-timing-function", keyword((@values).join(", ")))
+
+proc transitionBehaviors*(values: varargs[TransitionBehavior]): Declaration =
+  var authored: seq[string]
+  for value in values:
+    authored.add closedKeyword(value)
+  decl("transition-behavior", keyword(authored.join(", ")))
+
 defineClosedKeywordProperty(transformBox, TransformBox, "transform-box")
 defineClosedKeywordProperty(transformStyle, TransformStyle, "transform-style")

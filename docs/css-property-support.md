@@ -805,10 +805,10 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `transform-style` | Metadata | Supports `flat` and `preserve-3d` metadata. |
 | `transition` | Metadata | Stored as transition metadata; runtime subsystem is not complete yet. |
 | `transition-behavior` | Metadata | Stored as transition metadata; runtime subsystem is not complete yet. |
-| `transition-delay` | Runtime | Drives the paint-transition runtime, including negative delay; list cycling remains planned. |
-| `transition-duration` | Runtime | Drives paint transitions for the currently supported interpolable properties. |
-| `transition-property` | Runtime | Selects `opacity`, `color`, and `background-color`, or `all`; additional values remain planned. |
-| `transition-timing-function` | Runtime | Supports the named timing functions, step start/end, and valid cubic Bezier curves for paint transitions. |
+| `transition-delay` | Runtime | Drives the paint-transition runtime, including negative delay and CSS-like list cycling. |
+| `transition-duration` | Runtime | Drives paint transitions with CSS-like list cycling for the currently supported interpolable properties. |
+| `transition-property` | Runtime | Selects `opacity`, `color`, and `background-color`, or `all`; unknown names retain list positions and the last matching entry wins. Additional runtime properties remain planned. |
+| `transition-timing-function` | Runtime | Supports named timing functions, step start/end, valid cubic Bezier curves, and CSS-like list cycling for paint transitions. |
 | `translate` | Runtime | Resolves into the shared 2D affine paint, hit-test, clip, and surface-input contract. |
 | `trigger-scope` | Metadata | Stored as computed timeline trigger metadata. |
 | `unicode-bidi` | Metadata | Stored in computed text style; full bidi shaping remains text-engine dependent. |

@@ -48,6 +48,12 @@ type
     targetFrameInterval*: float64
     reducedMotion*: bool
 
+  TransitionParameters = object
+    duration: float64
+    delay: float64
+    timing: TimingFunction
+    behavior: TransitionBehavior
+
 proc `==`(left, right: TransitionKey): bool =
   left.node == right.node and left.property == right.property
 
@@ -101,34 +107,61 @@ proc parseTimingFunction*(value: string): Option[TimingFunction] =
   except ValueError:
     none(TimingFunction)
 
-proc selectsProperty(
-    authored: Option[string];
-    property: DeclarativeTransitionProperty
-): bool =
-  if authored.isNone:
-    return false
-  for item in authored.get.split(','):
-    let name = item.strip.toLowerAscii
-    if name == "all" or name == property.transitionPropertyName:
-      return true
-  false
-
-proc currentTiming(style: ComputedStyle): TimingFunction =
-  let authored = style.animation.transitionTimingFunction
-  if authored.isSome:
-    let parsed = authored.get.parseTimingFunction()
-    if parsed.isSome:
-      return parsed.get
-  easeTiming()
-
-proc transitionEnabled(
+proc transitionParameters(
     runtime: DeclarativeTransitionRuntime;
     style: ComputedStyle;
     property: DeclarativeTransitionProperty
-): bool =
-  not runtime.reducedMotion and
-    style.animation.transitionDuration > 0 and
-    style.animation.transitionProperty.selectsProperty(property)
+): Option[TransitionParameters] =
+  if runtime.reducedMotion:
+    return none(TransitionParameters)
+  let animation = style.animation
+  var properties = animation.transitionProperties
+  if properties.len == 0 and animation.transitionProperty.isSome:
+    for item in animation.transitionProperty.get.split(','):
+      properties.add item.strip
+  var matched = -1
+  for index, item in properties:
+    let name = item.strip.toLowerAscii
+    if name == "all" or name == property.transitionPropertyName:
+      matched = index
+  if matched < 0:
+    return none(TransitionParameters)
+
+  let duration =
+    if animation.transitionDurations.len > 0:
+      animation.transitionDurations[matched mod animation.transitionDurations.len]
+    else:
+      animation.transitionDuration
+  if duration <= 0:
+    return none(TransitionParameters)
+  let delay =
+    if animation.transitionDelays.len > 0:
+      animation.transitionDelays[matched mod animation.transitionDelays.len]
+    else:
+      animation.transitionDelay
+  let authoredTiming =
+    if animation.transitionTimingFunctions.len > 0:
+      some(animation.transitionTimingFunctions[
+        matched mod animation.transitionTimingFunctions.len
+      ])
+    else:
+      animation.transitionTimingFunction
+  let parsedTiming =
+    if authoredTiming.isSome:
+      authoredTiming.get.parseTimingFunction()
+    else:
+      none(TimingFunction)
+  let behavior =
+    if animation.transitionBehaviors.len > 0:
+      animation.transitionBehaviors[matched mod animation.transitionBehaviors.len]
+    else:
+      animation.transitionBehavior
+  some(TransitionParameters(
+    duration: duration.float64,
+    delay: delay.float64,
+    timing: parsedTiming.get(easeTiming()),
+    behavior: behavior
+  ))
 
 proc sameTarget(track: TransitionTrack; value: float32): bool =
   track.kind == ttkNumber and track.number.endValue == value
@@ -146,15 +179,15 @@ proc sameTarget(
 
 proc numberTrack(
     startValue, endValue: float32;
-    style: ComputedStyle;
+    parameters: TransitionParameters;
     nowSeconds: float64
 ): TransitionTrack =
   TransitionTrack(kind: ttkNumber, number: NumberTransition(
     startValue: startValue,
     endValue: endValue,
-    activeStart: nowSeconds + style.animation.transitionDelay.float64,
-    duration: style.animation.transitionDuration.float64,
-    timing: style.currentTiming()
+    activeStart: nowSeconds + parameters.delay,
+    duration: parameters.duration,
+    timing: parameters.timing
   ))
 
 proc transparentLike(value: Color): Color =
@@ -162,7 +195,7 @@ proc transparentLike(value: Color): Color =
 
 proc colorTrack(
     startValue, endValue: Option[Color];
-    style: ComputedStyle;
+    parameters: TransitionParameters;
     nowSeconds: float64
 ): TransitionTrack =
   let startColor =
@@ -176,9 +209,9 @@ proc colorTrack(
     startValue: startColor.prepareColorInterpolation(cisOklab),
     endValue: endColor.prepareColorInterpolation(cisOklab),
     endPresent: endValue.isSome,
-    activeStart: nowSeconds + style.animation.transitionDelay.float64,
-    duration: style.animation.transitionDuration.float64,
-    timing: style.currentTiming()
+    activeStart: nowSeconds + parameters.delay,
+    duration: parameters.duration,
+    timing: parameters.timing
   ))
 
 proc reconcileNumber(
@@ -188,14 +221,14 @@ proc reconcileNumber(
     targetStyle: ComputedStyle;
     nowSeconds: float64
 ) =
-  if startValue == endValue or
-      not runtime.transitionEnabled(targetStyle, key.property):
+  let parameters = runtime.transitionParameters(targetStyle, key.property)
+  if startValue == endValue or parameters.isNone:
     runtime.tracks.del(key)
     return
   if key in runtime.tracks and runtime.tracks[key].sameTarget(endValue):
     return
   runtime.tracks[key] = numberTrack(
-    startValue, endValue, targetStyle, nowSeconds
+    startValue, endValue, parameters.get, nowSeconds
   )
 
 proc reconcileColor(
@@ -205,14 +238,14 @@ proc reconcileColor(
     targetStyle: ComputedStyle;
     nowSeconds: float64
 ) =
-  if startValue == endValue or
-      not runtime.transitionEnabled(targetStyle, key.property):
+  let parameters = runtime.transitionParameters(targetStyle, key.property)
+  if startValue == endValue or parameters.isNone:
     runtime.tracks.del(key)
     return
   if key in runtime.tracks and runtime.tracks[key].sameTarget(endValue):
     return
   runtime.tracks[key] = colorTrack(
-    startValue, endValue, targetStyle, nowSeconds
+    startValue, endValue, parameters.get, nowSeconds
   )
 
 proc reconcileTransitions*(

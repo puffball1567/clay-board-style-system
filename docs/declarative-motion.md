@@ -33,7 +33,23 @@ Supported runtime properties in this slice are:
 
 Named timing functions, `step-start`, `step-end`, and valid
 `cubic-bezier(...)` values are supported. Negative delays begin partway through
-the active interval. Color transitions use prepared Oklab interpolation.
+the active interval. Comma-separated property, duration, delay, timing, and
+behavior lists use CSS-like index cycling. Unknown property names retain their
+position, and the last `transition-property` entry matching a property supplies
+its parameters. Color transitions use prepared Oklab interpolation.
+
+Typed list helpers avoid constructing the comma-separated representation by
+hand:
+
+```nim
+let motion = uiStyle([
+  transitionProperties("opacity", "background-color"),
+  transitionDurations(0.12'f32, 0.3'f32),
+  transitionDelays(0.0'f32),
+  transitionTimingFunctions("ease-out", "cubic-bezier(0.2, 0.8, 0.4, 1)"),
+  transitionBehaviors(tbNormal)
+])
+```
 
 The runtime is keyed by stable `NodeId` and property. Reversing a transition
 starts from the currently displayed value, reconciling an unchanged target
@@ -108,7 +124,7 @@ remain planned:
 - multiple comma-separated animations and CSS-like list cycling;
 - additive and accumulative `animation-composition` modes;
 - transition and animation lifecycle event dispatch;
-- list-valued durations, delays, and timing functions with CSS-like cycling;
+- list-valued keyframe animation longhands with CSS-like cycling;
 - discrete-transition policy; and
 - platform reduced-motion preference adapters.
 

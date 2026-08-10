@@ -399,6 +399,11 @@ type
     transitionDelay*: float32
     transitionTimingFunction*: Option[string]
     transitionBehavior*: TransitionBehavior
+    transitionProperties*: seq[string]
+    transitionDurations*: seq[float32]
+    transitionDelays*: seq[float32]
+    transitionTimingFunctions*: seq[string]
+    transitionBehaviors*: seq[TransitionBehavior]
 
   BoxShadow* = object
     offsetX*, offsetY*: float32

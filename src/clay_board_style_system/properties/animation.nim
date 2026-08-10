@@ -1,5 +1,101 @@
-import std/options
+import std/[math, options, parseutils, strutils]
 import ../core/[computed_style, declaration, diagnostics, property, style_value]
+
+proc requireKeyword(
+    declaration: Declaration;
+    diagnostics: var Diagnostics
+): Option[string]
+
+proc splitMotionList(value: string): Option[seq[string]] =
+  result = some(newSeq[string]())
+  var depth = 0
+  var start = 0
+  for index, character in value:
+    case character
+    of '(':
+      inc depth
+    of ')':
+      dec depth
+      if depth < 0:
+        return none(seq[string])
+    of ',':
+      if depth == 0:
+        let item = value[start ..< index].strip
+        if item.len == 0:
+          return none(seq[string])
+        result.get.add item
+        start = index + 1
+    else:
+      discard
+  if depth != 0:
+    return none(seq[string])
+  let item = value[start .. ^1].strip
+  if item.len == 0:
+    return none(seq[string])
+  result.get.add item
+
+proc requireKeywordList(
+    declaration: Declaration;
+    diagnostics: var Diagnostics
+): Option[seq[string]] =
+  let value = requireKeyword(declaration, diagnostics)
+  if value.isNone:
+    return none(seq[string])
+  result = splitMotionList(value.get)
+  if result.isNone:
+    diagnostics.addError(
+      declaration.property,
+      declaration.property & " requires a non-empty comma-separated list"
+    )
+
+proc requireNumberList(
+    declaration: Declaration;
+    diagnostics: var Diagnostics
+): Option[seq[float32]] =
+  if declaration.operation.value.isNone:
+    diagnostics.addError(
+      declaration.property, declaration.property & " requires a number list"
+    )
+    return none(seq[float32])
+  let value = declaration.operation.value.get
+  if value.kind == svNumber:
+    if value.number.classify in {fcNan, fcInf, fcNegInf}:
+      diagnostics.addError(
+        declaration.property,
+        declaration.property & " contains an invalid finite number"
+      )
+      return none(seq[float32])
+    return some(@[value.number])
+  if value.kind != svKeyword:
+    diagnostics.addError(
+      declaration.property, declaration.property & " requires a number list"
+    )
+    return none(seq[float32])
+  let items = splitMotionList(value.keyword)
+  if items.isNone:
+    diagnostics.addError(
+      declaration.property, declaration.property & " has an invalid number list"
+    )
+    return none(seq[float32])
+  var values: seq[float32]
+  for item in items.get:
+    var parsed: float
+    let consumed = parseFloat(item, parsed)
+    if consumed != item.len or parsed.classify in {fcNan, fcInf, fcNegInf}:
+      diagnostics.addError(
+        declaration.property,
+        declaration.property & " contains an invalid finite number"
+      )
+      return none(seq[float32])
+    let normalized = parsed.float32
+    if normalized.classify in {fcNan, fcInf, fcNegInf}:
+      diagnostics.addError(
+        declaration.property,
+        declaration.property & " contains a number outside the supported range"
+      )
+      return none(seq[float32])
+    values.add normalized
+  some(values)
 
 proc requireKeyword(declaration: Declaration; diagnostics: var Diagnostics): Option[string] =
   if declaration.operation.value.isNone or declaration.operation.value.get.kind != svKeyword:
@@ -391,6 +487,11 @@ proc applyRawTransition(
     style.animation.transitionDelay = 0
     style.animation.transitionTimingFunction = some("ease")
     style.animation.transitionBehavior = tbNormal
+    style.animation.transitionProperties.setLen(0)
+    style.animation.transitionDurations.setLen(0)
+    style.animation.transitionDelays.setLen(0)
+    style.animation.transitionTimingFunctions.setLen(0)
+    style.animation.transitionBehaviors.setLen(0)
   of mmInherit:
     if env.parent.isSome:
       style.animation.rawTransition = env.parent.get.animation.rawTransition
@@ -407,17 +508,27 @@ proc applyTransitionProperty(
 ) =
   case declaration.operation.mode
   of mmOverwrite:
-    let value = requireKeyword(declaration, diagnostics)
-    if value.isSome:
-      if value.get == "none":
-        style.animation.transitionProperty = none(string)
-      else:
-        style.animation.transitionProperty = value
+    let values = requireKeywordList(declaration, diagnostics)
+    if values.isNone:
+      return
+    if "none" in values.get and values.get.len != 1:
+      diagnostics.addError(
+        declaration.property, "transition-property cannot mix none with other values"
+      )
+      return
+    if values.get == @["none"]:
+      style.animation.transitionProperty = none(string)
+      style.animation.transitionProperties.setLen(0)
+    else:
+      style.animation.transitionProperty = some(values.get.join(", "))
+      style.animation.transitionProperties = values.get
   of mmInitial, mmUnset:
     style.animation.transitionProperty = some("all")
+    style.animation.transitionProperties.setLen(0)
   of mmInherit:
     if env.parent.isSome:
       style.animation.transitionProperty = env.parent.get.animation.transitionProperty
+      style.animation.transitionProperties = env.parent.get.animation.transitionProperties
     else:
       diagnostics.addError(declaration.property, "cannot inherit transition-property without parent")
   of mmRelative:
@@ -431,26 +542,38 @@ proc applyTransitionTime(
 ) =
   case declaration.operation.mode
   of mmOverwrite:
-    let value = requireNumber(declaration, diagnostics)
-    if value.isNone:
+    let values = requireNumberList(declaration, diagnostics)
+    if values.isNone:
       return
     if declaration.property == "transition-duration":
-      style.animation.transitionDuration = max(0.0'f32, value.get)
+      for value in values.get:
+        if value < 0:
+          diagnostics.addError(
+            declaration.property, "transition-duration values cannot be negative"
+          )
+          return
+      style.animation.transitionDurations = values.get
+      style.animation.transitionDuration = values.get[0]
     else:
       # A negative delay starts the transition partway through its active
       # interval, matching CSS transition timing semantics.
-      style.animation.transitionDelay = value.get
+      style.animation.transitionDelays = values.get
+      style.animation.transitionDelay = values.get[0]
   of mmInitial, mmUnset:
     if declaration.property == "transition-duration":
       style.animation.transitionDuration = 0
+      style.animation.transitionDurations.setLen(0)
     else:
       style.animation.transitionDelay = 0
+      style.animation.transitionDelays.setLen(0)
   of mmInherit:
     if env.parent.isSome:
       if declaration.property == "transition-duration":
         style.animation.transitionDuration = env.parent.get.animation.transitionDuration
+        style.animation.transitionDurations = env.parent.get.animation.transitionDurations
       else:
         style.animation.transitionDelay = env.parent.get.animation.transitionDelay
+        style.animation.transitionDelays = env.parent.get.animation.transitionDelays
     else:
       diagnostics.addError(declaration.property, "cannot inherit " & declaration.property & " without parent")
   of mmRelative:
@@ -464,12 +587,18 @@ proc applyTransitionTimingFunction(
 ) =
   case declaration.operation.mode
   of mmOverwrite:
-    style.animation.transitionTimingFunction = requireKeyword(declaration, diagnostics)
+    let values = requireKeywordList(declaration, diagnostics)
+    if values.isNone:
+      return
+    style.animation.transitionTimingFunctions = values.get
+    style.animation.transitionTimingFunction = some(values.get[0])
   of mmInitial, mmUnset:
     style.animation.transitionTimingFunction = some("ease")
+    style.animation.transitionTimingFunctions.setLen(0)
   of mmInherit:
     if env.parent.isSome:
       style.animation.transitionTimingFunction = env.parent.get.animation.transitionTimingFunction
+      style.animation.transitionTimingFunctions = env.parent.get.animation.transitionTimingFunctions
     else:
       diagnostics.addError(declaration.property, "cannot inherit transition-timing-function without parent")
   of mmRelative:
@@ -486,17 +615,25 @@ proc applyTransitionBehavior(
     return
   if declaration.operation.mode in {mmInitial, mmUnset}:
     style.animation.transitionBehavior = tbNormal
+    style.animation.transitionBehaviors.setLen(0)
     return
-  let value = requireKeyword(declaration, diagnostics)
-  if value.isNone:
+  let values = requireKeywordList(declaration, diagnostics)
+  if values.isNone:
     return
-  case value.get
-  of "normal":
-    style.animation.transitionBehavior = tbNormal
-  of "allow-discrete":
-    style.animation.transitionBehavior = tbAllowDiscrete
-  else:
-    diagnostics.addError(declaration.property, "unsupported transition-behavior keyword")
+  var behaviors: seq[TransitionBehavior]
+  for value in values.get:
+    case value
+    of "normal":
+      behaviors.add tbNormal
+    of "allow-discrete":
+      behaviors.add tbAllowDiscrete
+    else:
+      diagnostics.addError(
+        declaration.property, "unsupported transition-behavior keyword"
+      )
+      return
+  style.animation.transitionBehaviors = behaviors
+  style.animation.transitionBehavior = behaviors[0]
 
 let animationProperty* = PropertyImpl(name: "animation", apply: applyRawAnimation)
 let animationNameProperty* = PropertyImpl(name: "animation-name", apply: applyAnimationName)
