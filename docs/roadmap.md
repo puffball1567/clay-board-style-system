@@ -998,20 +998,21 @@ callers depend only on the versioned CBSS ABI.
 
 ### Keywords And Closed Value Sets
 
-Status: `Partially implemented on the Version 0.4 development line`
+Status: `Implemented on the Version 0.4 development line`
 
 `keyword(...)` remains the extensible lower-level representation for
 property-specific values that are not yet closed or may expand over time. It
 should not be the preferred surface for common, closed sets such as flex
 direction, alignment, overflow, or cursor kinds.
 
-Planned work:
+Implemented contract:
 
-- Add typed helpers or enum-backed APIs for common closed value sets.
-- Keep a documented lower-level keyword path for extension and explicitly
-  supported metadata use cases.
-- Validate keywords against the property that consumes them and report
-  unsupported values instead of accepting and ignoring them.
+- Typed helpers backed by existing CBSS enums are the preferred authoring API
+  for closed value sets.
+- The documented lower-level keyword path remains available for extension and
+  explicitly supported metadata use cases.
+- Property consumers validate authored keywords and report unsupported values
+  instead of accepting and ignoring them.
 
 The initial typed surface accepts existing CBSS enums for display, Flex
 direction and wrapping, alignment, positioning, box sizing, overflow, pointer
@@ -1019,6 +1020,15 @@ events, cursor, selection, resize, font style, and text alignment. These
 helpers serialize to the same validated property operations as the lower-level
 keyword path, so they add LSP completion and compile-time type checking without
 creating a second runtime representation.
+
+The Version 0.4 surface extends that contract across the existing enum-backed
+text, image, background, blending, color-adjustment, touch, reading-flow,
+scrollbar, overscroll, transform-metadata, transition-metadata, and
+animation-metadata value sets. Motion helpers make existing metadata authoring
+type-safe; they do not imply that the later declarative motion runtime is
+complete. Grammars that combine keywords with dimensions or other payloads
+continue to use their property-specific structured values rather than forcing
+an enum-only API.
 
 ## GPU Canvas Capability
 

@@ -274,3 +274,191 @@ suite "typed property authoring":
       doAssert compiles(overflow(omAuto))
       doAssert not compiles(flexDirection("row"))
       doAssert not compiles(flexDirection(omAuto))
+
+  test "extended closed value helpers preserve exact property vocabulary":
+    let declarations = [
+      fontKerning(fkNormal),
+      fontOpticalSizing(fosNone),
+      textAlignLast(taCenter),
+      whiteSpace(wsPreWrap),
+      textOverflow(toEllipsis),
+      overflowWrap(owAnywhere),
+      wordWrap(owBreakWord),
+      wordBreak(wbKeepAll),
+      hyphens(hyAuto),
+      direction(tdRtl),
+      unicodeBidi(ubIsolateOverride),
+      writingMode(wmVerticalRl),
+      textDecorationLine(tdlLineThrough),
+      textDecorationStyle(tdsWavy),
+      textTransform(ttCapitalize),
+      textWrap(twPretty),
+      objectFit(ofScaleDown),
+      imageRendering(irCrispEdges),
+      backgroundRepeat(bgRepeatX),
+      backgroundOrigin(bgContentBox),
+      backgroundClip(bgPaddingBox),
+      backgroundAttachment(bgLocal),
+      backgroundBlendMode(bmScreen),
+      boxDecorationBreak(bdbClone),
+      mixBlendMode(bmMultiply),
+      isolation(isoIsolate),
+      forcedColorAdjust(caNone),
+      printColorAdjust(pcaExact),
+      touchAction(taPinchZoom),
+      readingFlow(rfFlexVisual),
+      scrollbarWidth(swThin),
+      scrollbarVisibility(svScrolling),
+      scrollBehavior(sbSmooth),
+      overscrollBehavior(obContain),
+      overscrollBehaviorX(obNone),
+      overscrollBehaviorY(obAuto),
+      overscrollBehaviorBlock(obContain),
+      overscrollBehaviorInline(obNone),
+      animationDirection(adAlternateReverse),
+      animationFillMode(afBackwards),
+      animationPlayState(apsPaused),
+      animationComposition(acAccumulate),
+      transitionBehavior(tbAllowDiscrete),
+      transformBox(tboxViewBox),
+      transformStyle(tsPreserve3d)
+    ]
+
+    check declarations.mapIt(it.property) == [
+      "font-kerning", "font-optical-sizing", "text-align-last",
+      "white-space", "text-overflow", "overflow-wrap", "word-wrap",
+      "word-break", "hyphens", "direction", "unicode-bidi", "writing-mode",
+      "text-decoration-line", "text-decoration-style", "text-transform",
+      "text-wrap", "object-fit", "image-rendering", "background-repeat",
+      "background-origin", "background-clip", "background-attachment",
+      "background-blend-mode", "box-decoration-break", "mix-blend-mode",
+      "isolation", "forced-color-adjust", "print-color-adjust",
+      "touch-action", "reading-flow", "scrollbar-width",
+      "scrollbar-visibility", "scroll-behavior", "overscroll-behavior",
+      "overscroll-behavior-x", "overscroll-behavior-y",
+      "overscroll-behavior-block", "overscroll-behavior-inline",
+      "animation-direction", "animation-fill-mode", "animation-play-state",
+      "animation-composition", "transition-behavior", "transform-box",
+      "transform-style"
+    ]
+    check declarations.mapIt(it.authoredKeyword) == [
+      "normal", "none", "center", "pre-wrap", "ellipsis", "anywhere",
+      "break-word", "keep-all", "auto", "rtl", "isolate-override",
+      "vertical-rl", "line-through", "wavy", "capitalize", "pretty",
+      "scale-down", "crisp-edges", "repeat-x", "content-box", "padding-box",
+      "local", "screen", "clone", "multiply", "isolate", "none", "exact",
+      "pinch-zoom", "flex-visual", "thin", "scrolling", "smooth", "contain",
+      "none", "auto", "contain", "none", "alternate-reverse", "backwards",
+      "paused", "accumulate", "allow-discrete", "view-box", "preserve-3d"
+    ]
+
+  test "extended closed values resolve through existing property consumers":
+    var tree = initTree()
+    let root = tree.addBox(id = "root")
+    let sheet = styleSheet([rule(target(root), [
+      fontKerning(fkNone),
+      fontOpticalSizing(fosNone),
+      textAlignLast(taEnd),
+      whiteSpace(wsBreakSpaces),
+      textOverflow(toEllipsis),
+      overflowWrap(owAnywhere),
+      wordBreak(wbBreakAll),
+      hyphens(hyAuto),
+      direction(tdRtl),
+      unicodeBidi(ubPlaintext),
+      writingMode(wmVerticalLr),
+      textDecorationLine(tdlUnderline),
+      textDecorationStyle(tdsDashed),
+      textTransform(ttUppercase),
+      textWrap(twBalance),
+      objectFit(ofCover),
+      imageRendering(irPixelated),
+      backgroundRepeat(bgNoRepeat),
+      backgroundOrigin(bgContentBox),
+      backgroundClip(bgPaddingBox),
+      backgroundAttachment(bgFixed),
+      backgroundBlendMode(bmOverlay),
+      boxDecorationBreak(bdbClone),
+      mixBlendMode(bmScreen),
+      isolation(isoIsolate),
+      forcedColorAdjust(caNone),
+      printColorAdjust(pcaExact),
+      touchAction(taManipulation),
+      readingFlow(rfFlexFlow),
+      scrollbarWidth(swThin),
+      scrollbarVisibility(svScrolling),
+      scrollBehavior(sbSmooth),
+      overscrollBehavior(obContain),
+      overscrollBehaviorX(obNone),
+      overscrollBehaviorY(obAuto),
+      overscrollBehaviorBlock(obNone),
+      overscrollBehaviorInline(obContain),
+      animationDirection(adReverse),
+      animationFillMode(afBoth),
+      animationPlayState(apsPaused),
+      animationComposition(acAdd),
+      transitionBehavior(tbAllowDiscrete),
+      transformBox(tboxContentBox),
+      transformStyle(tsPreserve3d)
+    ])])
+    var diagnostics: Diagnostics
+    let resolved = resolveTreeStyles(
+      tree, [sheet], defaultProperties(), diagnostics
+    )
+    let style = resolved.styles[root.nodeIndex]
+
+    check not diagnostics.hasErrors
+    check style.text.fontKerning == some(fkNone)
+    check style.text.fontOpticalSizing == some(fosNone)
+    check style.text.textAlignLast == some(taEnd)
+    check style.text.whiteSpace == some(wsBreakSpaces)
+    check style.text.textOverflow == some(toEllipsis)
+    check style.text.overflowWrap == some(owAnywhere)
+    check style.text.wordBreak == some(wbBreakAll)
+    check style.text.hyphens == some(hyAuto)
+    check style.text.direction == some(tdRtl)
+    check style.text.unicodeBidi == some(ubPlaintext)
+    check style.text.writingMode == some(wmVerticalLr)
+    check style.text.textDecorationLine == some(tdlUnderline)
+    check style.text.textDecorationStyle == some(tdsDashed)
+    check style.text.textTransform == some(ttUppercase)
+    check style.text.textWrap == some(twBalance)
+    check style.image.objectFit == some(ofCover)
+    check style.image.imageRendering == irPixelated
+    check style.box.backgroundRepeat == bgNoRepeat
+    check style.box.backgroundOrigin == bgContentBox
+    check style.box.backgroundClip == bgPaddingBox
+    check style.box.backgroundAttachment == bgFixed
+    check style.box.backgroundBlendMode == bmOverlay
+    check style.box.boxDecorationBreak == bdbClone
+    check style.visual.mixBlendMode == bmScreen
+    check style.visual.isolation == isoIsolate
+    check style.visual.forcedColorAdjust == caNone
+    check style.visual.printColorAdjust == pcaExact
+    check style.visual.touchAction == taManipulation
+    check style.visual.readingFlow == rfFlexFlow
+    check style.visual.scrollbarWidth == swThin
+    check style.visual.scrollbarVisibility == svScrolling
+    check style.visual.scrollBehavior == sbSmooth
+    check style.visual.overscrollBehaviorX == obNone
+    check style.visual.overscrollBehaviorY == obAuto
+    check style.visual.overscrollBehaviorBlock == obNone
+    check style.visual.overscrollBehaviorInline == obContain
+    check style.animation.animationDirection == adReverse
+    check style.animation.animationFillMode == afBoth
+    check style.animation.animationPlayState == apsPaused
+    check style.animation.animationComposition == acAdd
+    check style.animation.transitionBehavior == tbAllowDiscrete
+    check style.transform.transformBox == tboxContentBox
+    check style.transform.transformStyle == tsPreserve3d
+
+  test "extended closed value helpers reject strings and unrelated enums":
+    static:
+      doAssert compiles(whiteSpace(wsPre))
+      doAssert compiles(backgroundRepeat(bgRepeat))
+      doAssert compiles(scrollBehavior(sbAuto))
+      doAssert compiles(transformBox(tboxBorderBox))
+      doAssert not compiles(whiteSpace("pre"))
+      doAssert not compiles(backgroundRepeat(bmNormal))
+      doAssert not compiles(scrollBehavior(obAuto))
+      doAssert not compiles(transformBox("border-box"))
