@@ -200,8 +200,8 @@ Version 0.3.2 is a developer preview. Public APIs may change before 1.0.
   incomplete.
 - Complete unit resolution, inline rich text, additional declarative motion
   properties, filters, 3D transforms, CPU effects, and GPU Canvas are roadmap
-  work. The first paint-transition and named-keyframe runtimes support opacity
-  and foreground/background colors.
+  work. Paint transitions and multiple named keyframes currently support
+  opacity and foreground/background colors with CSS-like longhand list cycling.
 - CBSS intentionally does not reproduce DOM selectors, browser quirks, legacy
   CSS behavior, JavaScript, or a browser security model.
 

@@ -1,4 +1,4 @@
-import std/[math, options, strutils, tables]
+import std/[algorithm, hashes, math, options, sequtils, sets, strutils, tables]
 
 import ../core/[
   color,
@@ -43,6 +43,10 @@ type
     timing: TimingFunction
     composition: AnimationComposition
 
+  AnimationTrackKey = object
+    node: NodeId
+    index: int
+
   PreparedColorKeyframe = object
     offset: float64
     value: PreparedColorInterpolation
@@ -74,8 +78,8 @@ type
 
   DeclarativeKeyframeRuntime* = object
     definitions: Table[string, RegisteredStyleKeyframes]
-    tracks: Table[NodeId, DeclarativeAnimationTrack]
-    completed: Table[NodeId, CompletedDeclarativeAnimation]
+    tracks: Table[AnimationTrackKey, DeclarativeAnimationTrack]
+    completed: Table[AnimationTrackKey, CompletedDeclarativeAnimation]
     clock: AnimationClock
     nextDefinitionRevision: uint64
 
@@ -89,6 +93,14 @@ proc `==`(left, right: AnimationSignature): bool =
     left.fillMode == right.fillMode and
     left.timing == right.timing and
     left.composition == right.composition
+
+proc `==`(left, right: AnimationTrackKey): bool =
+  left.node == right.node and left.index == right.index
+
+proc hash(value: AnimationTrackKey): Hash =
+  result = value.node.hash
+  result = result !& value.index.hash
+  result = !$result
 
 proc styleKeyframe*(
     offset: float64;
@@ -140,8 +152,8 @@ proc initDeclarativeKeyframeRuntime*(
 ): DeclarativeKeyframeRuntime =
   DeclarativeKeyframeRuntime(
     definitions: initTable[string, RegisteredStyleKeyframes](),
-    tracks: initTable[NodeId, DeclarativeAnimationTrack](),
-    completed: initTable[NodeId, CompletedDeclarativeAnimation](),
+    tracks: initTable[AnimationTrackKey, DeclarativeAnimationTrack](),
+    completed: initTable[AnimationTrackKey, CompletedDeclarativeAnimation](),
     clock: initAnimationClock(targetFramesPerSecond),
     nextDefinitionRevision: 1
   )
@@ -167,19 +179,19 @@ proc unregisterStyleKeyframes*(
   if normalized notin runtime.definitions:
     return false
   runtime.definitions.del(normalized)
-  var activeNodes: seq[NodeId]
-  for node, track in runtime.tracks.pairs:
+  var activeKeys: seq[AnimationTrackKey]
+  for key, track in runtime.tracks.pairs:
     if track.signature.name == normalized:
-      activeNodes.add node
-  for node in activeNodes:
-    discard runtime.clock.cancelAnimation(runtime.tracks[node].animation)
-    runtime.tracks.del(node)
-  var completedNodes: seq[NodeId]
-  for node, completed in runtime.completed.pairs:
+      activeKeys.add key
+  for key in activeKeys:
+    discard runtime.clock.cancelAnimation(runtime.tracks[key].animation)
+    runtime.tracks.del(key)
+  var completedKeys: seq[AnimationTrackKey]
+  for key, completed in runtime.completed.pairs:
     if completed.signature.name == normalized:
-      completedNodes.add node
-  for node in completedNodes:
-    runtime.completed.del(node)
+      completedKeys.add key
+  for key in completedKeys:
+    runtime.completed.del(key)
   true
 
 proc hasStyleKeyframes*(
@@ -324,67 +336,99 @@ proc sample(values: PreparedColorKeyframes; progress: float64): Color =
     span.amount
   )
 
-proc timingFor(style: ComputedStyle): TimingFunction =
-  if style.animation.animationTimingFunction.isSome:
-    let timing = parseTimingFunction(
-      style.animation.animationTimingFunction.get
-    )
+proc cycled[T](values: seq[T]; fallback: T; index: int): T =
+  if values.len == 0:
+    fallback
+  else:
+    values[index mod values.len]
+
+proc animationNames(style: ComputedStyle): seq[string] =
+  if style.animation.animationNames.len > 0:
+    return style.animation.animationNames
+  if style.animation.animationName.isSome:
+    return @[style.animation.animationName.get]
+
+proc timingFor(style: ComputedStyle; index: int): TimingFunction =
+  let authored = style.animation.animationTimingFunctions.cycled(
+    style.animation.animationTimingFunction.get("ease"), index
+  )
+  if authored.len > 0:
+    let timing = parseTimingFunction(authored)
     if timing.isSome:
       return timing.get
   easeTiming()
 
+proc playStateFor(style: ComputedStyle; index: int): AnimationPlayState =
+  style.animation.animationPlayStates.cycled(
+    style.animation.animationPlayState, index
+  )
+
 proc signatureFor(
     style: ComputedStyle;
-    definition: RegisteredStyleKeyframes
+    definition: RegisteredStyleKeyframes;
+    index: int
 ): AnimationSignature =
   AnimationSignature(
     name: definition.definition.name,
     definitionRevision: definition.revision,
-    duration: style.animation.animationDuration,
-    delay: style.animation.animationDelay,
-    iterations: style.animation.animationIterationCount,
-    direction: style.animation.animationDirection,
-    fillMode: style.animation.animationFillMode,
-    timing: style.timingFor(),
-    composition: style.animation.animationComposition
+    duration: style.animation.animationDurations.cycled(
+      style.animation.animationDuration, index
+    ),
+    delay: style.animation.animationDelays.cycled(
+      style.animation.animationDelay, index
+    ),
+    iterations: style.animation.animationIterationCounts.cycled(
+      style.animation.animationIterationCount, index
+    ),
+    direction: style.animation.animationDirections.cycled(
+      style.animation.animationDirection, index
+    ),
+    fillMode: style.animation.animationFillModes.cycled(
+      style.animation.animationFillMode, index
+    ),
+    timing: style.timingFor(index),
+    composition: style.animation.animationCompositions.cycled(
+      style.animation.animationComposition, index
+    )
   )
 
 proc cancelTrack(
     runtime: var DeclarativeKeyframeRuntime;
-    node: NodeId
+    key: AnimationTrackKey
 ) =
-  if node in runtime.tracks:
-    discard runtime.clock.cancelAnimation(runtime.tracks[node].animation)
-    runtime.tracks.del(node)
+  if key in runtime.tracks:
+    discard runtime.clock.cancelAnimation(runtime.tracks[key].animation)
+    runtime.tracks.del(key)
 
 proc rememberCompletion(
     runtime: var DeclarativeKeyframeRuntime;
-    node: NodeId;
+    key: AnimationTrackKey;
     signature: AnimationSignature;
     retainedTrack = none(DeclarativeAnimationTrack)
 ) =
-  runtime.completed[node] = CompletedDeclarativeAnimation(
+  runtime.completed[key] = CompletedDeclarativeAnimation(
     signature: signature,
     retainedTrack: retainedTrack
   )
 
 proc startTrack(
     runtime: var DeclarativeKeyframeRuntime;
-    node: NodeId;
+    key: AnimationTrackKey;
     definition: RegisteredStyleKeyframes;
     style: ComputedStyle;
+    playState: AnimationPlayState;
     viewportSize: Option[Size];
     nowSeconds: float64
 ) =
-  let signature = style.signatureFor(definition)
+  let signature = style.signatureFor(definition, key.index)
   if signature.composition != acReplace or
       (signature.iterations.isSome and signature.iterations.get <= 0):
-    runtime.rememberCompletion(node, signature)
+    runtime.rememberCompletion(key, signature)
     return
   var track = definition.compileTrack(signature, style, viewportSize)
   if track.opacity.isNone and track.color.isNone and
       track.backgroundColor.isNone:
-    runtime.rememberCompletion(node, signature)
+    runtime.rememberCompletion(key, signature)
     return
   let sampleState = track.sample
   let animation = runtime.clock.startAnimation(animationSpec(
@@ -401,9 +445,9 @@ proc startTrack(
       sampleState.initialized = true
   ), nowSeconds)
   track.animation = animation
-  if style.animation.animationPlayState == apsPaused:
+  if playState == apsPaused:
     track.pauseAfterFirstTick = true
-  runtime.tracks[node] = track
+  runtime.tracks[key] = track
 
 proc applySample(
     track: DeclarativeAnimationTrack;
@@ -418,55 +462,65 @@ proc reconcileAnimations*(
 ) =
   if nowSeconds.classify in {fcNan, fcInf, fcNegInf}:
     raise newException(ValueError, "animation reconciliation time must be finite")
+  var desired = initHashSet[AnimationTrackKey]()
   for index, style in target.styles:
     let node = tree.nodeIdAt(index)
     if node.isNone:
       continue
     let id = node.get
-    if style.animation.animationName.isNone or
-        style.animation.animationName.get notin runtime.definitions:
-      runtime.cancelTrack(id)
-      runtime.completed.del(id)
-      continue
-    let definition = runtime.definitions[style.animation.animationName.get]
-    let signature = style.signatureFor(definition)
-    if id in runtime.tracks and runtime.tracks[id].signature == signature:
-      var track = runtime.tracks[id]
-      if track.sample.initialized:
-        track.applySample(target.styles[index])
-      let shouldPause = style.animation.animationPlayState == apsPaused
-      if shouldPause and not track.paused and not track.pauseAfterFirstTick:
-        discard runtime.clock.pauseAnimation(track.animation, nowSeconds)
-        track.paused = true
-      elif not shouldPause and track.paused:
-        discard runtime.clock.resumeAnimation(track.animation, nowSeconds)
-        track.paused = false
-      if not shouldPause:
-        track.pauseAfterFirstTick = false
-      runtime.tracks[id] = track
-      continue
-    if id in runtime.completed and runtime.completed[id].signature == signature:
-      let completed = runtime.completed[id]
-      if completed.retainedTrack.isSome:
-        completed.retainedTrack.get.applySample(target.styles[index])
-      continue
-    runtime.cancelTrack(id)
-    runtime.completed.del(id)
-    runtime.startTrack(id, definition, style, target.viewportSize, nowSeconds)
+    let names = style.animationNames()
+    for animationIndex, name in names:
+      let key = AnimationTrackKey(node: id, index: animationIndex)
+      desired.incl key
+      if name notin runtime.definitions:
+        runtime.cancelTrack(key)
+        runtime.completed.del(key)
+        continue
+      let definition = runtime.definitions[name]
+      let signature = style.signatureFor(definition, animationIndex)
+      let playState = style.playStateFor(animationIndex)
+      if key in runtime.tracks and runtime.tracks[key].signature == signature:
+        var track = runtime.tracks[key]
+        if track.sample.initialized:
+          track.applySample(target.styles[index])
+        let shouldPause = playState == apsPaused
+        if shouldPause and not track.paused and not track.pauseAfterFirstTick:
+          discard runtime.clock.pauseAnimation(track.animation, nowSeconds)
+          track.paused = true
+        elif not shouldPause and track.paused:
+          discard runtime.clock.resumeAnimation(track.animation, nowSeconds)
+          track.paused = false
+        if not shouldPause:
+          track.pauseAfterFirstTick = false
+        runtime.tracks[key] = track
+        continue
+      if key in runtime.completed and
+          runtime.completed[key].signature == signature:
+        let completed = runtime.completed[key]
+        if completed.retainedTrack.isSome:
+          completed.retainedTrack.get.applySample(target.styles[index])
+        continue
+      runtime.cancelTrack(key)
+      runtime.completed.del(key)
+      runtime.startTrack(
+        key, definition, style, playState, target.viewportSize, nowSeconds
+      )
 
-  var stale: seq[NodeId]
-  for node in runtime.tracks.keys:
-    if not tree.isValid(node) or node.nodeIndex >= target.styles.len:
-      stale.add node
-  for node in stale:
-    runtime.cancelTrack(node)
-    runtime.completed.del(node)
+  var stale: seq[AnimationTrackKey]
+  for key in runtime.tracks.keys:
+    if key notin desired or not tree.isValid(key.node) or
+        key.node.nodeIndex >= target.styles.len:
+      stale.add key
+  for key in stale:
+    runtime.cancelTrack(key)
+    runtime.completed.del(key)
   stale.setLen(0)
-  for node in runtime.completed.keys:
-    if not tree.isValid(node) or node.nodeIndex >= target.styles.len:
-      stale.add node
-  for node in stale:
-    runtime.completed.del(node)
+  for key in runtime.completed.keys:
+    if key notin desired or not tree.isValid(key.node) or
+        key.node.nodeIndex >= target.styles.len:
+      stale.add key
+  for key in stale:
+    runtime.completed.del(key)
 
 proc restoreBase(track: DeclarativeAnimationTrack; style: var ComputedStyle) =
   style.visual.opacity = track.baseOpacity
@@ -501,17 +555,26 @@ proc applyAnimations*(
   if nowSeconds.classify in {fcNan, fcInf, fcNegInf}:
     raise newException(ValueError, "animation time must be finite")
   discard runtime.clock.tickAnimations(scheduler, nowSeconds)
-  var completed: seq[NodeId]
-  for node, track in runtime.tracks.mpairs:
-    if not tree.isValid(node) or node.nodeIndex >= styles.styles.len:
-      completed.add node
+  var orderedKeys = toSeq(runtime.tracks.keys)
+  orderedKeys.sort(proc(left, right: AnimationTrackKey): int =
+    result = cmp(left.node.nodeIndex, right.node.nodeIndex)
+    if result == 0:
+      result = cmp(left.index, right.index)
+  )
+  var completed: seq[AnimationTrackKey]
+  for key in orderedKeys:
+    if key notin runtime.tracks:
       continue
+    if not tree.isValid(key.node) or key.node.nodeIndex >= styles.styles.len:
+      completed.add key
+      continue
+    var track = runtime.tracks[key]
     if track.pauseAfterFirstTick:
       discard runtime.clock.pauseAnimation(track.animation, nowSeconds)
       track.pauseAfterFirstTick = false
       track.paused = true
     if track.sample.pending:
-      track.applySample(styles.styles[node.nodeIndex])
+      track.applySample(styles.styles[key.node.nodeIndex])
       track.sample.pending = false
       inc result
     if not runtime.clock.hasAnimation(track.animation):
@@ -520,10 +583,12 @@ proc applyAnimations*(
           some(track)
         else:
           none(DeclarativeAnimationTrack)
-      runtime.rememberCompletion(node, track.signature, retained)
-      completed.add node
-  for node in completed:
-    runtime.tracks.del(node)
+      runtime.rememberCompletion(key, track.signature, retained)
+      completed.add key
+    else:
+      runtime.tracks[key] = track
+  for key in completed:
+    runtime.tracks.del(key)
   if result > 0:
     scheduler.markDirty({ddPaint, ddAnimation})
 
@@ -540,8 +605,19 @@ proc cancelAnimations*(
     runtime: var DeclarativeKeyframeRuntime;
     nodes: openArray[NodeId]
 ): int {.discardable.} =
+  var requested = initHashSet[NodeId]()
   for node in nodes:
-    if node in runtime.tracks:
-      runtime.cancelTrack(node)
-      inc result
-    runtime.completed.del(node)
+    requested.incl node
+  var activeKeys: seq[AnimationTrackKey]
+  for key in runtime.tracks.keys:
+    if key.node in requested:
+      activeKeys.add key
+  for key in activeKeys:
+    runtime.cancelTrack(key)
+    inc result
+  var completedKeys: seq[AnimationTrackKey]
+  for key in runtime.completed.keys:
+    if key.node in requested:
+      completedKeys.add key
+  for key in completedKeys:
+    runtime.completed.del(key)

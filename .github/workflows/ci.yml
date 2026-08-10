@@ -199,6 +199,22 @@ jobs:
       - name: Check shared and static C ABI lifecycles
         run: nimble testCAbiValgrind -y
 
+  motion-address-sanitizer:
+    name: Motion runtime address sanitizer
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nim
+        run: |
+          curl https://nim-lang.org/choosenim/init.sh -sSf | sh -s -- -y 2.2.10
+          echo "$HOME/.nimble/bin" >> "$GITHUB_PATH"
+
+      - name: Check transition and keyframe lifecycles under ARC and ORC
+        run: nimble testMotionAsan -y
+
   rust-bridge:
     name: Native Rust bridges
     runs-on: ubuntu-latest

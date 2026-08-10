@@ -591,6 +591,54 @@ defineClosedKeywordProperty(
   transitionBehavior, TransitionBehavior, "transition-behavior"
 )
 
+proc animationNames*(values: varargs[string]): Declaration =
+  decl("animation-name", keyword((@values).join(", ")))
+
+proc animationDurations*(values: varargs[float32]): Declaration =
+  var authored: seq[string]
+  for value in values:
+    authored.add $value
+  decl("animation-duration", keyword(authored.join(", ")))
+
+proc animationDelays*(values: varargs[float32]): Declaration =
+  var authored: seq[string]
+  for value in values:
+    authored.add $value
+  decl("animation-delay", keyword(authored.join(", ")))
+
+proc animationTimingFunctions*(values: varargs[string]): Declaration =
+  decl("animation-timing-function", keyword((@values).join(", ")))
+
+proc animationIterationCounts*(values: varargs[float32]): Declaration =
+  var authored: seq[string]
+  for value in values:
+    authored.add $value
+  decl("animation-iteration-count", keyword(authored.join(", ")))
+
+proc animationDirections*(values: varargs[AnimationDirection]): Declaration =
+  var authored: seq[string]
+  for value in values:
+    authored.add closedKeyword(value)
+  decl("animation-direction", keyword(authored.join(", ")))
+
+proc animationFillModes*(values: varargs[AnimationFillMode]): Declaration =
+  var authored: seq[string]
+  for value in values:
+    authored.add closedKeyword(value)
+  decl("animation-fill-mode", keyword(authored.join(", ")))
+
+proc animationPlayStates*(values: varargs[AnimationPlayState]): Declaration =
+  var authored: seq[string]
+  for value in values:
+    authored.add closedKeyword(value)
+  decl("animation-play-state", keyword(authored.join(", ")))
+
+proc animationCompositions*(values: varargs[AnimationComposition]): Declaration =
+  var authored: seq[string]
+  for value in values:
+    authored.add closedKeyword(value)
+  decl("animation-composition", keyword(authored.join(", ")))
+
 proc transitionProperties*(values: varargs[string]): Declaration =
   decl("transition-property", keyword((@values).join(", ")))
 
