@@ -1405,13 +1405,16 @@ freedom without the matching runtime lifecycle pass.
 
 The Version 0.4 motion gate runs declarative transition and keyframe lifecycle
 tests under AddressSanitizer with both ARC and ORC on Linux, Windows, and macOS.
-Unix runners use Clang instrumentation and Windows uses the supported MSVC
-AddressSanitizer path. AddressSanitizer owns out-of-bounds, use-after-free, and
-double-free detection. The Linux Valgrind lane owns deterministic leak and
-lifecycle checks because Valgrind is not treated as a supported portable
-Windows or current macOS CI runtime. Keeping those responsibilities separate
-also makes the sanitizer command reproducible in restricted development
-environments where LeakSanitizer cannot inspect processes. The
+All three runners use LLVM Clang instrumentation. The Windows runner obtains
+the native SDK/linker environment from Visual Studio but explicitly places the
+standalone LLVM installation first in `PATH`, so the sanitizer compiler and
+runtime remain the LLVM implementation. AddressSanitizer owns out-of-bounds,
+use-after-free, and double-free detection. The Linux Valgrind lane owns
+deterministic leak and lifecycle checks because Valgrind is not treated as a
+supported portable Windows or current macOS CI runtime. Keeping those
+responsibilities separate also makes the sanitizer command reproducible in
+restricted development environments where LeakSanitizer cannot inspect
+processes. The
 `detect_leaks` ASan option is set only on Linux; it is not passed to the macOS
 or Windows jobs.
 

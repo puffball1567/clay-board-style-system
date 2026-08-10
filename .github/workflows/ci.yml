@@ -245,6 +245,13 @@ jobs:
             throw "Visual Studio C++ toolchain was not found"
           }
           & "$install\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -SkipAutomaticLocation
+          $llvmBin = "${env:ProgramFiles}\LLVM\bin"
+          if (-not (Test-Path "$llvmBin\clang.exe")) {
+            throw "LLVM Clang was not found at $llvmBin"
+          }
+          $env:PATH = "$llvmBin;$env:PATH"
+          Write-Host "Using LLVM Clang: $((Get-Command clang).Source)"
+          clang --version
           nimble testMotionAsan -y
 
   rust-bridge:
