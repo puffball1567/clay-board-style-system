@@ -309,6 +309,7 @@ nimble testOrc
 nimble checkExamples
 nimble checkExamplesOrc
 nimble bench
+nimble testMotionAsan
 nimble testWidgetLifecycleValgrind
 nimble testCAbiValgrind
 ```
@@ -316,7 +317,9 @@ nimble testCAbiValgrind
 The full test tasks discover and independently compile the suite under ARC and
 ORC. CI also checks portable public modules on Linux, Windows, and macOS,
 builds shared and static C ABI artifacts, tests both Rust bridges, verifies
-source-only package installation, and runs release hygiene checks.
+source-only package installation, and runs release hygiene checks. Declarative
+motion tests run under AddressSanitizer with ARC and ORC on Linux, Windows, and
+macOS. Valgrind remains a Linux-specific leak and lifecycle gate.
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before changing a public boundary or hot
 path. Properties, elements, backends, and reference controls are separated so
@@ -335,8 +338,9 @@ ERROR SUMMARY: 0 errors from 0 contexts
 The probe covers all reference controls, internal and replaced handlers,
 component mount and disposal, animations, popup closers, focus, clipboard, and
 text composition. Shared and static C ABI consumers have separate lifecycle
-gates. Valgrind complements the ARC suite and platform integration tests; it
-does not replace them.
+gates. Valgrind complements the three-platform AddressSanitizer matrix and
+platform integration tests; it does not replace them and is not presented as a
+portable Windows or macOS verifier.
 
 ## Name And License
 

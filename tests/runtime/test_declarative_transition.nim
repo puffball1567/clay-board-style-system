@@ -444,3 +444,42 @@ suite "declarative style transitions":
       driver.advanceTime(-0.1)
     expect ValueError:
       driver.advanceTime(NaN)
+
+  test "transition lifecycle events use normal dispatch and motion payloads":
+    let ui = initUiRoot()
+    let panel = ui.box(uiStyle(
+      transitionMetadata("opacity", 1) & @[decl("opacity", number(0))]
+    ))
+    var observed: seq[string]
+    panel.onTransitionRun = proc(event: DispatchResult): EventOutcome =
+      observed.add "run:" & event.motionName
+      handledEvent()
+    panel.onTransitionStart = proc(event: DispatchResult): EventOutcome =
+      observed.add "start:" & event.motionName
+      handledEvent()
+    panel.onTransitionEnd = proc(event: DispatchResult): EventOutcome =
+      observed.add "end:" & event.motionName
+      check abs(event.motionElapsedSeconds - 1) < 0.0001
+      handledEvent()
+    let driver = initCbssTestDriver(ui, size(200, 100))
+
+    panel.applyStyle(uiStyle([decl("opacity", number(1))]))
+    driver.refresh()
+    check observed == @["run:opacity", "start:opacity"]
+    driver.advanceTime(1)
+    check observed == @["run:opacity", "start:opacity", "end:opacity"]
+
+  test "disposing an active transition emits cancel before handlers detach":
+    let ui = initUiRoot()
+    let panel = ui.box(uiStyle(
+      transitionMetadata("opacity", 30) & @[decl("opacity", number(0))]
+    ))
+    var cancelled = false
+    panel.onTransitionCancel = proc(event: DispatchResult): EventOutcome =
+      cancelled = event.motionName == "opacity"
+      handledEvent()
+    let driver = initCbssTestDriver(ui, size(200, 100))
+    panel.applyStyle(uiStyle([decl("opacity", number(1))]))
+    driver.refresh()
+    check ui.disposeSubtree(panel, driver.input)
+    check cancelled

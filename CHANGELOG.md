@@ -9,6 +9,15 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added C ABI `0x00010011` and declaration-driven animation/transition
+  lifecycle events. `animationstart`, `animationiteration`, `animationend`,
+  `animationcancel`, `transitionrun`, `transitionstart`, `transitionend`, and
+  `transitioncancel` use normal CBSS dispatch with motion name, elapsed time,
+  and iteration payloads where applicable. Subtree disposal emits cancellation
+  before handlers are detached.
+- Expanded the motion AddressSanitizer gate to ARC and ORC on Linux, Windows,
+  and macOS. Linux additionally retains Valgrind lifecycle and leak gates;
+  unsupported LeakSanitizer options are not passed to macOS or Windows.
 - Added declarative transition and keyframe interpolation for typed 2D
   `transform`, `translate`, `scale`, and `rotate` values. Motion reuses the
   existing affine paint/hit contract, does not relayout each frame, and marks
@@ -19,7 +28,8 @@ release. Before 1.0, minor releases may contain public API changes.
   definitions retain their list positions, tracks pause and complete
   independently, and declaration order determines paint precedence.
 - Added an AddressSanitizer motion gate for declarative transitions and
-  keyframes under both ARC and ORC. Valgrind remains the separate leak gate.
+  keyframes under both ARC and ORC. Valgrind remains the separate Linux leak
+  gate.
 - Added typed and lower-level list authoring for transition property, duration,
   delay, timing, and behavior values, with CSS-like index cycling, preserved
   unknown-property positions, nested-function comma parsing, and last-match

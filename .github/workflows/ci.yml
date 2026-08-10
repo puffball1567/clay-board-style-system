@@ -172,8 +172,8 @@ jobs:
           cargo test --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml
           cargo test --locked --release --manifest-path native/image_bridge/Cargo.toml
 
-  arc-memory:
-    name: ARC lifecycle and C ABI memory checks
+  linux-valgrind:
+    name: Linux Valgrind lifecycle and C ABI checks
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -193,6 +193,9 @@ jobs:
       - name: Check ARC widget lifecycle
         run: nimble testWidgetLifecycleValgrind -y
 
+      - name: Check ARC event lifecycle
+        run: nimble testEventLifecycleValgrind -y
+
       - name: Check threaded ARC stream ownership transfer
         run: nimble testStreamMailboxValgrind -y
 
@@ -200,20 +203,49 @@ jobs:
         run: nimble testCAbiValgrind -y
 
   motion-address-sanitizer:
-    name: Motion runtime address sanitizer
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    name: Motion ASan (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux x86_64
+            os: ubuntu-latest
+          - platform: Windows x86_64
+            os: windows-latest
+          - platform: macOS arm64
+            os: macos-latest
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Nim
-        run: |
-          curl https://nim-lang.org/choosenim/init.sh -sSf | sh -s -- -y 2.2.10
-          echo "$HOME/.nimble/bin" >> "$GITHUB_PATH"
+        uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
+        with:
+          nim-version: '2.2.10'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Check transition and keyframe lifecycles under ARC and ORC
+      - name: Toolchain versions
+        run: |
+          nim --version
+          nimble --version
+
+      - name: Check transition and keyframe lifecycles under ARC and ORC (Unix)
+        if: runner.os != 'Windows'
         run: nimble testMotionAsan -y
+
+      - name: Check transition and keyframe lifecycles under ARC and ORC (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $install = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $install) {
+            throw "Visual Studio C++ toolchain was not found"
+          }
+          & "$install\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -SkipAutomaticLocation
+          nimble testMotionAsan -y
 
   rust-bridge:
     name: Native Rust bridges

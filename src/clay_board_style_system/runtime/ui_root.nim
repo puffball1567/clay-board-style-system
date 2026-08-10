@@ -15,6 +15,7 @@ import ./declarative_keyframes
 import ./declarative_transition
 import ./frame_scheduler
 import ./invalidation
+import ./motion_lifecycle
 import ./render_surface
 
 type
@@ -266,6 +267,30 @@ proc takeFrameRequest*(root: UiRoot): bool =
   result = root.frameRequestPending
   root.frameRequestPending = false
 
+proc dispatchMotionLifecycle(
+    root: UiRoot;
+    events: openArray[MotionLifecycleEvent]
+) =
+  for item in events:
+    if not root.tree.isValid(item.node):
+      continue
+    let kind =
+      case item.kind
+      of mlkAnimationStart: iekAnimationStart
+      of mlkAnimationIteration: iekAnimationIteration
+      of mlkAnimationEnd: iekAnimationEnd
+      of mlkAnimationCancel: iekAnimationCancel
+      of mlkTransitionRun: iekTransitionRun
+      of mlkTransitionStart: iekTransitionStart
+      of mlkTransitionEnd: iekTransitionEnd
+      of mlkTransitionCancel: iekTransitionCancel
+    discard root.dispatchEvent(DispatchResult(
+      target: some(item.node),
+      event: motionEvent(
+        kind, item.name, item.elapsedSeconds, item.iteration
+      )
+    ))
+
 proc reconcilePointerCapture*(
     root: UiRoot;
     interaction: var InteractionState
@@ -384,7 +409,10 @@ proc registerStyleKeyframes*(root: UiRoot; definition: StyleKeyframes) =
   root.keyframes.registerStyleKeyframes(definition)
 
 proc unregisterStyleKeyframes*(root: UiRoot; name: string): bool {.discardable.} =
-  not root.isNil and root.keyframes.unregisterStyleKeyframes(name)
+  if root.isNil:
+    return false
+  result = root.keyframes.unregisterStyleKeyframes(name)
+  root.dispatchMotionLifecycle(root.keyframes.takeLifecycleEvents())
 
 proc hasStyleKeyframes*(root: UiRoot; name: string): bool =
   not root.isNil and root.keyframes.hasStyleKeyframes(name)
@@ -396,6 +424,7 @@ proc reconcileStyleAnimations*(
 ) =
   if not root.isNil:
     root.keyframes.reconcileAnimations(root.tree, target, nowSeconds)
+    root.dispatchMotionLifecycle(root.keyframes.takeLifecycleEvents())
 
 proc applyStyleAnimations*(
     root: UiRoot;
@@ -405,7 +434,10 @@ proc applyStyleAnimations*(
 ): int {.discardable.} =
   if root.isNil:
     return 0
-  root.keyframes.applyAnimations(root.tree, styles, scheduler, nowSeconds)
+  result = root.keyframes.applyAnimations(
+    root.tree, styles, scheduler, nowSeconds
+  )
+  root.dispatchMotionLifecycle(root.keyframes.takeLifecycleEvents())
 
 proc activeStyleAnimationCount*(root: UiRoot): int =
   if root.isNil: 0
@@ -421,6 +453,7 @@ proc reconcileStyleTransitions*(
   root.transitions.reconcileTransitions(
     root.tree, displayed, target, nowSeconds
   )
+  root.dispatchMotionLifecycle(root.transitions.takeLifecycleEvents())
 
 proc applyStyleTransitions*(
     root: UiRoot;
@@ -430,9 +463,10 @@ proc applyStyleTransitions*(
 ): int {.discardable.} =
   if root.isNil:
     return 0
-  root.transitions.applyTransitions(
+  result = root.transitions.applyTransitions(
     root.tree, styles, scheduler, nowSeconds
   )
+  root.dispatchMotionLifecycle(root.transitions.takeLifecycleEvents())
 
 proc activeStyleTransitionCount*(root: UiRoot): int =
   if root.isNil: 0
@@ -731,6 +765,8 @@ proc disposeSubtree*(
     discard root.cancelOwnedAnimation(id)
   discard root.keyframes.cancelAnimations(removedIds)
   discard root.transitions.cancelTransitions(removedIds)
+  root.dispatchMotionLifecycle(root.keyframes.takeLifecycleEvents())
+  root.dispatchMotionLifecycle(root.transitions.takeLifecycleEvents())
   let componentUnmountCallbacks = root.takeComponentUnmountCallbacks(removed)
   discard root.events.removeEventHandlers(removed)
   root.removeSubtreeStyles(removed)

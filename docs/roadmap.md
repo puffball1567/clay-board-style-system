@@ -1404,11 +1404,16 @@ shutdown, and C ABI consumers. A static pass is not reported as proof of leak
 freedom without the matching runtime lifecycle pass.
 
 The Version 0.4 motion gate runs declarative transition and keyframe lifecycle
-tests under AddressSanitizer with both ARC and ORC. AddressSanitizer owns
-out-of-bounds, use-after-free, and double-free detection; the existing Valgrind
-lane owns leak detection. Keeping those responsibilities separate also makes
-the sanitizer command reproducible in restricted development environments
-where LeakSanitizer cannot inspect processes.
+tests under AddressSanitizer with both ARC and ORC on Linux, Windows, and macOS.
+Unix runners use Clang instrumentation and Windows uses the supported MSVC
+AddressSanitizer path. AddressSanitizer owns out-of-bounds, use-after-free, and
+double-free detection. The Linux Valgrind lane owns deterministic leak and
+lifecycle checks because Valgrind is not treated as a supported portable
+Windows or current macOS CI runtime. Keeping those responsibilities separate
+also makes the sanitizer command reproducible in restricted development
+environments where LeakSanitizer cannot inspect processes. The
+`detect_leaks` ASan option is set only on Linux; it is not passed to the macOS
+or Windows jobs.
 
 This verification is development-only. Ownership tracing, generated probes,
 sanitizer hooks, and verifier implementation code are not imported, linked, or

@@ -121,6 +121,26 @@ Completed forwards/both presentations survive unrelated style refreshes,
 definition replacement restarts the named animation, and subtree disposal or
 definition removal cancels active tracks.
 
+## Lifecycle Events
+
+Declarative motion emits standard lifecycle events through the same target,
+bubble, observer, and replaceable-handler path as other CBSS events:
+
+```nim
+panel.onAnimationIteration = proc(event: DispatchResult): EventOutcome =
+  echo event.motionName, " iteration ", event.motionIteration
+  return handledEvent()
+
+panel.onTransitionEnd = proc(event: DispatchResult): EventOutcome =
+  echo event.motionName, " completed in ", event.motionElapsedSeconds
+  return handledEvent()
+```
+
+Animations emit start, iteration, end, and cancel. Transitions emit run, start,
+end, and cancel. Cancellation caused by subtree disposal is dispatched before
+the subtree's handlers are detached. Lifecycle events are synthetic UI events;
+they do not cause style resolution or layout by themselves.
+
 Keyframe sampling, like transition sampling, is paint-only and proportional to
 active tracks. It does not resolve style, perform layout, or rebuild unrelated
 components on every animation frame. Transform tracks additionally invalidate
@@ -136,7 +156,6 @@ remain planned:
 - additional typed interpolable values beyond the current paint and transform
   set;
 - additive and accumulative `animation-composition` modes;
-- transition and animation lifecycle event dispatch;
 - discrete-transition policy; and
 - platform reduced-motion preference adapters.
 
