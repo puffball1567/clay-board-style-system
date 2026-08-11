@@ -13,6 +13,7 @@ const excludedTests = [
 const portableExcludedTests = [
   "tests/backends/test_sdl3_image_loader.nim",
   "tests/backends/test_sdl3_pen_input.nim",
+  "tests/backends/test_sdl3_stream_wake.nim",
   "tests/backends/test_sdl3_text_event_guard.nim",
   "tests/integration/test_demo_layout.nim",
   "tests/integration/test_sdl3_navigation.nim",
