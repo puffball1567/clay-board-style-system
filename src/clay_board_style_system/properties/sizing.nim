@@ -1,16 +1,13 @@
 import std/options
 import ../core/[computed_style, declaration, diagnostics, property, style_value]
+import ./length_resolution
 
-proc resolveSizing(value: StyleValue; property: string; diagnostics: var Diagnostics): Option[LengthValue] =
-  if value.kind != svLength:
-    diagnostics.addError(property, property & " requires a length value")
-    return none(LengthValue)
-  case value.length.kind
-  of ukPx, ukPercent, ukContent, ukMinContent, ukMaxContent, ukFitContent, ukAuto, ukNone:
-    some(value.length)
-  else:
-    diagnostics.addError(property, property & " does not support this unit")
-    none(LengthValue)
+proc resolveSizing(value: StyleValue; env: ResolveEnv; property: string;
+    diagnostics: var Diagnostics): Option[LengthValue] =
+  normalizeLength(value, env, property, {
+    ukPercent, ukContent, ukMinContent, ukMaxContent, ukFitContent, ukAuto,
+    ukNone
+  }, diagnostics)
 
 proc setWidth(style: var ComputedStyle; value: Option[LengthValue]) =
   if value.isSome and value.get.kind == ukPx:
@@ -65,7 +62,7 @@ proc applyWidth(
     if declaration.operation.value.isNone:
       diagnostics.addError(declaration.property, "width requires a value")
       return
-    style.setWidth(resolveSizing(declaration.operation.value.get, declaration.property, diagnostics))
+    style.setWidth(resolveSizing(declaration.operation.value.get, env, declaration.property, diagnostics))
   of mmInitial, mmUnset:
     style.setWidth(none(LengthValue))
   of mmInherit:
@@ -87,7 +84,7 @@ proc applyHeight(
     if declaration.operation.value.isNone:
       diagnostics.addError(declaration.property, "height requires a value")
       return
-    style.setHeight(resolveSizing(declaration.operation.value.get, declaration.property, diagnostics))
+    style.setHeight(resolveSizing(declaration.operation.value.get, env, declaration.property, diagnostics))
   of mmInitial, mmUnset:
     style.setHeight(none(LengthValue))
   of mmInherit:
@@ -135,7 +132,7 @@ proc applySizeConstraint(
     if declaration.operation.value.isNone:
       diagnostics.addError(declaration.property, declaration.property & " requires a value")
       return
-    style.setSizeSlot(declaration.property, resolveSizing(declaration.operation.value.get, declaration.property, diagnostics))
+    style.setSizeSlot(declaration.property, resolveSizing(declaration.operation.value.get, env, declaration.property, diagnostics))
   of mmInitial, mmUnset:
     style.setSizeSlot(declaration.property, none(LengthValue))
   of mmInherit:

@@ -1,8 +1,12 @@
 import std/[options, strutils]
-import ../core/[computed_style, geometry]
+import ../core/[computed_style, geometry, property]
 import ./font_registry
 
 type
+  TextFontMetricsInput* = object
+    style*: ComputedTextStyle
+    fonts*: FontRegistry
+
   TextMeasureInput* = object
     text*: string
     style*: ComputedTextStyle
@@ -37,12 +41,14 @@ type
   TextCaretProc* = proc(input: TextCaretInput): TextCaretResult {.closure.}
   TextHitProc* = proc(input: TextHitInput): TextCaretResult {.closure.}
   TextCaretLayoutProc* = proc(input: TextMeasureInput): seq[TextCaretSample] {.closure.}
+  TextFontMetricsProc* = proc(input: TextFontMetricsInput): FontUnitMetrics {.closure.}
 
   TextEngine* = object
     measureText*: TextMeasureProc
     caretPosition*: TextCaretProc
     hitTestText*: TextHitProc
     layoutCarets*: TextCaretLayoutProc
+    fontUnitMetrics*: TextFontMetricsProc
 
 proc measure*(engine: TextEngine; input: TextMeasureInput): Size =
   engine.measureText(input)
@@ -52,6 +58,31 @@ proc caret*(engine: TextEngine; input: TextCaretInput): TextCaretResult =
 
 proc hit*(engine: TextEngine; input: TextHitInput): TextCaretResult =
   engine.hitTestText(input)
+
+const fontUnitMetricsVersion* = fontUnitMetricsContractVersion
+
+proc fontMetrics*(
+    engine: TextEngine;
+    input: TextFontMetricsInput
+): FontUnitMetrics =
+  let fontSize = input.style.fontSize.get(16.0'f32)
+  if engine.fontUnitMetrics.isNil:
+    return fallbackFontUnitMetrics(fontSize)
+  result = resolveFontUnitMetrics(
+    proc(style: ComputedTextStyle): FontUnitMetrics =
+      engine.fontUnitMetrics(TextFontMetricsInput(
+        style: style,
+        fonts: input.fonts
+      )),
+    input.style
+  )
+
+proc fontMetricsResolver*(
+    engine: TextEngine;
+    fonts: FontRegistry
+): FontUnitMetricsResolver =
+  proc(style: ComputedTextStyle): FontUnitMetrics =
+    engine.fontMetrics(TextFontMetricsInput(style: style, fonts: fonts))
 
 proc nextRuneEnd(text: string; caret: int): int
 
@@ -163,11 +194,15 @@ proc debugHitText*(input: TextHitInput): TextCaretResult =
     byteIndex: byteIndex
   ))
 
+proc debugFontUnitMetrics(input: TextFontMetricsInput): FontUnitMetrics =
+  fallbackFontUnitMetrics(input.style.fontSize.get(16.0'f32))
+
 proc debugTextEngine*(): TextEngine =
   TextEngine(
     measureText: debugMeasureText,
     caretPosition: debugCaretPosition,
     hitTestText: debugHitText,
+    fontUnitMetrics: debugFontUnitMetrics,
     layoutCarets: proc(input: TextMeasureInput): seq[TextCaretSample] =
       let lineHeight = input.style.lineHeightOf()
       var index = 0

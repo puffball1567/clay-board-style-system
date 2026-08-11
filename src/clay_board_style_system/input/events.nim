@@ -1,5 +1,6 @@
 import std/[math, options, sets, tables]
-import ../core/[geometry, node]
+import ../core/[dirty_domain, geometry, node]
+import ../data/form_data
 import ../hit/hit_test
 import ../layout/scroll_state
 
@@ -99,7 +100,12 @@ type
     iekPenProximityIn,
     iekPenProximityOut,
     iekPenButtonDown,
-    iekPenButtonUp
+    iekPenButtonUp,
+    # Append-only: event ABI codes are enum ordinals.
+    iekAnimationCancel,
+    iekTransitionRun,
+    iekTransitionStart,
+    iekTransitionCancel
 
   PointerDeviceKind* = enum
     pdkMouse,
@@ -140,6 +146,77 @@ type
     edmCoreSynthetic,
     edmComponentDispatch
 
+  EventPayloadField* = enum
+    epfPosition,
+    epfDelta,
+    epfButton,
+    epfKey,
+    epfText,
+    epfPointer,
+    epfFocusOwnership,
+    epfFormData,
+    epfMotion
+
+  EventDefinition* = object
+    producer*: EventDispatchMode
+    payload*: set[EventPayloadField]
+    bubbles*: bool
+    cancelable*: bool
+    aliases*: array[2, InputEventKind]
+    aliasCount*: uint8
+    publicNames*: array[2, string]
+    publicNameCount*: uint8
+    abiCode*: uint32
+
+  EventPhase* = enum
+    epNone,
+    epTarget,
+    epBubble,
+    epDefaultAction
+
+  EventOutcome* = object
+    ## Event effects are independent. Handling an event does not implicitly
+    ## prevent its default action, and preventing a default does not stop it
+    ## from reaching an ancestor.
+    handled*: bool
+    stopPropagation*: bool
+    preventDefault*: bool
+
+  EventPointerCaptureAction* = enum
+    epcaNone,
+    epcaCapture,
+    epcaRelease
+
+  EventInvalidationRequest* = object
+    target*: Option[NodeId]
+    domains*: set[DirtyDomain]
+
+  EventActionSnapshot* = object
+    focusPending*: bool
+    focusTarget*: Option[NodeId]
+    pointerAction*: EventPointerCaptureAction
+    pointerTarget*: Option[NodeId]
+    invalidations*: seq[EventInvalidationRequest]
+    frameRequested*: bool
+
+  EventActionQueue* = ref object
+    generation: uint64
+    active: bool
+    focusPending: bool
+    focusTarget: Option[NodeId]
+    pointerAction: EventPointerCaptureAction
+    pointerTarget: Option[NodeId]
+    invalidations: seq[EventInvalidationRequest]
+    frameRequested: bool
+
+  InputEventPayload = ref object
+    ## Uncommon managed payloads stay behind one pointer so pointer, keyboard,
+    ## and animation events remain compact on the dispatch hot path.
+    formData: FormData
+    motionName: string
+    motionElapsedSeconds: float64
+    motionIteration: uint64
+
   InputEvent* = object
     kind*: InputEventKind
     timestamp*: uint64
@@ -155,11 +232,18 @@ type
     altKey*: bool
     shiftKey*: bool
     metaKey*: bool
+    payload: InputEventPayload
 
   DispatchResult* = object
+    ## `target` is the original hit/focus target for the complete dispatch.
+    ## `currentTarget` changes while the event traverses its ancestor chain.
     target*: Option[NodeId]
+    currentTarget*: Option[NodeId]
     local*: Option[Vec2]
+    phase*: EventPhase
     event*: InputEvent
+    actions: EventActionQueue
+    actionGeneration: uint64
 
   InteractionState* = object
     pressedTarget*: Option[NodeId]
@@ -181,20 +265,334 @@ type
     lastClickButton*: int
     clickCount*: int
 
-  EventHandler* = proc(event: DispatchResult): bool {.closure.}
+  EventHandler* = proc(event: DispatchResult): EventOutcome {.closure.}
+
+  EventSubscription* = object
+    id*: uint64
+    node*: NodeId
+    kind*: InputEventKind
+
+  EventBindingRole = enum
+    ebrPublicHandler,
+    ebrObserver,
+    ebrDefaultAction
 
   EventBinding* = object
+    id*: uint64
     node*: NodeId
     kind*: InputEventKind
     handler*: EventHandler
-    internal*: bool
+    role: EventBindingRole
+    active: bool
 
   EventRegistry* = object
     bindings*: seq[EventBinding]
     bindingIndex: Table[(NodeId, InputEventKind), seq[int]]
+    nextBindingId: uint64
+    dispatchDepth: int
+    inactiveBindingCount: int
 
 const maxPasteEventBytes* = 8_192
 const dragStartThreshold* = 4.0'f32
+
+proc ignoredEvent*(): EventOutcome =
+  EventOutcome()
+
+proc handledEvent*(
+    stopPropagation = false;
+    preventDefault = false
+): EventOutcome =
+  EventOutcome(
+    handled: true,
+    stopPropagation: stopPropagation,
+    preventDefault: preventDefault
+  )
+
+proc stoppedEvent*(preventDefault = false): EventOutcome =
+  EventOutcome(
+    handled: true,
+    stopPropagation: true,
+    preventDefault: preventDefault
+  )
+
+proc preventedEvent*(handled = true): EventOutcome =
+  EventOutcome(handled: handled, preventDefault: true)
+
+when not defined(cbssStrictEventOutcomes):
+  converter boolToEventOutcome*(value: bool): EventOutcome =
+    ## Source-compatible migration path for pre-0.4 handlers. New code should
+    ## return an explicit EventOutcome whenever propagation or defaults matter.
+    if value:
+      stoppedEvent()
+    else:
+      ignoredEvent()
+
+proc mergeOutcome*(result: var EventOutcome; value: EventOutcome) =
+  result.handled = result.handled or value.handled
+  result.stopPropagation = result.stopPropagation or value.stopPropagation
+  result.preventDefault = result.preventDefault or value.preventDefault
+
+proc beginEventActions*(reuse: EventActionQueue = nil): tuple[
+    actions: EventActionQueue,
+    generation: uint64
+] =
+  result.actions = reuse
+  if result.actions.isNil:
+    result.actions = EventActionQueue()
+  inc result.actions.generation
+  if result.actions.generation == 0:
+    result.actions.generation = 1
+  result.actions.active = true
+  result.actions.focusPending = false
+  result.actions.focusTarget = none(NodeId)
+  result.actions.pointerAction = epcaNone
+  result.actions.pointerTarget = none(NodeId)
+  result.actions.invalidations.setLen(0)
+  result.actions.frameRequested = false
+  result.generation = result.actions.generation
+
+proc withEventActions*(
+    dispatch: DispatchResult;
+    actions: EventActionQueue;
+    generation: uint64
+): DispatchResult =
+  result = dispatch
+  result.actions = actions
+  result.actionGeneration = generation
+
+proc finishEventActions*(
+    actions: EventActionQueue;
+    generation: uint64
+): EventActionSnapshot =
+  if actions.isNil or not actions.active or actions.generation != generation:
+    return
+  result = EventActionSnapshot(
+    focusPending: actions.focusPending,
+    focusTarget: actions.focusTarget,
+    pointerAction: actions.pointerAction,
+    pointerTarget: actions.pointerTarget,
+    invalidations: move(actions.invalidations),
+    frameRequested: actions.frameRequested
+  )
+  actions.active = false
+
+proc hasActiveEventActions(dispatch: DispatchResult): bool {.inline.} =
+  not dispatch.actions.isNil and dispatch.actions.active and
+    dispatch.actions.generation == dispatch.actionGeneration
+
+proc requestFocus*(
+    dispatch: DispatchResult;
+    target: Option[NodeId]
+): bool {.discardable.} =
+  if not dispatch.hasActiveEventActions:
+    return false
+  dispatch.actions.focusPending = true
+  dispatch.actions.focusTarget = target
+  true
+
+proc requestFocus*(dispatch: DispatchResult): bool {.discardable.} =
+  if dispatch.currentTarget.isNone:
+    return false
+  dispatch.requestFocus(dispatch.currentTarget)
+
+proc capturePointer*(
+    dispatch: DispatchResult;
+    target: NodeId
+): bool {.discardable.} =
+  if not dispatch.hasActiveEventActions:
+    return false
+  dispatch.actions.pointerAction = epcaCapture
+  dispatch.actions.pointerTarget = some(target)
+  true
+
+proc capturePointer*(dispatch: DispatchResult): bool {.discardable.} =
+  if dispatch.currentTarget.isNone:
+    return false
+  dispatch.capturePointer(dispatch.currentTarget.get)
+
+proc releasePointer*(dispatch: DispatchResult): bool {.discardable.} =
+  if not dispatch.hasActiveEventActions:
+    return false
+  dispatch.actions.pointerAction = epcaRelease
+  dispatch.actions.pointerTarget = none(NodeId)
+  true
+
+proc addInvalidation(
+    actions: EventActionQueue;
+    target: Option[NodeId];
+    domains: set[DirtyDomain]
+) =
+  if domains == {}:
+    return
+  for request in actions.invalidations.mitems:
+    if request.target == target:
+      request.domains = request.domains + domains
+      return
+  actions.invalidations.add EventInvalidationRequest(
+    target: target,
+    domains: domains
+  )
+
+proc invalidate*(
+    dispatch: DispatchResult;
+    target: NodeId;
+    domains: set[DirtyDomain]
+): bool {.discardable.} =
+  if not dispatch.hasActiveEventActions or domains == {}:
+    return false
+  dispatch.actions.addInvalidation(some(target), domains)
+  true
+
+proc invalidate*(
+    dispatch: DispatchResult;
+    domains: set[DirtyDomain]
+): bool {.discardable.} =
+  if dispatch.currentTarget.isNone:
+    return false
+  dispatch.invalidate(dispatch.currentTarget.get, domains)
+
+proc invalidateRoot*(
+    dispatch: DispatchResult;
+    domains: set[DirtyDomain]
+): bool {.discardable.} =
+  if not dispatch.hasActiveEventActions or domains == {}:
+    return false
+  dispatch.actions.addInvalidation(none(NodeId), domains)
+  true
+
+proc requestFrame*(dispatch: DispatchResult): bool {.discardable.} =
+  if not dispatch.hasActiveEventActions:
+    return false
+  dispatch.actions.frameRequested = true
+  true
+
+func buildEventDefinitions(): array[InputEventKind, EventDefinition] =
+  for kind in InputEventKind:
+    let enumName = $kind
+    result[kind] = EventDefinition(
+      producer: edmComponentDispatch,
+      bubbles: true,
+      cancelable: true,
+      publicNames: ["on" & enumName[3 .. ^1], ""],
+      publicNameCount: 1,
+      abiCode: uint32(ord(kind))
+    )
+
+  result[iekDoubleClick].publicNames = ["onDoubleClick", "onDblClick"]
+  result[iekDoubleClick].publicNameCount = 2
+
+  for kind in {
+    iekPointerMove, iekPointerDown, iekPointerUp,
+    iekKeyDown, iekKeyUp, iekTextInput, iekWheel,
+    iekResize,
+    iekPenProximityIn, iekPenProximityOut,
+    iekPenButtonDown, iekPenButtonUp,
+    iekTouchCancel, iekTouchEnd, iekTouchMove, iekTouchStart
+  }:
+    result[kind].producer = edmBackendInput
+
+  for kind in {
+    iekClick, iekAuxClick, iekContextMenu, iekDoubleClick,
+    iekBlur, iekFocus,
+    iekPointerCancel, iekPointerEnter, iekPointerLeave,
+    iekPointerOver, iekPointerOut,
+    iekGotPointerCapture, iekLostPointerCapture,
+    iekMouseMove, iekMouseDown, iekMouseUp,
+    iekMouseEnter, iekMouseLeave, iekMouseOver, iekMouseOut,
+    iekScroll, iekScrollEnd,
+    iekDrag, iekDragStart, iekDragEnd, iekDragEnter, iekDragOver,
+    iekDragLeave, iekDragExit, iekDrop
+  }:
+    result[kind].producer = edmCoreSynthetic
+
+  for kind in {
+    iekBlur, iekFocus, iekLoad,
+    iekMouseEnter, iekMouseLeave,
+    iekPointerEnter, iekPointerLeave,
+    iekScroll
+  }:
+    result[kind].bubbles = false
+
+  for kind in {
+    iekAnimationEnd, iekAnimationIteration, iekAnimationStart,
+    iekBlur, iekFocus, iekGotPointerCapture, iekLostPointerCapture,
+    iekLoad, iekLoadEnd, iekLoadedData, iekLoadedMetadata, iekLoadStart,
+    iekProgress, iekResize, iekScroll, iekScrollEnd,
+    iekTransitionEnd
+  }:
+    result[kind].cancelable = false
+
+  for kind in {
+    iekAnimationCancel, iekTransitionRun, iekTransitionStart,
+    iekTransitionCancel
+  }:
+    result[kind].producer = edmCoreSynthetic
+    result[kind].cancelable = false
+    result[kind].payload = {epfMotion}
+  for kind in {
+    iekAnimationEnd, iekAnimationIteration, iekAnimationStart,
+    iekTransitionEnd
+  }:
+    result[kind].producer = edmCoreSynthetic
+    result[kind].payload = {epfMotion}
+
+  for kind in {
+    iekAuxClick, iekClick, iekContextMenu, iekDoubleClick,
+    iekDrag, iekDragEnd, iekDragEnter, iekDragExit, iekDragLeave,
+    iekDragOver, iekDragStart, iekDrop,
+    iekMouseDown, iekMouseEnter, iekMouseLeave, iekMouseMove,
+    iekMouseOut, iekMouseOver, iekMouseUp,
+    iekPointerCancel, iekPointerDown, iekPointerEnter, iekPointerLeave,
+    iekPointerMove, iekPointerOut, iekPointerOver, iekPointerUp,
+    iekPenButtonDown, iekPenButtonUp, iekPenProximityIn, iekPenProximityOut,
+    iekTouchCancel, iekTouchEnd, iekTouchMove, iekTouchStart
+  }:
+    result[kind].payload = {epfPosition, epfButton, epfPointer}
+  result[iekWheel].payload = {epfPosition, epfDelta, epfPointer}
+  for kind in {iekKeyDown, iekKeyUp}:
+    result[kind].payload = {epfKey, epfFocusOwnership}
+  for kind in {
+    iekBeforeInput, iekChange, iekCompositionEnd, iekCompositionStart,
+    iekCompositionUpdate, iekCopy, iekCut, iekInput, iekPaste, iekTextInput
+  }:
+    result[kind].payload = {epfText, epfFocusOwnership}
+  result[iekSubmit].payload = {epfFormData}
+
+  template aliases(kind: InputEventKind; first, second: InputEventKind) =
+    result[kind].aliases = [first, second]
+    result[kind].aliasCount = 2
+
+  aliases(iekPointerMove, iekMouseMove, iekPointerMove)
+  aliases(iekPointerDown, iekMouseDown, iekPointerDown)
+  aliases(iekPointerUp, iekMouseUp, iekPointerUp)
+  aliases(iekPointerEnter, iekMouseEnter, iekPointerEnter)
+  aliases(iekPointerLeave, iekMouseLeave, iekPointerLeave)
+  aliases(iekPointerOver, iekMouseOver, iekPointerOver)
+  aliases(iekPointerOut, iekMouseOut, iekPointerOut)
+  aliases(iekTextInput, iekBeforeInput, iekTextInput)
+  aliases(iekTouchStart, iekPointerDown, iekTouchStart)
+  aliases(iekTouchMove, iekPointerMove, iekTouchMove)
+  aliases(iekTouchEnd, iekPointerUp, iekTouchEnd)
+  aliases(iekTouchCancel, iekPointerCancel, iekTouchCancel)
+
+const eventDefinitions* = buildEventDefinitions()
+
+func eventDefinition*(kind: InputEventKind): EventDefinition {.inline.} =
+  eventDefinitions[kind]
+
+func primaryEventName*(kind: InputEventKind): string {.inline.} =
+  kind.eventDefinition.publicNames[0]
+
+iterator publicEventNames*(kind: InputEventKind): string =
+  let definition = kind.eventDefinition
+  for index in 0 ..< int(definition.publicNameCount):
+    yield definition.publicNames[index]
+
+proc bubbles*(kind: InputEventKind): bool {.inline.} =
+  kind.eventDefinition.bubbles
+
+proc cancelable*(kind: InputEventKind): bool {.inline.} =
+  kind.eventDefinition.cancelable
 
 proc truncateUtf8EventText(text: string; maxBytes: int): string =
   if maxBytes <= 0:
@@ -206,48 +604,74 @@ proc truncateUtf8EventText(text: string; maxBytes: int): string =
     dec stop
   text[0 ..< stop]
 
-proc dispatchMode*(kind: InputEventKind): EventDispatchMode =
-  case kind
-  of iekPointerMove, iekPointerDown, iekPointerUp,
-     iekKeyDown, iekKeyUp, iekTextInput, iekWheel,
-     iekResize,
-     iekPenProximityIn, iekPenProximityOut,
-     iekPenButtonDown, iekPenButtonUp,
-     iekTouchCancel, iekTouchEnd, iekTouchMove, iekTouchStart:
-    edmBackendInput
-  of iekClick,
-     iekAuxClick, iekContextMenu, iekDoubleClick,
-     iekBlur, iekFocus,
-     iekPointerCancel, iekPointerEnter, iekPointerLeave,
-     iekPointerOver, iekPointerOut,
-     iekGotPointerCapture, iekLostPointerCapture,
-     iekMouseMove, iekMouseDown, iekMouseUp,
-     iekMouseEnter, iekMouseLeave, iekMouseOver, iekMouseOut,
-     iekScroll, iekScrollEnd,
-     iekDrag, iekDragStart, iekDragEnd, iekDragEnter, iekDragOver,
-     iekDragLeave, iekDragExit, iekDrop:
-    edmCoreSynthetic
-  of iekBeforeInput, iekInput, iekChange,
-     iekSubmit, iekReset, iekSelect, iekInvalid, iekToggle,
-     iekCopy, iekCut, iekPaste,
-     iekCompositionStart, iekCompositionUpdate, iekCompositionEnd,
-     iekLoad, iekLoadStart, iekLoadEnd, iekLoadedData, iekLoadedMetadata,
-     iekCanPlay, iekCanPlayThrough, iekDurationChange, iekEmptied,
-     iekEncrypted, iekEnded, iekError, iekPause, iekPlay, iekPlaying, iekProgress,
-     iekRateChange, iekSeeked, iekSeeking, iekStalled, iekSuspend,
-     iekTimeUpdate, iekVolumeChange, iekWaiting, iekAbort,
-     iekAnimationStart, iekAnimationIteration, iekAnimationEnd,
-     iekCancel, iekClose, iekCueChange,
-     iekFullscreenChange, iekFullscreenError,
-     iekShow,
-     iekTransitionEnd:
-    edmComponentDispatch
+proc dispatchMode*(kind: InputEventKind): EventDispatchMode {.inline.} =
+  kind.eventDefinition.producer
 
 proc needsComponentDispatch*(kind: InputEventKind): bool =
   kind.dispatchMode == edmComponentDispatch
 
 proc event*(kind: InputEventKind): InputEvent =
   InputEvent(kind: kind)
+
+proc submitEvent*(data: FormData): InputEvent =
+  ## Constructs a submit event carrying an immutable form snapshot. A payload
+  ## object is allocated only for events that actually transport FormData.
+  InputEvent(
+    kind: iekSubmit,
+    payload: InputEventPayload(formData: data)
+  )
+
+proc formData*(event: InputEvent): Option[FormData] =
+  ## Returns `some` even for an intentionally empty submitted form. Synthetic
+  ## submit events built only from `iekSubmit` retain their legacy no-payload
+  ## behavior and return `none`.
+  if event.payload.isNil:
+    none(FormData)
+  else:
+    some(event.payload.formData)
+
+proc formData*(dispatch: DispatchResult): Option[FormData] {.inline.} =
+  ## Convenience access for `onSubmit` and additive submit listeners.
+  dispatch.event.formData()
+
+proc motionEvent*(
+    kind: InputEventKind;
+    name: string;
+    elapsedSeconds: float64;
+    iteration = 0'u64
+): InputEvent =
+  if kind notin {
+      iekAnimationStart, iekAnimationIteration, iekAnimationEnd,
+      iekAnimationCancel, iekTransitionRun, iekTransitionStart,
+      iekTransitionEnd, iekTransitionCancel
+  }:
+    raise newException(ValueError, "motionEvent requires a motion event kind")
+  InputEvent(
+    kind: kind,
+    payload: InputEventPayload(
+      motionName: name,
+      motionElapsedSeconds: elapsedSeconds,
+      motionIteration: iteration
+    )
+  )
+
+proc motionName*(event: InputEvent): string =
+  if event.payload.isNil: "" else: event.payload.motionName
+
+proc motionElapsedSeconds*(event: InputEvent): float64 =
+  if event.payload.isNil: 0 else: event.payload.motionElapsedSeconds
+
+proc motionIteration*(event: InputEvent): uint64 =
+  if event.payload.isNil: 0 else: event.payload.motionIteration
+
+proc motionName*(dispatch: DispatchResult): string {.inline.} =
+  dispatch.event.motionName
+
+proc motionElapsedSeconds*(dispatch: DispatchResult): float64 {.inline.} =
+  dispatch.event.motionElapsedSeconds
+
+proc motionIteration*(dispatch: DispatchResult): uint64 {.inline.} =
+  dispatch.event.motionIteration
 
 proc textEvent*(kind: InputEventKind; text: string): InputEvent =
   InputEvent(kind: kind, text: some(text))
@@ -560,11 +984,26 @@ proc dispatchInput*(regions: openArray[HitRegion]; event: InputEvent): DispatchR
 proc initEventRegistry*(): EventRegistry =
   EventRegistry(
     bindings: @[],
-    bindingIndex: initTable[(NodeId, InputEventKind), seq[int]]()
+    bindingIndex: initTable[(NodeId, InputEventKind), seq[int]](),
+    nextBindingId: 1,
+    dispatchDepth: 0,
+    inactiveBindingCount: 0
   )
+
+proc newSubscription(
+    registry: var EventRegistry;
+    node: NodeId;
+    kind: InputEventKind
+): EventSubscription =
+  result = EventSubscription(id: registry.nextBindingId, node: node, kind: kind)
+  inc registry.nextBindingId
+  if registry.nextBindingId == 0:
+    registry.nextBindingId = 1
 
 proc indexBinding(registry: var EventRegistry; bindingIndex: int) =
   let binding = registry.bindings[bindingIndex]
+  if not binding.active:
+    return
   let key = (binding.node, binding.kind)
   registry.bindingIndex.mgetOrPut(key, @[]).add bindingIndex
 
@@ -577,15 +1016,76 @@ proc removeEventHandlers*(
     registry: var EventRegistry;
     nodes: HashSet[NodeId]
 ): int =
+  if registry.dispatchDepth > 0:
+    for binding in registry.bindings.mitems:
+      if binding.active and binding.node in nodes:
+        binding.active = false
+        binding.handler = nil
+        inc result
+        inc registry.inactiveBindingCount
+    if result > 0:
+      registry.rebuildBindingIndex()
+    return
   var retained = newSeqOfCap[EventBinding](registry.bindings.len)
   for binding in registry.bindings:
-    if binding.node in nodes:
+    if binding.active and binding.node in nodes:
       inc result
-    else:
+    elif binding.active:
       retained.add binding
   if result > 0:
     registry.bindings = retained
     registry.rebuildBindingIndex()
+
+proc removeEventHandler*(
+    registry: var EventRegistry;
+    subscription: EventSubscription
+): bool {.discardable.} =
+  if subscription.id == 0:
+    return false
+  for index in 0 ..< registry.bindings.len:
+    let binding = registry.bindings[index]
+    if binding.active and binding.id == subscription.id and
+        binding.node == subscription.node and
+        binding.kind == subscription.kind:
+      if registry.dispatchDepth > 0:
+        registry.bindings[index].active = false
+        registry.bindings[index].handler = nil
+        inc registry.inactiveBindingCount
+      else:
+        registry.bindings.delete(index)
+      registry.rebuildBindingIndex()
+      return true
+
+proc compactBindings(registry: var EventRegistry) =
+  if registry.inactiveBindingCount == 0:
+    return
+  var retained = newSeqOfCap[EventBinding](
+    registry.bindings.len - registry.inactiveBindingCount
+  )
+  for binding in registry.bindings:
+    if binding.active:
+      retained.add binding
+  registry.bindings = retained
+  registry.inactiveBindingCount = 0
+  registry.rebuildBindingIndex()
+
+proc addBinding(
+    registry: var EventRegistry;
+    node: NodeId;
+    kind: InputEventKind;
+    handler: EventHandler;
+    role: EventBindingRole
+): EventSubscription =
+  result = registry.newSubscription(node, kind)
+  registry.bindings.add EventBinding(
+    id: result.id,
+    node: node,
+    kind: kind,
+    handler: handler,
+    role: role,
+    active: true
+  )
+  registry.indexBinding(registry.bindings.high)
 
 proc addEventHandler*(
     registry: var EventRegistry;
@@ -593,8 +1093,15 @@ proc addEventHandler*(
     kind: InputEventKind;
     handler: EventHandler
 ) =
-  registry.bindings.add EventBinding(node: node, kind: kind, handler: handler)
-  registry.indexBinding(registry.bindings.high)
+  discard registry.addBinding(node, kind, handler, ebrObserver)
+
+proc subscribe*(
+    registry: var EventRegistry;
+    node: NodeId;
+    kind: InputEventKind;
+    handler: EventHandler
+): EventSubscription =
+  registry.addBinding(node, kind, handler, ebrObserver)
 
 proc setEventHandler*(
     registry: var EventRegistry;
@@ -603,12 +1110,31 @@ proc setEventHandler*(
     handler: EventHandler
 ) =
   for index in countdown(registry.bindings.high, 0):
-    if not registry.bindings[index].internal and
+    if registry.bindings[index].active and
+        registry.bindings[index].role == ebrPublicHandler and
         registry.bindings[index].node == node and
         registry.bindings[index].kind == kind:
       registry.bindings[index].handler = handler
       return
-  registry.addEventHandler(node, kind, handler)
+  discard registry.addBinding(node, kind, handler, ebrPublicHandler)
+
+proc clearEventHandler*(
+    registry: var EventRegistry;
+    node: NodeId;
+    kind: InputEventKind
+): bool {.discardable.} =
+  for index in countdown(registry.bindings.high, 0):
+    let binding = registry.bindings[index]
+    if binding.active and binding.role == ebrPublicHandler and
+        binding.node == node and binding.kind == kind:
+      if registry.dispatchDepth > 0:
+        registry.bindings[index].active = false
+        registry.bindings[index].handler = nil
+        inc registry.inactiveBindingCount
+      else:
+        registry.bindings.delete(index)
+      registry.rebuildBindingIndex()
+      return true
 
 proc addInternalEventHandler*(
     registry: var EventRegistry;
@@ -616,145 +1142,30 @@ proc addInternalEventHandler*(
     kind: InputEventKind;
     handler: EventHandler
 ) =
-  registry.bindings.add EventBinding(node: node, kind: kind, handler: handler, internal: true)
-  registry.indexBinding(registry.bindings.high)
+  discard registry.addBinding(node, kind, handler, ebrDefaultAction)
 
 proc bindingsNeedingComponentDispatch*(registry: EventRegistry): seq[EventBinding] =
   for binding in registry.bindings:
-    if binding.kind.needsComponentDispatch:
+    if binding.active and binding.kind.needsComponentDispatch:
       result.add binding
 
 template registerEventSlot(name: untyped; kindValue: InputEventKind) =
-  proc name*(registry: var EventRegistry; node: NodeId; handler: EventHandler) =
+  proc name*(
+      registry: var EventRegistry;
+      node: NodeId;
+      handler: EventHandler
+  ) =
     registry.addEventHandler(node, kindValue, handler)
 
-registerEventSlot(onAbort, iekAbort)
-registerEventSlot(onAnimationEnd, iekAnimationEnd)
-registerEventSlot(onAnimationIteration, iekAnimationIteration)
-registerEventSlot(onAnimationStart, iekAnimationStart)
-registerEventSlot(onAuxClick, iekAuxClick)
-registerEventSlot(onBeforeInput, iekBeforeInput)
-registerEventSlot(onBlur, iekBlur)
-registerEventSlot(onCancel, iekCancel)
-registerEventSlot(onCanPlay, iekCanPlay)
-registerEventSlot(onCanPlayThrough, iekCanPlayThrough)
-registerEventSlot(onChange, iekChange)
-registerEventSlot(onClick, iekClick)
-registerEventSlot(onClose, iekClose)
-registerEventSlot(onContextMenu, iekContextMenu)
-registerEventSlot(onCopy, iekCopy)
-registerEventSlot(onCueChange, iekCueChange)
-registerEventSlot(onCut, iekCut)
-registerEventSlot(onDblClick, iekDoubleClick)
-registerEventSlot(onDoubleClick, iekDoubleClick)
-registerEventSlot(onCompositionEnd, iekCompositionEnd)
-registerEventSlot(onCompositionStart, iekCompositionStart)
-registerEventSlot(onCompositionUpdate, iekCompositionUpdate)
-registerEventSlot(onDrag, iekDrag)
-registerEventSlot(onDragEnd, iekDragEnd)
-registerEventSlot(onDragEnter, iekDragEnter)
-registerEventSlot(onDragExit, iekDragExit)
-registerEventSlot(onDragLeave, iekDragLeave)
-registerEventSlot(onDragOver, iekDragOver)
-registerEventSlot(onDragStart, iekDragStart)
-registerEventSlot(onDrop, iekDrop)
-registerEventSlot(onDurationChange, iekDurationChange)
-registerEventSlot(onEmptied, iekEmptied)
-registerEventSlot(onEncrypted, iekEncrypted)
-registerEventSlot(onEnded, iekEnded)
-registerEventSlot(onError, iekError)
-registerEventSlot(onFocus, iekFocus)
-registerEventSlot(onFullscreenChange, iekFullscreenChange)
-registerEventSlot(onFullscreenError, iekFullscreenError)
-registerEventSlot(onGotPointerCapture, iekGotPointerCapture)
-registerEventSlot(onInput, iekInput)
-registerEventSlot(onInvalid, iekInvalid)
-registerEventSlot(onKeyDown, iekKeyDown)
-registerEventSlot(onKeyUp, iekKeyUp)
-registerEventSlot(onLoad, iekLoad)
-registerEventSlot(onLoadEnd, iekLoadEnd)
-registerEventSlot(onLoadedData, iekLoadedData)
-registerEventSlot(onLoadedMetadata, iekLoadedMetadata)
-registerEventSlot(onLoadStart, iekLoadStart)
-registerEventSlot(onLostPointerCapture, iekLostPointerCapture)
-registerEventSlot(onMouseDown, iekMouseDown)
-registerEventSlot(onMouseEnter, iekMouseEnter)
-registerEventSlot(onMouseLeave, iekMouseLeave)
-registerEventSlot(onMouseMove, iekMouseMove)
-registerEventSlot(onMouseOut, iekMouseOut)
-registerEventSlot(onMouseOver, iekMouseOver)
-registerEventSlot(onMouseUp, iekMouseUp)
-registerEventSlot(onPause, iekPause)
-registerEventSlot(onPaste, iekPaste)
-registerEventSlot(onPenButtonDown, iekPenButtonDown)
-registerEventSlot(onPenButtonUp, iekPenButtonUp)
-registerEventSlot(onPenProximityIn, iekPenProximityIn)
-registerEventSlot(onPenProximityOut, iekPenProximityOut)
-registerEventSlot(onPlay, iekPlay)
-registerEventSlot(onPlaying, iekPlaying)
-registerEventSlot(onPointerCancel, iekPointerCancel)
-registerEventSlot(onPointerDown, iekPointerDown)
-registerEventSlot(onPointerEnter, iekPointerEnter)
-registerEventSlot(onPointerLeave, iekPointerLeave)
-registerEventSlot(onPointerMove, iekPointerMove)
-registerEventSlot(onPointerOut, iekPointerOut)
-registerEventSlot(onPointerOver, iekPointerOver)
-registerEventSlot(onPointerUp, iekPointerUp)
-registerEventSlot(onProgress, iekProgress)
-registerEventSlot(onRateChange, iekRateChange)
-registerEventSlot(onReset, iekReset)
-registerEventSlot(onResize, iekResize)
-registerEventSlot(onScroll, iekScroll)
-registerEventSlot(onScrollEnd, iekScrollEnd)
-registerEventSlot(onSeeked, iekSeeked)
-registerEventSlot(onSeeking, iekSeeking)
-registerEventSlot(onSelect, iekSelect)
-registerEventSlot(onShow, iekShow)
-registerEventSlot(onStalled, iekStalled)
-registerEventSlot(onSubmit, iekSubmit)
-registerEventSlot(onSuspend, iekSuspend)
-registerEventSlot(onTextInput, iekTextInput)
-registerEventSlot(onTimeUpdate, iekTimeUpdate)
-registerEventSlot(onToggle, iekToggle)
-registerEventSlot(onTouchCancel, iekTouchCancel)
-registerEventSlot(onTouchEnd, iekTouchEnd)
-registerEventSlot(onTouchMove, iekTouchMove)
-registerEventSlot(onTouchStart, iekTouchStart)
-registerEventSlot(onTransitionEnd, iekTransitionEnd)
-registerEventSlot(onVolumeChange, iekVolumeChange)
-registerEventSlot(onWaiting, iekWaiting)
-registerEventSlot(onWheel, iekWheel)
+include "../generated/event_registry_slots.nim"
 
-proc expandedEventKinds(kind: InputEventKind): seq[InputEventKind] =
-  case kind
-  of iekPointerMove:
-    @[iekMouseMove, iekPointerMove]
-  of iekPointerDown:
-    @[iekMouseDown, iekPointerDown]
-  of iekPointerUp:
-    @[iekMouseUp, iekPointerUp]
-  of iekPointerEnter:
-    @[iekMouseEnter, iekPointerEnter]
-  of iekPointerLeave:
-    @[iekMouseLeave, iekPointerLeave]
-  of iekPointerOver:
-    @[iekMouseOver, iekPointerOver]
-  of iekPointerOut:
-    @[iekMouseOut, iekPointerOut]
-  of iekTextInput:
-    @[iekBeforeInput, iekTextInput, iekInput, iekChange]
-  of iekWheel:
-    @[iekWheel]
-  of iekTouchStart:
-    @[iekPointerDown, iekTouchStart]
-  of iekTouchMove:
-    @[iekPointerMove, iekTouchMove]
-  of iekTouchEnd:
-    @[iekPointerUp, iekTouchEnd]
-  of iekTouchCancel:
-    @[iekPointerCancel, iekTouchCancel]
+iterator expandedEventKinds(kind: InputEventKind): InputEventKind =
+  let definition = kind.eventDefinition
+  if definition.aliasCount == 0:
+    yield kind
   else:
-    @[kind]
+    for index in 0 ..< int(definition.aliasCount):
+      yield definition.aliases[index]
 
 proc appendTouchDispatches(
     result: var seq[DispatchResult];
@@ -794,65 +1205,168 @@ proc appendTouchDispatches(
     else:
       result.add dispatch
 
-proc handle*(registry: EventRegistry; dispatch: DispatchResult): bool =
+proc invokeBindings(
+    registry: EventRegistry;
+    dispatch: DispatchResult;
+    role: EventBindingRole
+): EventOutcome =
   if dispatch.target.isNone:
-    return false
-  if dispatch.event.focusOwner.isSome and dispatch.event.focusOwner.get != dispatch.target.get:
-    return false
+    return ignoredEvent()
+  let currentTarget =
+    if dispatch.currentTarget.isSome: dispatch.currentTarget.get
+    else: dispatch.target.get
+  if dispatch.event.focusOwner.isSome and
+      dispatch.event.focusOwner.get != dispatch.target.get:
+    return ignoredEvent()
   for effectiveKind in dispatch.event.kind.expandedEventKinds:
-    let key = (dispatch.target.get, effectiveKind)
+    let key = (currentTarget, effectiveKind)
     if key notin registry.bindingIndex:
       continue
     let indices = registry.bindingIndex[key]
     for bindingIndex in indices:
       let binding = registry.bindings[bindingIndex]
-      if binding.internal and binding.node == dispatch.target.get and binding.kind == effectiveKind:
+      if binding.active and binding.role == role and
+          binding.node == currentTarget and binding.kind == effectiveKind:
         var effectiveDispatch = dispatch
         effectiveDispatch.event.kind = binding.kind
-        if binding.handler(effectiveDispatch):
-          return true
-    for index in countdown(indices.high, 0):
-      let binding = registry.bindings[indices[index]]
-      if not binding.internal and binding.node == dispatch.target.get and binding.kind == effectiveKind:
-        var effectiveDispatch = dispatch
-        effectiveDispatch.event.kind = binding.kind
-        if binding.handler(effectiveDispatch):
-          return true
-  false
+        result.mergeOutcome(binding.handler(effectiveDispatch))
 
-proc dispatchToNode(dispatch: DispatchResult; node: NodeId; clearLocal: bool): DispatchResult =
+proc dispatchToNode(
+    dispatch: DispatchResult;
+    node: NodeId;
+    phase: EventPhase;
+    clearLocal: bool
+): DispatchResult =
   result = dispatch
-  result.target = some(node)
+  result.currentTarget = some(node)
+  result.phase = phase
   if clearLocal:
     result.local = none(Vec2)
 
-proc handle*(registry: EventRegistry; tree: Tree; dispatch: DispatchResult): bool =
+proc dispatchEvent*(
+    registry: var EventRegistry;
+    dispatch: DispatchResult
+): EventOutcome =
   if dispatch.target.isNone:
-    return false
+    return ignoredEvent()
+  inc registry.dispatchDepth
+  defer:
+    dec registry.dispatchDepth
+    if registry.dispatchDepth == 0:
+      registry.compactBindings()
+  let target = dispatch.target.get
+  let targeted = dispatch.dispatchToNode(target, epTarget, clearLocal = false)
+  result.mergeOutcome(registry.invokeBindings(targeted, ebrPublicHandler))
+  result.mergeOutcome(registry.invokeBindings(targeted, ebrObserver))
+  if not (result.preventDefault and dispatch.event.kind.cancelable):
+    result.mergeOutcome(registry.invokeBindings(
+      targeted.dispatchToNode(target, epDefaultAction, clearLocal = false),
+      ebrDefaultAction
+    ))
+
+proc disabledBlocksDispatch(kind: InputEventKind): bool =
+  kind in {
+    iekAuxClick, iekBeforeInput, iekChange, iekClick, iekContextMenu,
+    iekDoubleClick, iekDrag, iekDragEnd, iekDragStart, iekDrop,
+    iekInput, iekKeyDown, iekKeyUp,
+    iekMouseDown, iekMouseUp,
+    iekPointerDown, iekPointerUp,
+    iekSubmit, iekTextInput, iekToggle,
+    iekTouchEnd, iekTouchStart
+  }
+
+proc hasDisabledAncestor(tree: Tree; target: NodeId): bool =
+  var current = some(target)
+  while current.isSome:
+    let node = current.get
+    if not tree.isValid(node):
+      return false
+    if esDisabled in tree.nodes[node.nodeIndex].states:
+      return true
+    current = tree.nodes[node.nodeIndex].parent
+
+proc dispatchEvent*(
+    registry: var EventRegistry;
+    tree: Tree;
+    dispatch: DispatchResult
+): EventOutcome =
+  if dispatch.target.isNone:
+    return ignoredEvent()
 
   let originalTarget = dispatch.target.get
   if tree.isInert(originalTarget):
-    return false
+    return ignoredEvent()
+  if dispatch.event.kind.disabledBlocksDispatch and
+      tree.hasDisabledAncestor(originalTarget):
+    return ignoredEvent()
+
+  inc registry.dispatchDepth
+  defer:
+    dec registry.dispatchDepth
+    if registry.dispatchDepth == 0:
+      registry.compactBindings()
+
+  # User handlers and observers see the event before intrinsic control actions.
   var current = some(originalTarget)
+  var propagationBoundary = originalTarget
   while current.isSome:
     let node = current.get
-    if registry.handle(dispatch.dispatchToNode(node, clearLocal = node != originalTarget)):
-      return true
+    propagationBoundary = node
+    let phase = if node == originalTarget: epTarget else: epBubble
+    let currentDispatch = dispatch.dispatchToNode(
+      node,
+      phase,
+      clearLocal = node != originalTarget
+    )
+    result.mergeOutcome(registry.invokeBindings(
+      currentDispatch,
+      ebrPublicHandler
+    ))
+    result.mergeOutcome(registry.invokeBindings(currentDispatch, ebrObserver))
+    if result.stopPropagation or not dispatch.event.kind.bubbles:
+      break
     current = tree.nodes[node.nodeIndex].parent
-  false
 
-proc handle*(registry: EventRegistry; dispatches: openArray[DispatchResult]): bool =
+  if result.preventDefault and dispatch.event.kind.cancelable:
+    return
+
+  # Default actions use a separate pass so preventDefault never needs to race
+  # an internal handler. No ancestor route is allocated on the hot path.
+  current = some(originalTarget)
+  while current.isSome:
+    let node = current.get
+    let outcome = registry.invokeBindings(
+      dispatch.dispatchToNode(
+        node,
+        epDefaultAction,
+        clearLocal = node != originalTarget
+      ),
+      ebrDefaultAction
+    )
+    result.mergeOutcome(outcome)
+    if outcome.stopPropagation or not dispatch.event.kind.bubbles or
+        node == propagationBoundary:
+      break
+    current = tree.nodes[node.nodeIndex].parent
+
+proc handle*(registry: var EventRegistry; dispatch: DispatchResult): bool =
+  registry.dispatchEvent(dispatch).handled
+
+proc handle*(registry: var EventRegistry; tree: Tree; dispatch: DispatchResult): bool =
+  registry.dispatchEvent(tree, dispatch).handled
+
+proc handle*(registry: var EventRegistry; dispatches: openArray[DispatchResult]): bool =
   for dispatch in dispatches:
     if registry.handle(dispatch):
       result = true
 
-proc handle*(registry: EventRegistry; tree: Tree; dispatches: openArray[DispatchResult]): bool =
+proc handle*(registry: var EventRegistry; tree: Tree; dispatches: openArray[DispatchResult]): bool =
   for dispatch in dispatches:
     if registry.handle(tree, dispatch):
       result = true
 
 proc emit*(
-    registry: EventRegistry;
+    registry: var EventRegistry;
     target: NodeId;
     event: InputEvent;
     local = none(Vec2)
@@ -860,7 +1374,7 @@ proc emit*(
   registry.handle(DispatchResult(target: some(target), local: local, event: event))
 
 proc emit*(
-    registry: EventRegistry;
+    registry: var EventRegistry;
     tree: Tree;
     target: NodeId;
     event: InputEvent;
@@ -869,7 +1383,7 @@ proc emit*(
   registry.handle(tree, DispatchResult(target: some(target), local: local, event: event))
 
 proc emit*(
-    registry: EventRegistry;
+    registry: var EventRegistry;
     target: NodeId;
     kind: InputEventKind;
     local = none(Vec2)
@@ -877,7 +1391,7 @@ proc emit*(
   registry.emit(target, event(kind), local)
 
 proc emit*(
-    registry: EventRegistry;
+    registry: var EventRegistry;
     tree: Tree;
     target: NodeId;
     kind: InputEventKind;
@@ -886,7 +1400,7 @@ proc emit*(
   registry.emit(tree, target, event(kind), local)
 
 proc emitFocused*(
-    registry: EventRegistry;
+    registry: var EventRegistry;
     state: InteractionState;
     event: InputEvent
 ): bool =
@@ -895,7 +1409,7 @@ proc emitFocused*(
   registry.emit(state.focusedTarget.get, event.markFocusOwned(state))
 
 proc emitFocused*(
-    registry: EventRegistry;
+    registry: var EventRegistry;
     state: InteractionState;
     kind: InputEventKind
 ): bool =

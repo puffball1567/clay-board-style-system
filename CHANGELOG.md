@@ -7,6 +7,63 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-11
+
+### Added
+
+- Added LLVM UBSan gates for numeric, layout, transform, transition, and
+  keyframe paths on Linux and macOS; a standalone LSan lifecycle gate on Linux;
+  and TSan worker-to-UI ownership gates on Linux and macOS. Every sanitizer task
+  covers both ARC and ORC and remains test-only. Windows retains portable and
+  ASan coverage rather than requiring an unverified UBSan runtime.
+- Added C ABI `0x00010011` and declaration-driven animation/transition
+  lifecycle events. `animationstart`, `animationiteration`, `animationend`,
+  `animationcancel`, `transitionrun`, `transitionstart`, `transitionend`, and
+  `transitioncancel` use normal CBSS dispatch with motion name, elapsed time,
+  and iteration payloads where applicable. Subtree disposal emits cancellation
+  before handlers are detached.
+- Expanded the motion AddressSanitizer gate to ARC and ORC on Linux, Windows,
+  and macOS. Linux additionally retains Valgrind lifecycle and leak gates;
+  unsupported LeakSanitizer options are not passed to macOS or Windows.
+- Added declarative transition and keyframe interpolation for typed 2D
+  `transform`, `translate`, `scale`, and `rotate` values. Motion reuses the
+  existing affine paint/hit contract, does not relayout each frame, and marks
+  hit data dirty only while geometry changes.
+- Added multiple declaration-bound animations per node with typed list
+  authoring and CSS-like cycling across name, duration, delay, timing,
+  iteration count, direction, fill, play state, and composition. Missing
+  definitions retain their list positions, tracks pause and complete
+  independently, and declaration order determines paint precedence.
+- Added an AddressSanitizer motion gate for declarative transitions and
+  keyframes under both ARC and ORC. Valgrind remains the separate Linux leak
+  gate.
+- Added typed and lower-level list authoring for transition property, duration,
+  delay, timing, and behavior values, with CSS-like index cycling, preserved
+  unknown-property positions, nested-function comma parsing, and last-match
+  parameter selection.
+- Added the first declaration-bound named-keyframe runtime for `opacity`,
+  `color`, and `background-color`, including typed registration, duration,
+  signed delay, timing, finite/infinite iterations, direction, fill, pause and
+  resume, retained forwards presentation, reduced motion, definition revision,
+  subtree cancellation, and deterministic paint-only test-driver advancement.
+- Added the first declarative style-transition runtime for `opacity`, `color`,
+  and `background-color`, including timing functions, signed delay, reversal,
+  Oklab color interpolation, reduced motion, subtree cancellation, active-only
+  frame scheduling, and deterministic headless-driver time advancement without
+  per-frame style resolution or layout.
+- Expanded enum-backed property authoring across existing closed text, image,
+  background, blending, input, scrolling, transform, transition, and animation
+  value sets. These helpers retain the validated keyword runtime path while
+  adding LSP completion and compile-time rejection of unrelated values.
+- Added C ABI `0x00010010` and Nim host-authorized Blob providers with lazy
+  bounded reads, serialized access per Blob, success-only context ownership,
+  exactly-once release, and ARC/ORC plus pthread/Valgrind coverage.
+- Added C ABI `0x0001000F` bounded Blob streams with UI-owned consumers,
+  atomically retained cross-thread producers, item/byte backpressure,
+  coalesced wake callbacks, ordered pump/drain, explicit Blob ownership,
+  progress and terminal events, foreign-thread attach/detach, and shared/static
+  ARC/ORC pthread consumer coverage.
+
 ## [0.3.2] - 2026-08-04
 
 ### Changed

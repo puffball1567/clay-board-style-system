@@ -330,6 +330,21 @@ exceeds twice the 500-node result plus a one-microsecond noise allowance.
 Dynamic screen creation and physical subtree disposal remain separate work;
 this benchmark covers switching among already registered screens.
 
+### Indexed event dispatch gate
+
+Event lookup must depend on the original target's ancestor route and matching
+listeners, not on the total number of unrelated listeners retained by the
+application. Public handlers, additive observers, and intrinsic default actions
+share the same `(NodeId, InputEventKind)` index; event aliases are iterated
+without allocating a temporary sequence.
+
+`tests/perf/event_dispatch_benchmark.nim` dispatches 100,000 target-local click
+events with 500 and 50,000 unrelated listener bindings. The 50,000-listener
+case must remain within four times the 500-listener cost plus a 250 ns noise
+allowance. This is a structural scaling gate rather than a universal wall-clock
+promise: ancestor depth and the number of listeners actually attached to the
+route remain legitimate costs.
+
 ### Color conversion and parsing baseline (2026-08-02)
 
 Version 0.3 color authoring keeps declared color spaces outside the compact

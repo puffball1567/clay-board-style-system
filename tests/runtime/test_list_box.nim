@@ -24,11 +24,11 @@ suite "list box component":
     var inputValue = ""
     var changeValue = ""
 
-    files.onInput = proc(event: DispatchResult): bool =
+    files.onInput = proc(event: DispatchResult): EventOutcome =
       inputValue = files.selectedValue()
       false
 
-    files.onChange = proc(event: DispatchResult): bool =
+    files.onChange = proc(event: DispatchResult): EventOutcome =
       changeValue = files.selectedValue()
       false
 
@@ -63,7 +63,7 @@ suite "list box component":
     ], selectedValue = "alpha")
     var changed = false
 
-    files.onChange = proc(event: DispatchResult): bool =
+    files.onChange = proc(event: DispatchResult): EventOutcome =
       changed = true
       false
 
@@ -80,7 +80,7 @@ suite "list box component":
     let files = ui.listBox(listItems(), selectedValue = "alpha", disabled = true)
     var changed = false
 
-    files.onChange = proc(event: DispatchResult): bool =
+    files.onChange = proc(event: DispatchResult): EventOutcome =
       changed = true
       false
 
@@ -96,7 +96,7 @@ suite "list box component":
     let files = ui.listBox(listItems())
     var changed = false
 
-    files.onChange = proc(event: DispatchResult): bool =
+    files.onChange = proc(event: DispatchResult): EventOutcome =
       changed = true
       false
 

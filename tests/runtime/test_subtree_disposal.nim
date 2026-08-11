@@ -59,10 +59,17 @@ suite "dynamic subtree disposal":
 
     var clicks = 0
     var blurs = 0
-    action.onClick = proc(event: DispatchResult): bool =
+    var observedClicks = 0
+    action.onClick = proc(event: DispatchResult): EventOutcome =
       inc clicks
       true
-    action.container.onBlur = proc(event: DispatchResult): bool =
+    let observation = action.container.subscribe(
+      iekClick,
+      proc(event: DispatchResult): EventOutcome =
+        inc observedClicks
+        ignoredEvent()
+    )
+    action.container.onBlur = proc(event: DispatchResult): EventOutcome =
       inc blurs
       true
 
@@ -135,7 +142,7 @@ suite "dynamic subtree disposal":
     let replacement = ui.box(parent = some(app))
     replacement.applyStyle(uiStyle([decl("height", px(44))]))
     var replacementClicks = 0
-    replacement.onClick = proc(event: DispatchResult): bool =
+    replacement.onClick = proc(event: DispatchResult): EventOutcome =
       inc replacementClicks
       true
 
@@ -146,6 +153,8 @@ suite "dynamic subtree disposal":
     check replacement.id != oldAction
     check not ui.events.emit(ui.tree, oldAction, iekClick)
     check clicks == 0
+    check observedClicks == 0
+    check not ui.events.removeEventHandler(observation)
     check replacement.emit(iekClick)
     check replacementClicks == 1
     check ui.componentStyles.len <= oldStyleCount + 1
@@ -241,7 +250,7 @@ suite "dynamic subtree disposal":
         uiStyle([decl("height", px(30))]),
         priority = 2
       )
-      action.onClick = proc(event: DispatchResult): bool = true
+      action.onClick = proc(event: DispatchResult): EventOutcome = stoppedEvent()
       maximumNodes = max(maximumNodes, ui.tree.nodes.len)
       maximumStyles = max(maximumStyles, ui.componentStyles.len)
       check ui.disposeSubtree(panel, interaction)

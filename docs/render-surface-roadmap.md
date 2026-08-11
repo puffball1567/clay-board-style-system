@@ -212,6 +212,72 @@ and less common orientations can be added after the JSON/orthogonal path is
 stable. These modules remain opt-in imports so ordinary CBSS GUI applications
 do not pull game-oriented code or assets into their build.
 
+## Motion Scene Dependency Track
+
+Status: `Planned after declarative transition binding`
+
+GPU Canvas is not limited to displaying frames completed elsewhere. CBSS will
+also provide a retained Motion Scene whose visual objects are evaluated and
+drawn by the CBSS Canvas pipeline. This is the primary path for simultaneously
+animated shapes, text, images, particles, sprites, chart marks, and procedural
+visuals. External Nim code may calculate object data, but the resulting scene
+participates in CBSS composition, clipping, frame scheduling, coordinate
+conversion, hit testing, and presentation.
+
+A Motion Scene is internal content of one Canvas layout node. It must not
+inflate the UI tree by creating one Box for every particle, chart point, or
+motion-graphics layer. Scene objects instead use stable typed IDs and
+data-oriented retained storage suitable for CPU chunking, GPU instancing, and
+storage-buffer upload. Optional per-object interaction metadata maps scene
+hits back to CBSS input events without making those objects independent layout
+participants.
+
+The user-facing goal is a Web-like authoring boundary:
+
+```nim
+let scene = motionScene()
+scene.add(titleLayer)
+scene.add(particleField)
+
+ui.gpuCanvas(scene, style = previewStyle())
+```
+
+Application authors do not manage GPU queues, worker channels, swapchain
+ownership, generation counters, or frame fences. Independent Nim libraries
+can expose reusable motion, chart, game, and generative-design objects that
+mount through this contract.
+
+Implementation order:
+
+1. The ordinary-UI declarative transition engine defines the shared clock,
+   interpolation, reversal, cancellation, reduced-motion, and invalidation
+   semantics.
+2. A deterministic CPU reference renderer validates scene snapshots, stable
+   identities, hit testing, frame replacement, and headless output.
+3. The SDL3 GPU backend batches scene data into graphics and compute passes and
+   composites its offscreen result into the Canvas-owned region.
+4. An optional `wgpu-native` backend implements the same contract rather than
+   creating a second public scene model.
+
+The architectural contract is fixed before transition work completes: Canvas
+owns layout and presentation; Motion Scene owns its interior visual objects;
+backend handles remain private; worker results are bounded immutable snapshots;
+and static scenes do not request idle frames.
+
+Deployment remains capability-based. The CPU Canvas and SDL 2D profile does
+not import, link, or package Motion GPU, `wgpu-native`, Pixie, media codecs, or
+shader bundles unless selected by the application. This profile remains the
+baseline for 64-bit Raspberry Pi-class Linux targets. GPU-enabled profiles add
+only the chosen backend and report unsupported devices explicitly instead of
+silently falling back to an unbounded software workload.
+
+Capability selection occurs at compile/configure time. It controls source
+imports, native bridge builds, linker inputs, staged libraries, and assets;
+runtime feature flags alone are insufficient. The project may expose one
+generated `cbss_app` import for ergonomics, but that module re-exports only the
+selected profile. Release CI measures both artifact size and native dependency
+closure for the standard CPU/SDL 2D profile and the target's full profile.
+
 ## Phase 3: SDL3 GPU Canvas Capability
 
 Status: `Planned`
@@ -251,6 +317,363 @@ visualization, camera-frame effects, tile-map rendering, and game scenes while
 remaining behind the same Canvas composition, input, and lifecycle contract.
 It is not a prerequisite for the standard Canvas roadmap, and it must not
 change the canonical renderer for ordinary CBSS UI.
+
+### WGSL-Backed Custom Style Painting
+
+Status: `Design recorded; implementation milestone not assigned`
+
+The primary intended use of WGSL in ordinary CBSS UI is not to reimplement the
+layout engine, text stack, or every control on the GPU. CBSS first resolves
+Style, layout, text, and ordinary paint through its CPU-owned pipeline. A
+selected Box or retained layer can then use WGSL to paint beneath that result,
+paint over it, or process the CPU-rendered pixels as an input texture before
+CBSS performs final composition.
+
+```text
+CBSS Style / component tree
+          |
+          v
+CPU style, layout, text shaping, paint generation
+          |
+          v
+bounded retained element/layer texture
+          |
+          +--> WGSL underlay
+          +--> CPU-rendered content
+          +--> WGSL overlay
+          `--> WGSL post-process/filter
+                         |
+                         v
+              CBSS clip, opacity, transform,
+              stacking, and final presentation
+```
+
+This makes effects such as a moving liquid surface on a Button, animated light
+over static text, refraction of a baked panel, procedural borders, generated
+backgrounds, masks, and local color processing possible without making those
+elements separate GPU-only widgets. A later GPU profile may therefore let a
+normal CBSS Style reference a typed, registered WGSL material. The Style stores
+a stable material identifier and typed parameters, not a backend device,
+pipeline, raw native handle, or unvalidated shader string. Style resolution and
+layout remain backend-neutral; the material executes only after CBSS has
+produced the element's layout and paint placement.
+
+The public authoring unit remains `UiStyle`. A "custom Style" is an ordinary,
+mergeable `UiStyle` exported by a Nim library, with one or more typed custom
+paint declarations that reference packaged WGSL resources. It is not a second
+style system and does not require application code to manage a GPU pipeline.
+
+```nim
+proc liquidButtonStyle*(): UiStyle =
+  let liquid = wgslPaint(
+    shader = wgslResource("liquid-button"),
+    fallback = linearGradient(...),
+    effectOutset = px(8)
+  )
+
+  uiStyle([
+    customPaint(liquid, stage = cpsOverlay),
+    borderRadius(10),
+    overflow("visible")
+  ])
+
+button.applyStyle(liquidButtonStyle())
+```
+
+Custom paint declarations participate in the existing Style merge, component
+DI, replacement, state-style, invalidation, and ownership rules. A component
+library can therefore package a WGSL-backed visual language and consumers use
+it in the same way as any other imported Style. Shader identity, typed uniform
+schema, fallback, paint stage, effect bounds, frame policy, and required GPU
+capabilities are part of the declaration; backend objects are not.
+
+Provisional paint stages are:
+
+- `underlay`: run WGSL before ordinary CPU content, within the element's
+  background/effect bounds;
+- `overlay`: preserve the CPU-rendered content and paint WGSL output over it;
+- `filter`: provide the CPU-rendered element/layer as a sampled input texture
+  and replace it with the shader result; and
+- `mask`: use bounded WGSL output to control the final alpha of the retained
+  layer.
+
+The execution and caching contract is:
+
+- One presentation owner performs the final frame. When WGSL participates, CPU
+  raster output is uploaded or updated as a bounded texture; a second renderer
+  does not independently present the same window.
+- CPU content is rerasterized and reuploaded only when its paint revision,
+  logical size, pixel scale, clip source, or required color context changes.
+  Time-only WGSL animation reuses the retained CPU texture and must not rerun
+  style resolution, layout, text shaping, or ordinary CPU paint each frame.
+- A static shader result is cacheable after its source texture, uniforms, size,
+  and output context stop changing. An animated shader requests frames only
+  while its time/state inputs require them and returns to event-driven idle
+  afterward.
+- Composition is region-bounded. The allocation and redraw area is the element
+  or retained layer plus its declared `effectOutset`, not the complete window
+  unless a root-level effect explicitly requests that scope.
+- The CPU texture and shader pipeline agree on device-pixel scale, premultiplied
+  alpha, linear-versus-encoded color operations, clip and rounded-mask order,
+  and texture orientation. Text remains shaped by the configured CBSS text
+  engine and is not reconstructed by the shader.
+- Typed uniforms may expose size, local coordinates, time, pointer position,
+  element state, resolved colors, and explicitly registered images or textures.
+  They do not expose mutable `UiRoot`, backend ownership, arbitrary filesystem
+  access, or application memory.
+- If the selected profile cannot execute WGSL, the material uses its declared
+  standard Style/CPU fallback or reports a capability error according to its
+  policy. It must not leave the element blank without a diagnostic.
+
+The initial implementation should prove a bounded overlay first: bake one
+ordinary CPU-rendered Button or panel, upload it when dirty, animate a WGSL
+surface effect above it, preserve the existing Box hit region and accessibility
+semantics, and return to idle when the effect stops. Filter, mask, visual-shape
+hit testing, and arbitrary scene picking remain later layers on the same
+contract.
+
+This bounded Custom Style path is the scope of the design above. It ends at
+declaratively attaching packaged WGSL paint to an ordinary CPU-defined CBSS
+element and composing the result correctly. It does not require shader-derived
+layout, GPU-derived accessibility geometry, or visual-shape event targeting.
+
+### Deferred Visual-Shape Hit Testing
+
+Status: `Exploratory design; outside the Custom Style milestone`
+
+The default interaction shape remains the logical CBSS box. A ripple, color
+wave, refraction, or other surface-only effect therefore adds no hit-test cost
+and does not make a stable Button target move under the pointer. An effect that
+intentionally changes the visible interactive silhouette may opt into a visual
+hit-test contract.
+
+Provisional modes are:
+
+- `logical-box`: use the unmodified CBSS hit region; this is the default;
+- `effect-bounds`: use a conservative, declared maximum visual outset;
+- `transformed-box`: inverse-map the pointer through a CBSS-owned affine
+  transform;
+- `analytic-shape`: evaluate a bounded CPU path, signed-distance function, or
+  typed deformation expression using the same parameters supplied to WGSL;
+- `cached-mask`: sample a retained CPU-visible occupancy or alpha mask that is
+  regenerated only when its declared source changes; and
+- `gpu-pick`: resolve an object or alpha identifier from an asynchronous GPU
+  picking pass for specialized Canvas, scene, or editor workloads.
+
+Visual hit testing obeys the following invariants:
+
+- A normal broad-phase Box/effect-bounds test runs first. Detailed deformation,
+  path, or mask work runs only for topmost candidates that contain the pointer,
+  and only while processing relevant input rather than for every node each
+  frame.
+- WGSL is not introspected to infer geometry. Arbitrary shader output has no
+  automatic inverse. An effect that wants shape-aware input declares a matching
+  CPU-evaluable shape, mask, or specialized GPU-picking policy explicitly.
+- A future typed deformation IR may generate both a CPU evaluator and WGSL from
+  one expression. Until that contract exists, duplicated handwritten CPU/WGSL
+  formulas are an advanced adapter responsibility and must have conformance
+  tests over time, state, scale, and edge coordinates.
+- The shader cannot fabricate a `NodeId`, bypass clipping or stacking, dispatch
+  an event, or mutate focus. CBSS validates a visual hit against the retained
+  node generation, effective clip, visibility, pointer-events state, stacking
+  order, and the open event contract before dispatch.
+- A visual hit produces the same original `target`, traversal `currentTarget`,
+  propagation, default-action, disabled/inert, pointer-capture, and disposal
+  behavior as a logical hit. The rendering backend does not own a second event
+  system.
+- Layout, sibling flow, focus order, and accessibility geometry do not depend on
+  GPU readback. If visual expansion must affect layout or semantic bounds, the
+  corresponding width, transform, effect outset, or semantic geometry is
+  declared to CBSS independently of the shader.
+- Synchronous GPU readback is prohibited on ordinary pointer-event paths. GPU
+  picking is asynchronous, carries a frame and surface generation, discards
+  stale results after resize/unmount/device loss, and is not the default for
+  buttons, forms, links, or menus.
+- Unsupported GPU capability uses the declared CPU/standard Style fallback or
+  reports a capability diagnostic. It must not silently turn an irregular
+  visible target into an unrelated interactive shape.
+
+This capability is intentionally separate and optional. Builds without visual
+hit testing do not import a picking implementation or extra hit-test data.
+Ordinary nodes and WGSL-backed Custom Styles retain the current logical
+Box/transform hot path. If this later work is implemented, performance tests
+must separately cover broad-phase rejection, topmost-candidate analytic tests,
+mask cache invalidation, animated effects, large listener/node sets, and
+asynchronous picking under delayed completion.
+
+### Application GPU Compute Coexistence
+
+An application backend may use the same physical GPU for inference, image or
+signal processing, simulation, encoding preparation, or other general-purpose
+compute. CBSS must not assume that its Canvas renderer is the process-wide or
+machine-wide exclusive GPU owner.
+
+The integration model depends on the process and API boundary:
+
+- A separate backend process owns its own GPU device and queues. It transfers
+  only bounded results, Blob data, or immutable stream snapshots to the CBSS
+  process. API contexts cannot conflict across the process boundary, although
+  applications remain responsible for GPU memory, bandwidth, thermal, and
+  scheduling budgets shared by the physical device.
+- An in-process backend using a different GPU API owns an isolated device by
+  default. Its portable exchange path is a bounded CPU staging buffer. Raw
+  texture, external-memory, and semaphore exchange is an optional
+  platform-specific adapter and is never assumed merely because both APIs use
+  the same physical GPU.
+- An in-process backend using the selected CBSS GPU API may receive a
+  host-owned compute submission capability. It registers work with the shared
+  frame scheduler instead of creating a second swapchain owner or submitting
+  unsynchronized work behind CBSS.
+
+#### One wgpu Runtime And Binding Contract
+
+A process using the `motion-wgpu` or WGSL Custom Style profile has exactly one
+selected low-level Nim binding package and one linked or dynamically loaded
+`wgpu-native` runtime. CBSS and every in-process Nim compute, visualization, or
+rendering package depend on that same package and resolved version. An adapter
+must not vendor another generated binding, link a second static wgpu runtime,
+or load an independently selected shared-library version into the process.
+
+The canonical binding package is deliberately low-level. It owns generated C
+declarations, platform calling conventions, native-library discovery, the
+pinned header/runtime compatibility manifest, and minimal ABI probes. It does
+not own CBSS Style, application kernels, scene objects, or product logic. The
+application's generated capability configuration records the exact binding and
+native artifact version/checksum, and startup rejects a provider that does not
+match that manifest before creating a device.
+
+This single-provider rule prevents two Nim packages from compiling compatible-
+looking but ABI-incompatible handle types or from disagreeing about who may
+initialize, unload, or destroy the native runtime. Backend-specific handles
+remain outside the ordinary CBSS module and C ABI.
+
+#### Explicit GpuHost Ownership
+
+Device ownership is not inferred from who imports a module first. A versioned
+`GpuHost` contract supports two explicit creation modes:
+
+- `owned`: CBSS creates and owns the wgpu Instance, Adapter, Device, and Queue,
+  destroys them after all namespaces and surfaces have detached, and exposes
+  only scoped capabilities to registered in-process packages; or
+- `borrowed`: the application creates the compatible Instance, Adapter, Device,
+  and Queue through the canonical provider and attaches them to CBSS. The
+  application guarantees that they outlive every attached CBSS surface and
+  namespace; CBSS never destroys borrowed objects.
+
+In either mode CBSS is the only swapchain/surface acquisition and presentation
+owner for each CBSS window. A borrowed Device does not grant the application a
+second Present path. The host contract records thread affinity, supported
+features and limits, texture formats, queue identity, surface compatibility,
+device generation, and shutdown state before attachment. It rejects a second
+Device/Queue pair for the same presentation domain rather than attempting to
+merge unrelated command streams implicitly.
+
+Device loss increments the host generation and invalidates every device-bound
+resource handle. CBSS stops acquiring frames, notifies registered owners in a
+deterministic order, releases surface resources, and either asks the owning host
+to replace borrowed objects or recreates owned objects. No callback may retain
+a frame encoder, swapchain texture, or borrowed device pointer beyond its
+documented scope.
+
+#### Persistent GPU Resource Namespaces
+
+Frame-scoped submission is not sufficient for real compute or rendering
+packages. A `GpuResourceNamespace` is therefore a required part of the shared
+host contract. It is registered to a stable owner and may retain pipelines,
+buffers, textures, samplers, bind-group data, and immutable shader modules
+across frames without receiving ownership of the Device, Queue, or swapchain.
+
+Each namespace provides:
+
+- an owner ID and device generation, with stale handles rejected after device
+  loss or host replacement;
+- opaque typed resource handles and labels rather than process-global integer
+  names;
+- explicit create, replace, retain where sharing is permitted, release, cancel,
+  and close operations;
+- separate persistent GPU-memory, transient upload, readback, and per-frame
+  submission budgets;
+- declared resource usage and dependencies so CBSS can order compute, copy, and
+  render work without an implicit queue wait;
+- optional recreation descriptors or an owner callback for resources that may
+  be rebuilt after device restoration;
+- deterministic namespace teardown that waits for or safely retires in-flight
+  work before releasing resources; and
+- accounting and diagnostics that identify the owning namespace when a budget,
+  validation, lifetime, or device-generation rule is violated.
+
+Persistent resources survive frame callbacks, but command encoders, passes,
+swapchain textures, temporary mappings, and frame-local views do not. A
+namespace may submit compute or produce a texture for CBSS composition through
+a frame-scoped scheduler capability; it cannot present, bypass dependency
+tracking, or mutate another namespace's resources.
+
+The shared submission contract must provide:
+
+- exactly one window swapchain and present owner;
+- explicit device, queue, command-buffer, resource, and fence ownership;
+- scoped compute and copy submission that cannot retain a frame encoder after
+  its callback returns;
+- resource namespaces, memory budgets, upload limits, and per-frame work
+  budgets so backend compute cannot starve UI presentation;
+- declared dependencies between compute output and Canvas consumption without
+  blocking the UI thread for an unbounded fence wait;
+- device-loss and shutdown notification delivered to every registered owner;
+  and
+- deterministic mock scheduling tests that do not require GPU hardware.
+
+#### Shared-Device Integration Release Gate
+
+The wgpu profile is not considered integrated after isolated unit tests alone.
+A maintained independent compute fixture must run in the same process as CBSS
+and exercise all of the following together:
+
+```text
+CBSS Motion Scene and WGSL Custom Style rendering
+  + independent Nim compute package
+  + one canonical wgpu runtime and binding package
+  + one Instance / Adapter / Device / Queue
+  + one CBSS-owned window Surface and Present path
+```
+
+The fixture creates persistent pipelines and buffers in its own namespace,
+submits compute that produces data or a texture consumed by a CBSS frame, and
+proves that ordinary UI, scene rendering, compute, and presentation complete in
+the declared dependency order without a second queue owner or synchronous
+unbounded wait. It runs in both CBSS-owned and application-borrowed `GpuHost`
+modes.
+
+Release tests cover:
+
+- binding/runtime manifest mismatch and duplicate-provider rejection;
+- initialization failure at every ownership stage and rollback without leaked
+  native or Nim resources;
+- namespace creation, persistent reuse across many frames, explicit release,
+  cancellation with work in flight, and teardown in every supported owner order;
+- injected device loss before submission, during retained resource use, and
+  during shutdown, followed by generation rejection and supported restoration;
+- window resize, surface reconfiguration, hidden/minimized windows, and closing
+  while compute work is pending;
+- enforced persistent memory, transient upload, readback, and per-frame work
+  limits, including a package that deliberately exceeds each limit;
+- no callback or namespace retaining a frame encoder or swapchain texture after
+  scope exit;
+- idle behavior after all scene, Style effect, and compute work completes; and
+- bounded frame latency when compute and UI rendering contend for the same
+  Device and Queue.
+
+Deterministic mock tests run on every portable CI target. The release profile
+also requires a real Linux GPU integration run for the supported wgpu backend;
+additional native GPU/OS lanes may be contributed independently. GPU allocation
+accounting, validation errors, uncaptured errors, and CBSS ARC/resource
+lifecycle checks are recorded together because host-memory leak tools alone do
+not prove correct GPU teardown.
+
+CBSS does not become a general-purpose compute framework. Application logic
+owns kernels, data, retry policy, and result meaning. CBSS owns only the GPU
+composition and scheduling boundary needed to coexist safely in one process.
+Backend-specific device handles remain opaque across the C ABI and are absent
+from the standard CPU/SDL 2D capability profile.
 
 ## Phase 4: Game UI Workflow
 
@@ -301,6 +724,107 @@ Required integration behavior:
 CBSS does not own gameplay loops, physics, maps, AI, sprites, or game asset
 formats. It provides the UI and surface integration that lets those systems
 live naturally in the same native application.
+
+### Complex Game Frontend Architecture
+
+Status: `Design recorded; dependent on Motion Scene and GPU profiles`
+
+The combination of Visual Scene storage, WGSL-backed visual styles, Canvas,
+and ordinary CBSS components is intended to support complex 2D games without
+turning every game object into a Box or moving gameplay policy into Style.
+CBSS is the frontend and presentation owner; application or imported Nim
+systems remain responsible for simulation and domain logic.
+
+```text
+Nim game systems
+  fixed-step simulation, ECS, physics, AI, rules, save, networking
+                              |
+                              v
+                 bounded immutable SceneSnapshot
+                              |
+                              v
+CBSS Visual Scene / Canvas
+  sprites, tiles, particles, chart marks, effects, cameras, render layers
+                              |
+                  CPU renderer or WGSL backend
+                              |
+                              v
+CBSS components
+  HUD, menus, inventory, dialogs, chat, settings, accessibility UI
+                              |
+                              v
+                 one compositor and presentation owner
+```
+
+The simulation clock and presentation clock are separate. Gameplay may update
+at a deterministic fixed rate, while CBSS presents at the available display
+rate and may interpolate visual state. A slow or paused renderer must not change
+simulation results, and a busy simulation worker must not mutate the live UI or
+GPU resource graph. Worker-produced results cross to the presentation thread as
+bounded immutable snapshots, ownership-transferred buffers, or latest-result
+state according to the subsystem's ordering requirements.
+
+Dense visuals use a general data-oriented item contract rather than one CBSS
+Node per tile, sprite, particle, graph point, or world object:
+
+```text
+VisualItem
+  stable item ID
+  geometry or atlas reference
+  transform and layer
+  VisualStyle/material index
+  compact state flags
+  typed per-instance parameters
+```
+
+`VisualStyle` reuses the paint-relevant CBSS vocabulary, including fill,
+stroke, opacity, transform, clip, mask, blend, animation, and registered Custom
+Paint, but it does not pretend that every dense item is a Flex or Box layout
+participant. Full `UiStyle` remains on the containing Canvas/component. Logical
+per-item styling is compiled into shared material/style tables and instance or
+storage buffers; implementations batch by pipeline and material instead of
+creating one shader, pipeline, allocation, or event binding per item.
+
+The same contract covers tiles, sprites, particles, vector marks, graph bars and
+points, map regions, waveform samples, timeline clips, node-editor edges, and
+other repeated visuals. A tile map is one adapter over this substrate, not the
+definition of the substrate. Independent Nim libraries may expose higher-level
+game, chart, map, editor, and generative-design objects while sharing CBSS
+composition and scheduling.
+
+Interaction remains layered:
+
+- CBSS first applies window/Canvas placement, effective clipping, modal policy,
+  focus ownership, pointer capture, and input propagation.
+- The active scene maps local input to a stable `VisualItemId` using a grid,
+  spatial index, analytic shape, or another bounded scene-owned accelerator.
+- Scene selection or activation is reported through the open CBSS event/signal
+  contract. A visual item does not bypass disabled ancestors, overlays, or a
+  focused control merely because it is GPU-rendered.
+- Ordinary gameplay picking must not synchronously read pixels back from the
+  GPU. Tiles use coordinate/grid lookup; sprites and shapes use retained spatial
+  data. Asynchronous GPU picking remains an explicit specialized path.
+
+The intended practical range includes 2D RPGs, strategy and simulation games,
+card games, tower defense, dense particle/bullet scenes, adventure games,
+editor-heavy games, and other UI-rich native applications. Performance depends
+on culling, atlas use, material batching, stable buffers, bounded uploads, and
+not rebuilding unrelated CBSS UI when a scene frame changes.
+
+Three-dimensional rendering uses the same Canvas/RenderSurface placement and UI
+composition boundary, but CBSS does not claim to provide a complete 3D engine.
+A 3D package or application owns meshes, materials, scene graphs, lighting,
+shadows, skeletal animation, physics, visibility, and asset preparation. CBSS
+may host its texture or compatible GPU pass, route bounded input, and compose
+the HUD and application UI above it. Advanced 3D support therefore extends the
+frontend integration surface without making those engine systems mandatory
+CBSS core dependencies.
+
+Release work for this track must include deterministic simulation/snapshot
+fixtures, CPU reference output, GPU/CPU visual conformance for the supported
+subset, large-item batching benchmarks, bounded-memory and upload tests,
+snapshot replacement races, resize and device-loss recovery, input ownership,
+and proof that static or paused scenes return to event-driven idle behavior.
 
 ## Phase 5: External Engine And Renderer Integration
 

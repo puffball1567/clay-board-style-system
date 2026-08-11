@@ -49,16 +49,16 @@ type SaveButton = ref object of CBSSComponent
 
 proc saveButtonStyle(): UiStyle =
   uiStyle([
-    decl("width", px(112)),
-    decl("height", px(40)),
-    decl("padding", px(10)),
+    width(112),
+    height(40),
+    padding(10),
     decl("background-color", oklch(0.62, 0.16, 250))
   ])
 
 proc render(self: SaveButton) =
-  proc onSave(event: DispatchResult): bool =
+  proc onSave(event: DispatchResult): EventOutcome =
     echo "Saved"
-    return true
+    return handledEvent()
 
   ui.box(self, ownedStyle = saveButtonStyle()):
     ui.text(self.label)
@@ -68,6 +68,13 @@ proc render(self: SaveButton) =
 let app = initUiRoot()
 app.mount(SaveButton(label: "Save"))
 ```
+
+Typed property helpers make common declarations concise: a bare number in a
+dimensional helper expands to pixels, while `percent(...)`, `em(...)`,
+`rem(...)`, and viewport-unit constructors preserve explicit intent. The
+low-level `decl(...)` API remains available for generated and extension styles.
+Closed keyword sets use typed enums, such as `flexDirection(fdRow)` and
+`overflow(omAuto)`, instead of requiring stringly typed authoring.
 
 The component owns its behavior and required style. A caller can inject
 additional style through the inherited `style` field, while the component wins
@@ -95,9 +102,11 @@ The exact workloads, machine-local interpretation, budgets, and regression
 gates are documented in [Performance Model](docs/performance-model.md) and can
 be run with `nimble bench`.
 
-The discovered ARC suite currently covers 79 independently compiled test
-files. Separate Valgrind gates exercise the complete reference-control graph
-and both shared and static C ABI consumers.
+The discovered ARC suite currently covers 92 independently compiled test
+files. The same suite and public examples also run under ORC as a compatibility
+gate, so applications may select either `--mm:arc` or `--mm:orc`. ARC remains
+the stricter ownership baseline. Separate Valgrind gates exercise the complete
+reference-control graph and both shared and static C ABI consumers.
 
 ## Try It
 
@@ -155,8 +164,23 @@ cbss_configure system
 The selection is written to the application's ignored `.cbss/` directory.
 CBSS does not ship native runtime binaries inside its Nimble package.
 
-## What Version 0.3.2 Contains
+## What Version 0.4.0 Contains
 
+- Typed viewport, font-relative, font-metric-relative, percentage-spacing,
+  intrinsic, and property-specific numeric unit authoring with deterministic
+  resolution diagnostics.
+- Transparent conditional component materialization that preserves normal
+  Box/Flex order while empty components consume no layout, paint, hit, focus,
+  event, or accessibility space.
+- An open event contract with explicit outcomes, stable target/current-target
+  identity, replaceable public slots, removable subscriptions, typed signals,
+  deterministic default actions, and equivalent C ABI dispatch semantics.
+- Immutable Blob and FormData values plus bounded worker-to-UI streams,
+  component-owned stream bindings, SDL3 event-loop wakeup, and explicit C ABI
+  ownership contracts.
+- Declarative paint transitions and multiple named keyframes for opacity,
+  foreground/background colors, and typed 2D transforms, including CSS-like
+  list cycling, lifecycle events, reduced motion, and active-only scheduling.
 - Typed `CBSSComponent` authoring, nested composition, Style DI, lifecycle
   hooks, and transactional mount rollback.
 - CSS Color 4-inspired typed and serialized colors, `color-mix()`, wide-gamut
@@ -172,7 +196,8 @@ CBSS does not ship native runtime binaries inside its Nimble package.
 - An idle-aware reversible Switch transition and deterministic animation clock
   with reduced-motion support.
 - A versioned C ABI for tree, style, layout, paint, input, events, focus,
-  scrolling, accessibility, Canvas, and diagnostics.
+  scrolling, accessibility, Canvas, diagnostics, and bounded worker-to-UI Blob
+  streams.
 - Headless unit and E2E tooling, screenshot snapshots, optional real-window
   Wayland scenarios, portable CI, and native memory checks.
 
@@ -181,16 +206,18 @@ Accepting a value as metadata does not mean that layout or paint consumes it.
 
 ## Current Boundaries
 
-Version 0.3.2 is a developer preview. Public APIs may change before 1.0.
+Version 0.4.0 is a developer preview. Public APIs may change before 1.0.
 
 - Linux x86_64 with SDL3 is the only Tier 1 runtime target.
 - Windows and macOS native runtime validation is incomplete.
 - The semantic accessibility model and platform-neutral AT-SPI adapter exist;
   Linux AT-SPI D-Bus, Windows UIA, and macOS NSAccessibility transports remain
   incomplete.
-- Complete unit resolution, inline rich text, declarative transitions and
-  style-bound keyframes, filters, 3D transforms, CPU effects, and GPU Canvas
-  are roadmap work.
+- Remaining property-specific percentage and intrinsic-sizing combinations,
+  inline rich text, additional declarative motion values, filters, 3D
+  transforms, CPU effects, and GPU Canvas are roadmap work. Paint transitions
+  and multiple named keyframes support opacity, foreground/background colors,
+  and typed 2D transforms with CSS-like longhand list cycling.
 - CBSS intentionally does not reproduce DOM selectors, browser quirks, legacy
   CSS behavior, JavaScript, or a browser security model.
 
@@ -254,7 +281,10 @@ APIs. Application business logic remains ordinary Nim or an external service.
 
 The public C boundary uses opaque handles, fixed-layout values, explicit
 ownership, status codes, and append-only enums. Nim strings, sequences,
-references, exceptions, and object layouts do not cross the ABI.
+references, exceptions, and object layouts do not cross the ABI. Immutable
+Blob handles support both bounded eager snapshots and host-authorized lazy
+providers, so foreign files, mappings, and decoders can participate without
+exposing raw ownership to CBSS.
 
 ```sh
 nimble buildCAbiShared
@@ -272,8 +302,11 @@ construction, ownership, callbacks, versioning, and static/shared linking.
 | --- | --- |
 | Product direction | [Roadmap](docs/roadmap.md) |
 | Architecture and boundaries | [Architecture](docs/architecture.md) |
+| API stability and deprecation | [API Stability](docs/api-stability.md) |
 | Performance budgets | [Performance Model](docs/performance-model.md) |
 | Components and Style DI | [Component Authoring](docs/component-authoring.md) |
+| Events and typed signals | [Events](docs/events.md) |
+| Blob, FormData, and Streams | [UI Data Interchange](docs/data-interchange.md) |
 | Canvas and custom drawing | [Render Surfaces](docs/render-surfaces.md) |
 | Navigation and Link | [Navigation](docs/navigation.md) |
 | Color model | [Color](docs/color.md) |
@@ -287,16 +320,27 @@ construction, ownership, callbacks, versioning, and static/shared linking.
 
 ```sh
 nimble test
+nimble testOrc
 nimble checkExamples
+nimble checkExamplesOrc
 nimble bench
+nimble testMotionAsan
+nimble testUbsan
+nimble testLsan
+nimble testTsan
 nimble testWidgetLifecycleValgrind
 nimble testCAbiValgrind
 ```
 
-The full test task discovers and independently compiles ARC tests. CI also
-checks portable public modules on Linux, Windows, and macOS, builds shared and
-static C ABI artifacts, tests both Rust bridges, verifies source-only package
-installation, and runs release hygiene checks.
+The full test tasks discover and independently compile the suite under ARC and
+ORC. CI also checks portable public modules on Linux, Windows, and macOS,
+builds shared and static C ABI artifacts, tests both Rust bridges, verifies
+source-only package installation, and runs release hygiene checks. Declarative
+motion tests run under AddressSanitizer with ARC and ORC on Linux, Windows, and
+macOS. UndefinedBehaviorSanitizer covers Linux and macOS; ThreadSanitizer covers
+the same two systems. Standalone LeakSanitizer and Valgrind run on Linux. Other
+platform combinations are omitted when their sanitizer runtime cannot be
+reliably linked and maintained with the CI toolchain.
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before changing a public boundary or hot
 path. Properties, elements, backends, and reference controls are separated so
@@ -315,8 +359,28 @@ ERROR SUMMARY: 0 errors from 0 contexts
 The probe covers all reference controls, internal and replaced handlers,
 component mount and disposal, animations, popup closers, focus, clipboard, and
 text composition. Shared and static C ABI consumers have separate lifecycle
-gates. Valgrind complements the ARC suite and platform integration tests; it
-does not replace them.
+gates. Valgrind complements the three-platform AddressSanitizer matrix and
+platform integration tests; it does not replace them and is not presented as a
+portable Windows or macOS verifier. UndefinedBehaviorSanitizer checks numeric,
+layout, transform, and motion paths on Linux and macOS. Standalone
+LeakSanitizer checks retained lifecycles on Linux, while ThreadSanitizer checks
+worker-to-UI stream ownership on Linux and macOS. Each sanitizer task runs under
+both ARC and ORC. Windows is covered by the portable suite and ASan instead of
+an unverified UBSan runtime. Sanitizer runtimes are test-only and are never
+linked into release or application artifacts.
+
+| Verification | Linux | Windows | macOS |
+| --- | --- | --- | --- |
+| Portable tests and type checks | Yes | Yes | Yes |
+| LLVM AddressSanitizer | ARC + ORC | ARC + ORC | ARC + ORC |
+| LLVM UndefinedBehaviorSanitizer | ARC + ORC | No (portable + ASan) | ARC + ORC |
+| Standalone LeakSanitizer | ARC + ORC | No (Linux leak gates) | No (Linux leak gates) |
+| LLVM ThreadSanitizer | ARC + ORC | No (Unix TSan gates) | ARC + ORC |
+| Valgrind lifecycle and C ABI | ARC | No (Linux gate) | No (Linux gate) |
+
+Additional sanitizer tasks accept `CBSS_CLANG` when a specific compiler binary
+is required. CI pins Linux to `clang-18`; local runs otherwise use `clang` from
+`PATH`.
 
 ## Name And License
 

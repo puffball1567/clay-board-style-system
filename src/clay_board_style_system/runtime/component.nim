@@ -1,8 +1,20 @@
+import std/options
+
+import ../core/node
 import ../input/events
+import ./invalidation
 import ./ui_root
 
 type
   ComponentContextError* = object of ValueError
+
+  ComponentResourceReleaseProc* = proc(
+    resource: ComponentOwnedResource
+  ) {.nimcall, raises: [].}
+
+  ComponentOwnedResource* = ref object of RootObj
+    disposedValue: bool
+    releaseCallback: ComponentResourceReleaseProc
 
   ComponentMountState* = enum
     cmsCreated,
@@ -10,11 +22,44 @@ type
     cmsMounted,
     cmsUnmounted
 
+  ComponentFlowState* = enum
+    cfsMaterialized,
+    cfsCollapsed
+
   CBSSComponent* = ref object of RootObj
     style*: UiStyle
     rootNode: NodeHandle
     ownerRoot {.cursor.}: UiRoot
     mountState: ComponentMountState
+    flowState: ComponentFlowState
+    ownedResources: seq[ComponentOwnedResource]
+
+proc disposed*(resource: ComponentOwnedResource): bool {.inline.} =
+  resource.isNil or resource.disposedValue
+
+proc setReleaseCallback*(
+    resource: ComponentOwnedResource;
+    callback: ComponentResourceReleaseProc
+) =
+  if resource.isNil:
+    raise newException(ComponentContextError, "owned resource cannot be nil")
+  if resource.disposedValue:
+    raise newException(ComponentContextError, "owned resource is already disposed")
+  if callback.isNil:
+    raise newException(ComponentContextError, "resource release callback cannot be nil")
+  if resource.releaseCallback != nil:
+    raise newException(ComponentContextError, "resource release callback is already set")
+  resource.releaseCallback = callback
+
+proc dispose*(resource: ComponentOwnedResource): bool {.discardable.} =
+  if resource.isNil or resource.disposedValue:
+    return false
+  resource.disposedValue = true
+  let callback = resource.releaseCallback
+  resource.releaseCallback = nil
+  if callback != nil:
+    callback(resource)
+  true
 
 type RenderContextFrame = object
   root {.cursor.}: UiRoot
@@ -41,6 +86,57 @@ proc state*(self: CBSSComponent): ComponentMountState =
 proc mounted*(self: CBSSComponent): bool =
   not self.isNil and self.mountState == cmsMounted and self.rootNode.valid
 
+proc materialized*(self: CBSSComponent): bool =
+  not self.isNil and self.flowState == cfsMaterialized
+
+proc own*[T: ComponentOwnedResource](self: CBSSComponent; resource: T): T =
+  if self.isNil:
+    raise newException(ComponentContextError, "component cannot be nil")
+  if resource.isNil:
+    raise newException(ComponentContextError, "owned resource cannot be nil")
+  if resource.disposed:
+    raise newException(ComponentContextError, "owned resource is already disposed")
+  if self.mountState notin {cmsRendering, cmsMounted}:
+    raise newException(
+      ComponentContextError,
+      "resources can only be owned while a component is rendering or mounted"
+    )
+  for existing in self.ownedResources:
+    if existing == resource:
+      return resource
+  self.ownedResources.add resource
+  resource
+
+proc disposeOwnedResources(self: CBSSComponent) =
+  if self.isNil:
+    return
+  for index in countdown(self.ownedResources.high, 0):
+    discard self.ownedResources[index].dispose()
+  self.ownedResources.setLen(0)
+
+proc setMaterialized*(self: CBSSComponent; materialized: bool): bool {.discardable.} =
+  ## Keep the component mounted at a stable sibling position while allowing its
+  ## library-owned state to contribute either a normal flow item or no item.
+  if self.isNil:
+    raise newException(ComponentContextError, "component cannot be nil")
+  let nextState = if materialized: cfsMaterialized else: cfsCollapsed
+  if self.flowState == nextState:
+    return false
+  self.flowState = nextState
+  if self.rootNode.valid:
+    self.rootNode.root.tree.setFlowCollapsed(
+      self.rootNode.id,
+      nextState == cfsCollapsed
+    )
+  if self.mountState == cmsMounted and not self.ownerRoot.isNil:
+    let parent = self.ownerRoot.tree.nodes[self.rootNode.id.nodeIndex].parent
+    let layoutRoot = if parent.isSome: parent.get else: self.rootNode.id
+    self.ownerRoot.invalidate(
+      layoutRoot,
+      {ddStyle, ddLayout, ddPaint, ddHit}
+    )
+  true
+
 proc node*(self: CBSSComponent): lent NodeHandle =
   if self.isNil or not self.rootNode.valid:
     raise newException(ComponentContextError, "component does not have a mounted root node")
@@ -61,6 +157,7 @@ proc beginRoot(root: UiRoot; self: CBSSComponent; handle: NodeHandle) =
   if handle.root != root or not handle.valid:
     raise newException(ComponentContextError, "component root belongs to another UiRoot")
   self.rootNode = handle
+  root.tree.setFlowCollapsed(handle.id, self.flowState == cfsCollapsed)
 
 template box*(
     root: UiRoot;
@@ -104,6 +201,7 @@ proc unmountComponent(component: ComponentRetention) {.nimcall.} =
     self.onUnmount()
   finally:
     activeRenderContext = previousContext
+    self.disposeOwnedResources()
 
 proc mount*[T: CBSSComponent](root: UiRoot; self: T): T {.discardable.} =
   mixin render
@@ -157,6 +255,7 @@ proc mount*[T: CBSSComponent](root: UiRoot; self: T): T {.discardable.} =
           if mountFailure.isNil:
             raise
       if self.mountState != cmsUnmounted:
+        self.disposeOwnedResources()
         self.rootNode = NodeHandle()
         self.ownerRoot = nil
         self.mountState = cmsCreated
@@ -167,99 +266,17 @@ template componentEventSlot(setterName: untyped; kindValue: InputEventKind) =
   proc setterName*(self: CBSSComponent; handler: EventHandler) =
     self.node().root.events.setEventHandler(self.node().id, kindValue, handler)
 
-componentEventSlot(`onAbort=`, iekAbort)
-componentEventSlot(`onAnimationEnd=`, iekAnimationEnd)
-componentEventSlot(`onAnimationIteration=`, iekAnimationIteration)
-componentEventSlot(`onAnimationStart=`, iekAnimationStart)
-componentEventSlot(`onAuxClick=`, iekAuxClick)
-componentEventSlot(`onBeforeInput=`, iekBeforeInput)
-componentEventSlot(`onBlur=`, iekBlur)
-componentEventSlot(`onCancel=`, iekCancel)
-componentEventSlot(`onCanPlay=`, iekCanPlay)
-componentEventSlot(`onCanPlayThrough=`, iekCanPlayThrough)
-componentEventSlot(`onChange=`, iekChange)
-componentEventSlot(`onClick=`, iekClick)
-componentEventSlot(`onClose=`, iekClose)
-componentEventSlot(`onContextMenu=`, iekContextMenu)
-componentEventSlot(`onCopy=`, iekCopy)
-componentEventSlot(`onCueChange=`, iekCueChange)
-componentEventSlot(`onCut=`, iekCut)
-componentEventSlot(`onDblClick=`, iekDoubleClick)
-componentEventSlot(`onDoubleClick=`, iekDoubleClick)
-componentEventSlot(`onCompositionEnd=`, iekCompositionEnd)
-componentEventSlot(`onCompositionStart=`, iekCompositionStart)
-componentEventSlot(`onCompositionUpdate=`, iekCompositionUpdate)
-componentEventSlot(`onDrag=`, iekDrag)
-componentEventSlot(`onDragEnd=`, iekDragEnd)
-componentEventSlot(`onDragEnter=`, iekDragEnter)
-componentEventSlot(`onDragExit=`, iekDragExit)
-componentEventSlot(`onDragLeave=`, iekDragLeave)
-componentEventSlot(`onDragOver=`, iekDragOver)
-componentEventSlot(`onDragStart=`, iekDragStart)
-componentEventSlot(`onDrop=`, iekDrop)
-componentEventSlot(`onDurationChange=`, iekDurationChange)
-componentEventSlot(`onEmptied=`, iekEmptied)
-componentEventSlot(`onEncrypted=`, iekEncrypted)
-componentEventSlot(`onEnded=`, iekEnded)
-componentEventSlot(`onError=`, iekError)
-componentEventSlot(`onFocus=`, iekFocus)
-componentEventSlot(`onFullscreenChange=`, iekFullscreenChange)
-componentEventSlot(`onFullscreenError=`, iekFullscreenError)
-componentEventSlot(`onGotPointerCapture=`, iekGotPointerCapture)
-componentEventSlot(`onInput=`, iekInput)
-componentEventSlot(`onInvalid=`, iekInvalid)
-componentEventSlot(`onKeyDown=`, iekKeyDown)
-componentEventSlot(`onKeyUp=`, iekKeyUp)
-componentEventSlot(`onLoad=`, iekLoad)
-componentEventSlot(`onLoadEnd=`, iekLoadEnd)
-componentEventSlot(`onLoadedData=`, iekLoadedData)
-componentEventSlot(`onLoadedMetadata=`, iekLoadedMetadata)
-componentEventSlot(`onLoadStart=`, iekLoadStart)
-componentEventSlot(`onLostPointerCapture=`, iekLostPointerCapture)
-componentEventSlot(`onMouseDown=`, iekMouseDown)
-componentEventSlot(`onMouseEnter=`, iekMouseEnter)
-componentEventSlot(`onMouseLeave=`, iekMouseLeave)
-componentEventSlot(`onMouseMove=`, iekMouseMove)
-componentEventSlot(`onMouseOut=`, iekMouseOut)
-componentEventSlot(`onMouseOver=`, iekMouseOver)
-componentEventSlot(`onMouseUp=`, iekMouseUp)
-componentEventSlot(`onPause=`, iekPause)
-componentEventSlot(`onPaste=`, iekPaste)
-componentEventSlot(`onPenButtonDown=`, iekPenButtonDown)
-componentEventSlot(`onPenButtonUp=`, iekPenButtonUp)
-componentEventSlot(`onPenProximityIn=`, iekPenProximityIn)
-componentEventSlot(`onPenProximityOut=`, iekPenProximityOut)
-componentEventSlot(`onPlay=`, iekPlay)
-componentEventSlot(`onPlaying=`, iekPlaying)
-componentEventSlot(`onPointerCancel=`, iekPointerCancel)
-componentEventSlot(`onPointerDown=`, iekPointerDown)
-componentEventSlot(`onPointerEnter=`, iekPointerEnter)
-componentEventSlot(`onPointerLeave=`, iekPointerLeave)
-componentEventSlot(`onPointerMove=`, iekPointerMove)
-componentEventSlot(`onPointerOut=`, iekPointerOut)
-componentEventSlot(`onPointerOver=`, iekPointerOver)
-componentEventSlot(`onPointerUp=`, iekPointerUp)
-componentEventSlot(`onProgress=`, iekProgress)
-componentEventSlot(`onRateChange=`, iekRateChange)
-componentEventSlot(`onReset=`, iekReset)
-componentEventSlot(`onResize=`, iekResize)
-componentEventSlot(`onScroll=`, iekScroll)
-componentEventSlot(`onScrollEnd=`, iekScrollEnd)
-componentEventSlot(`onSeeked=`, iekSeeked)
-componentEventSlot(`onSeeking=`, iekSeeking)
-componentEventSlot(`onSelect=`, iekSelect)
-componentEventSlot(`onShow=`, iekShow)
-componentEventSlot(`onStalled=`, iekStalled)
-componentEventSlot(`onSubmit=`, iekSubmit)
-componentEventSlot(`onSuspend=`, iekSuspend)
-componentEventSlot(`onTextInput=`, iekTextInput)
-componentEventSlot(`onTimeUpdate=`, iekTimeUpdate)
-componentEventSlot(`onToggle=`, iekToggle)
-componentEventSlot(`onTouchCancel=`, iekTouchCancel)
-componentEventSlot(`onTouchEnd=`, iekTouchEnd)
-componentEventSlot(`onTouchMove=`, iekTouchMove)
-componentEventSlot(`onTouchStart=`, iekTouchStart)
-componentEventSlot(`onTransitionEnd=`, iekTransitionEnd)
-componentEventSlot(`onVolumeChange=`, iekVolumeChange)
-componentEventSlot(`onWaiting=`, iekWaiting)
-componentEventSlot(`onWheel=`, iekWheel)
+proc subscribe*(
+    self: CBSSComponent;
+    kind: InputEventKind;
+    handler: EventHandler
+): EventSubscription =
+  self.node().subscribe(kind, handler)
+
+proc unsubscribe*(
+    self: CBSSComponent;
+    subscription: EventSubscription
+): bool {.discardable.} =
+  self.node().unsubscribe(subscription)
+
+include "../generated/component_event_slots.nim"

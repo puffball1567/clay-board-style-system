@@ -14,9 +14,9 @@ type MemoryComponent = ref object of CBSSComponent
   unmounts: ref int
 
 proc render(self: MemoryComponent) =
-  proc handleClick(event: DispatchResult): bool =
+  proc handleClick(event: DispatchResult): EventOutcome =
     inc self.clicks[]
-    return true
+    return stoppedEvent()
 
   ui.box(self):
     ui.text("Typed component")
@@ -45,12 +45,12 @@ proc exerciseWidgetLifecycle() =
       let ui = initUiRoot()
 
       let button = ui.button("Run " & $iteration)
-      button.onClick = proc(event: DispatchResult): bool =
+      button.onClick = proc(event: DispatchResult): EventOutcome =
         button.setLabel("Replaced")
-        false
-      button.onClick = proc(event: DispatchResult): bool =
+        ignoredEvent()
+      button.onClick = proc(event: DispatchResult): EventOutcome =
         button.setLabel("Handled")
-        true
+        stoppedEvent()
       discard button.container.emit(InputEvent(kind: iekClick))
       discard button.container.emit(keyDownEvent("Enter"))
 
@@ -133,6 +133,27 @@ proc exerciseWidgetLifecycle() =
       let form = ui.form()
       doAssert form.submit()
       doAssert form.reset()
+
+      let uploadForm = ui.form()
+      ui.pushParent(uploadForm.container)
+      let fileInput = ui.fileInput(FileInputParams(multiple: true))
+      ui.popParent()
+      uploadForm.register("attachment", fileInput)
+      fileInput.onClick = proc(event: DispatchResult): EventOutcome =
+        ignoredEvent()
+      fileInput.setFiles([
+        fileInputValue(newBlob([byte iteration]), "lifecycle.bin")
+      ], emitEvents = true)
+      var submittedSnapshot = FormData()
+      uploadForm.onSubmit = proc(event: DispatchResult): EventOutcome =
+        doAssert event.formData.isSome
+        submittedSnapshot = event.formData.get
+        ignoredEvent()
+      doAssert uploadForm.submit()
+      doAssert submittedSnapshot.len == 1
+      doAssert submittedSnapshot[0].blob.readAll(1) == @[byte iteration]
+      fileInput.clear()
+      doAssert submittedSnapshot[0].blob.readAll(1) == @[byte iteration]
 
       let imageParent = ui.box(groups = ["image-parent"])
       let image = ui.image(imageParent, "asset.png", width = 32, height = 32)

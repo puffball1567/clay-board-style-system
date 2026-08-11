@@ -27,7 +27,11 @@ proc textStyle(size: float32; color: Color; weight = 400.0'f32): UiStyle =
 proc buildFrame(ui: UiRoot; viewport: Size): DemoFrame =
   var diagnostics: Diagnostics
   result.styles = resolveTreeStyles(
-    ui.tree, ui.styleSheets(), defaultProperties(), diagnostics
+    ui.tree,
+    ui.styleSheets(),
+    defaultProperties(),
+    diagnostics,
+    viewportSize = some(viewport)
   )
   if diagnostics.hasErrors:
     for item in diagnostics.items:
@@ -303,7 +307,7 @@ proc main() =
       let dispatches = interaction.processInput(
         ui.tree, frame.regions, input.get, ui.scroll
       )
-      discard ui.events.handle(ui.tree, dispatches)
+      discard ui.handleEvents(dispatches)
       scheduler.markDirty({ddStyle, ddPaint, ddHit})
     of sekPointerDown:
       let input = event.pointerInputEvent()
@@ -312,7 +316,7 @@ proc main() =
       let dispatches = interaction.processInput(
         ui.tree, frame.regions, input.get, ui.scroll
       )
-      discard ui.events.handle(ui.tree, dispatches)
+      discard ui.handleEvents(dispatches)
       scheduler.markDirty({ddStyle, ddPaint, ddHit})
     of sekPointerUp:
       let input = event.pointerInputEvent()
@@ -321,7 +325,7 @@ proc main() =
       let dispatches = interaction.processInput(
         ui.tree, frame.regions, input.get, ui.scroll
       )
-      discard ui.events.handle(ui.tree, dispatches)
+      discard ui.handleEvents(dispatches)
       scheduler.markDirty({ddStyle, ddPaint, ddHit})
     of sekTouchStart, sekTouchMove, sekTouchEnd, sekTouchCancel,
        sekPenProximityIn, sekPenProximityOut,
@@ -331,10 +335,11 @@ proc main() =
         let dispatches = interaction.processInput(
           ui.tree, frame.regions, input.get, ui.scroll
         )
-        discard ui.events.handle(ui.tree, dispatches)
+        discard ui.handleEvents(dispatches)
         scheduler.markDirty({ddStyle, ddPaint, ddHit})
     else:
       discard
+    discard ui.reconcilePointerCapture(interaction)
 
   var queued = none(Sdl3Event)
   while running:
@@ -349,6 +354,7 @@ proc main() =
 
     let now = epochTime()
     discard ui.runRenderSurfaceFrames(scheduler, now, 60)
+    scheduler.markDirty(ui.consumeInvalidation().domains)
     let dirty = scheduler.consumeDirty()
     if ddStyle in dirty or ddLayout in dirty:
       frame = ui.buildFrame(viewport)

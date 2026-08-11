@@ -1,4 +1,5 @@
 import clay_board_style_system/assets/asset_resolver
+import clay_board_style_system/data/[blob, form_data, stream_bridge, stream_mailbox]
 import clay_board_style_system/core/[
   color,
   color_conversion,
@@ -13,6 +14,7 @@ import clay_board_style_system/core/[
   gradient_sampling,
   node,
   property,
+  property_authoring,
   registry,
   rule,
   selector,
@@ -31,18 +33,24 @@ import clay_board_style_system/input/events
 import clay_board_style_system/input/pointer
 import clay_board_style_system/paint/[paint, paint_command, path_geometry]
 import clay_board_style_system/runtime/[accessibility, button, checkbox,
-    animation_clock, canvas, component, details, dialog, fieldset, focus, form,
-    frame_scheduler, image,
+    animation_clock, canvas, component, declarative_keyframes,
+    declarative_transition, details, dialog,
+    fieldset, focus, form,
+    file_input, frame_scheduler, image,
     invalidation, label, link, navigation, navigation_focus,
     navigation_transition, navigation_screen_host, platform_links, progress,
-    providers, radio, render_surface, select_box, slider, state_runtime,
-    switch, text_input, textarea, ui_root]
+    providers, radio, render_surface, select_box, signal, slider, state_runtime,
+    stream_binding, switch, text_input, textarea, ui_root]
 import clay_board_style_system/runtime/widgets/[command_menu, list_box, tabs]
 import clay_board_style_system/text/[cosmic_text_engine, font_registry, text_engine]
 import clay_board_style_system/design_source/model
 import clay_board_style_system/backends/atspi/adapter
 
 export asset_resolver
+export blob
+export form_data
+export stream_bridge
+export stream_mailbox
 export color
 export color_conversion
 export color_mix
@@ -56,6 +64,7 @@ export geometry
 export gradient_sampling
 export node
 export property
+export property_authoring
 export registry
 export rule
 export selector
@@ -76,13 +85,16 @@ export paint_command
 export path_geometry
 export accessibility
 export animation_clock
+export declarative_keyframes
 export button
 export canvas
 export component
 export checkbox
+export declarative_transition
 export details
 export dialog
 export fieldset
+export file_input
 export focus
 export form
 export frame_scheduler
@@ -102,8 +114,10 @@ export providers
 export radio
 export render_surface
 export select_box
+export signal
 export slider
 export state_runtime
+export stream_binding
 export tabs
 export switch
 export text_input

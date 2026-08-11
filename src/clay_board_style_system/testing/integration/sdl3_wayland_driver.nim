@@ -264,7 +264,13 @@ proc buildFrame(
     fonts: FontRegistry
 ): CbssSdl3Frame =
   result.diagnostics = Diagnostics()
-  result.styles = resolveTreeStyles(ui.tree, ui.styleSheets(), defaultProperties(), result.diagnostics)
+  result.styles = resolveTreeStyles(
+    ui.tree,
+    ui.styleSheets(),
+    defaultProperties(),
+    result.diagnostics,
+    viewportSize = some(viewport)
+  )
   result.layout = computeLayout(ui.tree, result.styles, viewport, textEngine, fonts)
   ui.scroll.syncScrollState(ui.tree, result.styles, result.layout)
   result.commands = buildPaintCommands(ui.tree, result.styles, result.layout, ui.scroll)
@@ -542,6 +548,10 @@ proc dispatchSdlEvent*(
      sekPenButtonDown, sekPenButtonUp:
     let input = event.pointerInputEvent()
     result = input.isSome and driver.headless.sendPointer(input.get)
+  of sekStreamWake:
+    # Stream ownership is application-specific. The integration driver keeps
+    # the wake observable without guessing which typed binding should pump.
+    result = false
   driver.finishSdlDispatch(renderAfter)
 
 proc pollAndDispatch*(driver: Sdl3WaylandDriver; maxEvents = 64; renderAfter = true): int =

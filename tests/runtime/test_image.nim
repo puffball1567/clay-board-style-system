@@ -77,10 +77,10 @@ suite "image element":
     var loaded = false
     var clicked = false
 
-    logo.onLoad = proc(event: DispatchResult): bool =
+    logo.onLoad = proc(event: DispatchResult): EventOutcome =
       loaded = true
       true
-    logo.onClick = proc(event: DispatchResult): bool =
+    logo.onClick = proc(event: DispatchResult): EventOutcome =
       clicked = true
       true
 

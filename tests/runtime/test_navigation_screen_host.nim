@@ -74,7 +74,7 @@ suite "retained navigation screen host":
     let settingsButton = ui.button("Settings")
     ui.popParent()
     var settingsClicks = 0
-    settingsButton.onClick = proc(event: DispatchResult): bool =
+    settingsButton.onClick = proc(event: DispatchResult): EventOutcome =
       inc settingsClicks
       true
 
@@ -311,7 +311,7 @@ suite "retained navigation screen host":
     let settingsButton = ui.button("Settings")
     ui.popParent()
     var clicks = 0
-    settingsButton.onClick = proc(event: DispatchResult): bool =
+    settingsButton.onClick = proc(event: DispatchResult): EventOutcome =
       inc clicks
       true
     let host = initNavigationScreenHost(ui, navigator)
@@ -465,7 +465,7 @@ suite "retained navigation screen host":
     let oldButton = ui.button("Old")
     ui.popParent()
     var oldClicks = 0
-    oldButton.onClick = proc(event: DispatchResult): bool =
+    oldButton.onClick = proc(event: DispatchResult): EventOutcome =
       inc oldClicks
       true
     let host = initNavigationScreenHost(ui, navigator)
@@ -570,7 +570,7 @@ suite "retained navigation screen host":
       ui.pushParent(currentRoot)
       currentButton = ui.button("Replacement")
       ui.popParent()
-      currentButton.onClick = proc(event: DispatchResult): bool = true
+      currentButton.onClick = proc(event: DispatchResult): EventOutcome = stoppedEvent()
       check host.replaceScreen(
         hsHome,
         currentRoot,

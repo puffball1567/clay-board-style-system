@@ -1,8 +1,9 @@
-import std/[algorithm, math, options, strutils, tables]
+import std/[algorithm, atomics, locks, math, options, strutils, tables]
 
 import ./core/[color, color_conversion, color_mix, color_mix_parser,
   color_parser, color_value, declaration, diagnostics, geometry, node, rule,
   selector, style_resolver, style_value]
+import ./data/[blob, form_data, stream_bridge, stream_mailbox]
 import ./core/computed_style as computed_style_types
 import ./generated/default_properties
 import ./hit/hit_test
@@ -24,7 +25,13 @@ proc ensureNimRuntime() {.inline.} =
     NimMain()
 
 const
-  CbssAbiVersion* = 0x0001_0006'u32
+  CbssAbiVersion* = 0x0001_0011'u32
+  CbssMaxEagerBlobBytes* = 64'u64 * 1024'u64 * 1024'u64
+  CbssMaxBlobMimeBytes* = 1024
+  CbssMaxFormDataEntries* = 65_536
+  CbssMaxFormDataNameBytes* = 65_536
+  CbssMaxFormDataTextBytes* = 16 * 1024 * 1024
+  CbssMaxStreamErrorBytes* = 65_536
   CbssNodeNone* = high(uint32)
 
   CbssOk* = 0'i32
@@ -33,6 +40,18 @@ const
   CbssOutOfRange* = 3'i32
   CbssStyleError* = 4'i32
   CbssInternalError* = 5'i32
+  CbssNotAvailable* = 6'i32
+
+  CbssFormDataText* = 0'u32
+  CbssFormDataBlob* = 1'u32
+
+  CbssStreamOfferAccepted* = 0'u32
+  CbssStreamOfferBackpressure* = 1'u32
+  CbssStreamOfferInvalidState* = 2'u32
+  CbssStreamOfferDisposed* = 3'u32
+  CbssStreamOfferInvalidArgument* = 4'u32
+
+  CbssStreamEventHasTotal* = 1'u32 shl 0
 
   CbssInputHasPosition* = 1'u32 shl 0
   CbssInputHasDelta* = 1'u32 shl 1
@@ -55,6 +74,14 @@ const
   CbssEventHasKey* = 1'u32 shl 4
   CbssEventHasText* = 1'u32 shl 5
   CbssEventHasPointer* = 1'u32 shl 6
+  CbssEventBubbles* = 1'u32 shl 7
+  CbssEventCancelable* = 1'u32 shl 8
+  CbssEventPhaseTarget* = 1'u32 shl 9
+  CbssEventPhaseBubble* = 1'u32 shl 10
+
+  CbssEventOutcomeHandled* = 1'u8 shl 0
+  CbssEventOutcomeStopPropagation* = 1'u8 shl 1
+  CbssEventOutcomePreventDefault* = 1'u8 shl 2
 
   CbssPointerAxisPressure* = 1'u32 shl 0
   CbssPointerAxisTangentialPressure* = 1'u32 shl 1
@@ -190,7 +217,7 @@ type
 
   CbssDispatchSummaryC* {.bycopy.} = object
     target*, dispatchCount*: uint32
-    handled*, needsCompute*, paintChanged*, focusChanged*: uint8
+    handled*, outcome*, needsCompute*, paintChanged*, focusChanged*: uint8
 
   CbssScrollMetricsC* {.bycopy.} = object
     offsetX*, offsetY*: cfloat
@@ -221,12 +248,34 @@ type
     pixelWidth*, pixelHeight*: cfloat
     input*: CbssInputEventC
 
+  CbssStreamPumpResultC* {.bycopy.} = object
+    processed*, rejected*: uint32
+    changed*, backpressured*, pending*: uint8
+
+  CbssStreamEventC* {.bycopy.} = object
+    kind*, flags*: uint32
+    blob*: CbssBlobHandle
+    weight*: uint64
+    completed*, total*: uint64
+    messageBytes*: uint32
+
   CbssContextHandle* = ptr CbssContextObj
   CbssStyleHandle* = ptr CbssStyleObj
   CbssColorValueHandle* = ptr CbssColorValueObj
+  CbssBlobHandle* = ptr CbssBlobObj
+  CbssFormDataBuilderHandle* = ptr CbssFormDataBuilderObj
+  CbssFormDataHandle* = ptr CbssFormDataObj
+  CbssEventViewHandle* = ptr CbssEventViewObj
+  CbssBlobStreamHandle* = ptr CbssBlobStreamObj
+  CbssStreamProducerHandle* = ptr CbssStreamProducerObj
   CbssEventCallback* = proc(
     context: CbssContextHandle;
     event: ptr CbssEventC;
+    userData: pointer
+  ): uint8 {.cdecl.}
+  CbssEventViewCallback* = proc(
+    context: CbssContextHandle;
+    view: CbssEventViewHandle;
     userData: pointer
   ): uint8 {.cdecl.}
   CbssRenderSurfaceCallback* = proc(
@@ -234,12 +283,19 @@ type
     event: ptr CbssRenderSurfaceEventC;
     userData: pointer
   ): uint32 {.cdecl.}
-
-  CbssEventBinding = object
-    node: NodeId
-    kind: InputEventKind
-    callback: CbssEventCallback
+  CbssStreamWakeCallback* = proc(
     userData: pointer
+  ) {.cdecl, gcsafe, raises: [].}
+  CbssBlobProviderReadCallback* = proc(
+    userData: pointer;
+    offset: uint64;
+    output: pointer;
+    capacity: uint32;
+    outputRead: ptr uint32
+  ): int32 {.cdecl, gcsafe, raises: [].}
+  CbssBlobProviderReleaseCallback* = proc(
+    userData: pointer
+  ) {.cdecl, gcsafe, raises: [].}
 
   CbssRenderSurfaceBinding = ref object
     context: CbssContextHandle
@@ -269,7 +325,8 @@ type
     hits: seq[HitRegion]
     scroll: ScrollState
     interaction: InteractionState
-    eventBindings: seq[CbssEventBinding]
+    events: EventRegistry
+    eventSubscriptions: Table[uint64, EventSubscription]
     surfaces: RenderSurfaceRegistry
     surfaceBindings: Table[RenderSurfaceId, CbssRenderSurfaceBinding]
     surfacePaintProvider: SurfacePaintProvider
@@ -296,6 +353,54 @@ type
     of ccvMix:
       mix: ColorMixValue
 
+  CbssBlobObj = object
+    bytes: pointer
+    length: uint64
+    mimeBytes: pointer
+    mimeLength: uint32
+    references: Atomic[uint32]
+    providerGate: Lock
+    providerRead: CbssBlobProviderReadCallback
+    providerRelease: CbssBlobProviderReleaseCallback
+    providerData: pointer
+    providerBacked: bool
+
+  CbssFormDataEntryObj = object
+    nameBytes: pointer
+    nameLength: uint32
+    kind: uint32
+    textBytes: pointer
+    textLength: uint32
+    blob: CbssBlobHandle
+    fileNameBytes: pointer
+    fileNameLength: uint32
+
+  CbssFormDataBuilderObj = object
+    entries: seq[CbssFormDataEntryObj]
+    finished: bool
+
+  CbssFormDataObj = object
+    entries: pointer
+    length: uint32
+    references: Atomic[uint32]
+
+  CbssEventViewObj = object
+    event: CbssEventC
+    formData: CbssFormDataHandle
+    formDataStatus: int32
+
+  CbssStreamBlobPayload = object
+    blob: CbssBlobHandle
+
+  CbssBlobStreamObj = object
+    mailbox: StreamMailbox[CbssStreamBlobPayload]
+    bridge: StreamBridge[CbssStreamBlobPayload]
+    lastError: string
+
+  CbssStreamProducerObj = object
+    producer: StreamProducer[CbssStreamBlobPayload]
+    references: Atomic[uint32]
+
 static:
   doAssert sizeof(CbssRectC) == 16
   doAssert sizeof(CbssColorC) == 16
@@ -310,11 +415,44 @@ static:
   doAssert sizeof(CbssPointerDataC) == 56
   doAssert sizeof(CbssInputEventC) == 112
   doAssert sizeof(CbssEventC) == 128
-  doAssert sizeof(CbssDispatchSummaryC) == 12
+  doAssert sizeof(CbssDispatchSummaryC) == 16
   doAssert sizeof(CbssScrollMetricsC) == 36
   doAssert sizeof(CbssAccessibilityC) == 32
   doAssert sizeof(CbssRenderSurfacePlacementC) == 40
   doAssert sizeof(CbssRenderSurfaceEventC) == 232
+  doAssert sizeof(CbssStreamPumpResultC) == 12
+  doAssert sizeof(CbssStreamEventC) == 48
+
+proc retainBlobHandle(blob: CbssBlobHandle): int32 {.raises: [].}
+proc releaseBlobHandle(blob: CbssBlobHandle) {.raises: [].}
+proc boundedCStringLength(value: cstring; maximum: int): int
+
+proc `=destroy`(payload: var CbssStreamBlobPayload) =
+  if not payload.blob.isNil:
+    releaseBlobHandle(payload.blob)
+    payload.blob = nil
+
+proc `=copy`(
+    destination: var CbssStreamBlobPayload;
+    source: CbssStreamBlobPayload
+) =
+  if destination.blob == source.blob:
+    return
+  if not source.blob.isNil:
+    discard retainBlobHandle(source.blob)
+  `=destroy`(destination)
+  destination.blob = source.blob
+
+proc `=sink`(
+    destination: var CbssStreamBlobPayload;
+    source: CbssStreamBlobPayload
+) =
+  `=destroy`(destination)
+  destination.blob = source.blob
+
+proc takeBlob(payload: var CbssStreamBlobPayload): CbssBlobHandle =
+  result = payload.blob
+  payload.blob = nil
 
 proc toRect(value: Rect): CbssRectC {.inline.} =
   CbssRectC(x: value.x, y: value.y, w: value.w, h: value.h)
@@ -977,6 +1115,17 @@ proc eventFlags(dispatch: DispatchResult; includeLocal: bool): uint32 =
     result = result or CbssEventHasText
   if dispatch.event.pointer.isSome:
     result = result or CbssEventHasPointer
+  if dispatch.event.kind.bubbles:
+    result = result or CbssEventBubbles
+  if dispatch.event.kind.cancelable:
+    result = result or CbssEventCancelable
+  case dispatch.phase
+  of epTarget:
+    result = result or CbssEventPhaseTarget
+  of epBubble:
+    result = result or CbssEventPhaseBubble
+  else:
+    discard
 
 proc callbackEvent(
     dispatch: DispatchResult;
@@ -984,7 +1133,7 @@ proc callbackEvent(
 ): CbssEventC =
   let includeLocal = currentTarget == originalTarget
   result = CbssEventC(
-    kind: uint32(ord(dispatch.event.kind)),
+    kind: dispatch.event.kind.eventDefinition.abiCode,
     target: originalTarget.nodeRawValue(),
     currentTarget: currentTarget.nodeRawValue(),
     flags: dispatch.eventFlags(includeLocal),
@@ -1012,58 +1161,32 @@ proc callbackEvent(
   if dispatch.event.pointer.isSome:
     result.pointer = dispatch.event.pointer.get.pointerDataC()
 
-proc effectiveEventKinds(kind: InputEventKind): seq[InputEventKind] =
-  case kind
-  of iekPointerMove:
-    @[iekMouseMove, iekPointerMove]
-  of iekPointerDown:
-    @[iekMouseDown, iekPointerDown]
-  of iekPointerUp:
-    @[iekMouseUp, iekPointerUp]
-  of iekPointerEnter:
-    @[iekMouseEnter, iekPointerEnter]
-  of iekPointerLeave:
-    @[iekMouseLeave, iekPointerLeave]
-  of iekPointerOver:
-    @[iekMouseOver, iekPointerOver]
-  of iekPointerOut:
-    @[iekMouseOut, iekPointerOut]
-  of iekTextInput:
-    @[iekBeforeInput, iekTextInput, iekInput, iekChange]
-  else:
-    @[kind]
+proc callbackOutcome(value: uint8): EventOutcome =
+  EventOutcome(
+    handled: (value and CbssEventOutcomeHandled) != 0,
+    stopPropagation: (value and CbssEventOutcomeStopPropagation) != 0,
+    preventDefault: (value and CbssEventOutcomePreventDefault) != 0
+  )
+
+proc cEventHandler(
+    context: CbssContextHandle;
+    callback: CbssEventCallback;
+    userData: pointer
+): EventHandler =
+  result = proc(dispatch: DispatchResult): EventOutcome =
+    if callback.isNil or dispatch.target.isNone or
+        dispatch.currentTarget.isNone:
+      return ignoredEvent()
+    var event = dispatch.callbackEvent(
+      dispatch.target.get, dispatch.currentTarget.get
+    )
+    callbackOutcome(callback(context, addr event, userData))
 
 proc invokeCallbacks(
     context: CbssContextHandle;
     dispatch: DispatchResult
-): bool =
-  if dispatch.target.isNone:
-    return false
-  let originalTarget = dispatch.target.get
-  var current = some(originalTarget)
-  while current.isSome:
-    let currentTarget = current.get
-    let parent =
-      if currentTarget.nodeIndex >= 0 and
-          currentTarget.nodeIndex < context.tree.nodes.len:
-        context.tree.nodes[currentTarget.nodeIndex].parent
-      else:
-        none(NodeId)
-    for kind in dispatch.event.kind.effectiveEventKinds:
-      if context.eventBindings.len > 0:
-        for index in countdown(context.eventBindings.high, 0):
-          let binding = context.eventBindings[index]
-          if binding.node == currentTarget and binding.kind == kind and
-              not binding.callback.isNil:
-            var effectiveDispatch = dispatch
-            effectiveDispatch.event.kind = kind
-            var event = effectiveDispatch.callbackEvent(
-              originalTarget, currentTarget
-            )
-            if binding.callback(context, addr event, binding.userData) != 0:
-              return true
-            break
-    current = parent
+): EventOutcome =
+  context.events.dispatchEvent(context.tree, dispatch)
 
 proc invokeRenderSurface(
     context: CbssContextHandle;
@@ -1087,13 +1210,12 @@ proc invokeRenderSurface(
 proc dispatchAll(
     context: CbssContextHandle;
     dispatches: openArray[DispatchResult]
-): tuple[handled: bool, count: int] =
+): tuple[outcome: EventOutcome, count: int] =
   for dispatch in dispatches:
     inc result.count
-    if context.invokeCallbacks(dispatch):
-      result.handled = true
+    result.outcome.mergeOutcome(context.invokeCallbacks(dispatch))
     if context.invokeRenderSurface(dispatch):
-      result.handled = true
+      result.outcome.handled = true
 
 type
   FocusOrderEntry = object
@@ -1158,13 +1280,932 @@ proc setContextFocus(
   let dispatched = context.dispatchAll(dispatches)
   result = (
     changed: true,
-    handled: dispatched.handled,
+    handled: dispatched.outcome.handled,
     dispatchCount: dispatched.count
   )
 
 proc cbssAbiVersion(): uint32 {.
     exportc: "cbss_abi_version", cdecl, dynlib, raises: [].} =
   CbssAbiVersion
+
+proc cbssThreadAttach() {.
+    exportc: "cbss_thread_attach", cdecl, dynlib, raises: [].} =
+  setupForeignThreadGc()
+
+proc cbssThreadDetach() {.
+    exportc: "cbss_thread_detach", cdecl, dynlib, raises: [].} =
+  tearDownForeignThreadGc()
+
+proc cbssBlobCreate(
+    bytes: pointer;
+    length: uint64;
+    mimeType: cstring;
+    output: ptr CbssBlobHandle
+): int32 {.exportc: "cbss_blob_create", cdecl, dynlib.} =
+  ensureNimRuntime()
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  if length > 0 and bytes.isNil:
+    return CbssInvalidArgument
+  if length > CbssMaxEagerBlobBytes or length > uint64(high(int)):
+    return CbssOutOfRange
+
+  let mimeLength = if mimeType.isNil: 0 else: mimeType.len
+  if mimeLength > CbssMaxBlobMimeBytes:
+    return CbssOutOfRange
+
+  let allocated = cast[CbssBlobHandle](allocShared0(sizeof(CbssBlobObj)))
+  if allocated.isNil:
+    return CbssInternalError
+  if length > 0:
+    allocated.bytes = allocShared(int(length))
+    if allocated.bytes.isNil:
+      deallocShared(allocated)
+      return CbssInternalError
+    copyMem(allocated.bytes, bytes, int(length))
+  if mimeLength > 0:
+    allocated.mimeBytes = allocShared(mimeLength + 1)
+    if allocated.mimeBytes.isNil:
+      if not allocated.bytes.isNil:
+        deallocShared(allocated.bytes)
+      deallocShared(allocated)
+      return CbssInternalError
+    copyMem(allocated.mimeBytes, mimeType, mimeLength)
+    cast[ptr UncheckedArray[char]](allocated.mimeBytes)[mimeLength] = '\0'
+  allocated.length = length
+  allocated.mimeLength = uint32(mimeLength)
+  allocated.references.store(1)
+  output[] = allocated
+  CbssOk
+
+proc cbssBlobCreateProvider(
+    length: uint64;
+    mimeType: cstring;
+    readCallback: CbssBlobProviderReadCallback;
+    releaseCallback: CbssBlobProviderReleaseCallback;
+    userData: pointer;
+    output: ptr CbssBlobHandle
+): int32 {.exportc: "cbss_blob_create_provider", cdecl, dynlib.} =
+  ensureNimRuntime()
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  if readCallback == nil:
+    return CbssInvalidArgument
+  let mimeLength = if mimeType.isNil: 0 else: mimeType.len
+  if mimeLength > CbssMaxBlobMimeBytes:
+    return CbssOutOfRange
+
+  let allocated = cast[CbssBlobHandle](allocShared0(sizeof(CbssBlobObj)))
+  if allocated.isNil:
+    return CbssInternalError
+  if mimeLength > 0:
+    allocated.mimeBytes = allocShared(mimeLength + 1)
+    if allocated.mimeBytes.isNil:
+      deallocShared(allocated)
+      return CbssInternalError
+    copyMem(allocated.mimeBytes, mimeType, mimeLength)
+    cast[ptr UncheckedArray[char]](allocated.mimeBytes)[mimeLength] = '\0'
+  initLock(allocated.providerGate)
+  allocated.length = length
+  allocated.mimeLength = uint32(mimeLength)
+  allocated.providerRead = readCallback
+  allocated.providerRelease = releaseCallback
+  allocated.providerData = userData
+  allocated.providerBacked = true
+  allocated.references.store(1)
+  output[] = allocated
+  CbssOk
+
+proc retainBlobHandle(blob: CbssBlobHandle): int32 {.raises: [].} =
+  if blob.isNil:
+    return CbssInvalidHandle
+  var current = blob.references.load()
+  while current > 0 and current < high(uint32):
+    var expected = current
+    if blob.references.compareExchange(expected, current + 1):
+      return CbssOk
+    current = expected
+  if current == high(uint32): CbssOutOfRange else: CbssInvalidHandle
+
+proc cbssBlobRetain(blob: CbssBlobHandle): int32 {.
+    exportc: "cbss_blob_retain", cdecl, dynlib, raises: [].} =
+  retainBlobHandle(blob)
+
+proc releaseBlobHandle(blob: CbssBlobHandle) {.raises: [].} =
+  if blob.isNil:
+    return
+  let previous = blob.references.fetchSub(1)
+  if previous != 1:
+    return
+  if blob.providerBacked:
+    if blob.providerRelease != nil:
+      blob.providerRelease(blob.providerData)
+    deinitLock(blob.providerGate)
+  elif not blob.bytes.isNil:
+    deallocShared(blob.bytes)
+  if not blob.mimeBytes.isNil:
+    deallocShared(blob.mimeBytes)
+  deallocShared(blob)
+
+proc cbssBlobRelease(blob: CbssBlobHandle) {.
+    exportc: "cbss_blob_release", cdecl, dynlib, raises: [].} =
+  releaseBlobHandle(blob)
+
+proc cbssBlobSize(blob: CbssBlobHandle): uint64 {.
+    exportc: "cbss_blob_size", cdecl, dynlib, raises: [].} =
+  if blob.isNil: 0'u64 else: blob.length
+
+proc cbssBlobMimeType(
+    blob: CbssBlobHandle;
+    buffer: cstring;
+    capacity: uint32
+): uint32 {.exportc: "cbss_blob_mime_type", cdecl, dynlib.} =
+  if blob.isNil:
+    return 0
+  result = blob.mimeLength
+  if buffer.isNil or capacity == 0:
+    return
+  let copyLength = min(int(blob.mimeLength), int(capacity) - 1)
+  if copyLength > 0:
+    copyMem(buffer, blob.mimeBytes, copyLength)
+  cast[ptr UncheckedArray[char]](buffer)[copyLength] = '\0'
+
+proc cbssBlobRead(
+    blob: CbssBlobHandle;
+    offset: uint64;
+    output: pointer;
+    capacity: uint32;
+    outputRead: ptr uint32
+): int32 {.exportc: "cbss_blob_read", cdecl, dynlib.} =
+  if blob.isNil:
+    return CbssInvalidHandle
+  if outputRead.isNil or (capacity > 0 and output.isNil):
+    return CbssInvalidArgument
+  outputRead[] = 0
+  if offset > blob.length:
+    return CbssOutOfRange
+  let available = blob.length - offset
+  let count = min(available, uint64(capacity))
+  if blob.providerBacked:
+    if count == 0:
+      return CbssOk
+    var providerRead = 0'u32
+    var status = CbssInternalError
+    acquire(blob.providerGate)
+    try:
+      status = blob.providerRead(
+        blob.providerData,
+        offset,
+        output,
+        uint32(count),
+        addr providerRead
+      )
+    finally:
+      release(blob.providerGate)
+    if status != CbssOk:
+      return if status in CbssInvalidArgument .. CbssNotAvailable:
+        status
+      else:
+        CbssInternalError
+    if providerRead > uint32(count):
+      return CbssInternalError
+    outputRead[] = providerRead
+    return CbssOk
+  if count > 0:
+    let source = cast[ptr UncheckedArray[byte]](blob.bytes)
+    copyMem(output, unsafeAddr source[int(offset)], int(count))
+  outputRead[] = uint32(count)
+  CbssOk
+
+proc toCStreamOffer(value: StreamMailboxOfferResult): uint32 {.inline.} =
+  case value
+  of smorAccepted: CbssStreamOfferAccepted
+  of smorBackpressure: CbssStreamOfferBackpressure
+  of smorInvalidState: CbssStreamOfferInvalidState
+  of smorDisposed: CbssStreamOfferDisposed
+
+proc cbssBlobStreamCreate(
+    maxQueuedItems: uint32;
+    maxQueuedWeight: uint64;
+    output: ptr CbssBlobStreamHandle
+): int32 {.exportc: "cbss_blob_stream_create", cdecl, dynlib.} =
+  ensureNimRuntime()
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  if maxQueuedItems == 0 or uint64(maxQueuedItems) > uint64(high(int)) or
+      maxQueuedWeight == 0 or maxQueuedWeight > uint64(high(int64)):
+    return CbssOutOfRange
+  var stream: CbssBlobStreamHandle
+  try:
+    stream = create(CbssBlobStreamObj)
+    stream.mailbox = initStreamMailbox[CbssStreamBlobPayload](
+      int(maxQueuedItems), int64(maxQueuedWeight)
+    )
+    stream.bridge = initStreamBridge[CbssStreamBlobPayload](
+      int(maxQueuedItems), int64(maxQueuedWeight)
+    )
+    output[] = stream
+    CbssOk
+  except CatchableError:
+    if not stream.isNil:
+      `=destroy`(stream[])
+      dealloc(stream)
+    CbssInternalError
+
+proc cbssBlobStreamDestroy(stream: CbssBlobStreamHandle) {.
+    exportc: "cbss_blob_stream_destroy", cdecl, dynlib.} =
+  if stream.isNil:
+    return
+  discard stream.mailbox.dispose()
+  discard stream.bridge.close()
+  discard stream.bridge.drain()
+  `=destroy`(stream[])
+  dealloc(stream)
+
+proc cbssBlobStreamProducer(
+    stream: CbssBlobStreamHandle;
+    output: ptr CbssStreamProducerHandle
+): int32 {.exportc: "cbss_blob_stream_producer", cdecl, dynlib.} =
+  if stream.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  let allocated = cast[CbssStreamProducerHandle](
+    allocShared0(sizeof(CbssStreamProducerObj))
+  )
+  if allocated.isNil:
+    return CbssInternalError
+  allocated.references.store(1, moRelaxed)
+  allocated.producer = stream.mailbox.producer()
+  output[] = allocated
+  CbssOk
+
+proc cbssStreamProducerRetain(
+    producer: CbssStreamProducerHandle
+): int32 {.exportc: "cbss_stream_producer_retain", cdecl, dynlib.} =
+  if producer.isNil:
+    return CbssInvalidHandle
+  var current = producer.references.load(moRelaxed)
+  while current > 0 and current < high(uint32):
+    var expected = current
+    if producer.references.compareExchange(
+        expected, current + 1, moAcquireRelease, moRelaxed
+    ):
+      return CbssOk
+    current = expected
+  if current == high(uint32): CbssOutOfRange else: CbssInvalidHandle
+
+proc cbssStreamProducerRelease(producer: CbssStreamProducerHandle) {.
+    exportc: "cbss_stream_producer_release", cdecl, dynlib.} =
+  if producer.isNil:
+    return
+  if producer.references.fetchSub(1, moAcquireRelease) != 1:
+    return
+  reset(producer.producer)
+  deallocShared(producer)
+
+proc cbssBlobStreamSetWakeCallback(
+    stream: CbssBlobStreamHandle;
+    callback: CbssStreamWakeCallback;
+    userData: pointer
+): int32 {.exportc: "cbss_blob_stream_set_wake_callback", cdecl, dynlib.} =
+  if stream.isNil:
+    return CbssInvalidHandle
+  stream.mailbox.setWakeCallback(callback, userData)
+  CbssOk
+
+proc cbssStreamProducerState(
+    producer: CbssStreamProducerHandle
+): uint32 {.exportc: "cbss_stream_producer_state", cdecl, dynlib.} =
+  if producer.isNil:
+    return uint32(ssClosed.ord)
+  uint32(producer.producer.state.ord)
+
+proc cbssStreamProducerOpen(
+    producer: CbssStreamProducerHandle
+): uint32 {.exportc: "cbss_stream_producer_open", cdecl, dynlib.} =
+  if producer.isNil:
+    return CbssStreamOfferDisposed
+  producer.producer.open().toCStreamOffer()
+
+proc cbssStreamProducerPushBlob(
+    producer: CbssStreamProducerHandle;
+    blob: CbssBlobHandle;
+    weight: uint64
+): uint32 {.exportc: "cbss_stream_producer_push_blob", cdecl, dynlib.} =
+  if producer.isNil:
+    return CbssStreamOfferDisposed
+  if blob.isNil or weight > uint64(high(int64)):
+    return CbssStreamOfferInvalidArgument
+  if cbssBlobRetain(blob) != CbssOk:
+    return CbssStreamOfferInvalidArgument
+  var payload = CbssStreamBlobPayload(blob: blob)
+  producer.producer.pushData(move(payload), int64(weight)).toCStreamOffer()
+
+proc cbssStreamProducerProgress(
+    producer: CbssStreamProducerHandle;
+    completed, total: uint64;
+    hasTotal: uint8
+): uint32 {.exportc: "cbss_stream_producer_progress", cdecl, dynlib.} =
+  if producer.isNil:
+    return CbssStreamOfferDisposed
+  if hasTotal > 1 or (hasTotal == 1 and completed > total):
+    return CbssStreamOfferInvalidArgument
+  let totalValue = if hasTotal == 1: some(total) else: none(uint64)
+  producer.producer.reportProgress(completed, totalValue).toCStreamOffer()
+
+proc cbssStreamProducerFinish(
+    producer: CbssStreamProducerHandle
+): uint32 {.exportc: "cbss_stream_producer_finish", cdecl, dynlib.} =
+  if producer.isNil:
+    return CbssStreamOfferDisposed
+  producer.producer.finish().toCStreamOffer()
+
+proc cbssStreamProducerFail(
+    producer: CbssStreamProducerHandle;
+    message: cstring
+): uint32 {.exportc: "cbss_stream_producer_fail", cdecl, dynlib.} =
+  if producer.isNil:
+    return CbssStreamOfferDisposed
+  let length = boundedCStringLength(message, CbssMaxStreamErrorBytes)
+  if length <= 0 or length > CbssMaxStreamErrorBytes:
+    return CbssStreamOfferInvalidArgument
+  producer.producer.fail($message).toCStreamOffer()
+
+proc cbssStreamProducerCancel(
+    producer: CbssStreamProducerHandle
+): uint32 {.exportc: "cbss_stream_producer_cancel", cdecl, dynlib.} =
+  if producer.isNil:
+    return CbssStreamOfferDisposed
+  producer.producer.cancel().toCStreamOffer()
+
+proc cbssStreamProducerClose(
+    producer: CbssStreamProducerHandle
+): uint32 {.exportc: "cbss_stream_producer_close", cdecl, dynlib.} =
+  if producer.isNil:
+    return CbssStreamOfferDisposed
+  producer.producer.close().toCStreamOffer()
+
+proc cbssBlobStreamPump(
+    stream: CbssBlobStreamHandle;
+    maxMessages: uint32;
+    output: ptr CbssStreamPumpResultC
+): int32 {.exportc: "cbss_blob_stream_pump", cdecl, dynlib.} =
+  if stream.isNil:
+    return CbssInvalidHandle
+  if output.isNil or maxMessages == 0 or
+      uint64(maxMessages) > uint64(high(int)):
+    return CbssInvalidArgument
+  output[] = default(CbssStreamPumpResultC)
+  let pumped = stream.mailbox.pumpInto(stream.bridge, int(maxMessages))
+  output.processed = uint32(pumped.processed)
+  output.rejected = uint32(pumped.rejected)
+  output.changed = uint8(pumped.changed)
+  output.backpressured = uint8(pumped.backpressured)
+  output.pending = uint8(pumped.pending)
+  CbssOk
+
+proc cbssBlobStreamNext(
+    stream: CbssBlobStreamHandle;
+    output: ptr CbssStreamEventC
+): int32 {.exportc: "cbss_blob_stream_next", cdecl, dynlib.} =
+  if stream.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = default(CbssStreamEventC)
+  var events = stream.bridge.drain(1)
+  if events.len == 0:
+    return CbssNotAvailable
+  var event = move(events[0])
+  output.kind = uint32(event.kind.ord)
+  case event.kind
+  of sekData:
+    output.blob = event.data.takeBlob()
+    output.weight = uint64(event.weight)
+  of sekProgress:
+    output.completed = event.completed
+    if event.total.isSome:
+      output.flags = CbssStreamEventHasTotal
+      output.total = event.total.get
+  of sekError:
+    stream.lastError = move(event.message)
+    output.messageBytes = uint32(stream.lastError.len)
+  else:
+    discard
+  CbssOk
+
+proc cbssBlobStreamErrorMessage(
+    stream: CbssBlobStreamHandle;
+    buffer: cstring;
+    capacity: uint32
+): uint32 {.exportc: "cbss_blob_stream_error_message", cdecl, dynlib.} =
+  if stream.isNil:
+    return 0
+  result = uint32(stream.lastError.len)
+  if buffer.isNil or capacity == 0:
+    return
+  let copyLength = int(min(uint32(stream.lastError.len), capacity - 1))
+  if copyLength > 0:
+    copyMem(buffer, unsafeAddr stream.lastError[0], copyLength)
+  cast[ptr UncheckedArray[char]](buffer)[copyLength] = '\0'
+
+proc cbssBlobStreamHasPending(
+    stream: CbssBlobStreamHandle
+): uint8 {.exportc: "cbss_blob_stream_has_pending", cdecl, dynlib.} =
+  if stream.isNil:
+    return 0
+  uint8(stream.mailbox.hasPending or stream.bridge.hasPending)
+
+proc releaseFormDataEntry(entry: var CbssFormDataEntryObj) =
+  if not entry.nameBytes.isNil:
+    deallocShared(entry.nameBytes)
+    entry.nameBytes = nil
+  if not entry.textBytes.isNil:
+    deallocShared(entry.textBytes)
+    entry.textBytes = nil
+  if not entry.fileNameBytes.isNil:
+    deallocShared(entry.fileNameBytes)
+    entry.fileNameBytes = nil
+  if not entry.blob.isNil:
+    cbssBlobRelease(entry.blob)
+    entry.blob = nil
+
+proc releaseFormDataEntries(entries: var seq[CbssFormDataEntryObj]) =
+  for entry in entries.mitems:
+    entry.releaseFormDataEntry()
+  entries.setLen(0)
+
+proc sharedCStringCopy(value: cstring; length: int): pointer =
+  if length <= 0:
+    return nil
+  result = allocShared(length)
+  if not result.isNil:
+    copyMem(result, value, length)
+
+proc sharedStringCopy(value: string): pointer =
+  if value.len == 0:
+    return nil
+  result = allocShared(value.len)
+  if not result.isNil:
+    copyMem(result, unsafeAddr value[0], value.len)
+
+proc copySharedString(
+    bytes: pointer;
+    length: uint32;
+    buffer: cstring;
+    capacity: uint32
+): uint32 =
+  result = length
+  if buffer.isNil or capacity == 0:
+    return
+  let copyLength = min(int(length), int(capacity) - 1)
+  if copyLength > 0:
+    copyMem(buffer, bytes, copyLength)
+  cast[ptr UncheckedArray[char]](buffer)[copyLength] = '\0'
+
+proc boundedCStringLength(value: cstring; maximum: int): int =
+  if value.isNil:
+    return -1
+  let bytes = cast[ptr UncheckedArray[char]](value)
+  while result <= maximum and bytes[result] != '\0':
+    inc result
+
+proc finishFormDataEntries(
+    entries: var seq[CbssFormDataEntryObj];
+    output: ptr CbssFormDataHandle
+): int32 =
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  let snapshot = cast[CbssFormDataHandle](
+    allocShared0(sizeof(CbssFormDataObj))
+  )
+  if snapshot.isNil:
+    return CbssInternalError
+  let count = entries.len
+  if count > 0:
+    snapshot.entries = allocShared(count * sizeof(CbssFormDataEntryObj))
+    if snapshot.entries.isNil:
+      deallocShared(snapshot)
+      return CbssInternalError
+    copyMem(
+      snapshot.entries,
+      unsafeAddr entries[0],
+      count * sizeof(CbssFormDataEntryObj)
+    )
+    for entry in entries.mitems:
+      entry.nameBytes = nil
+      entry.textBytes = nil
+      entry.fileNameBytes = nil
+      entry.blob = nil
+  snapshot.length = uint32(count)
+  snapshot.references.store(1)
+  entries.setLen(0)
+  output[] = snapshot
+  CbssOk
+
+proc cbssFormDataBuilderCreate(): CbssFormDataBuilderHandle {.
+    exportc: "cbss_form_data_builder_create", cdecl, dynlib.} =
+  ensureNimRuntime()
+  try:
+    result = create(CbssFormDataBuilderObj)
+    result[] = CbssFormDataBuilderObj(entries: @[])
+  except CatchableError:
+    result = nil
+
+proc cbssFormDataBuilderDestroy(builder: CbssFormDataBuilderHandle) {.
+    exportc: "cbss_form_data_builder_destroy", cdecl, dynlib.} =
+  if builder.isNil:
+    return
+  builder.entries.releaseFormDataEntries()
+  `=destroy`(builder[])
+  dealloc(builder)
+
+proc cbssFormDataBuilderAddText(
+    builder: CbssFormDataBuilderHandle;
+    name, value: cstring
+): int32 {.exportc: "cbss_form_data_builder_add_text", cdecl, dynlib.} =
+  if builder.isNil:
+    return CbssInvalidHandle
+  if builder.finished:
+    return CbssInvalidArgument
+  if builder.entries.len >= CbssMaxFormDataEntries:
+    return CbssOutOfRange
+  let nameLength = boundedCStringLength(name, CbssMaxFormDataNameBytes)
+  let valueLength = boundedCStringLength(value, CbssMaxFormDataTextBytes)
+  if nameLength <= 0 or valueLength < 0:
+    return CbssInvalidArgument
+  if nameLength > CbssMaxFormDataNameBytes or
+      valueLength > CbssMaxFormDataTextBytes:
+    return CbssOutOfRange
+  var entry = CbssFormDataEntryObj(
+    nameBytes: sharedCStringCopy(name, nameLength),
+    nameLength: uint32(nameLength),
+    kind: CbssFormDataText,
+    textBytes: sharedCStringCopy(value, valueLength),
+    textLength: uint32(valueLength)
+  )
+  if entry.nameBytes.isNil or (valueLength > 0 and entry.textBytes.isNil):
+    entry.releaseFormDataEntry()
+    return CbssInternalError
+  try:
+    builder.entries.add entry
+    CbssOk
+  except CatchableError:
+    entry.releaseFormDataEntry()
+    CbssInternalError
+
+proc cbssFormDataBuilderAddBlob(
+    builder: CbssFormDataBuilderHandle;
+    name: cstring;
+    blob: CbssBlobHandle;
+    fileName: cstring
+): int32 {.exportc: "cbss_form_data_builder_add_blob", cdecl, dynlib.} =
+  if builder.isNil or blob.isNil:
+    return CbssInvalidHandle
+  if builder.finished:
+    return CbssInvalidArgument
+  if builder.entries.len >= CbssMaxFormDataEntries:
+    return CbssOutOfRange
+  let nameLength = boundedCStringLength(name, CbssMaxFormDataNameBytes)
+  let fileNameLength = boundedCStringLength(
+    fileName, CbssMaxFormDataNameBytes
+  )
+  if nameLength <= 0:
+    return CbssInvalidArgument
+  if nameLength > CbssMaxFormDataNameBytes or
+      fileNameLength > CbssMaxFormDataNameBytes:
+    return CbssOutOfRange
+  let retainStatus = cbssBlobRetain(blob)
+  if retainStatus != CbssOk:
+    return retainStatus
+  var entry = CbssFormDataEntryObj(
+    nameBytes: sharedCStringCopy(name, nameLength),
+    nameLength: uint32(nameLength),
+    kind: CbssFormDataBlob,
+    blob: blob,
+    fileNameBytes:
+      if fileNameLength > 0:
+        sharedCStringCopy(fileName, fileNameLength)
+      else:
+        nil,
+    fileNameLength: uint32(max(fileNameLength, 0))
+  )
+  if entry.nameBytes.isNil or
+      (fileNameLength > 0 and entry.fileNameBytes.isNil):
+    entry.releaseFormDataEntry()
+    return CbssInternalError
+  try:
+    builder.entries.add entry
+    CbssOk
+  except CatchableError:
+    entry.releaseFormDataEntry()
+    CbssInternalError
+
+proc cbssFormDataBuilderFinish(
+    builder: CbssFormDataBuilderHandle;
+    output: ptr CbssFormDataHandle
+): int32 {.exportc: "cbss_form_data_builder_finish", cdecl, dynlib.} =
+  if builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  if builder.finished:
+    return CbssInvalidArgument
+  let status = finishFormDataEntries(builder.entries, output)
+  if status != CbssOk:
+    return status
+  builder.finished = true
+  CbssOk
+
+proc cbssFormDataRetain(data: CbssFormDataHandle): int32 {.
+    exportc: "cbss_form_data_retain", cdecl, dynlib.} =
+  if data.isNil:
+    return CbssInvalidHandle
+  var current = data.references.load()
+  while current > 0 and current < high(uint32):
+    var expected = current
+    if data.references.compareExchange(expected, current + 1):
+      return CbssOk
+    current = expected
+  if current == high(uint32): CbssOutOfRange else: CbssInvalidHandle
+
+proc cbssFormDataRelease(data: CbssFormDataHandle) {.
+    exportc: "cbss_form_data_release", cdecl, dynlib.} =
+  if data.isNil:
+    return
+  let previous = data.references.fetchSub(1)
+  if previous != 1:
+    return
+  if not data.entries.isNil:
+    let entries = cast[ptr UncheckedArray[CbssFormDataEntryObj]](data.entries)
+    for index in 0 ..< int(data.length):
+      entries[index].releaseFormDataEntry()
+    deallocShared(data.entries)
+  deallocShared(data)
+
+proc cbssFormDataLength(data: CbssFormDataHandle): uint32 {.
+    exportc: "cbss_form_data_length", cdecl, dynlib, raises: [].} =
+  if data.isNil: 0'u32 else: data.length
+
+proc cbssFormDataEntryKind(
+    data: CbssFormDataHandle;
+    index: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_form_data_entry_kind", cdecl, dynlib.} =
+  if data.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  if index >= data.length:
+    return CbssOutOfRange
+  let entries = cast[ptr UncheckedArray[CbssFormDataEntryObj]](data.entries)
+  output[] = entries[int(index)].kind
+  CbssOk
+
+proc cbssFormDataEntryName(
+    data: CbssFormDataHandle;
+    index: uint32;
+    buffer: cstring;
+    capacity: uint32
+): uint32 {.exportc: "cbss_form_data_entry_name", cdecl, dynlib.} =
+  if data.isNil or index >= data.length:
+    return 0
+  let entries = cast[ptr UncheckedArray[CbssFormDataEntryObj]](data.entries)
+  let entry = entries[int(index)]
+  copySharedString(entry.nameBytes, entry.nameLength, buffer, capacity)
+
+proc cbssFormDataEntryText(
+    data: CbssFormDataHandle;
+    index: uint32;
+    buffer: cstring;
+    capacity: uint32
+): uint32 {.exportc: "cbss_form_data_entry_text", cdecl, dynlib.} =
+  if data.isNil or index >= data.length:
+    return 0
+  let entries = cast[ptr UncheckedArray[CbssFormDataEntryObj]](data.entries)
+  let entry = entries[int(index)]
+  if entry.kind != CbssFormDataText:
+    return 0
+  copySharedString(entry.textBytes, entry.textLength, buffer, capacity)
+
+proc cbssFormDataEntryFileName(
+    data: CbssFormDataHandle;
+    index: uint32;
+    buffer: cstring;
+    capacity: uint32
+): uint32 {.exportc: "cbss_form_data_entry_file_name", cdecl, dynlib.} =
+  if data.isNil or index >= data.length:
+    return 0
+  let entries = cast[ptr UncheckedArray[CbssFormDataEntryObj]](data.entries)
+  let entry = entries[int(index)]
+  if entry.kind != CbssFormDataBlob:
+    return 0
+  copySharedString(
+    entry.fileNameBytes, entry.fileNameLength, buffer, capacity
+  )
+
+proc cbssFormDataEntryBlob(
+    data: CbssFormDataHandle;
+    index: uint32;
+    output: ptr CbssBlobHandle
+): int32 {.exportc: "cbss_form_data_entry_blob", cdecl, dynlib.} =
+  if data.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  if index >= data.length:
+    return CbssOutOfRange
+  let entries = cast[ptr UncheckedArray[CbssFormDataEntryObj]](data.entries)
+  let entry = entries[int(index)]
+  if entry.kind != CbssFormDataBlob or entry.blob.isNil:
+    return CbssInvalidArgument
+  let status = cbssBlobRetain(entry.blob)
+  if status == CbssOk:
+    output[] = entry.blob
+  status
+
+proc cBlobSnapshot(value: Blob; output: ptr CbssBlobHandle): int32 =
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  if not value.isValid:
+    return CbssInvalidArgument
+  if value.size > CbssMaxEagerBlobBytes:
+    return CbssOutOfRange
+  let bytes = value.readAll(int(CbssMaxEagerBlobBytes))
+  let mime = if value.mimeType.isSome: value.mimeType.get else: ""
+  if mime.len > CbssMaxBlobMimeBytes or '\0' in mime:
+    return CbssOutOfRange
+  cbssBlobCreate(
+    if bytes.len > 0: unsafeAddr bytes[0] else: nil,
+    uint64(bytes.len),
+    if mime.len > 0: mime.cstring else: nil,
+    output
+  )
+
+proc cFormDataSnapshot(
+    value: FormData;
+    output: ptr CbssFormDataHandle
+): int32 =
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  if value.len > CbssMaxFormDataEntries:
+    return CbssOutOfRange
+  var converted = newSeqOfCap[CbssFormDataEntryObj](value.len)
+  try:
+    for item in value.items:
+      if item.name.len == 0:
+        converted.releaseFormDataEntries()
+        return CbssInvalidArgument
+      if item.name.len > CbssMaxFormDataNameBytes:
+        converted.releaseFormDataEntries()
+        return CbssOutOfRange
+      var entry = CbssFormDataEntryObj(
+        nameBytes: sharedStringCopy(item.name),
+        nameLength: uint32(item.name.len)
+      )
+      if entry.nameBytes.isNil:
+        entry.releaseFormDataEntry()
+        converted.releaseFormDataEntries()
+        return CbssInternalError
+      case item.kind
+      of fdvText:
+        if item.text.len > CbssMaxFormDataTextBytes:
+          entry.releaseFormDataEntry()
+          converted.releaseFormDataEntries()
+          return CbssOutOfRange
+        entry.kind = CbssFormDataText
+        entry.textBytes = sharedStringCopy(item.text)
+        entry.textLength = uint32(item.text.len)
+        if item.text.len > 0 and entry.textBytes.isNil:
+          entry.releaseFormDataEntry()
+          converted.releaseFormDataEntries()
+          return CbssInternalError
+      of fdvBlob:
+        entry.kind = CbssFormDataBlob
+        let blobStatus = cBlobSnapshot(item.blob, addr entry.blob)
+        if blobStatus != CbssOk:
+          entry.releaseFormDataEntry()
+          converted.releaseFormDataEntries()
+          return blobStatus
+        if item.fileName.isSome:
+          let fileName = item.fileName.get
+          if fileName.len > CbssMaxFormDataNameBytes:
+            entry.releaseFormDataEntry()
+            converted.releaseFormDataEntries()
+            return CbssOutOfRange
+          entry.fileNameBytes = sharedStringCopy(fileName)
+          entry.fileNameLength = uint32(fileName.len)
+          if fileName.len > 0 and entry.fileNameBytes.isNil:
+            entry.releaseFormDataEntry()
+            converted.releaseFormDataEntries()
+            return CbssInternalError
+      converted.add entry
+    finishFormDataEntries(converted, output)
+  except CatchableError:
+    converted.releaseFormDataEntries()
+    CbssInternalError
+
+proc copiedString(bytes: pointer; length: uint32): string =
+  if length == 0:
+    return ""
+  result = newString(int(length))
+  copyMem(addr result[0], bytes, int(length))
+
+proc nimFormDataSnapshot(
+    value: CbssFormDataHandle;
+    output: var FormData
+): int32 =
+  if value.isNil:
+    return CbssInvalidHandle
+  var builder = initFormDataBuilder()
+  try:
+    let entries = cast[ptr UncheckedArray[CbssFormDataEntryObj]](
+      value.entries
+    )
+    for index in 0 ..< int(value.length):
+      let entry = entries[index]
+      let name = copiedString(entry.nameBytes, entry.nameLength)
+      if name.len == 0:
+        return CbssInvalidArgument
+      case entry.kind
+      of CbssFormDataText:
+        builder.addText(name, copiedString(entry.textBytes, entry.textLength))
+      of CbssFormDataBlob:
+        if entry.blob.isNil or entry.blob.length > CbssMaxEagerBlobBytes:
+          return CbssOutOfRange
+        var bytes = newSeq[byte](int(entry.blob.length))
+        if bytes.len > 0:
+          copyMem(addr bytes[0], entry.blob.bytes, bytes.len)
+        let mime = copiedString(entry.blob.mimeBytes, entry.blob.mimeLength)
+        builder.addBlob(
+          name,
+          newBlob(bytes, mime),
+          copiedString(entry.fileNameBytes, entry.fileNameLength)
+        )
+      else:
+        return CbssInvalidArgument
+    output = builder.finish()
+    CbssOk
+  except CatchableError:
+    CbssInternalError
+
+proc cbssEventViewEvent(view: CbssEventViewHandle): ptr CbssEventC {.
+    exportc: "cbss_event_view_event", cdecl, dynlib, raises: [].} =
+  if view.isNil: nil else: addr view.event
+
+proc cbssEventViewFormData(
+    view: CbssEventViewHandle;
+    output: ptr CbssFormDataHandle
+): int32 {.exportc: "cbss_event_view_form_data", cdecl, dynlib.} =
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  if view.isNil:
+    return CbssInvalidHandle
+  if view.formData.isNil:
+    return view.formDataStatus
+  let status = cbssFormDataRetain(view.formData)
+  if status == CbssOk:
+    output[] = view.formData
+  status
+
+proc cEventViewHandler(
+    context: CbssContextHandle;
+    callback: CbssEventViewCallback;
+    userData: pointer
+): EventHandler =
+  result = proc(dispatch: DispatchResult): EventOutcome =
+    if callback.isNil or dispatch.target.isNone or
+        dispatch.currentTarget.isNone:
+      return ignoredEvent()
+    var view = CbssEventViewObj(
+      event: dispatch.callbackEvent(
+        dispatch.target.get, dispatch.currentTarget.get
+      ),
+      formDataStatus: CbssNotAvailable
+    )
+    let payload = dispatch.formData()
+    if payload.isSome:
+      let status = cFormDataSnapshot(payload.get, addr view.formData)
+      view.formDataStatus = status
+      if status != CbssOk:
+        context.setError(
+          "event FormData payload could not cross the C ABI: " & $status
+        )
+    let outcome = callbackOutcome(callback(context, addr view, userData))
+    if not view.formData.isNil:
+      cbssFormDataRelease(view.formData)
+    outcome
 
 proc cbssContextCreate(): CbssContextHandle {.
     exportc: "cbss_context_create", cdecl, dynlib.} =
@@ -1182,7 +2223,8 @@ proc cbssContextCreate(): CbssContextHandle {.
       hits: @[],
       scroll: initScrollState(),
       interaction: initInteractionState(),
-      eventBindings: @[],
+      events: initEventRegistry(),
+      eventSubscriptions: initTable[uint64, EventSubscription](),
       surfaces: initRenderSurfaceRegistry(),
       surfaceBindings: initTable[RenderSurfaceId, CbssRenderSurfaceBinding](),
       pixelScale: 1.0'f32,
@@ -1235,7 +2277,8 @@ proc cbssContextReset(context: CbssContextHandle): int32 {.
     context.hits.setLen(0)
     context.scroll = initScrollState()
     context.interaction = initInteractionState()
-    context.eventBindings.setLen(0)
+    context.events = initEventRegistry()
+    context.eventSubscriptions.clear()
     context.pixelScale = 1.0'f32
     context.diagnostics.items.setLen(0)
     context.lastError = ""
@@ -2204,22 +3247,97 @@ proc cbssNodeSetEventHandler(
       kind > uint32(ord(high(InputEventKind))):
     return CbssInvalidArgument
   let eventKind = InputEventKind(kind)
-  for index in 0 ..< context.eventBindings.len:
-    if context.eventBindings[index].node == node.nodeId and
-        context.eventBindings[index].kind == eventKind:
-      if callback.isNil:
-        context.eventBindings.delete(index)
-      else:
-        context.eventBindings[index].callback = callback
-        context.eventBindings[index].userData = userData
-      return CbssOk
-  if not callback.isNil:
-    context.eventBindings.add CbssEventBinding(
-      node: node.nodeId,
-      kind: eventKind,
-      callback: callback,
-      userData: userData
+  if callback.isNil:
+    discard context.events.clearEventHandler(node.nodeId, eventKind)
+  else:
+    context.events.setEventHandler(
+      node.nodeId,
+      eventKind,
+      cEventHandler(context, callback, userData)
     )
+  CbssOk
+
+proc cbssNodeSetEventViewHandler(
+    context: CbssContextHandle;
+    node, kind: uint32;
+    callback: CbssEventViewCallback;
+    userData: pointer
+): int32 {.exportc: "cbss_node_set_event_view_handler", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if not context.validNode(node) or
+      kind > uint32(ord(high(InputEventKind))):
+    return CbssInvalidArgument
+  let eventKind = InputEventKind(kind)
+  if callback.isNil:
+    discard context.events.clearEventHandler(node.nodeId, eventKind)
+  else:
+    context.events.setEventHandler(
+      node.nodeId,
+      eventKind,
+      cEventViewHandler(context, callback, userData)
+    )
+  CbssOk
+
+proc cbssNodeSubscribeEvent(
+    context: CbssContextHandle;
+    node, kind: uint32;
+    callback: CbssEventCallback;
+    userData: pointer;
+    outputSubscription: ptr uint64
+): int32 {.exportc: "cbss_node_subscribe_event", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if outputSubscription.isNil or callback.isNil or
+      not context.validNode(node) or
+      kind > uint32(ord(high(InputEventKind))):
+    return CbssInvalidArgument
+  outputSubscription[] = 0
+  let subscription = context.events.subscribe(
+    node.nodeId,
+    InputEventKind(kind),
+    cEventHandler(context, callback, userData)
+  )
+  context.eventSubscriptions[subscription.id] = subscription
+  outputSubscription[] = subscription.id
+  CbssOk
+
+proc cbssNodeSubscribeEventView(
+    context: CbssContextHandle;
+    node, kind: uint32;
+    callback: CbssEventViewCallback;
+    userData: pointer;
+    outputSubscription: ptr uint64
+): int32 {.exportc: "cbss_node_subscribe_event_view", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if outputSubscription.isNil or callback.isNil or
+      not context.validNode(node) or
+      kind > uint32(ord(high(InputEventKind))):
+    return CbssInvalidArgument
+  outputSubscription[] = 0
+  let subscription = context.events.subscribe(
+    node.nodeId,
+    InputEventKind(kind),
+    cEventViewHandler(context, callback, userData)
+  )
+  context.eventSubscriptions[subscription.id] = subscription
+  outputSubscription[] = subscription.id
+  CbssOk
+
+proc cbssContextUnsubscribeEvent(
+    context: CbssContextHandle;
+    subscriptionId: uint64
+): int32 {.exportc: "cbss_context_unsubscribe_event", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if subscriptionId == 0 or subscriptionId notin context.eventSubscriptions:
+    return CbssInvalidArgument
+  let subscription = context.eventSubscriptions[subscriptionId]
+  if not context.events.removeEventHandler(subscription):
+    context.eventSubscriptions.del(subscriptionId)
+    return CbssInvalidArgument
+  context.eventSubscriptions.del(subscriptionId)
   CbssOk
 
 proc cbssStyleCreate(): CbssStyleHandle {.
@@ -2802,7 +3920,8 @@ proc cbssContextCompute(
       context.tree,
       context.sheets,
       defaultProperties(),
-      context.diagnostics
+      context.diagnostics,
+      viewportSize = some(size(width, height))
     )
     if context.diagnostics.hasErrors:
       var messages: seq[string]
@@ -3122,7 +4241,8 @@ proc writeDispatchSummary(
     output: ptr CbssDispatchSummaryC;
     target: Option[NodeId];
     dispatchCount: int;
-    handled, needsCompute, paintChanged, focusChanged: bool
+    outcome: EventOutcome;
+    needsCompute, paintChanged, focusChanged: bool
 ) =
   if output.isNil:
     return
@@ -3131,7 +4251,11 @@ proc writeDispatchSummary(
       if target.isSome: target.get.nodeRawValue()
       else: CbssNodeNone,
     dispatchCount: uint32(min(dispatchCount, int(high(uint32)))),
-    handled: uint8(ord(handled)),
+    handled: uint8(ord(outcome.handled)),
+    outcome:
+      (if outcome.handled: CbssEventOutcomeHandled else: 0'u8) or
+      (if outcome.stopPropagation: CbssEventOutcomeStopPropagation else: 0'u8) or
+      (if outcome.preventDefault: CbssEventOutcomePreventDefault else: 0'u8),
     needsCompute: uint8(ord(needsCompute)),
     paintChanged: uint8(ord(paintChanged)),
     focusChanged: uint8(ord(focusChanged))
@@ -3197,11 +4321,11 @@ proc cbssContextDispatchInput(
       context.invalidate()
 
     let dispatched = context.dispatchAll(dispatches)
-    var handled = dispatched.handled
+    var outcome = dispatched.outcome
     var dispatchCount = dispatched.count
 
     if event.kind == iekKeyDown and event.key.isSome and
-        event.key.get.toLowerAscii() == "tab" and not handled:
+        event.key.get.toLowerAscii() == "tab" and not outcome.handled:
       let targets = context.focusTargets()
       if targets.len > 0:
         var currentIndex = -1
@@ -3220,7 +4344,8 @@ proc cbssContextDispatchInput(
         let focusResult = context.setContextFocus(
           some(targets[nextIndex]), focusVisible = true
         )
-        handled = handled or focusResult.handled or focusResult.changed
+        outcome.handled = outcome.handled or
+          focusResult.handled or focusResult.changed
         dispatchCount += focusResult.dispatchCount
 
     let scrollChanged = oldScrollRevision != context.scroll.revision
@@ -3236,10 +4361,45 @@ proc cbssContextDispatchInput(
       output,
       target,
       dispatchCount,
-      handled,
+      outcome,
       not context.computed,
       scrollChanged and context.computed,
       oldFocused != context.interaction.focusedTarget
+    )
+    CbssOk
+  except CatchableError as error:
+    context.setError(error.msg)
+    CbssInternalError
+
+proc emitAtNode(
+    context: CbssContextHandle;
+    node: uint32;
+    event: InputEvent;
+    output: ptr CbssDispatchSummaryC
+): int32 =
+  try:
+    var dispatch = DispatchResult(
+      target: some(node.nodeId),
+      local: none(Vec2),
+      event: event
+    )
+    if event.position.isSome and context.computed:
+      for region in context.hits:
+        if region.node == node.nodeId and region.localOrigin.isSome:
+          dispatch.local = some(vec2(
+            event.position.get.x - region.localOrigin.get.x,
+            event.position.get.y - region.localOrigin.get.y
+          ))
+          break
+    let outcome = context.invokeCallbacks(dispatch)
+    writeDispatchSummary(
+      output,
+      some(node.nodeId),
+      1,
+      outcome,
+      not context.computed,
+      false,
+      false
     )
     CbssOk
   except CatchableError as error:
@@ -3257,35 +4417,26 @@ proc cbssContextEmitEvent(
   if not context.validNode(node) or input.isNil or
       not input[].validInputEvent():
     return CbssInvalidArgument
-  try:
-    let event = input[].inputEvent()
-    var dispatch = DispatchResult(
-      target: some(node.nodeId),
-      local: none(Vec2),
-      event: event
-    )
-    if event.position.isSome and context.computed:
-      for region in context.hits:
-        if region.node == node.nodeId and region.localOrigin.isSome:
-          dispatch.local = some(vec2(
-            event.position.get.x - region.localOrigin.get.x,
-            event.position.get.y - region.localOrigin.get.y
-          ))
-          break
-    let handled = context.invokeCallbacks(dispatch)
-    writeDispatchSummary(
-      output,
-      some(node.nodeId),
-      1,
-      handled,
-      not context.computed,
-      false,
-      false
-    )
-    CbssOk
-  except CatchableError as error:
-    context.setError(error.msg)
-    CbssInternalError
+  context.emitAtNode(node, input[].inputEvent(), output)
+
+proc cbssContextEmitSubmit(
+    context: CbssContextHandle;
+    node: uint32;
+    formData: CbssFormDataHandle;
+    output: ptr CbssDispatchSummaryC
+): int32 {.exportc: "cbss_context_emit_submit", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if not context.validNode(node):
+    return CbssInvalidArgument
+  if formData.isNil:
+    return CbssInvalidHandle
+  var snapshot: FormData
+  let status = nimFormDataSnapshot(formData, snapshot)
+  if status != CbssOk:
+    context.setError("C FormData could not be converted for submit")
+    return status
+  context.emitAtNode(node, submitEvent(snapshot), output)
 
 proc cbssContextFocusedNode(context: CbssContextHandle): uint32 {.
     exportc: "cbss_context_focused_node", cdecl, dynlib.} =

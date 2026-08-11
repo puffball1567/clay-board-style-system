@@ -95,7 +95,7 @@ suite "AT-SPI platform-neutral adapter":
     )
     ui.popParent()
     var saves = 0
-    save.onClick = proc(event: DispatchResult): bool =
+    save.onClick = proc(event: DispatchResult): EventOutcome =
       inc saves
       true
 
@@ -133,7 +133,7 @@ suite "AT-SPI platform-neutral adapter":
     let action = ui.button("Action", style = fixedStyle(120, 32))
     ui.popParent()
     var activations = 0
-    action.onClick = proc(event: DispatchResult): bool =
+    action.onClick = proc(event: DispatchResult): EventOutcome =
       inc activations
       true
 

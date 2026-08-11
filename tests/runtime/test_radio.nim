@@ -10,7 +10,7 @@ suite "radio component":
     let roomy = ui.radio(density, "Roomy", "roomy")
     var changed = ""
 
-    roomy.onChange = proc(event: DispatchResult): bool =
+    roomy.onChange = proc(event: DispatchResult): EventOutcome =
       changed = roomy.value()
       false
 
@@ -40,7 +40,7 @@ suite "radio component":
     let compact = ui.radio(density, "Compact", "compact", checked = true)
     var changed = false
 
-    compact.onChange = proc(event: DispatchResult): bool =
+    compact.onChange = proc(event: DispatchResult): EventOutcome =
       changed = true
       false
 
@@ -56,11 +56,11 @@ suite "radio component":
     var clicked = 0
     var changed = 0
 
-    compact.onClick = proc(event: DispatchResult): bool =
+    compact.onClick = proc(event: DispatchResult): EventOutcome =
       inc clicked
       false
 
-    compact.onChange = proc(event: DispatchResult): bool =
+    compact.onChange = proc(event: DispatchResult): EventOutcome =
       inc changed
       false
 
@@ -77,7 +77,7 @@ suite "radio component":
     let roomy = ui.radio(density, "Roomy", "roomy")
     var changed = 0
 
-    roomy.onChange = proc(event: DispatchResult): bool =
+    roomy.onChange = proc(event: DispatchResult): EventOutcome =
       inc changed
       false
 
@@ -121,11 +121,11 @@ suite "radio component":
     var changed = false
     var clicked = false
 
-    compact.onChange = proc(event: DispatchResult): bool =
+    compact.onChange = proc(event: DispatchResult): EventOutcome =
       changed = true
       false
 
-    compact.onClick = proc(event: DispatchResult): bool =
+    compact.onClick = proc(event: DispatchResult): EventOutcome =
       clicked = true
       false
 

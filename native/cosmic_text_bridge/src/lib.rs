@@ -134,6 +134,13 @@ pub struct CbssCosmicTextMeasureResult {
 }
 
 #[repr(C)]
+pub struct CbssCosmicTextFontMetricsResult {
+    pub x_height: c_float,
+    pub zero_advance: c_float,
+    pub ok: u8,
+}
+
+#[repr(C)]
 pub struct CbssCosmicTextBitmapResult {
     pub width: u32,
     pub height: u32,
@@ -375,6 +382,20 @@ fn apply_variations(value: &str, weight: &mut f32, stretch: &mut f32, style: &mu
     }
 }
 
+fn apply_ttf_variations(face: &mut ttf_parser::Face<'_>, value: &str) {
+    for item in value.split(',') {
+        let Some((tag, axis_value)) = parse_axis_item(item) else {
+            continue;
+        };
+        let bytes = tag.as_bytes();
+        if bytes.len() != 4 {
+            continue;
+        }
+        let axis = ttf_parser::Tag::from_bytes(&[bytes[0], bytes[1], bytes[2], bytes[3]]);
+        let _ = face.set_variation(axis, axis_value);
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn cbss_cosmic_text_engine_new(use_system_fonts: u8) -> *mut CbssCosmicTextEngine {
     ffi_guard!(ptr::null_mut(), {
@@ -472,6 +493,83 @@ pub unsafe extern "C" fn cbss_cosmic_text_measure(
             CbssCosmicTextMeasureResult {
                 width,
                 height,
+                ok: 1,
+            },
+        );
+        1
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cbss_cosmic_text_font_unit_metrics(
+    engine: *mut CbssCosmicTextEngine,
+    input: *const CbssCosmicTextMeasureInput,
+    output: *mut CbssCosmicTextFontMetricsResult,
+) -> u8 {
+    ffi_guard!(0, {
+        if engine.is_null() || input.is_null() || output.is_null() {
+            return 0;
+        }
+
+        let input = &*input;
+        let font_size = if input.font_size > 0.0 {
+            input.font_size
+        } else {
+            16.0
+        };
+        let families = parse_families(&cstr_or_empty(input.family_csv));
+        let variations = cstr_or_empty(input.font_variations);
+        let mut weight = input.font_weight;
+        let mut stretch = input.font_stretch;
+        let mut style = style_from_u32(input.font_style);
+        apply_variations(&variations, &mut weight, &mut stretch, &mut style);
+
+        let CbssCosmicTextEngine {
+            font_system,
+            shape_cache,
+            shape_cache_clock,
+            ..
+        } = &mut *engine;
+        let family = family_from_name(&families[0]);
+        let face_id = font_system.db().query(&fontdb::Query {
+            families: std::slice::from_ref(&family),
+            weight: Weight(weight.clamp(1.0, 1000.0) as u16),
+            stretch: stretch_from_percent(stretch),
+            style,
+        });
+        let x_height = face_id
+            .and_then(|id| {
+                font_system.db().with_face_data(id, |data, index| {
+                    ttf_parser::Face::parse(data, index)
+                        .ok()
+                        .and_then(|mut face| {
+                            apply_ttf_variations(&mut face, &variations);
+                            face.x_height().map(|height| {
+                                height as f32 * font_size / face.units_per_em() as f32
+                            })
+                        })
+                })
+            })
+            .flatten()
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .unwrap_or(font_size * 0.5);
+
+        let (buffer, _) = shaped_cache_entry(font_system, shape_cache, shape_cache_clock, input);
+        let zero_advance = buffer
+            .layout_runs()
+            .map(|run| run.line_w)
+            .fold(0.0f32, f32::max);
+        let zero_advance = if zero_advance.is_finite() && zero_advance > 0.0 {
+            zero_advance
+        } else {
+            font_size * 0.5
+        };
+
+        ptr::write(
+            output,
+            CbssCosmicTextFontMetricsResult {
+                x_height,
+                zero_advance,
                 ok: 1,
             },
         );
@@ -668,11 +766,7 @@ fn collect_caret_samples(
     // A trailing newline owns an empty final line; if layout produced no run
     // for it, synthesize the caret so end-of-text queries land below the last
     // glyph instead of at the origin.
-    if text.ends_with('\n')
-        && !samples
-            .iter()
-            .any(|sample| sample.byte_index >= text.len())
-    {
+    if text.ends_with('\n') && !samples.iter().any(|sample| sample.byte_index >= text.len()) {
         let bottom = samples
             .iter()
             .map(|sample| sample.y + sample.height)

@@ -94,20 +94,21 @@ proc link*[Destination](
   root.events.addInternalEventHandler(
     link.container.id,
     iekClick,
-    proc(event: DispatchResult): bool =
+    proc(event: DispatchResult): EventOutcome =
       if link.state.disabled:
-        return true
-      discard link.activate()
-      false
+        return ignoredEvent()
+      if link.activate():
+        return stoppedEvent()
+      ignoredEvent()
   )
   root.events.addInternalEventHandler(
     link.container.id,
     iekKeyDown,
-    proc(event: DispatchResult): bool =
+    proc(event: DispatchResult): EventOutcome =
       if link.state.disabled:
-        return true
+        return ignoredEvent()
       if event.event.key.isSome and event.event.key.get == "Enter":
         discard link.container.emit(InputEvent(kind: iekClick))
-        return true
-      false
+        return stoppedEvent()
+      ignoredEvent()
   )

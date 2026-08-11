@@ -40,19 +40,27 @@ proc scrollbarGutterInsets*(style: ComputedStyle): EdgeSizes =
     if bothEdges:
       result.top = thickness
 
-proc overflowContentRect*(base: Rect; style: ComputedStyle): Rect =
+proc overflowContentRect*(
+    base: Rect; style: ComputedStyle; padding: EdgeSizes
+): Rect =
   result = base
-  if style.box.padding.isSome:
-    let pad = style.box.padding.get
-    result = Rect(
-      x: base.x + pad.left,
-      y: base.y + pad.top,
-      w: max(0.0'f32, base.w - pad.left - pad.right),
-      h: max(0.0'f32, base.h - pad.top - pad.bottom)
-    )
+  result = Rect(
+    x: base.x + padding.left,
+    y: base.y + padding.top,
+    w: max(0.0'f32, base.w - padding.left - padding.right),
+    h: max(0.0'f32, base.h - padding.top - padding.bottom)
+  )
 
-proc overflowClipRect*(base: Rect; style: ComputedStyle): Rect =
-  let content = overflowContentRect(base, style)
+proc overflowContentRect*(base: Rect; style: ComputedStyle): Rect =
+  let padding =
+    if style.box.padding.isSome: style.box.padding.get
+    else: edges(0)
+  overflowContentRect(base, style, padding)
+
+proc overflowClipRect*(
+    base: Rect; style: ComputedStyle; padding: EdgeSizes
+): Rect =
+  let content = overflowContentRect(base, style, padding)
 
   result = Rect(
     x: if style.clipsOverflowX(): content.x else: -unboundedClipExtent,
@@ -60,3 +68,9 @@ proc overflowClipRect*(base: Rect; style: ComputedStyle): Rect =
     w: if style.clipsOverflowX(): content.w else: unboundedClipExtent * 2,
     h: if style.clipsOverflowY(): content.h else: unboundedClipExtent * 2
   )
+
+proc overflowClipRect*(base: Rect; style: ComputedStyle): Rect =
+  let padding =
+    if style.box.padding.isSome: style.box.padding.get
+    else: edges(0)
+  overflowClipRect(base, style, padding)

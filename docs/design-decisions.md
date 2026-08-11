@@ -188,10 +188,10 @@ or reduced to the documented generator input — one binding copy only
   Wayland tests, performance benchmarks, and the cosmic-text integration test
   remain explicit opt-in tasks because they require a display, release-mode
   timing, or a prebuilt native bridge.
-- CI runs `nimble check`, the discovered ARC suite, example checks for all
-  three SDL3 link modes, and locked Cargo bridge tests/builds. Release hygiene
-  checks verify required notices, SDL3 symlinks, and the absence of unrelated
-  native binaries.
+- CI runs `nimble check`, the discovered ARC suite, the same suite and public
+  examples under ORC, ARC example checks for all three SDL3 link modes, and
+  locked Cargo bridge tests/builds. Release hygiene checks verify required
+  notices, SDL3 symlinks, and the absence of unrelated native binaries.
 - A root `LICENSE` (Apache-2.0) is added, plus SDL3/cosmic-text third-party
   notices alongside the existing image-rs notice. The explicit contributor
   patent grant is appropriate for a shared native UI foundation intended for
@@ -501,3 +501,102 @@ dynamic Rust/C++ extension loader, or parallel non-Nim plugin registry.
 D20 remains unchanged: CBSS's versioned C ABI is the boundary through which an
 application written in another language may consume the CBSS runtime. It is
 not the authoring and distribution model for the CBSS extension ecosystem.
+
+## D22 — Events are an open runtime contract, not a widget-private protocol (Adopted)
+
+**Context.** D17 assigns reusable UI mechanics to CBSS and application meaning
+to callbacks. D21 allows independent Nim packages to provide components,
+charts, controls, and design systems. Those decisions do not hold if an
+internal widget handler can silently suppress the public handler, bubbling
+replaces the original target, a Boolean conflates default prevention with
+propagation, or additive listeners cannot be removed independently.
+
+The relevant distinction from a QML-style system is architectural rather than
+syntactic. QML has signals and extension mechanisms; CBSS's decision is that its
+declaration syntax will not also become the sole component object model, event
+protocol, and extension ABI. Ordinary Nim types and packages remain first-class
+on both sides of the runtime boundary.
+
+**Decision.** Version 0.4 completes D9 and exposes one stable event contract to
+Nim components and C ABI consumers:
+
+- dispatch separates invariant preconditions, public handlers and observers,
+  and preventable intrinsic default actions;
+- event outcomes distinguish handling, propagation stopping, and default
+  prevention;
+- original `target`, traversal `currentTarget`, phase, bubbling, cancelability,
+  and local-coordinate validity are represented explicitly;
+- public property assignment remains replacement-oriented, while additive
+  listeners use owned, removable subscriptions with automatic disposal;
+- standard event names remain closed and predictable, while library-specific
+  semantic output uses typed Nim signals or callbacks rather than string event
+  names or core-enum growth;
+- dispatch-time UI services avoid strong `UiRoot` captures in the documented
+  ARC-safe path; and
+- event metadata, generated API surfaces, hot-path lookup, and observable
+  semantics remain aligned across Nim and the C ABI.
+
+CBSS controls may implement focus, disabled behavior, keyboard activation,
+selection, expansion, and similar UI mechanics. They do not own the business
+operation invoked by a public handler. Independent libraries can therefore
+compose behavior without replacing CBSS internals or requiring parents to wire
+their children's event bundles.
+
+## D23 — One wgpu provider and explicit shared-device ownership (Adopted)
+
+**Context.** A WGSL Custom Style renderer and an independent in-process Nim
+compute or visualization package may need the same physical GPU, Device, Queue,
+and frame dependency graph. Allowing each package to vendor its own generated
+wgpu binding or native runtime risks ABI mismatch and duplicate initialization.
+Frame-only callbacks also cannot express persistent pipelines, buffers, or
+textures safely.
+
+**Decision.** A wgpu-enabled process resolves one canonical low-level Nim
+binding package and one exact compatible `wgpu-native` runtime. Every
+in-process package uses that provider; duplicate private bindings or runtime
+instances are unsupported in the shared-device path.
+
+A versioned `GpuHost` explicitly operates in CBSS-owned or application-borrowed
+mode. Owned mode gives CBSS deterministic Instance/Adapter/Device/Queue
+destruction. Borrowed mode requires the application-owned objects to outlive all
+CBSS attachments and prohibits CBSS from destroying them. CBSS remains the sole
+Surface acquisition and Present owner for each CBSS window in both modes.
+
+Independent packages receive owner-specific, budgeted persistent resource
+namespaces plus frame-scoped submission capabilities. Persistent resources may
+survive frames; encoders, passes, swapchain textures, and temporary mappings may
+not. Device generation, loss, restoration, cancellation, dependency order, and
+teardown are part of the contract rather than application convention.
+
+The release gate includes one same-process fixture combining CBSS Motion/WGSL
+rendering and an independent Nim compute package on a single runtime, Device,
+Queue, and Swapchain. Mock coverage alone is insufficient; the supported Linux
+wgpu profile also runs on a real GPU and verifies device loss, shutdown order,
+in-flight cancellation, duplicate/version rejection, and enforced GPU-memory
+budgets.
+
+## D24 — Public API migration is staged before removal (Adopted)
+
+**Context.** CBSS is pre-1.0 and still needs room to correct public design, but
+unannounced churn makes component packages and foreign-language bindings
+unnecessarily expensive to maintain. The C ABI has an additional risk: a
+header/runtime mismatch can compile successfully and then misread memory.
+
+**Decision.** A product minor release before Version 1.0 may make a necessary
+breaking Nim API change; patch releases do not intentionally do so. When a
+coherent additive replacement is practical, CBSS introduces it first, migrates
+first-party documentation and examples, marks the superseded API with Nim's
+standard `deprecated` pragma, and normally retains it for at least two
+subsequent minor release lines. A narrower API is not deprecated when it still
+has a valid purpose.
+
+The C ABI remains independently versioned. `CBSS_DEPRECATED(message)` can warn
+about a superseded function, but its exported symbol and established ownership
+remain available throughout the current C ABI major. Struct layout, enum value,
+function signature, symbol removal, and ownership changes require a new C ABI
+major regardless of the pre-1.0 product version.
+
+Security, memory-safety, or correctness failures may justify an accelerated
+removal, but the exception and migration must be explicit in release and
+security documentation. The operational checklist and syntax live in
+[API Stability And Deprecation](api-stability.md).

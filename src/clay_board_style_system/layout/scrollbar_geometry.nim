@@ -16,6 +16,7 @@ type
 proc scrollbarGeometry*(
     nodeRect: Rect;
     style: ComputedStyle;
+    padding: EdgeSizes;
     metrics: ScrollMetrics
 ): ScrollbarGeometry =
   let thickness = style.scrollbarThickness()
@@ -32,7 +33,7 @@ proc scrollbarGeometry*(
   if not showX and not showY:
     return
 
-  let content = overflowContentRect(nodeRect, style)
+  let content = overflowContentRect(nodeRect, style, padding)
   if showY:
     let trackHeight = max(
       0.0'f32, content.h - (if showX: thickness else: 0.0'f32)
@@ -86,3 +87,13 @@ proc scrollbarGeometry*(
           track.x + travel * progress, track.y, thumbWidth, thickness
         )
       ))
+
+proc scrollbarGeometry*(
+    nodeRect: Rect;
+    style: ComputedStyle;
+    metrics: ScrollMetrics
+): ScrollbarGeometry =
+  let padding =
+    if style.box.padding.isSome: style.box.padding.get
+    else: edges(0)
+  scrollbarGeometry(nodeRect, style, padding, metrics)

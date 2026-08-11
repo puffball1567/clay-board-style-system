@@ -1,5 +1,6 @@
 import std/options
 import ../core/[computed_style, declaration, diagnostics, property, style_value]
+import ./length_resolution
 
 proc toComputedLength(value: LengthValue): ComputedLength =
   case value.kind
@@ -26,10 +27,42 @@ proc toComputedLength(value: LengthValue): ComputedLength =
   of ukNone:
     ComputedLength(kind: cukNone, value: value.value)
 
-proc toComputedLength(value: Option[LengthValue]): Option[ComputedLength] =
-  if value.isSome: some(value.get.toComputedLength()) else: none(ComputedLength)
+  of ukVw:
+    ComputedLength(kind: cukVw, value: value.value)
+  of ukVh:
+    ComputedLength(kind: cukVh, value: value.value)
+  of ukVmin:
+    ComputedLength(kind: cukVmin, value: value.value)
+  of ukVmax:
+    ComputedLength(kind: cukVmax, value: value.value)
+  of ukLh:
+    ComputedLength(kind: cukLh, value: value.value)
+  of ukRlh:
+    ComputedLength(kind: cukRlh, value: value.value)
+  of ukEx:
+    ComputedLength(kind: cukEx, value: value.value)
+  of ukCh:
+    ComputedLength(kind: cukCh, value: value.value)
+  of ukRex:
+    ComputedLength(kind: cukRex, value: value.value)
+  of ukRch:
+    ComputedLength(kind: cukRch, value: value.value)
 
-proc toComputed(operation: style_value.TransformOperationValue): computed_style.TransformOperation =
+proc toResolvedComputedLength(value: Option[LengthValue]; env: ResolveEnv;
+    property: string; diagnostics: var Diagnostics): Option[ComputedLength] =
+  if value.isNone:
+    return none(ComputedLength)
+  let authored = StyleValue(kind: svLength, length: value.get)
+  let normalized = normalizeLength(
+    authored, env, property, {ukPercent}, diagnostics
+  )
+  if normalized.isSome:
+    some(normalized.get.toComputedLength())
+  else:
+    none(ComputedLength)
+
+proc toComputed(operation: style_value.TransformOperationValue; env: ResolveEnv;
+    property: string; diagnostics: var Diagnostics): computed_style.TransformOperation =
   case operation.kind
   of tokTranslate:
     result.kind = ctkTranslate
@@ -37,9 +70,15 @@ proc toComputed(operation: style_value.TransformOperationValue): computed_style.
     result.kind = ctkScale
   of tokRotate:
     result.kind = ctkRotate
-  result.xLength = operation.xLength.toComputedLength()
-  result.yLength = operation.yLength.toComputedLength()
-  result.zLength = operation.zLength.toComputedLength()
+  result.xLength = operation.xLength.toResolvedComputedLength(
+    env, property, diagnostics
+  )
+  result.yLength = operation.yLength.toResolvedComputedLength(
+    env, property, diagnostics
+  )
+  result.zLength = operation.zLength.toResolvedComputedLength(
+    env, property, diagnostics
+  )
   result.xNumber = operation.xNumber
   result.yNumber = operation.yNumber
   result.zNumber = operation.zNumber
@@ -72,7 +111,9 @@ proc applyTransform(
       style.transform.rawTransform = none(string)
       style.transform.operations = @[]
       for operation in value.transformOperations:
-        style.transform.operations.add(operation.toComputed())
+        style.transform.operations.add(operation.toComputed(
+          env, declaration.property, diagnostics
+        ))
     else:
       diagnostics.addError(declaration.property, "transform requires none, a raw keyword, or transformValue")
   of mmInitial, mmUnset:
@@ -189,9 +230,15 @@ proc applyTranslate(
       if value.transformOperation.kind != tokTranslate:
         diagnostics.addError(declaration.property, "translate requires translate(...)")
         return
-      style.transform.translateX = value.transformOperation.xLength.toComputedLength()
-      style.transform.translateY = value.transformOperation.yLength.toComputedLength()
-      style.transform.translateZ = value.transformOperation.zLength.toComputedLength()
+      style.transform.translateX = value.transformOperation.xLength.toResolvedComputedLength(
+        env, declaration.property, diagnostics
+      )
+      style.transform.translateY = value.transformOperation.yLength.toResolvedComputedLength(
+        env, declaration.property, diagnostics
+      )
+      style.transform.translateZ = value.transformOperation.zLength.toResolvedComputedLength(
+        env, declaration.property, diagnostics
+      )
     of svKeyword:
       if value.keyword == "none":
         style.transform.translateX = none(ComputedLength)
@@ -215,10 +262,11 @@ proc applyTranslate(
   of mmRelative:
     diagnostics.addError(declaration.property, "translate does not support relative merge")
 
-proc resolveOriginValue(value: StyleValue; property: string; diagnostics: var Diagnostics): Option[ComputedLength] =
+proc resolveOriginValue(value: StyleValue; env: ResolveEnv; property: string;
+    diagnostics: var Diagnostics): Option[ComputedLength] =
   case value.kind
   of svLength:
-    some(value.length.toComputedLength())
+    some(value.length).toResolvedComputedLength(env, property, diagnostics)
   of svKeyword:
     case value.keyword
     of "left", "top":
@@ -245,7 +293,7 @@ proc applyTransformOrigin(
     if declaration.operation.value.isNone:
       diagnostics.addError(declaration.property, "transform-origin requires a value")
       return
-    let value = resolveOriginValue(declaration.operation.value.get, declaration.property, diagnostics)
+    let value = resolveOriginValue(declaration.operation.value.get, env, declaration.property, diagnostics)
     if value.isNone:
       return
     style.transform.originX = value.get
@@ -353,7 +401,9 @@ proc applyPerspective(
     let value = declaration.operation.value.get
     case value.kind
     of svLength:
-      style.transform.perspective = some(value.length.toComputedLength())
+      style.transform.perspective = some(value.length).toResolvedComputedLength(
+        env, declaration.property, diagnostics
+      )
     of svKeyword:
       if value.keyword == "none":
         style.transform.perspective = none(ComputedLength)
@@ -382,7 +432,9 @@ proc applyPerspectiveOrigin(
     if declaration.operation.value.isNone:
       diagnostics.addError(declaration.property, "perspective-origin requires a value")
       return
-    let value = resolveOriginValue(declaration.operation.value.get, declaration.property, diagnostics)
+    let value = resolveOriginValue(
+      declaration.operation.value.get, env, declaration.property, diagnostics
+    )
     if value.isNone:
       return
     style.transform.perspectiveOriginX = value.get

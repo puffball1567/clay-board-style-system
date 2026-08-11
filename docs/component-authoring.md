@@ -22,9 +22,9 @@ proc saveButtonStyle(): UiStyle =
   ])
 
 proc render(self: SaveButton) =
-  proc onSave(event: DispatchResult): bool =
+  proc onSave(event: DispatchResult): EventOutcome =
     echo "Saved"
-    return true
+    return handledEvent()
 
   ui.box(self, ownedStyle = saveButtonStyle()):
     ui.text(self.label)
@@ -115,6 +115,54 @@ method onUnmount(self: SaveButton) =
 `render(self)` is retained initial construction, not a React-style replay
 contract. State changes should update stable handles and mark the affected
 dirty domains. CBSS does not rebuild every component after an event.
+
+## Conditional flow
+
+A library component can remain mounted at its declared sibling position while
+temporarily contributing no UI. The application still mounts an ordinary
+component and does not need a slot, selector, ID, coordinate, or conditional
+branch:
+
+```nim
+type RemotePanel* = ref object of CBSSComponent
+  source*: string
+
+proc remotePanel*(source: string): RemotePanel =
+  result = RemotePanel(source: source)
+  result.setMaterialized(false)
+
+proc render(self: RemotePanel) =
+  ui.box(self, ownedStyle = remotePanelStyle()):
+    ui.text("Remote content")
+
+proc receiveResult*(self: RemotePanel) =
+  # Update the component's stable handles here, then expose its flow root.
+  self.setMaterialized(true)
+
+proc clearResult*(self: RemotePanel) =
+  self.setMaterialized(false)
+```
+
+Application composition remains direct:
+
+```nim
+ui.mount(A())
+ui.mount(remotePanel(source))
+ui.mount(C())
+```
+
+While collapsed, `RemotePanel` consumes no size, margin, Flex item, or gap and
+does not participate in paint, hit testing, focus, input dispatch, or the
+exported accessibility tree. Materializing it reserves its normal Box/Flex
+space at the original position and moves later siblings. Neither transition
+reruns `render` or rebuilds unrelated component instances.
+
+`setMaterialized` may be used before mounting to choose the initial state and
+after mounting for repeated show/hide cycles. It queues a targeted
+`UiInvalidation` for the containing flow root. Event-loop hosts consume that
+request and may use CBSS subtree resolution and relayout APIs. Work completed
+on another thread must be handed back to the UI thread before calling this API;
+the retained tree and graphics submission are UI-thread-owned.
 
 ## Failure behavior
 

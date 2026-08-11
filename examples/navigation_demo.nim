@@ -28,7 +28,8 @@ proc buildFrame(ui: UiRoot; viewport: Size): DemoFrame =
     ui.tree,
     ui.styleSheets(),
     defaultProperties(),
-    diagnostics
+    diagnostics,
+    viewportSize = some(viewport)
   )
   if diagnostics.hasErrors:
     for item in diagnostics.items:
@@ -492,31 +493,31 @@ proc main() =
   var interaction = initInteractionState()
   var scheduler = initFrameScheduler()
 
-  backButton.onClick = proc(event: DispatchResult): bool =
+  backButton.onClick = proc(event: DispatchResult): EventOutcome =
     if not navigator.back():
       statusLabel.setText("History boundary.\nCannot go back.")
-    true
-  forwardButton.onClick = proc(event: DispatchResult): bool =
+    stoppedEvent()
+  forwardButton.onClick = proc(event: DispatchResult): EventOutcome =
     if not navigator.forward():
       statusLabel.setText("History boundary.\nCannot go forward.")
-    true
-  docsButton.onClick = proc(event: DispatchResult): bool =
+    stoppedEvent()
+  docsButton.onClick = proc(event: DispatchResult): EventOutcome =
     let opened = externalUrls.openExternalUrl(
       "https://github.com/puffball1567/clay-board-style-system"
     )
     statusLabel.setText("External URL:\n" & $opened.status)
-    true
-  overview.deepLinkButton.onClick = proc(event: DispatchResult): bool =
+    stoppedEvent()
+  overview.deepLinkButton.onClick = proc(event: DispatchResult): EventOutcome =
     let routed = navigator.navigateDeepLink(deepLinks, "cbss-demo://projects")
     statusLabel.setText("Deep link:\n" & $routed.status)
-    true
-  overview.rebuildButton.onClick = proc(event: DispatchResult): bool =
+    stoppedEvent()
+  overview.rebuildButton.onClick = proc(event: DispatchResult): EventOutcome =
     inc settingsRevision
     let replacement = buildSettings(ui, content, settingsRevision)
     if host.replaceScreen(dsSettings, replacement, interaction):
       settingsRoot = replacement
       statusLabel.setText("Settings rebuilt.\nRevision " & $settingsRevision & ".")
-    true
+    stoppedEvent()
 
   navigator.addListener(proc(change: NavigationChange[DemoScreen]) =
     scheduler.markDirty(change.dirtyDomains)
@@ -584,7 +585,7 @@ proc main() =
         pointerMoveEvent(point),
         ui.scroll
       )
-      discard ui.events.handle(ui.tree, dispatches)
+      discard ui.handleEvents(dispatches)
       scheduler.markDirty({ddStyle, ddPaint, ddHit})
     of sekPointerDown:
       let point = vec2(event.buttonX, event.buttonY)
@@ -605,7 +606,7 @@ proc main() =
         pointerDownEvent(point, event.button),
         ui.scroll
       )
-      let handled = ui.events.handle(ui.tree, dispatches)
+      let handled = ui.handleEvents(dispatches)
       if traceInput:
         echo "[navigation-demo] pointer-down dispatches=", dispatches.len,
           " handled=", handled
@@ -618,7 +619,7 @@ proc main() =
         pointerUpEvent(point, event.button),
         ui.scroll
       )
-      let handled = ui.events.handle(ui.tree, dispatches)
+      let handled = ui.handleEvents(dispatches)
       if traceInput:
         let hit = hitTest(frame.regions, point)
         echo "[navigation-demo] pointer-up x=", point.x,
@@ -658,10 +659,11 @@ proc main() =
         wheelEvent(point, event.scrollDelta()),
         ui.scroll
       )
-      discard ui.events.handle(ui.tree, dispatches)
+      discard ui.handleEvents(dispatches)
       scheduler.markDirty({ddPaint, ddHit})
     else:
       discard
+    discard ui.reconcilePointerCapture(interaction)
 
   var queuedEvent = none(Sdl3Event)
   while running:
@@ -679,6 +681,7 @@ proc main() =
       scheduler.clearDeadline()
       discard host.advanceTransition(scheduler, now)
     discard host.sync(interaction, scheduler, now)
+    scheduler.markDirty(ui.consumeInvalidation().domains)
 
     let dirty = scheduler.consumeDirty()
     if dirty != {}:

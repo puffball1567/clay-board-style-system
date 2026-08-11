@@ -19,17 +19,18 @@ proc resolvedLength(
     some(fontSize * length.value)
   of cukRem:
     some(rootFontSize * length.value)
-  else:
+  of cukFill, cukContent, cukMinContent, cukMaxContent, cukFitContent,
+      cukAuto, cukNone, cukVw, cukVh, cukVmin, cukVmax, cukLh, cukRlh,
+      cukEx, cukCh, cukRex, cukRch:
     none(float32)
 
-proc transformReferenceBounds*(bounds: Rect; style: ComputedStyle): Rect =
+proc transformReferenceBounds*(
+    bounds: Rect; style: ComputedStyle; padding: EdgeSizes
+): Rect =
   let transform = style.transform
   if transform.transformBox != tboxContentBox:
     return bounds
 
-  let padding =
-    if style.box.padding.isSome: style.box.padding.get
-    else: edges(0)
   let border = style.box.borderWidths
   let left = padding.left +
     (if style.box.borderSideVisible.left: border.left else: 0.0'f32)
@@ -45,6 +46,12 @@ proc transformReferenceBounds*(bounds: Rect; style: ComputedStyle): Rect =
     max(0.0'f32, bounds.w - left - right),
     max(0.0'f32, bounds.h - top - bottom)
   )
+
+proc transformReferenceBounds*(bounds: Rect; style: ComputedStyle): Rect =
+  let padding =
+    if style.box.padding.isSome: style.box.padding.get
+    else: edges(0)
+  transformReferenceBounds(bounds, style, padding)
 
 proc operationMatrix(
     operation: TransformOperation;
@@ -75,13 +82,14 @@ proc operationMatrix(
 proc resolvedTransform*(
     style: ComputedStyle;
     bounds: Rect;
+    padding: EdgeSizes;
     rootFontSize = 16.0'f32
 ): Affine2D =
   if not style.hasTransformStyle:
     return identityAffine2D()
 
   let transform = style.transform
-  let reference = transformReferenceBounds(bounds, style)
+  let reference = transformReferenceBounds(bounds, style, padding)
   let fontSize = style.text.fontSize.get(rootFontSize)
   let originX = transform.originX.resolvedLength(
     reference.w, fontSize, rootFontSize
@@ -119,3 +127,13 @@ proc resolvedTransform*(
 
   translationAffine2D(origin.x, origin.y) * local *
     translationAffine2D(-origin.x, -origin.y)
+
+proc resolvedTransform*(
+    style: ComputedStyle;
+    bounds: Rect;
+    rootFontSize = 16.0'f32
+): Affine2D =
+  let padding =
+    if style.box.padding.isSome: style.box.padding.get
+    else: edges(0)
+  resolvedTransform(style, bounds, padding, rootFontSize)

@@ -165,56 +165,56 @@ proc slider*(
 
   let slider = result
 
-  root.events.addInternalEventHandler(slider.container.id, iekClick, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(slider.container.id, iekClick, proc(event: DispatchResult): EventOutcome =
     if slider.state.disabled:
-      return true
+      return stoppedEvent()
     slider.setValueFromLocal(event.local)
-    false
+    ignoredEvent()
   )
-  root.events.addInternalEventHandler(slider.container.id, iekPointerDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(slider.container.id, iekPointerDown, proc(event: DispatchResult): EventOutcome =
     if slider.state.disabled:
-      return true
+      return stoppedEvent()
     slider.state.dragging = true
     slider.setValueFromLocal(event.local)
     slider.syncVisibleState()
-    false
+    ignoredEvent()
   )
-  root.events.addInternalEventHandler(slider.container.id, iekPointerMove, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(slider.container.id, iekPointerMove, proc(event: DispatchResult): EventOutcome =
     if slider.state.disabled:
-      return true
+      return stoppedEvent()
     if slider.state.dragging:
       slider.setValueFromLocal(event.local)
-      return false
-    false
+      return ignoredEvent()
+    ignoredEvent()
   )
-  root.events.addInternalEventHandler(slider.container.id, iekPointerUp, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(slider.container.id, iekPointerUp, proc(event: DispatchResult): EventOutcome =
     if slider.state.disabled:
-      return true
+      return stoppedEvent()
     slider.state.dragging = false
     slider.syncVisibleState()
-    false
+    ignoredEvent()
   )
-  root.events.addInternalEventHandler(slider.container.id, iekKeyDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(slider.container.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
     if slider.state.disabled:
-      return true
+      return stoppedEvent()
     if event.event.key.isNone:
-      return false
+      return ignoredEvent()
     case event.event.key.get
     of "ArrowRight", "ArrowUp":
       slider.stepBy(1)
-      return true
+      return stoppedEvent()
     of "ArrowLeft", "ArrowDown":
       slider.stepBy(-1)
-      return true
+      return stoppedEvent()
     of "Home":
       slider.setValue(slider.state.min, emitEvents = true)
-      return true
+      return stoppedEvent()
     of "End":
       slider.setValue(slider.state.max, emitEvents = true)
-      return true
+      return stoppedEvent()
     else:
       discard
-    false
+    ignoredEvent()
   )
 
 proc slider*(

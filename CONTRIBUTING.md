@@ -14,6 +14,8 @@ Before writing code, skim:
   against these rules.
 - [docs/design-decisions.md](docs/design-decisions.md) — settled decisions and
   component conventions.
+- [docs/api-stability.md](docs/api-stability.md) — compatibility, deprecation,
+  and removal policy for Nim and the C ABI.
 
 ## Branch and Release Workflow
 
@@ -46,7 +48,9 @@ only work that you have the right to license under those terms.
 ```sh
 nimble setupBundled       # select the vendored Linux runtime
 nimble test              # unit/behavior test suite
+nimble testOrc           # the same suite under ORC
 nimble checkExamples     # examples plus bundled/system/custom link checks
+nimble checkExamplesOrc  # public modules and examples under ORC
 nimble testCAbi          # shared/static C ABI build and C consumer
 nimble demo              # paint-command demo (no window)
 nimble renderDemo        # render demo to a PPM image
@@ -62,6 +66,9 @@ Requirements: Nim ≥ 2.2.0; for the SDL3 demo and text tests, a Rust toolchain
 C ABI changes touch `src/clay_board_style_system/c_api.nim`, `include/cbss.h`,
 and `tests/c_api/c_consumer.c` together. Never expose a Nim-managed type or
 change an existing C struct/function signature without an ABI-version decision.
+Use `CBSS_DEPRECATED("Use ... instead")` only after a complete replacement
+exists. Product Version 0.x does not permit binary-incompatible changes inside
+one C ABI major.
 Use `nimble setupSystem` when the application supplies SDL3, the image bridge,
 and the cosmic-text bridge through its own dynamic-library installation.
 
@@ -74,7 +81,7 @@ and the cosmic-text bridge through its own dynamic-library installation.
 | Layout behavior | `src/clay_board_style_system/layout/layout.nim` | `tests/layout/` | support matrix row if a property's status changes |
 | Paint behavior | `src/clay_board_style_system/paint/` | `tests/paint/` | — |
 | Hit testing | `src/clay_board_style_system/hit/hit_test.nim` | `tests/hit/` | — |
-| Input/events | `src/clay_board_style_system/input/events.nim` | `tests/input/` | event policy lives in `docs/architecture.md` |
+| Input/events | Edit the `EventDefinition` source in `src/clay_board_style_system/input/events.nim`, then run `nim c -r --mm:arc --path:src tools/generate_events.nim` | `tests/input/` and `nimble checkGeneratedEvents` | event policy lives in `docs/events.md`; do not hand-edit generated event slots or the marked C event-kind block |
 | Runtime control / widget | `src/clay_board_style_system/runtime/<name>.nim` (widgets under `runtime/widgets/`) | `tests/runtime/test_<name>.nim` | behavior notes in `docs/runtime-components.md`; follow conventions in design-decisions D15 |
 | Native navigation | `src/clay_board_style_system/runtime/navigation.nim`, `runtime/navigation_focus.nim`, `runtime/navigation_screen_host.nim`, `runtime/link.nim` | `tests/runtime/test_navigation*.nim`, `test_link.nim` | update `docs/navigation.md` and `docs/roadmap.md` when the public scope changes |
 | SDL3 backend | `src/clay_board_style_system/backends/sdl3/` (paths/link flags only in `config.nim`) | `tests/backends/`, opt-in Wayland smoke test | `docs/platform-support.md` |
@@ -91,9 +98,10 @@ generated indexes over central switches.
 - **Boundaries**: no SDL3 or cosmic-text types outside `backends/` and
   `text/`; the core emits renderer-neutral data. The public umbrella must not
   export testing or backend internals (enforced by the boundary test).
-- **Memory model**: ARC-friendly value objects, `NodeId` arenas, no `ref`
-  cycles, no closures stored in the core tree. Foreign resources get explicit
-  `close`/`destroy`.
+- **Memory model**: public Nim code supports both ARC and ORC. Keep the stricter
+  ARC-friendly ownership design: value objects, `NodeId` arenas, no `ref`
+  cycles, and no closures stored in the core tree. Foreign resources get
+  explicit `close`/`destroy`.
 - **Hot paths**: follow `docs/performance-model.md` — no large-value closure
   captures, no string identity per frame, index instead of scan, reuse
   scratch buffers.
@@ -102,7 +110,8 @@ generated indexes over central switches.
 - **Tests near features**: add the focused test next to the subsystem you
   changed. `nimble test` discovers new `tests/**/*.nim` files automatically,
   except explicit Wayland E2E, bridge, and benchmark targets. Keep every example
-  compiling with `nimble checkExamples`.
+  compiling with `nimble checkExamples`; memory-sensitive public changes also
+  pass `nimble testOrc` and `nimble checkExamplesOrc`.
 - **Docs**: architecture.md records stable intent. Component behavior notes go
   to `docs/runtime-components.md`; audits under `docs/audits/`.
 - **Native dependencies**: do not add an unexplained binary. Record its

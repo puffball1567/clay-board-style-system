@@ -41,23 +41,47 @@ Obsolete, legacy, or effectively deprecated CSS features should generally stay
 `No plan` even when browsers still carry them for compatibility. CBSS should spend
 implementation effort on modern native GUI behavior, not web compatibility debt.
 
-Keyframe animation is not excluded. `animation-*` and `transition-*` properties
-are currently `Metadata`: the style layer preserves the intent in a typed form,
-while applying those values to per-frame visual changes remains a later runtime
-subsystem.
+Keyframe animation is not excluded. The principal `animation-*` longhands and
+transition property, duration, delay, and timing function now drive the first
+paint-only runtime slices. Remaining animation and transition metadata
+preserves typed intent for later runtime work.
 
 ## Summary
 
 | Status | Count |
 | --- | ---: |
-| Runtime | 150 |
-| Computed | 84 |
-| Metadata | 193 |
+| Runtime | 174 |
+| Computed | 77 |
+| Metadata | 176 |
 | Planned | 0 |
 | No plan | 238 |
+| Target properties | 427 |
 | Total MDN entries | 665 |
 
+As of 2026-08-10, strict runtime completion is **174 of 427 target
+properties (40.7%)**. A further 77 properties reach computed style, so
+**251 of 427 (58.8%)** have runtime or computed support. All 427 target names
+are accepted by the default registry, but metadata-only acceptance is not
+counted as completed behavior. The 238 `No plan` entries are excluded from the
+implementation target and from both percentages.
+
+The counts above come only from the canonical Full Property Inventory. The
+curated table below repeats frequently used runtime properties for readability
+and must not be added to the totals a second time.
+
+These are property-level counts. Adding another accepted unit, keyword, color
+syntax, or value form improves the listed property's fidelity but does not add
+another property to the numerator. Likewise, Canvas APIs, components, events,
+forms, navigation, and data contracts are CBSS capabilities but are not CSS
+properties and are excluded here. The 2026-08-08 audit reviewed the current
+default registry and the viewport-relative, percentage-spacing,
+line-height-relative, and font-metric-relative unit work using this rule.
+
 ## Initial Implementation Properties
+
+This convenience table contains the 68 P0 properties plus the four
+side-specific border-style variants. All 72 entries also appear in the canonical
+inventory below; they are not additional properties.
 
 | Property | Status | Note |
 | --- | --- | --- |
@@ -133,6 +157,15 @@ subsystem.
 | `white-space` | Runtime | Initial CBSS runtime surface. |
 | `width` | Runtime | Supports px, percentage, auto, and intrinsic sizing values. |
 | `z-index` | Runtime | Initial CBSS runtime surface. |
+
+## CBSS-Specific Extensions
+
+These properties are native CBSS extensions and are excluded from the MDN-based
+427-property target and its completion percentages.
+
+| Property | Status | Note |
+| --- | --- | --- |
+| `scrollbar-visibility` | Runtime | Controls whether retained scrollbars are always visible or visible only while scrolling. |
 
 ## Full Property Inventory
 
@@ -261,18 +294,18 @@ subsystem.
 | `anchor-scope` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
 | `animation` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
 | `animation-composition` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
-| `animation-delay` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
-| `animation-direction` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
-| `animation-duration` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
-| `animation-fill-mode` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
-| `animation-iteration-count` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
-| `animation-name` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
-| `animation-play-state` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
+| `animation-delay` | Runtime | Drives named paint keyframes, including negative delays and CSS-like list cycling. |
+| `animation-direction` | Runtime | Controls normal, reverse, alternate, and alternate-reverse playback with per-animation list cycling. |
+| `animation-duration` | Runtime | Drives each active interval with per-animation list cycling. |
+| `animation-fill-mode` | Runtime | Controls independent backwards sampling and retained forwards presentation for named keyframes. |
+| `animation-iteration-count` | Runtime | Supports cycled finite counts and infinite named paint-keyframe playback. |
+| `animation-name` | Runtime | Binds one node to one or more typed keyframe definitions registered on its `UiRoot`; missing definitions retain list positions. |
+| `animation-play-state` | Runtime | Independently pauses and resumes named paint keyframes without restarting their timelines. |
 | `animation-range` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
 | `animation-range-end` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
 | `animation-range-start` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
 | `animation-timeline` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
-| `animation-timing-function` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
+| `animation-timing-function` | Runtime | Supports cycled named timing functions, step start/end, and valid cubic Bezier curves for named paint keyframes. |
 | `animation-trigger` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
 | `appearance` | Metadata | Stored as computed visual metadata. |
 | `aspect-ratio` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
@@ -652,7 +685,7 @@ subsystem.
 | `reading-order` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `resize` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `right` | Runtime | Supports signed px and percentage offsets against the containing content width. |
-| `rotate` | Runtime | Resolves into the shared 2D affine paint, hit-test, clip, and surface-input contract. |
+| `rotate` | Runtime | Resolves into the shared 2D affine paint, hit-test, clip, and surface-input contract and supports declarative transitions/keyframes. |
 | `row-gap` | Runtime | Supports px and percentage spacing against the container content height. |
 | `ruby-align` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
 | `ruby-merge` | Metadata | Stored as computed text metadata. |
@@ -660,7 +693,7 @@ subsystem.
 | `ruby-position` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
 | `rx` | Metadata | Stores number and px length values as computed vector geometry metadata. |
 | `ry` | Metadata | Stores number and px length values as computed vector geometry metadata. |
-| `scale` | Runtime | Resolves into the shared 2D affine paint, hit-test, clip, and surface-input contract. |
+| `scale` | Runtime | Resolves into the shared 2D affine paint, hit-test, clip, and surface-input contract and supports declarative transitions/keyframes. |
 | `scroll-behavior` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `scroll-initial-target` | Metadata | Stored as computed scroll metadata. |
 | `scroll-margin` | No plan | Browser scrolling model property; no initial CBSS support. |
@@ -766,17 +799,17 @@ subsystem.
 | `timeline-trigger-source` | Metadata | Stored as computed timeline trigger metadata. |
 | `top` | Runtime | Supports signed px and percentage offsets against the containing content height. |
 | `touch-action` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
-| `transform` | Runtime | Structured 2D transform operations resolve into shared SDL3/headless paint, exact hit-test, clip, and surface-input coordinates. Unsupported raw operations remain diagnostic metadata rather than silently changing paint. |
+| `transform` | Runtime | Structured 2D transform operations resolve into shared SDL3/headless paint, exact hit-test, clip, surface-input, transition, and keyframe coordinates. Unsupported raw operations remain diagnostic metadata rather than silently changing paint. |
 | `transform-box` | Runtime | Selects the source box used to resolve the 2D transform origin. |
 | `transform-origin` | Runtime | Resolves length, percentage, and keyword origins for the shared 2D affine contract. |
 | `transform-style` | Metadata | Supports `flat` and `preserve-3d` metadata. |
 | `transition` | Metadata | Stored as transition metadata; runtime subsystem is not complete yet. |
 | `transition-behavior` | Metadata | Stored as transition metadata; runtime subsystem is not complete yet. |
-| `transition-delay` | Metadata | Stored as transition metadata; runtime subsystem is not complete yet. |
-| `transition-duration` | Metadata | Stored as transition metadata; runtime subsystem is not complete yet. |
-| `transition-property` | Metadata | Stored as transition metadata; runtime subsystem is not complete yet. |
-| `transition-timing-function` | Metadata | Stored as transition metadata; runtime subsystem is not complete yet. |
-| `translate` | Runtime | Resolves into the shared 2D affine paint, hit-test, clip, and surface-input contract. |
+| `transition-delay` | Runtime | Drives the paint-transition runtime, including negative delay and CSS-like list cycling. |
+| `transition-duration` | Runtime | Drives paint transitions with CSS-like list cycling for the currently supported interpolable properties. |
+| `transition-property` | Runtime | Selects `opacity`, `color`, and `background-color`, or `all`; unknown names retain list positions and the last matching entry wins. Additional runtime properties remain planned. |
+| `transition-timing-function` | Runtime | Supports named timing functions, step start/end, valid cubic Bezier curves, and CSS-like list cycling for paint transitions. |
+| `translate` | Runtime | Resolves into the shared 2D affine paint, hit-test, clip, and surface-input contract and supports declarative transitions/keyframes. |
 | `trigger-scope` | Metadata | Stored as computed timeline trigger metadata. |
 | `unicode-bidi` | Metadata | Stored in computed text style; full bidi shaping remains text-engine dependent. |
 | `user-select` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |

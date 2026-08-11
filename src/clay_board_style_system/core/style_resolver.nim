@@ -1,8 +1,9 @@
-import std/[algorithm, options, tables]
+import std/[algorithm, options, strutils, tables]
 import ./[
   computed_style,
   declaration,
   diagnostics,
+  geometry,
   node,
   property,
   registry,
@@ -14,6 +15,7 @@ import ./[
 type
   ResolvedTree* = object
     styles*: seq[ComputedStyle]
+    viewportSize*: Option[Size]
 
   IndexedRule = object
     sheetIndex: int
@@ -119,13 +121,78 @@ proc matchingContext(
   for item in matched:
     result.addDeclaration item.declaration
 
-proc contextForProperty(context: StyleContext; property: string;
-    keepMatches: bool): StyleContext =
-  ## Font-relative units need a resolved font size before other declarations.
-  result = initStyleContext()
+proc partitionFontContexts(
+    context: StyleContext;
+    collectDescriptor: bool
+): tuple[
+    fontSize, lineHeight, descriptor, remaining: StyleContext] =
+  result.fontSize = initStyleContext()
+  result.lineHeight = initStyleContext()
+  result.descriptor = initStyleContext()
+  result.remaining = initStyleContext()
   for declaration in context.declarations:
-    if (declaration.property == property) == keepMatches:
-      result.addDeclaration declaration
+    case declaration.property
+    of "font-size":
+      result.fontSize.addDeclaration declaration
+    of "line-height":
+      result.lineHeight.addDeclaration declaration
+    else:
+      if collectDescriptor and declaration.property.startsWith("font-"):
+        result.descriptor.addDeclaration declaration
+      result.remaining.addDeclaration declaration
+
+proc metricTextStyle(
+    parent: ComputedStyleRef;
+    fontSize, lineHeight: float32;
+    descriptorContext: StyleContext;
+    resolvedDescriptor: ComputedTextStyle
+): ComputedTextStyle =
+  ## Build only the font-selection state needed by a metrics provider. Keeping
+  ## this separate avoids coupling the core resolver to a concrete text engine.
+  if parent.isSome:
+    result = parent.get.text
+  result.fontSize = some(fontSize)
+  result.lineHeight = some(lineHeight)
+  for declaration in descriptorContext.declarations:
+    case declaration.property
+    of "font-family":
+      result.fontFamily = resolvedDescriptor.fontFamily
+      result.fontFamilies = resolvedDescriptor.fontFamilies
+    of "font-style":
+      result.fontStyle = resolvedDescriptor.fontStyle
+    of "font-weight":
+      result.fontWeight = resolvedDescriptor.fontWeight
+    of "font-stretch", "font-width":
+      result.fontStretch = resolvedDescriptor.fontStretch
+      result.fontWidth = resolvedDescriptor.fontWidth
+    of "font-feature-settings":
+      result.fontFeatureSettings = resolvedDescriptor.fontFeatureSettings
+    of "font-variation-settings":
+      result.fontVariationSettings = resolvedDescriptor.fontVariationSettings
+    of "font-kerning":
+      result.fontKerning = resolvedDescriptor.fontKerning
+    of "font-optical-sizing":
+      result.fontOpticalSizing = resolvedDescriptor.fontOpticalSizing
+    of "font-size-adjust":
+      result.fontSizeAdjust = resolvedDescriptor.fontSizeAdjust
+    of "font-variant":
+      result.fontVariant = resolvedDescriptor.fontVariant
+    of "font-variant-ligatures":
+      result.fontVariantLigatures = resolvedDescriptor.fontVariantLigatures
+    of "font-variant-caps":
+      result.fontVariantCaps = resolvedDescriptor.fontVariantCaps
+    of "font-variant-numeric":
+      result.fontVariantNumeric = resolvedDescriptor.fontVariantNumeric
+    of "font-variant-east-asian":
+      result.fontVariantEastAsian = resolvedDescriptor.fontVariantEastAsian
+    of "font-variant-position":
+      result.fontVariantPosition = resolvedDescriptor.fontVariantPosition
+    of "font-variant-alternates":
+      result.fontVariantAlternates = resolvedDescriptor.fontVariantAlternates
+    of "font-variant-emoji":
+      result.fontVariantEmoji = resolvedDescriptor.fontVariantEmoji
+    else:
+      discard
 
 proc resolveNode(
     tree: Tree;
@@ -136,6 +203,11 @@ proc resolveNode(
     registry: PropertyRegistry;
     parent: ComputedStyleRef;
     rootFontSize: float32;
+    rootLineHeight: float32;
+    rootFontMetrics: FontUnitMetrics;
+    parentFontMetrics: FontUnitMetrics;
+    fontMetricsResolver: FontUnitMetricsResolver;
+    viewportSize: Option[Size];
     diagnostics: var Diagnostics;
     result: var ResolvedTree
 ) =
@@ -146,13 +218,33 @@ proc resolveNode(
       parent.get.text.fontSize.get
     else:
       rootFontSize
-  let fontContext = context.contextForProperty("font-size", keepMatches = true)
+  let inheritsNormalLineHeight =
+    parent.isNone or parent.get.text.lineHeight.isNone
+  let inheritedLineHeight =
+    if parent.isSome and parent.get.text.lineHeight.isSome:
+      parent.get.text.lineHeight.get
+    elif parent.isSome and parent.get.text.fontSize.isSome:
+      parent.get.text.fontSize.get * 1.2'f32
+    else:
+      rootLineHeight
+  let fontContexts = context.partitionFontContexts(
+    not fontMetricsResolver.isNil
+  )
   let fontEnv = ResolveEnv(
     parent: parent,
     rootFontSize: some(rootFontSize),
-    currentFontSize: some(inheritedFontSize)
+    currentFontSize: some(inheritedFontSize),
+    rootLineHeight: some(rootLineHeight),
+    currentLineHeight: some(inheritedLineHeight),
+    rootXHeight: some(rootFontMetrics.xHeight),
+    currentXHeight: some(parentFontMetrics.xHeight),
+    rootZeroAdvance: some(rootFontMetrics.zeroAdvance),
+    currentZeroAdvance: some(parentFontMetrics.zeroAdvance),
+    viewportSize: viewportSize
   )
-  let resolvedFont = resolveStyles(fontContext, registry, fontEnv, diagnostics)
+  let resolvedFont = resolveStyles(
+    fontContexts.fontSize, registry, fontEnv, diagnostics
+  )
   let currentFontSize =
     if resolvedFont.text.fontSize.isSome:
       resolvedFont.text.fontSize.get
@@ -161,15 +253,77 @@ proc resolveNode(
   let effectiveRootFontSize =
     if parent.isSome: rootFontSize
     else: currentFontSize
+  let hasLocalLineHeight = fontContexts.lineHeight.declarations.len > 0
+  var currentLineHeight =
+    if inheritsNormalLineHeight:
+      currentFontSize * 1.2'f32
+    else:
+      inheritedLineHeight
+  var storedLineHeight =
+    if parent.isSome: parent.get.text.lineHeight
+    else: none(float32)
+  let currentFontMetrics =
+    if fontMetricsResolver.isNil:
+      fallbackFontUnitMetrics(currentFontSize)
+    else:
+      let descriptorStyle =
+        if fontContexts.descriptor.declarations.len > 0:
+          var descriptorDiagnostics: Diagnostics
+          resolveStyles(
+            fontContexts.descriptor, registry, fontEnv, descriptorDiagnostics
+          ).text
+        else:
+          ComputedTextStyle()
+      let metricsStyle = metricTextStyle(
+        parent,
+        currentFontSize,
+        currentLineHeight,
+        fontContexts.descriptor,
+        descriptorStyle
+      )
+      resolveFontUnitMetrics(fontMetricsResolver, metricsStyle)
+  if hasLocalLineHeight:
+    let lineHeightEnv = ResolveEnv(
+      parent: parent,
+      rootFontSize: some(effectiveRootFontSize),
+      currentFontSize: some(currentFontSize),
+      rootLineHeight: some(rootLineHeight),
+      currentLineHeight: some(inheritedLineHeight),
+      rootXHeight: some(rootFontMetrics.xHeight),
+      currentXHeight: some(currentFontMetrics.xHeight),
+      rootZeroAdvance: some(rootFontMetrics.zeroAdvance),
+      currentZeroAdvance: some(currentFontMetrics.zeroAdvance),
+      viewportSize: viewportSize
+    )
+    let resolvedLineHeight = resolveStyles(
+      fontContexts.lineHeight, registry, lineHeightEnv, diagnostics
+    )
+    if resolvedLineHeight.text.lineHeight.isSome:
+      currentLineHeight = resolvedLineHeight.text.lineHeight.get
+    storedLineHeight = resolvedLineHeight.text.lineHeight
+  let effectiveRootLineHeight =
+    if parent.isSome: rootLineHeight
+    else: currentLineHeight
+  let effectiveRootFontMetrics =
+    if parent.isSome: rootFontMetrics
+    else: currentFontMetrics
   let env = ResolveEnv(
     parent: parent,
     rootFontSize: some(effectiveRootFontSize),
-    currentFontSize: some(currentFontSize)
+    currentFontSize: some(currentFontSize),
+    rootLineHeight: some(effectiveRootLineHeight),
+    currentLineHeight: some(currentLineHeight),
+    rootXHeight: some(effectiveRootFontMetrics.xHeight),
+    currentXHeight: some(currentFontMetrics.xHeight),
+    rootZeroAdvance: some(effectiveRootFontMetrics.zeroAdvance),
+    currentZeroAdvance: some(currentFontMetrics.zeroAdvance),
+    viewportSize: viewportSize
   )
-  let remainingContext = context.contextForProperty("font-size",
-      keepMatches = false)
-  var style = resolveStyles(remainingContext, registry, env, diagnostics)
+  var style = resolveStyles(
+    fontContexts.remaining, registry, env, diagnostics
+  )
   style.text.fontSize = some(currentFontSize)
+  style.text.lineHeight = storedLineHeight
   if parent.isSome:
     if style.text.color.isNone:
       style.text.color = parent.get.text.color
@@ -243,6 +397,8 @@ proc resolveNode(
       style.image.objectFit = parent.get.image.objectFit
     if style.image.objectPosition.isNone:
       style.image.objectPosition = parent.get.image.objectPosition
+  if node.flowCollapsed:
+    style.layout.display = dkNone
   result.styles[id.nodeIndex] = style
 
   for child in node.children:
@@ -255,6 +411,11 @@ proc resolveNode(
       registry,
       computedStyleRef(result.styles[id.nodeIndex]),
       effectiveRootFontSize,
+      effectiveRootLineHeight,
+      effectiveRootFontMetrics,
+      currentFontMetrics,
+      fontMetricsResolver,
+      viewportSize,
       diagnostics,
       result
     )
@@ -265,11 +426,18 @@ proc resolveTreeStyles*(
     registry: PropertyRegistry;
     diagnostics: var Diagnostics;
     baseContext = initStyleContext();
-    rootFontSize = 16.0'f32
+    rootFontSize = 16.0'f32;
+    viewportSize = none(Size);
+    fontMetricsResolver: FontUnitMetricsResolver = nil
 ): ResolvedTree =
+  result.viewportSize = viewportSize
   result.styles = newSeq[ComputedStyle](tree.nodes.len)
   if tree.root.isSome:
     let ruleIndex = buildRuleIndex(tree, sheets)
+    let initialMetrics = resolveFontUnitMetrics(
+      fontMetricsResolver,
+      ComputedTextStyle(fontSize: some(rootFontSize))
+    )
     resolveNode(
       tree,
       tree.root.get,
@@ -279,6 +447,11 @@ proc resolveTreeStyles*(
       registry,
       ComputedStyleRef(),
       rootFontSize,
+      rootFontSize * 1.2'f32,
+      initialMetrics,
+      initialMetrics,
+      fontMetricsResolver,
+      viewportSize,
       diagnostics,
       result
     )
@@ -290,11 +463,14 @@ proc resolveSubtreeStyles*(
     registry: PropertyRegistry;
     diagnostics: var Diagnostics;
     resolved: var ResolvedTree;
-    baseContext = initStyleContext()
+    baseContext = initStyleContext();
+    viewportSize = none(Size);
+    fontMetricsResolver: FontUnitMetricsResolver = nil
 ): bool =
   ## Re-resolve a stable subtree while preserving computed styles elsewhere.
   ## Callers must use full resolution when ancestors or global sheets changed.
-  if root.nodeIndex < 0 or root.nodeIndex >= tree.nodes.len or
+  if tree.root.isNone or
+      root.nodeIndex < 0 or root.nodeIndex >= tree.nodes.len or
       resolved.styles.len != tree.nodes.len:
     return false
   let parent = tree.nodes[root.nodeIndex].parent
@@ -307,6 +483,26 @@ proc resolveSubtreeStyles*(
       resolved.styles[tree.root.get.nodeIndex].text.fontSize.get
     else:
       16.0'f32
+  let rootLineHeight =
+    if tree.root.isSome and resolved.styles[
+        tree.root.get.nodeIndex].text.lineHeight.isSome:
+      resolved.styles[tree.root.get.nodeIndex].text.lineHeight.get
+    else:
+      rootFontSize * 1.2'f32
+  let effectiveViewport =
+    if viewportSize.isSome: viewportSize else: resolved.viewportSize
+  resolved.viewportSize = effectiveViewport
+  let rootMetrics = resolveFontUnitMetrics(
+    fontMetricsResolver,
+    resolved.styles[tree.root.get.nodeIndex].text
+  )
+  let parentMetrics =
+    if parent.isSome:
+      resolveFontUnitMetrics(
+        fontMetricsResolver, resolved.styles[parent.get.nodeIndex].text
+      )
+    else:
+      rootMetrics
   let ruleIndex = buildRuleIndex(tree, sheets)
   resolveNode(
     tree,
@@ -317,6 +513,11 @@ proc resolveSubtreeStyles*(
     registry,
     parentStyle,
     rootFontSize,
+    rootLineHeight,
+    rootMetrics,
+    parentMetrics,
+    fontMetricsResolver,
+    effectiveViewport,
     diagnostics,
     resolved
   )

@@ -144,7 +144,12 @@ clay_board_style_system
 The public project name can remain human-readable, but Nim modules should use
 the package spelling above.
 
-CBSS should prefer Nim ARC-compatible ownership patterns:
+Applications may compile CBSS with either `--mm:arc` or `--mm:orc`. CBSS uses
+ARC-compatible ownership as the stricter design and release-verification
+baseline; the ORC test lane verifies application compatibility rather than
+hiding cycles in CBSS-owned state.
+
+CBSS should therefore prefer Nim ARC-compatible ownership patterns:
 
 - Value objects where practical
 - `seq`-backed arenas for trees and computed results
@@ -616,9 +621,9 @@ in a lightweight handle. A handle keeps direct identity while allowing familiar
 assignments such as:
 
 ```nim
-saveButton.onClick = proc(event: DispatchResult): bool =
+saveButton.onClick = proc(event: DispatchResult): EventOutcome =
   dispatch(Action(kind: SaveClicked))
-  true
+  handledEvent()
 
 rule(target(saveButton), [
   decl("background-color", colorValue(rgb(0.1, 0.35, 0.6)))
@@ -797,9 +802,9 @@ node even when hit testing would target another node. Capture emits
 The component dispatch path is still a real firing path:
 
 ```nim
-submitButton.onClick = proc(event: DispatchResult): bool =
+submitButton.onClick = proc(event: DispatchResult): EventOutcome =
   discard form.emit(iekSubmit)
-  true
+  handledEvent()
 ```
 
 If an event name is public, CBSS should provide one of these paths. Deprecated
@@ -810,6 +815,7 @@ Initial standard slots:
 
 ```text
 onAbort
+onAnimationCancel
 onAnimationEnd
 onAnimationIteration
 onAnimationStart
@@ -897,7 +903,10 @@ onTouchCancel
 onTouchEnd
 onTouchMove
 onTouchStart
+onTransitionCancel
 onTransitionEnd
+onTransitionRun
+onTransitionStart
 onVolumeChange
 onWaiting
 onWheel
@@ -1708,13 +1717,14 @@ ARC lifetime surprises. A GUI layer can maintain a separate handler table:
 
 ```nim
 type
-  EventHandler* = proc(event: DispatchResult): bool {.closure.}
+  EventHandler* = proc(event: DispatchResult): EventOutcome {.closure.}
 
 handlerTable[NodeId] = EventHandler
 ```
 
-The boolean return can mean "handled". A higher layer may then stop its own
-propagation, trigger a style recompute, or enqueue application commands.
+The result independently records handled state, propagation control, and
+default-action prevention. A higher layer may also enqueue application
+commands without conflating those effects.
 
 Pseudo-selectors such as `:hover`, `:active`, and `:focus` should be represented
 as node state flags. Event dispatch updates those flags; selectors only read
@@ -1729,15 +1739,15 @@ UI runtimes can choose their own model:
 ```nim
 # React-like local state:
 var count = 0
-handlers.onClick(button, proc(event: DispatchResult): bool =
+handlers.onClick(button, proc(event: DispatchResult): EventOutcome =
   inc count
-  true
+  handledEvent()
 )
 
 # Redux-like external store:
-handlers.onClick(button, proc(event: DispatchResult): bool =
+handlers.onClick(button, proc(event: DispatchResult): EventOutcome =
   appStore.dispatch(Action(kind: SaveClicked, node: event.target.get))
-  true
+  handledEvent()
 )
 ```
 
@@ -1776,21 +1786,21 @@ keeps CBSS usable with several state styles:
 ```nim
 # Local closure state
 var open = false
-handlers.onClick(toggleButton, proc(event: DispatchResult): bool =
+handlers.onClick(toggleButton, proc(event: DispatchResult): EventOutcome =
   open = not open
-  true
+  handledEvent()
 )
 
 # Reducer/store state
-handlers.onClick(saveButton, proc(event: DispatchResult): bool =
+handlers.onClick(saveButton, proc(event: DispatchResult): EventOutcome =
   appStore.dispatch(SaveClicked())
-  true
+  handledEvent()
 )
 
 # Signal/atom style
-handlers.onClick(toggleButton, proc(event: DispatchResult): bool =
+handlers.onClick(toggleButton, proc(event: DispatchResult): EventOutcome =
   expandedSignal.set(not expandedSignal.get())
-  true
+  handledEvent()
 )
 ```
 
@@ -1941,7 +1951,7 @@ Text service:
 ```
 
 The initial implementation exposes a small `TextEngine` interface for layout
-measurement:
+measurement, caret and hit-test geometry, and versioned font-unit metrics:
 
 ```text
 src/clay_board_style_system/text/text_engine.nim
@@ -1957,6 +1967,29 @@ Applications can enable system font discovery, register bundled font files, add
 memory-backed fonts, and define fallback families. `font-family` resolves to an
 ordered family list, not just a single string, so a text engine can perform
 CSS-like fallback without exposing browser concepts in the core API.
+
+`ex` and `ch` resolution does not make the style resolver depend on a concrete
+font library. A `FontUnitMetricsResolver` receives the resolved text style and
+returns the selected font's x-height and `0` glyph advance. `TextEngine` can
+produce this resolver for a fixed `FontRegistry`:
+
+```nim
+let metrics = textEngine.fontMetricsResolver(fonts)
+let resolved = resolveTreeStyles(
+  tree,
+  sheets,
+  defaultProperties(),
+  diagnostics,
+  fontMetricsResolver = metrics
+)
+```
+
+The contract is versioned and rejects non-positive, non-finite, or incompatible
+results. Missing metrics use the CSS-defined `0.5em` fallback. The cosmic-text
+adapter caches results by font configuration so repeated nodes do not reshape
+the `0` glyph or reopen font data. Root variants `rex` and `rch` are established
+from the root text style and remain stable during descendant and subtree
+resolution.
 
 The default engine matches SDL3 debug text behavior so the current demo remains
 stable. Higher quality text engines should be added as adapters, not wired into

@@ -339,7 +339,7 @@ suite "retained scroll state":
     var input = initInteractionState()
     var registry = initEventRegistry()
     var scrollEvents = 0
-    registry.onScroll(inner, proc(event: DispatchResult): bool =
+    registry.onScroll(inner, proc(event: DispatchResult): EventOutcome =
       inc scrollEvents
       true
     )

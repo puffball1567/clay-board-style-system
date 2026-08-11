@@ -1,21 +1,7 @@
 import std/options
 import ../core/[color, computed_style, declaration, diagnostics, property,
     style_color, style_value]
-
-proc resolvePx(value: LengthValue; property: string;
-    diagnostics: var Diagnostics): Option[float32] =
-  if value.kind != ukPx:
-    diagnostics.addError(property, "only px is supported for initial " &
-        property & " implementation")
-    return none(float32)
-  some(value.value)
-
-proc resolvePxValue(value: StyleValue; property: string;
-    diagnostics: var Diagnostics): Option[float32] =
-  if value.kind != svLength:
-    diagnostics.addError(property, property & " requires a length value")
-    return none(float32)
-  resolvePx(value.length, property, diagnostics)
+import ./length_resolution
 
 proc applyBoxShadow(
     style: var ComputedStyle;
@@ -36,18 +22,22 @@ proc applyBoxShadow(
       else:
         diagnostics.addError(declaration.property, "unsupported box-shadow keyword")
     of svShadow:
-      let offsetX = resolvePx(value.shadowOffsetX, declaration.property, diagnostics)
-      let offsetY = resolvePx(value.shadowOffsetY, declaration.property, diagnostics)
+      let offsetX = resolveAbsoluteLength(value.shadowOffsetX, env,
+          declaration.property, diagnostics)
+      let offsetY = resolveAbsoluteLength(value.shadowOffsetY, env,
+          declaration.property, diagnostics)
       if offsetX.isNone or offsetY.isNone:
         return
       var blur = 0.0'f32
       var spread = 0.0'f32
       if value.shadowBlur.isSome:
-        let resolved = resolvePx(value.shadowBlur.get, declaration.property, diagnostics)
+        let resolved = resolveAbsoluteLength(value.shadowBlur.get, env,
+            declaration.property, diagnostics)
         if resolved.isSome:
           blur = resolved.get
       if value.shadowSpread.isSome:
-        let resolved = resolvePx(value.shadowSpread.get, declaration.property, diagnostics)
+        let resolved = resolveAbsoluteLength(value.shadowSpread.get, env,
+            declaration.property, diagnostics)
         if resolved.isSome:
           spread = resolved.get
       style.box.boxShadow = some(BoxShadow(
@@ -216,8 +206,8 @@ proc applyOutlineWidth(
     if declaration.operation.value.isNone:
       diagnostics.addError(declaration.property, "outline-width requires a value")
       return
-    let resolved = resolvePxValue(declaration.operation.value.get,
-        declaration.property, diagnostics)
+    let resolved = resolveAbsoluteLength(declaration.operation.value.get,
+        env, declaration.property, diagnostics)
     if resolved.isSome:
       style.setOutlineWidth(resolved.get)
   of mmInitial, mmUnset:
@@ -289,8 +279,8 @@ proc applyOutlineOffset(
     if declaration.operation.value.isNone:
       diagnostics.addError(declaration.property, "outline-offset requires a value")
       return
-    let resolved = resolvePxValue(declaration.operation.value.get,
-        declaration.property, diagnostics)
+    let resolved = resolveAbsoluteLength(declaration.operation.value.get,
+        env, declaration.property, diagnostics)
     if resolved.isSome:
       style.box.outlineOffset = resolved.get
   of mmInitial, mmUnset:
@@ -317,7 +307,8 @@ proc applyOutline(
     let value = declaration.operation.value.get
     case value.kind
     of svLength:
-      let resolved = resolvePxValue(value, declaration.property, diagnostics)
+      let resolved = resolveAbsoluteLength(value, env, declaration.property,
+          diagnostics)
       if resolved.isSome:
         style.setOutlineWidth(resolved.get)
     of svColor:
@@ -332,7 +323,8 @@ proc applyOutline(
         diagnostics.addError(declaration.property, "unsupported outline keyword")
     of svBorder:
       if value.borderWidth.isSome:
-        let resolved = resolvePx(value.borderWidth.get, declaration.property, diagnostics)
+        let resolved = resolveAbsoluteLength(value.borderWidth.get, env,
+            declaration.property, diagnostics)
         if resolved.isSome:
           style.setOutlineWidth(resolved.get)
       let color = value.resolveBorderColor(style, env)

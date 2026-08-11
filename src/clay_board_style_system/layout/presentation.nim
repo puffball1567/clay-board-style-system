@@ -11,6 +11,7 @@ type
     sourceBounds*: Rect
     transform*: Affine2D
     ownTransform*: Affine2D
+    padding*: EdgeSizes
 
   PresentationContext* = object
     translation*: Vec2
@@ -29,13 +30,13 @@ type
     visible*: bool
     sourceBounds*: Rect
     transform*: Affine2D
+    padding*: EdgeSizes
 
-proc presentedContentBounds*(bounds: Rect; style: ComputedStyle): Rect =
+proc presentedContentBounds*(
+    bounds: Rect; style: ComputedStyle; padding: EdgeSizes
+): Rect =
   ## Returns the pixels owned by replaced/custom content. CBSS retains
   ## ownership of the border and padding around this rectangle.
-  let padding =
-    if style.box.padding.isSome: style.box.padding.get
-    else: edges(0)
   let border = style.box.borderWidths
   let left = padding.left +
     (if style.box.borderSideVisible.left: border.left else: 0.0'f32)
@@ -52,13 +53,19 @@ proc presentedContentBounds*(bounds: Rect; style: ComputedStyle): Rect =
     max(0.0'f32, bounds.h - top - bottom)
   )
 
+proc presentedContentBounds*(bounds: Rect; style: ComputedStyle): Rect =
+  let padding =
+    if style.box.padding.isSome: style.box.padding.get
+    else: edges(0)
+  presentedContentBounds(bounds, style, padding)
+
 proc contentBounds*(presentation: NodePresentation; style: ComputedStyle): Rect =
   presentation.transform.transformedBounds(
-    presentedContentBounds(presentation.sourceBounds, style)
+    presentedContentBounds(presentation.sourceBounds, style, presentation.padding)
   )
 
 proc sourceContentBounds*(presentation: NodePresentation; style: ComputedStyle): Rect =
-  presentedContentBounds(presentation.sourceBounds, style)
+  presentedContentBounds(presentation.sourceBounds, style, presentation.padding)
 
 proc contentClip*(presentation: NodePresentation; style: ComputedStyle): Rect =
   presentation.contentBounds(style).intersection(presentation.clip)
@@ -99,8 +106,9 @@ proc ancestorPresentationContext*(
       result.visible = false
       return
 
-    let sourceBounds = layout.boxes[boxIndex].rect.translated(result.translation)
-    let ownTransform = resolvedTransform(style, sourceBounds)
+    let item = layout.boxes[boxIndex]
+    let sourceBounds = item.rect.translated(result.translation)
+    let ownTransform = resolvedTransform(style, sourceBounds, item.padding)
     let worldTransform = result.transform * ownTransform
     let bounds = worldTransform.transformedBounds(sourceBounds)
     result.ancestors.add PresentedAncestor(
@@ -108,11 +116,12 @@ proc ancestorPresentationContext*(
       bounds: bounds,
       sourceBounds: sourceBounds,
       transform: worldTransform,
-      ownTransform: ownTransform
+      ownTransform: ownTransform,
+      padding: item.padding
     )
     if tree.nodes[ancestor.nodeIndex].kind == nkBox and style.clipsOverflow():
       let ownClipShape = transformedRect(
-        overflowClipRect(sourceBounds, style), worldTransform
+        overflowClipRect(sourceBounds, style, item.padding), worldTransform
       )
       let ownClip = ownClipShape.bounds
       result.clipShapes.add ownClipShape
@@ -153,8 +162,11 @@ proc presentationForNode*(
   if not style.visual.visible or style.layout.display == dkNone or
       style.hidesPresentedContents:
     return none(NodePresentation)
-  let sourceBounds = layout.boxes[boxIndex].rect.translated(context.translation)
-  let transform = context.transform * resolvedTransform(style, sourceBounds)
+  let item = layout.boxes[boxIndex]
+  let sourceBounds = item.rect.translated(context.translation)
+  let transform = context.transform * resolvedTransform(
+    style, sourceBounds, item.padding
+  )
   let bounds = transform.transformedBounds(sourceBounds)
   let clip =
     if context.clip.isSome: bounds.intersection(context.clip.get)
@@ -167,7 +179,8 @@ proc presentationForNode*(
     opacity: opacity,
     visible: not clip.isEmpty and opacity > 0,
     sourceBounds: sourceBounds,
-    transform: transform
+    transform: transform,
+    padding: item.padding
   ))
 
 proc presentationForNode*(

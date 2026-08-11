@@ -1,5 +1,5 @@
 import std/[options, strutils]
-import ../core/[computed_style, geometry]
+import ../core/[computed_style, geometry, property]
 import ./[font_registry, text_engine]
 
 const cosmicTextBridgeLib* = "libcbss_cosmic_text_bridge.so"
@@ -15,6 +15,10 @@ type
   TextCaretCacheEntry = object
     key: string
     value: TextCaretResult
+
+  TextFontMetricsCacheEntry = object
+    key: string
+    value: FontUnitMetrics
 
   CosmicTextMeasureInput {.bycopy.} = object
     text: cstring
@@ -35,6 +39,11 @@ type
   CosmicTextMeasureResult {.bycopy.} = object
     width: cfloat
     height: cfloat
+    ok: uint8
+
+  CosmicTextFontMetricsResult {.bycopy.} = object
+    xHeight: cfloat
+    zeroAdvance: cfloat
     ok: uint8
 
   CosmicTextBitmapResult {.bycopy.} = object
@@ -88,6 +97,11 @@ proc cbss_cosmic_text_measure(
     handle: pointer;
     input: ptr CosmicTextMeasureInput;
     output: ptr CosmicTextMeasureResult
+): uint8 {.cdecl, importc, dynlib: cosmicTextBridgeLib.}
+proc cbss_cosmic_text_font_unit_metrics(
+    handle: pointer;
+    input: ptr CosmicTextMeasureInput;
+    output: ptr CosmicTextFontMetricsResult
 ): uint8 {.cdecl, importc, dynlib: cosmicTextBridgeLib.}
 proc cbss_cosmic_text_render_bitmap(
     handle: pointer;
@@ -358,6 +372,31 @@ proc toCosmicRequest(input: TextMeasureInput): CosmicTextMeasureInput =
     wrap: input.style.wrapCode
   )
 
+proc measureCosmicFontUnits*(
+    engine: CosmicTextEngine;
+    input: TextFontMetricsInput
+): FontUnitMetrics =
+  let fontSize = input.style.fontSize.get(16.0'f32)
+  result = fallbackFontUnitMetrics(fontSize)
+  if engine.handle.isNil:
+    return
+  var request = TextMeasureInput(
+    text: "0",
+    style: input.style,
+    maxWidth: none(float32),
+    fonts: input.fonts
+  ).toCosmicRequest()
+  var output: CosmicTextFontMetricsResult
+  if cbss_cosmic_text_font_unit_metrics(
+      engine.handle, addr request, addr output
+  ) == 0 or output.ok == 0:
+    return
+  result = FontUnitMetrics(
+    version: fontUnitMetricsVersion,
+    xHeight: output.xHeight.float32,
+    zeroAdvance: output.zeroAdvance.float32
+  )
+
 proc addKeyPart(parts: var seq[string]; value: string) =
   parts.add($value.len & ":" & value)
 
@@ -511,6 +550,7 @@ proc textEngine*(engine: CosmicTextEngine): TextEngine =
   let handle = engine.handle
   var measureCache: seq[TextMeasureCacheEntry] = @[]
   var caretCache: seq[TextCaretCacheEntry] = @[]
+  var fontMetricsCache: seq[TextFontMetricsCacheEntry] = @[]
 
   proc trimMeasureCache() =
     const limit = 512
@@ -521,6 +561,11 @@ proc textEngine*(engine: CosmicTextEngine): TextEngine =
     const limit = 512
     while caretCache.len > limit:
       caretCache.delete(0)
+
+  proc trimFontMetricsCache() =
+    const limit = 128
+    while fontMetricsCache.len > limit:
+      fontMetricsCache.delete(0)
 
   proc cachedMeasure(input: TextMeasureInput): Size =
     let key = input.cosmicTextRasterKey()
@@ -571,6 +616,21 @@ proc textEngine*(engine: CosmicTextEngine): TextEngine =
   proc cachedCaretLayout(input: TextMeasureInput): seq[TextCaretSample] =
     caretLayoutCosmicText(CosmicTextEngine(handle: handle), input)
 
+  proc cachedFontMetrics(input: TextFontMetricsInput): FontUnitMetrics =
+    let measureInput = TextMeasureInput(
+      text: "0",
+      style: input.style,
+      maxWidth: none(float32),
+      fonts: input.fonts
+    )
+    let key = measureInput.cosmicTextRasterKey()
+    for entry in fontMetricsCache:
+      if entry.key == key:
+        return entry.value
+    result = measureCosmicFontUnits(CosmicTextEngine(handle: handle), input)
+    fontMetricsCache.add TextFontMetricsCacheEntry(key: key, value: result)
+    trimFontMetricsCache()
+
   TextEngine(
     measureText: proc(input: TextMeasureInput): Size =
       cachedMeasure(input),
@@ -578,6 +638,8 @@ proc textEngine*(engine: CosmicTextEngine): TextEngine =
       cachedCaret(input),
     hitTestText: proc(input: TextHitInput): TextCaretResult =
       cachedHit(input),
+    fontUnitMetrics: proc(input: TextFontMetricsInput): FontUnitMetrics =
+      cachedFontMetrics(input),
     layoutCarets: proc(input: TextMeasureInput): seq[TextCaretSample] =
       cachedCaretLayout(input)
   )

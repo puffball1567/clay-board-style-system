@@ -107,11 +107,11 @@ proc `onInput=`*(listBox: ListBoxHandle; handler: EventHandler) =
   listBox.container.onInput = handler
 
 proc itemClickHandler(listBox: ListBoxHandle; itemIndex: int): EventHandler =
-  proc(event: DispatchResult): bool =
+  proc(event: DispatchResult): EventOutcome =
     if listBox.state.disabled:
-      return true
+      return stoppedEvent()
     listBox.setSelectedIndex(itemIndex, emitEvents = true)
-    true
+    stoppedEvent()
 
 proc listBox*(
     root: UiRoot;
@@ -146,33 +146,33 @@ proc listBox*(
   for index, node in listBox.itemNodes:
     root.events.addInternalEventHandler(node.id, iekClick, itemClickHandler(listBox, index))
 
-  root.events.addInternalEventHandler(listBox.container.id, iekKeyDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(listBox.container.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
     if listBox.state.disabled:
-      return true
+      return stoppedEvent()
     if event.event.key.isNone:
-      return false
+      return ignoredEvent()
     case event.event.key.get
     of "ArrowDown":
       listBox.selectNext()
-      return true
+      return stoppedEvent()
     of "ArrowUp":
       listBox.selectPrevious()
-      return true
+      return stoppedEvent()
     of "Home":
       for index, item in listBox.state.items:
         if not item.disabled:
           listBox.setSelectedIndex(index, emitEvents = true)
-          return true
-      return true
+          return stoppedEvent()
+      return stoppedEvent()
     of "End":
       for index in countdown(listBox.state.items.high, 0):
         if not listBox.state.items[index].disabled:
           listBox.setSelectedIndex(index, emitEvents = true)
-          return true
-      return true
+          return stoppedEvent()
+      return stoppedEvent()
     else:
       discard
-    false
+    ignoredEvent()
   )
 
 proc listBox*(

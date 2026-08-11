@@ -117,7 +117,7 @@ proc buildControlledRepeatedPasteUi(
       ]),
       id = "controlled-paste-input"
     )
-    input.container.onInput = proc(event: DispatchResult): bool =
+    input.container.onInput = proc(event: DispatchResult): EventOutcome =
       if event.event.text.isSome:
         onInputValue(event.event.text.get)
       false
@@ -140,7 +140,7 @@ proc buildControlledRepeatedPasteUi(
       ]),
       id = "controlled-paste-area"
     )
-    area.container.onInput = proc(event: DispatchResult): bool =
+    area.container.onInput = proc(event: DispatchResult): EventOutcome =
       if event.event.text.isSome:
         onAreaValue(event.event.text.get)
       false

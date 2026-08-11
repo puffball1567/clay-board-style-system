@@ -511,7 +511,7 @@ suite "CBSS headless test driver":
       result = initUiRoot()
       result.box("app"):
         saveButton = result.button("Save")
-        saveButton.onClick = proc(event: DispatchResult): bool =
+        saveButton.onClick = proc(event: DispatchResult): EventOutcome =
           inc saves
           false
         rememberBox = result.checkbox("Remember")
@@ -677,7 +677,7 @@ suite "CBSS headless test driver":
         decl("height", px(60)),
         decl("flex-shrink", number(0))
       ]))
-    panel.onWheel = proc(event: DispatchResult): bool =
+    panel.onWheel = proc(event: DispatchResult): EventOutcome =
       inc wheelCount
       true
 

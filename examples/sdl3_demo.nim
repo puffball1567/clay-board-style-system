@@ -36,6 +36,7 @@ type
     altTabStatusText: Option[NodeId]
 
   FrameData = object
+    viewport: Size
     styles: ResolvedTree
     layout: LayoutResult
     commands: seq[PaintCommand]
@@ -1552,9 +1553,9 @@ proc addButtonStateOverrides(ui: UiRoot; button: ButtonHandle) =
 proc RunButton(ui: UiRoot; onRun: proc() {.closure.}; style = primaryButtonStyle()): ButtonHandle {.discardable.} =
   result = ui.button("Run", style = style)
   ui.addButtonStateOverrides(result)
-  proc handleRun(event: DispatchResult): bool =
+  proc handleRun(event: DispatchResult): EventOutcome =
     onRun()
-    true
+    stoppedEvent()
 
   result.onClick = handleRun
 
@@ -1606,10 +1607,10 @@ proc DemoTextInput(ui: UiRoot; state: DemoState; valueDispatch: DispatchProc[Dem
     id = "hero-input"
   )
 
-  result.container.onInput = proc(event: DispatchResult): bool =
+  result.container.onInput = proc(event: DispatchResult): EventOutcome =
     if event.event.text.isSome:
       valueDispatch(DemoAction(kind: dakHeroInputChanged, value: event.event.text.get))
-    false
+    ignoredEvent()
 
 proc ControlsPanel(
     ui: UiRoot;
@@ -1693,11 +1694,11 @@ proc ControlsPanel(
         style = tabsStyle(),
         tabStyle = tabStyle()
       )
-      demoTabs.onChange = proc(event: DispatchResult): bool =
+      demoTabs.onChange = proc(event: DispatchResult): EventOutcome =
         let value = demoTabs.selectedValue()
         valueDispatch(DemoAction(kind: dakTabSelected, value: value))
         ui.syncTabStatusText(refs, value)
-        false
+        ignoredEvent()
 
     ui.box(controlRowStyle()):
       ui.text("", controlLabelStyle())
@@ -1790,11 +1791,11 @@ proc AltControlsPanel(
         tabStyle = altTabStyle(),
         tabGroups = ["tab-alt"]
       )
-      demoTabs.onChange = proc(event: DispatchResult): bool =
+      demoTabs.onChange = proc(event: DispatchResult): EventOutcome =
         let value = demoTabs.selectedValue()
         valueDispatch(DemoAction(kind: dakAltTabSelected, value: value))
         ui.syncAltTabStatusText(refs, value)
-        false
+        ignoredEvent()
 
     ui.box(altRowStyle()):
       ui.text("", altLabelStyle())
@@ -1858,10 +1859,10 @@ proc ComponentCatalog(
           textStyle = compactInputValueStyle(),
           id = "catalog-input"
         )
-        compact.container.onInput = proc(event: DispatchResult): bool =
+        compact.container.onInput = proc(event: DispatchResult): EventOutcome =
           if event.event.text.isSome:
             valueDispatch(DemoAction(kind: dakCatalogInputChanged, value: event.event.text.get))
-          false
+          ignoredEvent()
         ui.label("label target", compact, style = choiceStyle(), textStyle = choiceLabelStyle())
       ui.box(catalogRowStyle()):
         ui.text("textarea", catalogLabelStyle())
@@ -1881,10 +1882,10 @@ proc ComponentCatalog(
           textStyle = textAreaValueStyle(),
           id = "catalog-textarea"
         )
-        area.container.onInput = proc(event: DispatchResult): bool =
+        area.container.onInput = proc(event: DispatchResult): EventOutcome =
           if event.event.text.isSome:
             valueDispatch(DemoAction(kind: dakCatalogTextareaChanged, value: event.event.text.get))
-          false
+          ignoredEvent()
 
     ui.box(catalogSectionStyle(118)):
       ui.box(catalogSplitRowStyle(96), "command-menu-row"):
@@ -1974,10 +1975,10 @@ proc ComponentCatalog(
             textStyle = compactInputValueStyle(),
             id = "form-name-input"
           )
-          nameInput.container.onInput = proc(event: DispatchResult): bool =
+          nameInput.container.onInput = proc(event: DispatchResult): EventOutcome =
             if event.event.text.isSome:
               valueDispatch(DemoAction(kind: dakFormNameChanged, value: event.event.text.get))
-            false
+            ignoredEvent()
           ui.label("Name label", nameInput, style = choiceStyle(), textStyle = choiceLabelStyle())
         finally:
           ui.popParent()
@@ -2138,7 +2139,13 @@ proc buildFrame(
     fonts: FontRegistry
 ): FrameData =
   var diagnostics: Diagnostics
-  let styles = resolveTreeStyles(ui.tree, ui.styleSheets(), defaultProperties(), diagnostics)
+  let styles = resolveTreeStyles(
+    ui.tree,
+    ui.styleSheets(),
+    defaultProperties(),
+    diagnostics,
+    viewportSize = some(viewport)
+  )
   if diagnostics.hasErrors:
     for item in diagnostics.items:
       echo item.property, ": ", item.message
@@ -2147,6 +2154,7 @@ proc buildFrame(
   let layout = computeLayout(ui.tree, styles, viewport, textEngine, fonts)
   ui.scroll.syncScrollState(ui.tree, styles, layout)
   FrameData(
+    viewport: viewport,
     styles: styles,
     layout: layout,
     commands: buildPaintCommands(ui.tree, styles, layout, ui.scroll),
@@ -2160,7 +2168,13 @@ proc buildFrame(
 
 proc repaintFrame(ui: UiRoot; frame: var FrameData) =
   var diagnostics: Diagnostics
-  let styles = resolveTreeStyles(ui.tree, ui.styleSheets(), defaultProperties(), diagnostics)
+  let styles = resolveTreeStyles(
+    ui.tree,
+    ui.styleSheets(),
+    defaultProperties(),
+    diagnostics,
+    viewportSize = some(frame.viewport)
+  )
   if diagnostics.hasErrors:
     for item in diagnostics.items:
       echo item.property, ": ", item.message
@@ -2241,9 +2255,16 @@ proc repaintTextControlFrame(
       sheets,
       defaultProperties(),
       diagnostics,
-      frame.styles
+      frame.styles,
+      viewportSize = some(frame.viewport)
   ):
-    frame.styles = resolveTreeStyles(ui.tree, sheets, defaultProperties(), diagnostics)
+    frame.styles = resolveTreeStyles(
+      ui.tree,
+      sheets,
+      defaultProperties(),
+      diagnostics,
+      viewportSize = some(frame.viewport)
+    )
   when defined(cbssTracePerf):
     echo "[perf-detail] text styles ms=", elapsedMs(styleStart), " target=", target.nodeIndex
   if diagnostics.hasErrors:
@@ -2285,7 +2306,8 @@ proc repaintDirtySubtrees(
       sheets,
       defaultProperties(),
       diagnostics,
-      frame.styles
+      frame.styles,
+      viewportSize = some(frame.viewport)
     )
   when defined(cbssTracePerf):
     echo "[perf-detail] dirty styles ms=", elapsedMs(styleStart), " roots=", roots.len
@@ -3136,7 +3158,7 @@ proc main() =
           pointerMoveEvent(point, event.pointer, event.timestamp), ui.scroll
         )
         ui.normalizeTextControlDispatches(frame.regions, dispatches)
-        discard ui.events.handle(ui.tree, dispatches)
+        discard ui.handleEvents(dispatches)
         if ui.scroll.revision != scrollRevision:
           retainedScrollPaintPending = true
           frameDirty = true
@@ -3171,7 +3193,7 @@ proc main() =
           needsFrame = true
           continue
         if ui.isContextMenuHit(hitTarget):
-          discard ui.events.handle(ui.tree, DispatchResult(
+          discard ui.handleEvent(DispatchResult(
             target: hitTarget,
             local:
               if hit.isSome: some(hit.get.local)
@@ -3193,7 +3215,7 @@ proc main() =
               point, event.button, event.pointer, event.timestamp
             ), ui.scroll
           )
-          discard ui.events.handle(ui.tree, dispatches)
+          discard ui.handleEvents(dispatches)
           if ui.scroll.revision != scrollRevision:
             retainedScrollPaintPending = true
             frameDirty = true
@@ -3217,7 +3239,7 @@ proc main() =
           ), ui.scroll
         )
         ui.normalizeTextControlDispatches(frame.regions, dispatches)
-        discard ui.events.handle(ui.tree, dispatches)
+        discard ui.handleEvents(dispatches)
         ui.normalizeTextControlFocus(inputState, normalizedHitTarget)
         dirtyStyleRoots.addDirtyRoot(inputState.focusedTarget)
         if textHit.isSome:
@@ -3285,7 +3307,7 @@ proc main() =
           if hit.isSome: some(hit.get.node)
           else: none(NodeId)
         if ui.isContextMenuHit(hitTarget):
-          discard ui.events.handle(ui.tree, DispatchResult(
+          discard ui.handleEvent(DispatchResult(
             target: hitTarget,
             local:
               if hit.isSome: some(hit.get.local)
@@ -3312,7 +3334,7 @@ proc main() =
           ), ui.scroll
         )
         ui.normalizeTextControlDispatches(frame.regions, dispatches)
-        discard ui.events.handle(ui.tree, dispatches)
+        discard ui.handleEvents(dispatches)
         if scrollbarPointer:
           continue
         staticLayerDirty = true
@@ -3771,7 +3793,7 @@ proc main() =
             inputState.processInput(ui.tree, frame.regions, wheel)
           else:
             inputState.processInput(ui.tree, frame.regions, wheel, ui.scroll)
-        let handled = ui.events.handle(ui.tree, dispatches)
+        let handled = ui.handleEvents(dispatches)
         if ui.scroll.revision != scrollRevision:
           retainedScrollPaintPending = true
           frameDirty = true
@@ -3787,7 +3809,7 @@ proc main() =
         let input = event.pointerInputEvent()
         if input.isSome:
           let dispatches = inputState.processInput(ui.tree, frame.regions, input.get)
-          discard ui.events.handle(ui.tree, dispatches)
+          discard ui.handleEvents(dispatches)
         paintOnlyDirty = true
       of sekTouchMove:
         staticLayerDirty = true
@@ -3796,21 +3818,21 @@ proc main() =
           let dispatches = inputState.processInput(
             ui.tree, frame.regions, input.get
           )
-          discard ui.events.handle(ui.tree, dispatches)
+          discard ui.handleEvents(dispatches)
         paintOnlyDirty = true
       of sekTouchEnd:
         staticLayerDirty = true
         let input = event.pointerInputEvent()
         if input.isSome:
           let dispatches = inputState.processInput(ui.tree, frame.regions, input.get)
-          discard ui.events.handle(ui.tree, dispatches)
+          discard ui.handleEvents(dispatches)
         paintOnlyDirty = true
       of sekTouchCancel:
         staticLayerDirty = true
         let input = event.pointerInputEvent()
         if input.isSome:
           let dispatches = inputState.processInput(ui.tree, frame.regions, input.get)
-          discard ui.events.handle(ui.tree, dispatches)
+          discard ui.handleEvents(dispatches)
         paintOnlyDirty = true
       of sekPenProximityIn, sekPenProximityOut,
          sekPenButtonDown, sekPenButtonUp:
@@ -3819,8 +3841,13 @@ proc main() =
           let dispatches = inputState.processInput(
             ui.tree, frame.regions, input.get, ui.scroll
           )
-          discard ui.events.handle(ui.tree, dispatches)
+          discard ui.handleEvents(dispatches)
         paintOnlyDirty = true
+      of sekStreamWake:
+        # The full demo does not own a stream binding. Applications route this
+        # event through the matching Sdl3StreamWake handle.
+        discard
+      discard ui.reconcilePointerCapture(inputState)
       if ui.reconcileFocus(inputState):
         staticLayerDirty = true
         paintOnlyDirty = true
@@ -3849,7 +3876,7 @@ proc main() =
       let scrollRevision = ui.scroll.revision
       let scrollEndDispatches = inputState.finishScroll(ui.scroll)
       if scrollEndDispatches.len > 0:
-        discard ui.events.handle(ui.tree, scrollEndDispatches)
+        discard ui.handleEvents(scrollEndDispatches)
       if ui.scroll.revision != scrollRevision:
         finishScrollFrame(ui, frame)
         staticLayerDirty = true
@@ -3874,6 +3901,11 @@ proc main() =
       ui.clearCaretBlinkSheet(caretBlinkSheetIndex)
 
     discard ui.tickOwnedAnimations(scheduler, epochTime())
+    let componentInvalidation = ui.consumeInvalidation()
+    let hasComponentInvalidation = componentInvalidation.roots.len > 0
+    scheduler.markDirty(componentInvalidation.domains)
+    for root in componentInvalidation.roots:
+      dirtyStyleRoots.addDirtyRoot(some(root))
     let demoDirty = demo.consumeDirty()
     if demoDirty:
       scheduler.markDirty({ddStyle, ddLayout, ddPaint, ddHit})
@@ -3897,6 +3929,16 @@ proc main() =
       )
       frameDirty = true
       staticLayerDirty = true
+    elif hasComponentInvalidation and not needsFrame and
+        ddResource notin dirtyDomains:
+      let frameStart = epochTime()
+      repaintDirtySubtrees(ui, frame, dirtyStyleRoots, textEngine, fonts)
+      ui.tracePerf(
+        "repaintDirtySubtrees component ms=" & elapsedMs(frameStart) &
+        " roots=" & $dirtyStyleRoots.len
+      )
+      frameDirty = true
+      staticLayerDirty = true
     elif ({ddStyle, ddLayout, ddHit, ddResource} * dirtyDomains) != {}:
       let frameStart = epochTime()
       frame = buildFrame(ui, viewport, textEngine, fonts)
@@ -3910,9 +3952,7 @@ proc main() =
       staticLayerDirty = true
     elif dirtyDomains != {}:
       let frameStart = epochTime()
-      if dirtyStyleRoots.len > 0:
-        repaintDirtySubtrees(ui, frame, dirtyStyleRoots, textEngine, fonts)
-      elif not staticLayerDirty and
+      if not staticLayerDirty and
           inputState.focusedTarget.isSome and
           ui.isTextInputTarget(inputState.focusedTarget.get):
         repaintTextControlFrame(ui, frame, inputState.focusedTarget.get, textEngine, fonts)

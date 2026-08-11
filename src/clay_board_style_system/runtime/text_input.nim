@@ -3,6 +3,7 @@ import std/[options, strutils]
 import ../core/[color, computed_style, declaration, geometry, node, rule, selector, style_value]
 import ../input/events
 import ../text/text_engine
+import ./form
 import ./ui_root
 
 const textEdgeSlack = 2.0'f32
@@ -60,6 +61,9 @@ type
     textNode*: NodeHandle
     caretNode*: NodeHandle
     state*: TextInputState
+
+proc register*(form: FormHandle; name: string; input: TextInputHandle) =
+  form.registerField(input.container, name, ffText)
 
 proc clampCaret(state: TextInputState) =
   if state.caret < 0:
@@ -1037,217 +1041,217 @@ proc textInput*(
     input.setDisabled(ownDisabled or disabled)
   )
 
-  root.events.addInternalEventHandler(input.container.id, iekFocus, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekFocus, proc(event: DispatchResult): EventOutcome =
     input.focus()
-    false
+    ignoredEvent()
   )
-  root.events.addInternalEventHandler(input.container.id, iekPointerDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekPointerDown, proc(event: DispatchResult): EventOutcome =
     if input.state.disabled:
       input.state.selecting = false
-      return true
+      return stoppedEvent()
     let button = if event.event.button.isSome: event.event.button.get else: 0
     if button in [0, 1] and event.local.isSome:
       input.focus()
       input.state.selecting = true
       input.moveCaretToPoint(event.local.get, extendSelection = event.event.shiftKey)
-    false
+    ignoredEvent()
   )
-  root.events.addInternalEventHandler(input.container.id, iekPointerMove, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekPointerMove, proc(event: DispatchResult): EventOutcome =
     if input.state.disabled:
       input.state.selecting = false
-      return true
+      return stoppedEvent()
     if input.state.selecting and event.local.isSome:
       input.moveCaretToPoint(event.local.get, extendSelection = true)
-    false
+    ignoredEvent()
   )
-  root.events.addInternalEventHandler(input.container.id, iekDrag, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekDrag, proc(event: DispatchResult): EventOutcome =
     if input.state.disabled:
       input.state.selecting = false
-      return true
+      return stoppedEvent()
     if input.state.selecting and event.local.isSome:
       input.moveCaretToPoint(event.local.get, extendSelection = true)
-    false
+    ignoredEvent()
   )
-  root.events.addInternalEventHandler(input.container.id, iekPointerUp, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekPointerUp, proc(event: DispatchResult): EventOutcome =
     input.state.selecting = false
-    false
+    ignoredEvent()
   )
-  root.events.addInternalEventHandler(input.container.id, iekDragEnd, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekDragEnd, proc(event: DispatchResult): EventOutcome =
     input.state.selecting = false
-    false
+    ignoredEvent()
   )
-  root.events.addInternalEventHandler(input.container.id, iekBlur, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekBlur, proc(event: DispatchResult): EventOutcome =
     input.blur()
-    false
+    ignoredEvent()
   )
-  root.events.addInternalEventHandler(input.container.id, iekTextInput, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekTextInput, proc(event: DispatchResult): EventOutcome =
     if input.state.disabled or input.state.readOnly:
-      return true
+      return stoppedEvent()
     if event.event.text.isSome:
       let text = event.event.text.get
       if input.state.pendingFallbackText == text:
         input.state.pendingFallbackText = ""
-        return true
+        return stoppedEvent()
       else:
         input.insertText(text, emitValue = true)
-        return true
-    false
+        return stoppedEvent()
+    ignoredEvent()
   )
-  root.events.addInternalEventHandler(input.container.id, iekPaste, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekPaste, proc(event: DispatchResult): EventOutcome =
     if input.state.disabled or input.state.readOnly:
-      return true
+      return stoppedEvent()
     if event.event.text.isSome:
       input.insertText(event.event.text.get, emitValue = true)
-    false
+    ignoredEvent()
   )
-  root.events.addInternalEventHandler(input.container.id, iekCopy, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekCopy, proc(event: DispatchResult): EventOutcome =
     input.requestClipboardWrite(input.selectedText())
-    false
+    ignoredEvent()
   )
-  root.events.addInternalEventHandler(input.container.id, iekCut, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekCut, proc(event: DispatchResult): EventOutcome =
     input.requestClipboardWrite(input.selectedText())
     if not input.state.readOnly and input.deleteSelection():
       input.emitValueEvents()
-    false
+    ignoredEvent()
   )
-  root.events.addInternalEventHandler(input.container.id, iekCompositionStart, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekCompositionStart, proc(event: DispatchResult): EventOutcome =
     let text =
       if event.event.text.isSome: event.event.text.get
       else: ""
     if input.state.composingActive and input.state.composingText == text:
-      return false
+      return ignoredEvent()
     input.state.pendingFallbackText = ""
     input.state.composingActive = true
     input.state.composingText = text
     input.state.compositionUpdateSeen = false
     input.state.lastCompositionUpdateText = ""
     input.setVisibleText()
-    true
+    stoppedEvent()
   )
-  root.events.addInternalEventHandler(input.container.id, iekCompositionUpdate, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekCompositionUpdate, proc(event: DispatchResult): EventOutcome =
     let text =
       if event.event.text.isSome: event.event.text.get
       else: ""
     if input.state.compositionUpdateSeen and input.state.lastCompositionUpdateText == text:
-      return false
+      return ignoredEvent()
     input.state.pendingFallbackText = ""
     input.state.composingActive = true
     input.state.composingText = text
     input.state.compositionUpdateSeen = true
     input.state.lastCompositionUpdateText = text
     input.setVisibleText()
-    true
+    stoppedEvent()
   )
-  root.events.addInternalEventHandler(input.container.id, iekCompositionEnd, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekCompositionEnd, proc(event: DispatchResult): EventOutcome =
     if not input.state.composingActive and input.state.composingText.len == 0:
-      return false
+      return ignoredEvent()
     input.state.pendingFallbackText = ""
     input.state.composingActive = false
     input.state.composingText = ""
     input.state.compositionUpdateSeen = false
     input.state.lastCompositionUpdateText = ""
     input.setVisibleText()
-    true
+    stoppedEvent()
   )
-  root.events.addInternalEventHandler(input.container.id, iekKeyDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(input.container.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
     if input.state.disabled:
-      return false
+      return ignoredEvent()
     if event.event.key.isNone:
-      return false
+      return ignoredEvent()
     if event.event.ctrlKey or event.event.metaKey:
       case event.event.key.get.toLowerAscii()
       of "a":
         input.selectAll()
-        return true
+        return stoppedEvent()
       of "c":
         discard input.container.emit(copyEvent())
-        return true
+        return stoppedEvent()
       of "insert":
         discard input.container.emit(copyEvent())
-        return true
+        return stoppedEvent()
       of "x":
         discard input.container.emit(cutEvent())
-        return true
+        return stoppedEvent()
       of "v":
         discard input.container.emit(pasteEvent(input.root.clipboardText()))
-        return true
+        return stoppedEvent()
       of "z":
         let changed =
           if event.event.shiftKey: input.redo()
           else: input.undo()
         if changed:
           input.emitValueEvents()
-          return true
+          return stoppedEvent()
       of "y":
         if input.redo():
           input.emitValueEvents()
-          return true
+          return stoppedEvent()
       of "arrowleft":
         input.moveCaretWordLeft(extendSelection = event.event.shiftKey)
-        return true
+        return stoppedEvent()
       of "arrowright":
         input.moveCaretWordRight(extendSelection = event.event.shiftKey)
-        return true
+        return stoppedEvent()
       of "home":
         input.moveCaretTo(0, extendSelection = event.event.shiftKey)
-        return true
+        return stoppedEvent()
       of "end":
         input.moveCaretTo(input.state.value.len, extendSelection = event.event.shiftKey)
-        return true
+        return stoppedEvent()
       of "backspace":
         if input.deleteWordBackward():
           input.emitValueEvents()
-          return true
+          return stoppedEvent()
       of "delete":
         if input.deleteWordForward():
           input.emitValueEvents()
-          return true
+          return stoppedEvent()
       else:
         discard
-      return false
+      return ignoredEvent()
     case event.event.key.get
     of "Backspace":
       if input.deleteComposingBackward():
-        return true
+        return stoppedEvent()
       if input.deleteBackward():
         input.emitValueEvents()
-        return true
+        return stoppedEvent()
     of "Delete":
       if event.event.shiftKey:
         discard input.container.emit(cutEvent())
-        return true
+        return stoppedEvent()
       else:
         if input.deleteForward():
           input.emitValueEvents()
-          return true
+          return stoppedEvent()
     of "Insert":
       if event.event.shiftKey:
         discard input.container.emit(pasteEvent(input.root.clipboardText()))
-        return true
+        return stoppedEvent()
     of "ArrowLeft":
       input.moveCaretLeft(extendSelection = event.event.shiftKey)
-      return true
+      return stoppedEvent()
     of "ArrowRight":
       input.moveCaretRight(extendSelection = event.event.shiftKey)
-      return true
+      return stoppedEvent()
     of "ArrowUp", "PageUp":
       input.moveCaretTo(0, extendSelection = event.event.shiftKey)
-      return true
+      return stoppedEvent()
     of "ArrowDown", "PageDown":
       input.moveCaretTo(input.state.value.len, extendSelection = event.event.shiftKey)
-      return true
+      return stoppedEvent()
     of "Home":
       input.moveCaretTo(0, extendSelection = event.event.shiftKey)
-      return true
+      return stoppedEvent()
     of "End":
       input.moveCaretTo(input.state.value.len, extendSelection = event.event.shiftKey)
-      return true
+      return stoppedEvent()
     else:
       let typed = textFromPrintableKey(event.event)
       if typed.len > 0:
         input.insertText(typed)
         input.emitInputEvent()
         input.state.pendingFallbackText = typed
-        return true
-    false
+        return stoppedEvent()
+    ignoredEvent()
   )

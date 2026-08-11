@@ -13,16 +13,36 @@
 #  define CBSS_API
 #endif
 
+#if defined(_MSC_VER)
+#  define CBSS_DEPRECATED(message) __declspec(deprecated(message))
+#elif defined(__clang__) || defined(__GNUC__)
+#  define CBSS_DEPRECATED(message) __attribute__((deprecated(message)))
+#else
+#  define CBSS_DEPRECATED(message)
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define CBSS_ABI_VERSION 0x00010006u
+#define CBSS_ABI_VERSION 0x00010011u
 #define CBSS_NODE_NONE UINT32_MAX
+#define CBSS_MAX_EAGER_BLOB_BYTES (64ull * 1024ull * 1024ull)
+#define CBSS_MAX_FORM_DATA_ENTRIES 65536u
+#define CBSS_MAX_FORM_DATA_NAME_BYTES 65536u
+#define CBSS_MAX_FORM_DATA_TEXT_BYTES (16u * 1024u * 1024u)
+#define CBSS_MAX_STREAM_ERROR_BYTES 65536u
 
 typedef struct CbssContext CbssContext;
 typedef struct CbssStyle CbssStyle;
 typedef struct CbssColorValue CbssColorValue;
+typedef struct CbssBlob CbssBlob;
+typedef struct CbssFormDataBuilder CbssFormDataBuilder;
+typedef struct CbssFormData CbssFormData;
+typedef struct CbssEventView CbssEventView;
+typedef struct CbssBlobStream CbssBlobStream;
+typedef struct CbssStreamProducer CbssStreamProducer;
+typedef uint64_t CbssEventSubscription;
 
 typedef int32_t CbssStatus;
 enum {
@@ -31,7 +51,44 @@ enum {
   CBSS_INVALID_HANDLE = 2,
   CBSS_OUT_OF_RANGE = 3,
   CBSS_STYLE_ERROR = 4,
-  CBSS_INTERNAL_ERROR = 5
+  CBSS_INTERNAL_ERROR = 5,
+  CBSS_NOT_AVAILABLE = 6
+};
+
+typedef enum CbssFormDataValueKind {
+  CBSS_FORM_DATA_TEXT = 0,
+  CBSS_FORM_DATA_BLOB = 1
+} CbssFormDataValueKind;
+
+typedef enum CbssStreamState {
+  CBSS_STREAM_IDLE = 0,
+  CBSS_STREAM_OPEN = 1,
+  CBSS_STREAM_ENDED = 2,
+  CBSS_STREAM_FAILED = 3,
+  CBSS_STREAM_CANCELLED = 4,
+  CBSS_STREAM_CLOSED = 5
+} CbssStreamState;
+
+typedef enum CbssStreamOfferResult {
+  CBSS_STREAM_OFFER_ACCEPTED = 0,
+  CBSS_STREAM_OFFER_BACKPRESSURE = 1,
+  CBSS_STREAM_OFFER_INVALID_STATE = 2,
+  CBSS_STREAM_OFFER_DISPOSED = 3,
+  CBSS_STREAM_OFFER_INVALID_ARGUMENT = 4
+} CbssStreamOfferResult;
+
+typedef enum CbssStreamEventKind {
+  CBSS_STREAM_EVENT_OPEN = 0,
+  CBSS_STREAM_EVENT_DATA = 1,
+  CBSS_STREAM_EVENT_PROGRESS = 2,
+  CBSS_STREAM_EVENT_END = 3,
+  CBSS_STREAM_EVENT_ERROR = 4,
+  CBSS_STREAM_EVENT_CANCEL = 5,
+  CBSS_STREAM_EVENT_CLOSE = 6
+} CbssStreamEventKind;
+
+enum {
+  CBSS_STREAM_EVENT_HAS_TOTAL = 1u << 0
 };
 
 typedef enum CbssUnit {
@@ -45,7 +102,17 @@ typedef enum CbssUnit {
   CBSS_UNIT_MAX_CONTENT = 7,
   CBSS_UNIT_FIT_CONTENT = 8,
   CBSS_UNIT_AUTO = 9,
-  CBSS_UNIT_NONE = 10
+  CBSS_UNIT_NONE = 10,
+  CBSS_UNIT_VW = 11,
+  CBSS_UNIT_VH = 12,
+  CBSS_UNIT_VMIN = 13,
+  CBSS_UNIT_VMAX = 14,
+  CBSS_UNIT_LH = 15,
+  CBSS_UNIT_RLH = 16,
+  CBSS_UNIT_EX = 17,
+  CBSS_UNIT_CH = 18,
+  CBSS_UNIT_REX = 19,
+  CBSS_UNIT_RCH = 20
 } CbssUnit;
 
 typedef enum CbssNodeState {
@@ -65,6 +132,7 @@ typedef enum CbssNodeKind {
   CBSS_NODE_IMAGE = 2
 } CbssNodeKind;
 
+/* CBSS_GENERATED_EVENT_KINDS_BEGIN */
 typedef enum CbssEventKind {
   CBSS_EVENT_ABORT = 0,
   CBSS_EVENT_ANIMATION_END = 1,
@@ -160,8 +228,13 @@ typedef enum CbssEventKind {
   CBSS_EVENT_PEN_PROXIMITY_IN = 91,
   CBSS_EVENT_PEN_PROXIMITY_OUT = 92,
   CBSS_EVENT_PEN_BUTTON_DOWN = 93,
-  CBSS_EVENT_PEN_BUTTON_UP = 94
+  CBSS_EVENT_PEN_BUTTON_UP = 94,
+  CBSS_EVENT_ANIMATION_CANCEL = 95,
+  CBSS_EVENT_TRANSITION_RUN = 96,
+  CBSS_EVENT_TRANSITION_START = 97,
+  CBSS_EVENT_TRANSITION_CANCEL = 98
 } CbssEventKind;
+/* CBSS_GENERATED_EVENT_KINDS_END */
 
 enum {
   CBSS_INPUT_HAS_POSITION = 1u << 0,
@@ -204,7 +277,17 @@ enum {
   CBSS_EVENT_HAS_BUTTON = 1u << 3,
   CBSS_EVENT_HAS_KEY = 1u << 4,
   CBSS_EVENT_HAS_TEXT = 1u << 5,
-  CBSS_EVENT_HAS_POINTER = 1u << 6
+  CBSS_EVENT_HAS_POINTER = 1u << 6,
+  CBSS_EVENT_BUBBLES = 1u << 7,
+  CBSS_EVENT_CANCELABLE = 1u << 8,
+  CBSS_EVENT_PHASE_TARGET = 1u << 9,
+  CBSS_EVENT_PHASE_BUBBLE = 1u << 10
+};
+
+enum {
+  CBSS_EVENT_OUTCOME_HANDLED = 1u << 0,
+  CBSS_EVENT_OUTCOME_STOP_PROPAGATION = 1u << 1,
+  CBSS_EVENT_OUTCOME_PREVENT_DEFAULT = 1u << 2
 };
 
 enum {
@@ -528,6 +611,7 @@ typedef struct CbssDispatchSummary {
   uint32_t target;
   uint32_t dispatch_count;
   uint8_t handled;
+  uint8_t outcome;
   uint8_t needs_compute;
   uint8_t paint_changed;
   uint8_t focus_changed;
@@ -609,13 +693,166 @@ typedef struct CbssRenderSurfaceEvent {
   CbssInputEvent input;
 } CbssRenderSurfaceEvent;
 
+typedef struct CbssStreamPumpResult {
+  uint32_t processed;
+  uint32_t rejected;
+  uint8_t changed;
+  uint8_t backpressured;
+  uint8_t pending;
+} CbssStreamPumpResult;
+
+/*
+ * A DATA event transfers one owning Blob reference to `blob`; release it with
+ * cbss_blob_release. Other event kinds leave `blob` null.
+ */
+typedef struct CbssStreamEvent {
+  uint32_t kind;
+  uint32_t flags;
+  CbssBlob *blob;
+  uint64_t weight;
+  uint64_t completed;
+  uint64_t total;
+  uint32_t message_bytes;
+} CbssStreamEvent;
+
+/* Return a bitwise combination of CBSS_EVENT_OUTCOME_* values. */
 typedef uint8_t (*CbssEventCallback)(
     CbssContext *context, const CbssEvent *event, void *user_data);
+/*
+ * EventView is borrowed for the callback duration. Accessors return either a
+ * borrowed base event or an explicitly retained payload handle.
+ */
+typedef uint8_t (*CbssEventViewCallback)(
+    CbssContext *context, const CbssEventView *view, void *user_data);
 typedef uint32_t (*CbssRenderSurfaceCallback)(
     CbssContext *context, const CbssRenderSurfaceEvent *event,
     void *user_data);
+/* Post a host-loop wake only. Do not re-enter or destroy the stream. */
+typedef void (*CbssStreamWakeCallback)(void *user_data);
+/*
+ * Reads at most capacity bytes and writes the actual count to output_read.
+ * The callback is synchronous. CBSS serializes reads for one Blob, but it may
+ * call different providers concurrently. Do not re-enter the same Blob from
+ * its callback. Return a defined CbssStatus; unknown values become
+ * CBSS_INTERNAL_ERROR.
+ */
+typedef CbssStatus (*CbssBlobProviderReadCallback)(
+    void *user_data, uint64_t offset, uint8_t *output, uint32_t capacity,
+    uint32_t *output_read);
+typedef void (*CbssBlobProviderReleaseCallback)(void *user_data);
 
 CBSS_API uint32_t cbss_abi_version(void);
+/*
+ * Foreign worker threads must attach before calling CBSS and detach before
+ * exiting. Language wrappers should hide this pair in their worker adapter.
+ */
+CBSS_API void cbss_thread_attach(void);
+CBSS_API void cbss_thread_detach(void);
+
+CBSS_API CbssStatus cbss_blob_create(
+    const uint8_t *bytes, uint64_t length, const char *mime_type,
+    CbssBlob **output);
+/*
+ * Defines a host-authorized, fixed-size Blob without eagerly copying its data.
+ * Takes ownership of user_data on success only. The release callback runs
+ * exactly once after the last Blob reference and may run on the thread that
+ * releases that reference. Provider reads are serialized by CBSS. Callbacks
+ * must not release or otherwise re-enter the same Blob.
+ */
+CBSS_API CbssStatus cbss_blob_create_provider(
+    uint64_t length, const char *mime_type,
+    CbssBlobProviderReadCallback read_callback,
+    CbssBlobProviderReleaseCallback release_callback, void *user_data,
+    CbssBlob **output);
+CBSS_API CbssStatus cbss_blob_retain(CbssBlob *blob);
+CBSS_API void cbss_blob_release(CbssBlob *blob);
+CBSS_API uint64_t cbss_blob_size(const CbssBlob *blob);
+CBSS_API uint32_t cbss_blob_mime_type(
+    const CbssBlob *blob, char *buffer, uint32_t capacity);
+CBSS_API CbssStatus cbss_blob_read(
+    const CbssBlob *blob, uint64_t offset, uint8_t *output,
+    uint32_t capacity, uint32_t *output_read);
+
+/*
+ * Blob streams are UI-owned. Producer handles are atomically retained and may
+ * cross thread boundaries. Build the C ABI library with Nim thread support.
+ */
+CBSS_API CbssStatus cbss_blob_stream_create(
+    uint32_t max_queued_items, uint64_t max_queued_weight,
+    CbssBlobStream **output);
+CBSS_API void cbss_blob_stream_destroy(CbssBlobStream *stream);
+CBSS_API CbssStatus cbss_blob_stream_producer(
+    CbssBlobStream *stream, CbssStreamProducer **output);
+CBSS_API CbssStatus cbss_stream_producer_retain(
+    CbssStreamProducer *producer);
+CBSS_API void cbss_stream_producer_release(CbssStreamProducer *producer);
+/*
+ * Replacing or clearing a wake callback waits for an in-flight callback before
+ * returning. The host may then release the previous user_data safely.
+ */
+CBSS_API CbssStatus cbss_blob_stream_set_wake_callback(
+    CbssBlobStream *stream, CbssStreamWakeCallback callback,
+    void *user_data);
+CBSS_API uint32_t cbss_stream_producer_state(
+    const CbssStreamProducer *producer);
+CBSS_API uint32_t cbss_stream_producer_open(CbssStreamProducer *producer);
+CBSS_API uint32_t cbss_stream_producer_push_blob(
+    CbssStreamProducer *producer, CbssBlob *blob, uint64_t weight);
+CBSS_API uint32_t cbss_stream_producer_progress(
+    CbssStreamProducer *producer, uint64_t completed, uint64_t total,
+    uint8_t has_total);
+CBSS_API uint32_t cbss_stream_producer_finish(
+    CbssStreamProducer *producer);
+CBSS_API uint32_t cbss_stream_producer_fail(
+    CbssStreamProducer *producer, const char *message);
+CBSS_API uint32_t cbss_stream_producer_cancel(
+    CbssStreamProducer *producer);
+CBSS_API uint32_t cbss_stream_producer_close(
+    CbssStreamProducer *producer);
+/* Pump and next must be called by the stream's owning UI thread. */
+CBSS_API CbssStatus cbss_blob_stream_pump(
+    CbssBlobStream *stream, uint32_t max_messages,
+    CbssStreamPumpResult *output);
+CBSS_API CbssStatus cbss_blob_stream_next(
+    CbssBlobStream *stream, CbssStreamEvent *output);
+CBSS_API uint32_t cbss_blob_stream_error_message(
+    const CbssBlobStream *stream, char *buffer, uint32_t capacity);
+CBSS_API uint8_t cbss_blob_stream_has_pending(
+    const CbssBlobStream *stream);
+
+CBSS_API CbssFormDataBuilder *cbss_form_data_builder_create(void);
+CBSS_API void cbss_form_data_builder_destroy(CbssFormDataBuilder *builder);
+CBSS_API CbssStatus cbss_form_data_builder_add_text(
+    CbssFormDataBuilder *builder, const char *name, const char *value);
+CBSS_API CbssStatus cbss_form_data_builder_add_blob(
+    CbssFormDataBuilder *builder, const char *name, CbssBlob *blob,
+    const char *file_name);
+CBSS_API CbssStatus cbss_form_data_builder_finish(
+    CbssFormDataBuilder *builder, CbssFormData **output);
+CBSS_API CbssStatus cbss_form_data_retain(CbssFormData *data);
+CBSS_API void cbss_form_data_release(CbssFormData *data);
+CBSS_API uint32_t cbss_form_data_length(const CbssFormData *data);
+CBSS_API CbssStatus cbss_form_data_entry_kind(
+    const CbssFormData *data, uint32_t index, uint32_t *output);
+CBSS_API uint32_t cbss_form_data_entry_name(
+    const CbssFormData *data, uint32_t index, char *buffer,
+    uint32_t capacity);
+CBSS_API uint32_t cbss_form_data_entry_text(
+    const CbssFormData *data, uint32_t index, char *buffer,
+    uint32_t capacity);
+CBSS_API uint32_t cbss_form_data_entry_file_name(
+    const CbssFormData *data, uint32_t index, char *buffer,
+    uint32_t capacity);
+/* The returned Blob owns one retained reference and must be released. */
+CBSS_API CbssStatus cbss_form_data_entry_blob(
+    const CbssFormData *data, uint32_t index, CbssBlob **output);
+
+/* The returned event pointer is borrowed for the callback duration. */
+CBSS_API const CbssEvent *cbss_event_view_event(
+    const CbssEventView *view);
+/* The returned FormData owns one retained reference and must be released. */
+CBSS_API CbssStatus cbss_event_view_form_data(
+    const CbssEventView *view, CbssFormData **output);
 
 CBSS_API CbssContext *cbss_context_create(void);
 CBSS_API void cbss_context_destroy(CbssContext *context);
@@ -749,6 +986,19 @@ CBSS_API CbssStatus cbss_node_set_focusable(
 CBSS_API CbssStatus cbss_node_set_event_handler(
     CbssContext *context, uint32_t node, uint32_t kind,
     CbssEventCallback callback, void *user_data);
+CBSS_API CbssStatus cbss_node_subscribe_event(
+    CbssContext *context, uint32_t node, uint32_t kind,
+    CbssEventCallback callback, void *user_data,
+    CbssEventSubscription *output_subscription);
+CBSS_API CbssStatus cbss_node_set_event_view_handler(
+    CbssContext *context, uint32_t node, uint32_t kind,
+    CbssEventViewCallback callback, void *user_data);
+CBSS_API CbssStatus cbss_node_subscribe_event_view(
+    CbssContext *context, uint32_t node, uint32_t kind,
+    CbssEventViewCallback callback, void *user_data,
+    CbssEventSubscription *output_subscription);
+CBSS_API CbssStatus cbss_context_unsubscribe_event(
+    CbssContext *context, CbssEventSubscription subscription);
 
 CBSS_API CbssStatus cbss_color_value_create(
     uint32_t space, float first, float second, float third, float alpha,
@@ -859,6 +1109,9 @@ CBSS_API CbssStatus cbss_context_dispatch_input(
     CbssDispatchSummary *output);
 CBSS_API CbssStatus cbss_context_emit_event(
     CbssContext *context, uint32_t node, const CbssInputEvent *event,
+    CbssDispatchSummary *output);
+CBSS_API CbssStatus cbss_context_emit_submit(
+    CbssContext *context, uint32_t node, const CbssFormData *form_data,
     CbssDispatchSummary *output);
 CBSS_API uint32_t cbss_context_focused_node(CbssContext *context);
 CBSS_API CbssStatus cbss_context_set_focus(

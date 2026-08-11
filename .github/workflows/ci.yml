@@ -33,6 +33,15 @@ jobs:
       - name: Check package metadata
         run: nimble check
 
+      - name: Check property support matrix
+        run: nimble checkPropertySupport -y
+
+      - name: Check generated event surfaces
+        run: nimble checkGeneratedEvents -y
+
+      - name: Check explicit first-party event outcomes
+        run: nimble checkExplicitEventOutcomes -y
+
       - name: Run discovered ARC tests
         run: nimble test -y
 
@@ -61,6 +70,36 @@ jobs:
           readelf -d main | grep -q 'libcbss_image_bridge.so'
           ! readelf -d main | grep -q 'libSDL3.so'
           ./main
+
+  nim-orc:
+    name: Nim ORC compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nim
+        run: |
+          curl https://nim-lang.org/choosenim/init.sh -sSf | sh -s -- -y 2.2.10
+          echo "$HOME/.nimble/bin" >> "$GITHUB_PATH"
+
+      - name: Toolchain versions
+        run: |
+          nim --version
+          nimble --version
+
+      - name: Check package metadata
+        run: nimble check
+
+      - name: Run discovered ORC tests
+        run: nimble testOrc -y
+
+      - name: Check public modules and examples under ORC
+        run: nimble checkExamplesOrc -y
+
+      - name: Check cross-thread C ABI streams under ORC
+        run: nimble testCAbiOrc -y
 
   portable:
     name: Portable core (${{ matrix.platform }})
@@ -112,16 +151,29 @@ jobs:
 
       - name: Build shared and static C ABI libraries
         run: |
-          nim c --app:lib --mm:arc -d:release --path:src "--nimcache:${{ runner.temp }}/cbss-c-api-shared-cache" "--outdir:${{ runner.temp }}/cbss-c-api" src/cbss_c_api.nim
-          nim c --app:staticlib --mm:arc -d:release --path:src "--nimcache:${{ runner.temp }}/cbss-c-api-static-cache" "--outdir:${{ runner.temp }}/cbss-c-api" src/cbss_c_api.nim
+          nim c --threads:on --app:lib --mm:arc -d:release --path:src "--nimcache:${{ runner.temp }}/cbss-c-api-shared-cache" "--outdir:${{ runner.temp }}/cbss-c-api" src/cbss_c_api.nim
+          nim c --threads:on --app:staticlib --mm:arc -d:release --path:src "--nimcache:${{ runner.temp }}/cbss-c-api-static-cache" "--outdir:${{ runner.temp }}/cbss-c-api" src/cbss_c_api.nim
+
+      - name: Check C and C++ public headers (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -Iinclude -fsyntax-only tests/c_api/header_consumer.c
+          c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -fsyntax-only tests/c_api/header_consumer.cpp
+
+      - name: Check C and C++ public headers (MSVC-compatible)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          clang-cl /nologo /W4 /WX /c /TC /Iinclude tests\c_api\header_consumer.c /Fo"${{ runner.temp }}\cbss_header_c.obj"
+          clang-cl /nologo /W4 /WX /c /TP /std:c++14 /Iinclude tests\c_api\header_consumer.cpp /Fo"${{ runner.temp }}\cbss_header_cpp.obj"
 
       - name: Test native Rust bridges
         run: |
           cargo test --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml
           cargo test --locked --release --manifest-path native/image_bridge/Cargo.toml
 
-  arc-memory:
-    name: ARC lifecycle and C ABI memory checks
+  linux-valgrind:
+    name: Linux Valgrind lifecycle and C ABI checks
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -141,8 +193,184 @@ jobs:
       - name: Check ARC widget lifecycle
         run: nimble testWidgetLifecycleValgrind -y
 
+      - name: Check ARC event lifecycle
+        run: nimble testEventLifecycleValgrind -y
+
+      - name: Check threaded ARC stream ownership transfer
+        run: nimble testStreamMailboxValgrind -y
+
       - name: Check shared and static C ABI lifecycles
         run: nimble testCAbiValgrind -y
+
+  motion-address-sanitizer:
+    name: Motion ASan (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux x86_64
+            os: ubuntu-latest
+          - platform: Windows x86_64
+            os: windows-latest
+          - platform: macOS arm64
+            os: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nim
+        uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
+        with:
+          nim-version: '2.2.10'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Toolchain versions
+        run: |
+          nim --version
+          nimble --version
+
+      - name: Check transition and keyframe lifecycles under ARC and ORC (Unix)
+        if: runner.os != 'Windows'
+        run: nimble testMotionAsan -y
+
+      - name: Check transition and keyframe lifecycles under ARC and ORC (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $install = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $install) {
+            throw "Visual Studio C++ toolchain was not found"
+          }
+          & "$install\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -SkipAutomaticLocation
+          $llvmBin = "${env:ProgramFiles}\LLVM\bin"
+          if (-not (Test-Path "$llvmBin\clang.exe")) {
+            throw "LLVM Clang was not found at $llvmBin"
+          }
+          $env:PATH = "$llvmBin;$env:PATH"
+          Write-Host "Using LLVM Clang: $((Get-Command clang).Source)"
+          clang --version
+          nimble testMotionAsan -y
+
+  undefined-behavior-sanitizer:
+    name: UBSan (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux x86_64
+            os: ubuntu-latest
+            compiler: clang-18
+          - platform: macOS arm64
+            os: macos-latest
+            compiler: clang
+
+    env:
+      CBSS_CLANG: ${{ matrix.compiler }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nim
+        uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
+        with:
+          nim-version: '2.2.10'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sanitizer toolchain versions
+        run: |
+          nim --version
+          "$CBSS_CLANG" --version
+
+      - name: Verify UBSan runtime availability
+        run: |
+          printf '%s\n' 'int main(void) { return 0; }' > "$RUNNER_TEMP/cbss_ubsan_probe.c"
+          "$CBSS_CLANG" -fsanitize=undefined "$RUNNER_TEMP/cbss_ubsan_probe.c" -o "$RUNNER_TEMP/cbss_ubsan_probe"
+          "$RUNNER_TEMP/cbss_ubsan_probe"
+
+      - name: Check numeric, layout, transform, and motion behavior
+        run: nimble testUbsan -y
+
+  leak-sanitizer:
+    name: LSan (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    env:
+      CBSS_CLANG: clang-18
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux x86_64
+            os: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nim
+        uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
+        with:
+          nim-version: '2.2.10'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sanitizer toolchain versions
+        run: |
+          nim --version
+          "$CBSS_CLANG" --version
+
+      - name: Verify LSan runtime availability
+        run: |
+          printf '%s\n' 'int main(void) { return 0; }' > "$RUNNER_TEMP/cbss_lsan_probe.c"
+          "$CBSS_CLANG" -fsanitize=leak "$RUNNER_TEMP/cbss_lsan_probe.c" -o "$RUNNER_TEMP/cbss_lsan_probe"
+          "$RUNNER_TEMP/cbss_lsan_probe"
+
+      - name: Check retained lifecycles under ARC and ORC
+        run: nimble testLsan -y
+
+  thread-sanitizer:
+    name: TSan (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux x86_64
+            os: ubuntu-latest
+            compiler: clang-18
+          - platform: macOS arm64
+            os: macos-latest
+            compiler: clang
+
+    env:
+      CBSS_CLANG: ${{ matrix.compiler }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nim
+        uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
+        with:
+          nim-version: '2.2.10'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sanitizer toolchain versions
+        run: |
+          nim --version
+          "$CBSS_CLANG" --version
+
+      - name: Verify TSan runtime availability
+        run: |
+          printf '%s\n' 'int main(void) { return 0; }' > "$RUNNER_TEMP/cbss_tsan_probe.c"
+          "$CBSS_CLANG" -fsanitize=thread "$RUNNER_TEMP/cbss_tsan_probe.c" -o "$RUNNER_TEMP/cbss_tsan_probe"
+          "$RUNNER_TEMP/cbss_tsan_probe"
+
+      - name: Check worker-to-UI ownership races under ARC and ORC
+        run: nimble testTsan -y
 
   rust-bridge:
     name: Native Rust bridges

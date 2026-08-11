@@ -1,6 +1,7 @@
 import std/options
 import ../core/[color, computed_style, declaration, diagnostics, property,
     style_color, style_value]
+import ./length_resolution
 
 proc setVectorKeyword(style: var ComputedStyle; property: string; value: Option[string]) =
   style.ensureVector()
@@ -243,19 +244,19 @@ proc applyVectorNumber(
   case declaration.operation.mode
   of mmOverwrite:
     if declaration.operation.value.isNone:
-      diagnostics.addError(declaration.property, declaration.property & " requires a number or px length value")
+      diagnostics.addError(declaration.property, declaration.property & " requires a number or length value")
       return
     let value = declaration.operation.value.get
     case value.kind
     of svNumber:
       style.setVectorNumber(declaration.property, some(value.number))
     of svLength:
-      if value.length.kind == ukPx:
-        style.setVectorNumber(declaration.property, some(value.length.value))
-      else:
-        diagnostics.addError(declaration.property, declaration.property & " only supports px lengths")
+      let resolved = resolveAbsoluteLength(value, env, declaration.property,
+          diagnostics)
+      if resolved.isSome:
+        style.setVectorNumber(declaration.property, resolved)
     else:
-      diagnostics.addError(declaration.property, declaration.property & " requires a number or px length value")
+      diagnostics.addError(declaration.property, declaration.property & " requires a number or length value")
   of mmInitial, mmUnset:
     style.setVectorNumber(declaration.property, none(float32))
   of mmInherit:

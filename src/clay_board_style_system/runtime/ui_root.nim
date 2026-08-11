@@ -11,8 +11,11 @@ import ../paint/paint_command
 import ../text/[font_registry, text_engine]
 import ./animation_clock
 import ./canvas
+import ./declarative_keyframes
+import ./declarative_transition
 import ./frame_scheduler
 import ./invalidation
+import ./motion_lifecycle
 import ./render_surface
 
 type
@@ -48,6 +51,10 @@ type
   UiStyle* = object
     declarations*: seq[Declaration]
 
+  UiInvalidation* = object
+    domains*: set[DirtyDomain]
+    roots*: seq[NodeId]
+
   AppliedStyleKey = object
     node: NodeId
     states: set[ElementState]
@@ -78,9 +85,18 @@ type
     popupClosers*: seq[PopupCloserBinding]
     mountedComponents: seq[MountedComponentBinding]
     animations: AnimationClock
+    keyframes: DeclarativeKeyframeRuntime
+    transitions: DeclarativeTransitionRuntime
     animationOwners: Table[AnimationId, NodeId]
+    pendingInvalidation: InvalidationState
+    pendingInvalidationRoots: seq[NodeId]
+    eventActionPool: seq[EventActionQueue]
     focusRequestPending*: bool
     focusRequestTarget*: Option[NodeId]
+    pointerRequestPending: bool
+    pointerRequestAction: EventPointerCaptureAction
+    pointerRequestTarget: Option[NodeId]
+    frameRequestPending: bool
     parentStack: seq[NodeId]
     fieldsetStack: seq[FieldsetRegister]
 
@@ -120,12 +136,190 @@ proc initUiRoot*(): UiRoot =
     popupClosers: @[],
     mountedComponents: @[],
     animations: initAnimationClock(),
+    keyframes: initDeclarativeKeyframeRuntime(),
+    transitions: initDeclarativeTransitionRuntime(),
     animationOwners: initTable[AnimationId, NodeId](),
+    pendingInvalidation: initInvalidationState(),
+    pendingInvalidationRoots: @[],
+    eventActionPool: @[],
     focusRequestPending: false,
     focusRequestTarget: none(NodeId),
+    pointerRequestPending: false,
+    pointerRequestAction: epcaNone,
+    pointerRequestTarget: none(NodeId),
+    frameRequestPending: false,
     parentStack: @[],
     fieldsetStack: @[]
   )
+
+proc invalidate*(root: UiRoot; domain: DirtyDomain) =
+  if not root.isNil:
+    root.pendingInvalidation.markDirty(domain)
+
+proc invalidate*(root: UiRoot; domains: set[DirtyDomain]) =
+  if not root.isNil:
+    root.pendingInvalidation.markDirty(domains)
+
+proc invalidate*(root: UiRoot; target: NodeId; domains: set[DirtyDomain]) =
+  if root.isNil or not root.tree.isValid(target):
+    return
+  root.pendingInvalidation.markDirty(domains)
+  var index = 0
+  while index < root.pendingInvalidationRoots.len:
+    let existing = root.pendingInvalidationRoots[index]
+    if root.tree.isDescendantOrSelf(target, existing):
+      return
+    if root.tree.isDescendantOrSelf(existing, target):
+      root.pendingInvalidationRoots.delete(index)
+      continue
+    inc index
+  root.pendingInvalidationRoots.add target
+
+proc hasPendingInvalidation*(root: UiRoot): bool =
+  not root.isNil and root.pendingInvalidation.dirty()
+
+proc consumeInvalidation*(root: UiRoot): UiInvalidation =
+  if root.isNil:
+    return UiInvalidation()
+  result = UiInvalidation(
+    domains: root.pendingInvalidation.consumeDirty(),
+    roots: root.pendingInvalidationRoots
+  )
+  root.pendingInvalidationRoots = @[]
+
+proc requestFocus*(root: UiRoot; target: Option[NodeId])
+
+proc acquireEventActions(root: UiRoot): tuple[
+    actions: EventActionQueue,
+    generation: uint64
+] =
+  let reuse =
+    if root.eventActionPool.len > 0: root.eventActionPool.pop()
+    else: nil
+  beginEventActions(reuse)
+
+proc applyEventActions(root: UiRoot; snapshot: EventActionSnapshot) =
+  if snapshot.focusPending and
+      (snapshot.focusTarget.isNone or
+       root.tree.isValid(snapshot.focusTarget.get)):
+    root.requestFocus(snapshot.focusTarget)
+
+  if snapshot.pointerAction != epcaNone:
+    let validTarget = snapshot.pointerTarget.isSome and
+      root.tree.isValid(snapshot.pointerTarget.get)
+    if snapshot.pointerAction == epcaRelease or validTarget:
+      root.pointerRequestPending = true
+      root.pointerRequestAction = snapshot.pointerAction
+      root.pointerRequestTarget = snapshot.pointerTarget
+
+  for request in snapshot.invalidations:
+    if request.target.isSome:
+      if root.tree.isValid(request.target.get):
+        root.invalidate(request.target.get, request.domains)
+    else:
+      root.invalidate(request.domains)
+
+  if snapshot.frameRequested:
+    root.frameRequestPending = true
+    root.invalidate(ddAnimation)
+
+proc dispatchEvent*(
+    root: UiRoot;
+    dispatch: DispatchResult
+): EventOutcome =
+  if root.isNil:
+    return ignoredEvent()
+  let scope = root.acquireEventActions()
+  let scopedDispatch = dispatch.withEventActions(
+    scope.actions,
+    scope.generation
+  )
+  var snapshot: EventActionSnapshot
+  try:
+    result = root.events.dispatchEvent(root.tree, scopedDispatch)
+    snapshot = finishEventActions(scope.actions, scope.generation)
+  except:
+    discard finishEventActions(scope.actions, scope.generation)
+    root.eventActionPool.add scope.actions
+    raise
+  root.eventActionPool.add scope.actions
+  root.applyEventActions(snapshot)
+
+proc dispatchEvents*(
+    root: UiRoot;
+    dispatches: openArray[DispatchResult]
+): EventOutcome =
+  for dispatch in dispatches:
+    result.mergeOutcome(root.dispatchEvent(dispatch))
+
+proc handleEvent*(root: UiRoot; dispatch: DispatchResult): bool =
+  root.dispatchEvent(dispatch).handled
+
+proc handleEvents*(
+    root: UiRoot;
+    dispatches: openArray[DispatchResult]
+): bool =
+  root.dispatchEvents(dispatches).handled
+
+proc takeFrameRequest*(root: UiRoot): bool =
+  if root.isNil:
+    return false
+  result = root.frameRequestPending
+  root.frameRequestPending = false
+
+proc dispatchMotionLifecycle(
+    root: UiRoot;
+    events: openArray[MotionLifecycleEvent]
+) =
+  for item in events:
+    if not root.tree.isValid(item.node):
+      continue
+    let kind =
+      case item.kind
+      of mlkAnimationStart: iekAnimationStart
+      of mlkAnimationIteration: iekAnimationIteration
+      of mlkAnimationEnd: iekAnimationEnd
+      of mlkAnimationCancel: iekAnimationCancel
+      of mlkTransitionRun: iekTransitionRun
+      of mlkTransitionStart: iekTransitionStart
+      of mlkTransitionEnd: iekTransitionEnd
+      of mlkTransitionCancel: iekTransitionCancel
+    discard root.dispatchEvent(DispatchResult(
+      target: some(item.node),
+      event: motionEvent(
+        kind, item.name, item.elapsedSeconds, item.iteration
+      )
+    ))
+
+proc reconcilePointerCapture*(
+    root: UiRoot;
+    interaction: var InteractionState
+): EventOutcome =
+  if root.isNil or not root.pointerRequestPending:
+    return ignoredEvent()
+  let action = root.pointerRequestAction
+  let target = root.pointerRequestTarget
+  root.pointerRequestPending = false
+  root.pointerRequestAction = epcaNone
+  root.pointerRequestTarget = none(NodeId)
+
+  case action
+  of epcaCapture:
+    if target.isNone or not root.tree.isValid(target.get) or
+        interaction.pointerCaptureTarget == target:
+      return ignoredEvent()
+    let released = interaction.releasePointer()
+    if released.isSome:
+      result.mergeOutcome(root.dispatchEvent(released.get))
+    result.mergeOutcome(root.dispatchEvent(
+      interaction.capturePointer(target.get)
+    ))
+  of epcaRelease:
+    let released = interaction.releasePointer()
+    if released.isSome:
+      result.mergeOutcome(root.dispatchEvent(released.get))
+  of epcaNone:
+    discard
 
 proc requestFocus*(root: UiRoot; target: Option[NodeId]) =
   ## Event handlers do not own InteractionState. Queue one deterministic focus
@@ -203,6 +397,80 @@ proc activeAnimationOwners*(root: UiRoot): seq[NodeId] =
 
 proc setReducedMotion*(root: UiRoot; enabled: bool) =
   root.animations.reducedMotion = enabled
+  root.keyframes.setReducedMotion(enabled)
+  root.transitions.reducedMotion = enabled
+  if enabled and (root.transitions.hasActiveTransitions or
+      root.keyframes.activeAnimationCount > 0):
+    root.invalidate({ddPaint, ddAnimation})
+
+proc registerStyleKeyframes*(root: UiRoot; definition: StyleKeyframes) =
+  if root.isNil:
+    raise newException(ValueError, "cannot register keyframes on a nil UiRoot")
+  root.keyframes.registerStyleKeyframes(definition)
+
+proc unregisterStyleKeyframes*(root: UiRoot; name: string): bool {.discardable.} =
+  if root.isNil:
+    return false
+  result = root.keyframes.unregisterStyleKeyframes(name)
+  root.dispatchMotionLifecycle(root.keyframes.takeLifecycleEvents())
+
+proc hasStyleKeyframes*(root: UiRoot; name: string): bool =
+  not root.isNil and root.keyframes.hasStyleKeyframes(name)
+
+proc reconcileStyleAnimations*(
+    root: UiRoot;
+    target: var ResolvedTree;
+    nowSeconds: float64
+) =
+  if not root.isNil:
+    root.keyframes.reconcileAnimations(root.tree, target, nowSeconds)
+    root.dispatchMotionLifecycle(root.keyframes.takeLifecycleEvents())
+
+proc applyStyleAnimations*(
+    root: UiRoot;
+    styles: var ResolvedTree;
+    scheduler: var FrameScheduler;
+    nowSeconds: float64
+): int {.discardable.} =
+  if root.isNil:
+    return 0
+  result = root.keyframes.applyAnimations(
+    root.tree, styles, scheduler, nowSeconds
+  )
+  root.dispatchMotionLifecycle(root.keyframes.takeLifecycleEvents())
+
+proc activeStyleAnimationCount*(root: UiRoot): int =
+  if root.isNil: 0
+  else: root.keyframes.activeAnimationCount
+
+proc reconcileStyleTransitions*(
+    root: UiRoot;
+    displayed, target: ResolvedTree;
+    nowSeconds: float64
+) =
+  if root.isNil:
+    return
+  root.transitions.reconcileTransitions(
+    root.tree, displayed, target, nowSeconds
+  )
+  root.dispatchMotionLifecycle(root.transitions.takeLifecycleEvents())
+
+proc applyStyleTransitions*(
+    root: UiRoot;
+    styles: var ResolvedTree;
+    scheduler: var FrameScheduler;
+    nowSeconds: float64
+): int {.discardable.} =
+  if root.isNil:
+    return 0
+  result = root.transitions.applyTransitions(
+    root.tree, styles, scheduler, nowSeconds
+  )
+  root.dispatchMotionLifecycle(root.transitions.takeLifecycleEvents())
+
+proc activeStyleTransitionCount*(root: UiRoot): int =
+  if root.isNil: 0
+  else: root.transitions.activeTransitionCount()
 
 proc invalidateClipboardText*(root: UiRoot) =
   ## Call this when the host knows an external clipboard owner may have changed.
@@ -495,6 +763,10 @@ proc disposeSubtree*(
       removedAnimations.add id
   for id in removedAnimations:
     discard root.cancelOwnedAnimation(id)
+  discard root.keyframes.cancelAnimations(removedIds)
+  discard root.transitions.cancelTransitions(removedIds)
+  root.dispatchMotionLifecycle(root.keyframes.takeLifecycleEvents())
+  root.dispatchMotionLifecycle(root.transitions.takeLifecycleEvents())
   let componentUnmountCallbacks = root.takeComponentUnmountCallbacks(removed)
   discard root.events.removeEventHandlers(removed)
   root.removeSubtreeStyles(removed)
@@ -522,6 +794,10 @@ proc disposeSubtree*(
   if root.focusRequestTarget.isSome and root.focusRequestTarget.get in removed:
     root.focusRequestPending = false
     root.focusRequestTarget = none(NodeId)
+  if root.pointerRequestTarget.isSome and root.pointerRequestTarget.get in removed:
+    root.pointerRequestPending = false
+    root.pointerRequestAction = epcaNone
+    root.pointerRequestTarget = none(NodeId)
   if root.defaultContextMenuTarget.isSome and
       root.defaultContextMenuTarget.get in removed:
     root.defaultContextMenuTarget = none(NodeId)
@@ -698,14 +974,15 @@ proc bindRenderSurfaceEvents(root: UiRoot; node: NodeHandle; surface: RenderSurf
   }
   for kind in surfaceInputEventKinds:
     let eventKind = kind
-    root.events.addInternalEventHandler(node.id, eventKind, proc(event: DispatchResult): bool =
+    root.events.addInternalEventHandler(node.id, eventKind, proc(event: DispatchResult): EventOutcome =
       if not target.valid:
-        return false
-      target.root.surfaces.dispatchSurfaceInput(
+        return ignoredEvent()
+      let handled = target.root.surfaces.dispatchSurfaceInput(
         surface,
         event.event,
         captured = false
       )
+      if handled: stoppedEvent() else: ignoredEvent()
     )
 
 proc canvas*(
@@ -1091,18 +1368,21 @@ proc mountDefaultContextMenu*(
     root.tree.setState(node.id, esDisabled, item.disabled)
     root.defaultContextMenuItemNodes.add node.id
     let captured = item
-    root.events.addInternalEventHandler(node.id, iekPointerDown, proc(event: DispatchResult): bool =
-      menu.root.dispatchDefaultContextMenuAction(captured)
+    root.events.addInternalEventHandler(node.id, iekPointerDown, proc(event: DispatchResult): EventOutcome =
+      if menu.root.dispatchDefaultContextMenuAction(captured):
+        handledEvent()
+      else:
+        ignoredEvent()
     )
-    root.events.addInternalEventHandler(node.id, iekClick, proc(event: DispatchResult): bool =
-      true
+    root.events.addInternalEventHandler(node.id, iekClick, proc(event: DispatchResult): EventOutcome =
+      handledEvent()
     )
 
-  root.events.addInternalEventHandler(result.id, iekKeyDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(result.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
     if event.event.key.isSome and event.event.key.get == "Escape":
       discard menu.root.closeDefaultContextMenu()
-      return true
-    false
+      return handledEvent()
+    ignoredEvent()
   )
 
 proc imageNode*(
@@ -1254,108 +1534,34 @@ proc applyFocusVisibleStyle*(handle: NodeHandle; style: UiStyle; priority = 0) =
   handle.root.applyFocusVisibleStyle(handle, style, priority = priority)
 
 proc emit*(handle: NodeHandle; event: InputEvent; local = none(Vec2)): bool =
-  handle.root.events.emit(handle.root.tree, handle.id, event, local)
+  handle.root.dispatchEvent(DispatchResult(
+    target: some(handle.id),
+    local: local,
+    event: event
+  )).handled
 
 proc emit*(handle: NodeHandle; kind: InputEventKind; local = none(Vec2)): bool =
-  handle.root.events.emit(handle.root.tree, handle.id, kind, local)
+  handle.emit(InputEvent(kind: kind), local)
+
+proc subscribe*(
+    handle: NodeHandle;
+    kind: InputEventKind;
+    handler: EventHandler
+): EventSubscription =
+  if not handle.valid():
+    raise newException(ValueError, "cannot subscribe to an inactive node")
+  handle.root.events.subscribe(handle.id, kind, handler)
+
+proc unsubscribe*(
+    handle: NodeHandle;
+    subscription: EventSubscription
+): bool {.discardable.} =
+  if not handle.valid() or subscription.node != handle.id:
+    return false
+  handle.root.events.removeEventHandler(subscription)
 
 template handleEventSlot(setterName: untyped; kindValue: InputEventKind) =
   proc setterName*(handle: NodeHandle; handler: EventHandler) =
     handle.root.events.setEventHandler(handle.id, kindValue, handler)
 
-handleEventSlot(`onAbort=`, iekAbort)
-handleEventSlot(`onAnimationEnd=`, iekAnimationEnd)
-handleEventSlot(`onAnimationIteration=`, iekAnimationIteration)
-handleEventSlot(`onAnimationStart=`, iekAnimationStart)
-handleEventSlot(`onAuxClick=`, iekAuxClick)
-handleEventSlot(`onBeforeInput=`, iekBeforeInput)
-handleEventSlot(`onBlur=`, iekBlur)
-handleEventSlot(`onCancel=`, iekCancel)
-handleEventSlot(`onCanPlay=`, iekCanPlay)
-handleEventSlot(`onCanPlayThrough=`, iekCanPlayThrough)
-handleEventSlot(`onChange=`, iekChange)
-handleEventSlot(`onClick=`, iekClick)
-handleEventSlot(`onClose=`, iekClose)
-handleEventSlot(`onContextMenu=`, iekContextMenu)
-handleEventSlot(`onCopy=`, iekCopy)
-handleEventSlot(`onCueChange=`, iekCueChange)
-handleEventSlot(`onCut=`, iekCut)
-handleEventSlot(`onDblClick=`, iekDoubleClick)
-handleEventSlot(`onDoubleClick=`, iekDoubleClick)
-handleEventSlot(`onCompositionEnd=`, iekCompositionEnd)
-handleEventSlot(`onCompositionStart=`, iekCompositionStart)
-handleEventSlot(`onCompositionUpdate=`, iekCompositionUpdate)
-handleEventSlot(`onDrag=`, iekDrag)
-handleEventSlot(`onDragEnd=`, iekDragEnd)
-handleEventSlot(`onDragEnter=`, iekDragEnter)
-handleEventSlot(`onDragExit=`, iekDragExit)
-handleEventSlot(`onDragLeave=`, iekDragLeave)
-handleEventSlot(`onDragOver=`, iekDragOver)
-handleEventSlot(`onDragStart=`, iekDragStart)
-handleEventSlot(`onDrop=`, iekDrop)
-handleEventSlot(`onDurationChange=`, iekDurationChange)
-handleEventSlot(`onEmptied=`, iekEmptied)
-handleEventSlot(`onEncrypted=`, iekEncrypted)
-handleEventSlot(`onEnded=`, iekEnded)
-handleEventSlot(`onError=`, iekError)
-handleEventSlot(`onFocus=`, iekFocus)
-handleEventSlot(`onFullscreenChange=`, iekFullscreenChange)
-handleEventSlot(`onFullscreenError=`, iekFullscreenError)
-handleEventSlot(`onGotPointerCapture=`, iekGotPointerCapture)
-handleEventSlot(`onInput=`, iekInput)
-handleEventSlot(`onInvalid=`, iekInvalid)
-handleEventSlot(`onKeyDown=`, iekKeyDown)
-handleEventSlot(`onKeyUp=`, iekKeyUp)
-handleEventSlot(`onLoad=`, iekLoad)
-handleEventSlot(`onLoadEnd=`, iekLoadEnd)
-handleEventSlot(`onLoadedData=`, iekLoadedData)
-handleEventSlot(`onLoadedMetadata=`, iekLoadedMetadata)
-handleEventSlot(`onLoadStart=`, iekLoadStart)
-handleEventSlot(`onLostPointerCapture=`, iekLostPointerCapture)
-handleEventSlot(`onMouseDown=`, iekMouseDown)
-handleEventSlot(`onMouseEnter=`, iekMouseEnter)
-handleEventSlot(`onMouseLeave=`, iekMouseLeave)
-handleEventSlot(`onMouseMove=`, iekMouseMove)
-handleEventSlot(`onMouseOut=`, iekMouseOut)
-handleEventSlot(`onMouseOver=`, iekMouseOver)
-handleEventSlot(`onMouseUp=`, iekMouseUp)
-handleEventSlot(`onPause=`, iekPause)
-handleEventSlot(`onPaste=`, iekPaste)
-handleEventSlot(`onPlay=`, iekPlay)
-handleEventSlot(`onPlaying=`, iekPlaying)
-handleEventSlot(`onPointerCancel=`, iekPointerCancel)
-handleEventSlot(`onPointerDown=`, iekPointerDown)
-handleEventSlot(`onPointerEnter=`, iekPointerEnter)
-handleEventSlot(`onPointerLeave=`, iekPointerLeave)
-handleEventSlot(`onPointerMove=`, iekPointerMove)
-handleEventSlot(`onPointerOut=`, iekPointerOut)
-handleEventSlot(`onPointerOver=`, iekPointerOver)
-handleEventSlot(`onPointerUp=`, iekPointerUp)
-handleEventSlot(`onPenButtonDown=`, iekPenButtonDown)
-handleEventSlot(`onPenButtonUp=`, iekPenButtonUp)
-handleEventSlot(`onPenProximityIn=`, iekPenProximityIn)
-handleEventSlot(`onPenProximityOut=`, iekPenProximityOut)
-handleEventSlot(`onProgress=`, iekProgress)
-handleEventSlot(`onRateChange=`, iekRateChange)
-handleEventSlot(`onReset=`, iekReset)
-handleEventSlot(`onResize=`, iekResize)
-handleEventSlot(`onScroll=`, iekScroll)
-handleEventSlot(`onScrollEnd=`, iekScrollEnd)
-handleEventSlot(`onSeeked=`, iekSeeked)
-handleEventSlot(`onSeeking=`, iekSeeking)
-handleEventSlot(`onSelect=`, iekSelect)
-handleEventSlot(`onShow=`, iekShow)
-handleEventSlot(`onStalled=`, iekStalled)
-handleEventSlot(`onSubmit=`, iekSubmit)
-handleEventSlot(`onSuspend=`, iekSuspend)
-handleEventSlot(`onTextInput=`, iekTextInput)
-handleEventSlot(`onTimeUpdate=`, iekTimeUpdate)
-handleEventSlot(`onToggle=`, iekToggle)
-handleEventSlot(`onTouchCancel=`, iekTouchCancel)
-handleEventSlot(`onTouchEnd=`, iekTouchEnd)
-handleEventSlot(`onTouchMove=`, iekTouchMove)
-handleEventSlot(`onTouchStart=`, iekTouchStart)
-handleEventSlot(`onTransitionEnd=`, iekTransitionEnd)
-handleEventSlot(`onVolumeChange=`, iekVolumeChange)
-handleEventSlot(`onWaiting=`, iekWaiting)
-handleEventSlot(`onWheel=`, iekWheel)
+include "../generated/node_event_slots.nim"

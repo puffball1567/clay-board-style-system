@@ -1,6 +1,6 @@
 #include "cbss.h"
 
-_Static_assert(CBSS_ABI_VERSION == 0x00010006u, "unexpected CBSS ABI version");
+_Static_assert(CBSS_ABI_VERSION == 0x00010011u, "unexpected CBSS ABI version");
 _Static_assert(CBSS_ROLE_SWITCH == 22, "unexpected switch role value");
 
 #include <assert.h>
@@ -31,10 +31,14 @@ _Static_assert(sizeof(CbssPointerData) == 56,
 _Static_assert(sizeof(CbssInputEvent) == 112,
                "CbssInputEvent ABI changed");
 _Static_assert(sizeof(CbssEvent) == 128, "CbssEvent ABI changed");
-_Static_assert(sizeof(CbssDispatchSummary) == 12,
+_Static_assert(sizeof(CbssDispatchSummary) == 16,
                "CbssDispatchSummary ABI changed");
 _Static_assert(sizeof(CbssScrollMetrics) == 36,
                "CbssScrollMetrics ABI changed");
+_Static_assert(sizeof(CbssStreamPumpResult) == 12,
+               "CbssStreamPumpResult ABI changed");
+_Static_assert(sizeof(CbssStreamEvent) == 48,
+               "CbssStreamEvent ABI changed");
 _Static_assert(sizeof(CbssAccessibility) == 32,
                "CbssAccessibility ABI changed");
 _Static_assert(sizeof(CbssRenderSurfacePlacement) == 40,
@@ -52,7 +56,26 @@ typedef struct CallbackState {
   int focus_events;
   int text_events;
   int pen_events;
+  int stop_child_click;
 } CallbackState;
+
+typedef struct ObserverState {
+  uint32_t child;
+  int clicks;
+} ObserverState;
+
+typedef struct EventViewState {
+  uint32_t expected_target;
+  uint32_t expected_current_target;
+  int submit_events;
+  int events_without_payload;
+  int expect_form_data;
+  CbssFormData *retained_form_data;
+} EventViewState;
+
+typedef struct LegacySubmitState {
+  int submit_events;
+} LegacySubmitState;
 
 typedef struct SurfaceState {
   uint64_t surface;
@@ -161,10 +184,23 @@ static uint8_t handle_event(
   CallbackState *state = user_data;
   assert(event->target != CBSS_NODE_NONE);
   if (event->kind == CBSS_EVENT_CLICK) {
+    assert((event->flags & CBSS_EVENT_BUBBLES) != 0);
+    assert((event->flags & CBSS_EVENT_CANCELABLE) != 0);
+    if (event->target == event->current_target) {
+      assert((event->flags & CBSS_EVENT_PHASE_TARGET) != 0);
+      assert((event->flags & CBSS_EVENT_PHASE_BUBBLE) == 0);
+    } else {
+      assert((event->flags & CBSS_EVENT_PHASE_TARGET) == 0);
+      assert((event->flags & CBSS_EVENT_PHASE_BUBBLE) != 0);
+    }
     if (event->current_target == state->child) {
       ++state->child_clicks;
       require_ok(context, cbss_node_set_text(
           context, state->label, "Clicked from C"));
+      if (state->stop_child_click) {
+        return CBSS_EVENT_OUTCOME_HANDLED |
+               CBSS_EVENT_OUTCOME_STOP_PROPAGATION;
+      }
     } else {
       ++state->root_clicks;
     }
@@ -189,6 +225,50 @@ static uint8_t handle_event(
   return 0;
 }
 
+static uint8_t observe_click(
+    CbssContext *context, const CbssEvent *event, void *user_data) {
+  ObserverState *state = user_data;
+  assert(context != NULL);
+  assert(event->kind == CBSS_EVENT_CLICK);
+  assert(event->current_target == state->child);
+  ++state->clicks;
+  return 0;
+}
+
+static uint8_t handle_event_view(
+    CbssContext *context, const CbssEventView *view, void *user_data) {
+  EventViewState *state = user_data;
+  assert(context != NULL);
+  assert(view != NULL);
+  const CbssEvent *event = cbss_event_view_event(view);
+  assert(event != NULL);
+  assert(event->target == state->expected_target);
+  assert(event->current_target == state->expected_current_target);
+  CbssFormData *payload = NULL;
+  if (event->kind == CBSS_EVENT_SUBMIT && state->expect_form_data) {
+    assert(cbss_event_view_form_data(view, &payload) == CBSS_OK);
+    assert(payload != NULL);
+    assert(state->retained_form_data == NULL);
+    state->retained_form_data = payload;
+    ++state->submit_events;
+    return CBSS_EVENT_OUTCOME_HANDLED;
+  }
+  assert(cbss_event_view_form_data(view, &payload) == CBSS_NOT_AVAILABLE);
+  assert(payload == NULL);
+  ++state->events_without_payload;
+  return 0;
+}
+
+static uint8_t handle_legacy_submit(
+    CbssContext *context, const CbssEvent *event, void *user_data) {
+  LegacySubmitState *state = user_data;
+  assert(context != NULL);
+  assert(event != NULL);
+  assert(event->kind == CBSS_EVENT_SUBMIT);
+  ++state->submit_events;
+  return 0;
+}
+
 int main(void) {
   assert(cbss_abi_version() == CBSS_ABI_VERSION);
   assert(CBSS_PAINT_PUSH_LAYER == 11);
@@ -196,6 +276,142 @@ int main(void) {
   assert(CBSS_LAYER_SOURCE_OVER == 0);
   assert(CBSS_LAYER_COPY == 1);
   assert(CBSS_LAYER_ADDITIVE == 2);
+
+  uint8_t blob_source[] = {1, 2, 3, 4};
+  CbssBlob *blob = NULL;
+  assert(cbss_blob_create(
+      blob_source, sizeof(blob_source), "application/example", &blob) ==
+      CBSS_OK);
+  assert(blob != NULL);
+  blob_source[0] = 99;
+  assert(cbss_blob_size(blob) == 4);
+  char blob_mime[32];
+  assert(cbss_blob_mime_type(blob, blob_mime, sizeof(blob_mime)) == 19);
+  assert(strcmp(blob_mime, "application/example") == 0);
+  uint8_t blob_bytes[4] = {0};
+  uint32_t blob_read = 0;
+  assert(cbss_blob_read(blob, 1, blob_bytes, 2, &blob_read) == CBSS_OK);
+  assert(blob_read == 2);
+  assert(blob_bytes[0] == 2 && blob_bytes[1] == 3);
+  assert(cbss_blob_read(blob, 5, blob_bytes, 2, &blob_read) ==
+      CBSS_OUT_OF_RANGE);
+  assert(cbss_blob_retain(blob) == CBSS_OK);
+  cbss_blob_release(blob);
+  assert(cbss_blob_size(blob) == 4);
+  cbss_blob_release(blob);
+
+  assert(cbss_blob_create(NULL, 1, NULL, &blob) == CBSS_INVALID_ARGUMENT);
+  assert(cbss_blob_create(
+      blob_source, CBSS_MAX_EAGER_BLOB_BYTES + 1, NULL, &blob) ==
+      CBSS_OUT_OF_RANGE);
+
+  CbssBlob *form_blob = NULL;
+  assert(cbss_blob_create(
+      blob_source, sizeof(blob_source), "application/form-test", &form_blob) ==
+      CBSS_OK);
+  CbssFormDataBuilder *form_builder = cbss_form_data_builder_create();
+  assert(form_builder != NULL);
+  assert(cbss_form_data_builder_add_text(
+      NULL, "field", "value") == CBSS_INVALID_HANDLE);
+  assert(cbss_form_data_builder_add_text(
+      form_builder, NULL, "value") == CBSS_INVALID_ARGUMENT);
+  assert(cbss_form_data_builder_add_text(
+      form_builder, "field", NULL) == CBSS_INVALID_ARGUMENT);
+  assert(cbss_form_data_builder_add_text(
+      form_builder, "tag", "first") == CBSS_OK);
+  assert(cbss_form_data_builder_add_text(
+      form_builder, "title", "Document") == CBSS_OK);
+  assert(cbss_form_data_builder_add_text(
+      form_builder, "tag", "second") == CBSS_OK);
+  assert(cbss_form_data_builder_add_blob(
+      form_builder, "attachment", form_blob, "sample.bin") == CBSS_OK);
+  assert(cbss_form_data_builder_add_text(
+      form_builder, "empty", "") == CBSS_OK);
+  assert(cbss_form_data_builder_add_text(
+      form_builder, "", "invalid") == CBSS_INVALID_ARGUMENT);
+  char oversized_form_name[CBSS_MAX_FORM_DATA_NAME_BYTES + 2];
+  memset(oversized_form_name, 'x', sizeof(oversized_form_name));
+  oversized_form_name[sizeof(oversized_form_name) - 1] = '\0';
+  assert(cbss_form_data_builder_add_text(
+      form_builder, oversized_form_name, "invalid") == CBSS_OUT_OF_RANGE);
+  assert(cbss_form_data_builder_finish(form_builder, NULL) ==
+      CBSS_INVALID_ARGUMENT);
+
+  CbssFormData *form_data = NULL;
+  assert(cbss_form_data_builder_finish(form_builder, &form_data) == CBSS_OK);
+  assert(form_data != NULL);
+  CbssFormData *duplicate_form_data = NULL;
+  assert(cbss_form_data_builder_finish(form_builder, &duplicate_form_data) ==
+      CBSS_INVALID_ARGUMENT);
+  assert(duplicate_form_data == NULL);
+  assert(cbss_form_data_builder_add_text(
+      form_builder, "late", "invalid") == CBSS_INVALID_ARGUMENT);
+  cbss_form_data_builder_destroy(form_builder);
+  cbss_blob_release(form_blob);
+
+  assert(cbss_form_data_length(form_data) == 5);
+  uint32_t form_kind = UINT32_MAX;
+  assert(cbss_form_data_entry_kind(form_data, 0, &form_kind) == CBSS_OK);
+  assert(form_kind == CBSS_FORM_DATA_TEXT);
+  assert(cbss_form_data_entry_kind(form_data, 3, &form_kind) == CBSS_OK);
+  assert(form_kind == CBSS_FORM_DATA_BLOB);
+  assert(cbss_form_data_entry_kind(form_data, 4, &form_kind) ==
+      CBSS_OK);
+  assert(form_kind == CBSS_FORM_DATA_TEXT);
+  assert(cbss_form_data_entry_kind(form_data, 5, &form_kind) ==
+      CBSS_OUT_OF_RANGE);
+  assert(cbss_form_data_entry_kind(form_data, 0, NULL) ==
+      CBSS_INVALID_ARGUMENT);
+
+  char form_string[32];
+  char truncated_name[2];
+  assert(cbss_form_data_entry_name(
+      form_data, 0, truncated_name, sizeof(truncated_name)) == 3);
+  assert(strcmp(truncated_name, "t") == 0);
+  assert(cbss_form_data_entry_name(
+      form_data, 0, form_string, sizeof(form_string)) == 3);
+  assert(strcmp(form_string, "tag") == 0);
+  assert(cbss_form_data_entry_text(
+      form_data, 0, form_string, sizeof(form_string)) == 5);
+  assert(strcmp(form_string, "first") == 0);
+  assert(cbss_form_data_entry_name(
+      form_data, 2, form_string, sizeof(form_string)) == 3);
+  assert(strcmp(form_string, "tag") == 0);
+  assert(cbss_form_data_entry_text(
+      form_data, 2, form_string, sizeof(form_string)) == 6);
+  assert(strcmp(form_string, "second") == 0);
+  assert(cbss_form_data_entry_file_name(
+      form_data, 3, form_string, sizeof(form_string)) == 10);
+  assert(strcmp(form_string, "sample.bin") == 0);
+  assert(cbss_form_data_entry_text(
+      form_data, 3, form_string, sizeof(form_string)) == 0);
+  assert(cbss_form_data_entry_text(
+      form_data, 4, form_string, sizeof(form_string)) == 0);
+
+  CbssBlob *form_entry_blob = NULL;
+  assert(cbss_form_data_entry_blob(
+      form_data, 3, &form_entry_blob) == CBSS_OK);
+  assert(form_entry_blob != NULL);
+  assert(cbss_blob_size(form_entry_blob) == sizeof(blob_source));
+  cbss_blob_release(form_entry_blob);
+  assert(cbss_form_data_entry_blob(
+      form_data, 0, &form_entry_blob) == CBSS_INVALID_ARGUMENT);
+  assert(form_entry_blob == NULL);
+
+  assert(cbss_form_data_retain(form_data) == CBSS_OK);
+  cbss_form_data_release(form_data);
+  assert(cbss_form_data_length(form_data) == 5);
+
+  CbssFormDataBuilder *abandoned_builder =
+      cbss_form_data_builder_create();
+  CbssBlob *abandoned_blob = NULL;
+  assert(abandoned_builder != NULL);
+  assert(cbss_blob_create(blob_source, sizeof(blob_source), NULL,
+      &abandoned_blob) == CBSS_OK);
+  assert(cbss_form_data_builder_add_blob(
+      abandoned_builder, "file", abandoned_blob, NULL) == CBSS_OK);
+  cbss_blob_release(abandoned_blob);
+  cbss_form_data_builder_destroy(abandoned_builder);
 
   CbssContext *context = cbss_context_create();
   CbssStyle *root_style = cbss_style_create();
@@ -513,6 +729,8 @@ int main(void) {
       .label = label,
       .child = child
   };
+  ObserverState observer_state = {.child = child};
+  CbssEventSubscription click_observer = 0;
   require_ok(context, cbss_node_set_event_handler(
       context, child, CBSS_EVENT_CLICK, handle_event, &callback_state));
   require_ok(context, cbss_node_set_event_handler(
@@ -531,6 +749,145 @@ int main(void) {
   require_ok(context, cbss_node_set_event_handler(
       context, child, CBSS_EVENT_PEN_BUTTON_DOWN,
       handle_event, &callback_state));
+  require_ok(context, cbss_node_subscribe_event(
+      context, child, CBSS_EVENT_CLICK, observe_click, &observer_state,
+      &click_observer));
+  assert(click_observer != 0);
+
+  EventViewState submit_view_state = {
+      .expected_target = child,
+      .expected_current_target = child,
+      .expect_form_data = 1
+  };
+  EventViewState submit_bubble_state = {
+      .expected_target = child,
+      .expected_current_target = root,
+      .expect_form_data = 1
+  };
+  LegacySubmitState legacy_submit_state = {0};
+  CbssEventSubscription submit_bubble_observer = 0;
+  CbssEventSubscription legacy_submit_observer = 0;
+  require_ok(context, cbss_node_set_event_view_handler(
+      context, child, CBSS_EVENT_SUBMIT,
+      handle_event_view, &submit_view_state));
+  require_ok(context, cbss_node_subscribe_event_view(
+      context, root, CBSS_EVENT_SUBMIT,
+      handle_event_view, &submit_bubble_state,
+      &submit_bubble_observer));
+  require_ok(context, cbss_node_subscribe_event(
+      context, child, CBSS_EVENT_SUBMIT,
+      handle_legacy_submit, &legacy_submit_state,
+      &legacy_submit_observer));
+  assert(submit_bubble_observer != 0);
+  assert(legacy_submit_observer != 0);
+
+  assert(cbss_event_view_event(NULL) == NULL);
+  CbssFormData *missing_payload = (CbssFormData *)(uintptr_t)1;
+  assert(cbss_event_view_form_data(NULL, &missing_payload) ==
+      CBSS_INVALID_HANDLE);
+  assert(missing_payload == NULL);
+  assert(cbss_event_view_form_data(NULL, NULL) == CBSS_INVALID_ARGUMENT);
+  assert(cbss_node_set_event_view_handler(
+      NULL, child, CBSS_EVENT_SUBMIT,
+      handle_event_view, &submit_view_state) == CBSS_INVALID_HANDLE);
+  assert(cbss_node_set_event_view_handler(
+      context, CBSS_NODE_NONE, CBSS_EVENT_SUBMIT,
+      handle_event_view, &submit_view_state) == CBSS_INVALID_ARGUMENT);
+  assert(cbss_node_subscribe_event_view(
+      context, child, CBSS_EVENT_SUBMIT, NULL,
+      &submit_view_state, &submit_bubble_observer) == CBSS_INVALID_ARGUMENT);
+
+  EventViewState no_payload_state = {
+      .expected_target = child,
+      .expected_current_target = child
+  };
+  require_ok(context, cbss_node_set_event_view_handler(
+      context, child, CBSS_EVENT_ABORT,
+      handle_event_view, &no_payload_state));
+  CbssInputEvent abort_event = {.kind = CBSS_EVENT_ABORT};
+  CbssDispatchSummary submit_dispatch;
+  require_ok(context, cbss_context_emit_event(
+      context, child, &abort_event, &submit_dispatch));
+  assert(no_payload_state.events_without_payload == 1);
+  require_ok(context, cbss_node_set_event_view_handler(
+      context, child, CBSS_EVENT_ABORT, NULL, NULL));
+
+  assert(cbss_context_emit_submit(
+      NULL, child, form_data, &submit_dispatch) == CBSS_INVALID_HANDLE);
+  assert(cbss_context_emit_submit(
+      context, CBSS_NODE_NONE, form_data,
+      &submit_dispatch) == CBSS_INVALID_ARGUMENT);
+  assert(cbss_context_emit_submit(
+      context, child, NULL, &submit_dispatch) == CBSS_INVALID_HANDLE);
+  require_ok(context, cbss_context_emit_submit(
+      context, child, form_data, &submit_dispatch));
+  assert(submit_dispatch.handled);
+  assert((submit_dispatch.outcome & CBSS_EVENT_OUTCOME_HANDLED) != 0);
+  assert(submit_view_state.submit_events == 1);
+  assert(submit_bubble_state.submit_events == 1);
+  assert(legacy_submit_state.submit_events == 1);
+  assert(submit_view_state.retained_form_data != NULL);
+  assert(submit_bubble_state.retained_form_data != NULL);
+
+  cbss_form_data_release(form_data);
+  form_data = NULL;
+  assert(cbss_form_data_length(
+      submit_view_state.retained_form_data) == 5);
+  assert(cbss_form_data_entry_name(
+      submit_view_state.retained_form_data, 1,
+      form_string, sizeof(form_string)) == 5);
+  assert(strcmp(form_string, "title") == 0);
+  assert(cbss_form_data_entry_text(
+      submit_view_state.retained_form_data, 1,
+      form_string, sizeof(form_string)) == 8);
+  assert(strcmp(form_string, "Document") == 0);
+  assert(cbss_form_data_entry_blob(
+      submit_bubble_state.retained_form_data, 3,
+      &form_entry_blob) == CBSS_OK);
+  assert(cbss_blob_size(form_entry_blob) == sizeof(blob_source));
+  cbss_blob_release(form_entry_blob);
+  form_entry_blob = NULL;
+  cbss_form_data_release(submit_view_state.retained_form_data);
+  cbss_form_data_release(submit_bubble_state.retained_form_data);
+  submit_view_state.retained_form_data = NULL;
+  submit_bubble_state.retained_form_data = NULL;
+
+  CbssFormDataBuilder *empty_form_builder =
+      cbss_form_data_builder_create();
+  CbssFormData *empty_form_data = NULL;
+  assert(empty_form_builder != NULL);
+  assert(cbss_form_data_builder_finish(
+      empty_form_builder, &empty_form_data) == CBSS_OK);
+  cbss_form_data_builder_destroy(empty_form_builder);
+  require_ok(context, cbss_context_emit_submit(
+      context, child, empty_form_data, &submit_dispatch));
+  cbss_form_data_release(empty_form_data);
+  assert(submit_view_state.submit_events == 2);
+  assert(submit_bubble_state.submit_events == 2);
+  assert(cbss_form_data_length(
+      submit_view_state.retained_form_data) == 0);
+  assert(cbss_form_data_length(
+      submit_bubble_state.retained_form_data) == 0);
+  cbss_form_data_release(submit_view_state.retained_form_data);
+  cbss_form_data_release(submit_bubble_state.retained_form_data);
+  submit_view_state.retained_form_data = NULL;
+  submit_bubble_state.retained_form_data = NULL;
+
+  submit_view_state.expect_form_data = 0;
+  submit_bubble_state.expect_form_data = 0;
+  CbssInputEvent synthetic_submit = {.kind = CBSS_EVENT_SUBMIT};
+  require_ok(context, cbss_context_emit_event(
+      context, child, &synthetic_submit, &submit_dispatch));
+  assert(submit_view_state.events_without_payload == 1);
+  assert(submit_bubble_state.events_without_payload == 1);
+  assert(submit_view_state.retained_form_data == NULL);
+  assert(submit_bubble_state.retained_form_data == NULL);
+  require_ok(context, cbss_context_unsubscribe_event(
+      context, submit_bubble_observer));
+  require_ok(context, cbss_context_unsubscribe_event(
+      context, legacy_submit_observer));
+  require_ok(context, cbss_node_set_event_view_handler(
+      context, child, CBSS_EVENT_SUBMIT, NULL, NULL));
 
   CbssPathSegment surface_path[] = {
       {.kind = CBSS_PATH_MOVE_TO, .endpoint_x = 1.0f, .endpoint_y = 1.0f},
@@ -881,8 +1238,27 @@ int main(void) {
       context, &pointer_up, &dispatch));
   assert(callback_state.child_clicks == 1);
   assert(callback_state.root_clicks == 1);
+  assert(observer_state.clicks == 1);
   assert(dispatch.needs_compute);
   require_ok(context, cbss_context_recompute(context));
+
+  require_ok(context, cbss_context_unsubscribe_event(
+      context, click_observer));
+  assert(cbss_context_unsubscribe_event(
+      context, click_observer) == CBSS_INVALID_ARGUMENT);
+
+  callback_state.stop_child_click = 1;
+  CbssInputEvent direct_click = {.kind = CBSS_EVENT_CLICK};
+  require_ok(context, cbss_context_emit_event(
+      context, child, &direct_click, &dispatch));
+  assert(callback_state.child_clicks == 2);
+  assert(callback_state.root_clicks == 1);
+  assert(observer_state.clicks == 1);
+  assert(dispatch.handled);
+  assert((dispatch.outcome & CBSS_EVENT_OUTCOME_HANDLED) != 0);
+  assert((dispatch.outcome & CBSS_EVENT_OUTCOME_STOP_PROPAGATION) != 0);
+  assert((dispatch.outcome & CBSS_EVENT_OUTCOME_PREVENT_DEFAULT) == 0);
+  callback_state.stop_child_click = 0;
 
   CbssInputEvent text_input = {
       .kind = CBSS_EVENT_TEXT_INPUT,
@@ -891,7 +1267,7 @@ int main(void) {
   };
   require_ok(context, cbss_context_dispatch_input(
       context, &text_input, &dispatch));
-  assert(callback_state.text_events == 4);
+  assert(callback_state.text_events == 2);
 
   CbssInputEvent tab = {
       .kind = CBSS_EVENT_KEY_DOWN,
@@ -935,6 +1311,97 @@ int main(void) {
   assert(strstr(error, "unknown style property") != NULL);
   cbss_style_destroy(invalid_style);
   cbss_context_destroy(invalid_context);
+
+  CbssContext *viewport_context = cbss_context_create();
+  CbssStyle *viewport_style = cbss_style_create();
+  assert(viewport_context != NULL);
+  assert(viewport_style != NULL);
+  uint32_t viewport_root = cbss_context_add_box(
+      viewport_context, CBSS_NODE_NONE, "viewport-root");
+  assert(viewport_root != CBSS_NODE_NONE);
+  assert(cbss_style_set_length(
+      viewport_style, "width", CBSS_UNIT_VW, 50.0f) == CBSS_OK);
+  assert(cbss_style_set_length(
+      viewport_style, "height", CBSS_UNIT_VH, 25.0f) == CBSS_OK);
+  require_ok(viewport_context, cbss_node_apply_style(
+      viewport_context, viewport_root, viewport_style, 0, 0));
+  require_ok(viewport_context, cbss_context_compute(
+      viewport_context, 800.0f, 400.0f));
+  CbssRect viewport_rect;
+  require_ok(viewport_context, cbss_node_layout_rect(
+      viewport_context, viewport_root, &viewport_rect));
+  assert(fabsf(viewport_rect.w - 400.0f) < 0.01f);
+  assert(fabsf(viewport_rect.h - 100.0f) < 0.01f);
+  require_ok(viewport_context, cbss_context_compute(
+      viewport_context, 1000.0f, 800.0f));
+  require_ok(viewport_context, cbss_node_layout_rect(
+      viewport_context, viewport_root, &viewport_rect));
+  assert(fabsf(viewport_rect.w - 500.0f) < 0.01f);
+  assert(fabsf(viewport_rect.h - 200.0f) < 0.01f);
+  cbss_style_destroy(viewport_style);
+  cbss_context_destroy(viewport_context);
+
+  CbssContext *line_height_context = cbss_context_create();
+  CbssStyle *line_height_root_style = cbss_style_create();
+  CbssStyle *line_height_child_style = cbss_style_create();
+  assert(line_height_context != NULL);
+  assert(line_height_root_style != NULL);
+  assert(line_height_child_style != NULL);
+  uint32_t line_height_root = cbss_context_add_box(
+      line_height_context, CBSS_NODE_NONE, "line-height-root");
+  uint32_t line_height_child = cbss_context_add_box(
+      line_height_context, line_height_root, "line-height-child");
+  assert(line_height_root != CBSS_NODE_NONE);
+  assert(line_height_child != CBSS_NODE_NONE);
+  assert(cbss_style_set_length(
+      line_height_root_style, "width", CBSS_UNIT_PX, 200.0f) == CBSS_OK);
+  assert(cbss_style_set_length(
+      line_height_root_style, "height", CBSS_UNIT_PX, 100.0f) == CBSS_OK);
+  assert(cbss_style_set_length(
+      line_height_root_style, "line-height", CBSS_UNIT_PX, 24.0f) == CBSS_OK);
+  assert(cbss_style_set_length(
+      line_height_child_style, "width", CBSS_UNIT_LH, 2.0f) == CBSS_OK);
+  assert(cbss_style_set_length(
+      line_height_child_style, "height", CBSS_UNIT_RLH, 3.0f) == CBSS_OK);
+  require_ok(line_height_context, cbss_node_apply_style(
+      line_height_context, line_height_root, line_height_root_style, 0, 0));
+  require_ok(line_height_context, cbss_node_apply_style(
+      line_height_context, line_height_child, line_height_child_style, 0, 0));
+  require_ok(line_height_context, cbss_context_compute(
+      line_height_context, 200.0f, 100.0f));
+  CbssRect line_height_rect;
+  require_ok(line_height_context, cbss_node_layout_rect(
+      line_height_context, line_height_child, &line_height_rect));
+  assert(fabsf(line_height_rect.w - 48.0f) < 0.01f);
+  assert(fabsf(line_height_rect.h - 72.0f) < 0.01f);
+  cbss_style_destroy(line_height_child_style);
+  cbss_style_destroy(line_height_root_style);
+  cbss_context_destroy(line_height_context);
+
+  CbssContext *font_unit_context = cbss_context_create();
+  CbssStyle *font_unit_style = cbss_style_create();
+  assert(font_unit_context != NULL);
+  assert(font_unit_style != NULL);
+  uint32_t font_unit_root = cbss_context_add_box(
+      font_unit_context, CBSS_NODE_NONE, "font-unit-root");
+  assert(font_unit_root != CBSS_NODE_NONE);
+  assert(cbss_style_set_length(
+      font_unit_style, "font-size", CBSS_UNIT_PX, 20.0f) == CBSS_OK);
+  assert(cbss_style_set_length(
+      font_unit_style, "width", CBSS_UNIT_EX, 4.0f) == CBSS_OK);
+  assert(cbss_style_set_length(
+      font_unit_style, "height", CBSS_UNIT_CH, 3.0f) == CBSS_OK);
+  require_ok(font_unit_context, cbss_node_apply_style(
+      font_unit_context, font_unit_root, font_unit_style, 0, 0));
+  require_ok(font_unit_context, cbss_context_compute(
+      font_unit_context, 200.0f, 100.0f));
+  CbssRect font_unit_rect;
+  require_ok(font_unit_context, cbss_node_layout_rect(
+      font_unit_context, font_unit_root, &font_unit_rect));
+  assert(fabsf(font_unit_rect.w - 40.0f) < 0.01f);
+  assert(fabsf(font_unit_rect.h - 30.0f) < 0.01f);
+  cbss_style_destroy(font_unit_style);
+  cbss_context_destroy(font_unit_context);
 
   CbssContext *scroll_context = cbss_context_create();
   CbssStyle *scroll_style = cbss_style_create();

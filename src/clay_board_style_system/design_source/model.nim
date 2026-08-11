@@ -174,10 +174,10 @@ proc viewportCondition*(
     maxHeight: maxHeight
   )
 
-proc minWidth*(value: SomeNumber): ViewportCondition =
+proc minViewportWidth*(value: SomeNumber): ViewportCondition =
   viewportCondition(minWidth = some(value.float32))
 
-proc maxWidth*(value: SomeNumber): ViewportCondition =
+proc maxViewportWidth*(value: SomeNumber): ViewportCondition =
   viewportCondition(maxWidth = some(value.float32))
 
 proc matches*(condition: ViewportCondition; viewportWidth, viewportHeight: float32): bool =

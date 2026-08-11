@@ -84,13 +84,13 @@ suite "general focus runtime":
     var firstBlurred = 0
     var secondFocused = 0
 
-    first.onFocus = proc(event: DispatchResult): bool =
+    first.onFocus = proc(event: DispatchResult): EventOutcome =
       inc firstFocused
       false
-    first.onBlur = proc(event: DispatchResult): bool =
+    first.onBlur = proc(event: DispatchResult): EventOutcome =
       inc firstBlurred
       false
-    second.onFocus = proc(event: DispatchResult): bool =
+    second.onFocus = proc(event: DispatchResult): EventOutcome =
       inc secondFocused
       false
 

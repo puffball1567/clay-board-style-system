@@ -1,6 +1,7 @@
 import std/options
 import ../core/[color, computed_style, declaration, diagnostics, property,
     style_color, style_value]
+import ./length_resolution
 
 proc applyBackgroundColor(
     style: var ComputedStyle;
@@ -137,11 +138,11 @@ proc applyBackgroundSize(
       else:
         diagnostics.addError(declaration.property, "unsupported background-size keyword")
     of svLength:
-      if value.length.kind != ukPx:
-        diagnostics.addError(declaration.property, "only px is supported for length background-size")
-        return
-      style.box.backgroundSize = some(BackgroundSize(kind: bgSizeLength,
-          width: some(value.length.value), height: none(float32)))
+      let resolved = resolveAbsoluteLength(value, env, declaration.property,
+          diagnostics)
+      if resolved.isSome:
+        style.box.backgroundSize = some(BackgroundSize(kind: bgSizeLength,
+            width: resolved, height: none(float32)))
     else:
       diagnostics.addError(declaration.property, "background-size requires a keyword or length value")
   of mmInitial, mmUnset:
@@ -157,6 +158,7 @@ proc applyBackgroundSize(
 proc applyBackgroundPositionAxis(
     style: var ComputedStyle;
     declaration: Declaration;
+    env: ResolveEnv;
     diagnostics: var Diagnostics
 ) =
   if declaration.operation.value.isNone:
@@ -168,11 +170,13 @@ proc applyBackgroundPositionAxis(
   of svNumber:
     resolved = some(value.number)
   of svLength:
-    if value.length.kind in {ukPx, ukPercent}:
+    if value.length.kind == ukPercent:
       resolved = some(value.length.value)
     else:
-      diagnostics.addError(declaration.property, "unsupported background-position unit")
-      return
+      resolved = resolveAbsoluteLength(value, env, declaration.property,
+          diagnostics)
+      if resolved.isNone:
+        return
   of svKeyword:
     case value.keyword
     of "left", "top":
@@ -202,7 +206,7 @@ proc applyBackgroundPosition(
 ) =
   case declaration.operation.mode
   of mmOverwrite:
-    style.applyBackgroundPositionAxis(declaration, diagnostics)
+    style.applyBackgroundPositionAxis(declaration, env, diagnostics)
   of mmInitial, mmUnset:
     style.box.backgroundPosition = ObjectPosition(x: 0, y: 0)
   of mmInherit:

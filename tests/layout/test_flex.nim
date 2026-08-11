@@ -10,6 +10,67 @@ proc rectFor(layout: LayoutResult; node: NodeId): Option[Rect] =
   none(Rect)
 
 suite "flex layout":
+  test "display none children consume neither size nor a flex gap":
+    var tree = initTree()
+    let root = tree.addBox(id = "root")
+    let first = tree.addBox(parent = some(root), id = "first")
+    let collapsed = tree.addBox(parent = some(root), id = "collapsed")
+    let last = tree.addBox(parent = some(root), id = "last")
+
+    let sheet = styleSheet([
+      rule(id("root"), [
+        decl("width", px(100)),
+        decl("flex-direction", keyword("column")),
+        decl("gap", px(8))
+      ]),
+      rule(id("first"), [decl("height", px(10))]),
+      rule(id("collapsed"), [
+        decl("display", keyword("none")),
+        decl("height", px(40)),
+        decl("margin", px(12))
+      ]),
+      rule(id("last"), [decl("height", px(10))])
+    ])
+
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(tree, [sheet], defaultProperties(), diagnostics)
+    let layout = computeLayout(tree, styles, size(100, 100))
+
+    check not diagnostics.hasErrors
+    check layout.rectFor(first).get.y == 0
+    check layout.rectFor(collapsed).isNone
+    check layout.rectFor(last).get.y == 18
+    check layout.rectFor(root).get.h == 28
+
+  test "display none children do not inflate intrinsic row flow":
+    var tree = initTree()
+    let root = tree.addBox(id = "root")
+    let first = tree.addBox(parent = some(root), id = "first")
+    let collapsed = tree.addBox(parent = some(root), id = "collapsed")
+    let last = tree.addBox(parent = some(root), id = "last")
+    let sheet = styleSheet([
+      rule(id("root"), [
+        decl("flex-direction", keyword("row")),
+        decl("gap", px(8))
+      ]),
+      rule(id("first"), [decl("width", px(10)), decl("height", px(10))]),
+      rule(id("collapsed"), [
+        decl("display", keyword("none")),
+        decl("width", px(40)),
+        decl("margin", px(12))
+      ]),
+      rule(id("last"), [decl("width", px(10)), decl("height", px(10))])
+    ])
+
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(tree, [sheet], defaultProperties(), diagnostics)
+    let layout = computeLayout(tree, styles, size(100, 20))
+
+    check not diagnostics.hasErrors
+    check layout.rectFor(collapsed).isNone
+    check layout.rectFor(last).get.x == 18
+    check layout.rectFor(root).get.w == 28
+
   test "flex-grow distributes remaining main-axis space":
     var tree = initTree()
     let root = tree.addBox(id = "root")

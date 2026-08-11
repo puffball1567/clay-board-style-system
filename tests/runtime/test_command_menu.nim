@@ -16,11 +16,11 @@ suite "command menu widget":
     var shown = false
     var closed = false
 
-    file.onShow = proc(event: DispatchResult): bool =
+    file.onShow = proc(event: DispatchResult): EventOutcome =
       shown = true
       false
 
-    file.onClose = proc(event: DispatchResult): bool =
+    file.onClose = proc(event: DispatchResult): EventOutcome =
       closed = true
       false
 
@@ -39,7 +39,7 @@ suite "command menu widget":
     let file = ui.commandMenu(menuItems(), open = true)
     var changed = ""
 
-    file.onChange = proc(event: DispatchResult): bool =
+    file.onChange = proc(event: DispatchResult): EventOutcome =
       changed = file.selectedValue()
       false
 
@@ -73,7 +73,7 @@ suite "command menu widget":
     let file = ui.commandMenu(menuItems(), open = true, disabled = true)
     var changed = false
 
-    file.onChange = proc(event: DispatchResult): bool =
+    file.onChange = proc(event: DispatchResult): EventOutcome =
       changed = true
       false
 

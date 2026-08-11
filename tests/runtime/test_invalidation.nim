@@ -1,8 +1,25 @@
-import std/unittest
+import std/[options, unittest]
 
 import clay_board_style_system
 
 suite "runtime invalidation":
+  test "UiRoot invalidation coalesces nested roots and consumes atomically":
+    let ui = initUiRoot()
+    let outer = ui.box()
+    let parent = ui.box(parent = some(outer))
+    let child = ui.box(parent = some(parent))
+
+    ui.invalidate(child.id, {ddPaint})
+    ui.invalidate(parent.id, {ddStyle, ddLayout})
+    ui.invalidate(child.id, {ddHit})
+
+    check ui.hasPendingInvalidation
+    let pending = ui.consumeInvalidation()
+    check pending.domains == {ddStyle, ddLayout, ddPaint, ddHit}
+    check pending.roots == @[parent.id]
+    check not ui.hasPendingInvalidation
+    check ui.consumeInvalidation().roots.len == 0
+
   test "dirty domains accumulate and consume as a set":
     var invalidation = initInvalidationState()
 

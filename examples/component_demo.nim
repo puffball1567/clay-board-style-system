@@ -1,3 +1,5 @@
+import std/options
+
 import clay_board_style_system
 import clay_board_style_system/generated/default_properties
 
@@ -11,16 +13,16 @@ type
 
 proc saveButtonStyle(): UiStyle =
   uiStyle([
-    decl("width", px(112)),
-    decl("height", px(40)),
-    decl("padding", px(10)),
+    width(112),
+    height(40),
+    padding(10),
     decl("background-color", oklch(0.62, 0.16, 250))
   ])
 
 proc render(self: SaveButton) =
-  proc onSave(event: DispatchResult): bool =
+  proc onSave(event: DispatchResult): EventOutcome =
     self.saved[] = true
-    return true
+    return stoppedEvent()
 
   ui.box(self, ownedStyle = saveButtonStyle()):
     ui.text(self.label)
@@ -29,10 +31,10 @@ proc render(self: SaveButton) =
 
 proc render(self: Toolbar) =
   ui.box(self, ownedStyle = uiStyle([
-    decl("width", px(320)),
-    decl("padding", px(12)),
-    decl("gap", px(8)),
-    decl("flex-direction", keyword("row"))
+    width(320),
+    padding(12),
+    gap(8),
+    flexDirection(fdRow)
   ])):
     ui.text("Project")
     ui.mount(self.saveButton)
@@ -43,7 +45,7 @@ proc main() =
   let saveButton = SaveButton(
     label: "Save",
     saved: saved,
-    style: uiStyle([decl("height", px(48))])
+    style: uiStyle([height(48)])
   )
   let toolbar = root.mount(Toolbar(saveButton: saveButton))
 
@@ -52,7 +54,8 @@ proc main() =
     root.tree,
     root.styleSheets(),
     defaultProperties(),
-    diagnostics
+    diagnostics,
+    viewportSize = some(size(320, 80))
   )
   doAssert not diagnostics.hasErrors
   let layout = computeLayout(root.tree, styles, size(320, 80))

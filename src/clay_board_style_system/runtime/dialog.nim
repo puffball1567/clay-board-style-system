@@ -213,13 +213,13 @@ proc dialog*(
 
   let dialog = result
 
-  root.events.addInternalEventHandler(dialog.container.id, iekKeyDown, proc(event: DispatchResult): bool =
+  root.events.addInternalEventHandler(dialog.container.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
     if not dialog.state.open:
-      return true
+      return stoppedEvent()
     if event.event.key.isSome and event.event.key.get == "Escape":
       discard dialog.cancel()
-      return true
-    false
+      return stoppedEvent()
+    ignoredEvent()
   )
 
 proc dialog*(

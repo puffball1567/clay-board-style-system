@@ -18,11 +18,11 @@ suite "slider component":
     let volume = ui.slider(value = 0, min = 0, max = 10, step = 1)
     var seen: seq[string] = @[]
 
-    volume.onInput = proc(event: DispatchResult): bool =
+    volume.onInput = proc(event: DispatchResult): EventOutcome =
       seen.add $volume.value()
       false
 
-    volume.onChange = proc(event: DispatchResult): bool =
+    volume.onChange = proc(event: DispatchResult): EventOutcome =
       seen.add $volume.value()
       false
 
@@ -90,11 +90,11 @@ suite "slider component":
     var pointerDown = false
     var changed = false
 
-    volume.onPointerDown = proc(event: DispatchResult): bool =
+    volume.onPointerDown = proc(event: DispatchResult): EventOutcome =
       pointerDown = true
       false
 
-    volume.onChange = proc(event: DispatchResult): bool =
+    volume.onChange = proc(event: DispatchResult): EventOutcome =
       changed = true
       false
 

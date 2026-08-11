@@ -33,6 +33,7 @@ name = "cbss_cosmic_text_bridge"
 version = "0.1.0"
 dependencies = [
  "cosmic-text",
+ "ttf-parser",
  "unicode-segmentation",
 ]
 

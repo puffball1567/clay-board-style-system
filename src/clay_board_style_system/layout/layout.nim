@@ -8,6 +8,7 @@ type
   LayoutBox* = object
     node*: NodeId
     rect*: Rect
+    padding*: EdgeSizes
     zIndex*: int
 
   LayoutOverflowMetrics* = object
@@ -95,21 +96,52 @@ proc childrenInLayoutOrder(node: Node; styles: ResolvedTree): seq[NodeId] =
 proc isAbsolute(style: ComputedStyle): bool =
   style.layout.position == pkAbsolute
 
-proc paddingOf(style: ComputedStyle): EdgeSizes =
+proc resolveSpacing(spec: Option[LengthValue]; fallback, reference: float32;
+    nonNegative: bool): float32 =
+  result = fallback
+  if spec.isSome:
+    case spec.get.kind
+    of ukPx:
+      result = spec.get.value
+    of ukPercent:
+      result = reference * spec.get.value / 100.0'f32
+    else:
+      discard
+  if nonNegative:
+    result = max(0.0'f32, result)
+
+proc paddingOf(style: ComputedStyle; containingInlineSize = 0.0'f32): EdgeSizes =
   result =
     if style.box.padding.isSome: style.box.padding.get
     else: edges(0)
+  if not style.layout.sizing.isNil:
+    result.top = resolveSpacing(style.layout.sizing.paddingTop, result.top,
+        containingInlineSize, true)
+    result.right = resolveSpacing(style.layout.sizing.paddingRight, result.right,
+        containingInlineSize, true)
+    result.bottom = resolveSpacing(style.layout.sizing.paddingBottom, result.bottom,
+        containingInlineSize, true)
+    result.left = resolveSpacing(style.layout.sizing.paddingLeft, result.left,
+        containingInlineSize, true)
   let gutter = style.scrollbarGutterInsets()
   result.top += gutter.top
   result.right += gutter.right
   result.bottom += gutter.bottom
   result.left += gutter.left
 
-proc marginOf(style: ComputedStyle): EdgeSizes =
-  if style.box.margin.isSome:
-    style.box.margin.get
-  else:
-    edges(0)
+proc marginOf(style: ComputedStyle; containingInlineSize = 0.0'f32): EdgeSizes =
+  result =
+    if style.box.margin.isSome: style.box.margin.get
+    else: edges(0)
+  if not style.layout.sizing.isNil:
+    result.top = resolveSpacing(style.layout.sizing.marginTop, result.top,
+        containingInlineSize, false)
+    result.right = resolveSpacing(style.layout.sizing.marginRight, result.right,
+        containingInlineSize, false)
+    result.bottom = resolveSpacing(style.layout.sizing.marginBottom, result.bottom,
+        containingInlineSize, false)
+    result.left = resolveSpacing(style.layout.sizing.marginLeft, result.left,
+        containingInlineSize, false)
 
 proc shiftBoxes(output: var LayoutResult; firstBox, boxCount: int; dx, dy: float32) =
   for index in firstBox ..< firstBox + boxCount:
@@ -122,6 +154,10 @@ proc scaleBoxes(output: var LayoutResult; firstBox, boxCount: int; originX, orig
     output.boxes[index].rect.y = originY + (output.boxes[index].rect.y - originY) * factor
     output.boxes[index].rect.w *= factor
     output.boxes[index].rect.h *= factor
+    output.boxes[index].padding.top *= factor
+    output.boxes[index].padding.right *= factor
+    output.boxes[index].padding.bottom *= factor
+    output.boxes[index].padding.left *= factor
 
 proc stretchOwnBox(output: var LayoutResult; firstBox, boxCount: int; node: NodeId; width, height: Option[float32]) =
   for index in firstBox ..< firstBox + boxCount:
@@ -222,7 +258,8 @@ proc resolveLength(
     none(float32)
   of ukFill:
     some(max(0.0'f32, reference))
-  of ukEm, ukRem:
+  of ukEm, ukRem, ukVw, ukVh, ukVmin, ukVmax, ukLh, ukRlh,
+      ukEx, ukCh, ukRex, ukRch:
     none(float32)
 
 proc flexMinimumMain(
@@ -286,7 +323,9 @@ proc resolveInsetLength(value: Option[LengthValue]; reference: float32): Option[
     some(value.get.value)
   of ukPercent:
     some(reference * value.get.value / 100.0'f32)
-  else:
+  of ukEm, ukRem, ukFill, ukContent, ukMinContent, ukMaxContent,
+      ukFitContent, ukAuto, ukNone, ukVw, ukVh, ukVmin, ukVmax, ukLh,
+      ukRlh, ukEx, ukCh, ukRex, ukRch:
     none(float32)
 
 proc resolvedInsets(style: ComputedStyle; containingSize: Size): Insets =
@@ -636,7 +675,7 @@ proc layoutNode(
       return size(clamped.w * zoom, clamped.h * zoom)
     return clamped
 
-  let pad = paddingOf(style)
+  let pad = paddingOf(style, constraints.w)
   let childConstraints = size(
     max(0.0'f32, (if resolvedWidth.isSome: resolvedWidth.get else: constraints.w) - pad.left - pad.right),
     max(0.0'f32, (if resolvedHeight.isSome: resolvedHeight.get else: constraints.h) - pad.top - pad.bottom)
@@ -656,6 +695,8 @@ proc layoutNode(
   let orderedChildren = node.childrenInLayoutOrder(styles)
   for child in orderedChildren:
     let childStyle {.cursor.} = styles.styles[child.nodeIndex]
+    if childStyle.layout.display == dkNone:
+      continue
     if childStyle.isAbsolute:
       let firstBox = output.boxes.len
       let childSize = layoutNode(
@@ -674,7 +715,7 @@ proc layoutNode(
         node: child,
         size: childSize,
         minMain: 0,
-        margin: marginOf(childStyle),
+        margin: marginOf(childStyle, childConstraints.w),
         firstBox: firstBox,
         boxCount: output.boxes.len - firstBox
       )
@@ -721,7 +762,7 @@ proc layoutNode(
         firstBox, output.boxes.len - firstBox,
         child, style.layout.direction, basis.get
       )
-    let margin = marginOf(childStyle)
+    let margin = marginOf(childStyle, childConstraints.w)
     let outerW = childSize.w + margin.left + margin.right
     let outerH = childSize.h + margin.top + margin.bottom
     children.add ChildPlacement(
@@ -945,6 +986,7 @@ proc layoutNode(
   output.boxes.add LayoutBox(
     node: id,
     rect: rect(x, y, clamped.w, clamped.h),
+    padding: pad,
     zIndex: style.layout.zIndex
   )
   let zoom = parsedZoom(style)

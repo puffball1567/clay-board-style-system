@@ -52,15 +52,17 @@ let settingsLink = ui.link(
   textStyle = settingsLinkTextStyle
 )
 
-settingsLink.onClick = proc(event: DispatchResult): bool =
+settingsLink.onClick = proc(event: DispatchResult): EventOutcome =
   recordNavigationMetric()
-  false
+  ignoredEvent()
 ```
 
-Internal navigation runs before the optional user `onClick` handler. Disabled
-links suppress both navigation and the user handler. Visual appearance,
-including hover and focus-visible styling, remains injectable through normal
-CBSS styles.
+The optional user `onClick` handler runs before navigation. Returning
+`preventedEvent()` suppresses navigation without implicitly stopping event
+propagation; `stoppedEvent()` stops propagation while retaining navigation.
+Disabled links suppress both navigation and the user handler. Visual
+appearance, including hover and focus-visible styling, remains injectable
+through normal CBSS styles.
 
 The navigator is application-owned and must outlive every mounted Link that
 uses it. Link stores a non-owning ARC cursor to the navigator so a navigator
@@ -255,8 +257,9 @@ of the same retained screen do not manufacture a visual transition.
 
 The scheduler requests the next deadline only while a transition is active.
 The legacy `sync(interaction)` overload remains an immediate switch for event
-loops that do not opt into time-driven transitions. Navigation hooks are not
-the general CSS transition/keyframe engine planned for a later release.
+loops that do not opt into time-driven transitions. Navigation hooks remain
+separate from the declarative CSS-inspired transition/keyframe engine; they
+coordinate retained screen roots rather than style-property interpolation.
 
 ## External URLs And Application Deep Links
 
