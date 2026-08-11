@@ -1,4 +1,4 @@
-version       = "0.4.0"
+version       = "0.4.1"
 author        = "Clay Board Style System contributors"
 description   = "A CSS-inspired primitive engine for native GUI toolkits"
 license       = "Apache-2.0"
@@ -55,6 +55,7 @@ task checkExplicitEventOutcomes, "Reject implicit boolean outcomes in first-part
   exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_v03_canvas -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/v03_canvas_demo.nim"
   exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_loading_indicator -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/loading_indicator_demo.nim"
   exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_door_button -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/door_button_canvas_demo.nim"
+  exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_declarative_motion -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/declarative_motion_demo.nim"
   exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_widget_lifecycle tests/memory/widget_lifecycle.nim"
 
 task testOrc, "Run the test suite under ORC":
@@ -154,6 +155,9 @@ task checkExamples, "Type-check every example in each supported link configurati
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_door_button_canvas -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/door_button_canvas_demo.nim"
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_door_button_canvas_system -d:cbssSdl3LinkMode=system examples/door_button_canvas_demo.nim"
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_door_button_canvas_custom -d:cbssSdl3LinkMode=custom -d:cbssRuntimeRoot=vendor/sdl3 examples/door_button_canvas_demo.nim"
+  exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_declarative_motion -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/declarative_motion_demo.nim"
+  exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_declarative_motion_system -d:cbssSdl3LinkMode=system examples/declarative_motion_demo.nim"
+  exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_declarative_motion_custom -d:cbssSdl3LinkMode=custom -d:cbssRuntimeRoot=vendor/sdl3 examples/declarative_motion_demo.nim"
 
 task checkExamplesOrc, "Type-check public examples under ORC":
   exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
@@ -166,6 +170,7 @@ task checkExamplesOrc, "Type-check public examples under ORC":
   exec "nim check --mm:orc --path:src --nimcache:/tmp/clay_board_style_system_orc_check_v03_canvas -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/v03_canvas_demo.nim"
   exec "nim check --mm:orc --path:src --nimcache:/tmp/clay_board_style_system_orc_check_loading_indicator -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/loading_indicator_demo.nim"
   exec "nim check --mm:orc --path:src --nimcache:/tmp/clay_board_style_system_orc_check_door_button_canvas -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/door_button_canvas_demo.nim"
+  exec "nim check --mm:orc --path:src --nimcache:/tmp/clay_board_style_system_orc_check_declarative_motion -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/declarative_motion_demo.nim"
 
 task buildCAbiShared, "Build the shared CBSS C ABI library":
   exec "nim c --threads:on --app:lib --mm:arc -d:release --path:src --nimcache:/tmp/clay_board_style_system_c_api_shared_nimcache --out:/tmp/libcbss.so src/cbss_c_api.nim"
@@ -270,6 +275,11 @@ task doorButtonCanvasDemo, "Run the font-relative Canvas door button demo":
   exec "cargo build --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml"
   exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
   exec "env LD_LIBRARY_PATH=native/cosmic_text_bridge/target/release:native/image_bridge/target/release nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_door_button_canvas_demo_nimcache --out:/tmp/clay_board_style_system_door_button_canvas_demo examples/door_button_canvas_demo.nim"
+
+task declarativeMotionDemo, "Run the declarative transition and keyframe demo":
+  exec "cargo build --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml"
+  exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
+  exec "env LD_LIBRARY_PATH=native/cosmic_text_bridge/target/release:native/image_bridge/target/release nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_declarative_motion_demo_nimcache --out:/tmp/clay_board_style_system_declarative_motion_demo examples/declarative_motion_demo.nim"
 
 task buildCosmicTextBridge, "Build the Rust cosmic-text C ABI bridge":
   exec "cargo build --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml"
