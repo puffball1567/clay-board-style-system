@@ -155,7 +155,7 @@ application-domain libraries remain separate OSS packages. SDL-native game
 surfaces that must share CBSS texture, renderer, input, and frame lifecycles
 are optional modules shipped within CBSS.
 
-Planned capabilities:
+Version 0.4 release capabilities:
 
 - Add a type-oriented Nim component authoring layer that remains ordinary Nim
   and preserves LSP completion, navigation, rename, and static checking. Public
@@ -344,7 +344,7 @@ Implementation progress:
 
 ## Version 0.4 - Units, Component Flow, And Open Event Contracts
 
-Status: `Partially implemented`
+Status: `Release candidate scope implemented`
 
 Version 0.4 completes the typed unit model across supported properties, makes
 conditionally materialized components behave like ordinary flow children, and
@@ -357,6 +357,14 @@ layout placeholders, or conditional-rendering machinery. The event goal is to
 keep intrinsic UI behavior, application callbacks, and library observers
 separate without making one component language or widget implementation the
 only integration surface.
+
+The Version 0.4 release boundary includes the implemented unit-resolution
+contexts, conditional component flow, open event contract, Blob/FormData/stream
+data boundary, typed closed-value authoring, and declarative transitions and
+keyframes documented in this section. Optional Pixie effects, GPU Canvas,
+Motion Scene, media capabilities, complete 3D transforms, and additional
+property-specific motion values remain later roadmap work and are not Version
+0.4 release gates.
 
 Planned capabilities:
 
@@ -756,7 +764,7 @@ wake-callback replacement while the old raw context is still executing.
 
 ## Authoring Value Model And Ergonomics
 
-Status: `Partially implemented on the Version 0.4 development line`
+Status: `Version 0.4 authoring scope implemented; later effects remain planned`
 
 CBSS should keep its typed, CSS-inspired value model while making common
 authoring forms concise. This work is separate from CSS compatibility: a value
@@ -1090,7 +1098,7 @@ Custom Styles retain their logical Box/transform hit path.
 
 ## Motion, Transform, And Native Visual Surfaces
 
-Status: `Partially implemented on the Version 0.4 development line`
+Status: `Version 0.4 scope implemented; later visual surfaces remain planned`
 
 CBSS should support the CSS-inspired motion and geometric vocabulary needed by
 modern application UI without adopting a browser or a virtual-DOM redraw
@@ -1125,7 +1133,9 @@ Current and planned work:
   independently. `opacity`, `color`, and `background-color` sample through the
   shared animation clock without per-frame style resolution or layout.
   Typed 2D transform values share the same paint/hit interpolation path.
-  Additive composition, lifecycle events, and further value types remain.
+  Animation and transition start, iteration, end, and cancellation lifecycle
+  events use the normal typed dispatch contract. Additive composition and
+  further value types remain later work.
 - Implemented: frames are scheduled only while timed work, caret blink,
   scrolling motion, or Canvas requests one; idle UI remains event-driven.
 - Implemented foundation: the animation clock accepts reduced-motion policy;
@@ -1136,7 +1146,7 @@ The current host and test contract is documented in
 
 ### CSS-Like Motion Scene
 
-Status: `Planned after declarative transition binding`
+Status: `Planned after Version 0.4`
 
 CBSS will provide a retained Motion Scene inside Canvas for motion graphics,
 generative design, high-density charts, particles, sprites, and other visuals

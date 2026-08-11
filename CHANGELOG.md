@@ -7,6 +7,8 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-11
+
 ### Added
 
 - Added LLVM UBSan gates for numeric, layout, transform, transition, and

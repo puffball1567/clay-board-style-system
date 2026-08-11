@@ -257,8 +257,9 @@ of the same retained screen do not manufacture a visual transition.
 
 The scheduler requests the next deadline only while a transition is active.
 The legacy `sync(interaction)` overload remains an immediate switch for event
-loops that do not opt into time-driven transitions. Navigation hooks are not
-the general CSS transition/keyframe engine planned for a later release.
+loops that do not opt into time-driven transitions. Navigation hooks remain
+separate from the declarative CSS-inspired transition/keyframe engine; they
+coordinate retained screen roots rather than style-property interpolation.
 
 ## External URLs And Application Deep Links
 

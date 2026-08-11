@@ -164,8 +164,23 @@ cbss_configure system
 The selection is written to the application's ignored `.cbss/` directory.
 CBSS does not ship native runtime binaries inside its Nimble package.
 
-## What Version 0.3.2 Contains
+## What Version 0.4.0 Contains
 
+- Typed viewport, font-relative, font-metric-relative, percentage-spacing,
+  intrinsic, and property-specific numeric unit authoring with deterministic
+  resolution diagnostics.
+- Transparent conditional component materialization that preserves normal
+  Box/Flex order while empty components consume no layout, paint, hit, focus,
+  event, or accessibility space.
+- An open event contract with explicit outcomes, stable target/current-target
+  identity, replaceable public slots, removable subscriptions, typed signals,
+  deterministic default actions, and equivalent C ABI dispatch semantics.
+- Immutable Blob and FormData values plus bounded worker-to-UI streams,
+  component-owned stream bindings, SDL3 event-loop wakeup, and explicit C ABI
+  ownership contracts.
+- Declarative paint transitions and multiple named keyframes for opacity,
+  foreground/background colors, and typed 2D transforms, including CSS-like
+  list cycling, lifecycle events, reduced motion, and active-only scheduling.
 - Typed `CBSSComponent` authoring, nested composition, Style DI, lifecycle
   hooks, and transactional mount rollback.
 - CSS Color 4-inspired typed and serialized colors, `color-mix()`, wide-gamut
@@ -191,18 +206,18 @@ Accepting a value as metadata does not mean that layout or paint consumes it.
 
 ## Current Boundaries
 
-Version 0.3.2 is a developer preview. Public APIs may change before 1.0.
+Version 0.4.0 is a developer preview. Public APIs may change before 1.0.
 
 - Linux x86_64 with SDL3 is the only Tier 1 runtime target.
 - Windows and macOS native runtime validation is incomplete.
 - The semantic accessibility model and platform-neutral AT-SPI adapter exist;
   Linux AT-SPI D-Bus, Windows UIA, and macOS NSAccessibility transports remain
   incomplete.
-- Complete unit resolution, inline rich text, additional declarative motion
-  properties, filters, 3D transforms, CPU effects, and GPU Canvas are roadmap
-  work. Paint transitions and multiple named keyframes currently support
-  opacity, foreground/background colors, and typed 2D transforms with CSS-like
-  longhand list cycling.
+- Remaining property-specific percentage and intrinsic-sizing combinations,
+  inline rich text, additional declarative motion values, filters, 3D
+  transforms, CPU effects, and GPU Canvas are roadmap work. Paint transitions
+  and multiple named keyframes support opacity, foreground/background colors,
+  and typed 2D transforms with CSS-like longhand list cycling.
 - CBSS intentionally does not reproduce DOM selectors, browser quirks, legacy
   CSS behavior, JavaScript, or a browser security model.
 
