@@ -102,7 +102,7 @@ The exact workloads, machine-local interpretation, budgets, and regression
 gates are documented in [Performance Model](docs/performance-model.md) and can
 be run with `nimble bench`.
 
-The discovered ARC suite currently covers 92 independently compiled test
+The discovered ARC suite currently covers 99 independently compiled test
 files. The same suite and public examples also run under ORC as a compatibility
 gate, so applications may select either `--mm:arc` or `--mm:orc`. ARC remains
 the stricter ownership baseline. Separate Valgrind gates exercise the complete
@@ -131,13 +131,19 @@ nimble sdl3Demo
 ```
 
 The focused demos isolate component authoring, Canvas/color behavior, and an
-event-driven loading animation:
+event-driven loading animation. The declarative motion demo runs automatic
+keyframes and hover transitions without manual Canvas animation:
 
 ```sh
 nimble componentDemo
 nimble v03CanvasDemo
 nimble loadingIndicatorDemo
+nimble declarativeMotionDemo
 ```
+
+[![Declarative transition and keyframe demo](sample/ClayBoardStyleSystem_declarative_motion_demo_preview.gif)](sample/ClayBoardStyleSystem_declarative_motion_demo.mp4)
+
+Select the preview to open the full MP4 recording.
 
 ### 3. Install for an application
 
@@ -164,7 +170,7 @@ cbss_configure system
 The selection is written to the application's ignored `.cbss/` directory.
 CBSS does not ship native runtime binaries inside its Nimble package.
 
-## What Version 0.4.0 Contains
+## What Version 0.4.1 Contains
 
 - Typed viewport, font-relative, font-metric-relative, percentage-spacing,
   intrinsic, and property-specific numeric unit authoring with deterministic
@@ -206,7 +212,7 @@ Accepting a value as metadata does not mean that layout or paint consumes it.
 
 ## Current Boundaries
 
-Version 0.4.0 is a developer preview. Public APIs may change before 1.0.
+Version 0.4.1 is a developer preview. Public APIs may change before 1.0.
 
 - Linux x86_64 with SDL3 is the only Tier 1 runtime target.
 - Windows and macOS native runtime validation is incomplete.
