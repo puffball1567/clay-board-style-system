@@ -508,6 +508,125 @@ suite "style context merge":
     check style.animation.transitionTimingFunction == some("linear")
     check style.animation.transitionBehavior == tbAllowDiscrete
 
+  test "animation delay preserves a negative authored offset":
+    let context = styleContext([
+      decl("animation-duration", number(-1)),
+      decl("animation-delay", number(-0.25))
+    ])
+    var diagnostics: Diagnostics
+    let style = resolveStyles(
+      context, defaultProperties(), ResolveEnv(), diagnostics
+    )
+
+    check diagnostics.hasErrors
+    check style.animation.animationDuration == 0
+    check style.animation.animationDelay == -0.25'f32
+
+  test "animation longhands retain normalized lists for runtime cycling":
+    let context = styleContext([
+      animationNames("fade", "tint", "move"),
+      animationDurations(2.0'f32, 0.5'f32),
+      animationDelays(-0.25'f32),
+      animationTimingFunctions(
+        "cubic-bezier(0.2, 0.8, 0.4, 1)", "linear"
+      ),
+      decl("animation-iteration-count", keyword("1, infinite")),
+      animationDirections(adNormal, adAlternate),
+      animationFillModes(afNone, afForwards),
+      animationPlayStates(apsRunning, apsPaused),
+      animationCompositions(acReplace, acAdd)
+    ])
+    var diagnostics: Diagnostics
+    let style = resolveStyles(
+      context, defaultProperties(), ResolveEnv(), diagnostics
+    )
+
+    check not diagnostics.hasErrors
+    check style.animation.animationNames == @["fade", "tint", "move"]
+    check style.animation.animationDurations == @[2.0'f32, 0.5'f32]
+    check style.animation.animationDelays == @[-0.25'f32]
+    check style.animation.animationTimingFunctions == @[
+      "cubic-bezier(0.2, 0.8, 0.4, 1)", "linear"
+    ]
+    check style.animation.animationIterationCounts == @[
+      some(1.0'f32), none(float32)
+    ]
+    check style.animation.animationDirections == @[adNormal, adAlternate]
+    check style.animation.animationFillModes == @[afNone, afForwards]
+    check style.animation.animationPlayStates == @[apsRunning, apsPaused]
+    check style.animation.animationCompositions == @[acReplace, acAdd]
+    check style.animation.animationName == some("fade")
+    check style.animation.animationDuration == 2.0'f32
+    check style.animation.animationIterationCount == some(1.0'f32)
+
+  test "animation list diagnostics reject malformed and invalid values":
+    for declaration in [
+      decl("animation-name", keyword("fade,,move")),
+      decl("animation-name", keyword("none, fade")),
+      decl("animation-duration", keyword("1, nope")),
+      decl("animation-duration", keyword("1, -0.5")),
+      decl("animation-iteration-count", keyword("1, -1")),
+      decl("animation-direction", keyword("normal, sideways")),
+      decl("animation-fill-mode", keyword("both, mystery")),
+      decl("animation-play-state", keyword("running, stopped")),
+      decl("animation-composition", keyword("replace, merge"))
+    ]:
+      var diagnostics: Diagnostics
+      discard resolveStyles(
+        styleContext([declaration]),
+        defaultProperties(),
+        ResolveEnv(),
+        diagnostics
+      )
+      check diagnostics.hasErrors
+
+  test "transition longhands retain normalized lists for runtime cycling":
+    let context = styleContext([
+      transitionProperties("future-property", "opacity", "background-color"),
+      transitionDurations(2.0'f32, 0.5'f32),
+      transitionDelays(-0.25'f32),
+      transitionTimingFunctions(
+        "cubic-bezier(0.2, 0.8, 0.4, 1)", "linear"
+      ),
+      transitionBehaviors(tbNormal, tbAllowDiscrete)
+    ])
+    var diagnostics: Diagnostics
+    let style = resolveStyles(
+      context, defaultProperties(), ResolveEnv(), diagnostics
+    )
+
+    check not diagnostics.hasErrors
+    check style.animation.transitionProperties == @[
+      "future-property", "opacity", "background-color"
+    ]
+    check style.animation.transitionDurations == @[2.0'f32, 0.5'f32]
+    check style.animation.transitionDelays == @[-0.25'f32]
+    check style.animation.transitionTimingFunctions == @[
+      "cubic-bezier(0.2, 0.8, 0.4, 1)", "linear"
+    ]
+    check style.animation.transitionBehaviors == @[
+      tbNormal, tbAllowDiscrete
+    ]
+    check style.animation.transitionDuration == 2.0'f32
+    check style.animation.transitionDelay == -0.25'f32
+
+  test "transition list diagnostics reject malformed and negative values":
+    for declaration in [
+      decl("transition-property", keyword("opacity,,color")),
+      decl("transition-duration", keyword("1, nope")),
+      decl("transition-duration", keyword("1, -0.5")),
+      decl("transition-timing-function", keyword("linear,")),
+      decl("transition-behavior", keyword("normal, mystery"))
+    ]:
+      var diagnostics: Diagnostics
+      discard resolveStyles(
+        styleContext([declaration]),
+        defaultProperties(),
+        ResolveEnv(),
+        diagnostics
+      )
+      check diagnostics.hasErrors
+
   test "background properties resolve to computed box style":
     let context = styleContext([
       decl("background", colorValue(rgb(0.1, 0.2, 0.3))),

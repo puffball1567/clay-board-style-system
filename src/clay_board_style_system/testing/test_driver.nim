@@ -1,4 +1,4 @@
-import std/[json, options, os, strutils]
+import std/[json, math, options, os, strutils]
 
 import ../core/[computed_style, diagnostics, geometry, node, style_resolver]
 import ../generated/default_properties
@@ -7,7 +7,7 @@ import ../input/events
 import ../layout/layout
 import ../layout/scroll_state
 import ../paint/[paint, paint_command, path_geometry]
-import ../runtime/[focus, text_focus, ui_root]
+import ../runtime/[focus, frame_scheduler, invalidation, text_focus, ui_root]
 
 type
   CbssQueryKind* = enum
@@ -43,6 +43,8 @@ type
     paintCommands*: seq[PaintCommand]
     lastDispatches*: seq[DispatchResult]
     actionLog*: seq[string]
+    nowSeconds*: float64
+    scheduler*: FrameScheduler
 
   CbssScope* = object
     driver*: CbssTestDriver
@@ -219,12 +221,26 @@ proc matches(tree: Tree; id: NodeId; query: CbssQuery): bool =
 
 proc refresh*(driver: CbssTestDriver) =
   driver.diagnostics = Diagnostics()
-  driver.styles = resolveTreeStyles(
+  var targetStyles = resolveTreeStyles(
     driver.ui.tree,
     driver.ui.styleSheets(),
     defaultProperties(),
     driver.diagnostics,
     viewportSize = some(driver.viewport)
+  )
+  if driver.styles.styles.len > 0:
+    driver.ui.reconcileStyleTransitions(
+      driver.styles, targetStyles, driver.nowSeconds
+    )
+  driver.ui.reconcileStyleAnimations(targetStyles, driver.nowSeconds)
+  driver.styles = targetStyles
+  driver.scheduler.clearDeadline()
+  discard driver.scheduler.consumeDirty()
+  discard driver.ui.applyStyleTransitions(
+    driver.styles, driver.scheduler, driver.nowSeconds
+  )
+  discard driver.ui.applyStyleAnimations(
+    driver.styles, driver.scheduler, driver.nowSeconds
   )
   driver.layout = computeLayout(driver.ui.tree, driver.styles, driver.viewport, driver.ui.textEngine, driver.ui.fonts)
   driver.ui.scroll.syncScrollState(driver.ui.tree, driver.styles, driver.layout)
@@ -236,13 +252,45 @@ proc refresh*(driver: CbssTestDriver) =
   )
   discard driver.ui.consumeInvalidation()
 
+proc advanceTime*(driver: CbssTestDriver; elapsedSeconds: float64) =
+  ## Advances timed paint work without resolving style, layout, or hit regions.
+  ## Tests can therefore assert the same retained-frame behavior as a host loop.
+  if elapsedSeconds.classify in {fcNan, fcInf, fcNegInf} or elapsedSeconds < 0:
+    raise newException(
+      ValueError, "test-driver elapsed time must be finite and non-negative"
+    )
+  driver.rememberAction("advanceTime " & $elapsedSeconds)
+  driver.nowSeconds += elapsedSeconds
+  driver.scheduler.clearDeadline()
+  discard driver.scheduler.consumeDirty()
+  let transitionSamples = driver.ui.applyStyleTransitions(
+      driver.styles, driver.scheduler, driver.nowSeconds
+  )
+  let animationSamples = driver.ui.applyStyleAnimations(
+    driver.styles, driver.scheduler, driver.nowSeconds
+  )
+  if transitionSamples > 0 or animationSamples > 0:
+    if ddHit in driver.scheduler.invalidation.domains:
+      driver.hitRegions = buildHitRegions(
+        driver.ui.tree, driver.layout, driver.styles, driver.ui.scroll
+      )
+    driver.paintCommands = buildPaintCommands(
+      driver.ui.tree, driver.styles, driver.layout, driver.ui.scroll,
+      driver.ui.canvasPaintProvider()
+    )
+
 proc setViewport*(driver: CbssTestDriver; viewport: Size) =
   driver.rememberAction("setViewport " & $viewport.w & "x" & $viewport.h)
   driver.viewport = viewport
   driver.refresh()
 
 proc initCbssTestDriver*(ui: UiRoot; viewport: Size): CbssTestDriver =
-  result = CbssTestDriver(ui: ui, viewport: viewport, input: initInteractionState())
+  result = CbssTestDriver(
+    ui: ui,
+    viewport: viewport,
+    input: initInteractionState(),
+    scheduler: initFrameScheduler()
+  )
   let driver = result
   result.ui.configureClipboardTextProvider(proc(): string =
     driver.clipboard

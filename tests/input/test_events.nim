@@ -562,6 +562,20 @@ suite "input events":
     check registry.emit(NodeId(1), iekSubmit)
     check submitted
 
+  test "motion events validate their kind and preserve typed payloads":
+    let event = motionEvent(
+      iekAnimationIteration, "pulse", 1.25, iteration = 3
+    )
+    check event.motionName == "pulse"
+    check event.motionElapsedSeconds == 1.25
+    check event.motionIteration == 3
+    check eventDefinition(iekAnimationIteration).producer == edmCoreSynthetic
+    check not eventDefinition(iekAnimationIteration).cancelable
+    check epfMotion in eventDefinition(iekAnimationIteration).payload
+
+    expect ValueError:
+      discard motionEvent(iekClick, "invalid", 0)
+
   test "focused clipboard and composition events can be emitted":
     var tree = initTree()
     let root = tree.addBox(id = "root")

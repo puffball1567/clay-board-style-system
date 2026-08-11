@@ -155,7 +155,7 @@ application-domain libraries remain separate OSS packages. SDL-native game
 surfaces that must share CBSS texture, renderer, input, and frame lifecycles
 are optional modules shipped within CBSS.
 
-Planned capabilities:
+Version 0.4 release capabilities:
 
 - Add a type-oriented Nim component authoring layer that remains ordinary Nim
   and preserves LSP completion, navigation, rename, and static checking. Public
@@ -344,7 +344,7 @@ Implementation progress:
 
 ## Version 0.4 - Units, Component Flow, And Open Event Contracts
 
-Status: `Partially implemented`
+Status: `Release candidate scope implemented`
 
 Version 0.4 completes the typed unit model across supported properties, makes
 conditionally materialized components behave like ordinary flow children, and
@@ -357,6 +357,14 @@ layout placeholders, or conditional-rendering machinery. The event goal is to
 keep intrinsic UI behavior, application callbacks, and library observers
 separate without making one component language or widget implementation the
 only integration surface.
+
+The Version 0.4 release boundary includes the implemented unit-resolution
+contexts, conditional component flow, open event contract, Blob/FormData/stream
+data boundary, typed closed-value authoring, and declarative transitions and
+keyframes documented in this section. Optional Pixie effects, GPU Canvas,
+Motion Scene, media capabilities, complete 3D transforms, and additional
+property-specific motion values remain later roadmap work and are not Version
+0.4 release gates.
 
 Planned capabilities:
 
@@ -577,7 +585,7 @@ must be corrected as part of this work rather than preserved as compatibility.
 
 ### UI Data Interchange: Blob, Form Data, And Streams
 
-Status: `Partially implemented on the Version 0.4 development line`
+Status: `Implemented on the Version 0.4 development line; optional adapters remain`
 
 Implemented on this line: immutable in-memory `Blob` snapshots with advisory
 MIME metadata, bounded reads, slices, and explicit materialization limits;
@@ -611,17 +619,34 @@ empty snapshots remain distinguishable from payload-free synthetic events,
 and callbacks may retain a snapshot beyond dispatch through explicit
 retain/release ownership.
 
-The first bounded stream slice is now implemented as a transport-neutral
-`StreamBridge[T]` UI-thread state machine. It provides deterministic
-open/data/progress/end/error/cancel/close ordering, item and declared-weight
-backpressure, progress coalescing, exact terminal delivery, cancellation that
-drops queued work, late-offer rejection, partial draining, and ARC/ORC stress
-tests. It intentionally does not claim thread safety.
+C ABI `0x00010010` and the Nim API add host-authorized fixed-size Blob
+providers with lazy bounded reads, per-Blob read serialization, success-only
+context ownership transfer, and exactly-once provider release. This supplies
+the reusable source boundary for files, mappings, decoders, and foreign buffers
+without giving CBSS path-opening authority.
 
-Remaining: host-authorized file/provider Blob sources, optional transport
-adapters, an ARC-safe worker-to-UI ownership-transfer mailbox, component
-disposal and scheduler wake-up integration, C ABI transport, and cancellation
-race verification.
+The bounded stream boundary is now implemented as two transport-neutral
+layers. `StreamBridge[T]` is the UI-thread state machine and provides
+deterministic open/data/progress/end/error/cancel/close ordering, item and
+declared-weight backpressure, progress coalescing, exact terminal delivery,
+cancellation that drops queued work, late-offer rejection, partial draining,
+and ARC/ORC stress tests. `StreamMailbox[T]` is the bounded worker-to-UI
+ownership-transfer layer.
+It moves managed values through shared channel storage, uses atomically retained
+producer handles, preserves a backpressured value without copying, coalesces
+host-loop wake requests, invalidates escaped producers during automatic or
+explicit disposal, and has real threaded ARC/ORC transfer tests. UI trees,
+components, and `StreamBridge` remain UI-thread-owned rather than becoming
+lock-based shared objects.
+
+The Blob-specialized C ABI transport is implemented in ABI `0x0001000F` with
+opaque UI and producer handles, bounded item/byte pressure, coalesced wake
+callbacks, ordered pump/drain, explicit Blob ownership transfer, and real
+pthread consumers for shared and static ARC/ORC builds. Foreign workers use an
+explicit runtime attach/detach boundary.
+
+Remaining: optional transport-specific adapters. The Blob, FormData, and
+bounded-stream ownership contracts required by those adapters are implemented.
 
 CBSS will define transport-neutral data contracts for UI operations that need
 binary values, form snapshots, or progressively produced data. These contracts
@@ -719,14 +744,27 @@ network-facing producers and FormData request encoding. Media and image
 features may build adapters on this bridge while retaining their own resource
 and scheduling policies.
 
-The first stream implementation slice establishes the bounded UI-side state
-machine and deterministic fake-producer surface. Worker-thread delivery remains
-gated on bounded-memory stress tests, cancellation races, explicit ownership
-transfer, and proof that idle streams do not force continuous frames.
+The implemented stream boundary establishes both the bounded UI-side state
+machine and an explicit worker-to-UI ownership-transfer mailbox. The mailbox
+uses a coalesced host wake callback instead of requesting continuous frames;
+the UI drains it and performs invalidation only when transferred events change
+observable state. `ComponentStreamBinding[T]` now connects that pump to selected
+dirty domains and is retained through the general component-owned resource
+lifecycle. Subtree disposal closes the mailbox, drains retained payloads, and
+rejects escaped producer handles exactly once under ARC and ORC. The C ABI
+transport now exposes the same state machines for immutable Blob chunks without
+exporting managed Nim storage.
+The SDL3 adapter now posts a coalesced, integer-token-only user event from the
+worker callback. A real worker test proves that an SDL event loop blocked in
+`SDL_WaitEventTimeout` wakes, routes only the matching binding, preserves stream
+order, marks only configured dirty domains, and returns to an empty event queue.
+Threaded race gates additionally cover simultaneous bounded producers,
+competing finish/fail/cancel offers, disposal during active production, and
+wake-callback replacement while the old raw context is still executing.
 
 ## Authoring Value Model And Ergonomics
 
-Status: `Partially implemented on the Version 0.4 development line`
+Status: `Version 0.4 authoring scope implemented; later effects remain planned`
 
 CBSS should keep its typed, CSS-inspired value model while making common
 authoring forms concise. This work is separate from CSS compatibility: a value
@@ -968,20 +1006,21 @@ callers depend only on the versioned CBSS ABI.
 
 ### Keywords And Closed Value Sets
 
-Status: `Partially implemented on the Version 0.4 development line`
+Status: `Implemented on the Version 0.4 development line`
 
 `keyword(...)` remains the extensible lower-level representation for
 property-specific values that are not yet closed or may expand over time. It
 should not be the preferred surface for common, closed sets such as flex
 direction, alignment, overflow, or cursor kinds.
 
-Planned work:
+Implemented contract:
 
-- Add typed helpers or enum-backed APIs for common closed value sets.
-- Keep a documented lower-level keyword path for extension and explicitly
-  supported metadata use cases.
-- Validate keywords against the property that consumes them and report
-  unsupported values instead of accepting and ignoring them.
+- Typed helpers backed by existing CBSS enums are the preferred authoring API
+  for closed value sets.
+- The documented lower-level keyword path remains available for extension and
+  explicitly supported metadata use cases.
+- Property consumers validate authored keywords and report unsupported values
+  instead of accepting and ignoring them.
 
 The initial typed surface accepts existing CBSS enums for display, Flex
 direction and wrapping, alignment, positioning, box sizing, overflow, pointer
@@ -989,6 +1028,15 @@ events, cursor, selection, resize, font style, and text alignment. These
 helpers serialize to the same validated property operations as the lower-level
 keyword path, so they add LSP completion and compile-time type checking without
 creating a second runtime representation.
+
+The Version 0.4 surface extends that contract across the existing enum-backed
+text, image, background, blending, color-adjustment, touch, reading-flow,
+scrollbar, overscroll, transform-metadata, transition-metadata, and
+animation-metadata value sets. Motion helpers make existing metadata authoring
+type-safe; they do not imply that the later declarative motion runtime is
+complete. Grammars that combine keywords with dimensions or other payloads
+continue to use their property-specific structured values rather than forcing
+an enum-only API.
 
 ## GPU Canvas Capability
 
@@ -1050,7 +1098,7 @@ Custom Styles retain their logical Box/transform hit path.
 
 ## Motion, Transform, And Native Visual Surfaces
 
-Status: `Planned`
+Status: `Version 0.4 scope implemented; later visual surfaces remain planned`
 
 CBSS should support the CSS-inspired motion and geometric vocabulary needed by
 modern application UI without adopting a browser or a virtual-DOM redraw
@@ -1064,19 +1112,41 @@ Current and planned work:
 - Implemented: `translate`, `scale`, `rotate`, transform origin, and 2D
   composition order use a single layout, paint, hit-test, clip, and
   RenderSurface coordinate contract. Canvas uses the same affine paint scopes.
-- Add declarative transition property, duration, delay, timing-function, and
-  interpolation behavior for supported style values.
-- Implemented foundation: typed float/color keyframes and the animation clock
-  resolve and interpolate deterministically; declaration-driven keyframe
-  binding remains planned.
+- Complete the 2D vocabulary with typed skew and matrix operations while
+  preserving the same inverse hit-test and transformed-clip contract.
+- Add perspective, perspective origin, `transform-style: preserve-3d`, and
+  `backface-visibility` only as a coherent 3D scene/composition contract;
+  storing these values as transform metadata is not runtime completion.
+- Implemented first runtime slice: declarative `transition-property`, duration,
+  signed delay, timing function, reversal, cancellation, and reduced-motion
+  behavior drive `opacity`, `color`, and `background-color`. Sampling is
+  proportional to active tracks and does not require style resolution or
+  layout on animation frames. Property, duration, delay, timing, and behavior
+  lists cycle by index; unknown property positions are retained and the last
+  matching property entry wins. Typed 2D `transform`, `translate`, `scale`, and
+  `rotate` now interpolate through the shared affine paint/hit contract without
+  relayout; additional typed values remain.
+- Implemented: named typed keyframes bind through list-valued `animation-name`,
+  duration, signed delay, timing function, iteration count, direction, fill
+  mode, play state, and composition. Lists cycle by animation index, missing
+  definitions retain their positions, and multiple tracks on one node progress
+  independently. `opacity`, `color`, and `background-color` sample through the
+  shared animation clock without per-frame style resolution or layout.
+  Typed 2D transform values share the same paint/hit interpolation path.
+  Animation and transition start, iteration, end, and cancellation lifecycle
+  events use the normal typed dispatch contract. Additive composition and
+  further value types remain later work.
 - Implemented: frames are scheduled only while timed work, caret blink,
   scrolling motion, or Canvas requests one; idle UI remains event-driven.
 - Implemented foundation: the animation clock accepts reduced-motion policy;
   platform preference adapters remain planned.
 
+The current host and test contract is documented in
+[declarative-motion.md](declarative-motion.md).
+
 ### CSS-Like Motion Scene
 
-Status: `Planned after declarative transition binding`
+Status: `Planned after Version 0.4`
 
 CBSS will provide a retained Motion Scene inside Canvas for motion graphics,
 generative design, high-density charts, particles, sprites, and other visuals
@@ -1343,12 +1413,92 @@ including late callbacks, cancellation races, Blob/provider release, stream
 shutdown, and C ABI consumers. A static pass is not reported as proof of leak
 freedom without the matching runtime lifecycle pass.
 
+The Version 0.4 motion gate runs declarative transition and keyframe lifecycle
+tests under AddressSanitizer with both ARC and ORC on Linux, Windows, and macOS.
+All three runners use LLVM Clang instrumentation. The Windows runner obtains
+the native SDK/linker environment from Visual Studio but explicitly places the
+standalone LLVM installation first in `PATH`, so the sanitizer compiler and
+runtime remain the LLVM implementation. AddressSanitizer owns out-of-bounds,
+use-after-free, and double-free detection. UndefinedBehaviorSanitizer runs
+numeric, Flex, transform, transition, and keyframe paths on Linux and macOS.
+Standalone LeakSanitizer runs retained widget, event, transition, and keyframe
+lifecycles on Linux. ThreadSanitizer runs the concurrent worker-to-UI stream
+mailbox on Linux and macOS. Windows uses the portable suite and ASan instead of
+requiring sanitizer combinations whose runtime cannot be reliably linked with
+the CI toolchain. Every sanitizer lane exercises ARC and ORC.
+
+The Linux Valgrind lane remains the deterministic lifecycle and C ABI leak gate
+because Valgrind is not treated as a supported portable Windows or current
+macOS CI runtime. The `detect_leaks` ASan option is set only on Linux; neither
+that option nor standalone LSan is passed to macOS or Windows.
+
 This verification is development-only. Ownership tracing, generated probes,
 sanitizer hooks, and verifier implementation code are not imported, linked, or
 packaged into normal application artifacts. CBSS release branches and official
 examples use the strict gate in CI. An optional checker may help advanced API
 and adapter authors, but correctness of arbitrary application memory management
 is outside the CBSS guarantee.
+
+### CSS Property Runtime Completion
+
+Status: `Version 0.5+ candidate; priority order not yet decided`
+
+The canonical property target remains in
+[css-property-support.md](css-property-support.md), and every targeted property
+has a provisional rank in
+[css-property-implementation-order.md](css-property-implementation-order.md).
+Those ranks are planning input rather than a fixed Version 0.5 execution order.
+The owner may reorder the following work packages after evaluating user
+feedback, subsystem dependencies, and release goals.
+
+A property is not complete merely because the registry accepts its name or
+ComputedStyle preserves its value. Promotion to `Runtime` requires a consumer
+in layout, paint, text, hit testing, input, accessibility, or another visible
+runtime subsystem, together with focused behavior and boundary tests.
+
+Before publishing a new completion percentage, audit every current `Computed`
+entry against the implementation. Existing consumers for `aspect-ratio`,
+`letter-spacing`, `word-spacing`, `order`, `align-self`, and textarea `resize`
+show that the support matrix can conservatively lag the code. The matrix,
+implementation order, default registry, and generated summary remain
+machine-checked, while semantic promotion requires code-and-test review.
+
+Candidate work packages:
+
+- **Box and Flex layout fidelity.** Complete executable `box-sizing`,
+  multi-line `flex-wrap` and `flex-flow`, line distribution through
+  `align-content`, and the remaining item/container alignment properties.
+  Preserve stable intrinsic sizing, min/max constraints, gaps, ordering,
+  percentage resolution, scrolling overflow, and dirty-subtree behavior in
+  both row and column layouts.
+- **Background geometry and composition.** Connect `background-position`,
+  `background-position-x`, `background-position-y`, `background-size`,
+  `background-repeat`, `background-clip`, and `background-origin` to the
+  shared SDL3 and headless paint contract. Then connect attachment and blend
+  behavior without introducing an idle redraw loop or backend-specific style
+  semantics. Linear-gradient support remains the reference image path.
+- **Everyday text behavior.** Finish visible `text-overflow` and ellipsis,
+  `text-transform`, `text-indent`, supported `text-wrap` forms, word breaking,
+  overflow wrapping, and hyphenation behavior. Letter and word spacing remain
+  consistent across measurement, shaping, caret geometry, selection, input,
+  textarea scrolling, and both text backends.
+- **Writing direction and logical geometry.** Replace the current
+  horizontal-LTR physical aliases with explicit `direction`, `unicode-bidi`,
+  and `writing-mode` behavior before claiming general logical-property
+  compatibility. Layout, text shaping, focus traversal, scrolling, and hit
+  geometry must agree on the resulting axes.
+- **Visual effects and advanced text.** Connect `filter`, `backdrop-filter`,
+  masks, blend/isolation behavior, and the remaining decoration and typography
+  properties only through shared paint/text contracts with deterministic
+  headless references. Optional Pixie or GPU implementations must not change
+  authored semantics or make the standard profile depend on them.
+
+Every selected work package includes negative and unsupported-value
+diagnostics, cross-backend reference tests where pixels are affected, and
+performance tests proving that a local property change does not resolve or
+relayout unrelated subtrees. `No plan` properties remain outside these
+candidates unless a later design decision explicitly moves them into the
+target.
 
 ## Later Milestones
 

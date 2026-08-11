@@ -39,6 +39,7 @@ suite "bounded UI stream bridge":
     check stream.queuedItems == 2
     check stream.queuedWeight == 6
     check stream.pushData("rejected", 0) == sorBackpressure
+    check stream.canPushData(0) == sorBackpressure
 
     let first = stream.drain(2)
     check first.len == 2
@@ -47,6 +48,7 @@ suite "bounded UI stream bridge":
     check stream.queuedItems == 1
     check stream.queuedWeight == 3
     check stream.pushData("too-heavy", 7) == sorBackpressure
+    check stream.canPushData(7) == sorBackpressure
     check stream.pushData("accepted", 3) == sorAccepted
 
   test "cancellation drops queued work and rejects late producer messages":

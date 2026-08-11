@@ -378,6 +378,15 @@ type
     animationFillMode*: AnimationFillMode
     animationPlayState*: AnimationPlayState
     animationComposition*: AnimationComposition
+    animationNames*: seq[string]
+    animationDurations*: seq[float32]
+    animationDelays*: seq[float32]
+    animationTimingFunctions*: seq[string]
+    animationIterationCounts*: seq[Option[float32]]
+    animationDirections*: seq[AnimationDirection]
+    animationFillModes*: seq[AnimationFillMode]
+    animationPlayStates*: seq[AnimationPlayState]
+    animationCompositions*: seq[AnimationComposition]
     animationRange*: Option[string]
     animationRangeStart*: Option[string]
     animationRangeEnd*: Option[string]
@@ -399,6 +408,11 @@ type
     transitionDelay*: float32
     transitionTimingFunction*: Option[string]
     transitionBehavior*: TransitionBehavior
+    transitionProperties*: seq[string]
+    transitionDurations*: seq[float32]
+    transitionDelays*: seq[float32]
+    transitionTimingFunctions*: seq[string]
+    transitionBehaviors*: seq[TransitionBehavior]
 
   BoxShadow* = object
     offsetX*, offsetY*: float32

@@ -8,6 +8,14 @@ import ./ui_root
 type
   ComponentContextError* = object of ValueError
 
+  ComponentResourceReleaseProc* = proc(
+    resource: ComponentOwnedResource
+  ) {.nimcall, raises: [].}
+
+  ComponentOwnedResource* = ref object of RootObj
+    disposedValue: bool
+    releaseCallback: ComponentResourceReleaseProc
+
   ComponentMountState* = enum
     cmsCreated,
     cmsRendering,
@@ -24,6 +32,34 @@ type
     ownerRoot {.cursor.}: UiRoot
     mountState: ComponentMountState
     flowState: ComponentFlowState
+    ownedResources: seq[ComponentOwnedResource]
+
+proc disposed*(resource: ComponentOwnedResource): bool {.inline.} =
+  resource.isNil or resource.disposedValue
+
+proc setReleaseCallback*(
+    resource: ComponentOwnedResource;
+    callback: ComponentResourceReleaseProc
+) =
+  if resource.isNil:
+    raise newException(ComponentContextError, "owned resource cannot be nil")
+  if resource.disposedValue:
+    raise newException(ComponentContextError, "owned resource is already disposed")
+  if callback.isNil:
+    raise newException(ComponentContextError, "resource release callback cannot be nil")
+  if resource.releaseCallback != nil:
+    raise newException(ComponentContextError, "resource release callback is already set")
+  resource.releaseCallback = callback
+
+proc dispose*(resource: ComponentOwnedResource): bool {.discardable.} =
+  if resource.isNil or resource.disposedValue:
+    return false
+  resource.disposedValue = true
+  let callback = resource.releaseCallback
+  resource.releaseCallback = nil
+  if callback != nil:
+    callback(resource)
+  true
 
 type RenderContextFrame = object
   root {.cursor.}: UiRoot
@@ -52,6 +88,31 @@ proc mounted*(self: CBSSComponent): bool =
 
 proc materialized*(self: CBSSComponent): bool =
   not self.isNil and self.flowState == cfsMaterialized
+
+proc own*[T: ComponentOwnedResource](self: CBSSComponent; resource: T): T =
+  if self.isNil:
+    raise newException(ComponentContextError, "component cannot be nil")
+  if resource.isNil:
+    raise newException(ComponentContextError, "owned resource cannot be nil")
+  if resource.disposed:
+    raise newException(ComponentContextError, "owned resource is already disposed")
+  if self.mountState notin {cmsRendering, cmsMounted}:
+    raise newException(
+      ComponentContextError,
+      "resources can only be owned while a component is rendering or mounted"
+    )
+  for existing in self.ownedResources:
+    if existing == resource:
+      return resource
+  self.ownedResources.add resource
+  resource
+
+proc disposeOwnedResources(self: CBSSComponent) =
+  if self.isNil:
+    return
+  for index in countdown(self.ownedResources.high, 0):
+    discard self.ownedResources[index].dispose()
+  self.ownedResources.setLen(0)
 
 proc setMaterialized*(self: CBSSComponent; materialized: bool): bool {.discardable.} =
   ## Keep the component mounted at a stable sibling position while allowing its
@@ -140,6 +201,7 @@ proc unmountComponent(component: ComponentRetention) {.nimcall.} =
     self.onUnmount()
   finally:
     activeRenderContext = previousContext
+    self.disposeOwnedResources()
 
 proc mount*[T: CBSSComponent](root: UiRoot; self: T): T {.discardable.} =
   mixin render
@@ -193,6 +255,7 @@ proc mount*[T: CBSSComponent](root: UiRoot; self: T): T {.discardable.} =
           if mountFailure.isNil:
             raise
       if self.mountState != cmsUnmounted:
+        self.disposeOwnedResources()
         self.rootNode = NodeHandle()
         self.ownerRoot = nil
         self.mountState = cmsCreated

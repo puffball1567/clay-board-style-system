@@ -11,8 +11,11 @@ import ../paint/paint_command
 import ../text/[font_registry, text_engine]
 import ./animation_clock
 import ./canvas
+import ./declarative_keyframes
+import ./declarative_transition
 import ./frame_scheduler
 import ./invalidation
+import ./motion_lifecycle
 import ./render_surface
 
 type
@@ -82,6 +85,8 @@ type
     popupClosers*: seq[PopupCloserBinding]
     mountedComponents: seq[MountedComponentBinding]
     animations: AnimationClock
+    keyframes: DeclarativeKeyframeRuntime
+    transitions: DeclarativeTransitionRuntime
     animationOwners: Table[AnimationId, NodeId]
     pendingInvalidation: InvalidationState
     pendingInvalidationRoots: seq[NodeId]
@@ -131,6 +136,8 @@ proc initUiRoot*(): UiRoot =
     popupClosers: @[],
     mountedComponents: @[],
     animations: initAnimationClock(),
+    keyframes: initDeclarativeKeyframeRuntime(),
+    transitions: initDeclarativeTransitionRuntime(),
     animationOwners: initTable[AnimationId, NodeId](),
     pendingInvalidation: initInvalidationState(),
     pendingInvalidationRoots: @[],
@@ -260,6 +267,30 @@ proc takeFrameRequest*(root: UiRoot): bool =
   result = root.frameRequestPending
   root.frameRequestPending = false
 
+proc dispatchMotionLifecycle(
+    root: UiRoot;
+    events: openArray[MotionLifecycleEvent]
+) =
+  for item in events:
+    if not root.tree.isValid(item.node):
+      continue
+    let kind =
+      case item.kind
+      of mlkAnimationStart: iekAnimationStart
+      of mlkAnimationIteration: iekAnimationIteration
+      of mlkAnimationEnd: iekAnimationEnd
+      of mlkAnimationCancel: iekAnimationCancel
+      of mlkTransitionRun: iekTransitionRun
+      of mlkTransitionStart: iekTransitionStart
+      of mlkTransitionEnd: iekTransitionEnd
+      of mlkTransitionCancel: iekTransitionCancel
+    discard root.dispatchEvent(DispatchResult(
+      target: some(item.node),
+      event: motionEvent(
+        kind, item.name, item.elapsedSeconds, item.iteration
+      )
+    ))
+
 proc reconcilePointerCapture*(
     root: UiRoot;
     interaction: var InteractionState
@@ -366,6 +397,80 @@ proc activeAnimationOwners*(root: UiRoot): seq[NodeId] =
 
 proc setReducedMotion*(root: UiRoot; enabled: bool) =
   root.animations.reducedMotion = enabled
+  root.keyframes.setReducedMotion(enabled)
+  root.transitions.reducedMotion = enabled
+  if enabled and (root.transitions.hasActiveTransitions or
+      root.keyframes.activeAnimationCount > 0):
+    root.invalidate({ddPaint, ddAnimation})
+
+proc registerStyleKeyframes*(root: UiRoot; definition: StyleKeyframes) =
+  if root.isNil:
+    raise newException(ValueError, "cannot register keyframes on a nil UiRoot")
+  root.keyframes.registerStyleKeyframes(definition)
+
+proc unregisterStyleKeyframes*(root: UiRoot; name: string): bool {.discardable.} =
+  if root.isNil:
+    return false
+  result = root.keyframes.unregisterStyleKeyframes(name)
+  root.dispatchMotionLifecycle(root.keyframes.takeLifecycleEvents())
+
+proc hasStyleKeyframes*(root: UiRoot; name: string): bool =
+  not root.isNil and root.keyframes.hasStyleKeyframes(name)
+
+proc reconcileStyleAnimations*(
+    root: UiRoot;
+    target: var ResolvedTree;
+    nowSeconds: float64
+) =
+  if not root.isNil:
+    root.keyframes.reconcileAnimations(root.tree, target, nowSeconds)
+    root.dispatchMotionLifecycle(root.keyframes.takeLifecycleEvents())
+
+proc applyStyleAnimations*(
+    root: UiRoot;
+    styles: var ResolvedTree;
+    scheduler: var FrameScheduler;
+    nowSeconds: float64
+): int {.discardable.} =
+  if root.isNil:
+    return 0
+  result = root.keyframes.applyAnimations(
+    root.tree, styles, scheduler, nowSeconds
+  )
+  root.dispatchMotionLifecycle(root.keyframes.takeLifecycleEvents())
+
+proc activeStyleAnimationCount*(root: UiRoot): int =
+  if root.isNil: 0
+  else: root.keyframes.activeAnimationCount
+
+proc reconcileStyleTransitions*(
+    root: UiRoot;
+    displayed, target: ResolvedTree;
+    nowSeconds: float64
+) =
+  if root.isNil:
+    return
+  root.transitions.reconcileTransitions(
+    root.tree, displayed, target, nowSeconds
+  )
+  root.dispatchMotionLifecycle(root.transitions.takeLifecycleEvents())
+
+proc applyStyleTransitions*(
+    root: UiRoot;
+    styles: var ResolvedTree;
+    scheduler: var FrameScheduler;
+    nowSeconds: float64
+): int {.discardable.} =
+  if root.isNil:
+    return 0
+  result = root.transitions.applyTransitions(
+    root.tree, styles, scheduler, nowSeconds
+  )
+  root.dispatchMotionLifecycle(root.transitions.takeLifecycleEvents())
+
+proc activeStyleTransitionCount*(root: UiRoot): int =
+  if root.isNil: 0
+  else: root.transitions.activeTransitionCount()
 
 proc invalidateClipboardText*(root: UiRoot) =
   ## Call this when the host knows an external clipboard owner may have changed.
@@ -658,6 +763,10 @@ proc disposeSubtree*(
       removedAnimations.add id
   for id in removedAnimations:
     discard root.cancelOwnedAnimation(id)
+  discard root.keyframes.cancelAnimations(removedIds)
+  discard root.transitions.cancelTransitions(removedIds)
+  root.dispatchMotionLifecycle(root.keyframes.takeLifecycleEvents())
+  root.dispatchMotionLifecycle(root.transitions.takeLifecycleEvents())
   let componentUnmountCallbacks = root.takeComponentUnmountCallbacks(removed)
   discard root.events.removeEventHandlers(removed)
   root.removeSubtreeStyles(removed)

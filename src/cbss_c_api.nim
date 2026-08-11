@@ -1,2 +1,6 @@
 {.warning[UnusedImport]: off.}
-import clay_board_style_system/c_api
+
+when compileOption("threads"):
+  import clay_board_style_system/c_api
+else:
+  {.error: "CBSS C ABI requires --threads:on for cross-thread stream producers".}

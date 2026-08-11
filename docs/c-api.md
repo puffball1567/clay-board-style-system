@@ -10,7 +10,12 @@ build wrappers over the same engine without depending on Nim object layouts.
 nimble buildCAbiShared
 nimble buildCAbiStatic
 nimble testCAbi
+nimble testCAbiOrc
 ```
+
+The C ABI includes a worker-to-UI stream transport and is therefore compiled
+with Nim thread support. Use `--threads:on` when invoking `nim c` directly;
+the Nimble tasks already supply it.
 
 The development tasks write artifacts outside the repository:
 
@@ -23,16 +28,24 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x0001000E` supports:
+ABI version `0x00010010` supports:
 
 - Opaque context and style handles.
 - Atomically reference-counted immutable Blob handles with advisory MIME
   metadata, bounded reads into host buffers, and a 64 MiB eager-construction
   limit. Blob storage does not expose Nim-managed pointers.
+- Host-authorized fixed-size Blob providers for files, mappings, decoders, and
+  foreign buffers. Provider data is read lazily into caller-owned buffers,
+  reads on one Blob are serialized, and the host context is released exactly
+  once after the final Blob reference.
 - Ordered immutable FormData handles built through an explicit builder. Text
   entries preserve repeated names, Blob entries retain shared Blob handles,
   and every returned Blob owns one reference that the caller releases. Finished
   snapshots use shared raw storage and expose no Nim-managed pointer.
+- Bounded Blob streams with atomically retained producer handles, declared-byte
+  backpressure, coalesced host-loop wake callbacks, ordered UI-thread pumping,
+  progress, terminal states, cancellation, and deterministic late-offer
+  rejection. Stream payloads cross the ABI only as retained Blob handles.
 - Generation-checked node handles plus box, text, and image node creation.
 - Groups, attributes, pseudo-state flags, and accessibility semantics.
 - Typed length, number, keyword, color, color-pair, border, shadow, gradient,
@@ -114,6 +127,38 @@ two update paths:
 
 `cbss_context_recompute` reuses the last successful viewport size. A resize
 uses `cbss_context_compute` with the new dimensions.
+
+## Worker-To-UI Blob Streams
+
+`CbssBlobStream` is owned by the UI thread. Create a producer with
+`cbss_blob_stream_producer`, retain it when another native owner needs a copy,
+and move that retained handle to a worker thread. A thread created outside Nim
+must call `cbss_thread_attach` before its first CBSS call and
+`cbss_thread_detach` before exiting; first-party language wrappers should hide
+that pair in their worker adapter. Producer calls are
+non-blocking and return a `CbssStreamOfferResult`; backpressure is an ordinary
+result, not an allocation request or an instruction to grow the queue.
+
+The host may install one `CbssStreamWakeCallback`. It must only post a wake to
+the host event loop. Offers are coalesced until the UI pumps all pending work,
+so an idle application does not poll. Replacing or clearing the callback waits
+for an already-running callback before returning, after which the host may
+release the old `user_data`.
+
+On the owning UI thread:
+
+1. call `cbss_blob_stream_pump` after a wake;
+2. consume events with `cbss_blob_stream_next` until it returns
+   `CBSS_NOT_AVAILABLE`;
+3. release the Blob returned by every `CBSS_STREAM_EVENT_DATA` event; and
+4. pump again before blocking when `CbssStreamPumpResult.pending` is nonzero.
+
+`CBSS_STREAM_EVENT_ERROR` reports the complete message length in
+`message_bytes`; copy the retained terminal message with
+`cbss_blob_stream_error_message`. Destroying the stream disposes queued work,
+waits for an in-flight wake callback, and makes escaped producer handles return
+`CBSS_STREAM_OFFER_DISPOSED`. The producer handle itself remains valid until
+its final `cbss_stream_producer_release`.
 
 Event handlers are installed with `cbss_node_set_event_handler`. Reinstalling
 the same node/event pair replaces the callback; passing a null callback removes
@@ -213,6 +258,11 @@ ownership and synchronization contracts.
 - `CbssColorValueGradientStop.color` is borrowed only for the duration of
   `cbss_style_set_linear_gradient_color_values`; the setter copies every
   authored value before returning.
+- `cbss_blob_create` copies eager input bytes. `cbss_blob_create_provider`
+  instead takes ownership of its `user_data` only on success. Its release
+  callback runs exactly once after the final atomically retained Blob reference
+  and may run on that releasing thread. Reads on one provider Blob are
+  serialized; a provider callback must not release or re-enter its own Blob.
 - `cbss_form_data_builder_create` returns one mutable builder. Finishing moves
   its entries into a new immutable snapshot; the builder must still be
   destroyed and cannot be reused. Destroying an unfinished builder releases
@@ -224,6 +274,14 @@ ownership and synchronization contracts.
   accessor returns a separate retained owning reference. CBSS releases its
   dispatch reference after the callback, so a successfully returned handle
   remains valid until the caller releases it.
+- `CbssBlobStream` and its pump/drain operations are UI-thread-owned.
+  `CbssStreamProducer` uses atomic retain/release and may cross worker-thread
+  boundaries. A successful data offer retains its Blob; rejection and stream
+  disposal release that reference automatically. A DATA event transfers one
+  owning Blob reference to the caller.
+- A worker not created by Nim brackets CBSS calls with `cbss_thread_attach` and
+  `cbss_thread_detach`. ARC treats the pair as a no-op; ORC uses it to establish
+  and release the foreign thread's runtime state.
 - Node IDs are values owned by their context. `CBSS_NODE_NONE` is never valid.
 - Strings passed into CBSS are copied before the call returns.
 - Strings returned by CBSS are copied into caller-owned buffers. Query with a
@@ -231,16 +289,20 @@ ownership and synchronization contracts.
 - Output pointers must remain valid only for the duration of their call.
 - `CbssEvent.key` and `CbssEvent.text` are borrowed and valid only during the
   callback.
-- Callback function pointers and `user_data` are borrowed. They must remain
-  valid until replaced, removed, or the context is destroyed.
+- Unless a constructor explicitly transfers ownership, callback function
+  pointers and `user_data` are borrowed. They must remain valid until replaced,
+  removed, or the context is destroyed.
 - RenderSurface event pointers, input strings, and placement data are borrowed
   only for the callback duration. Registration owns no host resource.
 - Unregistering a RenderSurface detaches it from its node and synchronously
   delivers visibility/unmount callbacks before returning.
 
-Context and style handles are not internally synchronized. A host may use
+Context, style, and Blob-stream consumer handles are not internally
+synchronized. Blob retain/release is atomic, and reads on one provider Blob are
+serialized as the explicit exceptions. A host may use
 independent contexts on separate threads, but it must serialize access to each
-individual handle. Static-library hosts should create their first handle on the
+individual handle. Producer handles are the explicit exception described
+above. Static-library hosts should create their first handle on the
 main thread before starting worker threads; subsequent first-party wrappers can
 hide this process-level initialization in their normal startup path.
 
