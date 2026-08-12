@@ -25,16 +25,18 @@
 extern "C" {
 #endif
 
-#define CBSS_ABI_VERSION 0x00010011u
+#define CBSS_ABI_VERSION 0x00010012u
 #define CBSS_NODE_NONE UINT32_MAX
 #define CBSS_MAX_EAGER_BLOB_BYTES (64ull * 1024ull * 1024ull)
 #define CBSS_MAX_FORM_DATA_ENTRIES 65536u
 #define CBSS_MAX_FORM_DATA_NAME_BYTES 65536u
 #define CBSS_MAX_FORM_DATA_TEXT_BYTES (16u * 1024u * 1024u)
 #define CBSS_MAX_STREAM_ERROR_BYTES 65536u
+#define CBSS_MAX_KEYFRAME_STEPS 16384u
 
 typedef struct CbssContext CbssContext;
 typedef struct CbssStyle CbssStyle;
+typedef struct CbssKeyframes CbssKeyframes;
 typedef struct CbssColorValue CbssColorValue;
 typedef struct CbssBlob CbssBlob;
 typedef struct CbssFormDataBuilder CbssFormDataBuilder;
@@ -281,8 +283,19 @@ enum {
   CBSS_EVENT_BUBBLES = 1u << 7,
   CBSS_EVENT_CANCELABLE = 1u << 8,
   CBSS_EVENT_PHASE_TARGET = 1u << 9,
-  CBSS_EVENT_PHASE_BUBBLE = 1u << 10
+  CBSS_EVENT_PHASE_BUBBLE = 1u << 10,
+  CBSS_EVENT_HAS_MOTION = 1u << 11
 };
+
+typedef enum CbssDirtyDomain {
+  CBSS_DIRTY_STYLE = 1u << 0,
+  CBSS_DIRTY_LAYOUT = 1u << 1,
+  CBSS_DIRTY_PAINT = 1u << 2,
+  CBSS_DIRTY_HIT = 1u << 3,
+  CBSS_DIRTY_TEXT = 1u << 4,
+  CBSS_DIRTY_RESOURCE = 1u << 5,
+  CBSS_DIRTY_ANIMATION = 1u << 6
+} CbssDirtyDomain;
 
 enum {
   CBSS_EVENT_OUTCOME_HANDLED = 1u << 0,
@@ -585,8 +598,8 @@ typedef struct CbssInputEvent {
 } CbssInputEvent;
 
 /*
- * key and text point to CBSS-owned temporary memory. They are valid only
- * during the callback and must be copied if the host retains them.
+ * key, text, and motion_name point to CBSS-owned temporary memory. They are
+ * valid only during the callback and must be copied if the host retains them.
  */
 typedef struct CbssEvent {
   uint32_t kind;
@@ -605,7 +618,22 @@ typedef struct CbssEvent {
   const char *text;
   CbssPointerData pointer;
   uint64_t timestamp;
+  const char *motion_name;
+  double motion_elapsed_seconds;
+  uint64_t motion_iteration;
 } CbssEvent;
+
+typedef struct CbssMotionState {
+  uint32_t active_animations;
+  uint32_t active_transitions;
+  uint32_t sampled_animations;
+  uint32_t sampled_transitions;
+  uint32_t dirty_domains;
+  uint8_t has_deadline;
+  uint8_t reduced_motion;
+  double next_deadline;
+  double now_seconds;
+} CbssMotionState;
 
 typedef struct CbssDispatchSummary {
   uint32_t target;
@@ -1022,6 +1050,20 @@ CBSS_API void cbss_color_value_destroy(CbssColorValue *value);
 CBSS_API CbssStyle *cbss_style_create(void);
 CBSS_API void cbss_style_destroy(CbssStyle *style);
 CBSS_API CbssStatus cbss_style_clear(CbssStyle *style);
+CBSS_API CbssStatus cbss_keyframes_create(
+    const char *name, CbssKeyframes **output);
+CBSS_API void cbss_keyframes_destroy(CbssKeyframes *keyframes);
+CBSS_API CbssStatus cbss_keyframes_clear(CbssKeyframes *keyframes);
+/* The step declarations are copied; the source style may be reused or freed. */
+CBSS_API CbssStatus cbss_keyframes_add_step(
+    CbssKeyframes *keyframes, double offset, const CbssStyle *style);
+/* Registration copies the complete definition into the context. */
+CBSS_API CbssStatus cbss_context_register_keyframes(
+    CbssContext *context, const CbssKeyframes *keyframes);
+CBSS_API CbssStatus cbss_context_unregister_keyframes(
+    CbssContext *context, const char *name);
+CBSS_API uint8_t cbss_context_has_keyframes(
+    const CbssContext *context, const char *name);
 CBSS_API CbssStatus cbss_style_set_length(
     CbssStyle *style, const char *property, uint32_t unit, float value);
 CBSS_API CbssStatus cbss_style_set_number(
@@ -1071,8 +1113,18 @@ CBSS_API CbssStatus cbss_node_clear_style(
 
 CBSS_API CbssStatus cbss_context_compute(
     CbssContext *context, float width, float height);
+CBSS_API CbssStatus cbss_context_compute_at(
+    CbssContext *context, float width, float height, double now_seconds);
 CBSS_API uint8_t cbss_context_needs_compute(CbssContext *context);
 CBSS_API CbssStatus cbss_context_recompute(CbssContext *context);
+CBSS_API CbssStatus cbss_context_recompute_at(
+    CbssContext *context, double now_seconds);
+CBSS_API CbssStatus cbss_context_advance_motion(
+    CbssContext *context, double now_seconds, CbssMotionState *output);
+CBSS_API CbssStatus cbss_context_motion_state(
+    const CbssContext *context, CbssMotionState *output);
+CBSS_API CbssStatus cbss_context_set_reduced_motion(
+    CbssContext *context, uint8_t enabled);
 CBSS_API uint32_t cbss_context_layout_box_count(CbssContext *context);
 CBSS_API CbssStatus cbss_context_layout_box(
     CbssContext *context, uint32_t index, CbssLayoutBox *output);

@@ -1,6 +1,6 @@
 #include "cbss.h"
 
-_Static_assert(CBSS_ABI_VERSION == 0x00010011u, "unexpected CBSS ABI version");
+_Static_assert(CBSS_ABI_VERSION == 0x00010012u, "unexpected CBSS ABI version");
 _Static_assert(CBSS_ROLE_SWITCH == 22, "unexpected switch role value");
 
 #include <assert.h>
@@ -30,7 +30,9 @@ _Static_assert(sizeof(CbssPointerData) == 56,
                "CbssPointerData ABI changed");
 _Static_assert(sizeof(CbssInputEvent) == 112,
                "CbssInputEvent ABI changed");
-_Static_assert(sizeof(CbssEvent) == 128, "CbssEvent ABI changed");
+_Static_assert(sizeof(CbssEvent) == 152, "CbssEvent ABI changed");
+_Static_assert(sizeof(CbssMotionState) == 40,
+               "CbssMotionState ABI changed");
 _Static_assert(sizeof(CbssDispatchSummary) == 16,
                "CbssDispatchSummary ABI changed");
 _Static_assert(sizeof(CbssScrollMetrics) == 36,

@@ -89,7 +89,7 @@ browser.
 | SDL3 GPU Canvas | Planned | GPU workloads remain inside Canvas and do not create a second interpretation of ordinary styles. |
 | Camera, video, and audio surfaces | Planned | Media adapters have explicit resource and permission lifecycles. |
 | External renderer surfaces | Planned | A versioned `ExternalSurface` contract supports Canvas composition without coupling CBSS to a particular renderer. |
-| C ABI | Runtime / In progress | Other languages can construct and control CBSS through stable opaque handles. Tree, style, events, focus, Canvas, and frame requests are available; named-keyframe registration and the complete declarative-motion execution/deadline contract are planned for Version 0.5+. |
+| C ABI | Runtime | Other languages can construct and control CBSS through stable opaque handles. Tree, style, events, focus, Canvas, frame requests, named-keyframe registration, monotonic motion advancement, dirty domains, deadlines, reduced motion, and lifecycle payloads are available. Foreign-language convenience wrappers and paint-command span patching remain later work. |
 | Native accessibility bridges | Planned | Export the semantic/focus model through the relevant OS accessibility system. |
 | Platform-native dialogs, file pickers, notifications, and system integration | Planned | Capability-gated adapters keep platform policy out of components. |
 
