@@ -1488,6 +1488,34 @@ examples use the strict gate in CI. An optional checker may help advanced API
 and adapter authors, but correctness of arbitrary application memory management
 is outside the CBSS guarantee.
 
+### Optional Frontend Runtime And Cue Orchestration
+
+Status: `Version 0.5+ candidate; design adopted, implementation not started`
+
+CBSS will provide an optional Nim frontend runtime that joins retained
+component state, typed Stores and Actions, selected subscriptions, owned
+effects, asynchronous Commands, and Cue-based temporal orchestration. The goal
+is the productive data flow familiar to JavaScript and TypeScript frontend
+engineers, not API compatibility with React Hooks or Redux.
+
+The primary authoring surface uses familiar names such as `createStore`,
+`dispatch`, `select`, `subscribe`, `effect`, `command`, and `cueSequence` while
+remaining ordinary typed Nim with parentheses and full LSP support. It does not
+introduce Hook call-order rules, dependency arrays, virtual-DOM replay, or
+whole-component-tree updates.
+
+Cue is the behavior-side bridge from a standard event or asynchronous result
+to multiple transitions and keyframes. One Cue session can start actions in
+parallel, schedule steps relative to its start or another step, and trigger
+end actions when the wrapped root operation completes. Cue is not a Style
+property and does not execute side effects during style resolution.
+
+The runtime is opt-in and must compile out when unused. State publication,
+Selector evaluation, component patches, dirty-domain updates, asynchronous
+delivery, and Cue deadlines remain bounded to affected work. Detailed API,
+ownership, cancellation, scheduling, and test requirements are in
+[Frontend Runtime Design](frontend-runtime.md).
+
 ### CSS Property Runtime Completion
 
 Status: `Version 0.5+ candidate; priority order not yet decided`

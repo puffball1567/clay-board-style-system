@@ -26,6 +26,14 @@ release. Before 1.0, minor releases may contain public API changes.
 - Made C context reset and destruction dispatch active animation/transition
   cancellation before handlers and runtime state are released.
 
+### Documentation
+
+- Defined the optional frontend runtime architecture for retained local state,
+  typed Stores and Actions, selected subscriptions, owned effects,
+  asynchronous Commands, and Cue-based multi-object motion orchestration. The
+  authoring model keeps Web-familiar names without adopting Hook ordering,
+  dependency arrays, Redux-specific APIs, or virtual-DOM replay.
+
 ## [0.4.1] - 2026-08-12
 
 ### Added

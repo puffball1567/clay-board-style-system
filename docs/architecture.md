@@ -1823,6 +1823,14 @@ CBSS should not require React-like hooks, Redux-like stores, or signal libraries
 Those can be built above CBSS. CBSS should remain the lower-level engine that
 accepts the resulting tree, styles, event handlers, and state flags.
 
+CBSS also defines an optional first-party frontend runtime above that lower
+level boundary. It extracts the useful frontend capabilities -- retained local
+state, typed Stores and Actions, selected subscriptions, owned effects,
+asynchronous Commands, and Cue orchestration -- without adopting Hook ordering,
+dependency arrays, virtual-DOM replay, or Redux-specific APIs. The complete
+contract and delivery order are documented in
+[Frontend Runtime Design](frontend-runtime.md).
+
 The low-level pieces should not be the primary authoring surface. Most
 developers should not have to manually call `processInput`, bind an
 `EventRegistry`, track a `needsRebuild` flag, and rebuild layout in application

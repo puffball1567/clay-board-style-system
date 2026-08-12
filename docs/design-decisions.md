@@ -600,3 +600,32 @@ Security, memory-safety, or correctness failures may justify an accelerated
 removal, but the exception and migration must be explicit in release and
 security documentation. The operational checklist and syntax live in
 [API Stability And Deprecation](api-stability.md).
+
+## D25 — Frontend capabilities, not React or Redux mechanics (Adopted)
+
+**Context.** React Hooks and Redux collect capabilities frontend engineers
+need: local and shared state, deterministic updates, derived values,
+subscriptions, lifecycle cleanup, asynchronous work, and testable data flow.
+Their exact APIs also carry constraints from React's function-component replay
+and reconciliation model. CBSS components are retained objects and should not
+inherit Hook ordering, dependency arrays, referential-equality workarounds, or
+whole-tree replay merely to provide the same outcomes.
+
+**Decision.** CBSS defines an optional first-party frontend runtime above the
+style/layout core. It provides typed Stores, Actions, Selectors, owned effects,
+Commands, and Cue orchestration while treating ordinary component fields as
+the default local-state mechanism. Public authoring uses Web-familiar names
+and flow, remains normal Nim with parentheses and LSP support, and updates
+stable nodes through bounded invalidation.
+
+Standard UI events remain the input boundary. Cue is a separate behavior-side
+orchestration runtime that connects an event or Command completion to multiple
+transitions, keyframes, Actions, Signals, or typed adapters over time. Cue is
+not a CSS property, does not run during style resolution, and does not replace
+event dispatch. Style and motion continue to own visual values and
+interpolation; Cue owns ordering, parallelism, deadlines, completion, and
+cancellation.
+
+The frontend runtime is opt-in. CBSS core continues to accept external Stores,
+signals, reducers, or other state systems through ordinary Nim and Provider
+boundaries. The complete contract is [Frontend Runtime Design](frontend-runtime.md).
