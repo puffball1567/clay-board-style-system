@@ -344,7 +344,7 @@ Implementation progress:
 
 ## Version 0.4 - Units, Component Flow, And Open Event Contracts
 
-Status: `Release candidate scope implemented`
+Status: `Released 2026-08-11`
 
 Version 0.4 completes the typed unit model across supported properties, makes
 conditionally materialized components behave like ordinary flow children, and
@@ -1143,6 +1143,60 @@ Current and planned work:
 
 The current host and test contract is documented in
 [declarative-motion.md](declarative-motion.md).
+
+### Language-Neutral Declarative Motion ABI
+
+Status: `Planned for Version 0.5+`
+
+The current C ABI can construct styles, set generic animation and transition
+declarations, receive motion lifecycle events, and request RenderSurface
+frames. It does not yet expose the complete authoring and execution contract
+for named keyframes or declarative transitions. In particular, a foreign host
+cannot register a typed keyframe definition and drive the same retained motion
+runtime used by Nim without relying on private implementation details.
+
+Version 0.5+ will expose declarative motion through an additive C ABI revision.
+The public surface will include:
+
+- an opaque keyframe-definition builder with create, destroy, clear, and
+  ordered-step operations;
+- copied step declarations so a caller may destroy or reuse the source
+  `CbssStyle` immediately after adding a step;
+- context-scoped registration, replacement, lookup, and removal of named
+  keyframes, with deterministic behavior when an active definition is
+  replaced or removed;
+- transition and animation reconciliation after a targeted style change,
+  without requiring a foreign host to rebuild the tree or resolve unrelated
+  styles;
+- one monotonic-time advance operation shared by transitions, keyframes,
+  caret deadlines, and future timed UI work;
+- active-work, dirty-domain, frame-request, and next-deadline queries so an
+  event loop can block while idle and repaint only affected presentation and
+  hit-test state;
+- explicit reduced-motion policy and later platform-preference adapters;
+- normal C ABI event dispatch for animation and transition start, iteration,
+  end, and cancellation, using the lifecycle event vocabulary already exposed;
+  and
+- bounded diagnostics for invalid offsets, missing names, unsupported values,
+  invalid time, stale handles, and ownership violations. No Nim exception may
+  cross the ABI.
+
+The exact function names remain provisional until the header and C consumer
+tests are reviewed. The ownership and performance contracts are not
+provisional: opaque owning handles use explicit destruction, registration
+copies or retains data according to documented rules, and advancing motion is
+proportional to active tracks and changed presentation rather than total tree
+size. No backend object, Nim reference, sequence, closure, or exception crosses
+the boundary.
+
+Release qualification requires shared and static C consumers under ARC and
+ORC, a headless deterministic-clock scenario, transition reversal and
+cancellation tests, multiple named-keyframe tests, reduced-motion tests,
+deadline/idle tests, lifecycle-event verification, stale-handle and invalid-
+input tests, and the existing Valgrind and supported sanitizer gates. A small
+SDL3 C example must demonstrate that an idle application waits for events and
+wakes only for the next motion deadline. Foreign-language wrappers remain thin
+packages built on this contract and do not duplicate the motion engine.
 
 ### CSS-Like Motion Scene
 

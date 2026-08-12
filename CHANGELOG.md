@@ -7,6 +7,22 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-08-12
+
+### Added
+
+- Added a polished declarative-motion SDL3 demo with automatic eased travel,
+  2D flip motion, simultaneous color/text/opacity keyframes, and a reversible
+  hover transition. Its host loop samples active tracks through paint and hit
+  updates without resolving styles or running layout on every animation frame.
+- Added GIF and MP4 recordings of the declarative-motion demo.
+
+### Documentation
+
+- Defined the planned Version 0.5+ C ABI for foreign-language keyframe
+  registration, transition reconciliation, active motion, frame deadlines,
+  reduced motion, ownership, and conformance testing.
+
 ## [0.4.0] - 2026-08-11
 
 ### Added
