@@ -7,6 +7,25 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+### Added
+
+- Added C ABI `0x00010012` with copied named-keyframe builders,
+  context-scoped registration and removal, time-aware style reconciliation,
+  paint-only transition/keyframe advancement, active-track and dirty-domain
+  state, next deadlines, reduced-motion control, and explicit lifecycle event
+  payloads.
+- Added shared/static ARC and ORC C consumers for deterministic keyframe and
+  transition sampling, lifecycle/cancellation behavior, ownership, reduced
+  motion, deadlines, invalid offsets and values, and monotonic-time rejection.
+
+### Fixed
+
+- Kept borrowed C motion-event names alive for the complete callback scope;
+  Valgrind now reports zero invalid accesses and zero leaks for shared and
+  static motion consumers.
+- Made C context reset and destruction dispatch active animation/transition
+  cancellation before handlers and runtime state are released.
+
 ## [0.4.1] - 2026-08-12
 
 ### Added

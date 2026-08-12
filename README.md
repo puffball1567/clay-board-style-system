@@ -290,7 +290,9 @@ ownership, status codes, and append-only enums. Nim strings, sequences,
 references, exceptions, and object layouts do not cross the ABI. Immutable
 Blob handles support both bounded eager snapshots and host-authorized lazy
 providers, so foreign files, mappings, and decoders can participate without
-exposing raw ownership to CBSS.
+exposing raw ownership to CBSS. The same boundary exposes copied named
+keyframes, declaration-driven transitions, monotonic motion advancement,
+frame deadlines, dirty domains, reduced-motion control, and lifecycle events.
 
 ```sh
 nimble buildCAbiShared

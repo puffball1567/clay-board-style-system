@@ -10,7 +10,8 @@ import ./hit/hit_test
 import ./input/events
 import ./layout/[layout, presentation, scroll_state]
 import ./paint/[paint, paint_command, path_geometry]
-import ./runtime/[canvas, render_surface]
+import ./runtime/[canvas, declarative_keyframes, declarative_transition,
+  frame_scheduler, invalidation, motion_lifecycle, render_surface]
 
 var cbssRuntimeInitialized: bool
 cbssRuntimeInitialized = true
@@ -25,7 +26,7 @@ proc ensureNimRuntime() {.inline.} =
     NimMain()
 
 const
-  CbssAbiVersion* = 0x0001_0011'u32
+  CbssAbiVersion* = 0x0001_0012'u32
   CbssMaxEagerBlobBytes* = 64'u64 * 1024'u64 * 1024'u64
   CbssMaxBlobMimeBytes* = 1024
   CbssMaxFormDataEntries* = 65_536
@@ -133,6 +134,9 @@ const
   CbssTextHasFontStyle* = 1'u32 shl 4
   CbssTextFlagsMask* = (1'u32 shl 5) - 1
 
+  CbssEventHasMotion* = 1'u32 shl 11
+  CbssMaxKeyframeSteps* = 16_384'u32
+
 type
   CbssRectC* {.bycopy.} = object
     x*, y*, w*, h*: cfloat
@@ -214,6 +218,16 @@ type
     key*, text*: cstring
     pointer*: CbssPointerDataC
     timestamp*: uint64
+    motionName*: cstring
+    motionElapsedSeconds*: cdouble
+    motionIteration*: uint64
+
+  CbssMotionStateC* {.bycopy.} = object
+    activeAnimations*, activeTransitions*: uint32
+    sampledAnimations*, sampledTransitions*: uint32
+    dirtyDomains*: uint32
+    hasDeadline*, reducedMotion*: uint8
+    nextDeadline*, nowSeconds*: cdouble
 
   CbssDispatchSummaryC* {.bycopy.} = object
     target*, dispatchCount*: uint32
@@ -261,6 +275,7 @@ type
 
   CbssContextHandle* = ptr CbssContextObj
   CbssStyleHandle* = ptr CbssStyleObj
+  CbssKeyframesHandle* = ptr CbssKeyframesObj
   CbssColorValueHandle* = ptr CbssColorValueObj
   CbssBlobHandle* = ptr CbssBlobObj
   CbssFormDataBuilderHandle* = ptr CbssFormDataBuilderObj
@@ -338,9 +353,20 @@ type
     viewportWidth, viewportHeight: float32
     refreshingPresentation: bool
     presentationRefreshPending: bool
+    keyframes: DeclarativeKeyframeRuntime
+    transitions: DeclarativeTransitionRuntime
+    motionScheduler: FrameScheduler
+    motionNow: float64
+    motionTimeInitialized: bool
+    reducedMotion: bool
+    motionDirtyDomains: uint32
 
   CbssStyleObj = object
     declarations: seq[Declaration]
+
+  CbssKeyframesObj = object
+    name: string
+    steps: seq[StyleKeyframe]
 
   CbssColorValueKind = enum
     ccvValue,
@@ -414,7 +440,8 @@ static:
   doAssert sizeof(CbssTransformOperationC) == 36
   doAssert sizeof(CbssPointerDataC) == 56
   doAssert sizeof(CbssInputEventC) == 112
-  doAssert sizeof(CbssEventC) == 128
+  doAssert sizeof(CbssEventC) == 152
+  doAssert sizeof(CbssMotionStateC) == 40
   doAssert sizeof(CbssDispatchSummaryC) == 16
   doAssert sizeof(CbssScrollMetricsC) == 36
   doAssert sizeof(CbssAccessibilityC) == 32
@@ -1115,6 +1142,8 @@ proc eventFlags(dispatch: DispatchResult; includeLocal: bool): uint32 =
     result = result or CbssEventHasText
   if dispatch.event.pointer.isSome:
     result = result or CbssEventHasPointer
+  if dispatch.event.kind.eventDefinition.payload.contains(epfMotion):
+    result = result or CbssEventHasMotion
   if dispatch.event.kind.bubbles:
     result = result or CbssEventBubbles
   if dispatch.event.kind.cancelable:
@@ -1160,6 +1189,76 @@ proc callbackEvent(
     result.text = dispatch.event.text.get.cstring
   if dispatch.event.pointer.isSome:
     result.pointer = dispatch.event.pointer.get.pointerDataC()
+  if (result.flags and CbssEventHasMotion) != 0:
+    result.motionElapsedSeconds = dispatch.motionElapsedSeconds
+    result.motionIteration = dispatch.motionIteration
+
+proc dispatchMotionLifecycle(
+    context: CbssContextHandle;
+    events: openArray[MotionLifecycleEvent]
+) =
+  for item in events:
+    if not context.validNode(item.node.nodeRawValue()):
+      continue
+    let kind =
+      case item.kind
+      of mlkAnimationStart: iekAnimationStart
+      of mlkAnimationIteration: iekAnimationIteration
+      of mlkAnimationEnd: iekAnimationEnd
+      of mlkAnimationCancel: iekAnimationCancel
+      of mlkTransitionRun: iekTransitionRun
+      of mlkTransitionStart: iekTransitionStart
+      of mlkTransitionEnd: iekTransitionEnd
+      of mlkTransitionCancel: iekTransitionCancel
+    discard context.events.dispatchEvent(context.tree, DispatchResult(
+      target: some(item.node),
+      event: motionEvent(
+        kind, item.name, item.elapsedSeconds, item.iteration
+      )
+    ))
+
+proc dispatchPendingMotionLifecycle(context: CbssContextHandle) =
+  context.dispatchMotionLifecycle(context.transitions.takeLifecycleEvents())
+  context.dispatchMotionLifecycle(context.keyframes.takeLifecycleEvents())
+
+proc cancelAllMotion(context: CbssContextHandle) =
+  if context.isNil:
+    return
+  var nodes: seq[NodeId]
+  for index, item in context.tree.nodes:
+    if item.alive:
+      let node = context.tree.nodeIdAt(index)
+      if node.isSome:
+        nodes.add node.get
+  discard context.transitions.cancelTransitions(nodes)
+  discard context.keyframes.cancelAnimations(nodes)
+  context.dispatchPendingMotionLifecycle()
+
+proc dirtyDomainBits(domains: set[DirtyDomain]): uint32 =
+  for domain in domains:
+    result = result or (1'u32 shl uint32(ord(domain)))
+
+proc fillMotionState(
+    context: CbssContextHandle;
+    output: ptr CbssMotionStateC;
+    sampledAnimations = 0;
+    sampledTransitions = 0
+) =
+  output[] = CbssMotionStateC(
+    activeAnimations: uint32(context.keyframes.activeAnimationCount),
+    activeTransitions: uint32(context.transitions.activeTransitionCount),
+    sampledAnimations: uint32(max(0, sampledAnimations)),
+    sampledTransitions: uint32(max(0, sampledTransitions)),
+    dirtyDomains: context.motionDirtyDomains,
+    hasDeadline: uint8(ord(context.motionScheduler.nextDeadline.isSome)),
+    reducedMotion: uint8(ord(context.reducedMotion)),
+    nextDeadline:
+      if context.motionScheduler.nextDeadline.isSome:
+        context.motionScheduler.nextDeadline.get
+      else:
+        0.0,
+    nowSeconds: context.motionNow
+  )
 
 proc callbackOutcome(value: uint8): EventOutcome =
   EventOutcome(
@@ -1180,6 +1279,9 @@ proc cEventHandler(
     var event = dispatch.callbackEvent(
       dispatch.target.get, dispatch.currentTarget.get
     )
+    let motionName = dispatch.motionName
+    if (event.flags and CbssEventHasMotion) != 0:
+      event.motionName = motionName.cstring
     callbackOutcome(callback(context, addr event, userData))
 
 proc invokeCallbacks(
@@ -2194,6 +2296,9 @@ proc cEventViewHandler(
       ),
       formDataStatus: CbssNotAvailable
     )
+    let motionName = dispatch.motionName
+    if (view.event.flags and CbssEventHasMotion) != 0:
+      view.event.motionName = motionName.cstring
     let payload = dispatch.formData()
     if payload.isSome:
       let status = cFormDataSnapshot(payload.get, addr view.formData)
@@ -2230,7 +2335,14 @@ proc cbssContextCreate(): CbssContextHandle {.
       pixelScale: 1.0'f32,
       diagnostics: Diagnostics(items: @[]),
       computed: false,
-      hasViewport: false
+      hasViewport: false,
+      keyframes: initDeclarativeKeyframeRuntime(),
+      transitions: initDeclarativeTransitionRuntime(),
+      motionScheduler: initFrameScheduler(),
+      motionNow: 0,
+      motionTimeInitialized: false,
+      reducedMotion: false,
+      motionDirtyDomains: 0
     )
     let owner = allocated
     allocated.surfacePaintProvider = proc(
@@ -2256,6 +2368,10 @@ proc cbssContextDestroy(context: CbssContextHandle) {.
   if context.isNil:
     return
   context.computed = false
+  try:
+    context.cancelAllMotion()
+  except CatchableError:
+    discard
   context.surfaces.unmountAllSurfaces()
   context.surfacePaintProvider = nil
   `=destroy`(context[])
@@ -2267,6 +2383,7 @@ proc cbssContextReset(context: CbssContextHandle): int32 {.
     return CbssInvalidHandle
   try:
     context.computed = false
+    context.cancelAllMotion()
     context.surfaces.unmountAllSurfaces()
     context.tree = initTree()
     context.sheets.setLen(0)
@@ -2286,6 +2403,13 @@ proc cbssContextReset(context: CbssContextHandle): int32 {.
     context.hasViewport = false
     context.viewportWidth = 0
     context.viewportHeight = 0
+    context.keyframes = initDeclarativeKeyframeRuntime()
+    context.transitions = initDeclarativeTransitionRuntime()
+    context.motionScheduler = initFrameScheduler()
+    context.motionNow = 0
+    context.motionTimeInitialized = false
+    context.reducedMotion = false
+    context.motionDirtyDomains = 0
     CbssOk
   except CatchableError as error:
     context.setError(error.msg)
@@ -3363,6 +3487,115 @@ proc cbssStyleClear(style: CbssStyleHandle): int32 {.
   style.declarations.setLen(0)
   CbssOk
 
+proc cbssKeyframesCreate(
+    name: cstring;
+    output: ptr CbssKeyframesHandle
+): int32 {.exportc: "cbss_keyframes_create", cdecl, dynlib.} =
+  if output.isNil or name.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  let normalized = fromCString(name).strip()
+  if normalized.len == 0 or normalized == "none" or ',' in normalized:
+    return CbssInvalidArgument
+  ensureNimRuntime()
+  var handle: CbssKeyframesHandle = nil
+  try:
+    handle = create(CbssKeyframesObj)
+    handle[] = CbssKeyframesObj(name: normalized, steps: @[])
+    output[] = handle
+    CbssOk
+  except CatchableError:
+    if not handle.isNil:
+      `=destroy`(handle[])
+      dealloc(handle)
+    CbssInternalError
+
+proc cbssKeyframesDestroy(keyframes: CbssKeyframesHandle) {.
+    exportc: "cbss_keyframes_destroy", cdecl, dynlib.} =
+  if keyframes.isNil:
+    return
+  `=destroy`(keyframes[])
+  dealloc(keyframes)
+
+proc cbssKeyframesClear(keyframes: CbssKeyframesHandle): int32 {.
+    exportc: "cbss_keyframes_clear", cdecl, dynlib.} =
+  if keyframes.isNil:
+    return CbssInvalidHandle
+  keyframes.steps.setLen(0)
+  CbssOk
+
+proc cbssKeyframesAddStep(
+    keyframes: CbssKeyframesHandle;
+    offset: cdouble;
+    style: CbssStyleHandle
+): int32 {.exportc: "cbss_keyframes_add_step", cdecl, dynlib.} =
+  if keyframes.isNil or style.isNil:
+    return CbssInvalidHandle
+  if keyframes.steps.len >= int(CbssMaxKeyframeSteps):
+    return CbssOutOfRange
+  if offset.classify in {fcNan, fcInf, fcNegInf} or offset < 0 or offset > 1:
+    return CbssInvalidArgument
+  if keyframes.steps.len > 0 and offset < keyframes.steps[^1].offset:
+    return CbssInvalidArgument
+  try:
+    keyframes.steps.add styleKeyframe(
+      offset, copyDeclarations(style.declarations)
+    )
+    CbssOk
+  except ValueError:
+    CbssStyleError
+  except CatchableError:
+    CbssInternalError
+
+proc cbssContextRegisterKeyframes(
+    context: CbssContextHandle;
+    keyframes: CbssKeyframesHandle
+): int32 {.exportc: "cbss_context_register_keyframes", cdecl, dynlib.} =
+  if context.isNil or keyframes.isNil:
+    return CbssInvalidHandle
+  try:
+    context.keyframes.registerStyleKeyframes(styleKeyframes(
+      keyframes.name, keyframes.steps
+    ))
+    context.invalidate()
+    CbssOk
+  except ValueError as error:
+    context.setError(error.msg)
+    CbssInvalidArgument
+  except CatchableError as error:
+    context.setError(error.msg)
+    CbssInternalError
+
+proc cbssContextUnregisterKeyframes(
+    context: CbssContextHandle;
+    name: cstring
+): int32 {.exportc: "cbss_context_unregister_keyframes", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if name.isNil:
+    return CbssInvalidArgument
+  try:
+    if not context.keyframes.unregisterStyleKeyframes(fromCString(name)):
+      return CbssOutOfRange
+    context.dispatchPendingMotionLifecycle()
+    context.invalidate()
+    CbssOk
+  except CatchableError as error:
+    context.setError(error.msg)
+    CbssInternalError
+
+proc cbssContextHasKeyframes(
+    context: CbssContextHandle;
+    name: cstring
+): uint8 {.exportc: "cbss_context_has_keyframes", cdecl, dynlib.} =
+  if context.isNil or name.isNil:
+    return 0
+  try:
+    uint8(ord(context.keyframes.hasStyleKeyframes(fromCString(name))))
+  except CatchableError as error:
+    context.setError(error.msg)
+    0
+
 proc cbssColorValueCreate(
     space: uint32;
     first, second, third, alpha: cfloat;
@@ -3902,21 +4135,28 @@ proc cbssNodeClearStyle(
       return CbssOk
   CbssOutOfRange
 
-proc cbssContextCompute(
+proc computeContextAt(
     context: CbssContextHandle;
-    width, height: cfloat
-): int32 {.exportc: "cbss_context_compute", cdecl, dynlib.} =
+    width, height: cfloat;
+    nowSeconds: cdouble
+): int32 =
   if context.isNil:
     return CbssInvalidHandle
-  if width < 0 or height < 0:
-    context.setError("layout constraints must be non-negative")
+  if width.classify in {fcNan, fcInf, fcNegInf} or
+      height.classify in {fcNan, fcInf, fcNegInf} or
+      nowSeconds.classify in {fcNan, fcInf, fcNegInf} or
+      width < 0 or height < 0:
+    context.setError("layout constraints and motion time must be finite")
+    return CbssInvalidArgument
+  if context.motionTimeInitialized and nowSeconds < context.motionNow:
+    context.setError("motion time must be monotonic")
     return CbssInvalidArgument
   if context.tree.root.isNone:
     context.setError("cannot compute an empty CBSS tree")
     return CbssInvalidArgument
   try:
     context.diagnostics = Diagnostics(items: @[])
-    context.resolved = resolveTreeStyles(
+    var target = resolveTreeStyles(
       context.tree,
       context.sheets,
       defaultProperties(),
@@ -3931,6 +4171,27 @@ proc cbssContextCompute(
       context.setError(messages.join("; "))
       context.computed = false
       return CbssStyleError
+    if context.hasViewport and context.resolved.styles.len > 0:
+      context.transitions.reconcileTransitions(
+        context.tree, context.resolved, target, nowSeconds
+      )
+    context.keyframes.reconcileAnimations(
+      context.tree, target, nowSeconds
+    )
+    context.dispatchPendingMotionLifecycle()
+    context.resolved = target
+    context.motionScheduler.clearDeadline()
+    discard context.motionScheduler.consumeDirty()
+    discard context.transitions.applyTransitions(
+      context.tree, context.resolved, context.motionScheduler, nowSeconds
+    )
+    discard context.keyframes.applyAnimations(
+      context.tree, context.resolved, context.motionScheduler, nowSeconds
+    )
+    context.dispatchPendingMotionLifecycle()
+    context.motionDirtyDomains = dirtyDomainBits(
+      context.motionScheduler.consumeDirty()
+    )
     context.layout = computeLayout(
       context.tree, context.resolved, size(width, height)
     )
@@ -3943,11 +4204,34 @@ proc cbssContextCompute(
     context.hasViewport = true
     context.viewportWidth = width
     context.viewportHeight = height
+    context.motionNow = nowSeconds
+    context.motionTimeInitialized = true
     CbssOk
   except CatchableError as error:
     context.setError(error.msg)
     context.computed = false
     CbssInternalError
+
+proc cbssContextCompute(
+    context: CbssContextHandle;
+    width, height: cfloat
+): int32 {.exportc: "cbss_context_compute", cdecl, dynlib.} =
+  computeContextAt(
+    context,
+    width,
+    height,
+    if not context.isNil and context.motionTimeInitialized:
+      context.motionNow
+    else:
+      0.0
+  )
+
+proc cbssContextComputeAt(
+    context: CbssContextHandle;
+    width, height: cfloat;
+    nowSeconds: cdouble
+): int32 {.exportc: "cbss_context_compute_at", cdecl, dynlib.} =
+  computeContextAt(context, width, height, nowSeconds)
 
 proc cbssContextNeedsCompute(context: CbssContextHandle): uint8 {.
     exportc: "cbss_context_needs_compute", cdecl, dynlib.} =
@@ -3963,6 +4247,84 @@ proc cbssContextRecompute(context: CbssContextHandle): int32 {.
   cbssContextCompute(
     context, context.viewportWidth, context.viewportHeight
   )
+
+proc cbssContextRecomputeAt(
+    context: CbssContextHandle;
+    nowSeconds: cdouble
+): int32 {.exportc: "cbss_context_recompute_at", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if not context.hasViewport:
+    context.setError("context has no previous viewport")
+    return CbssInvalidArgument
+  computeContextAt(
+    context, context.viewportWidth, context.viewportHeight, nowSeconds
+  )
+
+proc cbssContextAdvanceMotion(
+    context: CbssContextHandle;
+    nowSeconds: cdouble;
+    output: ptr CbssMotionStateC
+): int32 {.exportc: "cbss_context_advance_motion", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if output.isNil or not context.computed or not context.motionTimeInitialized:
+    return CbssInvalidArgument
+  if nowSeconds.classify in {fcNan, fcInf, fcNegInf} or
+      nowSeconds < context.motionNow:
+    context.setError("motion time must be finite and monotonic")
+    return CbssInvalidArgument
+  try:
+    context.motionScheduler.clearDeadline()
+    discard context.motionScheduler.consumeDirty()
+    let transitionSamples = context.transitions.applyTransitions(
+      context.tree, context.resolved, context.motionScheduler, nowSeconds
+    )
+    let animationSamples = context.keyframes.applyAnimations(
+      context.tree, context.resolved, context.motionScheduler, nowSeconds
+    )
+    context.dispatchPendingMotionLifecycle()
+    context.motionDirtyDomains = dirtyDomainBits(
+      context.motionScheduler.consumeDirty()
+    )
+    context.motionNow = nowSeconds
+    if transitionSamples > 0 or animationSamples > 0:
+      context.refreshPresentation()
+    context.fillMotionState(
+      output, animationSamples, transitionSamples
+    )
+    context.lastError = ""
+    CbssOk
+  except CatchableError as error:
+    context.setError(error.msg)
+    CbssInternalError
+
+proc cbssContextMotionState(
+    context: CbssContextHandle;
+    output: ptr CbssMotionStateC
+): int32 {.exportc: "cbss_context_motion_state", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  context.fillMotionState(output)
+  CbssOk
+
+proc cbssContextSetReducedMotion(
+    context: CbssContextHandle;
+    enabled: uint8
+): int32 {.exportc: "cbss_context_set_reduced_motion", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if enabled > 1:
+    return CbssInvalidArgument
+  context.reducedMotion = enabled != 0
+  context.transitions.reducedMotion = context.reducedMotion
+  context.keyframes.setReducedMotion(context.reducedMotion)
+  if context.computed and context.motionTimeInitialized:
+    var state: CbssMotionStateC
+    return cbssContextAdvanceMotion(context, context.motionNow, addr state)
+  CbssOk
 
 proc cbssContextLayoutBoxCount(context: CbssContextHandle): uint32 {.
     exportc: "cbss_context_layout_box_count", cdecl, dynlib.} =
