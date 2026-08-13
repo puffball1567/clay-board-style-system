@@ -170,7 +170,7 @@ cbss_configure system
 The selection is written to the application's ignored `.cbss/` directory.
 CBSS does not ship native runtime binaries inside its Nimble package.
 
-## What Version 0.4.1 Contains
+## What Version 0.4.2 Contains
 
 - Typed viewport, font-relative, font-metric-relative, percentage-spacing,
   intrinsic, and property-specific numeric unit authoring with deterministic
@@ -187,6 +187,9 @@ CBSS does not ship native runtime binaries inside its Nimble package.
 - Declarative paint transitions and multiple named keyframes for opacity,
   foreground/background colors, and typed 2D transforms, including CSS-like
   list cycling, lifecycle events, reduced motion, and active-only scheduling.
+- A language-neutral declarative-motion C ABI with copied keyframe builders,
+  named registration, time-aware reconciliation, lifecycle events, active-work
+  queries, deadlines, cancellation, and ARC/ORC consumer coverage.
 - Typed `CBSSComponent` authoring, nested composition, Style DI, lifecycle
   hooks, and transactional mount rollback.
 - CSS Color 4-inspired typed and serialized colors, `color-mix()`, wide-gamut
@@ -212,7 +215,7 @@ Accepting a value as metadata does not mean that layout or paint consumes it.
 
 ## Current Boundaries
 
-Version 0.4.1 is a developer preview. Public APIs may change before 1.0.
+Version 0.4.2 is a developer preview. Public APIs may change before 1.0.
 
 - Linux x86_64 with SDL3 is the only Tier 1 runtime target.
 - Windows and macOS native runtime validation is incomplete.
@@ -290,7 +293,9 @@ ownership, status codes, and append-only enums. Nim strings, sequences,
 references, exceptions, and object layouts do not cross the ABI. Immutable
 Blob handles support both bounded eager snapshots and host-authorized lazy
 providers, so foreign files, mappings, and decoders can participate without
-exposing raw ownership to CBSS.
+exposing raw ownership to CBSS. The same boundary exposes copied named
+keyframes, declaration-driven transitions, monotonic motion advancement,
+frame deadlines, dirty domains, reduced-motion control, and lifecycle events.
 
 ```sh
 nimble buildCAbiShared
@@ -311,6 +316,7 @@ construction, ownership, callbacks, versioning, and static/shared linking.
 | API stability and deprecation | [API Stability](docs/api-stability.md) |
 | Performance budgets | [Performance Model](docs/performance-model.md) |
 | Components and Style DI | [Component Authoring](docs/component-authoring.md) |
+| State, effects, Commands, and Cue | [Frontend Runtime Design](docs/frontend-runtime.md) |
 | Events and typed signals | [Events](docs/events.md) |
 | Blob, FormData, and Streams | [UI Data Interchange](docs/data-interchange.md) |
 | Canvas and custom drawing | [Render Surfaces](docs/render-surfaces.md) |

@@ -1819,9 +1819,19 @@ platform event
   -> backend renders
 ```
 
-CBSS should not require React-like hooks, Redux-like stores, or signal libraries.
-Those can be built above CBSS. CBSS should remain the lower-level engine that
-accepts the resulting tree, styles, event handlers, and state flags.
+The CBSS style/layout core does not require React-like Hooks, Redux-like Stores,
+or a particular signal library. It remains the lower-level engine that accepts
+the resulting tree, Styles, event handlers, and state flags.
+
+The CBSS package also includes a first-party frontend runtime as an opt-in Nim
+module above that lower-level boundary. It extracts the useful frontend
+capabilities -- retained local state, typed Stores and Actions, selected
+subscriptions, owned effects, asynchronous Commands, and Cue orchestration --
+without adopting Hook ordering, dependency arrays, virtual-DOM replay, or
+Redux-specific APIs. Applications may still use external state systems through
+ordinary Nim and Provider boundaries. The complete contract and delivery order
+are documented in
+[Frontend Runtime Design](frontend-runtime.md).
 
 The low-level pieces should not be the primary authoring surface. Most
 developers should not have to manually call `processInput`, bind an

@@ -28,7 +28,7 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x00010010` supports:
+ABI version `0x00010012` supports:
 
 - Opaque context and style handles.
 - Atomically reference-counted immutable Blob handles with advisory MIME
@@ -57,6 +57,10 @@ ABI version `0x00010010` supports:
   serialized CSS colors, and `color-mix()`, without changing the stable
   16-byte resolved `CbssColor` value.
 - Replaceable per-node and per-state style application.
+- Context-scoped named-keyframe definitions built from copied `CbssStyle`
+  steps, declaration-driven transition/keyframe reconciliation, monotonic
+  paint-only motion advancement, active-track counts, dirty-domain bits, next
+  deadlines, reduced-motion policy, and lifecycle payloads.
 - Style resolution, intrinsic sizing, and flex layout.
 - Layout-box and node-rectangle queries.
 - Renderer-neutral paint-command iteration.
@@ -79,8 +83,10 @@ ABI version `0x00010010` supports:
   stop-propagation, and prevent-default callback result bits. Dispatch summaries
   retain the legacy `handled` byte and expose the complete bitset as `outcome`.
 - An additive opaque `CbssEventView` callback contract for managed event
-  payloads. Existing `CbssEventCallback` signatures and the 128-byte
-  `CbssEvent` layout remain unchanged. Submit views expose an owning retained
+  payloads. Existing `CbssEventCallback` signatures remain unchanged. The
+  library-owned `CbssEvent` callback record is 152 bytes and appends borrowed
+  motion name, elapsed-time, and iteration fields after its original 128-byte
+  prefix. Submit views expose an owning retained
   FormData snapshot, while a synthetic submit without a snapshot reports
   `CBSS_NOT_AVAILABLE`.
 - Optional pointer-device metadata with stable-in-process device IDs, contact,
@@ -127,6 +133,68 @@ two update paths:
 
 `cbss_context_recompute` reuses the last successful viewport size. A resize
 uses `cbss_context_compute` with the new dimensions.
+
+## Declarative Motion
+
+`CbssKeyframes` is a mutable definition builder. Create it with
+`cbss_keyframes_create`, add offset-sorted steps with
+`cbss_keyframes_add_step`, and register a copied context-scoped definition with
+`cbss_context_register_keyframes`. Every step copies its source `CbssStyle`
+during the call. Registration copies the completed definition again, so both
+the step style and builder may be cleared, reused, or destroyed immediately
+after their successful calls.
+
+Use one monotonic clock for all calls on a context:
+
+1. call `cbss_context_compute_at` for the first frame;
+2. after declaration or pseudo-state changes, call
+   `cbss_context_recompute_at` at the current time;
+3. while `CbssMotionState.has_deadline` is nonzero, wake at
+   `next_deadline` and call `cbss_context_advance_motion`; and
+4. block for input when no deadline and no other frame source remains.
+
+Recompute performs style reconciliation and layout because authored target
+styles may have changed. Advance samples only already-active transition and
+keyframe tracks; it does not resolve styles or run layout. It refreshes the
+renderer-neutral paint/hit snapshot only when a sample changed presentation.
+`dirty_domains` uses `CBSS_DIRTY_*` bits and tells a foreign host whether the
+sample affected paint, hit testing, or timed animation work. Sample and active
+counts are separate: a paused animation may remain active without requesting a
+deadline.
+
+Times must be finite and must not move backwards. A rejected time leaves the
+previous presentation intact. `cbss_context_set_reduced_motion` accepts only
+zero or one and immediately settles nonessential active motion at the current
+context time. Removing a registered definition synchronously cancels its
+active tracks before returning. Replacing a definition becomes observable on
+the next recompute, where definition revision changes cancel and restart the
+affected declaration-bound tracks.
+
+Motion lifecycle callbacks use the ordinary event subscription API.
+`CBSS_EVENT_HAS_MOTION` indicates that `motion_name`,
+`motion_elapsed_seconds`, and `motion_iteration` are populated. The name is
+borrowed only for the callback. Animation events include start, iteration,
+end, and cancel; transition events include run, start, end, and cancel.
+
+```c
+CbssKeyframes *pulse = NULL;
+CbssStyle *step = cbss_style_create();
+cbss_keyframes_create("pulse", &pulse);
+
+cbss_style_set_number(step, "opacity", 0.2f);
+cbss_keyframes_add_step(pulse, 0.0, step);
+cbss_style_clear(step);
+cbss_style_set_number(step, "opacity", 1.0f);
+cbss_keyframes_add_step(pulse, 1.0, step);
+
+cbss_context_register_keyframes(ui, pulse);
+cbss_style_destroy(step);
+cbss_keyframes_destroy(pulse);
+
+CbssMotionState motion;
+cbss_context_compute_at(ui, 800.0f, 600.0f, now_seconds);
+cbss_context_motion_state(ui, &motion);
+```
 
 ## Worker-To-UI Blob Streams
 
@@ -248,6 +316,12 @@ ownership and synchronization contracts.
 - `cbss_style_create` owns a reusable declaration set.
 - `cbss_style_destroy` does not affect styles already applied to a context;
   declarations are copied on application.
+- `cbss_keyframes_add_step` copies all declarations from its source style.
+  `cbss_context_register_keyframes` copies the complete builder into the
+  context. Destroying either source handle does not affect registered motion.
+  Registered definitions live until replacement, explicit removal, context
+  reset, or context destruction. Reset and destruction cancel active tracks
+  and dispatch their cancellation events before event handlers are detached.
 - `cbss_color_value_create`, `cbss_color_value_current`, the two parse
   constructors, and `cbss_color_mix_create` return owning color-value handles.
   `cbss_color_value_destroy` releases them. Style setters copy the authored
@@ -287,8 +361,8 @@ ownership and synchronization contracts.
 - Strings returned by CBSS are copied into caller-owned buffers. Query with a
   null buffer or zero capacity to obtain the required byte count.
 - Output pointers must remain valid only for the duration of their call.
-- `CbssEvent.key` and `CbssEvent.text` are borrowed and valid only during the
-  callback.
+- `CbssEvent.key`, `CbssEvent.text`, and `CbssEvent.motion_name` are borrowed
+  and valid only during the callback.
 - Unless a constructor explicitly transfers ownership, callback function
   pointers and `user_data` are borrowed. They must remain valid until replaced,
   removed, or the context is destroyed.
@@ -328,10 +402,12 @@ The high 16 bits are the ABI major version and the low 16 bits are the minor
 version. Existing function signatures, enum values, struct field order, and
 ownership rules are frozen within one major version.
 
-Compatible additions include new functions and new constants. Removing or
-reordering fields, changing an enum value, or changing ownership requires a new
-major ABI. Bindings should compare the major version before constructing a
-context.
+Compatible additions include new functions, new constants, and append-only
+fields on library-owned callback records whose original prefix remains stable.
+Removing or reordering fields, changing an enum value, shrinking a callback
+record, or changing ownership requires a new major ABI. Bindings should compare
+the major version before constructing a context and use the complete header
+matching the linked minor version when reading appended fields.
 
 Functions with a complete replacement may be annotated with
 `CBSS_DEPRECATED("replacement guidance")`. The annotation produces a compiler

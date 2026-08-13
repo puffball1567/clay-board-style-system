@@ -151,9 +151,10 @@ Status: `Released in 0.3.0`
 Version 0.3 establishes the public visual-surface foundation that independent
 libraries can build on. CBSS owns the host contract, placement, composition,
 input routing, frame scheduling, and core color model. Charting and other
-application-domain libraries remain separate OSS packages. SDL-native game
-surfaces that must share CBSS texture, renderer, input, and frame lifecycles
-are optional modules shipped within CBSS.
+application-domain libraries remain separate OSS packages. SDL-native visual
+asset surfaces that must share CBSS texture, renderer, input, and frame
+lifecycles are optional modules shipped within CBSS; they do not make CBSS a
+gameplay framework.
 
 Version 0.4 release capabilities:
 
@@ -212,11 +213,11 @@ Version 0.4 release capabilities:
   gates.
 
 Independent modules may use the resulting contract to provide capabilities
-such as `cbss_charts`. CBSS itself may provide opt-in game modules for sprites,
-tile maps, and Tiled integration because they share its SDL renderer, texture
-cache, input routing, coordinate conversion, and frame scheduler. CBSS does
-not bundle image assets or make a chart/widget catalogue part of its core
-release.
+such as `cbss_charts`. CBSS itself may provide opt-in visual-asset modules for
+sprites, tile maps, and Tiled-output integration because they share its SDL
+renderer, texture cache, input routing, coordinate conversion, and frame
+scheduler. CBSS does not bundle image assets or make a chart/widget catalogue
+part of its core release.
 
 Implementation progress:
 
@@ -1146,17 +1147,15 @@ The current host and test contract is documented in
 
 ### Language-Neutral Declarative Motion ABI
 
-Status: `Planned for Version 0.5+`
+Status: `Core authoring and execution contract implemented after Version 0.4`
 
-The current C ABI can construct styles, set generic animation and transition
-declarations, receive motion lifecycle events, and request RenderSurface
-frames. It does not yet expose the complete authoring and execution contract
-for named keyframes or declarative transitions. In particular, a foreign host
-cannot register a typed keyframe definition and drive the same retained motion
-runtime used by Nim without relying on private implementation details.
+The C ABI can construct styles, set generic animation and transition
+declarations, register named keyframes, receive motion lifecycle events, and
+drive the same retained transition/keyframe runtimes used by Nim. Foreign hosts
+do not depend on private Nim layouts or backend objects.
 
-Version 0.5+ will expose declarative motion through an additive C ABI revision.
-The public surface will include:
+ABI revision `0x00010012` exposes the Version 0.4 declarative-motion runtime
+through the following additive public surface:
 
 - an opaque keyframe-definition builder with create, destroy, clear, and
   ordered-step operations;
@@ -1165,38 +1164,35 @@ The public surface will include:
 - context-scoped registration, replacement, lookup, and removal of named
   keyframes, with deterministic behavior when an active definition is
   replaced or removed;
-- transition and animation reconciliation after a targeted style change,
-  without requiring a foreign host to rebuild the tree or resolve unrelated
-  styles;
-- one monotonic-time advance operation shared by transitions, keyframes,
-  caret deadlines, and future timed UI work;
-- active-work, dirty-domain, frame-request, and next-deadline queries so an
-  event loop can block while idle and repaint only affected presentation and
-  hit-test state;
+- transition and animation reconciliation through time-aware compute and
+  recompute operations after style changes;
+- one monotonic-time advance operation shared by transitions and keyframes;
+- active-work, dirty-domain, sample-count, and next-deadline queries so an
+  event loop can block while idle and repaint only when presentation changed;
 - explicit reduced-motion policy and later platform-preference adapters;
 - normal C ABI event dispatch for animation and transition start, iteration,
   end, and cancellation, using the lifecycle event vocabulary already exposed;
   and
-- bounded diagnostics for invalid offsets, missing names, unsupported values,
-  invalid time, stale handles, and ownership violations. No Nim exception may
-  cross the ABI.
+- bounded status/error reporting for invalid offsets, missing names,
+  unsupported values, invalid time, and ownership violations. No Nim exception
+  crosses the ABI.
 
-The exact function names remain provisional until the header and C consumer
-tests are reviewed. The ownership and performance contracts are not
-provisional: opaque owning handles use explicit destruction, registration
-copies or retains data according to documented rules, and advancing motion is
-proportional to active tracks and changed presentation rather than total tree
-size. No backend object, Nim reference, sequence, closure, or exception crosses
-the boundary.
+The function names and ownership contracts are now public in `include/cbss.h`.
+Opaque owning handles use explicit destruction, step insertion and registration
+copy their input, and no backend object, Nim reference, sequence, closure, or
+exception crosses the boundary. Motion sampling is proportional to active
+tracks and does not resolve styles or run layout. The current C context still
+rebuilds its renderer-neutral paint/hit snapshot after changed samples; command
+span patching remains a later performance optimization.
 
-Release qualification requires shared and static C consumers under ARC and
-ORC, a headless deterministic-clock scenario, transition reversal and
-cancellation tests, multiple named-keyframe tests, reduced-motion tests,
-deadline/idle tests, lifecycle-event verification, stale-handle and invalid-
-input tests, and the existing Valgrind and supported sanitizer gates. A small
-SDL3 C example must demonstrate that an idle application waits for events and
-wakes only for the next motion deadline. Foreign-language wrappers remain thin
-packages built on this contract and do not duplicate the motion engine.
+Shared and static C consumers now exercise ARC and ORC, deterministic time,
+transition and keyframe sampling, reduced motion, deadline/idle state,
+lifecycle payloads, copied ownership, cancellation, and invalid input. Existing
+Valgrind and supported sanitizer lanes cover the same implementation. Remaining
+qualification work is a small SDL3 C example that demonstrates blocking while
+idle, broader multiple-animation/reversal cases, and targeted paint-command
+span patching. Foreign-language wrappers remain thin packages built on this
+contract and do not duplicate the motion engine.
 
 ### CSS-Like Motion Scene
 
@@ -1312,14 +1308,15 @@ integration boundary are specified in
 
 ### Sprites And Tile Maps
 
-Sprite animation and tile-map drawing are opt-in CBSS game modules, not
-general-purpose application widgets. They use the same SDL renderer, texture
-cache, input routing, coordinate conversion, and frame scheduler as Canvas,
-which avoids requiring a second lifecycle and resource-management layer in an
-external package. Applications still supply their own sprites, textures, map
-files, and game data. CBSS does not bundle Tiled itself: its game module reads
-the needed subset of a Tiled-exported JSON map, operates on that map data, and
-draws it through the shared SDL/Canvas path.
+Sprite animation and tile-map drawing are opt-in CBSS visual-asset surfaces,
+not gameplay modules or general-purpose application widgets. They use the same
+SDL renderer, texture cache, input routing, coordinate conversion, and frame
+scheduler as Canvas, which avoids requiring a second lifecycle and
+resource-management layer in an external package. Applications still supply
+their own sprites, textures, map files, and application data. CBSS does not
+bundle Tiled itself: its visual-surface module reads the needed subset of a
+Tiled-exported JSON map, operates on that map data, and draws it through the
+shared SDL/Canvas path.
 
 Planned work:
 
@@ -1341,6 +1338,8 @@ Planned work:
 The user-facing API should remain declarative where possible. CSS-inspired
 styles describe how a surface is placed and composed; typed Nim data and
 callbacks describe sprite frames, tile data, and application-specific behavior.
+CBSS owns image-sequence and map-layer presentation; movement, collision,
+simulation, save state, and map semantics remain application responsibilities.
 
 ## Camera And Audio Media Capability
 
@@ -1429,9 +1428,27 @@ Planned work:
   deterministic injected-event tests for routing, pressure curves, and stroke
   generation.
 
-## Version 0.5+ - Ownership Contract And Release Verification
+## Versions 0.5 And 0.6 - Parallel Foundation Tracks
 
 Status: `Planned`
+
+Version 0.5 and Version 0.6 are separate release scopes developed in the same
+foundation wave. Version 0.5 owns the first-party frontend runtime and general
+Cue orchestration. Version 0.6 owns the layout, scrolling, virtualization,
+accessibility-transport, ownership, and performance work required for
+data-dense production applications. Work may proceed concurrently where the
+contracts are independent, and Version 0.6 provides integrated production
+validation of the Version 0.5 authoring APIs.
+
+The implementation remains divided into small feature branches and pull
+requests merged into `devel`. Parallel development does not justify a single
+long-running branch or a cross-subsystem patch. Each version retains its own
+release gate, while shared integration scenarios run continuously against
+`devel`.
+
+### Ownership Contract And Release Verification
+
+Status: `Version 0.6 target`
 
 CBSS will guarantee its own ARC ownership and native-resource lifecycle when an
 application uses the documented safe public API and follows its explicit
@@ -1493,17 +1510,128 @@ examples use the strict gate in CI. An optional checker may help advanced API
 and adapter authors, but correctness of arbitrary application memory management
 is outside the CBSS guarantee.
 
+### Frontend Runtime And General Cue Orchestration
+
+Status: `Version 0.5 target; design adopted, integration not started`
+
+CBSS will include an opt-in first-party Nim frontend runtime that joins retained
+component state, typed Stores and Actions, selected subscriptions, owned
+effects, asynchronous Commands, and Cue-based temporal orchestration. The goal
+is the productive data flow familiar to JavaScript and TypeScript frontend
+engineers, not API compatibility with React Hooks or Redux.
+
+The primary authoring surface uses familiar names such as `createStore`,
+`dispatch`, `select`, `subscribe`, `watch`, `effect`, `command`, and `cue` while
+remaining ordinary typed Nim with parentheses and full LSP support. It does not
+introduce Hook call-order rules, dependency arrays, virtual-DOM replay, or
+whole-component-tree updates.
+
+This authoring direction is fixed for implementation: retained fields for
+local state; typed `createStore` / `dispatch`; focused `select` and owned
+`watch`; explicit source-driven `effect`; typed `command`; standard event
+properties; and readable Cue graph composition. Exact generic and result types
+may be refined for safety, but the implementation must preserve ordinary Nim
+syntax, LSP support, bounded updates, and the concise flow documented in
+[Frontend Runtime Design](frontend-runtime.md).
+
+Cue is the behavior-side graph that starts from one typed occurrence and then
+advances serial and parallel branches automatically. `A -> B -> C` requires
+only A to be externally triggered; `A -> (B + C + D) -> E` starts the middle
+branches on one logical Cue tick and joins them according to an explicit
+all/any/race policy before E. Relative start and end triggers, deadlines,
+failure policy, cancellation propagation, and repeated-start policy are part
+of the graph rather than application-maintained completion flags.
+
+The first occurrence may be a standard UI Event, an existing `Signal[T]`, a
+monotonic clock or media-timeline marker, component lifecycle, Store change,
+Command completion, audio-analysis marker such as a kick or beat, game or
+simulation event, or an adapter supplied by an independent Nim library. Cue
+does not make these sources new `InputEvent` kinds and does not perform media
+analysis. Continuous amplitude, spectrum, sensor, and frame data remain
+bounded Streams or parameter sources; typed threshold, beat, marker, and
+section occurrences trigger Cue sessions.
+
+This boundary keeps CBSS useful beyond conventional controls: animation and
+video editing, music-synchronized promotion video, generative design, motion
+graphics, game UI, and later GPU scenes can share one deterministic trigger,
+parallel orchestration, clock, ownership, and cancellation model. Cue remains
+separate from Style resolution: transitions and keyframes own interpolation,
+while Cue owns ordering, fan-out, joins, deadlines, completion, and
+cancellation.
+
+Cue exposes the substrate only: typed graphs, scoped ownership, clocks,
+pause/resume, deadlines, completion, and cancellation. Application policies
+such as game pause, cut-scene progression, or autosave timing are not CBSS
+features and remain ordinary application logic.
+
+The runtime is opt-in and must compile out when unused. State publication,
+Selector evaluation, component patches, dirty-domain updates, asynchronous
+delivery, and Cue deadlines remain bounded to affected work. Detailed API,
+ownership, cancellation, scheduling, and test requirements are in
+[Frontend Runtime Design](frontend-runtime.md).
+
+Implementation order reuses the current code rather than recreating it:
+
+1. Add retained `State[T]`, component-owned `watch`, exact invalidation, and
+   `batch` over the existing Signal, ownership, and dirty-domain primitives.
+2. Extend the existing `StateRuntime` with committed transactions and selected
+   Store subscriptions.
+3. Add owned Effects and Command adapters over the implemented StreamMailbox,
+   StreamBridge, and UI-thread wake path.
+4. Implement typed Cue triggers, serial edges, parallel fan-out, joins,
+   deadlines, scoped cancellation, and virtual-clock tests.
+5. Connect Cue to the existing transition, keyframe, Signal, Store, Command,
+   Canvas scheduling, and component-lifecycle contracts.
+6. Add traces, ARC/ORC and performance gates, and event/time/Signal-triggered
+   orchestration demos before considering a foreign-language ABI.
+
+### Production Layout, Scrolling, Virtualization, And Accessibility
+
+Status: `Version 0.6 target`
+
+The existing percentage, automatic, intrinsic, min/max, Flex, retained-scroll,
+semantic-tree, focus, and AT-SPI adapter foundations are not restarted. Version
+0.6 closes their remaining executable and platform gaps:
+
+- complete the remaining percentage, `auto`, intrinsic, min/max, `box-sizing`,
+  multi-line Flex, `align-content`, writing-axis, text-overflow, and background
+  geometry consumers needed by production layouts;
+- keep scrolling as a paint/hit coordinate transform rather than a reason to
+  resolve Style or recompute layout, coalesce wheel and drag input once per
+  frame, and preserve stable scrollbar, popup, clipping, and hit behavior;
+- define a typed viewport/data-virtualization contract with stable item keys,
+  visible-range requests, estimated extents, measured correction, overscan,
+  focus retention, accessibility range semantics, and bounded node reuse;
+- keep virtualization opt-in at the list/grid component boundary rather than
+  silently changing the semantics of every ordinary Box tree;
+- connect the platform-neutral semantic tree and AT-SPI model adapter to the
+  Linux D-Bus transport, including roles, names, values, states, actions,
+  focus, selection, expansion, and deterministic object lifetime;
+- preserve external future UIA and NSAccessibility adapters behind the same
+  semantic contract without claiming untested platform support; and
+- prove that local changes are `O(dirty)`, scrolling and virtualized range
+  changes do not rebuild unrelated UI, and an idle application returns to the
+  event wait.
+
+The integrated reference scenario is a data-dense list/grid foundation rather
+than a bundled styled Data Grid widget. It must exercise large logical data,
+virtualized materialization, keyboard and pointer interaction, scrolling,
+focus, semantic range exposure, Store updates, asynchronous Commands, and Cue
+feedback without retaining one node per logical row.
+
 ### CSS Property Runtime Completion
 
-Status: `Version 0.5+ candidate; priority order not yet decided`
+Status: `Version 0.6 target; package order remains dependency-driven`
 
 The canonical property target remains in
 [css-property-support.md](css-property-support.md), and every targeted property
 has a provisional rank in
 [css-property-implementation-order.md](css-property-implementation-order.md).
-Those ranks are planning input rather than a fixed Version 0.5 execution order.
-The owner may reorder the following work packages after evaluating user
-feedback, subsystem dependencies, and release goals.
+Those ranks are planning input rather than a fixed execution order. Packages
+required by the Version 0.6 production scenarios are release gates; lower-value
+independent properties may move to a later release when they do not affect the
+layout, scrolling, virtualization, accessibility, or frontend-runtime
+contracts.
 
 A property is not complete merely because the registry accepts its name or
 ComputedStyle preserves its value. Promotion to `Runtime` requires a consumer
@@ -1553,6 +1681,119 @@ performance tests proving that a local property change does not resolve or
 relayout unrelated subtrees. `No plan` properties remain outside these
 candidates unless a later design decision explicitly moves them into the
 target.
+
+### Parallel Version 0.5 And 0.6 Delivery Order
+
+1. Freeze release baselines for layout, scrolling, focus, accessibility,
+   ownership, idle scheduling, and dirty-work complexity.
+2. Implement `State[T]`, owned `watch`, `batch`, selected Store transactions,
+   Effects, and Commands over the existing runtime primitives.
+3. Complete the production layout consumers and their intrinsic, percentage,
+   min/max, Flex, text, and writing-axis tests.
+4. Complete transform-only scrolling and add the typed virtualization contract
+   with large-data performance tests.
+5. Connect the semantic tree to the Linux AT-SPI D-Bus transport and run
+   headless adapter plus real-session integration coverage.
+6. Implement Cue triggers, serial and parallel graphs, joins, clocks,
+   cancellation, and integration with Store, Signal, Command, transition,
+   keyframes, Canvas, and component lifecycle.
+7. Run the integrated large-data application scenario under ARC and ORC,
+   sanitizers, Valgrind, Wayland E2E, accessibility inspection, and release
+   performance budgets before the Version 0.6 release branch is created.
+
+## Version 0.7+ - Visual And Native Capability Sequence
+
+After the parallel Version 0.5 and Version 0.6 foundation work, the provisional
+sequence is:
+
+- **Version 0.7:** one visual-expression milestone combining complete color
+  authoring, advanced CPU Canvas, optional Pixie effects, SDL3 GPU Canvas,
+  optional `wgpu-native`, WGSL Custom Style, shared GPU ownership, and the
+  retained Motion Scene contract;
+- **Version 0.8:** sprite animation, Tiled-output tile maps, richer game input,
+  camera/video surfaces, audio, and media/game Cue adapters; and
+- **Version 0.9:** complete touch and expressive-input behavior, ecosystem
+  hardening, cross-language coverage, complex visual tooling scenarios, and
+  API/ABI preparation for Version 1.0.
+
+These later numbers are planning labels, not compatibility promises. Their
+contents may move as the parallel foundation implementation exposes actual
+dependencies and performance costs.
+
+### Version 0.7 Visual Rendering Release Scope
+
+Version 0.7 combines the CPU and GPU expression tracks so applications and
+component libraries receive one coherent visual release rather than separate
+backend-shaped feature sets. Its release gates are:
+
+- complete CSS-inspired color authoring and defined interpolation behavior for
+  gradients, transitions, Canvas, Pixie, and GPU materials;
+- advanced CPU Canvas paths, text, images, cached layers, masks, filters, blend
+  behavior, and deterministic headless references;
+- optional Pixie raster/effects integration that consumes resolved CBSS paint
+  data without making Pixie a dependency of the standard profile;
+- an SDL3 GPU Canvas backend for textures, buffers, render targets, graphics
+  pipelines, compute pipelines, offscreen rendering, and composition inside a
+  normal Canvas-owned layout region;
+- an optional `wgpu-native` backend behind the same public GPU Canvas and
+  Motion Scene contracts rather than a second UI or layout implementation;
+- WGSL-backed Custom Style stages for bounded `underlay`, `overlay`, `mask`,
+  and `filter` painting over CPU-resolved Box geometry and retained content;
+- a deterministic CPU Motion Scene reference path followed by batched GPU
+  execution for shapes, text, images, particles, sprites, chart marks, and
+  generative objects without one Box node per visual object;
+- one canonical low-level Nim binding and one compatible `wgpu-native` runtime
+  version per process;
+- explicit owned and borrowed `GpuHost` modes, one Surface/Present owner, and
+  documented Instance, Adapter, Device, Queue, swapchain, resize, and
+  device-loss lifecycles;
+- budgeted persistent resource namespaces for independent Nim visualization or
+  compute libraries, with frame-scoped submission capabilities and no raw
+  swapchain ownership escape;
+- compatible external 3D texture, render-target, or GPU-pass composition with
+  explicit synchronization, color-space, alpha, resize, input, and lifetime
+  rules, without absorbing meshes, materials, lights, cameras, scene graphs,
+  skeletal animation, physics, or 3D asset pipelines into CBSS;
+- compile-time profiles that keep GPU source, native libraries, shaders, and
+  assets out of the standard CPU/SDL 2D build when unused;
+- deterministic mock and CPU-reference tests plus a real Linux GPU integration
+  fixture combining CBSS Motion/WGSL rendering and independent compute work on
+  one Device, Queue, and Swapchain; and
+- device-loss, cancellation, teardown order, version mismatch, GPU-memory
+  budget, idle-frame, and CPU fallback verification.
+
+The complete Custom Style, shared-device, persistent-resource, interaction,
+and complex visual-scene design remains in
+[Render Surface Roadmap](render-surface-roadmap.md). A language-neutral GPU ABI
+is considered only after the Nim ownership and submission contracts are stable;
+raw backend handles are not the portable public contract.
+
+### Version 0.9 Touch And Expressive Input Scope
+
+The existing pointer metadata, touch source identity, pen axes, pressure,
+tilt, rotation, eraser state, capture, and injected-event foundations remain in
+place. Version 0.9 completes application-facing touch interaction:
+
+- stable multi-touch contact tracking with per-contact identity, local and
+  window coordinates, capture, cancellation, and deterministic cleanup;
+- typed pan, pinch/zoom, rotate, swipe, tap, double-tap, long-press, and
+  configurable gesture recognizers built above raw pointer/touch events;
+- explicit gesture arbitration so scrolling, controls, Canvas drawing, and
+  application gestures do not all consume the same contact accidentally;
+- touch-oriented kinetic scrolling, drag thresholds, overscroll policy, and
+  high-rate coalescing without layout or full-tree work per sample;
+- pen and touch coexistence, optional palm-rejection policy, pressure-driven
+  Canvas input, and capability reporting for hardware-dependent axes;
+- touch focus, virtual-keyboard, text-selection handle, context-menu, and
+  accessibility behavior through platform adapters where the OS exposes the
+  required capability; and
+- deterministic injected multi-contact tests plus native device scenarios for
+  supported contributor hardware.
+
+Raw events remain available to games, drawing tools, and specialized controls.
+The gesture layer is an opt-in interpretation above them, not a replacement for
+SDL3 input or an assumption that every touch must become a browser-style
+gesture.
 
 ## Later Milestones
 
