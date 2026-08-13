@@ -1,6 +1,6 @@
 # Frontend Runtime Design
 
-Status: `State through Cue core implemented; typed Cue adapters, traces, and demo pending`
+Status: `State through Cue core and typed source adapters implemented; Command/motion adapters, traces, and demo pending`
 
 The authoring flow in this document is adopted. Exact generic constraints,
 result types, and individual identifiers may be refined during implementation,
@@ -415,6 +415,12 @@ simulation events, and independent Nim libraries. Cue does not reinterpret
 their payloads or force them into `InputEvent`; a typed adapter decides how an
 occurrence starts a session.
 
+The first source adapters are implemented for `Signal[T]`, retained `State[T]`,
+Store commit revisions, and `StoreSelector` values. A fixed graph may be shared
+by every occurrence, or a `CueGraphFactory[T]` may build a payload-specific
+graph without string identifiers or erased values. Component-owned triggers
+unsubscribe and cancel their still-active sessions during unmount.
+
 ```nim
 let presentation = cue(actionA)
   .thenParallel(actionB, actionC, actionD)
@@ -634,8 +640,9 @@ for the style/layout engine.
 6. Implement the Cue graph core: serial edges, parallel fan-out, joins,
    relative deadlines, cancellation, scoped ownership, independent clocks,
    and virtual-clock tests. **Implemented.**
-7. Connect Cue actions to the existing Signal, Store, transition, keyframe,
-   Canvas frame-request, and Command completion contracts.
+7. Connect Cue to existing runtime contracts. Typed Signal, State, Store
+   commit, and StoreSelector source adapters are **implemented**. Command,
+   transition, keyframe, and Canvas adapters remain.
 8. Add optional traces, authoring conveniences, performance gates, and a demo
    that exercises event-, time-, and Signal-triggered parallel orchestration.
 9. Consider C ABI exposure only after the Nim ownership and completion

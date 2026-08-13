@@ -32,6 +32,10 @@ release. Before 1.0, minor releases may contain public API changes.
 - Added virtual-clock and lifecycle coverage plus a parallel-Cue performance
   gate; 10,000 branch completions remain constant-cost instead of rescanning
   the complete stage for every result.
+- Added component-owned typed Cue source adapters for `Signal[T]`, retained
+  `State[T]`, Store commits, and selected Store values. Payload-aware graph
+  factories preserve source types, repeated-start policy, automatic
+  unsubscribe, active-session cancellation, and late-emission rejection.
 
 ## [0.4.2] - 2026-08-13
 
