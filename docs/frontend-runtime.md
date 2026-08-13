@@ -1,11 +1,11 @@
 # Frontend Runtime Design
 
-Status: `Design adopted; implementation is planned after the current motion and
-event foundations`
+Status: `Design and authoring direction adopted; implementation is planned`
 
-All frontend-runtime API names and examples in this document are proposed
-authoring contracts. They do not claim that the corresponding symbols are
-already exported.
+The authoring flow in this document is adopted. Exact generic constraints,
+result types, and individual identifiers may be refined during implementation,
+but such refinement must preserve this interaction model and its readability.
+Examples do not claim that the corresponding symbols are already exported.
 
 CBSS already provides retained components, typed events, signals, dependency
 injection, lifecycle ownership, dirty domains, transitions, and keyframes.
@@ -21,13 +21,15 @@ patch stable nodes directly.
 
 ## Product Boundary
 
-The optional frontend runtime owns application-facing coordination:
+The first-party frontend runtime owns application-facing coordination:
 
 - local and shared state;
 - typed actions and deterministic reducers;
 - selected and derived values;
 - owned subscriptions and effects;
 - asynchronous commands and UI-thread delivery;
+- typed adapters that connect external device, media, library, and timeline
+  occurrences to Signals, Streams, Commands, or Cue triggers;
 - Cue-based temporal orchestration; and
 - focused invalidation of the affected retained UI.
 
@@ -36,8 +38,17 @@ style state, interaction state, layout, paint, hit testing, focus, and reusable
 control behavior. Business logic, network policy, persistence, and domain
 models remain application or service-library responsibilities.
 
-The feature is an optional Nim module. Applications that do not import it do
-not link its scheduler, action log, command adapters, or Cue runtime.
+The boundary is determined by responsibility, not by whether a feature is
+often used in games or media tools. Receiving an external occurrence, giving
+it a typed lifetime-safe representation, scheduling it on the UI thread, and
+connecting it to retained UI is CBSS foundation work. Deciding what that
+occurrence means for a particular application is not. Likewise, sprite frames
+and tile-map layers are visual-asset presentation inputs; game rules attached
+to those visuals remain application logic.
+
+The feature ships in the CBSS package as an opt-in Nim module rather than a
+separate state-management project. Applications that do not import it do not
+link its action log, command adapters, or Cue runtime.
 
 ```nim
 import clay_board_style_system
@@ -61,11 +72,44 @@ The design extends working CBSS mechanisms rather than replacing them.
 
 Selectors, effect sources, Commands, and Cue sessions are not implemented yet.
 
+## Adopted Authoring Contract
+
+The state-management and Cue authoring style shown in this document is the
+accepted public direction. Implementation must preserve these properties:
+
+- APIs are ordinary typed Nim procedures and objects with explicit
+  parentheses, so completion, navigation, rename, and diagnostics continue to
+  work through the Nim language server;
+- component-local state is an ordinary retained field, changed by a plainly
+  named component procedure rather than a positional Hook;
+- shared state uses a typed `createStore` / `dispatch` flow and typed Actions;
+- `select` derives a focused value and component-owned `watch` applies the
+  resulting patch without rebuilding unrelated components;
+- `effect(source, run)` names its source directly and owns deterministic
+  cleanup instead of relying on render-time dependency arrays;
+- `command(...)` is the typed boundary for asynchronous or external work and
+  returns completion that can re-enter the UI runtime safely;
+- Cue uses a readable graph-building flow such as
+  `cue(actionA).thenParallel(actionB, actionC).then(actionD)`, with only the
+  graph's first occurrence requiring an external trigger;
+- standard event properties such as `onClick` receive ordinary named
+  procedures; Cue, Store, and business operations are invoked from those
+  procedures rather than replacing event names with application-specific
+  names;
+- Style remains independently injectable and contains no one-shot behavior;
+  and
+- no ID, class, string selector, Provider wrapper, Store, or Cue is mandatory
+  merely to render and operate a self-contained component.
+
+An implementation that exposes the same capabilities but requires Hook call
+order, hidden component replay, manual completion forwarding between every Cue
+step, or broad tree reconstruction does not satisfy this contract.
+
 ## Familiar Authoring Without React Semantics
 
 Public names should be immediately understandable to JavaScript and
 TypeScript developers: `createStore`, `dispatch`, `select`, `subscribe`,
-`effect`, `command`, and `cueSequence`. APIs remain ordinary typed Nim
+`watch`, `effect`, `command`, and `cue`. APIs remain ordinary typed Nim
 procedures with parentheses. They must preserve compiler diagnostics, LSP
 completion, navigation, rename, and static checking.
 
@@ -79,7 +123,7 @@ The authoring surface must not require:
 - string action types, selector names, or component IDs; or
 - command-call syntax, implicit `result`, or untyped macros in primary examples.
 
-The intended flow is:
+The intended state flow is:
 
 ```text
 native input
@@ -94,9 +138,10 @@ Action
   -> Command
     -> UI-thread Result Action
 
-event or Command result
+typed Event / Signal / clock marker / Command result
   -> CueSession
-    -> transition / keyframes / typed actions
+    -> serial and parallel action graph
+      -> transition / keyframes / Commands / typed actions / adapters
 ```
 
 ## Capability Model
@@ -123,7 +168,7 @@ default update mechanism. A component may deliberately rebuild or replace a
 subtree, but ordinary text, value, selection, Style, and visibility changes
 patch stable handles.
 
-A later `StateCell[T]` convenience may combine a current value with typed
+A later `State[T]` convenience may combine a current value with typed
 subscriptions. It is not a mandatory wrapper around every component field.
 
 ### Shared Store
@@ -278,51 +323,78 @@ only their UI attachment, cancellation, and invalidation behavior.
 
 ### Cue Orchestration
 
-Cue is the temporal orchestration layer. It is JavaScript-side behavior, not a
-CSS property and not another input event. A standard event starts a
-`CueSession`; the session coordinates multiple retained targets and calls the
-existing motion runtime.
+Cue is the typed temporal and dependency-graph orchestration layer. It is
+behavior-side functionality, not a CSS property, a FIFO queue, or another
+input-event kind. Only the first trigger enters from outside the graph. After
+that trigger, a `CueSession` starts serial or parallel actions, waits for
+declared completion barriers, joins branches, and advances the graph without
+application code manually forwarding every completion.
+
+A Cue trigger is not limited to pointer or keyboard input. The open trigger
+boundary accepts standard UI Events and existing `Signal[T]` occurrences, as
+well as adapters for monotonic clock markers, component lifecycle, Store
+changes, Command completion, media timelines, audio-analysis markers, game or
+simulation events, and independent Nim libraries. Cue does not reinterpret
+their payloads or force them into `InputEvent`; a typed adapter decides how an
+occurrence starts a session.
 
 ```nim
-let saveCue = cueSequence("save", [
-  atStart([
-    animate(dialog, dialogEnterKeyframes),
-    animate(backdrop, backdropFadeKeyframes),
-    animate(spinner, spinnerStartKeyframes)
-  ]),
-  after(300.ms, [
-    animate(title, titleRevealKeyframes)
-  ]),
-  after(600.ms, [
-    animate(description, descriptionRevealKeyframes)
-  ]),
-  atEnd([
-    animate(spinner, spinnerExitKeyframes),
-    animate(resultPanel, resultRevealKeyframes)
-  ])
-])
+let presentation = cue(actionA)
+  .thenParallel(actionB, actionC, actionD)
+  .then(actionE)
 
-saveButton.onClick = withCue(saveCue, onSave)
+saveButton.onClick = proc(event: DispatchResult): EventOutcome =
+  presentation.start()
+  return handledEvent()
 ```
 
 Semantics:
 
-- `atStart` actions begin in parallel with the wrapped root operation;
-- `after` uses a monotonic deadline relative to the sequence start or an
-  explicitly named preceding step;
-- actions in one step begin in parallel;
-- `atEnd` waits for the wrapped root operation's completion contract;
+- `A -> B -> C` starts only A externally and advances through B and C on
+  successful completion;
+- `A -> (B + C + D) -> E` starts B, C, and D from one logical Cue tick and
+  starts E only after the declared join condition is satisfied;
+- `cueStart(A)` triggers when A starts, `cueAfter(A, delay)` uses a monotonic
+  deadline relative to A's start, and `cueEnd(A)` triggers from A's terminal
+  completion contract;
+- parallel groups define `all`, `any`, race, failure, and remaining-branch
+  cancellation policies explicitly;
 - synchronous handlers complete on return;
 - asynchronous Commands, Futures, streams, and animations expose explicit
   completion handles;
 - cancellation and failure are separate from successful completion; and
 - repeated start policy is one of `restart`, `ignore`, `queue`, or `parallel`.
 
+"Parallel" means that branches receive the same logical start timestamp and
+sample the same monotonic time. UI mutations still commit safely on the UI
+thread, worker Commands may execute concurrently, and later GPU work may batch
+or queue its submissions. Cue promises deterministic orchestration rather than
+pretending that every branch begins in the same CPU instruction.
+
+Continuous values are not converted into a high-frequency Cue event stream.
+Amplitude, spectrum, pen samples, sensor values, and similar data remain
+bounded Streams or direct parameter sources. A meaningful occurrence such as
+a kick, beat, threshold crossing, video marker, scene boundary, or selected
+timeline position is emitted as a typed Signal and may trigger a Cue. This
+separation supports music-synchronized promotion video, animation and video
+editing, generative design, game UI, and motion graphics without making the
+Cue scheduler the media-analysis engine.
+
 Cue does not execute from Style resolution. Style recalculation may happen
 more than once and must remain free of one-shot side effects. Cue actions may
 start named keyframes, change an applied Style slot, dispatch an Action, emit a
 Signal, or invoke a registered typed adapter for audio, video, or another
 subsystem.
+
+Cue sessions may be owned by a retained component or another explicit scope.
+Unmount or scope disposal cancels owned sessions, removes pending deadlines,
+and rejects late generation-mismatched completion. Lifecycle can be a trigger
+or ownership boundary, but Cue does not reproduce Hook call-order or component
+replay semantics. Clock ownership is explicit, and independent clocks support
+pause, resume, rate, and cancellation without imposing application policy.
+Choosing which work pauses, resumes, saves, or continues is application logic;
+CBSS supplies the clocks and orchestration primitives but no built-in game-pause
+or autosave behavior.
 
 One process-wide or `UiRoot`-owned monotonic scheduler services all Cue
 deadlines. It must not allocate an OS timer or thread per Cue. When no Command,
@@ -358,7 +430,8 @@ The frontend runtime is retained and transactional.
 
 1. Dispatch the standard UI event through the existing event contract.
 2. Run the public handler once.
-3. Queue Actions, Commands, and Cue starts requested by that handler.
+3. Queue Actions, Commands, Signal-triggered Cue starts, and clock-triggered
+   Cue steps requested during that turn.
 4. Commit Store transactions after event propagation reaches a stable point.
 5. Evaluate affected Selectors once.
 6. Run owned watchers and patch stable handles.
@@ -430,8 +503,13 @@ Required coverage includes:
 - mount/unmount cleanup and failed mount rollback;
 - late Command completion after cancellation or disposal;
 - worker-to-UI result ownership;
-- Cue start, relative steps, completion barriers, cancellation, restart,
-  queueing, parallel sessions, and reduced motion;
+- Cue start, serial advancement, fan-out, all/any/race joins, relative steps,
+  completion barriers, cancellation propagation, restart, queueing, parallel
+  sessions, lifecycle disposal, independent clock pause/resume, and reduced
+  motion;
+- typed UI-event, Signal, Command-result, and virtual timeline-marker triggers;
+- deterministic audio/video marker fixtures without requiring a decoder or
+  physical audio device in core tests;
 - no idle frame requests after all work settles;
 - ARC/ORC lifecycle and sanitizer coverage; and
 - large unrelated component and Store populations proving local work remains
@@ -463,15 +541,23 @@ for the style/layout engine.
 
 ## Delivery Order
 
-1. Extend `StateRuntime` with transaction boundaries and owned typed
-   subscriptions while preserving its current API.
-2. Add `select` and component-owned `watch` with precise invalidation tests.
-3. Add source-driven `effect` and deterministic cleanup using
-   `ComponentOwnedResource`.
-4. Define the Command completion/cancellation adapter over the existing
-   stream and UI-thread mailbox.
-5. Implement Cue definitions, sessions, virtual-clock tests, and the bridge to
-   transition/keyframes.
-6. Add optional development traces and higher-level authoring conveniences.
-7. Consider C ABI exposure only after the Nim ownership and completion
+1. Build retained `State[T]` and component-owned `watch` on the already working
+   `Signal[T]` and `ComponentOwnedResource` lifetime primitives.
+2. Connect state publication to exact dirty domains and add transaction
+   `batch` behavior without replaying component render procedures.
+3. Extend the existing `StateRuntime` with committed transactions, selected
+   Store subscriptions, and deterministic nested-dispatch policy while
+   preserving its current API.
+4. Add source-driven `effect` and deterministic cleanup using the existing
+   component ownership mechanism.
+5. Define Command completion and cancellation adapters over the implemented
+   bounded stream, UI mailbox, and SDL wake path.
+6. Implement the Cue graph core: typed triggers, serial edges, parallel
+   fan-out, joins, relative deadlines, cancellation, scoped ownership, and
+   virtual-clock tests.
+7. Connect Cue actions to the existing Signal, Store, transition, keyframe,
+   Canvas frame-request, and Command completion contracts.
+8. Add optional traces, authoring conveniences, performance gates, and a demo
+   that exercises event-, time-, and Signal-triggered parallel orchestration.
+9. Consider C ABI exposure only after the Nim ownership and completion
    contracts are stable; generic Nim Store state does not cross the C ABI.

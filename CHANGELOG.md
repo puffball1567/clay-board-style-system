@@ -7,6 +7,8 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-08-13
+
 ### Added
 
 - Added C ABI `0x00010012` with copied named-keyframe builders,
@@ -28,11 +30,38 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Documentation
 
-- Defined the optional frontend runtime architecture for retained local state,
-  typed Stores and Actions, selected subscriptions, owned effects,
-  asynchronous Commands, and Cue-based multi-object motion orchestration. The
-  authoring model keeps Web-familiar names without adopting Hook ordering,
-  dependency arrays, Redux-specific APIs, or virtual-DOM replay.
+- Defined the opt-in first-party frontend runtime architecture for retained
+  local state, typed Stores and Actions, selected subscriptions, owned effects,
+  asynchronous Commands, and typed Cue graphs with serial progression,
+  parallel fan-out, joins, relative timing, lifecycle ownership, and triggers
+  from UI events, Signals, Commands, clocks, media markers, and independent
+  libraries. The authoring model keeps Web-familiar names without adopting
+  Hook ordering, dependency arrays, Redux-specific APIs, or virtual-DOM replay.
+- Recorded the adopted frontend authoring contract for retained local fields,
+  typed Stores and Actions, focused `select` / owned `watch`, source-driven
+  effects, typed Commands, standard event properties, and fluent serial or
+  parallel Cue graphs.
+- Defined Version 0.5 frontend-runtime work and Version 0.6 production-
+  foundation work as separate scopes developed in parallel, with shared
+  integration scenarios and independently reviewable feature branches.
+- Combined CPU Canvas, Pixie, color, SDL3 GPU Canvas, optional `wgpu-native`,
+  WGSL Custom Style, Motion Scene, shared-device ownership, persistent
+  resources, capability profiles, and real-GPU gates into the Version 0.7
+  visual-expression milestone.
+- Added a Version 0.9 touch and expressive-input scope covering multi-contact
+  tracking, gesture recognition and arbitration, kinetic scrolling, pen/touch
+  coexistence, virtual-keyboard behavior, and native device verification.
+- Clarified that Cue supplies clocks, pause/resume, graph, and cancellation
+  primitives while application policies such as game pause and autosave remain
+  outside CBSS.
+- Adopted a responsibility-based boundary: CBSS connects external inputs,
+  timelines, libraries, streams, and visual assets to retained UI, while
+  application-specific meaning and gameplay policy remain outside it. Sprite
+  animation and tile maps are classified as visual-asset presentation rather
+  than gameplay mechanics.
+- Applied the same boundary to 3D: CBSS may compose compatible textures,
+  render targets, and GPU passes inside UI, while complete 3D scene and engine
+  responsibilities remain in independent libraries.
 
 ## [0.4.1] - 2026-08-12
 

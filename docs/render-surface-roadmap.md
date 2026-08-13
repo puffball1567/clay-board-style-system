@@ -176,11 +176,12 @@ Status: `Planned`
 
 CBSS should enable independent visualization and application-surface libraries
 built on Canvas rather than absorbing charts and domain-specific application
-formats into its core. SDL-native game surfaces are the deliberate exception:
-sprite animation, tile-map rendering, and Tiled integration may be opt-in CBSS
-game modules because they must share the existing SDL renderer, texture cache,
-input routing, frame loop, and resource lifecycle. This avoids duplicating or
-coordinating two SDL rendering stacks in every game-oriented library.
+formats into its core. SDL-native visual-asset surfaces are the deliberate
+exception: sprite animation, tile-map rendering, and Tiled-output integration
+may be opt-in CBSS modules because they must share the existing SDL renderer,
+texture cache, input routing, frame loop, and resource lifecycle. This avoids
+duplicating or coordinating two SDL rendering stacks in every consuming
+library while keeping gameplay policy outside CBSS.
 
 Initial targets:
 
@@ -202,15 +203,15 @@ An independent library should be free to provide both levels of expression:
 Neither CBSS nor the extension contract owns network loading, databases,
 dashboard business rules, or a proprietary chart document format.
 
-The SDL-native game module set consumes application-provided sprites or texture
-atlases. Its initial Tiled-output importer/renderer should read the required
+The SDL-native visual-asset module set consumes application-provided sprites or
+texture atlases. Its initial Tiled-output importer/renderer should read the required
 subset of Tiled JSON and render that exported map through Canvas, following
 Tiled's public format and established SDL-game patterns. It owns map-data
 traversal, global tile IDs and flip flags, camera culling, and Tiled tile
 animation, but it does not bundle the Tiled editor or implementation. TMX/XML
 and less common orientations can be added after the JSON/orthogonal path is
 stable. These modules remain opt-in imports so ordinary CBSS GUI applications
-do not pull game-oriented code or assets into their build.
+do not pull unused visual-asset code or assets into their build.
 
 ## Motion Scene Dependency Track
 
@@ -246,6 +247,15 @@ Application authors do not manage GPU queues, worker channels, swapchain
 ownership, generation counters, or frame fences. Independent Nim libraries
 can expose reusable motion, chart, game, and generative-design objects that
 mount through this contract.
+
+Motion Scene actions are valid targets of the first-party Cue graph. UI
+events, timeline or media markers, audio-analysis signals, game events, and
+independent Nim libraries may start a Cue session that coordinates scene
+actions in serial or parallel. Continuous amplitude, spectrum, simulation, or
+sensor values remain bounded Streams or frame parameters; meaningful markers
+become typed Signals. This keeps media analysis and simulation outside the Cue
+scheduler while giving animation, video editing, music-synchronized visuals,
+games, and generative design one deterministic orchestration contract.
 
 Implementation order:
 
@@ -699,7 +709,8 @@ Required integration behavior:
   joystick button numbers as the default contract.
 - Two deliberate gamepad layers: semantic UI actions such as navigate,
   activate, cancel, tab, and focus movement for normal controls; and raw
-  gamepad button/axis events routed into Canvas or game modules for gameplay.
+  gamepad button/axis events routed into Canvas or visual surfaces for
+  application-defined behavior.
   A focused control or active modal owns semantic UI actions before an
   underlying game surface can consume them.
 - Runtime capability queries and optional support for rumble, trigger rumble,
@@ -709,7 +720,8 @@ Required integration behavior:
 - Application-configurable mappings loaded through SDL3's mapping support, plus
   a test input adapter or SDL virtual joystick for deterministic headless
   gamepad tests. CBSS must not require a physical controller in CI.
-- Pause, focus, modal, pointer capture, and gamepad navigation behavior.
+- Focus, modal, pointer capture, and gamepad navigation behavior. Application
+  pause policy is not part of this integration contract.
 - Frame scheduling that keeps the game scene active without forcing unrelated
   UI to relayout or repaint every frame.
 - Canvas resizing, high-DPI handling, fullscreen transitions, and viewport
@@ -721,9 +733,10 @@ Required integration behavior:
 - Gallery examples for a HUD, pause menu, inventory panel, and a simple
   Canvas-driven 2D scene.
 
-CBSS does not own gameplay loops, physics, maps, AI, sprites, or game asset
-formats. It provides the UI and surface integration that lets those systems
-live naturally in the same native application.
+CBSS does not own gameplay loops, physics, map meaning, AI, sprite artwork, or
+application rules. It provides image-sequence and map-layer presentation plus
+the UI and surface integration that lets those systems live naturally in the
+same native application.
 
 ### Complex Game Frontend Architecture
 
