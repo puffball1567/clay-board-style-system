@@ -1,5 +1,5 @@
-## Verifies that concurrent Command completion uses indexed run lookup rather
-## than scanning the active set for every result.
+## Verifies that Command and Cue completion use indexed/counted runtime state
+## rather than scanning the active set for every result.
 import std/[monotimes, strformat, times]
 
 import clay_board_style_system
@@ -31,6 +31,27 @@ proc benchmarkConcurrentCompletion(runCount: int): float =
   doAssert command.activeCount == 0
   doAssert checksum >= 0
 
+proc benchmarkParallelCueCompletion(branchCount: int): float =
+  let completions = new seq[CueCompletion]
+  let action = cueAction("parallel", proc(completion: CueCompletion): CueCancel =
+    completions[].add completion
+    nil
+  )
+  var branches = newSeq[CueBranch](branchCount)
+  for index in 0 ..< branchCount:
+    branches[index] = branch(action)
+  let graph = cue(cueAction("start", proc() = discard)).thenStage(branches)
+  let runtime = initCueRuntime()
+  let session = runtime.start(graph)
+  doAssert completions[].len == branchCount
+
+  let started = getMonoTime()
+  for completion in completions[]:
+    completion.succeed()
+  result = elapsedUs(started) / branchCount.float
+  doAssert session.status == cssSucceeded
+  doAssert runtime.activeCount == 0
+
 proc main() =
   echo "CBSS frontend-runtime concurrent Command benchmark (release, ARC)"
   echo "Reverse-order worker results; mean UI pump cost per completion"
@@ -42,6 +63,14 @@ proc main() =
   doAssert large <= small * 4.0 + 0.5,
     "Command completion lookup scaled superlinearly with active runs"
 
+  echo "Parallel Cue stage; mean completion cost per branch"
+  echo "branches\tcompletion us"
+  let cueSmall = benchmarkParallelCueCompletion(1_000)
+  let cueLarge = benchmarkParallelCueCompletion(10_000)
+  echo &"1000\t{cueSmall:.3f}"
+  echo &"10000\t{cueLarge:.3f}"
+  doAssert cueLarge <= cueSmall * 4.0 + 0.5,
+    "Cue completion scaled superlinearly with parallel branches"
+
 when isMainModule:
   main()
-

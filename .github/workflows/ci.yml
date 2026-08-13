@@ -199,6 +199,9 @@ jobs:
       - name: Check threaded ARC stream ownership transfer
         run: nimble testStreamMailboxValgrind -y
 
+      - name: Check ARC Cue lifecycle
+        run: nimble testCueValgrind -y
+
       - name: Check shared and static C ABI lifecycles
         run: nimble testCAbiValgrind -y
 
@@ -231,11 +234,11 @@ jobs:
           nim --version
           nimble --version
 
-      - name: Check transition and keyframe lifecycles under ARC and ORC (Unix)
+      - name: Check motion and Cue lifecycles under ARC and ORC (Unix)
         if: runner.os != 'Windows'
         run: nimble testMotionAsan -y
 
-      - name: Check transition and keyframe lifecycles under ARC and ORC (Windows)
+      - name: Check motion and Cue lifecycles under ARC and ORC (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |

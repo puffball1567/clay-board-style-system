@@ -62,10 +62,10 @@ task testOrc, "Run the test suite under ORC":
   exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
   exec "nim c -r --mm:orc --nimcache:/tmp/clay_board_style_system_orc_test_runner_nimcache --out:/tmp/clay_board_style_system_orc_test_runner tools/run_tests.nim --memory:orc"
 
-task testMotionAsan, "Run declarative transition and keyframe tests under AddressSanitizer":
+task testMotionAsan, "Run motion and Cue lifecycle tests under AddressSanitizer":
   let sanitizerRoot = thisDir() & "/nimcache"
   for memoryModel in ["arc", "orc"]:
-    for testName in ["declarative_transition", "declarative_keyframes"]:
+    for testName in ["declarative_transition", "declarative_keyframes", "cue"]:
       let suffix = testName & "_" & memoryModel & "_asan"
       let nimcache = sanitizerRoot & "/clay_board_style_system_" & suffix & "_nimcache"
       let artifact = nimcache & "/clay_board_style_system_" & suffix
@@ -109,7 +109,8 @@ task testLsan, "Run retained lifecycle tests under LeakSanitizer on Linux":
         ("widget_lifecycle", "tests/memory/widget_lifecycle.nim"),
         ("event_lifecycle", "tests/memory/event_lifecycle.nim"),
         ("declarative_transition", "tests/runtime/test_declarative_transition.nim"),
-        ("declarative_keyframes", "tests/runtime/test_declarative_keyframes.nim")
+        ("declarative_keyframes", "tests/runtime/test_declarative_keyframes.nim"),
+        ("cue", "tests/runtime/test_cue.nim")
       ]:
         let testName = test[0]
         let testPath = test[1]
@@ -235,6 +236,10 @@ task testEventLifecycleValgrind, "Run ARC event lifecycle checks under Valgrind"
 task testStreamMailboxValgrind, "Run the threaded ARC stream mailbox under Valgrind":
   exec "nim c --threads:on --mm:arc -d:release -d:useMalloc --path:src --nimcache:/tmp/clay_board_style_system_stream_mailbox_nimcache --out:/tmp/clay_board_style_system_stream_mailbox tests/data/test_stream_mailbox_threaded.nim"
   exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 /tmp/clay_board_style_system_stream_mailbox"
+
+task testCueValgrind, "Run ARC Cue lifecycle checks under Valgrind":
+  exec "nim c --mm:arc -d:release -d:useMalloc --path:src --nimcache:/tmp/clay_board_style_system_cue_valgrind_nimcache --out:/tmp/clay_board_style_system_cue_valgrind tests/runtime/test_cue.nim"
+  exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 /tmp/clay_board_style_system_cue_valgrind"
 
 task setupBundled, "Use the repository development runtime for static SDL3 linking":
   exec "nim c -r --mm:arc --nimcache:/tmp/clay_board_style_system_setup_nimcache --out:/tmp/cbss_configure src/cbss_configure.nim bundled vendor/sdl3 ."
