@@ -70,3 +70,16 @@ suite "typed library signals":
     check signal.listenerCount == 0
     expect ValueError:
       discard signal.subscribe(proc(value: int) = discard)
+
+  test "one failing listener does not leave later listeners stale":
+    let signal = initSignal[int]()
+    var values: seq[int]
+    discard signal.subscribe(proc(value: int) =
+      raise newException(ValueError, "listener failed")
+    )
+    discard signal.subscribe(proc(value: int) = values.add(value))
+
+    expect ValueError:
+      signal.emit(4)
+
+    check values == @[4]

@@ -12,6 +12,9 @@ release. Before 1.0, minor releases may contain public API changes.
 - Added the first opt-in Version 0.5 frontend-runtime unit: retained typed
   `State[T]`, deterministic nested `batch` publication, component-owned
   `watch`, and target-scoped dirty-domain invalidation without component replay.
+- Added transactional `StateRuntime` commits, queued reentrant dispatch,
+  `createStore`, typed `StoreSelector` projections, and component-owned
+  selected subscriptions that notify only when their selected value changes.
 
 ## [0.4.2] - 2026-08-13
 
