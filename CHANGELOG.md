@@ -15,6 +15,16 @@ release. Before 1.0, minor releases may contain public API changes.
 - Added transactional `StateRuntime` commits, queued reentrant dispatch,
   `createStore`, typed `StoreSelector` projections, and component-owned
   selected subscriptions that notify only when their selected value changes.
+- Added component-owned source Effects with immediate retained-value runs,
+  ordered reentrant updates, cleanup-before-rerun, failed-mount rollback, and
+  idempotent manual or unmount disposal.
+- Added typed asynchronous Commands with latest-only, ordered, and concurrent
+  policies; stable run tickets; cancellation; bounded worker-to-UI completion
+  delivery; exact bounded pumping; late-result rejection; and component-owned
+  lifecycle cleanup.
+- Added an indexed concurrent-Command performance gate; 10,000 reverse-order
+  completions remain constant-cost per result instead of linearly searching
+  the active run set.
 
 ## [0.4.2] - 2026-08-13
 
