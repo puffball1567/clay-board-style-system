@@ -1,6 +1,6 @@
 # Frontend Runtime Design
 
-Status: `State, Store, Selectors, watch, Effects, and Commands implemented; Cue pending`
+Status: `State through Cue core implemented; typed Cue adapters, traces, and demo pending`
 
 The authoring flow in this document is adopted. Exact generic constraints,
 result types, and individual identifiers may be refined during implementation,
@@ -420,8 +420,10 @@ let presentation = cue(actionA)
   .thenParallel(actionB, actionC, actionD)
   .then(actionE)
 
+let cueRuntime = initCueRuntime()
+
 saveButton.onClick = proc(event: DispatchResult): EventOutcome =
-  presentation.start()
+  discard cueRuntime.start(presentation)
   return handledEvent()
 ```
 
@@ -431,9 +433,9 @@ Semantics:
   successful completion;
 - `A -> (B + C + D) -> E` starts B, C, and D from one logical Cue tick and
   starts E only after the declared join condition is satisfied;
-- `cueStart(A)` triggers when A starts, `cueAfter(A, delay)` uses a monotonic
-  deadline relative to A's start, and `cueEnd(A)` triggers from A's terminal
-  completion contract;
+- `cueAfter(delay, action)` places a branch on a monotonic deadline relative
+  to its stage start; action start and terminal completion are the boundaries
+  used by graph progression and later typed adapters;
 - parallel groups define `all`, `any`, race, failure, and remaining-branch
   cancellation policies explicitly;
 - synchronous handlers complete on return;
@@ -629,9 +631,9 @@ for the style/layout engine.
    component ownership mechanism.
 5. Define Command completion and cancellation adapters over the implemented
    bounded stream, UI mailbox, and SDL wake path. **Implemented.**
-6. Implement the Cue graph core: typed triggers, serial edges, parallel
-   fan-out, joins, relative deadlines, cancellation, scoped ownership, and
-   virtual-clock tests.
+6. Implement the Cue graph core: serial edges, parallel fan-out, joins,
+   relative deadlines, cancellation, scoped ownership, independent clocks,
+   and virtual-clock tests. **Implemented.**
 7. Connect Cue actions to the existing Signal, Store, transition, keyframe,
    Canvas frame-request, and Command completion contracts.
 8. Add optional traces, authoring conveniences, performance gates, and a demo

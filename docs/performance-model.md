@@ -330,7 +330,7 @@ exceeds twice the 500-node result plus a one-microsecond noise allowance.
 Dynamic screen creation and physical subtree disposal remain separate work;
 this benchmark covers switching among already registered screens.
 
-### Frontend runtime Command gate (2026-08-13)
+### Frontend runtime Command and Cue gates (2026-08-13)
 
 Command completion must depend on the number of results drained in the current
 UI turn, not require a scan of the retained UI tree or a linear search through
@@ -352,6 +352,20 @@ The gate fails if the 10,000-run per-completion cost exceeds four times the
 host; the enforced property is that completion lookup is not O(active runs).
 The completion mailbox remains bounded, and `pump(maxCompletions)` leaves
 excess results queued rather than dropping or processing them invisibly.
+
+Parallel Cue completion likewise updates one indexed session branch and
+constant-size stage counters. It does not rescan every sibling branch after
+each completion. The same benchmark completes 1,000- and 10,000-branch `all`
+stages and applies the same ratio gate. The initial same-machine ARC baseline
+is:
+
+| parallel branches | mean completion cost per branch |
+| ---: | ---: |
+| 1,000 | 0.040 us |
+| 10,000 | 0.038 us |
+
+Session finalization may visit the stage once to release unfinished branches;
+the total completion path remains O(branches), not O(branches squared).
 
 ### Indexed event dispatch gate
 

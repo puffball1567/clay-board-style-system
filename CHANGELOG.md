@@ -25,6 +25,13 @@ release. Before 1.0, minor releases may contain public API changes.
 - Added an indexed concurrent-Command performance gate; 10,000 reverse-order
   completions remain constant-cost per result instead of linearly searching
   the active run set.
+- Added the typed Cue graph core with automatic serial progression, parallel
+  `all` / `any` / `race` joins, relative deadlines, restart / ignore / queue /
+  parallel start policies, explicit failure and cancellation, component-owned
+  sessions, and independent pausable/rate-adjustable monotonic clocks.
+- Added virtual-clock and lifecycle coverage plus a parallel-Cue performance
+  gate; 10,000 branch completions remain constant-cost instead of rescanning
+  the complete stage for every result.
 
 ## [0.4.2] - 2026-08-13
 

@@ -1512,7 +1512,7 @@ is outside the CBSS guarantee.
 
 ### Frontend Runtime And General Cue Orchestration
 
-Status: `Version 0.5 target; State through Commands implemented; Cue pending`
+Status: `Version 0.5 target; State through Cue core implemented; adapters, traces, and demo pending`
 
 CBSS will include an opt-in first-party Nim frontend runtime that joins retained
 component state, typed Stores and Actions, selected subscriptions, owned
@@ -1578,8 +1578,9 @@ Implementation order reuses the current code rather than recreating it:
    Store subscriptions.
 3. Add owned Effects and Command adapters over the implemented StreamMailbox,
    StreamBridge, and UI-thread wake path. **Implemented.**
-4. Implement typed Cue triggers, serial edges, parallel fan-out, joins,
-   deadlines, scoped cancellation, and virtual-clock tests.
+4. Implement the Cue graph core with serial edges, parallel fan-out, joins,
+   deadlines, scoped cancellation, independent clocks, and virtual-clock
+   tests. **Implemented.**
 5. Connect Cue to the existing transition, keyframe, Signal, Store, Command,
    Canvas scheduling, and component-lifecycle contracts.
 6. Add traces, ARC/ORC and performance gates, and event/time/Signal-triggered
