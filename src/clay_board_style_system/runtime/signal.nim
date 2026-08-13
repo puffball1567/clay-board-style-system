@@ -75,7 +75,10 @@ proc unsubscribe*[Value](
       subscription.owner != cast[pointer](signal) or
       subscription.id notin signal.bindingIndex:
     return false
-  let index = signal.bindingIndex[subscription.id]
+  let index = signal.bindingIndex.getOrDefault(subscription.id, -1)
+  if index < 0 or index >= signal.bindings.len:
+    signal.bindingIndex.del(subscription.id)
+    return false
   signal.bindingIndex.del(subscription.id)
   if signal.emitDepth > 0:
     signal.bindings[index].active = false

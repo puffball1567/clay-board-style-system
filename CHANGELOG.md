@@ -7,6 +7,12 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+### Added
+
+- Added the first opt-in Version 0.5 frontend-runtime unit: retained typed
+  `State[T]`, deterministic nested `batch` publication, component-owned
+  `watch`, and target-scoped dirty-domain invalidation without component replay.
+
 ## [0.4.2] - 2026-08-13
 
 ### Added
