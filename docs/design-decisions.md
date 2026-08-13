@@ -600,3 +600,86 @@ Security, memory-safety, or correctness failures may justify an accelerated
 removal, but the exception and migration must be explicit in release and
 security documentation. The operational checklist and syntax live in
 [API Stability And Deprecation](api-stability.md).
+
+## D25 — Frontend capabilities, not React or Redux mechanics (Adopted)
+
+**Context.** React Hooks and Redux collect capabilities frontend engineers
+need: local and shared state, deterministic updates, derived values,
+subscriptions, lifecycle cleanup, asynchronous work, and testable data flow.
+Their exact APIs also carry constraints from React's function-component replay
+and reconciliation model. CBSS components are retained objects and should not
+inherit Hook ordering, dependency arrays, referential-equality workarounds, or
+whole-tree replay merely to provide the same outcomes.
+
+**Decision.** CBSS includes a first-party frontend runtime as an opt-in Nim
+module above the style/layout core. It provides typed Stores, Actions,
+Selectors, owned effects, Commands, and Cue orchestration while treating
+ordinary component fields as the default local-state mechanism. Public
+authoring uses Web-familiar names and flow, remains normal Nim with parentheses
+and LSP support, and updates stable nodes through bounded invalidation.
+The accepted authoring contract uses retained fields for local state, typed
+`createStore` / `dispatch`, focused `select` / component-owned `watch`, explicit
+source-driven `effect`, typed `command`, standard event properties such as
+`onClick`, and readable Cue graph construction. Exact type details may be
+refined during implementation, but the interaction model must not regress to
+Hook call ordering, dependency arrays, manual forwarding between every Cue
+step, or broad component replay.
+
+Standard UI events remain one input boundary, but Cue orchestration is not
+limited to UI input. Cue is a separate behavior-side graph that accepts typed
+Events, `Signal[T]` occurrences, clock or media markers, lifecycle, Store
+changes, Command completion, and independent-library adapters. Only the first
+occurrence enters externally; Cue advances serial edges, parallel fan-out,
+joins, relative deadlines, completion, failure, and cancellation. Continuous
+media or sensor values remain Streams or parameter sources and emit typed Cue
+triggers only for meaningful markers or threshold crossings.
+
+Cue is not a CSS property, FIFO queue, media analyzer, or replacement for
+event dispatch. Style and motion continue to own visual values and
+interpolation; Cue owns ordering, parallelism, joins, deadlines, scoped
+ownership, completion, and cancellation. This same contract is intended for
+ordinary GUI behavior, game and media UI, motion graphics, animation/video
+editing, music-synchronized visual changes, and generative design.
+
+CBSS exposes independent clocks and scoped pause/resume/cancellation mechanics,
+but does not define application policies such as game pause, cut-scene rules,
+or autosave timing. Applications compose those policies from the primitives.
+
+Importing the frontend runtime is optional. CBSS core continues to accept
+external Stores, signals, reducers, or other state systems through ordinary Nim
+and Provider boundaries. The complete contract is
+[Frontend Runtime Design](frontend-runtime.md).
+
+## D26 — Integration and presentation substrate, not application mechanics (Adopted)
+
+**Context.** Input, media, game, and visualization features can be classified
+incorrectly by product category. A touch contact, audio marker, camera frame,
+sprite sequence, or tile-map layer may be used by a game, editor, dashboard, or
+ordinary application. Whether it belongs in CBSS depends on its technical
+responsibility rather than that application category.
+
+**Decision.** CBSS owns the reusable substrate that connects external devices,
+libraries, timelines, data streams, and visual assets to retained UI. That
+includes typed Events, Signals, Streams, Command completion, Cue triggers,
+thread handoff, lifecycle, scheduling, invalidation, coordinate conversion,
+layout participation, clipping, hit testing, composition, and accessibility
+semantics where applicable.
+
+Sprite animation and tile-map rendering belong to this substrate as visual
+asset and image-sequence presentation. CBSS may own frame selection, timing,
+texture regions, map-layer traversal, viewport transforms, clipping, culling,
+paint caching, and input-coordinate conversion. It does not own gameplay rules,
+map meaning, collisions, movement, combat, quests, save formats, or simulation.
+
+Three-dimensional output follows the same rule. CBSS may accept a compatible
+texture, render target, or GPU pass; place and clip it inside a Canvas box;
+route bounded input; manage synchronization and lifetime at the integration
+boundary; and compose normal UI above it. Meshes, materials, lights, cameras,
+scene graphs, skeletal animation, visibility, physics, and 3D asset pipelines
+belong to an independent Three.nim-like library or application engine.
+
+Similarly, independent clocks and Cue pause/resume/cancellation are reusable
+mechanisms. Game-pause policy, autosave conditions, cut-scene decisions, and
+other application-specific orchestration remain application code. A feature is
+not excluded merely because games use it, and it is not included merely because
+one application could automate it.

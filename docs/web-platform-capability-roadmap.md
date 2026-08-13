@@ -67,8 +67,8 @@ libraries practical.
 | --- | --- | --- | --- |
 | JavaScript language runtime | Nim | External | CBSS does not embed a scripting runtime. |
 | DOM event listeners | typed `onClick`, `onChange`, keyboard, pointer, focus, form, and gamepad handlers | Runtime / In progress | Event names and semantics are familiar where useful, while payloads remain native and typed. |
-| Component state and updates | Nim values, CBSS state primitives, and explicit invalidation | Runtime | Updates must remain dirty-domain based, not virtual-DOM-style full reconstruction. |
-| Effects, derived state, and subscriptions | Nim procedures and focused state libraries | External | CBSS provides UI lifecycle boundaries, not a compulsory application-state framework. |
+| Component state and updates | Retained Nim fields, `StateRuntime`, and explicit invalidation | Runtime / Planned | The current primitives remain; concise `State[T]` and component-owned `watch` are planned without virtual-DOM-style reconstruction. |
+| Effects, derived state, and subscriptions | First-party opt-in frontend-runtime module | Planned | Typed selectors, owned effects, Commands, and Cue orchestration ship in the CBSS package but do not enter builds that omit the module. External state systems remain usable through ordinary Nim and Provider boundaries. |
 | Timers and animation frames | scheduler deadlines and frame requests | In progress / Planned | Idle applications block on events; animation explicitly requests frames. |
 | `fetch`, HTTP, retries, promises, and serialization | dedicated Nim networking packages | External | UI handlers may call those packages; transport policy is not CBSS core. |
 | Browser storage APIs | application persistence packages and native storage adapters | External | CBSS owns no database, cookie, or browser-origin model. |
