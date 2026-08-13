@@ -330,6 +330,29 @@ exceeds twice the 500-node result plus a one-microsecond noise allowance.
 Dynamic screen creation and physical subtree disposal remain separate work;
 this benchmark covers switching among already registered screens.
 
+### Frontend runtime Command gate (2026-08-13)
+
+Command completion must depend on the number of results drained in the current
+UI turn, not require a scan of the retained UI tree or a linear search through
+all concurrent runs. Active runs use their typed ticket ID as a hash index, and
+the ordered policy advances through an amortized O(1) queue head rather than
+shifting every remaining input after each completion.
+
+`tests/perf/frontend_runtime_benchmark.nim` creates concurrent Commands,
+delivers every result in reverse run order, and measures release ARC UI-pump
+cost. The initial same-machine baseline is:
+
+| active runs | mean pump cost per completion |
+| ---: | ---: |
+| 1,000 | 0.151 us |
+| 10,000 | 0.134 us |
+
+The gate fails if the 10,000-run per-completion cost exceeds four times the
+1,000-run cost plus a 0.5 microsecond noise allowance. Absolute time varies by
+host; the enforced property is that completion lookup is not O(active runs).
+The completion mailbox remains bounded, and `pump(maxCompletions)` leaves
+excess results queued rather than dropping or processing them invisibly.
+
 ### Indexed event dispatch gate
 
 Event lookup must depend on the original target's ancestor route and matching

@@ -1,11 +1,12 @@
 # Frontend Runtime Design
 
-Status: `Design adopted; State, Store transactions, Selectors, and owned watch implemented`
+Status: `State, Store, Selectors, watch, Effects, and Commands implemented; Cue pending`
 
 The authoring flow in this document is adopted. Exact generic constraints,
 result types, and individual identifiers may be refined during implementation,
 but such refinement must preserve this interaction model and its readability.
-Examples do not claim that the corresponding symbols are already exported.
+Examples identify planned APIs where noted; State through Command examples use
+the exported opt-in runtime.
 
 CBSS already provides retained components, typed events, signals, dependency
 injection, lifecycle ownership, dirty domains, transitions, and keyframes.
@@ -71,9 +72,9 @@ The design extends working CBSS mechanisms rather than replacing them.
 | Worker delivery | bounded streams and UI mailbox | Command completion adapters |
 
 Retained `State[T]`, nested `batch` publication, transactional Stores, selected
-subscriptions, and component-owned `watch` are implemented in the opt-in
-`frontend_runtime` module. Effect sources, Commands, and Cue sessions are not
-implemented yet.
+subscriptions, component-owned `watch`, source-driven Effects, and typed
+Commands are implemented in the opt-in `frontend_runtime` module. Cue sessions
+remain the next implementation unit.
 
 ## Adopted Authoring Contract
 
@@ -321,6 +322,12 @@ when the typed source changes, cleans the previous resource before rerunning,
 and cleans the final resource during unmount. There is no dependency array:
 the source is the dependency.
 
+`State[T]` and `StoreSelector` Effects run once with the current value by
+default. Signal Effects wait for their first occurrence because a Signal has
+no retained current value. Reentrant source changes are processed in order;
+cleanup for the previous run always happens before the next run. Manual
+`dispose()` and component unmount use the same idempotent cleanup path.
+
 Simple mount-only work continues to use `onMount`; deterministic release uses
 `onUnmount` or `ComponentOwnedResource`. Timer choreography belongs to Cue,
 and network/storage work belongs to Command. A generic Effect must not become
@@ -332,16 +339,39 @@ Commands connect application Actions to asynchronous or external work without
 putting business logic in Style calculation or event propagation.
 
 ```nim
-let saveDocument = command(
-  proc(input: Document): Future[SaveResult] = repository.save(input)
+let saveDocument = self.command[Document, SaveResult, SaveError](
+  proc(document: Document;
+       sink: CommandSink[SaveResult, SaveError]): CommandCancel =
+    let saveSucceeded = proc(value: SaveResult) =
+      # A worker may own a copy of sink. It never calls UI code directly.
+      discard sink.succeed(value)
+    let saveFailed = proc(error: SaveError) =
+      discard sink.fail(error)
+    let operation = repository.startSave(
+      document,
+      saveSucceeded,
+      saveFailed
+    )
+    return proc() = operation.cancel()
 )
 
 saveDocument.onSuccess = proc(result: SaveResult) =
   appStore.dispatch(AppAction(kind: akSaveFinished))
+
+saveButton.onClick = proc(event: DispatchResult): EventOutcome =
+  discard saveDocument.run(currentDocument)
+  return handledEvent()
 ```
 
 The initial runtime does not choose one networking, storage, or async library.
-A Command adapter must provide:
+A Command adapter receives a copyable `CommandSink[Output, Failure]` and
+returns an idempotent, non-raising `CommandCancel`. The sink transfers typed
+success or failure values through the existing thread-safe bounded mailbox.
+The owning UI loop calls `pump(command)` after the command wake callback posts
+an SDL user event. Therefore worker code never invokes a component, Store, or
+application callback directly.
+
+A Command provides:
 
 - a completion handle;
 - cancellation;
@@ -349,6 +379,20 @@ A Command adapter must provide:
 - an ownership-transfer boundary for worker results;
 - marshaling to the owning UI thread; and
 - latest-only, ordered, or concurrent policy chosen explicitly by the caller.
+
+`cpLatestOnly` cancels the previous generation and ignores its late result.
+`cpOrdered` starts one operation at a time. `cpConcurrent` permits independent
+out-of-order completion. Every `run` returns a `CommandTicket` whose status is
+stable after completion or cancellation. Component-created Commands cancel
+active work, discard queued work, detach wake callbacks, and reject late sink
+offers during unmount. Application-owned Commands may use `dispose()` directly.
+
+The completion queue has explicit item and weight bounds. `succeed` and `fail`
+return `StreamMailboxOfferResult`; adapters must react to `smorBackpressure`
+rather than dropping a terminal result. `pump(command, maxCompletions)` is an
+exact bound and leaves later completions queued. Processing cost is
+proportional to completions pumped plus policy-local active or queued runs; it
+does not scan the retained UI tree.
 
 The existing bounded stream/mailbox boundary remains the mechanism for
 progressive results. `joubako` may provide HTTP-facing Commands, but CBSS owns
@@ -584,7 +628,7 @@ for the style/layout engine.
 4. Add source-driven `effect` and deterministic cleanup using the existing
    component ownership mechanism.
 5. Define Command completion and cancellation adapters over the implemented
-   bounded stream, UI mailbox, and SDL wake path.
+   bounded stream, UI mailbox, and SDL wake path. **Implemented.**
 6. Implement the Cue graph core: typed triggers, serial edges, parallel
    fan-out, joins, relative deadlines, cancellation, scoped ownership, and
    virtual-clock tests.

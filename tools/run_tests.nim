@@ -5,6 +5,7 @@ const excludedTests = [
   "tests/integration/test_sdl3_wayland_smoke.nim",
   "tests/perf/color_conversion_benchmark.nim",
   "tests/perf/dirty_subtree_benchmark.nim",
+  "tests/perf/frontend_runtime_benchmark.nim",
   "tests/perf/navigation_screen_host_benchmark.nim",
   "tests/perf/pipeline_benchmark.nim",
   "tests/text/test_cosmic_text_engine.nim"

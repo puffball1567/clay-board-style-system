@@ -246,6 +246,7 @@ task bench, "Run compiled pipeline benchmarks (not part of the product build)":
   exec "nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_color_bench_nimcache --out:/tmp/clay_board_style_system_color_conversion_benchmark tests/perf/color_conversion_benchmark.nim"
   exec "nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_bench_nimcache --out:/tmp/clay_board_style_system_pipeline_benchmark tests/perf/pipeline_benchmark.nim"
   exec "nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_dirty_bench_nimcache --out:/tmp/clay_board_style_system_dirty_subtree_benchmark tests/perf/dirty_subtree_benchmark.nim"
+  exec "nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_frontend_bench_nimcache --out:/tmp/clay_board_style_system_frontend_runtime_benchmark tests/perf/frontend_runtime_benchmark.nim"
   exec "nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_navigation_bench_nimcache --out:/tmp/clay_board_style_system_navigation_screen_host_benchmark tests/perf/navigation_screen_host_benchmark.nim"
   exec "nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_render_surface_bench_nimcache --out:/tmp/clay_board_style_system_render_surface_benchmark tests/perf/render_surface_benchmark.nim"
 
