@@ -1512,7 +1512,7 @@ is outside the CBSS guarantee.
 
 ### Frontend Runtime And General Cue Orchestration
 
-Status: `Version 0.5 target; retained State and owned watch implemented`
+Status: `Version 0.5 target; State, Store transactions, Selectors, and owned watch implemented`
 
 CBSS will include an opt-in first-party Nim frontend runtime that joins retained
 component state, typed Stores and Actions, selected subscriptions, owned

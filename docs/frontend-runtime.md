@@ -1,6 +1,6 @@
 # Frontend Runtime Design
 
-Status: `Design adopted; retained State and owned watch implementation started`
+Status: `Design adopted; State, Store transactions, Selectors, and owned watch implemented`
 
 The authoring flow in this document is adopted. Exact generic constraints,
 result types, and individual identifiers may be refined during implementation,
@@ -70,10 +70,10 @@ The design extends working CBSS mechanisms rather than replacing them.
 | Visual motion | transition and named keyframes | Cue orchestration over motion |
 | Worker delivery | bounded streams and UI mailbox | Command completion adapters |
 
-Retained `State[T]`, nested `batch` publication, and component-owned `watch`
-are implemented in the opt-in `frontend_runtime` module. Selected Store
-subscriptions, effect sources, Commands, and Cue sessions are not implemented
-yet.
+Retained `State[T]`, nested `batch` publication, transactional Stores, selected
+subscriptions, and component-owned `watch` are implemented in the opt-in
+`frontend_runtime` module. Effect sources, Commands, and Cue sessions are not
+implemented yet.
 
 ## Adopted Authoring Contract
 
@@ -227,6 +227,10 @@ proc reduce(state: var AppState; action: AppAction) =
 
 let appStore = createStore(AppState(), reduce)
 appStore.dispatch(AppAction(kind: akIncrement))
+
+appStore.transaction:
+  appStore.dispatch(AppAction(kind: akSaveStarted))
+  appStore.dispatch(AppAction(kind: akSaveFinished))
 ```
 
 Required behavior:
@@ -269,6 +273,11 @@ A Selector:
 - records no implicit dependency on component render order;
 - does not retain the owning component strongly; and
 - is detached automatically when owned by an unmounted component.
+
+Selectors intended for application-wide reuse may live with their Store.
+Dynamically created Selectors should call `dispose()` when no longer needed;
+component `watch` ownership applies to the UI subscription, not to a Selector
+that may be shared by several components.
 
 The default equality is typed `==`. Callers may provide a comparator for large
 or identity-bearing values. Expensive derived computation uses explicit input

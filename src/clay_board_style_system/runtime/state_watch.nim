@@ -1,7 +1,7 @@
 import std/options
 
 import ../core/dirty_domain
-import ./[component, retained_state, signal, ui_root]
+import ./[component, retained_state, signal, store_selector, ui_root]
 
 type
   ComponentWatch*[Value] = ref object of ComponentOwnedResource
@@ -87,6 +87,31 @@ proc watch*[Value](
     listener(state.value)
   component.watch(
     state.signal,
+    listener,
+    dirtyDomains = dirtyDomains,
+    target = target
+  )
+
+proc watch*[Source, Action, Value](
+    component: CBSSComponent;
+    selector: StoreSelector[Source, Action, Value];
+    listener: SignalListener[Value];
+    dirtyDomains: set[DirtyDomain] = {};
+    target = none(NodeHandle);
+    immediate = true
+): ComponentWatch[Value] =
+  if selector.isNil or selector.disposed:
+    raise newException(ComponentContextError, "watch selector is not active")
+  if component.isNil:
+    raise newException(ComponentContextError, "component cannot be nil")
+  if listener.isNil:
+    raise newException(ComponentContextError, "watch listener cannot be nil")
+  component.validateWatchTarget(target)
+  selector.refresh()
+  if immediate:
+    listener(selector.value)
+  component.watch(
+    selector.signal,
     listener,
     dirtyDomains = dirtyDomains,
     target = target
