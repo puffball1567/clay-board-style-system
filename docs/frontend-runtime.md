@@ -1,6 +1,6 @@
 # Frontend Runtime Design
 
-Status: `Design and authoring direction adopted; implementation is planned`
+Status: `Design adopted; retained State and owned watch implementation started`
 
 The authoring flow in this document is adopted. Exact generic constraints,
 result types, and individual identifiers may be refined during implementation,
@@ -70,7 +70,10 @@ The design extends working CBSS mechanisms rather than replacing them.
 | Visual motion | transition and named keyframes | Cue orchestration over motion |
 | Worker delivery | bounded streams and UI mailbox | Command completion adapters |
 
-Selectors, effect sources, Commands, and Cue sessions are not implemented yet.
+Retained `State[T]`, nested `batch` publication, and component-owned `watch`
+are implemented in the opt-in `frontend_runtime` module. Selected Store
+subscriptions, effect sources, Commands, and Cue sessions are not implemented
+yet.
 
 ## Adopted Authoring Contract
 
@@ -162,14 +165,35 @@ proc increment(self: Counter) =
   self.countLabel.setText($self.count)
 ```
 
-The frontend runtime should add concise helpers that pair a retained mutation
-with its exact invalidation. It must not make replaying `render(self)` the
-default update mechanism. A component may deliberately rebuild or replace a
-subtree, but ordinary text, value, selection, Style, and visibility changes
-patch stable handles.
+The opt-in frontend runtime adds `State[T]` for values that need typed
+subscriptions and `batch` for publishing several writes at one commit boundary.
 
-A later `State[T]` convenience may combine a current value with typed
-subscriptions. It is not a mandatory wrapper around every component field.
+```nim
+import std/options
+
+import clay_board_style_system
+import clay_board_style_system/frontend_runtime
+
+let count = initState(0)
+
+batch:
+  count.set(1)
+  count.set(2)
+
+self.watch(
+  count,
+  proc(value: int) = self.countLabel.setText($value),
+  dirtyDomains = {ddText, ddPaint},
+  target = some(self.countLabel.textNode)
+)
+```
+
+Component-owned `watch` subscriptions are disposed automatically at unmount
+and invalidate only the declared target and domains. They do not replay
+`render(self)`. A component may deliberately rebuild or replace a subtree,
+but ordinary text, value, selection, Style, and visibility changes patch
+stable handles. `State[T]` remains optional; an ordinary component field is
+still the smallest correct representation when no subscription is needed.
 
 ### Shared Store
 
