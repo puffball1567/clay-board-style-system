@@ -41,6 +41,10 @@ release. Before 1.0, minor releases may contain public API changes.
   application `onSuccess` / `onFailure` callbacks or copying result payloads;
   failure, cancellation, graph cancellation, and late completion remain
   deterministic.
+- Added `cueTransition` and `cueAnimation` motion actions. They subscribe before
+  starting motion, wait for the matching lifecycle end, preserve public event
+  handlers, and detach deterministically on completion, cancellation, startup
+  failure, or node disposal.
 
 ## [0.4.2] - 2026-08-13
 

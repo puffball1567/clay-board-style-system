@@ -3,6 +3,7 @@ import clay_board_style_system/runtime/[
   command,
   cue,
   cue_command,
+  cue_motion,
   cue_trigger,
   retained_state,
   state_watch,
@@ -13,6 +14,7 @@ export component_effect
 export command
 export cue
 export cue_command
+export cue_motion
 export cue_trigger
 export retained_state
 export state_watch

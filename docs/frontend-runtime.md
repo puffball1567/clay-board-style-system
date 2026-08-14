@@ -1,6 +1,6 @@
 # Frontend Runtime Design
 
-Status: `State through Cue core, typed source adapters, and Command adapter implemented; motion adapters, traces, and demo pending`
+Status: `State through Cue core plus typed source, Command, and motion adapters implemented; Canvas adapter, traces, and demo pending`
 
 The authoring flow in this document is adopted. Exact generic constraints,
 result types, and individual identifiers may be refined during implementation,
@@ -433,6 +433,15 @@ the Command result, and maps Command failure or cancellation into Cue failure.
 Cancelling the Cue branch first detaches its ticket observer and then cancels
 the Command run, so a late worker result cannot resume the graph.
 
+Declarative transitions and named keyframes are awaited with `cueTransition`
+and `cueAnimation`. Each adapter installs additive lifecycle observers before
+calling its start procedure, then waits for the matching property or animation
+name. Existing `onTransition*` and `onAnimation*` handlers remain unchanged.
+Node disposal and an externally cancelled motion fail the waiting action;
+cancelled Cue branches detach first and may invoke an optional motion cleanup
+procedure. The cleanup is explicit because restoring or replacing an authored
+Style is an application decision.
+
 ```nim
 let loadDocument = cueCommand(
   "load-document",
@@ -441,7 +450,15 @@ let loadDocument = cueCommand(
 )
 
 let presentation = cue(loadDocument)
-  .thenParallel(showEditor, updateRecentFiles)
+  .thenParallel(
+    cueTransition(
+      "show-editor",
+      editor,
+      dtpOpacity,
+      proc() = editor.applyStyle(visibleEditorStyle)
+    ),
+    updateRecentFiles
+  )
   .then(announceReady)
 
 let cueRuntime = initCueRuntime()
@@ -659,8 +676,8 @@ for the style/layout engine.
    relative deadlines, cancellation, scoped ownership, independent clocks,
    and virtual-clock tests. **Implemented.**
 7. Connect Cue to existing runtime contracts. Typed Signal, State, Store
-   commit, StoreSelector, and Command adapters are **implemented**.
-   Transition, keyframe, and Canvas adapters remain.
+   commit, StoreSelector, Command, transition, and keyframe adapters are
+   **implemented**. The Canvas adapter remains.
 8. Add optional traces, authoring conveniences, performance gates, and a demo
    that exercises event-, time-, and Signal-triggered parallel orchestration.
 9. Consider C ABI exposure only after the Nim ownership and completion
