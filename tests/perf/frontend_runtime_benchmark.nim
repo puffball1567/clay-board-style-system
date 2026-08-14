@@ -65,6 +65,45 @@ proc benchmarkParallelCueCompletion(branchCount: int): float =
   doAssert session.status == cssSucceeded
   doAssert runtime.activeCount == 0
 
+proc benchmarkCanvasCueCompletion(branchCount: int): float =
+  let ui = initUiRoot()
+  let drawing = newCanvas2D()
+  let canvas = ui.canvas(drawing)
+  ui.surfaces.mountSurface(
+    canvas.surface,
+    canvas.node.id,
+    renderSurfacePlacement(rect(0, 0, 100, 100), rect(0, 0, 100, 100))
+  )
+  var completed = 0
+  let action = cueCanvas(
+    "canvas-frame",
+    canvas,
+    proc(
+        value: Canvas2D;
+        frame: RenderSurfaceFrame
+    ): CueCanvasFrameDecision =
+      discard value
+      discard frame
+      inc completed
+      ccfdComplete
+  )
+  var branches = newSeq[CueBranch](branchCount)
+  for index in 0 ..< branchCount:
+    branches[index] = branch(action)
+  let graph = cue(cueAction("start", proc() = discard)).thenStage(branches)
+  let runtime = initCueRuntime()
+  defer:
+    doAssert runtime.dispose()
+  let session = runtime.start(graph)
+
+  let started = getMonoTime()
+  doAssert ui.runRenderSurfaceFrames(1) == 1
+  result = elapsedUs(started) / branchCount.float
+  doAssert completed == branchCount
+  doAssert session.status == cssSucceeded
+  doAssert runtime.activeCount == 0
+  doAssert not drawing.hasFrameObservers(canvas.surface)
+
 proc main() =
   echo "CBSS frontend-runtime concurrent Command benchmark (release, ARC)"
   echo "Reverse-order worker results; mean UI pump cost per completion"
@@ -84,6 +123,15 @@ proc main() =
   echo &"10000\t{cueLarge:.3f}"
   doAssert cueLarge <= cueSmall * 4.0 + 0.5,
     "Cue completion scaled superlinearly with parallel branches"
+
+  echo "Canvas Cue fan-out; mean frame dispatch and completion cost per branch"
+  echo "branches\tcompletion us"
+  let canvasSmall = benchmarkCanvasCueCompletion(1_000)
+  let canvasLarge = benchmarkCanvasCueCompletion(10_000)
+  echo &"1000\t{canvasSmall:.3f}"
+  echo &"10000\t{canvasLarge:.3f}"
+  doAssert canvasLarge <= canvasSmall * 4.0 + 0.5,
+    "Canvas Cue completion scaled superlinearly with parallel branches"
 
 when isMainModule:
   main()

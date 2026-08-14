@@ -1,4 +1,4 @@
-import std/[math, options]
+import std/[math, options, tables]
 
 import ../core/[color, computed_style, geometry, node]
 import ../paint/[paint_command, path_geometry]
@@ -74,9 +74,165 @@ type
     revision*: uint64
     onInput*: proc(canvas: Canvas2D; event: RenderSurfaceInput): bool {.closure.}
     onFrame*: proc(canvas: Canvas2D; frame: RenderSurfaceFrame): RenderSurfaceFrameResult {.closure.}
+    nextFrameObserverId: uint64
+    frameObservers: seq[CanvasFrameObserverBinding]
+    frameObserverIndex: Table[uint64, int]
+    frameObserverDispatchDepth: int
+    inactiveFrameObserverCount: int
+
+  CanvasFrameObserver* = proc(
+    canvas: Canvas2D;
+    frame: RenderSurfaceFrame
+  ): RenderSurfaceFrameResult {.closure.}
+    ## Observes frames for one mounted use of a retained Canvas display list.
+
+  CanvasDisposeObserver* = proc(canvas: Canvas2D) {.closure.}
+    ## Receives disposal of the RenderSurface associated with a subscription.
+
+  CanvasFrameSubscription* = object
+    ## Opaque handle for an additive Canvas frame subscription.
+    id*: uint64
+
+  CanvasFrameObserverBinding = object
+    id: uint64
+    surface: RenderSurfaceId
+    onFrame: CanvasFrameObserver
+    onDispose: CanvasDisposeObserver
+    active: bool
 
 proc newCanvas2D*(): Canvas2D =
-  Canvas2D(commands: @[], revision: 1)
+  Canvas2D(
+    commands: @[],
+    revision: 1,
+    nextFrameObserverId: 1,
+    frameObserverIndex: initTable[uint64, int]()
+  )
+
+proc compactFrameObservers(canvas: Canvas2D) =
+  if canvas.isNil or canvas.inactiveFrameObserverCount == 0 or
+      canvas.frameObserverDispatchDepth > 0:
+    return
+  var retained = newSeqOfCap[CanvasFrameObserverBinding](
+    canvas.frameObservers.len - canvas.inactiveFrameObserverCount
+  )
+  for binding in canvas.frameObservers:
+    if binding.active:
+      retained.add binding
+  canvas.frameObservers = move(retained)
+  canvas.inactiveFrameObserverCount = 0
+  canvas.frameObserverIndex.clear()
+  for index, binding in canvas.frameObservers:
+    canvas.frameObserverIndex[binding.id] = index
+
+proc observeFrames*(
+    canvas: Canvas2D;
+    surface: RenderSurfaceId;
+    onFrame: CanvasFrameObserver;
+    onDispose: CanvasDisposeObserver = nil
+): CanvasFrameSubscription =
+  ## Adds a surface-scoped observer without replacing `Canvas2D.onFrame`.
+  if canvas.isNil:
+    raise newException(ValueError, "canvas cannot be nil")
+  if onFrame.isNil:
+    raise newException(ValueError, "canvas frame observer cannot be nil")
+  if surface.renderSurfaceIdValue == 0:
+    raise newException(ValueError, "canvas frame observer surface is invalid")
+  if canvas.nextFrameObserverId == 0:
+    raise newException(
+      ValueError,
+      "canvas frame observer identifier space exhausted"
+    )
+  result = CanvasFrameSubscription(id: canvas.nextFrameObserverId)
+  inc canvas.nextFrameObserverId
+  canvas.frameObservers.add CanvasFrameObserverBinding(
+    id: result.id,
+    surface: surface,
+    onFrame: onFrame,
+    onDispose: onDispose,
+    active: true
+  )
+  canvas.frameObserverIndex[result.id] = canvas.frameObservers.high
+
+proc unsubscribeFrames*(
+    canvas: Canvas2D;
+    subscription: CanvasFrameSubscription
+): bool {.discardable.} =
+  ## Removes a frame observer. Repeated removal is a safe no-op.
+  if canvas.isNil or subscription.id == 0:
+    return false
+  if subscription.id notin canvas.frameObserverIndex:
+    return false
+  let index = canvas.frameObserverIndex[subscription.id]
+  if index < 0 or index >= canvas.frameObservers.len or
+      not canvas.frameObservers[index].active or
+      canvas.frameObservers[index].id != subscription.id:
+    canvas.frameObserverIndex.del(subscription.id)
+    return false
+  canvas.frameObservers[index].active = false
+  canvas.frameObservers[index].onFrame = nil
+  canvas.frameObservers[index].onDispose = nil
+  canvas.frameObserverIndex.del(subscription.id)
+  inc canvas.inactiveFrameObserverCount
+  if canvas.frameObserverDispatchDepth == 0 and
+      (canvas.inactiveFrameObserverCount >= 64 or
+        canvas.inactiveFrameObserverCount * 2 >= canvas.frameObservers.len):
+    canvas.compactFrameObservers()
+  true
+
+proc hasFrameObservers*(canvas: Canvas2D; surface: RenderSurfaceId): bool =
+  ## Reports whether a mounted surface currently has additive frame work.
+  if canvas.isNil:
+    return false
+  for binding in canvas.frameObservers:
+    if binding.active and binding.surface == surface:
+      return true
+
+proc notifyCanvasDisposed*(canvas: Canvas2D; surface: RenderSurfaceId) =
+  ## Completes disposal callbacks and removes all observers for one surface.
+  if canvas.isNil or canvas.frameObservers.len == 0:
+    return
+  inc canvas.frameObserverDispatchDepth
+  try:
+    let count = canvas.frameObservers.len
+    for index in 0 ..< count:
+      if index < canvas.frameObservers.len and
+          canvas.frameObservers[index].active and
+          canvas.frameObservers[index].surface == surface and
+          not canvas.frameObservers[index].onDispose.isNil:
+        try:
+          canvas.frameObservers[index].onDispose(canvas)
+        except Exception:
+          discard
+  finally:
+    dec canvas.frameObserverDispatchDepth
+    for index in 0 ..< canvas.frameObservers.len:
+      if canvas.frameObservers[index].active and
+          canvas.frameObservers[index].surface == surface:
+        canvas.frameObservers[index].active = false
+        canvas.frameObservers[index].onFrame = nil
+        canvas.frameObservers[index].onDispose = nil
+        canvas.frameObserverIndex.del(canvas.frameObservers[index].id)
+        inc canvas.inactiveFrameObserverCount
+    canvas.compactFrameObservers()
+
+proc runFrameObservers(
+    canvas: Canvas2D;
+    frame: RenderSurfaceFrame
+): RenderSurfaceFrameResult =
+  result = rsfIdle
+  inc canvas.frameObserverDispatchDepth
+  try:
+    let count = canvas.frameObservers.len
+    for index in 0 ..< count:
+      if index < canvas.frameObservers.len and
+          canvas.frameObservers[index].active and
+          canvas.frameObservers[index].surface == frame.surface and
+          not canvas.frameObservers[index].onFrame.isNil:
+        if canvas.frameObservers[index].onFrame(canvas, frame) == rsfRequestNext:
+          result = rsfRequestNext
+  finally:
+    dec canvas.frameObserverDispatchDepth
+    canvas.compactFrameObservers()
 
 proc touch(canvas: Canvas2D) =
   if canvas.revision == high(uint64):
@@ -436,7 +592,11 @@ proc paintCommands*(
   if resolveBounds and hasTransform:
     result.resolveTransformBounds()
 
-proc renderSurfaceDescriptor*(canvas: Canvas2D; name = "canvas-2d"): RenderSurfaceDescriptor =
+proc renderSurfaceDescriptor*(
+    canvas: Canvas2D;
+    name = "canvas-2d";
+    onUnmount: proc() {.closure.} = nil
+): RenderSurfaceDescriptor =
   RenderSurfaceDescriptor(
     name: name,
     callbacks: RenderSurfaceCallbacks(
@@ -445,8 +605,14 @@ proc renderSurfaceDescriptor*(canvas: Canvas2D; name = "canvas-2d"): RenderSurfa
           return false
         canvas.onInput(canvas, event),
       onFrame: proc(frame: RenderSurfaceFrame): RenderSurfaceFrameResult =
-        if canvas.onFrame.isNil:
-          return rsfIdle
-        canvas.onFrame(canvas, frame)
+        result = rsfIdle
+        if not canvas.onFrame.isNil and
+            canvas.onFrame(canvas, frame) == rsfRequestNext:
+          result = rsfRequestNext
+        if canvas.runFrameObservers(frame) == rsfRequestNext:
+          result = rsfRequestNext,
+      onUnmount: proc() =
+        if not onUnmount.isNil:
+          onUnmount()
     )
   )

@@ -367,6 +367,21 @@ is:
 Session finalization may visit the stage once to release unfinished branches;
 the total completion path remains O(branches), not O(branches squared).
 
+Canvas Cue fan-out uses an indexed additive frame-subscription table. A frame
+may settle many parallel branches, marks each subscription inactive in O(1),
+and compacts the observer storage once after dispatch. It must not linearly
+search the observer sequence for every completed branch. The benchmark applies
+the same ratio gate to one RenderSurface frame:
+
+| parallel Canvas branches | mean dispatch + completion cost per branch |
+| ---: | ---: |
+| 1,000 | 0.086 us |
+| 10,000 | 0.089 us |
+
+The baseline is a release ARC run on the same development host. Canvas display
+list construction and rasterization are deliberately excluded; this gate
+isolates adapter dispatch, Cue settlement, observer removal, and compaction.
+
 ### Indexed event dispatch gate
 
 Event lookup must depend on the original target's ancestor route and matching

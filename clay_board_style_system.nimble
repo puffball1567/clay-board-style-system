@@ -64,12 +64,19 @@ task testOrc, "Run the test suite under ORC":
 
 task testMotionAsan, "Run motion and Cue lifecycle tests under AddressSanitizer":
   let sanitizerRoot = thisDir() & "/nimcache"
+  let addressLayoutFlags =
+    when defined(linux):
+      # Keep the test runtime stable under Linux ASLR; release artifacts remain PIE.
+      " --passC:-fno-pie --passL:-no-pie"
+    else:
+      ""
   for memoryModel in ["arc", "orc"]:
     for testName in [
       "declarative_transition",
       "declarative_keyframes",
       "command",
       "cue",
+      "cue_canvas",
       "cue_command",
       "cue_motion",
       "cue_trigger"
@@ -78,7 +85,7 @@ task testMotionAsan, "Run motion and Cue lifecycle tests under AddressSanitizer"
       let nimcache = sanitizerRoot & "/clay_board_style_system_" & suffix & "_nimcache"
       let artifact = nimcache & "/clay_board_style_system_" & suffix
       let source = "tests/runtime/test_" & testName & ".nim"
-      exec "nim c --forceBuild:on --cc:clang --mm:" & memoryModel & " -d:release -d:useMalloc --debugger:native --path:src --passC:-fsanitize=address --passC:-fno-omit-frame-pointer --passL:-fsanitize=address --nimcache:\"" & nimcache & "\" --out:\"" & artifact & "\" " & source
+      exec "nim c --forceBuild:on --cc:clang --mm:" & memoryModel & " -d:release -d:useMalloc --debugger:native --path:src --passC:-fsanitize=address --passC:-fno-omit-frame-pointer --passL:-fsanitize=address" & addressLayoutFlags & " --nimcache:\"" & nimcache & "\" --out:\"" & artifact & "\" " & source
       when defined(windows):
         exec "\"" & artifact & ".exe\""
       elif defined(linux):
@@ -120,6 +127,7 @@ task testLsan, "Run retained lifecycle tests under LeakSanitizer on Linux":
         ("declarative_keyframes", "tests/runtime/test_declarative_keyframes.nim"),
         ("command", "tests/runtime/test_command.nim"),
         ("cue", "tests/runtime/test_cue.nim"),
+        ("cue_canvas", "tests/runtime/test_cue_canvas.nim"),
         ("cue_command", "tests/runtime/test_cue_command.nim"),
         ("cue_motion", "tests/runtime/test_cue_motion.nim"),
         ("cue_trigger", "tests/runtime/test_cue_trigger.nim")
@@ -258,6 +266,8 @@ task testCueValgrind, "Run ARC Cue lifecycle checks under Valgrind":
   exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 /tmp/clay_board_style_system_cue_trigger_valgrind"
   exec "nim c --mm:arc -d:release -d:useMalloc --path:src --nimcache:/tmp/clay_board_style_system_cue_command_valgrind_nimcache --out:/tmp/clay_board_style_system_cue_command_valgrind tests/runtime/test_cue_command.nim"
   exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 /tmp/clay_board_style_system_cue_command_valgrind"
+  exec "nim c --mm:arc -d:release -d:useMalloc --path:src --nimcache:/tmp/clay_board_style_system_cue_canvas_valgrind_nimcache --out:/tmp/clay_board_style_system_cue_canvas_valgrind tests/runtime/test_cue_canvas.nim"
+  exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 /tmp/clay_board_style_system_cue_canvas_valgrind"
   exec "nim c --mm:arc -d:release -d:useMalloc --path:src --nimcache:/tmp/clay_board_style_system_cue_motion_valgrind_nimcache --out:/tmp/clay_board_style_system_cue_motion_valgrind tests/runtime/test_cue_motion.nim"
   exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 /tmp/clay_board_style_system_cue_motion_valgrind"
 
