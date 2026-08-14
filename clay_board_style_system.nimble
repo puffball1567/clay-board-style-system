@@ -79,13 +79,14 @@ task testMotionAsan, "Run motion and Cue lifecycle tests under AddressSanitizer"
       "cue_canvas",
       "cue_command",
       "cue_motion",
-      "cue_trigger"
+      "cue_trigger",
+      "frontend_trace"
     ]:
       let suffix = testName & "_" & memoryModel & "_asan"
       let nimcache = sanitizerRoot & "/clay_board_style_system_" & suffix & "_nimcache"
       let artifact = nimcache & "/clay_board_style_system_" & suffix
       let source = "tests/runtime/test_" & testName & ".nim"
-      exec "nim c --forceBuild:on --cc:clang --mm:" & memoryModel & " -d:release -d:useMalloc --debugger:native --path:src --passC:-fsanitize=address --passC:-fno-omit-frame-pointer --passL:-fsanitize=address" & addressLayoutFlags & " --nimcache:\"" & nimcache & "\" --out:\"" & artifact & "\" " & source
+      exec "nim c --forceBuild:on --cc:clang --mm:" & memoryModel & " -d:release -d:cbssFrontendTrace -d:useMalloc --debugger:native --path:src --passC:-fsanitize=address --passC:-fno-omit-frame-pointer --passL:-fsanitize=address" & addressLayoutFlags & " --nimcache:\"" & nimcache & "\" --out:\"" & artifact & "\" " & source
       when defined(windows):
         exec "\"" & artifact & ".exe\""
       elif defined(linux):
@@ -130,14 +131,15 @@ task testLsan, "Run retained lifecycle tests under LeakSanitizer on Linux":
         ("cue_canvas", "tests/runtime/test_cue_canvas.nim"),
         ("cue_command", "tests/runtime/test_cue_command.nim"),
         ("cue_motion", "tests/runtime/test_cue_motion.nim"),
-        ("cue_trigger", "tests/runtime/test_cue_trigger.nim")
+        ("cue_trigger", "tests/runtime/test_cue_trigger.nim"),
+        ("frontend_trace", "tests/runtime/test_frontend_trace.nim")
       ]:
         let testName = test[0]
         let testPath = test[1]
         let suffix = testName & "_" & memoryModel & "_lsan"
         let nimcache = sanitizerRoot & "/clay_board_style_system_" & suffix & "_nimcache"
         let artifact = nimcache & "/clay_board_style_system_" & suffix
-        exec "nim c --forceBuild:on --cc:clang --clang.exe:" & clangExe & " --mm:" & memoryModel & " -d:release -d:useMalloc --debugger:native --path:src --passC:-fsanitize=leak --passC:-fno-omit-frame-pointer --passL:-fsanitize=leak --nimcache:\"" & nimcache & "\" --out:\"" & artifact & "\" " & testPath
+        exec "nim c --forceBuild:on --cc:clang --clang.exe:" & clangExe & " --mm:" & memoryModel & " -d:release -d:cbssFrontendTrace -d:useMalloc --debugger:native --path:src --passC:-fsanitize=leak --passC:-fno-omit-frame-pointer --passL:-fsanitize=leak --nimcache:\"" & nimcache & "\" --out:\"" & artifact & "\" " & testPath
         exec "env LSAN_OPTIONS=exitcode=99 \"" & artifact & "\""
   else:
     echo "Standalone LeakSanitizer is verified only in the Linux CI lane."
@@ -258,6 +260,8 @@ task testStreamMailboxValgrind, "Run the threaded ARC stream mailbox under Valgr
   exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 /tmp/clay_board_style_system_stream_mailbox"
 
 task testCueValgrind, "Run ARC Cue lifecycle checks under Valgrind":
+  exec "nim c --mm:arc -d:release -d:cbssFrontendTrace -d:useMalloc --path:src --nimcache:/tmp/clay_board_style_system_frontend_trace_valgrind_nimcache --out:/tmp/clay_board_style_system_frontend_trace_valgrind tests/runtime/test_frontend_trace.nim"
+  exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 /tmp/clay_board_style_system_frontend_trace_valgrind"
   exec "nim c --mm:arc -d:release -d:useMalloc --path:src --nimcache:/tmp/clay_board_style_system_command_valgrind_nimcache --out:/tmp/clay_board_style_system_command_valgrind tests/runtime/test_command.nim"
   exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 /tmp/clay_board_style_system_command_valgrind"
   exec "nim c --mm:arc -d:release -d:useMalloc --path:src --nimcache:/tmp/clay_board_style_system_cue_valgrind_nimcache --out:/tmp/clay_board_style_system_cue_valgrind tests/runtime/test_cue.nim"
@@ -282,6 +286,7 @@ task bench, "Run compiled pipeline benchmarks (not part of the product build)":
   exec "nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_bench_nimcache --out:/tmp/clay_board_style_system_pipeline_benchmark tests/perf/pipeline_benchmark.nim"
   exec "nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_dirty_bench_nimcache --out:/tmp/clay_board_style_system_dirty_subtree_benchmark tests/perf/dirty_subtree_benchmark.nim"
   exec "nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_frontend_bench_nimcache --out:/tmp/clay_board_style_system_frontend_runtime_benchmark tests/perf/frontend_runtime_benchmark.nim"
+  exec "nim c -r -d:release -d:cbssFrontendTrace --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_frontend_trace_bench_nimcache --out:/tmp/clay_board_style_system_frontend_trace_benchmark tests/perf/frontend_trace_benchmark.nim"
   exec "nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_navigation_bench_nimcache --out:/tmp/clay_board_style_system_navigation_screen_host_benchmark tests/perf/navigation_screen_host_benchmark.nim"
   exec "nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_render_surface_bench_nimcache --out:/tmp/clay_board_style_system_render_surface_benchmark tests/perf/render_surface_benchmark.nim"
 

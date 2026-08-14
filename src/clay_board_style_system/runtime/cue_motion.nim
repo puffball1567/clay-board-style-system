@@ -1,5 +1,6 @@
 import std/strutils
 
+import ../core/dirty_domain
 import ../input/events
 import ./[cue, declarative_transition, ui_root]
 
@@ -13,7 +14,8 @@ proc cueMotion(
     endKind, cancelKind: InputEventKind;
     start: MotionStartProc;
     cancelMotion: CueCancel;
-    cancelledMessage: string
+    cancelledMessage: string;
+    domains: set[DirtyDomain]
 ): CueAction =
   if not target.valid:
     raise newException(ValueError, "Cue motion target is not active")
@@ -45,8 +47,12 @@ proc cueMotion(
       detach()
       try:
         if succeeded:
+          when not defined(release) or defined(cbssFrontendTrace):
+            completion.traceAdapter(ftkMotionSucceeded, motionName, domains = domains)
           completion.succeed()
         else:
+          when not defined(release) or defined(cbssFrontendTrace):
+            completion.traceAdapter(ftkMotionCancelled, motionName, domains = domains)
           completion.fail(cancelledMessage)
       except Exception:
         discard
@@ -61,9 +67,19 @@ proc cueMotion(
         cancelKind,
         proc(event: DispatchResult): EventOutcome = settle(event, false)
       )
+      when not defined(release) or defined(cbssFrontendTrace):
+        completion.traceAdapter(ftkMotionStarted, motionName, domains = domains)
+        completion.traceAdapter(ftkDirtyDomains, motionName, domains = domains)
       start()
     except CatchableError as error:
       detach()
+      when not defined(release) or defined(cbssFrontendTrace):
+        completion.traceAdapter(
+          ftkMotionFailed,
+          motionName,
+          domains = domains,
+          detail = "Motion could not start: " & error.msg
+        )
       completion.fail("Motion could not start: " & error.msg)
 
     return proc() {.raises: [].} =
@@ -89,7 +105,11 @@ proc cueTransition*(
     iekTransitionCancel,
     start,
     cancelMotion,
-    cancelledMessage
+    cancelledMessage,
+    if property in {dtpTransform, dtpTranslate, dtpScale, dtpRotate}:
+      {ddPaint, ddHit, ddAnimation}
+    else:
+      {ddPaint, ddAnimation}
   )
 
 proc cueAnimation*(
@@ -111,5 +131,6 @@ proc cueAnimation*(
     iekAnimationCancel,
     start,
     cancelMotion,
-    cancelledMessage
+    cancelledMessage,
+    {ddPaint, ddHit, ddAnimation}
   )

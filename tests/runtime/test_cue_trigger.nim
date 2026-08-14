@@ -26,6 +26,26 @@ proc render(self: TriggerComponent) =
     ui.text("trigger")
 
 suite "typed Cue source adapters":
+  when not defined(release) or defined(cbssFrontendTrace):
+    test "Signal trigger is recorded before its Cue session starts":
+      let source = initSignal[int]()
+      let runtime = initCueRuntime()
+      let trace = runtime.enableTrace()
+      let trigger = initCueTrigger(
+        source,
+        runtime,
+        proc(value: int): CueGraph =
+          cue(cueAction("record", proc() = discard value))
+      )
+      defer:
+        check trigger.dispose()
+        check runtime.dispose()
+
+      source.emit(8)
+      let events = trace.snapshot
+      check events[0].kind == ftkTriggerSignal
+      check events[1].kind == ftkSessionStarted
+
   test "Signal values build and start typed Cue graphs":
     let source = initSignal[int]()
     let runtime = initCueRuntime()
@@ -124,6 +144,8 @@ suite "typed Cue source adapters":
     let root = initUiRoot()
     let source = initState(1)
     let runtime = initCueRuntime()
+    when not defined(release) or defined(cbssFrontendTrace):
+      let trace = runtime.enableTrace()
     var values: seq[int]
     let component = root.mount(TriggerComponent(
       source: initSignal[int](),
@@ -140,6 +162,12 @@ suite "typed Cue source adapters":
     discard source.set(2)
     discard source.set(3)
     check values == @[2, 3]
+    when not defined(release) or defined(cbssFrontendTrace):
+      var stateEvents = 0
+      for event in trace.snapshot:
+        if event.kind == ftkTriggerState:
+          inc stateEvents
+      check stateEvents == 2
     var interaction = initInteractionState()
     check root.disposeSubtree(component.node, interaction)
 
@@ -151,6 +179,8 @@ suite "typed Cue source adapters":
         inc state
     )
     let runtime = initCueRuntime()
+    when not defined(release) or defined(cbssFrontendTrace):
+      let trace = runtime.enableTrace()
     var revisions: seq[uint64]
     let component = root.mount(TriggerComponent(
       source: initSignal[int](),
@@ -169,6 +199,13 @@ suite "typed Cue source adapters":
       store.dispatch(caIncrement)
     check store.state == 2
     check revisions == @[1'u64]
+    when not defined(release) or defined(cbssFrontendTrace):
+      let events = trace.snapshot
+      var storeTrigger = false
+      for event in events:
+        if event.kind == ftkTriggerStore and event.revision == 1:
+          storeTrigger = true
+      check storeTrigger
     var interaction = initInteractionState()
     check root.disposeSubtree(component.node, interaction)
 
@@ -181,6 +218,8 @@ suite "typed Cue source adapters":
     )
     let parity = store.select(proc(value: int): int = value mod 2)
     let runtime = initCueRuntime()
+    when not defined(release) or defined(cbssFrontendTrace):
+      let trace = runtime.enableTrace()
     var values: seq[int]
     let component = root.mount(TriggerComponent(
       source: initSignal[int](),
@@ -197,6 +236,12 @@ suite "typed Cue source adapters":
     store.dispatch(caIncrement)
     store.dispatch(caIncrement)
     check values == @[1, 0]
+    when not defined(release) or defined(cbssFrontendTrace):
+      var selectorEvents = 0
+      for event in trace.snapshot:
+        if event.kind == ftkTriggerSelector:
+          inc selectorEvents
+      check selectorEvents == 2
     check parity.dispose()
     var interaction = initInteractionState()
     check root.disposeSubtree(component.node, interaction)

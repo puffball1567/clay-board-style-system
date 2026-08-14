@@ -45,6 +45,11 @@ jobs:
       - name: Run discovered ARC tests
         run: nimble test -y
 
+      - name: Verify development trace release gating
+        run: |
+          nim check -d:release --path:src tests/runtime/test_frontend_trace_release.nim
+          nim check -d:release -d:cbssFrontendTrace --path:src tests/runtime/test_frontend_trace_release.nim
+
       - name: Check examples and link profiles
         run: nimble checkExamples -y
 

@@ -45,6 +45,38 @@ proc render(self: CueCommandComponent) =
     ui.text("command")
 
 suite "Cue Command adapter":
+  when not defined(release) or defined(cbssFrontendTrace):
+    test "Command lifecycle shares the owning Cue trace context":
+      let sinks = new seq[TestSink]
+      let cancellations = new int
+      let command = deferredCommand(cpConcurrent, sinks, cancellations)
+      let runtime = initCueRuntime()
+      let trace = runtime.enableTrace()
+      defer:
+        check runtime.dispose()
+        check command.dispose()
+      let session = runtime.start(cue(cueCommand(
+        "load",
+        command,
+        proc(): int = 42
+      )))
+
+      check sinks[][0].succeed("loaded") == smorAccepted
+      check command.pump() == 1
+      let events = trace.snapshot
+      var commandStarted = false
+      var commandSucceeded = false
+      for event in events:
+        if event.kind == ftkCommandStarted and event.name == "load" and
+            event.revision == 1:
+          commandStarted = true
+        elif event.kind == ftkCommandSucceeded and event.name == "load" and
+            event.revision == 1:
+          commandSucceeded = true
+      check session.status == cssSucceeded
+      check commandStarted
+      check commandSucceeded
+
   test "successful Commands advance Cue only after the UI pumps":
     let sinks = new seq[TestSink]
     let cancellations = new int
@@ -228,6 +260,8 @@ suite "Cue Command adapter":
         raise newException(ValueError, "executor rejected input")
     )
     let runtime = initCueRuntime()
+    when not defined(release) or defined(cbssFrontendTrace):
+      let trace = runtime.enableTrace()
     defer:
       check runtime.dispose()
       check command.dispose()
@@ -236,6 +270,13 @@ suite "Cue Command adapter":
     let session = runtime.start(graph)
     check session.status == cssFailed
     check session.failure == "Command could not start: executor rejected input"
+    when not defined(release) or defined(cbssFrontendTrace):
+      var startFailure = false
+      for event in trace.snapshot:
+        if event.kind == ftkCommandFailed and event.name == "reject" and
+            event.detail == "Command could not start: executor rejected input":
+          startFailure = true
+      check startFailure
 
   test "invalid adapter inputs fail before a graph is created":
     let sinks = new seq[TestSink]
