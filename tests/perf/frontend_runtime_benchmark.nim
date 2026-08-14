@@ -18,10 +18,20 @@ proc benchmarkConcurrentCompletion(runCount: int): float =
     policy = cpConcurrent,
     maxPendingCompletions = runCount
   )
+  defer:
+    doAssert command.dispose()
   var checksum = 0
+  var settled = 0
   command.onSuccess = proc(value: int) = checksum = checksum xor value
   for value in 0 ..< runCount:
-    discard command.run(value)
+    let ticket = command.run(value)
+    discard command.observeRun(
+      ticket,
+      proc(ticket: CommandTicket; status: CommandStatus) {.raises: [].} =
+        discard ticket
+        if status == csSucceeded:
+          inc settled
+    )
   for value in countdown(runCount - 1, 0):
     doAssert sinks[][value].succeed(value) == smorAccepted
 
@@ -30,6 +40,7 @@ proc benchmarkConcurrentCompletion(runCount: int): float =
   result = elapsedUs(started) / runCount.float
   doAssert command.activeCount == 0
   doAssert checksum >= 0
+  doAssert settled == runCount
 
 proc benchmarkParallelCueCompletion(branchCount: int): float =
   let completions = new seq[CueCompletion]
@@ -42,6 +53,8 @@ proc benchmarkParallelCueCompletion(branchCount: int): float =
     branches[index] = branch(action)
   let graph = cue(cueAction("start", proc() = discard)).thenStage(branches)
   let runtime = initCueRuntime()
+  defer:
+    doAssert runtime.dispose()
   let session = runtime.start(graph)
   doAssert completions[].len == branchCount
 

@@ -1,6 +1,6 @@
 # Frontend Runtime Design
 
-Status: `State through Cue core and typed source adapters implemented; Command/motion adapters, traces, and demo pending`
+Status: `State through Cue core, typed source adapters, and Command adapter implemented; motion adapters, traces, and demo pending`
 
 The authoring flow in this document is adopted. Exact generic constraints,
 result types, and individual identifiers may be refined during implementation,
@@ -387,6 +387,12 @@ stable after completion or cancellation. Component-created Commands cancel
 active work, discard queued work, detach wake callbacks, and reject late sink
 offers during unmount. Application-owned Commands may use `dispose()` directly.
 
+`observeRun` attaches a no-throw settlement observer to one ticket without
+replacing the Command's application-level callbacks or copying its Output or
+Failure payload. A terminal ticket notifies immediately; a live subscription
+is removed on settlement, explicit unsubscribe, or Command disposal. This is
+the lifecycle boundary used by Cue and is also available to focused adapters.
+
 The completion queue has explicit item and weight bounds. `succeed` and `fail`
 return `StreamMailboxOfferResult`; adapters must react to `smorBackpressure`
 rather than dropping a terminal result. `pump(command, maxCompletions)` is an
@@ -421,10 +427,22 @@ by every occurrence, or a `CueGraphFactory[T]` may build a payload-specific
 graph without string identifiers or erased values. Component-owned triggers
 unsubscribe and cancel their still-active sessions during unmount.
 
+Commands are awaited as ordinary Cue actions. `cueCommand` calls its typed
+input factory once per session, completes only after the owning UI loop pumps
+the Command result, and maps Command failure or cancellation into Cue failure.
+Cancelling the Cue branch first detaches its ticket observer and then cancels
+the Command run, so a late worker result cannot resume the graph.
+
 ```nim
-let presentation = cue(actionA)
-  .thenParallel(actionB, actionC, actionD)
-  .then(actionE)
+let loadDocument = cueCommand(
+  "load-document",
+  loadCommand,
+  proc(): DocumentId = selectedDocumentId
+)
+
+let presentation = cue(loadDocument)
+  .thenParallel(showEditor, updateRecentFiles)
+  .then(announceReady)
 
 let cueRuntime = initCueRuntime()
 
@@ -641,8 +659,8 @@ for the style/layout engine.
    relative deadlines, cancellation, scoped ownership, independent clocks,
    and virtual-clock tests. **Implemented.**
 7. Connect Cue to existing runtime contracts. Typed Signal, State, Store
-   commit, and StoreSelector source adapters are **implemented**. Command,
-   transition, keyframe, and Canvas adapters remain.
+   commit, StoreSelector, and Command adapters are **implemented**.
+   Transition, keyframe, and Canvas adapters remain.
 8. Add optional traces, authoring conveniences, performance gates, and a demo
    that exercises event-, time-, and Signal-triggered parallel orchestration.
 9. Consider C ABI exposure only after the Nim ownership and completion

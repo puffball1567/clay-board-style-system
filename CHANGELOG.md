@@ -36,6 +36,11 @@ release. Before 1.0, minor releases may contain public API changes.
   `State[T]`, Store commits, and selected Store values. Payload-aware graph
   factories preserve source types, repeated-start policy, automatic
   unsubscribe, active-session cancellation, and late-emission rejection.
+- Added ticket-scoped Command settlement subscriptions and `cueCommand`.
+  Cue graphs can now await typed asynchronous Commands without replacing
+  application `onSuccess` / `onFailure` callbacks or copying result payloads;
+  failure, cancellation, graph cancellation, and late completion remain
+  deterministic.
 
 ## [0.4.2] - 2026-08-13
 

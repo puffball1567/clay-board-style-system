@@ -49,6 +49,19 @@ type
   CommandSuccessProc*[Output] = proc(output: Output) {.closure.}
   CommandFailureProc*[Failure] = proc(failure: Failure) {.closure.}
   CommandCancelledProc* = proc(ticket: CommandTicket) {.closure, raises: [].}
+  CommandRunSettledProc* = proc(
+    ticket: CommandTicket;
+    status: CommandStatus
+  ) {.closure, raises: [].}
+
+  CommandRunSubscription* = object
+    id*: uint64
+    runId: uint64
+    owner: pointer
+
+  CommandRunBinding = object
+    id: uint64
+    callback: CommandRunSettledProc
 
   ActiveCommandRun = object
     ticket: CommandTicket
@@ -71,12 +84,76 @@ type
     onSuccessValue: CommandSuccessProc[Output]
     onFailureValue: CommandFailureProc[Failure]
     onCancelledValue: CommandCancelledProc
+    runBindings: Table[uint64, seq[CommandRunBinding]]
+    nextRunBindingId: uint64
 
 proc status*(ticket: CommandTicket): CommandStatus {.inline.} =
   if ticket.state.isNil: csCancelled else: ticket.state.status
 
 proc valid*(ticket: CommandTicket): bool {.inline.} =
   ticket.id != 0 and not ticket.state.isNil
+
+proc valid*(subscription: CommandRunSubscription): bool {.inline.} =
+  subscription.id != 0 and subscription.runId != 0 and
+    subscription.owner != nil
+
+proc notifyRunSettled[Input, Output, Failure](
+    command: Command[Input, Output, Failure];
+    ticket: CommandTicket
+) {.raises: [].} =
+  if ticket.id notin command.runBindings:
+    return
+  let bindings = command.runBindings.getOrDefault(ticket.id)
+  command.runBindings.del(ticket.id)
+  for binding in bindings:
+    if binding.callback != nil:
+      binding.callback(ticket, ticket.status)
+
+proc observeRun*[Input, Output, Failure](
+    command: Command[Input, Output, Failure];
+    ticket: CommandTicket;
+    callback: CommandRunSettledProc
+): CommandRunSubscription =
+  if command.isNil:
+    raise newException(ValueError, "command cannot be nil")
+  if not ticket.valid or ticket.owner != cast[pointer](command):
+    raise newException(ValueError, "command ticket does not belong to this command")
+  if callback.isNil:
+    raise newException(ValueError, "command run observer cannot be nil")
+  if ticket.status notin {csQueued, csRunning}:
+    callback(ticket, ticket.status)
+    return
+  if command.disposed:
+    raise newException(ValueError, "command is not active")
+  if command.nextRunBindingId == 0:
+    raise newException(ValueError, "command run observer identifier space exhausted")
+  result = CommandRunSubscription(
+    id: command.nextRunBindingId,
+    runId: ticket.id,
+    owner: cast[pointer](command)
+  )
+  inc command.nextRunBindingId
+  var bindings = command.runBindings.getOrDefault(ticket.id)
+  bindings.add CommandRunBinding(id: result.id, callback: callback)
+  command.runBindings[ticket.id] = move(bindings)
+
+proc unsubscribeRun*[Input, Output, Failure](
+    command: Command[Input, Output, Failure];
+    subscription: CommandRunSubscription
+): bool {.discardable.} =
+  if command.isNil or not subscription.valid or
+      subscription.owner != cast[pointer](command) or
+      subscription.runId notin command.runBindings:
+    return false
+  var bindings = command.runBindings.getOrDefault(subscription.runId)
+  for index, binding in bindings:
+    if binding.id == subscription.id:
+      bindings.delete(index)
+      if bindings.len == 0:
+        command.runBindings.del(subscription.runId)
+      else:
+        command.runBindings[subscription.runId] = move(bindings)
+      return true
 
 proc policy*[Input, Output, Failure](
     command: Command[Input, Output, Failure]
@@ -144,6 +221,7 @@ proc cancelActive[Input, Output, Failure](
   command.activeRuns.del(id)
   active.invokeCancel()
   active.ticket.state.status = csCancelled
+  command.notifyRunSettled(active.ticket)
   if notify and command.onCancelledValue != nil:
     command.onCancelledValue(active.ticket)
   true
@@ -192,12 +270,14 @@ proc completeRun[Input, Output, Failure](
   of cmkSuccess:
     ticket.state.status = csSucceeded
     let callback = command.onSuccessValue
+    command.notifyRunSettled(ticket)
     command.startNextOrdered()
     if callback != nil:
       callback(move(message.output))
   of cmkFailure:
     ticket.state.status = csFailed
     let callback = command.onFailureValue
+    command.notifyRunSettled(ticket)
     command.startNextOrdered()
     if callback != nil:
       callback(move(message.failure))
@@ -209,8 +289,10 @@ proc releaseCommand[Input, Output, Failure](
   for _, active in command.activeRuns.mpairs:
     active.invokeCancel()
     active.ticket.state.status = csCancelled
+    command.notifyRunSettled(active.ticket)
   for index in command.queuedHead ..< command.queuedRuns.len:
     command.queuedRuns[index].ticket.state.status = csCancelled
+    command.notifyRunSettled(command.queuedRuns[index].ticket)
   command.activeRuns.clear()
   command.queuedRuns.setLen(0)
   command.queuedHead = 0
@@ -226,6 +308,7 @@ proc releaseCommand[Input, Output, Failure](
   command.onSuccessValue = nil
   command.onFailureValue = nil
   command.onCancelledValue = nil
+  command.runBindings.clear()
 
 proc initCommand*[Input, Output, Failure](
     executor: CommandExecutor[Input, Output, Failure];
@@ -263,6 +346,8 @@ proc initCommand*[Input, Output, Failure](
     bridge: bridge,
     source: source,
     activeRuns: initTable[uint64, ActiveCommandRun](),
+    runBindings: initTable[uint64, seq[CommandRunBinding]](),
+    nextRunBindingId: 1,
     nextRunId: 1
   )
   result.setReleaseCallback(releaseCommand[Input, Output, Failure])
@@ -321,6 +406,7 @@ proc startQueued[Input, Output, Failure](
     if queued.ticket.id in command.activeRuns:
       command.activeRuns.del(queued.ticket.id)
     queued.ticket.state.status = csCancelled
+    command.notifyRunSettled(queued.ticket)
     command.startNextOrdered()
     raise
 
@@ -333,28 +419,33 @@ proc run*[Input, Output, Failure](
   result = command.makeTicket()
   var queued = QueuedCommandRun[Input](ticket: result, input: move(input))
 
-  case command.policyValue
-  of cpLatestOnly:
-    var activeIds: seq[uint64]
-    for id in command.activeRuns.keys:
-      activeIds.add id
-    for id in activeIds:
-      discard command.cancelActive(id, true)
-    for index in command.queuedHead ..< command.queuedRuns.len:
-      let pending = command.queuedRuns[index].ticket
-      pending.state.status = csCancelled
-      if command.onCancelledValue != nil:
-        command.onCancelledValue(pending)
-    command.queuedRuns.setLen(0)
-    command.queuedHead = 0
-    command.startQueued(move(queued))
-  of cpOrdered:
-    if command.activeRuns.len == 0:
+  try:
+    case command.policyValue
+    of cpLatestOnly:
+      var activeIds: seq[uint64]
+      for id in command.activeRuns.keys:
+        activeIds.add id
+      for id in activeIds:
+        discard command.cancelActive(id, true)
+      for index in command.queuedHead ..< command.queuedRuns.len:
+        let pending = command.queuedRuns[index].ticket
+        pending.state.status = csCancelled
+        command.notifyRunSettled(pending)
+        if command.onCancelledValue != nil:
+          command.onCancelledValue(pending)
+      command.queuedRuns.setLen(0)
+      command.queuedHead = 0
       command.startQueued(move(queued))
-    else:
-      command.queuedRuns.add move(queued)
-  of cpConcurrent:
-    command.startQueued(move(queued))
+    of cpOrdered:
+      if command.activeRuns.len == 0:
+        command.startQueued(move(queued))
+      else:
+        command.queuedRuns.add move(queued)
+    of cpConcurrent:
+      command.startQueued(move(queued))
+  except:
+    result = CommandTicket()
+    raise
 
 proc succeed*[Output, Failure](
     target: CommandSink[Output, Failure];
@@ -400,6 +491,7 @@ proc cancel*[Input, Output, Failure](
       let cancelled = command.queuedRuns[index].ticket
       command.queuedRuns.delete(index)
       cancelled.state.status = csCancelled
+      command.notifyRunSettled(cancelled)
       if command.onCancelledValue != nil:
         command.onCancelledValue(cancelled)
       return true
@@ -420,6 +512,7 @@ proc cancelAll*[Input, Output, Failure](
     let ticket = command.queuedRuns[^1].ticket
     command.queuedRuns.setLen(command.queuedRuns.len - 1)
     ticket.state.status = csCancelled
+    command.notifyRunSettled(ticket)
     if command.onCancelledValue != nil:
       command.onCancelledValue(ticket)
     inc result

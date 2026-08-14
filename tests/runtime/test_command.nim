@@ -130,6 +130,127 @@ suite "typed commands":
     check cancelled == @[second.id, first.id]
     check not command.cancel(first)
 
+  test "run observers coexist with global callbacks without copying outputs":
+    let sinks = new seq[IntSink]
+    let cancellations = new int
+    let command = deferredCommand(cpConcurrent, sinks, cancellations)
+    var successes: seq[string]
+    var settled: seq[(uint64, CommandStatus)]
+    command.onSuccess = proc(value: string) = successes.add value
+
+    let ticket = command.run(1)
+    let subscription = command.observeRun(
+      ticket,
+      proc(observed: CommandTicket; status: CommandStatus) {.raises: [].} =
+        settled.add (observed.id, status)
+    )
+    check subscription.valid
+    check sinks[][0].succeed("large-output-remains-owned-by-callback") == smorAccepted
+    check command.pump() == 1
+    check successes == @["large-output-remains-owned-by-callback"]
+    check settled == @[(ticket.id, csSucceeded)]
+    check not command.unsubscribeRun(subscription)
+
+  test "run observers can be independently removed and terminal runs notify immediately":
+    let sinks = new seq[IntSink]
+    let cancellations = new int
+    let command = deferredCommand(cpConcurrent, sinks, cancellations)
+    var firstCalls = 0
+    var secondCalls = 0
+    var secondStatus = csRunning
+    let ticket = command.run(1)
+    let first = command.observeRun(
+      ticket,
+      proc(ticket: CommandTicket; status: CommandStatus) {.raises: [].} =
+        discard ticket
+        discard status
+        inc firstCalls
+    )
+    discard command.observeRun(
+      ticket,
+      proc(ticket: CommandTicket; status: CommandStatus) {.raises: [].} =
+        discard ticket
+        secondStatus = status
+        inc secondCalls
+    )
+    check command.unsubscribeRun(first)
+    check not command.unsubscribeRun(first)
+    check sinks[][0].succeed("done") == smorAccepted
+    check command.pump() == 1
+    check firstCalls == 0
+    check secondCalls == 1
+    check secondStatus == csSucceeded
+
+    var immediate = csRunning
+    var immediateTicketId = 0'u64
+    let terminal = command.observeRun(
+      ticket,
+      proc(observed: CommandTicket; status: CommandStatus) {.raises: [].} =
+        immediateTicketId = observed.id
+        immediate = status
+    )
+    check not terminal.valid
+    check immediateTicketId == ticket.id
+    check immediate == csSucceeded
+
+  test "run observers cover queued active and disposal cancellation":
+    let sinks = new seq[IntSink]
+    let cancellations = new int
+    let command = deferredCommand(cpOrdered, sinks, cancellations)
+    var settled: seq[(uint64, CommandStatus)]
+    let first = command.run(1)
+    let second = command.run(2)
+    discard command.observeRun(
+      first,
+      proc(ticket: CommandTicket; status: CommandStatus) {.raises: [].} =
+        settled.add (ticket.id, status)
+    )
+    discard command.observeRun(
+      second,
+      proc(ticket: CommandTicket; status: CommandStatus) {.raises: [].} =
+        settled.add (ticket.id, status)
+    )
+    check command.cancel(second)
+    check settled == @[(second.id, csCancelled)]
+    check command.dispose()
+    check settled == @[
+      (second.id, csCancelled),
+      (first.id, csCancelled)
+    ]
+
+  test "queued executor failures settle their registered observer":
+    var firstSink: CommandSink[int, string]
+    let command = initCommand[int, int, string](
+      proc(input: int; sink: CommandSink[int, string]): CommandCancel =
+        if input == 1:
+          firstSink = sink
+          return nil
+        raise newException(ValueError, "queued executor failed"),
+      policy = cpOrdered
+    )
+    let first = command.run(1)
+    let second = command.run(2)
+    var firstStatus = csRunning
+    var secondStatus = csRunning
+    discard command.observeRun(
+      first,
+      proc(ticket: CommandTicket; status: CommandStatus) {.raises: [].} =
+        discard ticket
+        firstStatus = status
+    )
+    discard command.observeRun(
+      second,
+      proc(ticket: CommandTicket; status: CommandStatus) {.raises: [].} =
+        discard ticket
+        secondStatus = status
+    )
+    check firstSink.succeed(1) == smorAccepted
+    expect ValueError:
+      discard command.pump()
+    check firstStatus == csSucceeded
+    check secondStatus == csCancelled
+    check second.status == csCancelled
+
   test "executor exceptions do not wedge ordered dispatch":
     var attempts = 0
     let command = initCommand[int, int, string](
