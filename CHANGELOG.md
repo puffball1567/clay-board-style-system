@@ -45,6 +45,11 @@ release. Before 1.0, minor releases may contain public API changes.
   starting motion, wait for the matching lifecycle end, preserve public event
   handlers, and detach deterministically on completion, cancellation, startup
   failure, or node disposal.
+- Added `cueCanvas`, an additive frame adapter that lets retained Canvas work
+  participate in serial and parallel Cue graphs without replacing the public
+  `onFrame` callback. Frame subscriptions are scoped by RenderSurface, support
+  shared display lists, and detach on completion, cancellation, failure, or
+  surface disposal.
 
 ## [0.4.2] - 2026-08-13
 

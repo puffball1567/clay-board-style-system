@@ -1,6 +1,6 @@
 # Frontend Runtime Design
 
-Status: `State through Cue core plus typed source, Command, and motion adapters implemented; Canvas adapter, traces, and demo pending`
+Status: `State through Cue core and runtime adapters implemented; traces and demo pending`
 
 The authoring flow in this document is adopted. Exact generic constraints,
 result types, and individual identifiers may be refined during implementation,
@@ -442,6 +442,16 @@ cancelled Cue branches detach first and may invoke an optional motion cleanup
 procedure. The cleanup is explicit because restoring or replacing an authored
 Style is an application decision.
 
+Retained Canvas work joins the same graph through `cueCanvas`. Its callback
+runs from the existing RenderSurface frame scheduler and returns
+`ccfdContinue` or `ccfdComplete`; continuation requests only the next frame for
+that surface. The adapter is additive, so it does not replace `Canvas2D.onFrame`,
+and multiple parallel Cue branches may observe one Canvas frame. Subscriptions
+are scoped by RenderSurface rather than only by `Canvas2D`, which keeps a
+shared retained display list safe when it is mounted in more than one place.
+Completion, cancellation, callback failure, direct surface unmount, and
+subtree disposal all detach the subscription deterministically.
+
 ```nim
 let loadDocument = cueCommand(
   "load-document",
@@ -460,6 +470,17 @@ let presentation = cue(loadDocument)
     updateRecentFiles
   )
   .then(announceReady)
+
+let chartReveal = cueCanvas(
+  "chart-reveal",
+  chartCanvas,
+  proc(
+      canvas: Canvas2D;
+      frame: RenderSurfaceFrame
+  ): CueCanvasFrameDecision =
+    drawChartFrame(canvas, frame.nowSeconds)
+    if chartIsComplete(): ccfdComplete else: ccfdContinue
+)
 
 let cueRuntime = initCueRuntime()
 
@@ -676,8 +697,8 @@ for the style/layout engine.
    relative deadlines, cancellation, scoped ownership, independent clocks,
    and virtual-clock tests. **Implemented.**
 7. Connect Cue to existing runtime contracts. Typed Signal, State, Store
-   commit, StoreSelector, Command, transition, and keyframe adapters are
-   **implemented**. The Canvas adapter remains.
+   commit, StoreSelector, Command, transition, keyframe, and Canvas adapters
+   are **implemented**.
 8. Add optional traces, authoring conveniences, performance gates, and a demo
    that exercises event-, time-, and Signal-triggered parallel orchestration.
 9. Consider C ABI exposure only after the Nim ownership and completion

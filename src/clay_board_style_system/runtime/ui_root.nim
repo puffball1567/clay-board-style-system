@@ -776,6 +776,8 @@ proc disposeSubtree*(
     let surface = root.tree.nodes[id.nodeIndex].renderSurfaceId
     if surface.isSome:
       let surfaceId = RenderSurfaceId(surface.get)
+      if surfaceId in root.canvases:
+        root.canvases[surfaceId].notifyCanvasDisposed(surfaceId)
       root.canvases.del(surfaceId)
       discard root.surfaces.unregisterSurface(surfaceId)
 
@@ -1000,7 +1002,10 @@ proc canvas*(
   let parentId =
     if parent.isSome: some(parent.get.id)
     else: root.currentParent()
-  let surface = root.surfaces.registerSurface(value.renderSurfaceDescriptor())
+  var surface: RenderSurfaceId
+  surface = root.surfaces.registerSurface(value.renderSurfaceDescriptor(
+    onUnmount = proc() = value.notifyCanvasDisposed(surface)
+  ))
   let node = NodeHandle(
     root: root,
     id: root.tree.addRenderSurfaceBox(
@@ -1086,7 +1091,9 @@ proc syncRenderSurfaces*(
       root.surfaces.mountSurface(
         surface, nodeId, placement, visible = visible, revision = revision
       )
-      if surface in root.canvases and not root.canvases[surface].onFrame.isNil:
+      if surface in root.canvases and
+          (not root.canvases[surface].onFrame.isNil or
+            root.canvases[surface].hasFrameObservers(surface)):
         discard root.surfaces.requestSurfaceFrame(surface)
     else:
       discard root.surfaces.placeSurface(surface, placement)

@@ -1502,6 +1502,9 @@ The Linux Valgrind lane remains the deterministic lifecycle and C ABI leak gate
 because Valgrind is not treated as a supported portable Windows or current
 macOS CI runtime. The `detect_leaks` ASan option is set only on Linux; neither
 that option nor standalone LSan is passed to macOS or Windows.
+Linux ASan test executables are linked as non-PIE to avoid address-space-layout
+collisions between PIE randomization and the sanitizer shadow mapping. This is
+a test-only linker policy and does not change release artifact hardening.
 
 This verification is development-only. Ownership tracing, generated probes,
 sanitizer hooks, and verifier implementation code are not imported, linked, or
@@ -1512,7 +1515,7 @@ is outside the CBSS guarantee.
 
 ### Frontend Runtime And General Cue Orchestration
 
-Status: `Version 0.5 target; State through Cue core plus typed source, Command, and motion adapters implemented; Canvas adapter, traces, and demo pending`
+Status: `Version 0.5 target; State through Cue core and runtime adapters implemented; traces and demo pending`
 
 CBSS will include an opt-in first-party Nim frontend runtime that joins retained
 component state, typed Stores and Actions, selected subscriptions, owned
@@ -1582,8 +1585,8 @@ Implementation order reuses the current code rather than recreating it:
    deadlines, scoped cancellation, independent clocks, and virtual-clock
    tests. **Implemented.**
 5. Connect Cue to the existing runtime contracts. Signal, retained State,
-   Store commit, StoreSelector, Command, transition, keyframe, and component
-   lifecycle adapters are **implemented**. The Canvas adapter remains.
+   Store commit, StoreSelector, Command, transition, keyframe, Canvas, and
+   component lifecycle adapters are **implemented**.
 6. Add traces, ARC/ORC and performance gates, and event/time/Signal-triggered
    orchestration demos before considering a foreign-language ABI.
 
