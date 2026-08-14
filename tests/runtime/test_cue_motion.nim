@@ -44,6 +44,41 @@ suite "Cue motion adapters":
     check session.status == cssSucceeded
     check continued
 
+  when not defined(release) or defined(cbssFrontendTrace):
+    test "transition trace includes motion lifecycle and dirty domains":
+      let ui = initUiRoot()
+      let panel = ui.box(transitionStyle(0))
+      let driver = initCbssTestDriver(ui, size(200, 100))
+      let runtime = initCueRuntime()
+      let trace = runtime.enableTrace()
+      defer:
+        check runtime.dispose()
+      let session = runtime.start(cue(cueTransition(
+        "fade",
+        panel,
+        dtpOpacity,
+        proc() = panel.applyStyle(transitionStyle(1))
+      )))
+
+      driver.refresh()
+      driver.advanceTime(1)
+      let events = trace.snapshot
+      var started = false
+      var succeeded = false
+      var dirtied = false
+      for event in events:
+        if event.kind == ftkMotionStarted and event.name == "opacity":
+          started = true
+        elif event.kind == ftkMotionSucceeded and event.name == "opacity":
+          succeeded = true
+        elif event.kind == ftkDirtyDomains and
+            event.domains == {ddPaint, ddAnimation}:
+          dirtied = true
+      check session.status == cssSucceeded
+      check started
+      check succeeded
+      check dirtied
+
   test "animation action waits for one named animation only":
     let ui = initUiRoot()
     ui.registerStyleKeyframes(styleKeyframes("fade", [
@@ -141,6 +176,8 @@ suite "Cue motion adapters":
     let ui = initUiRoot()
     let panel = ui.box()
     let runtime = initCueRuntime()
+    when not defined(release) or defined(cbssFrontendTrace):
+      let trace = runtime.enableTrace()
     defer:
       check runtime.dispose()
     let session = runtime.start(cue(cueAnimation(
@@ -152,6 +189,13 @@ suite "Cue motion adapters":
 
     check session.status == cssFailed
     check session.failure == "Motion could not start: bad animation"
+    when not defined(release) or defined(cbssFrontendTrace):
+      var startFailure = false
+      for event in trace.snapshot:
+        if event.kind == ftkMotionFailed and event.name == "fade" and
+            event.detail == "Motion could not start: bad animation":
+          startFailure = true
+      check startFailure
     discard panel.emit(motionEvent(iekAnimationEnd, "fade", 1))
     check session.status == cssFailed
 

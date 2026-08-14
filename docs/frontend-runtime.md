@@ -656,10 +656,29 @@ Required coverage includes:
 - large unrelated component and Store populations proving local work remains
   local.
 
-Development builds may expose an action/session trace containing typed Action
-names, Store revisions, Selector changes, Command lifecycle, Cue steps, and
-dirty domains. The trace is development-only and is not linked into release
-artifacts unless explicitly enabled.
+Development builds expose a bounded typed trace for Cue sessions, stages, and
+branches, source triggers, Command runs, motion lifecycle, and dirty domains.
+It can be enabled per runtime without changing application control flow:
+
+```nim
+let runtime = initCueRuntime()
+let trace = runtime.enableTrace(capacity = 4096)
+
+discard runtime.start(graph)
+for event in trace.snapshot:
+  echo event.sequence, " ", event.kind, " ", event.name
+```
+
+The collector is an O(1) fixed-capacity ring. Once full, it overwrites the
+oldest event and increments `dropped`, so diagnostics cannot grow memory for
+the lifetime of an application. `snapshot` returns chronological events and
+`clear` releases retained event strings. Application callbacks are not used as
+the storage path, so diagnostic consumers cannot throw into Cue execution.
+
+Ordinary `-d:release` builds do not compile the trace types, runtime field, or
+recording branches. A diagnostic release build can opt in explicitly with
+`-d:cbssFrontendTrace`. This keeps production execution unchanged by default
+while allowing optimized builds to be investigated when necessary.
 
 ## Intentional Non-Goals
 
@@ -701,5 +720,7 @@ for the style/layout engine.
    are **implemented**.
 8. Add optional traces, authoring conveniences, performance gates, and a demo
    that exercises event-, time-, and Signal-triggered parallel orchestration.
+   The bounded development trace is **implemented**; the integration demo is
+   pending.
 9. Consider C ABI exposure only after the Nim ownership and completion
    contracts are stable; generic Nim Store state does not cross the C ABI.

@@ -2,6 +2,11 @@ import std/[algorithm, math, options, tables]
 
 import ./component
 
+when not defined(release) or defined(cbssFrontendTrace):
+  import ../core/dirty_domain
+  import ./frontend_trace
+  export frontend_trace
+
 type
   CueJoinPolicy* = enum
     cjpAll,
@@ -42,6 +47,8 @@ type
     activeByGraph: Table[pointer, seq[uint64]]
     queuedByGraph: Table[pointer, QueuedCueQueue]
     processing: bool
+    when not defined(release) or defined(cbssFrontendTrace):
+      traceValue: FrontendTrace
 
   CueCompletionState = ref object
     owner: pointer
@@ -108,6 +115,76 @@ proc settle(
     succeeded: bool;
     failure: string
 )
+
+when not defined(release) or defined(cbssFrontendTrace):
+  proc recordTrace(
+      runtime: CueRuntime;
+      kind: FrontendTraceKind;
+      sessionId = 0'u64;
+      stageIndex = -1;
+      branchIndex = -1;
+      name = "";
+      revision = 0'u64;
+      domains: set[DirtyDomain] = {};
+      detail = ""
+  ) =
+    if runtime.isNil or runtime.traceValue.isNil:
+      return
+    runtime.traceValue.add FrontendTraceEvent(
+      atSeconds: runtime.nowValue,
+      kind: kind,
+      sessionId: sessionId,
+      stageIndex: stageIndex,
+      branchIndex: branchIndex,
+      name: name,
+      revision: revision,
+      domains: domains,
+      detail: detail
+    )
+
+  proc enableTrace*(runtime: CueRuntime; capacity = 2048): FrontendTrace =
+    if runtime.isNil or runtime.disposed:
+      raise newException(ValueError, "Cue runtime is not active")
+    runtime.traceValue = initFrontendTrace(capacity)
+    runtime.traceValue
+
+  proc trace*(runtime: CueRuntime): FrontendTrace {.inline.} =
+    if runtime.isNil: nil else: runtime.traceValue
+
+  proc disableTrace*(runtime: CueRuntime) =
+    if not runtime.isNil:
+      runtime.traceValue = nil
+
+  proc traceAdapter*(
+      completion: CueCompletion;
+      kind: FrontendTraceKind;
+      name = "";
+      revision = 0'u64;
+      domains: set[DirtyDomain] = {};
+      detail = ""
+  ) =
+    if completion.state.isNil or completion.state.owner == nil:
+      return
+    let state = completion.state
+    let runtime = cast[CueRuntime](state.owner)
+    runtime.recordTrace(
+      kind,
+      state.sessionId,
+      state.stageIndex,
+      state.branchIndex,
+      name,
+      revision,
+      domains,
+      detail
+    )
+
+  proc traceTrigger*(
+      runtime: CueRuntime;
+      kind: FrontendTraceKind;
+      revision = 0'u64;
+      name = ""
+  ) =
+    runtime.recordTrace(kind, revision = revision, name = name)
 
 proc status*(session: CueSession): CueSessionStatus {.inline.} =
   if session.state.isNil: cssCancelled else: session.state.status
@@ -275,6 +352,8 @@ proc activateQueued(runtime: CueRuntime; graphKey: pointer) =
     ticket: next.ticket
   )
   runtime.activeByGraph[graphKey] = @[next.ticket.id]
+  when not defined(release) or defined(cbssFrontendTrace):
+    runtime.recordTrace(ftkSessionStarted, next.ticket.id)
 
 proc finishSession(
     runtime: CueRuntime;
@@ -290,6 +369,18 @@ proc finishSession(
       branch.invokeCancel()
   session.ticket.state.status = status
   session.ticket.state.failure = failure
+  when not defined(release) or defined(cbssFrontendTrace):
+    let kind = case status
+      of cssSucceeded: ftkSessionSucceeded
+      of cssFailed: ftkSessionFailed
+      of cssCancelled: ftkSessionCancelled
+      of cssQueued, cssRunning: ftkSessionCancelled
+    runtime.recordTrace(
+      kind,
+      sessionId,
+      session.stageIndex,
+      detail = failure
+    )
   let graphKey = cast[pointer](session.graph)
   runtime.sessions.del(sessionId)
   runtime.removeActive(graphKey, sessionId)
@@ -326,8 +417,17 @@ proc evaluateStage(runtime: CueRuntime; sessionId: uint64): bool =
       branch.settled = true
   runtime.sessions[sessionId] = session
   if failSession:
+    when not defined(release) or defined(cbssFrontendTrace):
+      runtime.recordTrace(
+        ftkStageFailed,
+        sessionId,
+        session.stageIndex,
+        detail = session.firstFailure
+      )
     runtime.finishSession(sessionId, cssFailed, session.firstFailure)
   else:
+    when not defined(release) or defined(cbssFrontendTrace):
+      runtime.recordTrace(ftkStageSucceeded, sessionId, session.stageIndex)
     var updated = runtime.sessions[sessionId]
     inc updated.stageIndex
     updated.branches.setLen(0)
@@ -356,6 +456,14 @@ proc startBranch(
   session.branches[branchIndex].completion = completionState
   let action = session.branches[branchIndex].definition.actionValue
   runtime.sessions[sessionId] = session
+  when not defined(release) or defined(cbssFrontendTrace):
+    runtime.recordTrace(
+      ftkActionStarted,
+      sessionId,
+      expectedStage,
+      branchIndex,
+      action.name
+    )
   try:
     let cancel = action.executor(CueCompletion(state: completionState))
     if sessionId in runtime.sessions:
@@ -386,6 +494,8 @@ proc openStage(runtime: CueRuntime; sessionId: uint64) =
   for definition in stage.branches:
     session.branches.add ActiveCueBranch(definition: definition)
   runtime.sessions[sessionId] = session
+  when not defined(release) or defined(cbssFrontendTrace):
+    runtime.recordTrace(ftkStageStarted, sessionId, session.stageIndex)
   for index, definition in stage.branches:
     if sessionId notin runtime.sessions or
         runtime.sessions[sessionId].stageIndex != session.stageIndex or
@@ -469,6 +579,15 @@ proc settle(
   session.branches[completion.branchIndex].settled = true
   session.branches[completion.branchIndex].succeeded = succeeded
   session.branches[completion.branchIndex].cancel = nil
+  when not defined(release) or defined(cbssFrontendTrace):
+    runtime.recordTrace(
+      if succeeded: ftkActionSucceeded else: ftkActionFailed,
+      completion.sessionId,
+      completion.stageIndex,
+      completion.branchIndex,
+      session.branches[completion.branchIndex].definition.actionValue.name,
+      detail = failure
+    )
   inc session.settledCount
   if succeeded:
     inc session.succeededCount
@@ -485,12 +604,25 @@ proc settle(
 proc releaseCueRuntime(resource: ComponentOwnedResource) {.raises: [].} =
   let runtime = CueRuntime(resource)
   for _, session in runtime.sessions.mpairs:
+    when not defined(release) or defined(cbssFrontendTrace):
+      runtime.recordTrace(
+        ftkSessionCancelled,
+        session.ticket.id,
+        session.stageIndex,
+        detail = "Cue runtime was disposed"
+      )
     for branch in session.branches.mitems:
       if not branch.settled:
         branch.invokeCancel()
     session.ticket.state.status = cssCancelled
   for _, queue in runtime.queuedByGraph.mpairs:
     for index in queue.head ..< queue.items.len:
+      when not defined(release) or defined(cbssFrontendTrace):
+        runtime.recordTrace(
+          ftkSessionCancelled,
+          queue.items[index].ticket.id,
+          detail = "Cue runtime was disposed"
+        )
       queue.items[index].ticket.state.status = cssCancelled
   runtime.sessions.clear()
   runtime.activeByGraph.clear()
@@ -551,6 +683,12 @@ proc start*(
       var queue = runtime.queuedByGraph[graphKey]
       for index in queue.head ..< queue.items.len:
         queue.items[index].ticket.state.status = cssCancelled
+        when not defined(release) or defined(cbssFrontendTrace):
+          runtime.recordTrace(
+            ftkSessionCancelled,
+            queue.items[index].ticket.id,
+            detail = "Cue session was replaced"
+          )
       runtime.queuedByGraph.del(graphKey)
     for id in active:
       discard runtime.cancel(CueSession(
@@ -564,6 +702,8 @@ proc start*(
       var queue = runtime.queuedByGraph.getOrDefault(graphKey)
       queue.items.add QueuedCueSession(graph: graph, ticket: result)
       runtime.queuedByGraph[graphKey] = move(queue)
+      when not defined(release) or defined(cbssFrontendTrace):
+        runtime.recordTrace(ftkSessionQueued, result.id)
       return
   of cspParallel:
     discard
@@ -573,6 +713,8 @@ proc start*(
   var ids = runtime.activeByGraph.getOrDefault(graphKey)
   ids.add result.id
   runtime.activeByGraph[graphKey] = move(ids)
+  when not defined(release) or defined(cbssFrontendTrace):
+    runtime.recordTrace(ftkSessionStarted, result.id)
   runtime.process()
 
 proc cancel*(runtime: CueRuntime; ticket: CueSession): bool {.discardable.} =
@@ -590,6 +732,8 @@ proc cancel*(runtime: CueRuntime; ticket: CueSession): bool {.discardable.} =
           queue.items[index].ticket.status == cssQueued:
         queuedGraphKey = graphKey
         ticket.state.status = cssCancelled
+        when not defined(release) or defined(cbssFrontendTrace):
+          runtime.recordTrace(ftkSessionCancelled, ticket.id)
         queue.items[index] = QueuedCueSession()
         break
     if queuedGraphKey != nil:

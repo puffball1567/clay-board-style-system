@@ -24,7 +24,15 @@ proc cueCommand*[Input, Output, Failure](
     try:
       var input = inputFactory()
       ticket = command.run(move(input))
+      when not defined(release) or defined(cbssFrontendTrace):
+        completion.traceAdapter(ftkCommandStarted, name, ticket.id)
     except CatchableError as error:
+      when not defined(release) or defined(cbssFrontendTrace):
+        completion.traceAdapter(
+          ftkCommandFailed,
+          name,
+          detail = "Command could not start: " & error.msg
+        )
       completion.fail("Command could not start: " & error.msg)
       return nil
 
@@ -35,10 +43,16 @@ proc cueCommand*[Input, Output, Failure](
         try:
           case status
           of csSucceeded:
+            when not defined(release) or defined(cbssFrontendTrace):
+              completion.traceAdapter(ftkCommandSucceeded, name, observed.id)
             completion.succeed()
           of csFailed:
+            when not defined(release) or defined(cbssFrontendTrace):
+              completion.traceAdapter(ftkCommandFailed, name, observed.id)
             completion.fail(failureMessage)
           of csCancelled:
+            when not defined(release) or defined(cbssFrontendTrace):
+              completion.traceAdapter(ftkCommandCancelled, name, observed.id)
             completion.fail(cancelledMessage)
           of csQueued, csRunning:
             discard

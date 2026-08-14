@@ -50,6 +50,11 @@ release. Before 1.0, minor releases may contain public API changes.
   `onFrame` callback. Frame subscriptions are scoped by RenderSurface, support
   shared display lists, and detach on completion, cancellation, failure, or
   surface disposal.
+- Added an opt-in bounded frontend trace that records Cue sessions, stages and
+  actions together with Signal / State / Store / Selector triggers, Command
+  run identifiers, motion lifecycle, and requested dirty domains. Ordinary
+  release builds compile the trace types and storage out; diagnostic release
+  builds can restore them with `-d:cbssFrontendTrace`.
 
 ## [0.4.2] - 2026-08-13
 

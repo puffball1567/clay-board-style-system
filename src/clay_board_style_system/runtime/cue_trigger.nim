@@ -10,6 +10,12 @@ import ./[
 type
   CueGraphFactory*[Value] = proc(value: Value): CueGraph {.closure.}
 
+  CueTriggerSourceKind = enum
+    ctskSignal,
+    ctskState,
+    ctskStore,
+    ctskSelector
+
   CueTrigger*[Value] = ref object of ComponentOwnedResource
     source: Signal[Value]
     subscription: SignalSubscription
@@ -41,11 +47,12 @@ proc releaseCueTrigger[Value](resource: ComponentOwnedResource) {.raises: [].} =
   trigger.graphFactory = nil
   trigger.subscription = SignalSubscription()
 
-proc initCueTrigger*[Value](
+proc initCueTriggerWithSource[Value](
     source: Signal[Value];
     runtime: CueRuntime;
     graphFactory: CueGraphFactory[Value];
-    policy = cspRestart
+    policy: CueStartPolicy;
+    sourceKind: static[CueTriggerSourceKind]
 ): CueTrigger[Value] =
   if source.isNil:
     raise newException(ValueError, "Cue trigger source cannot be nil")
@@ -66,6 +73,19 @@ proc initCueTrigger*[Value](
     if trigger.disposed or trigger.runtime.isNil or trigger.runtime.disposed:
       return
     trigger.compactSessions()
+    when not defined(release) or defined(cbssFrontendTrace):
+      let traceKind = case sourceKind
+        of ctskSignal: ftkTriggerSignal
+        of ctskState: ftkTriggerState
+        of ctskStore: ftkTriggerStore
+        of ctskSelector: ftkTriggerSelector
+      when Value is uint64:
+        if sourceKind == ctskStore:
+          trigger.runtime.traceTrigger(traceKind, revision = value)
+        else:
+          trigger.runtime.traceTrigger(traceKind)
+      else:
+        trigger.runtime.traceTrigger(traceKind)
     let graph = trigger.graphFactory(value)
     if graph.isNil:
       raise newException(ValueError, "Cue graph factory returned nil")
@@ -75,18 +95,27 @@ proc initCueTrigger*[Value](
 proc initCueTrigger*[Value](
     source: Signal[Value];
     runtime: CueRuntime;
+    graphFactory: CueGraphFactory[Value];
+    policy = cspRestart
+): CueTrigger[Value] =
+  initCueTriggerWithSource(source, runtime, graphFactory, policy, ctskSignal)
+
+proc initCueTrigger*[Value](
+    source: Signal[Value];
+    runtime: CueRuntime;
     graph: CueGraph;
     policy = cspRestart
 ): CueTrigger[Value] =
   if graph.isNil:
     raise newException(ValueError, "Cue trigger graph cannot be nil")
-  initCueTrigger(
+  initCueTriggerWithSource(
     source,
     runtime,
     proc(value: Value): CueGraph =
       discard value
       graph,
-    policy
+    policy,
+    ctskSignal
   )
 
 proc ownTrigger[Value](
@@ -128,7 +157,13 @@ proc cueOn*[Value](
 ): CueTrigger[Value] =
   if state.isNil:
     raise newException(ComponentContextError, "Cue trigger state cannot be nil")
-  component.cueOn(state.signal, runtime, graphFactory, policy)
+  component.ownTrigger(initCueTriggerWithSource(
+    state.signal,
+    runtime,
+    graphFactory,
+    policy,
+    ctskState
+  ))
 
 proc cueOn*[Value](
     component: CBSSComponent;
@@ -139,7 +174,15 @@ proc cueOn*[Value](
 ): CueTrigger[Value] =
   if state.isNil:
     raise newException(ComponentContextError, "Cue trigger state cannot be nil")
-  component.cueOn(state.signal, runtime, graph, policy)
+  component.ownTrigger(initCueTriggerWithSource(
+    state.signal,
+    runtime,
+    proc(value: Value): CueGraph =
+      discard value
+      graph,
+    policy,
+    ctskState
+  ))
 
 proc cueOn*[Source, Action, Value](
     component: CBSSComponent;
@@ -150,7 +193,13 @@ proc cueOn*[Source, Action, Value](
 ): CueTrigger[Value] =
   if selector.isNil or selector.disposed:
     raise newException(ComponentContextError, "Cue trigger selector is not active")
-  component.cueOn(selector.signal, runtime, graphFactory, policy)
+  component.ownTrigger(initCueTriggerWithSource(
+    selector.signal,
+    runtime,
+    graphFactory,
+    policy,
+    ctskSelector
+  ))
 
 proc cueOn*[Source, Action, Value](
     component: CBSSComponent;
@@ -161,7 +210,15 @@ proc cueOn*[Source, Action, Value](
 ): CueTrigger[Value] =
   if selector.isNil or selector.disposed:
     raise newException(ComponentContextError, "Cue trigger selector is not active")
-  component.cueOn(selector.signal, runtime, graph, policy)
+  component.ownTrigger(initCueTriggerWithSource(
+    selector.signal,
+    runtime,
+    proc(value: Value): CueGraph =
+      discard value
+      graph,
+    policy,
+    ctskSelector
+  ))
 
 proc cueOn*[Source, Action](
     component: CBSSComponent;
@@ -172,7 +229,13 @@ proc cueOn*[Source, Action](
 ): CueTrigger[uint64] =
   if store.isNil:
     raise newException(ComponentContextError, "Cue trigger Store cannot be nil")
-  component.cueOn(store.commitSignal, runtime, graphFactory, policy)
+  component.ownTrigger(initCueTriggerWithSource(
+    store.commitSignal,
+    runtime,
+    graphFactory,
+    policy,
+    ctskStore
+  ))
 
 proc cueOn*[Source, Action](
     component: CBSSComponent;
@@ -183,7 +246,15 @@ proc cueOn*[Source, Action](
 ): CueTrigger[uint64] =
   if store.isNil:
     raise newException(ComponentContextError, "Cue trigger Store cannot be nil")
-  component.cueOn(store.commitSignal, runtime, graph, policy)
+  component.ownTrigger(initCueTriggerWithSource(
+    store.commitSignal,
+    runtime,
+    proc(value: uint64): CueGraph =
+      discard value
+      graph,
+    policy,
+    ctskStore
+  ))
 
 proc activeCount*[Value](trigger: CueTrigger[Value]): int =
   if trigger.isNil or trigger.disposed:
