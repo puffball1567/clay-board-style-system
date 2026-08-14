@@ -71,6 +71,7 @@ task testMotionAsan, "Run motion and Cue lifecycle tests under AddressSanitizer"
       "command",
       "cue",
       "cue_command",
+      "cue_motion",
       "cue_trigger"
     ]:
       let suffix = testName & "_" & memoryModel & "_asan"
@@ -120,6 +121,7 @@ task testLsan, "Run retained lifecycle tests under LeakSanitizer on Linux":
         ("command", "tests/runtime/test_command.nim"),
         ("cue", "tests/runtime/test_cue.nim"),
         ("cue_command", "tests/runtime/test_cue_command.nim"),
+        ("cue_motion", "tests/runtime/test_cue_motion.nim"),
         ("cue_trigger", "tests/runtime/test_cue_trigger.nim")
       ]:
         let testName = test[0]
@@ -256,6 +258,8 @@ task testCueValgrind, "Run ARC Cue lifecycle checks under Valgrind":
   exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 /tmp/clay_board_style_system_cue_trigger_valgrind"
   exec "nim c --mm:arc -d:release -d:useMalloc --path:src --nimcache:/tmp/clay_board_style_system_cue_command_valgrind_nimcache --out:/tmp/clay_board_style_system_cue_command_valgrind tests/runtime/test_cue_command.nim"
   exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 /tmp/clay_board_style_system_cue_command_valgrind"
+  exec "nim c --mm:arc -d:release -d:useMalloc --path:src --nimcache:/tmp/clay_board_style_system_cue_motion_valgrind_nimcache --out:/tmp/clay_board_style_system_cue_motion_valgrind tests/runtime/test_cue_motion.nim"
+  exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 /tmp/clay_board_style_system_cue_motion_valgrind"
 
 task setupBundled, "Use the repository development runtime for static SDL3 linking":
   exec "nim c -r --mm:arc --nimcache:/tmp/clay_board_style_system_setup_nimcache --out:/tmp/cbss_configure src/cbss_configure.nim bundled vendor/sdl3 ."
