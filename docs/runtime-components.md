@@ -177,6 +177,14 @@ value-less registrations produce diagnostics instead of being silently lost.
 Successful submission collects once and transports the resulting immutable
 snapshot on the submit event; later control mutations cannot change it.
 
+Version 0.5 extends this existing registration model with reusable typed
+validation rules attached to controls. Controls retain current validity while
+error reporting remains independently configurable for input, blur, or submit.
+Forms gain `checkValidity()` and `reportValidity()`; `submit()` validates before
+collecting the immutable snapshot. Network-backed checks remain explicit
+Commands rather than hidden rules. The target contract is documented in
+[Form Validation Design](form-validation.md).
+
 `runtime/file_input.nim` provides a style-neutral file-selection boundary. It
 does not open paths or own a platform picker. User activation gives application
 code a copied `FileSelectionRequest`; the host applies its permission, sandbox,
