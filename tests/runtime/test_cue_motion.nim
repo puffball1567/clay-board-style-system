@@ -104,6 +104,48 @@ suite "Cue motion adapters":
     driver.advanceTime(1)
     check session.status == cssSucceeded
 
+  test "completed animation can start a following animation through invalidation":
+    let ui = initUiRoot()
+    for name in ["fade-in", "fade-out"]:
+      ui.registerStyleKeyframes(styleKeyframes(name, [
+        styleKeyframe(0, [decl("opacity", number(
+          if name == "fade-in": 0 else: 1
+        ))]),
+        styleKeyframe(1, [decl("opacity", number(
+          if name == "fade-in": 1 else: 0
+        ))])
+      ]))
+    let panel = ui.box()
+    let driver = initCbssTestDriver(ui, size(200, 100))
+    let runtime = initCueRuntime()
+    defer:
+      check runtime.dispose()
+    let graph = cue(cueAnimation(
+      "enter",
+      panel,
+      "fade-in",
+      proc() = panel.applyStyle(animationStyle("fade-in"))
+    )).then(cueAnimation(
+      "leave",
+      panel,
+      "fade-out",
+      proc() = panel.applyStyle(animationStyle("fade-out"))
+    ))
+
+    let session = runtime.start(graph)
+    check ui.consumeInvalidation().domains == {ddStyle}
+    driver.refresh()
+    driver.advanceTime(1)
+
+    check session.status == cssRunning
+    let chainedUpdate = ui.consumeInvalidation()
+    check chainedUpdate.domains == {ddStyle}
+    check chainedUpdate.roots == @[panel.id]
+
+    driver.refresh()
+    driver.advanceTime(1)
+    check session.status == cssSucceeded
+
   test "public motion handlers coexist with Cue observers":
     let ui = initUiRoot()
     let panel = ui.box(transitionStyle(0))

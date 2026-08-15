@@ -1,6 +1,6 @@
 # Frontend Runtime Design
 
-Status: `State through Cue core and runtime adapters implemented; traces and demo pending`
+Status: `Version 0.5 runtime, adapters, bounded traces, and orchestration demo implemented`
 
 The authoring flow in this document is adopted. Exact generic constraints,
 result types, and individual identifiers may be refined during implementation,
@@ -72,9 +72,9 @@ The design extends working CBSS mechanisms rather than replacing them.
 | Worker delivery | bounded streams and UI mailbox | Command completion adapters |
 
 Retained `State[T]`, nested `batch` publication, transactional Stores, selected
-subscriptions, component-owned `watch`, source-driven Effects, and typed
-Commands are implemented in the opt-in `frontend_runtime` module. Cue sessions
-remain the next implementation unit.
+subscriptions, component-owned `watch`, source-driven Effects, typed Commands,
+Cue sessions, runtime adapters, and bounded development traces are implemented
+in the opt-in `frontend_runtime` module.
 
 ## Adopted Authoring Contract
 
@@ -720,7 +720,12 @@ for the style/layout engine.
    are **implemented**.
 8. Add optional traces, authoring conveniences, performance gates, and a demo
    that exercises event-, time-, and Signal-triggered parallel orchestration.
-   The bounded development trace is **implemented**; the integration demo is
-   pending.
+   The bounded development trace and standalone orchestration demo are
+   **implemented**. Run the visual example with `nimble orchestrationDemo`;
+   its headless contract is covered by `test_orchestration_demo.nim`.
+   Two additional real-time visual examples are included:
+   `nimble cueMotionGraphicsDemo` exercises kinetic typography, while
+   `nimble cueGeometryMotionDemo` exercises the same Style and Cue contracts
+   with geometry, synchronized motion, and staggered composition.
 9. Consider C ABI exposure only after the Nim ownership and completion
    contracts are stable; generic Nim Store state does not cross the C ABI.

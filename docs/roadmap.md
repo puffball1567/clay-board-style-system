@@ -1515,7 +1515,7 @@ is outside the CBSS guarantee.
 
 ### Frontend Runtime And General Cue Orchestration
 
-Status: `Version 0.5 target; State through Cue core and runtime adapters implemented; traces and demo pending`
+Status: `Version 0.5 runtime, adapters, bounded traces, and orchestration demo implemented`
 
 CBSS will include an opt-in first-party Nim frontend runtime that joins retained
 component state, typed Stores and Actions, selected subscriptions, owned
@@ -1589,6 +1589,8 @@ Implementation order reuses the current code rather than recreating it:
    component lifecycle adapters are **implemented**.
 6. Add traces, ARC/ORC and performance gates, and event/time/Signal-triggered
    orchestration demos before considering a foreign-language ABI.
+   **Implemented**, including an opt-in bounded trace, release-build exclusion
+   gate, standalone SDL3 demo, and virtual-clock headless contract test.
 
 ### Production Layout, Scrolling, Virtualization, And Accessibility
 

@@ -637,9 +637,11 @@ proc setNodeStyle*(
         style.declarations
       )
       root.componentStyles[index] = styleSheet([rule(selector, declarations, priority = priority)])
+      root.invalidate(node, {ddStyle})
       return
   let sheet = styleSheet([rule(selector, style.declarations, priority = priority)])
   root.appliedStyleIndices[key] = root.storeComponentStyle(sheet)
+  root.invalidate(node, {ddStyle})
 
 proc applyStyle*(root: UiRoot; handle: NodeHandle; style: UiStyle) =
   if style.declarations.len > 0:

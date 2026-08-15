@@ -131,15 +131,24 @@ nimble sdl3Demo
 ```
 
 The focused demos isolate component authoring, Canvas/color behavior, and an
-event-driven loading animation. The declarative motion demo runs automatic
-keyframes and hover transitions without manual Canvas animation:
+event-driven loading animation. The declarative and Cue motion demos run
+real-time keyframes, transitions, and serial/parallel orchestration without
+pre-rendered animation:
 
 ```sh
 nimble componentDemo
 nimble v03CanvasDemo
 nimble loadingIndicatorDemo
 nimble declarativeMotionDemo
+nimble orchestrationDemo
+nimble cueMotionGraphicsDemo
+nimble cueGeometryMotionDemo
 ```
+
+`cueMotionGraphicsDemo` demonstrates kinetic typography and sequenced visual
+stages. `cueGeometryMotionDemo` proves the same public Style and Cue APIs with
+only geometry: a gravity-shaped bounce, synchronized shadow, staggered tiles,
+and a composed final poster.
 
 [![Declarative transition and keyframe demo](sample/ClayBoardStyleSystem_declarative_motion_demo_preview.gif)](sample/ClayBoardStyleSystem_declarative_motion_demo.mp4)
 
