@@ -54,12 +54,16 @@ disposed registered field or a control without a value produces a diagnostic
 instead of disappearing silently. Editing a control after collection does not
 change an existing snapshot.
 
-`form.submit()` validates first, collects successful controls once, and carries
-that immutable snapshot on its `onSubmit` event. An empty valid form still
-carries an explicitly present empty snapshot. A synthetic `iekSubmit` emitted
-without `submitEvent(data)` has no snapshot, so generic event producers do not
-silently claim that they collected a form. Call `form.collectData()` directly
-when collection diagnostics are needed before submission.
+The current registration model uses the retained form validity state before it
+collects successful controls once and carries that immutable snapshot on its
+`onSubmit` event. Version 0.5 replaces manual aggregate validity with attached
+control rules, `checkValidity()`, `reportValidity()`, and validation-first
+`submit()` behavior as specified in
+[Form Validation Design](form-validation.md). An empty valid form still carries
+an explicitly present empty snapshot. A synthetic `iekSubmit` emitted without
+`submitEvent(data)` has no snapshot, so generic event producers do not silently
+claim that they collected a form. Call `form.collectData()` directly when
+collection diagnostics are needed before submission.
 
 `FileInput` uses the same form contract without granting filesystem authority
 to CBSS. The host opens its platform picker, validates the result under its own

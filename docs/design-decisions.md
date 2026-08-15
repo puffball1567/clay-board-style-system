@@ -683,3 +683,33 @@ mechanisms. Game-pause policy, autosave conditions, cut-scene decisions, and
 other application-specific orchestration remain application code. A feature is
 not excluded merely because games use it, and it is not included merely because
 one application could automate it.
+
+## D27 — Validation is retained control state, not a submission-time utility (Adopted)
+
+**Context.** A one-shot `validate(value)` chain is useful for ordinary Nim code
+but does not by itself provide the frontend capability expected from forms.
+Controls need current validity, configurable reporting, invalid Style and
+accessibility state, cross-field dependency updates, focus behavior, and a
+validation-first submit boundary. Hiding network requests inside the same chain
+would also mix deterministic value checking with transport, cancellation, and
+application policy.
+
+**Decision.** Version 0.5 uses reusable typed `ValidationRules[T]` declarations
+attached to retained controls. A value change evaluates only the affected
+control and its explicit cross-field dependants. Computing validity is separate
+from reporting it; controls support input-, blur-, and submit-oriented reporting
+without rejecting editable intermediate values by default. The same rules
+remain directly callable through `rules.validate(value)` for tests and logic
+that does not construct a UI.
+
+Forms expose `checkValidity()` and `reportValidity()`. `submit()` validates all
+enabled registered controls before collecting one immutable FormData snapshot
+and dispatching application code. Invalid submission reports and focuses under
+the form policy but never invokes transport.
+
+The built-in rules are synchronous typed descriptors. Network-backed checks,
+remote uniqueness, and application-state policy are explicit Commands or user
+operations, optionally using Joubako; there is no `customAsync` validation rule.
+CBSS owns frontend validity mechanics and accessibility semantics, while the
+backend remains the authoritative security boundary. The complete contract is
+[Form Validation Design](form-validation.md).

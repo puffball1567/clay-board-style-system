@@ -30,12 +30,12 @@ libraries practical.
 | Semantic document structure | roles, accessible names, state, labels, and relationships | In progress | The runtime model belongs in CBSS; operating-system accessibility export must be completed per platform. |
 | HTML custom elements | Nim modules exporting components, styles, and behavior | Runtime | Packages define their own components without a global tag registry. |
 | HTML forms | text input, textarea, select, checkbox, switch, radio, range, buttons, focus, and events | Runtime | Form behavior is native and typed, not HTML form submission. |
-| Constraint validation | chainable typed validation, retained validity state, messages, and native form policy | Version 0.5 target | The first field-focused set includes presence, string and regular-expression matching, common formats, number, comparison, collection, file, custom, and cancellable asynchronous validation. CBSS provides efficient execution and reusable control semantics; applications own business rules and backend validation. |
+| Constraint validation | reusable typed rules attached to controls, retained validity, reporting policy, and form coordination | Version 0.5 target | The first field-focused set contains 40 synchronous presence, string, regex, format, number, comparison, collection, file, and custom rules. Network-backed checks remain explicit Commands or application operations; backend validation remains authoritative. |
 | Links and document navigation | native `Link` and navigation stack | Planned | In-process destinations replace browser document navigation. |
 | Canvas | first-class CBSS Canvas and 2D drawing context | Planned | Must behave as a normal CBSS box with clipping, focus, and retained rendering. |
 | SVG/vector drawing | paths, fills, strokes, images, and text through Canvas | Planned | SVG text parsing is not required; vector capabilities are exposed as typed APIs. |
 | Image, video, and camera elements | native media/image surfaces | Planned | Decoding and device access use dedicated adapters or packages. |
-| Drag and drop | pointer capture, drag lifecycle, data payloads, and native drop integration | Planned | Browser `DataTransfer` compatibility is not a goal. |
+| Drag and drop | existing synthetic lifecycle plus typed payloads, previews, automatic scrolling, accessibility, and native drop adapters | Runtime / Planned | Basic pointer events exist. The complete platform primitive is planned; browser `DataTransfer` compatibility is not a goal. |
 | Clipboard | typed clipboard actions and platform adapters | In progress | Clipboard policy remains explicit and local to the application. |
 | Browser document parser | HTML parser and document mutation API | No plan | Nim source constructs the UI directly. |
 | Browser tabs, SEO, page reload, browser history | browser navigation model | No plan | Native navigation has different requirements. |

@@ -326,9 +326,11 @@ construction, ownership, callbacks, versioning, and static/shared linking.
 | Performance budgets | [Performance Model](docs/performance-model.md) |
 | Components and Style DI | [Component Authoring](docs/component-authoring.md) |
 | State, effects, Commands, and Cue | [Frontend Runtime Design](docs/frontend-runtime.md) |
+| Forms and reactive validation | [Form Validation Design](docs/form-validation.md) |
 | Events and typed signals | [Events](docs/events.md) |
 | Blob, FormData, and Streams | [UI Data Interchange](docs/data-interchange.md) |
 | Canvas and custom drawing | [Render Surfaces](docs/render-surfaces.md) |
+| Optional platform primitive candidates | [Platform Primitives](docs/platform-primitives.md) |
 | Navigation and Link | [Navigation](docs/navigation.md) |
 | Color model | [Color](docs/color.md) |
 | Accessibility | [Accessibility](docs/accessibility.md) |

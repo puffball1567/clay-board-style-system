@@ -1592,37 +1592,42 @@ Implementation order reuses the current code rather than recreating it:
    **Implemented**, including an opt-in bounded trace, release-build exclusion
    gate, standalone SDL3 demo, and virtual-clock headless contract test.
 
-### Chainable Form Validation
+### Retained Reactive Form Validation
 
 Status: `Version 0.5 target`
 
-Version 0.5 adds an opt-in, chainable validation surface for native forms. The
-API should feel familiar to engineers who have used JavaScript and TypeScript
-validation libraries, while remaining ordinary typed Nim with full LSP support.
-CBSS owns the efficient execution contract and the connection between validation
-state and retained UI. Applications continue to own business-specific rules,
-error wording, submission policy, and backend validation.
+Version 0.5 adds reusable typed rule declarations for native forms. The API
+should feel familiar to engineers who have used JavaScript and TypeScript
+validation libraries while remaining ordinary Nim with full LSP support. CBSS
+owns efficient rule execution, retained control validity, reporting policy,
+form coordination, focus, Style state, and accessibility semantics.
+Applications continue to own rule selection, error wording, business policy,
+transport, and authoritative backend validation.
 
 The normal authoring flow is intentionally direct:
 
 ```nim
-let result =
-  validate(emailAddress)
+let emailRules =
+  validationRules[string]()
     .required("Email is required")
     .maxLength(254, "Email is too long")
     .email("Enter a valid email address")
 
-emailError.set(result.message)
+let emailInput = ui.textInput(
+  emailAddress,
+  validation = emailRules,
+  reportOn = ValidationReport.onBlur
+)
 ```
 
-Validation does not require a framework-owned form object or force external
-validation packages to convert their errors into one CBSS-specific model. A
-result can be stored in ordinary retained `State[T]`, and conditional component
-flow can mount an error element, apply invalid-state Style, request focus, and
-publish accessibility semantics. Higher-level form libraries may define richer
-error collections on top of the same primitives.
+Rules are prepared once, can be imported or injected, and remain independently
+testable through `emailRules.validate(value)`. Attached controls keep validity
+current as values change while error reporting remains configurable as
+`onInput`, `onBlur`, or `onSubmit`. Invalid intermediate values remain editable
+rather than being rejected at the key-event boundary.
 
-The Version 0.5 built-in validator set contains these 41 operations:
+The Version 0.5 built-in validator set contains these 40 synchronous
+operations:
 
 - **Presence and strings:** `required`, `optional`, `minLength`, `maxLength`,
   `exactLength`, `notBlank`, `matches`, `contains`, `startsWith`, and
@@ -1638,14 +1643,14 @@ The Version 0.5 built-in validator set contains these 41 operations:
   and `uniqueItems`.
 - **Files:** `maxFileSize`, `allowedMimeTypes`, `allowedExtensions`, and
   `maxFiles`.
-- **Extension points:** `custom` and `customAsync`.
+- **Extension point:** `custom`.
 
 The implementation is subject to the following performance and behavior
 constraints:
 
-- Chaining is normal Nim call composition, not a heap-allocated sequence of
-  closures or a runtime interpreter. Built-in validators remain inlineable and
-  do not capture component or `UiRoot` ownership.
+- Chaining builds typed descriptors or a bounded tagged representation once,
+  not a heap-allocated sequence of capturing closures per input event. Built-in
+  validators do not capture component or `UiRoot` ownership.
 - Synchronous validation borrows its input where possible, performs no string
   copy on the success path, and stops at the first failure by default. Explicit
   all-error collection is opt-in and may allocate only when recording failures.
@@ -1656,17 +1661,18 @@ constraints:
 - `optional` short-circuits validators that do not apply to an absent value;
   `required` and `notBlank` remain distinct so an empty string and a
   whitespace-only string have explicit behavior.
-- Cross-field comparisons read an explicit peer value or selector. They do not
-  subscribe to an entire form or invalidate unrelated controls.
+- Cross-field comparisons declare an explicit peer dependency. A peer change
+  revalidates only registered dependants, with bounded cycle protection; it does
+  not subscribe every field to the entire form.
 - File validators inspect immutable Blob/file metadata and bounded counts. They
   do not synchronously read file contents, infer MIME types from untrusted bytes,
   or perform transport work on the UI thread.
 - `custom` accepts an ordinary typed Nim procedure. Capturing closures remain an
   explicit opt-in cost rather than the built-in path.
-- `customAsync` uses generation/cancellation ownership so a stale completion
-  cannot overwrite a newer field value or update an unmounted component. Worker
-  results cross the existing bounded UI-thread handoff and trigger only the
-  affected dirty domains.
+- Network-backed and application-state checks are Commands, not hidden
+  validators. Username availability and similar checks may use Joubako after
+  synchronous local validation succeeds; Command ownership handles
+  cancellation and stale-result rejection.
 - Validation and normalization remain separate. Operations such as trimming,
   case conversion, Unicode normalization, coercion, parsing, and default-value
   insertion must not silently mutate a value while a validation chain is being
@@ -1681,6 +1687,12 @@ statically, so they should be added only where runtime input validation provides
 clear value. The eventual validation surface may contain roughly 70 to 80
 focused operations without placing unused format or schema modules in a normal
 CBSS application binary.
+
+`form.checkValidity()` checks without forcing visible reports;
+`form.reportValidity()` exposes failures and focuses the first invalid control;
+and `form.submit()` validates before collecting one immutable FormData snapshot
+and dispatching application code. The full behavior, ownership, performance,
+and test contract is in [Form Validation Design](form-validation.md).
 
 ### Production Layout, Scrolling, Virtualization, And Accessibility
 
@@ -1891,6 +1903,22 @@ Raw events remain available to games, drawing tools, and specialized controls.
 The gesture layer is an opt-in interpretation above them, not a replacement for
 SDL3 input or an assumption that every touch must become a browser-style
 gesture.
+
+### Official Platform Primitive Candidates
+
+CBSS may provide more than the smallest paint and event mechanisms when a
+broadly reusable capability is difficult to implement correctly and must
+coordinate layout, rendering, input, focus, accessibility, or platform
+adapters. Brush and Stroke, a style-neutral Color Picker, and complete Drag and
+Drop are recorded as official implementation candidates.
+
+These candidates use a layered model: a small core mechanism, an official
+optional module that compiles out when unused, and replaceable reference
+controls where a usable default matters. Application workflows, business
+policy, branded component libraries, and content-specific tools remain outside
+CBSS. See [Official Platform Primitive Candidates](platform-primitives.md) for
+the inclusion test, current foundation, responsibility boundaries, and release
+gates.
 
 ## Later Milestones
 
