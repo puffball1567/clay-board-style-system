@@ -1592,6 +1592,96 @@ Implementation order reuses the current code rather than recreating it:
    **Implemented**, including an opt-in bounded trace, release-build exclusion
    gate, standalone SDL3 demo, and virtual-clock headless contract test.
 
+### Chainable Form Validation
+
+Status: `Version 0.5 target`
+
+Version 0.5 adds an opt-in, chainable validation surface for native forms. The
+API should feel familiar to engineers who have used JavaScript and TypeScript
+validation libraries, while remaining ordinary typed Nim with full LSP support.
+CBSS owns the efficient execution contract and the connection between validation
+state and retained UI. Applications continue to own business-specific rules,
+error wording, submission policy, and backend validation.
+
+The normal authoring flow is intentionally direct:
+
+```nim
+let result =
+  validate(emailAddress)
+    .required("Email is required")
+    .maxLength(254, "Email is too long")
+    .email("Enter a valid email address")
+
+emailError.set(result.message)
+```
+
+Validation does not require a framework-owned form object or force external
+validation packages to convert their errors into one CBSS-specific model. A
+result can be stored in ordinary retained `State[T]`, and conditional component
+flow can mount an error element, apply invalid-state Style, request focus, and
+publish accessibility semantics. Higher-level form libraries may define richer
+error collections on top of the same primitives.
+
+The Version 0.5 built-in validator set contains these 41 operations:
+
+- **Presence and strings:** `required`, `optional`, `minLength`, `maxLength`,
+  `exactLength`, `notBlank`, `matches`, `contains`, `startsWith`, and
+  `endsWith`.
+- **Formats:** `email`, `url`, `uuid`, `ipAddress`, `date`, `time`, and
+  `dateTime`. The `matches` string validator provides explicit regular-
+  expression validation.
+- **Numbers:** `min`, `max`, `range`, `integer`, `positive`, `negative`,
+  `finite`, and `multipleOf`.
+- **Comparison and selection:** `equalTo`, `notEqualTo`, `oneOf`, `notOneOf`,
+  `sameAs`, and `differentFrom`.
+- **Collections and multiple selection:** `minItems`, `maxItems`, `exactItems`,
+  and `uniqueItems`.
+- **Files:** `maxFileSize`, `allowedMimeTypes`, `allowedExtensions`, and
+  `maxFiles`.
+- **Extension points:** `custom` and `customAsync`.
+
+The implementation is subject to the following performance and behavior
+constraints:
+
+- Chaining is normal Nim call composition, not a heap-allocated sequence of
+  closures or a runtime interpreter. Built-in validators remain inlineable and
+  do not capture component or `UiRoot` ownership.
+- Synchronous validation borrows its input where possible, performs no string
+  copy on the success path, and stops at the first failure by default. Explicit
+  all-error collection is opt-in and may allocate only when recording failures.
+- `matches` accepts a compiled regular-expression value so input events do not
+  compile the same expression repeatedly. Pattern syntax errors are reported at
+  construction or compilation time where the selected Nim regex backend permits
+  it, never once per keystroke.
+- `optional` short-circuits validators that do not apply to an absent value;
+  `required` and `notBlank` remain distinct so an empty string and a
+  whitespace-only string have explicit behavior.
+- Cross-field comparisons read an explicit peer value or selector. They do not
+  subscribe to an entire form or invalidate unrelated controls.
+- File validators inspect immutable Blob/file metadata and bounded counts. They
+  do not synchronously read file contents, infer MIME types from untrusted bytes,
+  or perform transport work on the UI thread.
+- `custom` accepts an ordinary typed Nim procedure. Capturing closures remain an
+  explicit opt-in cost rather than the built-in path.
+- `customAsync` uses generation/cancellation ownership so a stale completion
+  cannot overwrite a newer field value or update an unmounted component. Worker
+  results cross the existing bounded UI-thread handoff and trigger only the
+  affected dirty domains.
+- Validation and normalization remain separate. Operations such as trimming,
+  case conversion, Unicode normalization, coercion, parsing, and default-value
+  insertion must not silently mutate a value while a validation chain is being
+  evaluated.
+
+The first release is field- and form-focused rather than a clone of a
+TypeScript schema library. Later opt-in modules may add more string formats and
+runtime schemas for nested arrays, objects, tuples, records, enums, literals,
+unions, discriminated unions, intersections, defaults, preprocessing,
+transforms, pipelines, and recursive data. Nim already represents many of these
+statically, so they should be added only where runtime input validation provides
+clear value. The eventual validation surface may contain roughly 70 to 80
+focused operations without placing unused format or schema modules in a normal
+CBSS application binary.
+
 ### Production Layout, Scrolling, Virtualization, And Accessibility
 
 Status: `Version 0.6 target`
