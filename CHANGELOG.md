@@ -55,6 +55,21 @@ release. Before 1.0, minor releases may contain public API changes.
   run identifiers, motion lifecycle, and requested dirty domains. Ordinary
   release builds compile the trace types and storage out; diagnostic release
   builds can restore them with `-d:cbssFrontendTrace`.
+- Added a standalone Cue orchestration demo and matching headless contract
+  test for typed Signal entry, serial stages, stage-relative delayed parallel
+  branches, an all-join barrier, retained visual updates, and bounded tracing.
+- Added typography and geometry motion-graphics demos built entirely from the
+  public Style, keyframe, and Cue APIs. They demonstrate real-time serial and
+  parallel visual orchestration without pre-rendered media or demo-specific
+  runtime behavior.
+
+### Fixed
+
+- Invalidating a dynamically replaced node style now schedules style
+  reconciliation, allowing completed Cue motion to start its following stage
+  without an unrelated redraw.
+- The cosmic-text bridge now source-over composites overlapping glyph pixels
+  instead of allowing later antialiased pixels to erase earlier glyph edges.
 
 ## [0.4.2] - 2026-08-13
 

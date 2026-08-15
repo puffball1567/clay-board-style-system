@@ -635,6 +635,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn overlapping_glyph_pixels_are_composited_instead_of_erased() {
+        let mut opaque = [255, 255, 255, 255];
+        composite_rgba(&mut opaque, [255, 255, 255, 48]);
+        assert_eq!(opaque, [255, 255, 255, 255]);
+
+        let mut antialiased = [255, 255, 255, 128];
+        composite_rgba(&mut antialiased, [255, 255, 255, 128]);
+        assert_eq!(antialiased, [255, 255, 255, 192]);
+    }
+
+    #[test]
     fn family_csv_keeps_order_and_removes_duplicates() {
         assert_eq!(
             parse_families("Inter, 'Noto Sans JP', Inter, sans-serif"),
@@ -970,6 +981,26 @@ fn checked_bitmap_len(width: u32, height: u32) -> Option<usize> {
         .filter(|value| *value <= MAX_TEXT_BITMAP_BYTES)
 }
 
+fn composite_rgba(dst: &mut [u8], src: [u8; 4]) {
+    let src_alpha = u32::from(src[3]);
+    if src_alpha == 0 {
+        return;
+    }
+    let dst_alpha = u32::from(dst[3]);
+    let inverse_src_alpha = 255 - src_alpha;
+    let alpha_numerator = src_alpha * 255 + dst_alpha * inverse_src_alpha;
+    if alpha_numerator == 0 {
+        return;
+    }
+
+    for channel in 0..3 {
+        let color_numerator = u32::from(src[channel]) * src_alpha * 255
+            + u32::from(dst[channel]) * dst_alpha * inverse_src_alpha;
+        dst[channel] = ((color_numerator + alpha_numerator / 2) / alpha_numerator) as u8;
+    }
+    dst[3] = ((alpha_numerator + 127) / 255).min(255) as u8;
+}
+
 unsafe fn render_bitmap_impl(
     engine: *mut CbssCosmicTextEngine,
     input: *const CbssCosmicTextMeasureInput,
@@ -1067,10 +1098,7 @@ unsafe fn render_bitmap_impl(
                 let tx = (span.x - min_x) as u32 + px;
                 let ty = (span.y - min_y) as u32 + py;
                 let index = (ty as usize * width as usize + tx as usize) * 4;
-                pixels[index] = rgba[0];
-                pixels[index + 1] = rgba[1];
-                pixels[index + 2] = rgba[2];
-                pixels[index + 3] = rgba[3];
+                composite_rgba(&mut pixels[index..index + 4], rgba);
             }
         }
     }
