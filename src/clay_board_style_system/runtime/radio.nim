@@ -4,6 +4,7 @@ import ../core/[color, declaration, node, style_value]
 import ../input/events
 import ./form
 import ./ui_root
+import ./validation
 
 type
   RadioState* = ref object
@@ -20,6 +21,7 @@ type
   RadioSet* = ref object
     selectedValue*: string
     items*: seq[RadioState]
+    validation*: ValidationBinding[string]
 
   RadioParams* = object
     label*: string
@@ -31,8 +33,21 @@ type
     state*: RadioState
     radioSet*: RadioSet
 
+proc evaluateValidation(
+    radio: RadioHandle;
+    trigger: ValidationTrigger;
+    forceReport = false
+): ValidationResult
+
+proc validationAdapterFor(radio: RadioHandle): ValidationAdapter
+
 proc register*(form: FormHandle; name: string; radio: RadioHandle) =
-  form.registerField(radio.state.container, name, ffCheckable)
+  form.registerField(
+    radio.state.container,
+    name,
+    ffCheckable,
+    validation = radio.validationAdapterFor()
+  )
 
 proc initRadioSet*(selectedValue = ""): RadioSet =
   RadioSet(selectedValue: selectedValue, items: @[])
@@ -70,6 +85,9 @@ proc syncChecked(state: RadioState; checked: bool) =
   state.updateMarker()
 
 proc emitValueEvents(radio: RadioHandle) =
+  discard radio.evaluateValidation(ValidationTrigger.input)
+  if not radio.radioSet.validation.isNil:
+    radio.state.root.notifyValidationDependencies(radio.radioSet.validation.valueReference.identity)
   discard radio.container.emit(inputEvent(radio.state.value))
   discard radio.container.emit(changeEvent(radio.state.value))
 
@@ -81,12 +99,144 @@ proc select*(radio: RadioHandle; emitEvents = true) =
     item.syncChecked(item == radio.state)
   if emitEvents:
     radio.emitValueEvents()
+  else:
+    discard radio.evaluateValidation(ValidationTrigger.explicit)
+    if not radio.radioSet.validation.isNil:
+      radio.state.root.notifyValidationDependencies(radio.radioSet.validation.valueReference.identity)
+
+proc syncValidationState(radio: RadioHandle) =
+  let validation =
+    if radio.radioSet.validation.isNil:
+      validValidationResult()
+    else:
+      radio.radioSet.validation.result
+  let message =
+    if radio.radioSet.validation.isNil:
+      ""
+    else:
+      radio.radioSet.validation.validationMessage()
+  for item in radio.radioSet.items:
+    if item.container.valid():
+      item.container.setState(esInvalid, not item.disabled and not validation.isValid)
+      item.root.tree.setAttribute(
+        item.container.id,
+        "validation-message",
+        if item.disabled: "" else: message
+      )
+
+proc evaluateValidation(
+    radio: RadioHandle;
+    trigger: ValidationTrigger;
+    forceReport = false
+): ValidationResult =
+  if radio.radioSet.validation.isNil:
+    return validValidationResult()
+  result = radio.radioSet.validation.evaluate(
+    radio.radioSet.selectedValue,
+    trigger,
+    forceReport = forceReport
+  )
+  radio.syncValidationState()
+
+proc validationAdapterFor(radio: RadioHandle): ValidationAdapter =
+  validationAdapter(
+    proc(report: bool): ValidationResult =
+      radio.evaluateValidation(
+        if report: ValidationTrigger.submit else: ValidationTrigger.explicit,
+        forceReport = report
+      ),
+    proc(): ValidationResult =
+      if radio.radioSet.validation.isNil:
+        validValidationResult()
+      else:
+        radio.radioSet.validation.result
+  )
+
+proc setValidation*(
+    radioSet: RadioSet;
+    rules: ValidationRules[string];
+    reportOn = ValidationReport.onBlur
+) =
+  if radioSet.isNil:
+    raise newException(ValueError, "radio set is not initialized")
+  radioSet.validation = initValidationBinding(rules, radioSet.selectedValue, reportOn)
+  if radioSet.items.len > 0:
+    let representative = RadioHandle(state: radioSet.items[0], radioSet: radioSet)
+    representative.state.root.clearValidationDependencies(representative.container.id)
+    for peer in radioSet.validation.dependencyReferences:
+      let dependent = representative
+      representative.state.root.registerValidationDependency(
+        peer.identity,
+        representative.container.id,
+        proc() =
+          discard dependent.evaluateValidation(ValidationTrigger.explicit)
+      )
+    representative.syncValidationState()
+
+proc validationValue*(radioSet: RadioSet): ValidationValueRef[string] =
+  if radioSet.isNil:
+    raise newException(ValueError, "radio set is not initialized")
+  if radioSet.validation.isNil:
+    radioSet.validation = initValidationBinding(
+      validationRules[string](),
+      radioSet.selectedValue
+    )
+  radioSet.validation.valueReference
+
+proc validationResult*(radioSet: RadioSet): ValidationResult =
+  if radioSet.isNil or radioSet.validation.isNil:
+    validValidationResult()
+  else:
+    radioSet.validation.result
+
+proc validationMessage*(radioSet: RadioSet): string =
+  if radioSet.isNil or radioSet.validation.isNil:
+    ""
+  else:
+    radioSet.validation.validationMessage()
+
+proc checkValidity*(radioSet: RadioSet): bool =
+  if radioSet.isNil or radioSet.validation.isNil:
+    return true
+  var hasEnabledItem = false
+  for item in radioSet.items:
+    if item.container.valid() and not item.disabled:
+      hasEnabledItem = true
+      break
+  if not hasEnabledItem:
+    return true
+  radioSet.validation.evaluate(
+    radioSet.selectedValue,
+    ValidationTrigger.explicit
+  ).isValid
+
+proc reportValidity*(radioSet: RadioSet): bool =
+  if radioSet.isNil or radioSet.validation.isNil:
+    return true
+  var representativeState: RadioState
+  for item in radioSet.items:
+    if item.container.valid() and not item.disabled:
+      representativeState = item
+      break
+  if representativeState.isNil:
+    return true
+  result = radioSet.validation.evaluate(
+    radioSet.selectedValue,
+    ValidationTrigger.explicit,
+    forceReport = true
+  ).isValid
+  let representative = RadioHandle(state: representativeState, radioSet: radioSet)
+  representative.syncValidationState()
+  if not result:
+    discard representative.container.emit(iekInvalid)
+    representative.state.root.requestFocus(some(representative.container.id))
 
 proc setDisabled*(radio: RadioHandle; disabled: bool) =
   if not radio.container.valid():
     return
   radio.state.disabled = disabled
   radio.container.setState(esDisabled, disabled)
+  radio.syncValidationState()
 
 proc setLabel*(radio: RadioHandle; label: string) =
   if not radio.container.valid():
@@ -180,6 +330,7 @@ proc radio*(
       item.syncChecked(item == state)
 
   result = RadioHandle(state: state, radioSet: radioSet)
+  discard result.evaluateValidation(ValidationTrigger.explicit)
   let radio = result
   let ownDisabled = params.disabled
   root.registerFieldsetTarget(proc(disabled: bool) =
@@ -190,6 +341,10 @@ proc radio*(
     if radio.state.disabled:
       return stoppedEvent()
     radio.select()
+    ignoredEvent()
+  )
+  root.events.addInternalEventHandler(radio.container.id, iekBlur, proc(event: DispatchResult): EventOutcome =
+    discard radio.evaluateValidation(ValidationTrigger.blur)
     ignoredEvent()
   )
   root.events.addInternalEventHandler(radio.container.id, iekPointerDown, proc(event: DispatchResult): EventOutcome =

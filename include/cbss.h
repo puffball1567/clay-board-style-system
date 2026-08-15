@@ -25,7 +25,7 @@
 extern "C" {
 #endif
 
-#define CBSS_ABI_VERSION 0x00010012u
+#define CBSS_ABI_VERSION 0x00010013u
 #define CBSS_NODE_NONE UINT32_MAX
 #define CBSS_MAX_EAGER_BLOB_BYTES (64ull * 1024ull * 1024ull)
 #define CBSS_MAX_FORM_DATA_ENTRIES 65536u
@@ -125,7 +125,8 @@ typedef enum CbssNodeState {
   CBSS_STATE_DISABLED = 4,
   CBSS_STATE_CHECKED = 5,
   CBSS_STATE_SELECTED = 6,
-  CBSS_STATE_OPEN = 7
+  CBSS_STATE_OPEN = 7,
+  CBSS_STATE_INVALID = 8
 } CbssNodeState;
 
 typedef enum CbssNodeKind {

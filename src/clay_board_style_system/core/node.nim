@@ -48,7 +48,8 @@ type
     esDisabled,
     esChecked,
     esSelected,
-    esOpen
+    esOpen,
+    esInvalid
 
   SemanticInfo* = object
     role*: AccessibleRole

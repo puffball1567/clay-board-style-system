@@ -1,6 +1,6 @@
 #include "cbss.h"
 
-_Static_assert(CBSS_ABI_VERSION == 0x00010012u, "unexpected CBSS ABI version");
+_Static_assert(CBSS_ABI_VERSION == 0x00010013u, "unexpected CBSS ABI version");
 _Static_assert(CBSS_ROLE_SWITCH == 22, "unexpected switch role value");
 
 #include <assert.h>
@@ -623,6 +623,12 @@ int main(void) {
   assert(cbss_node_parent(context, label) == child);
   assert(cbss_node_child_count(context, root) == 3);
   assert(cbss_node_child(context, root, 0) == child);
+  assert(cbss_node_set_state(
+      context, child, CBSS_STATE_INVALID, 1) == CBSS_OK);
+  assert(cbss_node_set_state(
+      context, child, CBSS_STATE_INVALID, 0) == CBSS_OK);
+  assert(cbss_node_set_state(
+      context, child, CBSS_STATE_INVALID + 1, 1) == CBSS_INVALID_ARGUMENT);
   char identifier[32];
   assert(cbss_node_identifier(
       context, child, identifier, sizeof(identifier)) == 5);

@@ -151,6 +151,20 @@ disables wall-clock gates that are not meaningful under Valgrind.
 The release ARC memory-check build completed this workload under Valgrind with
 zero bytes retained at exit and zero reported memory errors.
 
+### Version 0.5 validation gate
+
+`tests/perf/validation_benchmark.nim` measures prepared typed rule descriptors
+and a precompiled regular expression independently. It compares 10,000 and
+100,000 successful evaluations per operation and fails if mean cost scales
+superlinearly. It also compares one-dependant dispatch in trees with 100 and
+10,000 unrelated nodes, enforcing that notification remains indexed by source
+rather than scanning the tree. Rule construction and regular-expression
+compilation stay outside the input path. A control value change evaluates that
+control and its explicit cross-field dependants only; unrelated form controls
+are not scanned.
+Full registered-field traversal is reserved for `checkValidity`,
+`reportValidity`, and `submit`.
+
 ## Hot-path data rules
 
 The hot path is: input event → dispatch → dirty marking → subtree style →

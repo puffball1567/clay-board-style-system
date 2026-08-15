@@ -36,6 +36,12 @@ type
     component: ComponentRetention
     callback: ComponentUnmountCallback
 
+  ValidationDependencyRefresh = proc() {.closure.}
+
+  ValidationDependencyBinding = object
+    target: NodeId
+    refresh: ValidationDependencyRefresh
+
   ContextMenuAction* = enum
     cmaCut,
     cmaCopy,
@@ -99,6 +105,8 @@ type
     frameRequestPending: bool
     parentStack: seq[NodeId]
     fieldsetStack: seq[FieldsetRegister]
+    validationDependencies: Table[pointer, seq[ValidationDependencyBinding]]
+    validationRefreshActive: HashSet[NodeId]
 
   NodeHandle* = object
     ## Non-owning: UiRoot owns the event registry, whose closures may capture
@@ -128,6 +136,8 @@ proc initUiRoot*(): UiRoot =
     defaultContextMenuNode: none(NodeId),
     defaultContextMenuItems: @[],
     defaultContextMenuItemNodes: @[],
+    validationDependencies: initTable[pointer, seq[ValidationDependencyBinding]](),
+    validationRefreshActive: initHashSet[NodeId](),
     defaultContextMenuStyleIndex: none(int),
     clipboardTextProvider: proc(): string = "",
     clipboardTextWriter: proc(text: string) = discard,
@@ -547,6 +557,65 @@ proc takeComponentUnmountCallbacks(
       retained.add binding
   root.mountedComponents = retained
 
+proc clearValidationDependencies*(root: UiRoot; target: NodeId) =
+  var emptySources: seq[pointer]
+  for source, bindings in root.validationDependencies.mpairs:
+    var retained = newSeqOfCap[ValidationDependencyBinding](bindings.len)
+    for binding in bindings:
+      if binding.target != target:
+        retained.add binding
+    bindings = retained
+    if bindings.len == 0:
+      emptySources.add source
+  for source in emptySources:
+    root.validationDependencies.del source
+
+proc registerValidationDependency*(
+    root: UiRoot;
+    source: pointer;
+    target: NodeId;
+    refresh: proc() {.closure.}
+) =
+  if source.isNil:
+    raise newException(ValueError, "validation dependency source is not initialized")
+  if not root.tree.isValid(target):
+    raise newException(ValueError, "validation dependency target is not active")
+  if refresh.isNil:
+    raise newException(ValueError, "validation dependency callback is required")
+  root.validationDependencies.mgetOrPut(source, @[]).add ValidationDependencyBinding(
+    target: target,
+    refresh: refresh
+  )
+
+proc notifyValidationDependencies*(root: UiRoot; source: pointer) =
+  if source.isNil:
+    return
+  let pending = root.validationDependencies.getOrDefault(source)
+  if pending.len == 0:
+    return
+  var needsPrune = false
+  for binding in pending:
+    if not root.tree.isValid(binding.target):
+      needsPrune = true
+      continue
+    if binding.target in root.validationRefreshActive:
+      continue
+    root.validationRefreshActive.incl binding.target
+    try:
+      binding.refresh()
+    finally:
+      root.validationRefreshActive.excl binding.target
+  if needsPrune and root.validationDependencies.hasKey(source):
+    let current = root.validationDependencies[source]
+    var retained = newSeqOfCap[ValidationDependencyBinding](current.len)
+    for binding in current:
+      if root.tree.isValid(binding.target):
+        retained.add binding
+    if retained.len == 0:
+      root.validationDependencies.del source
+    else:
+      root.validationDependencies[source] = retained
+
 proc uiStyle*(declarations: openArray[Declaration]): UiStyle =
   UiStyle(declarations: @declarations)
 
@@ -773,6 +842,20 @@ proc disposeSubtree*(
   discard root.events.removeEventHandlers(removed)
   root.removeSubtreeStyles(removed)
   root.scroll.clearNodes(removedIds)
+
+  var emptyValidationSources: seq[pointer]
+  for source, bindings in root.validationDependencies.mpairs:
+    var retained = newSeqOfCap[ValidationDependencyBinding](bindings.len)
+    for binding in bindings:
+      if binding.target notin removed:
+        retained.add binding
+    bindings = retained
+    if bindings.len == 0:
+      emptyValidationSources.add source
+  for source in emptyValidationSources:
+    root.validationDependencies.del source
+  for id in removedIds:
+    root.validationRefreshActive.excl id
 
   for id in removedIds:
     let surface = root.tree.nodes[id.nodeIndex].renderSurfaceId

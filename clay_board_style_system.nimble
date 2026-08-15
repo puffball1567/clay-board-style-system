@@ -65,7 +65,7 @@ task testOrc, "Run the test suite under ORC":
   exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
   exec "nim c -r --mm:orc --nimcache:/tmp/clay_board_style_system_orc_test_runner_nimcache --out:/tmp/clay_board_style_system_orc_test_runner tools/run_tests.nim --memory:orc"
 
-task testMotionAsan, "Run motion and Cue lifecycle tests under AddressSanitizer":
+task testMotionAsan, "Run retained runtime tests under AddressSanitizer":
   let sanitizerRoot = thisDir() & "/nimcache"
   let addressLayoutFlags =
     when defined(linux):
@@ -83,7 +83,10 @@ task testMotionAsan, "Run motion and Cue lifecycle tests under AddressSanitizer"
       "cue_command",
       "cue_motion",
       "cue_trigger",
-      "frontend_trace"
+      "frontend_trace",
+      "validation",
+      "validation_controls",
+      "form"
     ]:
       let suffix = testName & "_" & memoryModel & "_asan"
       let nimcache = sanitizerRoot & "/clay_board_style_system_" & suffix & "_nimcache"
@@ -106,7 +109,8 @@ task testUbsan, "Run numeric, layout, transform, and motion tests under Undefine
       ("flex", "tests/layout/test_flex.nim"),
       ("transform_geometry", "tests/layout/test_transform_geometry.nim"),
       ("declarative_transition", "tests/runtime/test_declarative_transition.nim"),
-      ("declarative_keyframes", "tests/runtime/test_declarative_keyframes.nim")
+      ("declarative_keyframes", "tests/runtime/test_declarative_keyframes.nim"),
+      ("validation", "tests/runtime/test_validation.nim")
     ]:
       let testName = test[0]
       let testPath = test[1]
@@ -135,7 +139,10 @@ task testLsan, "Run retained lifecycle tests under LeakSanitizer on Linux":
         ("cue_command", "tests/runtime/test_cue_command.nim"),
         ("cue_motion", "tests/runtime/test_cue_motion.nim"),
         ("cue_trigger", "tests/runtime/test_cue_trigger.nim"),
-        ("frontend_trace", "tests/runtime/test_frontend_trace.nim")
+        ("frontend_trace", "tests/runtime/test_frontend_trace.nim"),
+        ("validation", "tests/runtime/test_validation.nim"),
+        ("validation_controls", "tests/runtime/test_validation_controls.nim"),
+        ("form", "tests/runtime/test_form.nim")
       ]:
         let testName = test[0]
         let testPath = test[1]
@@ -304,6 +311,7 @@ task bench, "Run compiled pipeline benchmarks (not part of the product build)":
   exec "nim c -r -d:release -d:cbssFrontendTrace --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_frontend_trace_bench_nimcache --out:/tmp/clay_board_style_system_frontend_trace_benchmark tests/perf/frontend_trace_benchmark.nim"
   exec "nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_navigation_bench_nimcache --out:/tmp/clay_board_style_system_navigation_screen_host_benchmark tests/perf/navigation_screen_host_benchmark.nim"
   exec "nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_render_surface_bench_nimcache --out:/tmp/clay_board_style_system_render_surface_benchmark tests/perf/render_surface_benchmark.nim"
+  exec "nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_validation_bench_nimcache --out:/tmp/clay_board_style_system_validation_benchmark tests/perf/validation_benchmark.nim"
 
 task demo, "Run the paint command demo":
   exec "nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_nimcache --out:/tmp/clay_board_style_system_paint_demo examples/paint_demo.nim"

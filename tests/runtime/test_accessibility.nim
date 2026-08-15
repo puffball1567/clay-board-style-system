@@ -122,3 +122,24 @@ suite "accessibility semantics":
     semantics = ui.accessibilityTree()
     check not semantics.accessibleNodeFor(dialog.container.nodeId).get.hidden
     check not semantics.accessibleNodeFor(accept.container.nodeId).get.hidden
+
+  test "invalid controls expose state alongside an author-owned error description":
+    let ui = initUiRoot()
+    let input = ui.textInput(
+      "",
+      validationRules[string]().required("Username is required"),
+      reportOn = ValidationReport.onSubmit
+    )
+    let error = ui.box()
+    discard ui.text(error, "Username is required")
+    input.container.setAccessibleDescribedBy(some(error))
+
+    let semantic = ui.accessibilityTree().accessibleNodeFor(input.container.nodeId).get
+    check esInvalid in semantic.states
+    check semantic.description == "Username is required"
+
+    input.setDisabled(true)
+    let disabledSemantic = ui.accessibilityTree()
+      .accessibleNodeFor(input.container.nodeId).get
+    check esDisabled in disabledSemantic.states
+    check esInvalid notin disabledSemantic.states

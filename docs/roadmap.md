@@ -1594,7 +1594,7 @@ Implementation order reuses the current code rather than recreating it:
 
 ### Retained Reactive Form Validation
 
-Status: `Version 0.5 target`
+Status: `Implemented on the Version 0.5 development branch`
 
 Version 0.5 adds reusable typed rule declarations for native forms. The API
 should feel familiar to engineers who have used JavaScript and TypeScript
@@ -1693,6 +1693,11 @@ CBSS application binary.
 and `form.submit()` validates before collecting one immutable FormData snapshot
 and dispatching application code. The full behavior, ownership, performance,
 and test contract is in [Form Validation Design](form-validation.md).
+
+Implementation coverage includes all 40 operations, six retained control
+families, invalid Style and AT-SPI state, form-level validation-first submit,
+first-invalid focus, explicit cross-field dependency updates, ARC/ORC tests,
+and a release benchmark for typed and precompiled-regex rule paths.
 
 ### Production Layout, Scrolling, Virtualization, And Accessibility
 
