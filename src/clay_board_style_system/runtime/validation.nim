@@ -1,4 +1,6 @@
-import std/[math, net, options, re, strutils, times, unicode, uri]
+import std/[math, net, options, strutils, times, unicode, uri]
+
+import regex
 
 type
   ValidationReport* {.pure.} = enum
@@ -56,7 +58,7 @@ type
 
   ValidationPattern* = object
     source*: string
-    compiled: Regex
+    compiled: Regex2
 
   ValidationFile* = object
     name*: string
@@ -111,7 +113,7 @@ proc compileRegex*(source: string): ValidationPattern =
   if source.len == 0:
     raise newException(ValueError, "validation regular expression cannot be empty")
   try:
-    result = ValidationPattern(source: source, compiled: re(source))
+    result = ValidationPattern(source: source, compiled: re2(source))
   except RegexError as error:
     raise newException(ValueError, "invalid validation regular expression: " & error.msg)
 
@@ -434,7 +436,7 @@ proc lengthOf[T](value: T): int =
     -1
 
 proc exactPatternMatch(value: string; pattern: ValidationPattern): bool =
-  value.matchLen(pattern.compiled) == value.len
+  value.match(pattern.compiled)
 
 proc validEmail(value: string): bool =
   if value.len < 3 or value.contains({' ', '\t', '\r', '\n'}):

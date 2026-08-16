@@ -9,6 +9,7 @@ installExt    = @["nim"]
 skipDirs      = @["target"]
 
 requires "nim >= 2.2.0"
+requires "regex >= 0.26.3"
 
 before install:
   let packageRoot = thisDir()

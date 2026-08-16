@@ -65,7 +65,8 @@ release. Before 1.0, minor releases may contain public API changes.
 - Added typed synchronous form validation with 40 composable rules, reactive
   validation for six form-control families, cross-field dependency tracking,
   form submission gating, invalid events and accessibility state, plus the
-  corresponding C ABI invalid-state flag.
+  corresponding C ABI invalid-state flag. Prepared patterns use a linear-time
+  pure Nim regex engine without adding a native PCRE runtime dependency.
 
 ### Fixed
 

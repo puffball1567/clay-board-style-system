@@ -148,8 +148,9 @@ not decide which schemes an application may open, and file MIME metadata does
 not prove file contents are safe. Applications must apply scheme allowlists,
 backend validation, and content inspection at their trust boundaries.
 `matches` performs a whole-value match and accepts only a prepared
-`ValidationPattern`; applications must not compile attacker-controlled regular
-expressions on the UI thread.
+`ValidationPattern`. Its pure Nim regex engine provides linear-time matching
+without a native PCRE runtime dependency. Applications must still bound and
+prepare attacker-controlled pattern definitions away from the UI thread.
 
 ## Cross-Field Rules
 
