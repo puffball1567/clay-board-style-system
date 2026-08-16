@@ -4,6 +4,7 @@ import ../core/node
 import ../data/[blob, form_data]
 import ../input/events
 import ./ui_root
+import ./validation
 
 type
   FormFieldKind* = enum
@@ -23,6 +24,7 @@ type
     name*: string
     kind*: FormFieldKind
     fileState: FormFileFieldState
+    validation: ValidationAdapter
 
   FormDataDiagnosticKind* = enum
     fddDisposedField,
@@ -67,7 +69,14 @@ proc disabled*(form: FormHandle): bool =
   form.state.disabled
 
 proc valid*(form: FormHandle): bool =
-  form.state.valid
+  if not form.state.valid:
+    return false
+  for field in form.state.fields:
+    if form.root.tree.isValid(field.node) and
+        esDisabled notin form.root.tree.nodes[field.node.nodeIndex].states and
+        not field.validation.current().isValid:
+      return false
+  true
 
 proc initFormFileFieldState*(): FormFileFieldState =
   FormFileFieldState(values: @[])
@@ -113,7 +122,8 @@ proc registerField*(
     form: FormHandle;
     node: NodeHandle;
     name: string;
-    kind = ffText
+    kind = ffText;
+    validation: ValidationAdapter = nil
 ) =
   if kind == ffFile:
     raise newException(ValueError, "file fields require registerFileField")
@@ -121,14 +131,16 @@ proc registerField*(
   form.state.fields.add FormFieldRegistration(
     node: node.id,
     name: name,
-    kind: kind
+    kind: kind,
+    validation: validation
   )
 
 proc registerFileField*(
     form: FormHandle;
     node: NodeHandle;
     name: string;
-    state: FormFileFieldState
+    state: FormFileFieldState;
+    validation: ValidationAdapter = nil
 ) =
   if state.isNil:
     raise newException(ValueError, "form file field state is not initialized")
@@ -137,7 +149,8 @@ proc registerFileField*(
     node: node.id,
     name: name,
     kind: ffFile,
-    fileState: state
+    fileState: state,
+    validation: validation
   )
 
 proc unregisterField*(form: FormHandle; node: NodeHandle): bool {.discardable.} =
@@ -187,10 +200,43 @@ proc setDisabled*(form: FormHandle; disabled: bool) =
 proc setValid*(form: FormHandle; valid: bool) =
   form.state.valid = valid
 
+proc checkValidity*(form: FormHandle): bool =
+  if form.state.disabled or not form.state.valid:
+    return false
+  result = true
+  for field in form.state.fields:
+    if not form.root.tree.isValid(field.node):
+      continue
+    let node = form.root.tree.nodes[field.node.nodeIndex]
+    if esDisabled in node.states:
+      continue
+    if not field.validation.check(report = false).isValid:
+      result = false
+
+proc reportValidity*(form: FormHandle): bool =
+  if form.state.disabled:
+    return false
+  result = form.state.valid
+  var firstInvalid = none(NodeId)
+  for field in form.state.fields:
+    if not form.root.tree.isValid(field.node):
+      continue
+    let node = form.root.tree.nodes[field.node.nodeIndex]
+    if esDisabled in node.states:
+      continue
+    let validation = field.validation.check(report = true)
+    if not validation.isValid:
+      result = false
+      if firstInvalid.isNone:
+        firstInvalid = some(field.node)
+      discard form.root.events.emit(form.root.tree, field.node, iekInvalid)
+  if firstInvalid.isSome:
+    form.root.requestFocus(firstInvalid)
+
 proc submit*(form: FormHandle): bool =
   if form.state.disabled:
     return false
-  if not form.state.valid:
+  if not form.reportValidity():
     inc form.state.invalidCount
     discard form.container.emit(iekInvalid)
     return false

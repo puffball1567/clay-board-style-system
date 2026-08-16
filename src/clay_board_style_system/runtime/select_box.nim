@@ -4,6 +4,7 @@ import ../core/[declaration, node, style_value]
 import ../input/events
 import ./form
 import ./ui_root
+import ./validation
 
 type
   SelectOption* = object
@@ -23,6 +24,7 @@ type
     placeholder*: string
     disabled*: bool
     open*: bool
+    validation*: ValidationBinding[string]
 
   SelectHandle* = object
     root* {.cursor.}: UiRoot
@@ -32,8 +34,22 @@ type
     optionNodes*: seq[NodeHandle]
     state*: SelectState
 
+proc evaluateValidation(
+    select: SelectHandle;
+    trigger: ValidationTrigger;
+    forceReport = false
+): ValidationResult
+
+proc validationAdapterFor(select: SelectHandle): ValidationAdapter
+proc syncValidationState(select: SelectHandle)
+
 proc register*(form: FormHandle; name: string; select: SelectHandle) =
-  form.registerField(select.container, name, ffText)
+  form.registerField(
+    select.container,
+    name,
+    ffText,
+    validation = select.validationAdapterFor()
+  )
 
 proc selectedLabel(select: SelectHandle): string =
   if select.state.selectedIndex >= 0 and select.state.selectedIndex < select.state.options.len:
@@ -73,6 +89,9 @@ proc syncVisibleState(select: SelectHandle) =
   select.panelNode.setState(esOpen, select.state.open)
 
 proc emitValueEvents(select: SelectHandle) =
+  discard select.evaluateValidation(ValidationTrigger.input)
+  if not select.state.validation.isNil:
+    select.root.notifyValidationDependencies(select.state.validation.valueReference.identity)
   discard select.container.emit(inputEvent(select.selectedValue()))
   discard select.container.emit(changeEvent(select.selectedValue()))
 
@@ -92,6 +111,7 @@ proc setDisabled*(select: SelectHandle; disabled: bool) =
     return
   select.state.disabled = disabled
   select.syncVisibleState()
+  select.syncValidationState()
 
 proc setSelectedIndex*(select: SelectHandle; index: int; emitEvents = false) =
   if not select.container.valid() or select.state.disabled or
@@ -103,6 +123,106 @@ proc setSelectedIndex*(select: SelectHandle; index: int; emitEvents = false) =
   select.syncVisibleState()
   if emitEvents:
     select.emitValueEvents()
+  else:
+    discard select.evaluateValidation(ValidationTrigger.explicit)
+    if not select.state.validation.isNil:
+      select.root.notifyValidationDependencies(select.state.validation.valueReference.identity)
+
+proc syncValidationState(select: SelectHandle) =
+  if not select.container.valid():
+    return
+  let validation =
+    if select.state.validation.isNil:
+      validValidationResult()
+    else:
+      select.state.validation.result
+  select.container.setState(esInvalid, not select.state.disabled and not validation.isValid)
+  select.root.tree.setAttribute(
+    select.container.id,
+    "validation-message",
+    if select.state.disabled or select.state.validation.isNil:
+      ""
+    else:
+      select.state.validation.validationMessage()
+  )
+
+proc evaluateValidation(
+    select: SelectHandle;
+    trigger: ValidationTrigger;
+    forceReport = false
+): ValidationResult =
+  if select.state.validation.isNil:
+    return validValidationResult()
+  result = select.state.validation.evaluate(
+    select.selectedValue(),
+    trigger,
+    forceReport = forceReport
+  )
+  select.syncValidationState()
+
+proc validationAdapterFor(select: SelectHandle): ValidationAdapter =
+  validationAdapter(
+    proc(report: bool): ValidationResult =
+      select.evaluateValidation(
+        if report: ValidationTrigger.submit else: ValidationTrigger.explicit,
+        forceReport = report
+      ),
+    proc(): ValidationResult =
+      if select.state.validation.isNil:
+        validValidationResult()
+      else:
+        select.state.validation.result
+  )
+
+proc setValidation*(
+    select: SelectHandle;
+    rules: ValidationRules[string];
+    reportOn = ValidationReport.onBlur
+) =
+  select.root.clearValidationDependencies(select.container.id)
+  select.state.validation = initValidationBinding(rules, select.selectedValue(), reportOn)
+  for peer in select.state.validation.dependencyReferences:
+    let dependent = select
+    select.root.registerValidationDependency(
+      peer.identity,
+      select.container.id,
+      proc() =
+        discard dependent.evaluateValidation(ValidationTrigger.explicit)
+    )
+  select.syncValidationState()
+
+proc validationValue*(select: SelectHandle): ValidationValueRef[string] =
+  if select.state.validation.isNil:
+    select.setValidation(validationRules[string]())
+  select.state.validation.valueReference
+
+proc validationResult*(select: SelectHandle): ValidationResult =
+  if select.state.validation.isNil:
+    validValidationResult()
+  else:
+    select.state.validation.result
+
+proc validationMessage*(select: SelectHandle): string =
+  if select.state.disabled or select.state.validation.isNil:
+    ""
+  else:
+    select.state.validation.validationMessage()
+
+proc checkValidity*(select: SelectHandle): bool =
+  if select.state.disabled:
+    return true
+  select.evaluateValidation(ValidationTrigger.explicit).isValid
+
+proc reportValidity*(select: SelectHandle): bool =
+  if select.state.disabled:
+    return true
+  result = select.evaluateValidation(
+    ValidationTrigger.explicit,
+    forceReport = true
+  ).isValid
+  if not result:
+    discard select.container.emit(iekInvalid)
+    select.root.requestFocus(some(select.container.id))
 
 proc setSelectedValue*(select: SelectHandle; value: string; emitEvents = false) =
   for index, option in select.state.options:
@@ -264,6 +384,7 @@ proc selectBox*(
   )
   root.events.addInternalEventHandler(select.container.id, iekBlur, proc(event: DispatchResult): EventOutcome =
     select.setOpen(false, emitToggle = true)
+    discard select.evaluateValidation(ValidationTrigger.blur)
     ignoredEvent()
   )
   root.events.addInternalEventHandler(select.container.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
@@ -320,3 +441,32 @@ proc selectBox*(
     id = id,
     groups = groups
   )
+
+proc selectBox*(
+    root: UiRoot;
+    options: openArray[SelectOption];
+    validation: ValidationRules[string];
+    reportOn = ValidationReport.onBlur;
+    selectedValue = "";
+    placeholder = "";
+    disabled = false;
+    style = UiStyle();
+    valueStyle = UiStyle();
+    panelStyle = UiStyle();
+    optionStyle = UiStyle();
+    id = "";
+    groups: openArray[string] = ["select"]
+): SelectHandle {.discardable.} =
+  result = root.selectBox(
+    options,
+    selectedValue = selectedValue,
+    placeholder = placeholder,
+    disabled = disabled,
+    style = style,
+    valueStyle = valueStyle,
+    panelStyle = panelStyle,
+    optionStyle = optionStyle,
+    id = id,
+    groups = groups
+  )
+  result.setValidation(validation, reportOn)

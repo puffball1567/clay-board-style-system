@@ -182,7 +182,7 @@ validation rules attached to controls. Controls retain current validity while
 error reporting remains independently configurable for input, blur, or submit.
 Forms gain `checkValidity()` and `reportValidity()`; `submit()` validates before
 collecting the immutable snapshot. Network-backed checks remain explicit
-Commands rather than hidden rules. The target contract is documented in
+Commands rather than hidden rules. The implemented contract is documented in
 [Form Validation Design](form-validation.md).
 
 `runtime/file_input.nim` provides a style-neutral file-selection boundary. It

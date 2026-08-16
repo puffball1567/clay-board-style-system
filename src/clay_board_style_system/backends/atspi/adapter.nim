@@ -41,7 +41,8 @@ type
     atsSelected,
     atsSensitive,
     atsShowing,
-    atsVisible
+    atsVisible,
+    atsInvalid
 
   AtspiInterface* = enum
     atiAccessible,
@@ -152,6 +153,8 @@ proc statesFor(node: AccessibleNode): set[AtspiState] =
     result.incl atsFocusable
   if esFocus in node.states:
     result.incl atsFocused
+  if esInvalid in node.states:
+    result.incl atsInvalid
   if node.bounds.isSome and not node.hidden:
     result.incl atsShowing
     result.incl atsVisible

@@ -1,6 +1,6 @@
 # Form Validation Design
 
-Status: `Version 0.5 target`
+Status: `Version 0.5 implementation complete on the development branch`
 
 CBSS form validation is a retained UI capability, not a transport protocol or
 a replacement for backend validation. Applications declare reusable typed
@@ -53,6 +53,12 @@ Every validating control keeps a current validity result. A value change
 evaluates only that control and explicitly registered cross-field dependants.
 It does not rebuild the component, scan the form, or invalidate unrelated UI.
 
+The implemented controls are text input, text area, select, checkbox, radio
+set, and file input. Each exposes `setValidation`, `validationResult`,
+`validationMessage`, `checkValidity`, and `reportValidity` (radio validation is
+owned by `RadioSet`). `validationValue` exposes an explicit retained peer for
+`sameAs` and `differentFrom` without public ids or selector lookup.
+
 Computing validity and presenting an error are separate operations:
 
 - `onInput` reports while the value changes;
@@ -66,10 +72,16 @@ the key-event boundary by default. A numeric field may temporarily contain a
 minus sign, and a partially entered email address may remain in the control
 while its validity is false.
 
+Disabled controls are barred from constraint validation. Their direct
+`checkValidity()` and `reportValidity()` calls succeed without dispatching an
+invalid event, and they do not expose invalid Style or accessibility state.
+Re-enabling a control restores validation from its retained value and rules.
+
 Validity feeds the same retained mechanisms as other control state:
 
 - invalid-state Style selection;
-- an accessible invalid state and error description relationship;
+- an accessible invalid state, with author-owned error components connected
+  through the existing accessible description relationship;
 - an optional error component owned by the authoring component; and
 - bounded paint, semantic, and accessibility invalidation when the visible or
   exposed result changes.
@@ -131,16 +143,37 @@ Validation and normalization remain separate. Trimming, case conversion,
 Unicode normalization, coercion, parsing, and default insertion must not
 silently mutate a value during validation.
 
+Format rules answer only whether a value has the declared shape. `url` does
+not decide which schemes an application may open, and file MIME metadata does
+not prove file contents are safe. Applications must apply scheme allowlists,
+backend validation, and content inspection at their trust boundaries.
+`matches` performs a whole-value match and accepts only a prepared
+`ValidationPattern`. Its pure Nim regex engine provides linear-time matching
+without a native PCRE runtime dependency. Applications must still bound and
+prepare attacker-controlled pattern definitions away from the UI thread.
+
 ## Cross-Field Rules
 
 `sameAs` and `differentFrom` declare an explicit dependency on another retained
-value or field handle. When that peer changes, CBSS revalidates only registered
+control value. When that peer changes, CBSS revalidates only registered
 dependants. It does not subscribe every field to an entire form or infer
 dependencies from a closure.
 
-Cross-field validation must remain acyclic or use bounded duplicate suppression
-within one validation transaction. A diagnostic identifies an invalid
-dependency graph instead of repeatedly revalidating it.
+```nim
+let password = ui.textInput(TextInputParams(value: ""))
+let confirmation = ui.textInput(TextInputParams(value: ""))
+
+confirmation.setValidation(
+  validationRules[string]().sameAs(
+    password.validationValue,
+    "Passwords do not match"
+  )
+)
+```
+
+The dependency registry suppresses recursive refresh of an active target and
+removes registrations when the dependent subtree is disposed. Replacing a
+control's rule set also replaces its dependency registrations.
 
 ## Asynchronous Checks
 
@@ -168,8 +201,8 @@ the Version 0.5 rule set.
   regular expressions.
 - The success path borrows its value where possible, performs no input string
   copy, and allocates no error collection.
-- First-failure evaluation is the default. Explicit all-error collection may
-  allocate only when recording failures.
+- Evaluation stops at the first failure. A future explicit all-error API may
+  allocate only while recording failures; Version 0.5 does not expose one.
 - `optional` short-circuits rules that do not apply to an absent value;
   `required` and `notBlank` remain distinct.
 - File rules inspect immutable Blob/file metadata and bounded counts. They do
@@ -192,10 +225,26 @@ ARC and ORC:
 - cross-field dependency updates and cycle protection;
 - `checkValidity`, `reportValidity`, invalid submit, valid submit, focus, and
   immutable FormData collection order;
-- accessibility state and error relationships;
-- no-allocation success-path and bounded dirty-work performance checks; and
+- accessibility invalid state and author-owned error relationships;
+- no input-value copy or error-collection allocation on the common success
+  path, plus bounded dirty-work performance checks; and
 - component and form integration tests proving that unrelated controls and
   layout are not recomputed.
+
+The validation suite is maintained as a matrix rather than a single happy-path
+test:
+
+| Dimension | Required coverage |
+| --- | --- |
+| Rule operations | All 40 operations with accepted and rejected values; `optional` with absent and present values |
+| Boundaries | Exact limits, Unicode length, malformed descriptors, malformed formats, NaN, and infinity |
+| Controls | Text input, text area, select, checkbox, radio set, and file input |
+| Reporting | `onInput`, `onBlur`, `onSubmit`, explicit checks, correction after failure, and disabled controls |
+| Dependencies | Peer update, unrelated peer isolation, replacement, disposal, source indexing, and recursion suppression |
+| Forms | Check, report, invalid event, first-invalid focus, disabled exclusion, and immutable successful data |
+| Ownership | ARC and ORC, ASan, Linux LSan, and Valgrind definite/indirect leak checks |
+| ABI and semantics | C/C++ header consumers, shared/static C consumers, invalid state, and AT-SPI mapping |
+| Performance | Prepared descriptors and precompiled regular expressions at 10k and 100k iterations |
 
 Later optional schema modules may cover runtime object, tuple, union, and
 recursive-data validation where runtime input makes them useful. Nim's static

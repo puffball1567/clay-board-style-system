@@ -236,3 +236,30 @@ suite "AT-SPI platform-neutral adapter":
     check adapter.snapshot.nodeAt(
       objectPathFor(checkbox.container.nodeId)
     ).get.value == committedValue
+
+  test "invalid semantic state maps to AT-SPI":
+    let ui = initUiRoot()
+    let app = ui.box(fixedStyle(300, 100))
+    ui.pushParent(app)
+    let input = ui.textInput(
+      "",
+      validationRules[string]().required(),
+      reportOn = ValidationReport.onSubmit,
+      style = fixedStyle(180, 32)
+    )
+    ui.popParent()
+    let snapshot = ui.buildAtspiSnapshot(ui.layoutFor(), "Validation")
+    let node = snapshot.nodeAt(objectPathFor(input.container.nodeId))
+
+    check node.isSome
+    check atsInvalid in node.get.states
+
+    input.setDisabled(true)
+    let disabledSnapshot = ui.buildAtspiSnapshot(ui.layoutFor(), "Validation")
+    let disabledNode = disabledSnapshot.nodeAt(
+      objectPathFor(input.container.nodeId)
+    )
+    check disabledNode.isSome
+    check atsEnabled notin disabledNode.get.states
+    check atsSensitive notin disabledNode.get.states
+    check atsInvalid notin disabledNode.get.states

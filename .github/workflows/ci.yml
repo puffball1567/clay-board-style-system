@@ -140,6 +140,9 @@ jobs:
       - name: Check package metadata
         run: nimble check
 
+      - name: Install Nim dependencies
+        run: nimble install --depsOnly -y
+
       - name: Run portable ARC tests
         run: >-
           nim c -r --mm:arc

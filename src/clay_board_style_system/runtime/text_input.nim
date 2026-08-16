@@ -5,6 +5,7 @@ import ../input/events
 import ../text/text_engine
 import ./form
 import ./ui_root
+import ./validation
 
 const textEdgeSlack = 2.0'f32
 const maxVisibleInputBytes = 512
@@ -51,6 +52,7 @@ type
     horizontalScroll*: float32
     caretStyleIndex*: Option[int]
     selectionStyleIndex*: Option[int]
+    validation*: ValidationBinding[string]
 
   TextInputVisibleInfo = tuple[text: string, start: int, caret: int]
 
@@ -62,8 +64,21 @@ type
     caretNode*: NodeHandle
     state*: TextInputState
 
+proc evaluateValidation(
+    input: TextInputHandle;
+    trigger: ValidationTrigger;
+    forceReport = false
+): ValidationResult
+
+proc validationAdapterFor(input: TextInputHandle): ValidationAdapter
+
 proc register*(form: FormHandle; name: string; input: TextInputHandle) =
-  form.registerField(input.container, name, ffText)
+  form.registerField(
+    input.container,
+    name,
+    ffText,
+    validation = input.validationAdapterFor()
+  )
 
 proc clampCaret(state: TextInputState) =
   if state.caret < 0:
@@ -565,10 +580,16 @@ proc syncTextChrome(input: TextInputHandle) =
   input.syncCaretStyle(caret)
 
 proc emitValueEvents(input: TextInputHandle) =
+  discard input.evaluateValidation(ValidationTrigger.input)
+  if not input.state.validation.isNil:
+    input.root.notifyValidationDependencies(input.state.validation.valueReference.identity)
   discard input.container.emit(inputEvent(input.state.value))
   discard input.container.emit(changeEvent(input.state.value))
 
 proc emitInputEvent(input: TextInputHandle) =
+  discard input.evaluateValidation(ValidationTrigger.input)
+  if not input.state.validation.isNil:
+    input.root.notifyValidationDependencies(input.state.validation.valueReference.identity)
   discard input.container.emit(inputEvent(input.state.value))
 
 proc emitSelect(input: TextInputHandle) =
@@ -885,6 +906,9 @@ proc setValue*(input: TextInputHandle; value: string) =
   input.state.composingText = ""
   input.state.composingActive = false
   input.setVisibleText()
+  discard input.evaluateValidation(ValidationTrigger.explicit)
+  if not input.state.validation.isNil:
+    input.root.notifyValidationDependencies(input.state.validation.valueReference.identity)
 
 proc setSelection*(input: TextInputHandle; first, last: int) =
   if not input.container.valid():
@@ -951,6 +975,103 @@ proc blur*(input: TextInputHandle) =
   input.state.composingActive = false
   input.state.pendingFallbackText = ""
   input.setVisibleText()
+  discard input.evaluateValidation(ValidationTrigger.blur)
+
+proc syncValidationState(input: TextInputHandle) =
+  if not input.container.valid():
+    return
+  let validation =
+    if input.state.validation.isNil:
+      validValidationResult()
+    else:
+      input.state.validation.result
+  input.container.setState(esInvalid, not input.state.disabled and not validation.isValid)
+  input.root.tree.setAttribute(
+    input.container.id,
+    "validation-message",
+    if input.state.disabled or input.state.validation.isNil:
+      ""
+    else:
+      input.state.validation.validationMessage()
+  )
+
+proc evaluateValidation(
+    input: TextInputHandle;
+    trigger: ValidationTrigger;
+    forceReport = false
+): ValidationResult =
+  if input.state.validation.isNil:
+    return validValidationResult()
+  result = input.state.validation.evaluate(
+    input.state.value,
+    trigger,
+    forceReport = forceReport
+  )
+  input.syncValidationState()
+
+proc validationAdapterFor(input: TextInputHandle): ValidationAdapter =
+  validationAdapter(
+    proc(report: bool): ValidationResult =
+      input.evaluateValidation(
+        if report: ValidationTrigger.submit else: ValidationTrigger.explicit,
+        forceReport = report
+      ),
+    proc(): ValidationResult =
+      if input.state.validation.isNil:
+        validValidationResult()
+      else:
+        input.state.validation.result
+  )
+
+proc setValidation*(
+    input: TextInputHandle;
+    rules: ValidationRules[string];
+    reportOn = ValidationReport.onBlur
+) =
+  input.root.clearValidationDependencies(input.container.id)
+  input.state.validation = initValidationBinding(rules, input.state.value, reportOn)
+  for peer in input.state.validation.dependencyReferences:
+    let dependent = input
+    input.root.registerValidationDependency(
+      peer.identity,
+      input.container.id,
+      proc() =
+        discard dependent.evaluateValidation(ValidationTrigger.explicit)
+    )
+  input.syncValidationState()
+
+proc validationValue*(input: TextInputHandle): ValidationValueRef[string] =
+  if input.state.validation.isNil:
+    input.setValidation(validationRules[string]())
+  input.state.validation.valueReference
+
+proc validationResult*(input: TextInputHandle): ValidationResult =
+  if input.state.validation.isNil:
+    validValidationResult()
+  else:
+    input.state.validation.result
+
+proc validationMessage*(input: TextInputHandle): string =
+  if input.state.disabled or input.state.validation.isNil:
+    ""
+  else:
+    input.state.validation.validationMessage()
+
+proc checkValidity*(input: TextInputHandle): bool =
+  if input.state.disabled:
+    return true
+  input.evaluateValidation(ValidationTrigger.explicit).isValid
+
+proc reportValidity*(input: TextInputHandle): bool =
+  if input.state.disabled:
+    return true
+  result = input.evaluateValidation(
+    ValidationTrigger.explicit,
+    forceReport = true
+  ).isValid
+  if not result:
+    discard input.container.emit(iekInvalid)
+    input.root.requestFocus(some(input.container.id))
 
 proc setDisabled*(input: TextInputHandle; disabled: bool) =
   if not input.container.valid():
@@ -959,6 +1080,7 @@ proc setDisabled*(input: TextInputHandle; disabled: bool) =
   input.container.setState(esDisabled, disabled)
   if disabled:
     input.blur()
+  input.syncValidationState()
 
 proc textInput*(
     root: UiRoot;
@@ -1045,6 +1167,7 @@ proc textInput*(
     input.focus()
     ignoredEvent()
   )
+
   root.events.addInternalEventHandler(input.container.id, iekPointerDown, proc(event: DispatchResult): EventOutcome =
     if input.state.disabled:
       input.state.selecting = false
@@ -1056,6 +1179,7 @@ proc textInput*(
       input.moveCaretToPoint(event.local.get, extendSelection = event.event.shiftKey)
     ignoredEvent()
   )
+
   root.events.addInternalEventHandler(input.container.id, iekPointerMove, proc(event: DispatchResult): EventOutcome =
     if input.state.disabled:
       input.state.selecting = false
@@ -1255,3 +1379,32 @@ proc textInput*(
         return stoppedEvent()
     ignoredEvent()
   )
+
+proc textInput*(
+    root: UiRoot;
+    value: string;
+    validation: ValidationRules[string];
+    reportOn = ValidationReport.onBlur;
+    placeholder = "";
+    disabled = false;
+    readOnly = false;
+    maxLength = none(int);
+    style = UiStyle();
+    textStyle = UiStyle();
+    id = "";
+    groups: openArray[string] = ["text-input"]
+): TextInputHandle {.discardable.} =
+  result = root.textInput(
+    TextInputParams(
+      value: value,
+      placeholder: placeholder,
+      disabled: disabled,
+      readOnly: readOnly,
+      maxLength: maxLength
+    ),
+    style = style,
+    textStyle = textStyle,
+    id = id,
+    groups = groups
+  )
+  result.setValidation(validation, reportOn)

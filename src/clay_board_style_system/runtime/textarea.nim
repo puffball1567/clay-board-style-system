@@ -5,6 +5,7 @@ import ../input/events
 import ../text/text_engine
 import ./form
 import ./ui_root
+import ./validation
 
 const textEdgeSlack = 2.0'f32
 const initialSelectionFragmentCount = 24
@@ -90,6 +91,7 @@ type
     caretLinesDirty*: bool
     cachedCaretLines*: seq[TextAreaVisualLine]
     selectionNodes*: seq[NodeHandle]
+    validation*: ValidationBinding[string]
 
   TextAreaHandle* = object
     root* {.cursor.}: UiRoot
@@ -103,8 +105,21 @@ type
     resizeHandle*: NodeHandle
     state*: TextAreaState
 
+proc evaluateValidation(
+    area: TextAreaHandle;
+    trigger: ValidationTrigger;
+    forceReport = false
+): ValidationResult
+
+proc validationAdapterFor(area: TextAreaHandle): ValidationAdapter
+
 proc register*(form: FormHandle; name: string; area: TextAreaHandle) =
-  form.registerField(area.container, name, ffText)
+  form.registerField(
+    area.container,
+    name,
+    ffText,
+    validation = area.validationAdapterFor()
+  )
 
 proc displayText(state: TextAreaState): string =
   if state.value.len == 0 and
@@ -347,6 +362,9 @@ proc ensureSelectionNodes(area: TextAreaHandle; count: int) =
     discard area.addSelectionNode()
 
 proc emitValueEvents(area: TextAreaHandle) =
+  discard area.evaluateValidation(ValidationTrigger.input)
+  if not area.state.validation.isNil:
+    area.root.notifyValidationDependencies(area.state.validation.valueReference.identity)
   discard area.container.emit(inputEvent(area.state.value))
   discard area.container.emit(changeEvent(area.state.value))
 
@@ -1353,6 +1371,9 @@ proc setValue*(area: TextAreaHandle; value: string) =
   area.state.composingActive = false
   area.state.pendingFallbackText = ""
   area.setVisibleText()
+  discard area.evaluateValidation(ValidationTrigger.explicit)
+  if not area.state.validation.isNil:
+    area.root.notifyValidationDependencies(area.state.validation.valueReference.identity)
 
 proc setSelection*(area: TextAreaHandle; first, last: int) =
   if not area.container.valid():
@@ -1461,6 +1482,103 @@ proc blur*(area: TextAreaHandle) =
   area.state.composingActive = false
   area.state.pendingFallbackText = ""
   area.setVisibleText()
+  discard area.evaluateValidation(ValidationTrigger.blur)
+
+proc syncValidationState(area: TextAreaHandle) =
+  if not area.container.valid():
+    return
+  let validation =
+    if area.state.validation.isNil:
+      validValidationResult()
+    else:
+      area.state.validation.result
+  area.container.setState(esInvalid, not area.state.disabled and not validation.isValid)
+  area.root.tree.setAttribute(
+    area.container.id,
+    "validation-message",
+    if area.state.disabled or area.state.validation.isNil:
+      ""
+    else:
+      area.state.validation.validationMessage()
+  )
+
+proc evaluateValidation(
+    area: TextAreaHandle;
+    trigger: ValidationTrigger;
+    forceReport = false
+): ValidationResult =
+  if area.state.validation.isNil:
+    return validValidationResult()
+  result = area.state.validation.evaluate(
+    area.state.value,
+    trigger,
+    forceReport = forceReport
+  )
+  area.syncValidationState()
+
+proc validationAdapterFor(area: TextAreaHandle): ValidationAdapter =
+  validationAdapter(
+    proc(report: bool): ValidationResult =
+      area.evaluateValidation(
+        if report: ValidationTrigger.submit else: ValidationTrigger.explicit,
+        forceReport = report
+      ),
+    proc(): ValidationResult =
+      if area.state.validation.isNil:
+        validValidationResult()
+      else:
+        area.state.validation.result
+  )
+
+proc setValidation*(
+    area: TextAreaHandle;
+    rules: ValidationRules[string];
+    reportOn = ValidationReport.onBlur
+) =
+  area.root.clearValidationDependencies(area.container.id)
+  area.state.validation = initValidationBinding(rules, area.state.value, reportOn)
+  for peer in area.state.validation.dependencyReferences:
+    let dependent = area
+    area.root.registerValidationDependency(
+      peer.identity,
+      area.container.id,
+      proc() =
+        discard dependent.evaluateValidation(ValidationTrigger.explicit)
+    )
+  area.syncValidationState()
+
+proc validationValue*(area: TextAreaHandle): ValidationValueRef[string] =
+  if area.state.validation.isNil:
+    area.setValidation(validationRules[string]())
+  area.state.validation.valueReference
+
+proc validationResult*(area: TextAreaHandle): ValidationResult =
+  if area.state.validation.isNil:
+    validValidationResult()
+  else:
+    area.state.validation.result
+
+proc validationMessage*(area: TextAreaHandle): string =
+  if area.state.disabled or area.state.validation.isNil:
+    ""
+  else:
+    area.state.validation.validationMessage()
+
+proc checkValidity*(area: TextAreaHandle): bool =
+  if area.state.disabled:
+    return true
+  area.evaluateValidation(ValidationTrigger.explicit).isValid
+
+proc reportValidity*(area: TextAreaHandle): bool =
+  if area.state.disabled:
+    return true
+  result = area.evaluateValidation(
+    ValidationTrigger.explicit,
+    forceReport = true
+  ).isValid
+  if not result:
+    discard area.container.emit(iekInvalid)
+    area.root.requestFocus(some(area.container.id))
 
 proc setDisabled*(area: TextAreaHandle; disabled: bool) =
   if not area.container.valid():
@@ -1470,6 +1588,7 @@ proc setDisabled*(area: TextAreaHandle; disabled: bool) =
   if disabled:
     area.state.resizing = false
     area.blur()
+  area.syncValidationState()
   area.syncResizeStyle()
 
 proc setSize*(area: TextAreaHandle; width, height: Option[float32]; emitEvent = false) =
@@ -1953,3 +2072,32 @@ proc textArea*(
       return stoppedEvent()
     ignoredEvent()
   )
+
+proc textArea*(
+    root: UiRoot;
+    value: string;
+    validation: ValidationRules[string];
+    reportOn = ValidationReport.onBlur;
+    placeholder = "";
+    disabled = false;
+    readOnly = false;
+    maxLength = none(int);
+    style = UiStyle();
+    textStyle = UiStyle();
+    id = "";
+    groups: openArray[string] = ["textarea"]
+): TextAreaHandle {.discardable.} =
+  result = root.textArea(
+    TextAreaParams(
+      value: value,
+      placeholder: placeholder,
+      disabled: disabled,
+      readOnly: readOnly,
+      maxLength: maxLength
+    ),
+    style = style,
+    textStyle = textStyle,
+    id = id,
+    groups = groups
+  )
+  result.setValidation(validation, reportOn)
