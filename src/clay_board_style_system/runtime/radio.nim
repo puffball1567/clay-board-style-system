@@ -105,11 +105,6 @@ proc select*(radio: RadioHandle; emitEvents = true) =
       radio.state.root.notifyValidationDependencies(radio.radioSet.validation.valueReference.identity)
 
 proc syncValidationState(radio: RadioHandle) =
-  let validation =
-    if radio.radioSet.validation.isNil:
-      validValidationResult()
-    else:
-      radio.radioSet.validation.result
   let message =
     if radio.radioSet.validation.isNil:
       ""
@@ -117,7 +112,10 @@ proc syncValidationState(radio: RadioHandle) =
       radio.radioSet.validation.validationMessage()
   for item in radio.radioSet.items:
     if item.container.valid():
-      item.container.setState(esInvalid, not item.disabled and not validation.isValid)
+      item.container.setState(
+        esInvalid,
+        not item.disabled and radio.radioSet.validation.shouldExpose()
+      )
       item.root.tree.setAttribute(
         item.container.id,
         "validation-message",

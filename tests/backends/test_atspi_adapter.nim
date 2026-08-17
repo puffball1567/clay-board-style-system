@@ -84,6 +84,22 @@ suite "AT-SPI platform-neutral adapter":
     check volumeNode.get.valueMax == some(100.0'f32)
     check atiValue notin volumeNode.get.interfaces
 
+  test "password text maps to the protected AT-SPI role":
+    let ui = initUiRoot()
+    let app = ui.box(fixedStyle(300, 100))
+    ui.pushParent(app)
+    let input = ui.textInput(
+      TextInputParams(value: "secret", inputType: TextInputType.password),
+      style = fixedStyle(180, 32)
+    )
+    ui.popParent()
+
+    let snapshot = ui.buildAtspiSnapshot(ui.layoutFor(), "Passwords")
+    let node = snapshot.nodeAt(objectPathFor(input.container.nodeId))
+    check node.isSome
+    check node.get.role == atrPasswordText
+    check node.get.value == "******"
+
   test "only advertised enabled actions dispatch into the existing UI event path":
     let ui = initUiRoot()
     let app = ui.box(fixedStyle(300, 100))
@@ -248,6 +264,11 @@ suite "AT-SPI platform-neutral adapter":
       style = fixedStyle(180, 32)
     )
     ui.popParent()
+    let initialSnapshot = ui.buildAtspiSnapshot(ui.layoutFor(), "Validation")
+    check atsInvalid notin initialSnapshot.nodeAt(
+      objectPathFor(input.container.nodeId)
+    ).get.states
+    check not input.reportValidity()
     let snapshot = ui.buildAtspiSnapshot(ui.layoutFor(), "Validation")
     let node = snapshot.nodeAt(objectPathFor(input.container.nodeId))
 

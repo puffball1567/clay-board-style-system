@@ -16,9 +16,14 @@ const defaultMaxTextInputBytes = 8_192
 const maxValueAttributeBytes = 8_192
 
 type
+  TextInputType* {.pure.} = enum
+    text,
+    password
+
   TextInputParams* = object
     value*: string
     placeholder*: string
+    inputType*: TextInputType
     disabled*: bool
     readOnly*: bool
     maxLength*: Option[int]
@@ -33,6 +38,7 @@ type
     compositionUpdateSeen*: bool
     lastCompositionUpdateText*: string
     placeholder*: string
+    inputType*: TextInputType
     disabled*: bool
     readOnly*: bool
     maxLength*: Option[int]
@@ -54,7 +60,13 @@ type
     selectionStyleIndex*: Option[int]
     validation*: ValidationBinding[string]
 
-  TextInputVisibleInfo = tuple[text: string, start: int, caret: int]
+  TextInputVisibleInfo = tuple[
+    text: string,
+    start: int,
+    sourceEnd: int,
+    caret: int,
+    sourceBoundaries: seq[int]
+  ]
 
   TextInputHandle* = object
     root* {.cursor.}: UiRoot
@@ -158,6 +170,12 @@ proc effectiveMaxLength(state: TextInputState): int =
   else:
     defaultMaxTextInputBytes
 
+proc maskedRunes(text: string): string =
+  var offset = 0
+  while offset < text.len:
+    offset = nextRuneEnd(text, offset)
+    result.add '*'
+
 proc setValueAttribute(input: TextInputHandle) =
   let value =
     if input.state.value.len <= maxValueAttributeBytes:
@@ -165,7 +183,12 @@ proc setValueAttribute(input: TextInputHandle) =
     else:
       input.state.value.truncateAtRuneBoundary(maxValueAttributeBytes)
   input.root.tree.setAttribute(input.container.id, "value", value)
-  input.container.setAccessibleValue(input.state.value)
+  input.container.setAccessibleValue(
+    if input.state.inputType == TextInputType.password:
+      input.state.value.maskedRunes()
+    else:
+      input.state.value
+  )
 
 proc runeStartAtOrAfter(text: string; index: int): int =
   result = max(0, min(index, text.len))
@@ -267,6 +290,20 @@ proc virtualDisplaySlice(state: TextInputState; first, last: int): string =
     if valueStart < valueStop:
       result.add state.value[valueStart ..< valueStop]
 
+proc displayIndex(visible: TextInputVisibleInfo; sourceIndex: int): int =
+  if visible.sourceBoundaries.len == 0:
+    return max(0, min(sourceIndex - visible.start, visible.text.len))
+  let clamped = max(visible.start, min(sourceIndex, visible.sourceEnd))
+  for index, boundary in visible.sourceBoundaries:
+    if boundary >= clamped:
+      return index
+  visible.text.len
+
+proc sourceIndex(visible: TextInputVisibleInfo; displayIndex: int): int =
+  if visible.sourceBoundaries.len == 0:
+    return visible.start + max(0, min(displayIndex, visible.text.len))
+  visible.sourceBoundaries[max(0, min(displayIndex, visible.text.len))]
+
 proc visibleInputInfo(input: TextInputHandle): TextInputVisibleInfo =
   let displayLen = input.state.virtualDisplayLen()
   let caretDisplay = input.state.virtualBoundaryAtOrAfter(input.state.displayCaretIndex())
@@ -303,15 +340,25 @@ proc visibleInputInfo(input: TextInputHandle): TextInputVisibleInfo =
 
   input.state.visibleStart = start
 
-  result.text =
+  let sourceText =
     if start < stop: input.state.virtualDisplaySlice(start, stop)
     else: ""
   result.start = start
-  result.caret = caretDisplay - result.start
-  if result.caret < 0:
-    result.caret = 0
-  if result.caret > result.text.len:
-    result.caret = result.text.len
+  result.sourceEnd = stop
+  let showingPlaceholder = input.state.value.len == 0 and
+    input.state.composingText.len == 0 and
+    not input.state.composingActive and
+    input.state.placeholder.len > 0
+  if input.state.inputType == TextInputType.password and not showingPlaceholder:
+    result.sourceBoundaries = @[start]
+    var offset = 0
+    while offset < sourceText.len:
+      offset = nextRuneEnd(sourceText, offset)
+      result.text.add '*'
+      result.sourceBoundaries.add start + offset
+  else:
+    result.text = sourceText
+  result.caret = result.displayIndex(caretDisplay)
 
 proc textStyleFrom(style: UiStyle): ComputedTextStyle =
   for declaration in style.declarations:
@@ -487,9 +534,9 @@ proc syncCaretStyle(
 proc syncSelectionStyle(input: TextInputHandle; visible: TextInputVisibleInfo) =
   let bounds = input.state.selectionBounds()
   let visibleStart = visible.start
-  let visibleEnd = visible.start + visible.text.len
-  let first = max(bounds.first, visibleStart) - visibleStart
-  let last = min(bounds.last, visibleEnd) - visibleStart
+  let visibleEnd = visible.sourceEnd
+  let first = visible.displayIndex(max(bounds.first, visibleStart))
+  let last = visible.displayIndex(min(bounds.last, visibleEnd))
   var left = 0.0'f32
   var width = 0.0'f32
   var top = 0.0'f32
@@ -940,7 +987,7 @@ proc moveCaretToPoint*(input: TextInputHandle; local: Vec2; extendSelection = fa
     fonts: input.root.fonts,
     point: vec2(textX, 0.0'f32)
   ))
-  input.state.caret = input.state.displayValueIndex(visible.start + hit.byteIndex)
+  input.state.caret = input.state.displayValueIndex(visible.sourceIndex(hit.byteIndex))
   input.state.clampCaret()
   if extendSelection:
     input.state.selectionEnd = input.state.caret
@@ -980,12 +1027,10 @@ proc blur*(input: TextInputHandle) =
 proc syncValidationState(input: TextInputHandle) =
   if not input.container.valid():
     return
-  let validation =
-    if input.state.validation.isNil:
-      validValidationResult()
-    else:
-      input.state.validation.result
-  input.container.setState(esInvalid, not input.state.disabled and not validation.isValid)
+  input.container.setState(
+    esInvalid,
+    not input.state.disabled and input.state.validation.shouldExpose()
+  )
   input.root.tree.setAttribute(
     input.container.id,
     "validation-message",
@@ -1102,6 +1147,7 @@ proc textInput*(
     selectionStart: params.value.len,
     selectionEnd: params.value.len,
     placeholder: params.placeholder,
+    inputType: params.inputType,
     disabled: params.disabled,
     readOnly: params.readOnly,
     maxLength: params.maxLength,
@@ -1120,7 +1166,10 @@ proc textInput*(
     result.state.collapseSelection()
   result.container = root.box(style, id = id, groups = groups)
   result.container.setFocusable()
-  result.container.setAccessibleRole(arTextBox)
+  result.container.setAccessibleRole(
+    if params.inputType == TextInputType.password: arPasswordText
+    else: arTextBox
+  )
   result.container.applyStyle(uiStyle([
     decl("overflow", keyword("hidden"))
   ]))
@@ -1386,6 +1435,7 @@ proc textInput*(
     validation: ValidationRules[string];
     reportOn = ValidationReport.onBlur;
     placeholder = "";
+    inputType = TextInputType.text;
     disabled = false;
     readOnly = false;
     maxLength = none(int);
@@ -1398,6 +1448,7 @@ proc textInput*(
     TextInputParams(
       value: value,
       placeholder: placeholder,
+      inputType: inputType,
       disabled: disabled,
       readOnly: readOnly,
       maxLength: maxLength

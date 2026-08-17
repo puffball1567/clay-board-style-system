@@ -3,6 +3,22 @@ import std/[options, unittest]
 import clay_board_style_system
 
 suite "validating controls":
+  test "onInput text input reports required after a focus and blur cycle":
+    let ui = initUiRoot()
+    let input = ui.textInput(
+      "",
+      validationRules[string]().required("Required"),
+      reportOn = ValidationReport.onInput
+    )
+
+    check not input.validationResult.isValid
+    check input.validationMessage.len == 0
+    check esInvalid notin ui.tree.nodes[input.container.nodeId.nodeIndex].states
+    input.focus()
+    input.blur()
+    check input.validationMessage == "Required"
+    check esInvalid in ui.tree.nodes[input.container.nodeId.nodeIndex].states
+
   test "textarea tracks current validity and reports on blur":
     let ui = initUiRoot()
     let area = ui.textArea(
@@ -13,8 +29,10 @@ suite "validating controls":
 
     check not area.validationResult.isValid
     check area.validationMessage.len == 0
+    check esInvalid notin ui.tree.nodes[area.container.nodeId.nodeIndex].states
     area.blur()
     check area.validationMessage == "Write more"
+    check esInvalid in ui.tree.nodes[area.container.nodeId.nodeIndex].states
     area.setValue("long enough text")
     check area.validationResult.isValid
     check esInvalid notin ui.tree.nodes[area.container.nodeId.nodeIndex].states
@@ -31,9 +49,12 @@ suite "validating controls":
     )
 
     check not select.validationResult.isValid
+    check esInvalid notin ui.tree.nodes[select.container.nodeId.nodeIndex].states
     select.setSelectedValue("editor", emitEvents = true)
     check select.validationResult.isValid
     check select.validationMessage.len == 0
+    select.setSelectedValue("", emitEvents = true)
+    check esInvalid in ui.tree.nodes[select.container.nodeId.nodeIndex].states
 
   test "checkbox can require affirmative consent":
     let ui = initUiRoot()
@@ -44,9 +65,12 @@ suite "validating controls":
     )
 
     check not consent.validationResult.isValid
+    check esInvalid notin ui.tree.nodes[consent.container.nodeId.nodeIndex].states
     consent.toggle()
     check consent.checked
     check consent.validationResult.isValid
+    consent.toggle()
+    check esInvalid in ui.tree.nodes[consent.container.nodeId.nodeIndex].states
 
   test "radio set validates one shared selected value":
     let ui = initUiRoot()
@@ -59,6 +83,9 @@ suite "validating controls":
     )
 
     check not choices.validationResult.isValid
+    check esInvalid notin ui.tree.nodes[compact.container.nodeId.nodeIndex].states
+    check esInvalid notin ui.tree.nodes[spacious.container.nodeId.nodeIndex].states
+    check not choices.reportValidity()
     check esInvalid in ui.tree.nodes[compact.container.nodeId.nodeIndex].states
     check esInvalid in ui.tree.nodes[spacious.container.nodeId.nodeIndex].states
     spacious.select()
@@ -80,6 +107,7 @@ suite "validating controls":
     )
 
     check not input.validationResult.isValid
+    check esInvalid notin ui.tree.nodes[input.container.nodeId.nodeIndex].states
     input.setFiles([
       fileInputValue(newBlob([byte 1, 2, 3], mimeType = "text/plain"), "note.txt")
     ], emitEvents = true)
@@ -90,6 +118,7 @@ suite "validating controls":
     ], emitEvents = true)
     check not input.validationResult.isValid
     check input.validationMessage == "File is too large"
+    check esInvalid in ui.tree.nodes[input.container.nodeId.nodeIndex].states
 
   test "validation message remains queryable through the retained attribute":
     let ui = initUiRoot()

@@ -75,6 +75,41 @@ suite "text input component":
     fail()
     rect(0, 0, 0, 0)
 
+  test "password input masks rendered runes without changing its value":
+    let ui = initUiRoot()
+    let input = ui.textInput(TextInputParams(
+      value: "secret\xE7\x8C\xAB",
+      inputType: TextInputType.password
+    ))
+
+    check input.value == "secret\xE7\x8C\xAB"
+    check ui.tree.nodes[input.textNode.id.nodeIndex].text == "*******"
+    check ui.tree.nodes[input.container.id.nodeIndex].attrValue("value") ==
+      some("secret\xE7\x8C\xAB")
+
+  test "password input leaves an empty placeholder readable":
+    let ui = initUiRoot()
+    let input = ui.textInput(TextInputParams(
+      placeholder: "Passphrase",
+      inputType: TextInputType.password
+    ))
+
+    check ui.tree.nodes[input.textNode.id.nodeIndex].text == "Passphrase"
+
+  test "password pointer placement maps masked runes back to UTF-8 boundaries":
+    let ui = initUiRoot()
+    let input = ui.textInput(TextInputParams(
+      value: "a\xE7\x8C\xABb",
+      inputType: TextInputType.password
+    ))
+    let afterTwoMasks = naturalCaretLeft(input, "***", 2)
+
+    input.moveCaretToPoint(vec2(input.state.textLeftInset + afterTwoMasks, 8))
+
+    check input.state.caret == 4
+    check input.state.selectionStart == 4
+    check input.state.selectionEnd == 4
+
   test "text input updates value before onInput and onChange handlers":
     let ui = initUiRoot()
     let input = ui.textInput(TextInputParams(value: "A"))
@@ -964,6 +999,26 @@ suite "text input component":
     discard input.container.emit(iekBlur)
     check esFocus notin ui.tree.nodes[input.container.nodeId.nodeIndex].states
     check ui.tree.nodes[input.textNode.nodeId.nodeIndex].text == "a"
+
+  test "repeated focus changes cannot leave placeholder composition stuck":
+    let ui = initUiRoot()
+    let first = ui.textInput(TextInputParams(placeholder: "First"))
+    let second = ui.textInput(TextInputParams(placeholder: "Second"))
+
+    discard first.container.emit(iekFocus)
+    discard first.container.emit(compositionStartEvent(""))
+    check ui.tree.nodes[first.textNode.nodeId.nodeIndex].text == ""
+
+    discard first.container.emit(iekBlur)
+    discard second.container.emit(iekFocus)
+    discard second.container.emit(iekBlur)
+    discard first.container.emit(iekFocus)
+    check not first.state.composingActive
+    check ui.tree.nodes[first.textNode.nodeId.nodeIndex].text == "First"
+
+    discard first.container.emit(textInputEvent("A"))
+    check first.value() == "A"
+    check ui.tree.nodes[first.textNode.nodeId.nodeIndex].text == "A"
 
   test "select all delete clears stale fallback text":
     let ui = initUiRoot()

@@ -1430,7 +1430,7 @@ Planned work:
 
 ## Versions 0.5 And 0.6 - Parallel Foundation Tracks
 
-Status: `Planned`
+Status: `Version 0.5 implemented; Version 0.6 planned`
 
 Version 0.5 and Version 0.6 are separate release scopes developed in the same
 foundation wave. Version 0.5 owns the first-party frontend runtime and general
@@ -1492,11 +1492,20 @@ standalone LLVM installation first in `PATH`, so the sanitizer compiler and
 runtime remain the LLVM implementation. AddressSanitizer owns out-of-bounds,
 use-after-free, and double-free detection. UndefinedBehaviorSanitizer runs
 numeric, Flex, transform, transition, and keyframe paths on Linux and macOS.
-Standalone LeakSanitizer runs retained widget, event, transition, and keyframe
-lifecycles on Linux. ThreadSanitizer runs the concurrent worker-to-UI stream
-mailbox on Linux and macOS. Windows uses the portable suite and ASan instead of
-requiring sanitizer combinations whose runtime cannot be reliably linked with
-the CI toolchain. Every sanitizer lane exercises ARC and ORC.
+LeakSanitizer checks retained widget, event, transition, keyframe, validation,
+form, and text-input lifecycles on Linux through ASan's integrated LSan
+detector. Some LLVM releases crash while standalone LSan scans nontrivial Nim
+ownership graphs, so CI uses the integrated detector for both ARC and ORC.
+ThreadSanitizer runs the concurrent worker-to-UI stream mailbox on Linux and
+macOS. Windows uses the portable suite and ASan instead of requiring sanitizer
+combinations whose runtime cannot be reliably linked with the CI toolchain.
+Every sanitizer lane exercises ARC and ORC.
+
+Nim 2.2.10's `Channel.close` destroys its internal mutex while the standard
+library still holds it. The TSan task narrowly suppresses that teardown symbol;
+mailbox send, receive, disposal, wake, and ownership races remain fatal. CBSS
+also serializes `Channel.tryRecv` with producers because that Nim version reads
+channel state before acquiring the channel's internal lock.
 
 The Linux Valgrind lane remains the deterministic lifecycle and C ABI leak gate
 because Valgrind is not treated as a supported portable Windows or current
@@ -1504,7 +1513,9 @@ macOS CI runtime. The `detect_leaks` ASan option is set only on Linux; neither
 that option nor standalone LSan is passed to macOS or Windows.
 Linux ASan test executables are linked as non-PIE to avoid address-space-layout
 collisions between PIE randomization and the sanitizer shadow mapping. This is
-a test-only linker policy and does not change release artifact hardening.
+a test-only linker policy and does not change release artifact hardening. The
+Linux TSan lane uses the same test-only non-PIE policy for its shadow-memory
+mapping and disables ASLR for the instrumented test process only.
 
 This verification is development-only. Ownership tracing, generated probes,
 sanitizer hooks, and verifier implementation code are not imported, linked, or

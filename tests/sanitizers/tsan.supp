@@ -1,0 +1,4 @@
+# Nim 2.2.10 Channel.close destroys its internal mutex while it is still held.
+# Suppress only that standard-library teardown function; CBSS mailbox races and
+# every other TSan diagnostic remain fatal.
+mutex:system::deinitRawChannel

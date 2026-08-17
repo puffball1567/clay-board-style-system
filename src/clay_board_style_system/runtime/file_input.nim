@@ -153,12 +153,10 @@ proc validationFiles(input: FileInputHandle): seq[ValidationFile] =
 proc syncValidationState(input: FileInputHandle) =
   if not input.container.valid():
     return
-  let validation =
-    if input.state.validation.isNil:
-      validValidationResult()
-    else:
-      input.state.validation.result
-  input.container.setState(esInvalid, not input.state.disabled and not validation.isValid)
+  input.container.setState(
+    esInvalid,
+    not input.state.disabled and input.state.validation.shouldExpose()
+  )
   input.root.tree.setAttribute(
     input.container.id,
     "validation-message",

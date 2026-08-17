@@ -39,6 +39,20 @@ suite "accessibility semantics":
     check sliderNode.get.valueMin == some(0.0'f32)
     check sliderNode.get.valueMax == some(100.0'f32)
 
+  test "password inputs expose protected semantics without plaintext values":
+    let ui = initUiRoot()
+    let input = ui.textInput(TextInputParams(
+      value: "secret",
+      inputType: TextInputType.password
+    ))
+
+    let semantic = ui.accessibilityTree()
+      .accessibleNodeFor(input.container.nodeId).get
+    check semantic.role == arPasswordText
+    check semantic.value == "******"
+    check ui.tree.nodes[input.container.nodeId.nodeIndex].attrValue("value") ==
+      some("secret")
+
   test "semantic values and states follow control updates":
     let ui = initUiRoot()
     let checkbox = ui.checkbox("Remember")
@@ -134,6 +148,10 @@ suite "accessibility semantics":
     discard ui.text(error, "Username is required")
     input.container.setAccessibleDescribedBy(some(error))
 
+    let initial = ui.accessibilityTree()
+      .accessibleNodeFor(input.container.nodeId).get
+    check esInvalid notin initial.states
+    check not input.reportValidity()
     let semantic = ui.accessibilityTree().accessibleNodeFor(input.container.nodeId).get
     check esInvalid in semantic.states
     check semantic.description == "Username is required"

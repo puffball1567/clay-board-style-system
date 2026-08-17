@@ -38,7 +38,8 @@ type
     arImage,
     arStaticText,
     arLink,
-    arSwitch
+    arSwitch,
+    arPasswordText
 
   ElementState* = enum
     esHover,

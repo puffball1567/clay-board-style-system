@@ -25,7 +25,7 @@
 extern "C" {
 #endif
 
-#define CBSS_ABI_VERSION 0x00010013u
+#define CBSS_ABI_VERSION 0x00010014u
 #define CBSS_NODE_NONE UINT32_MAX
 #define CBSS_MAX_EAGER_BLOB_BYTES (64ull * 1024ull * 1024ull)
 #define CBSS_MAX_FORM_DATA_ENTRIES 65536u
@@ -357,7 +357,8 @@ typedef enum CbssAccessibleRole {
   CBSS_ROLE_IMAGE = 19,
   CBSS_ROLE_STATIC_TEXT = 20,
   CBSS_ROLE_LINK = 21,
-  CBSS_ROLE_SWITCH = 22
+  CBSS_ROLE_SWITCH = 22,
+  CBSS_ROLE_PASSWORD_TEXT = 23
 } CbssAccessibleRole;
 
 typedef enum CbssHitKind {

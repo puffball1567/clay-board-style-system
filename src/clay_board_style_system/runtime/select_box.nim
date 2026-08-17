@@ -131,12 +131,10 @@ proc setSelectedIndex*(select: SelectHandle; index: int; emitEvents = false) =
 proc syncValidationState(select: SelectHandle) =
   if not select.container.valid():
     return
-  let validation =
-    if select.state.validation.isNil:
-      validValidationResult()
-    else:
-      select.state.validation.result
-  select.container.setState(esInvalid, not select.state.disabled and not validation.isValid)
+  select.container.setState(
+    esInvalid,
+    not select.state.disabled and select.state.validation.shouldExpose()
+  )
   select.root.tree.setAttribute(
     select.container.id,
     "validation-message",

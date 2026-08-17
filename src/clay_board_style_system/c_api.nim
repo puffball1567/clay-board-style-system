@@ -26,7 +26,7 @@ proc ensureNimRuntime() {.inline.} =
     NimMain()
 
 const
-  CbssAbiVersion* = 0x0001_0013'u32
+  CbssAbiVersion* = 0x0001_0014'u32
   CbssMaxEagerBlobBytes* = 64'u64 * 1024'u64 * 1024'u64
   CbssMaxBlobMimeBytes* = 1024
   CbssMaxFormDataEntries* = 65_536

@@ -336,8 +336,8 @@ jobs:
       - name: Verify LSan runtime availability
         run: |
           printf '%s\n' 'int main(void) { return 0; }' > "$RUNNER_TEMP/cbss_lsan_probe.c"
-          "$CBSS_CLANG" -fsanitize=leak "$RUNNER_TEMP/cbss_lsan_probe.c" -o "$RUNNER_TEMP/cbss_lsan_probe"
-          "$RUNNER_TEMP/cbss_lsan_probe"
+          "$CBSS_CLANG" -fsanitize=address "$RUNNER_TEMP/cbss_lsan_probe.c" -o "$RUNNER_TEMP/cbss_lsan_probe"
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 "$RUNNER_TEMP/cbss_lsan_probe"
 
       - name: Check retained lifecycles under ARC and ORC
         run: nimble testLsan -y

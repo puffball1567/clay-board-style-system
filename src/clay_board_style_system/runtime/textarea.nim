@@ -1487,12 +1487,10 @@ proc blur*(area: TextAreaHandle) =
 proc syncValidationState(area: TextAreaHandle) =
   if not area.container.valid():
     return
-  let validation =
-    if area.state.validation.isNil:
-      validValidationResult()
-    else:
-      area.state.validation.result
-  area.container.setState(esInvalid, not area.state.disabled and not validation.isValid)
+  area.container.setState(
+    esInvalid,
+    not area.state.disabled and area.state.validation.shouldExpose()
+  )
   area.root.tree.setAttribute(
     area.container.id,
     "validation-message",

@@ -194,7 +194,8 @@ proc evaluate*[T](
   binding.result = binding.rules.validate(value)
   if forceReport or
       (trigger == ValidationTrigger.input and binding.reportOn == ValidationReport.onInput) or
-      (trigger == ValidationTrigger.blur and binding.reportOn == ValidationReport.onBlur) or
+      (trigger == ValidationTrigger.blur and
+        binding.reportOn in {ValidationReport.onInput, ValidationReport.onBlur}) or
       (trigger == ValidationTrigger.submit and binding.reportOn == ValidationReport.onSubmit):
     binding.hasReported = true
   binding.result
