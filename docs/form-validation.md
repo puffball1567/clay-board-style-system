@@ -61,7 +61,8 @@ owned by `RadioSet`). `validationValue` exposes an explicit retained peer for
 
 Computing validity and presenting an error are separate operations:
 
-- `onInput` reports while the value changes;
+- `onInput` reports while the value changes and when the user leaves a control
+  that is still invalid;
 - `onBlur` reports after the user leaves the control;
 - `onSubmit` reports when submission is attempted; and
 - after a failure has been reported, a control may update the visible result
@@ -160,8 +161,14 @@ dependants. It does not subscribe every field to an entire form or infer
 dependencies from a closure.
 
 ```nim
-let password = ui.textInput(TextInputParams(value: ""))
-let confirmation = ui.textInput(TextInputParams(value: ""))
+let password = ui.textInput(TextInputParams(
+  value: "",
+  inputType: TextInputType.password
+))
+let confirmation = ui.textInput(TextInputParams(
+  value: "",
+  inputType: TextInputType.password
+))
 
 confirmation.setValidation(
   validationRules[string]().sameAs(
@@ -242,7 +249,7 @@ test:
 | Reporting | `onInput`, `onBlur`, `onSubmit`, explicit checks, correction after failure, and disabled controls |
 | Dependencies | Peer update, unrelated peer isolation, replacement, disposal, source indexing, and recursion suppression |
 | Forms | Check, report, invalid event, first-invalid focus, disabled exclusion, and immutable successful data |
-| Ownership | ARC and ORC, ASan, Linux LSan, and Valgrind definite/indirect leak checks |
+| Ownership | ARC and ORC, ASan, Linux integrated LSan, and Valgrind definite/indirect leak checks |
 | ABI and semantics | C/C++ header consumers, shared/static C consumers, invalid state, and AT-SPI mapping |
 | Performance | Prepared descriptors and precompiled regular expressions at 10k and 100k iterations |
 

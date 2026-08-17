@@ -28,7 +28,7 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x00010013` supports:
+ABI version `0x00010014` supports:
 
 - Opaque context and style handles.
 - Atomically reference-counted immutable Blob handles with advisory MIME
@@ -48,7 +48,8 @@ ABI version `0x00010013` supports:
   rejection. Stream payloads cross the ABI only as retained Blob handles.
 - Generation-checked node handles plus box, text, and image node creation.
 - Groups, attributes, pseudo-state flags, validation invalid-state exposure,
-  and accessibility semantics.
+  and accessibility semantics, including an append-only protected-password
+  text role.
 - Typed length, number, keyword, color, color-pair, border, shadow, gradient,
   and transform declarations.
 - Append-only `lh`, `rlh`, `ex`, `ch`, `rex`, and `rch` unit tags. The C ABI

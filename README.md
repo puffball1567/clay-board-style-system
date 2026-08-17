@@ -141,6 +141,7 @@ nimble v03CanvasDemo
 nimble loadingIndicatorDemo
 nimble declarativeMotionDemo
 nimble orchestrationDemo
+nimble validationDemo
 nimble cueMotionGraphicsDemo
 nimble cueGeometryMotionDemo
 ```
@@ -149,6 +150,11 @@ nimble cueGeometryMotionDemo
 stages. `cueGeometryMotionDemo` proves the same public Style and Cue APIs with
 only geometry: a gravity-shaped bounce, synchronized shadow, staggered tiles,
 and a composed final poster.
+
+`validationDemo` demonstrates retained reactive validation across text,
+password, checkbox, cross-field, blur, input, and submit flows. Password inputs
+render one mask character per Unicode rune while retaining their typed value
+for validation and FormData collection.
 
 [![Declarative transition and keyframe demo](sample/ClayBoardStyleSystem_declarative_motion_demo_preview.gif)](sample/ClayBoardStyleSystem_declarative_motion_demo.mp4)
 
@@ -385,7 +391,7 @@ text composition. Shared and static C ABI consumers have separate lifecycle
 gates. Valgrind complements the three-platform AddressSanitizer matrix and
 platform integration tests; it does not replace them and is not presented as a
 portable Windows or macOS verifier. UndefinedBehaviorSanitizer checks numeric,
-layout, transform, and motion paths on Linux and macOS. Standalone
+layout, transform, and motion paths on Linux and macOS. ASan's integrated
 LeakSanitizer checks retained lifecycles on Linux, while ThreadSanitizer checks
 worker-to-UI stream ownership on Linux and macOS. Each sanitizer task runs under
 both ARC and ORC. Windows is covered by the portable suite and ASan instead of
@@ -397,7 +403,7 @@ linked into release or application artifacts.
 | Portable tests and type checks | Yes | Yes | Yes |
 | LLVM AddressSanitizer | ARC + ORC | ARC + ORC | ARC + ORC |
 | LLVM UndefinedBehaviorSanitizer | ARC + ORC | No (portable + ASan) | ARC + ORC |
-| Standalone LeakSanitizer | ARC + ORC | No (Linux leak gates) | No (Linux leak gates) |
+| ASan-integrated LeakSanitizer | ARC + ORC | No (Linux leak gates) | No (Linux leak gates) |
 | LLVM ThreadSanitizer | ARC + ORC | No (Unix TSan gates) | ARC + ORC |
 | Valgrind lifecycle and C ABI | ARC | No (Linux gate) | No (Linux gate) |
 

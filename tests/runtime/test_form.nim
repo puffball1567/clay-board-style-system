@@ -3,6 +3,24 @@ import std/[options, unittest]
 import clay_board_style_system
 
 suite "form component":
+  test "submit reports a required checkbox only after the button path runs":
+    let ui = initUiRoot()
+    let form = ui.form()
+    ui.pushParent(form.container)
+    let consent = ui.checkbox(
+      "Consent",
+      validationRules[bool]().equalTo(true, "Consent is required"),
+      reportOn = ValidationReport.onSubmit
+    )
+    ui.popParent()
+    form.register("consent", consent)
+
+    check consent.validationMessage.len == 0
+    check esInvalid notin ui.tree.nodes[consent.container.id.nodeIndex].states
+    check not form.submit()
+    check consent.validationMessage == "Consent is required"
+    check esInvalid in ui.tree.nodes[consent.container.id.nodeIndex].states
+
   test "valid form submits and emits onSubmit":
     let ui = initUiRoot()
     let login = ui.form()
@@ -292,6 +310,25 @@ suite "form component":
     check captured.len == 2
     check captured[0].text == "Ada"
     check captured[1].text == "true"
+
+  test "password controls submit their source value instead of the mask":
+    let ui = initUiRoot()
+    let login = ui.form()
+    ui.pushParent(login.container)
+    let password = ui.textInput(TextInputParams(
+      value: "secret\xE7\x8C\xAB",
+      inputType: TextInputType.password
+    ))
+    ui.popParent()
+    login.register("password", password)
+
+    let collection = login.collectData()
+
+    check collection.diagnostics.len == 0
+    check collection.data.len == 1
+    check collection.data[0].name == "password"
+    check collection.data[0].text == "secret\xE7\x8C\xAB"
+    check ui.tree.nodes[password.textNode.id.nodeIndex].text == "*******"
 
   test "disabled validating controls are excluded from validation":
     let ui = initUiRoot()

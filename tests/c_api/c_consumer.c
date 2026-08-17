@@ -1,7 +1,9 @@
 #include "cbss.h"
 
-_Static_assert(CBSS_ABI_VERSION == 0x00010013u, "unexpected CBSS ABI version");
+_Static_assert(CBSS_ABI_VERSION == 0x00010014u, "unexpected CBSS ABI version");
 _Static_assert(CBSS_ROLE_SWITCH == 22, "unexpected switch role value");
+_Static_assert(CBSS_ROLE_PASSWORD_TEXT == 23,
+               "unexpected password text role value");
 
 #include <assert.h>
 #include <stddef.h>

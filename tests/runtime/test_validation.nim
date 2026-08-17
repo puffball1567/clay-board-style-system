@@ -234,16 +234,21 @@ suite "validation rules":
     check binding.result.isValid
     check not binding.shouldExpose()
 
-  test "onInput and onSubmit policies expose only at their boundaries":
+  test "reporting policies expose at their defined trigger boundaries":
     let rules = validationRules[string]().required()
-    let live = initValidationBinding(rules, "", ValidationReport.onInput)
-    let submitOnly = initValidationBinding(rules, "", ValidationReport.onSubmit)
-    discard live.evaluate("", ValidationTrigger.input)
-    discard submitOnly.evaluate("", ValidationTrigger.blur)
-    check live.shouldExpose()
-    check not submitOnly.shouldExpose()
-    discard submitOnly.evaluate("", ValidationTrigger.submit)
-    check submitOnly.shouldExpose()
+    for trigger in ValidationTrigger:
+      let live = initValidationBinding(rules, "", ValidationReport.onInput)
+      discard live.evaluate("", trigger)
+      check live.shouldExpose() ==
+        (trigger in {ValidationTrigger.input, ValidationTrigger.blur})
+
+      let afterBlur = initValidationBinding(rules, "", ValidationReport.onBlur)
+      discard afterBlur.evaluate("", trigger)
+      check afterBlur.shouldExpose() == (trigger == ValidationTrigger.blur)
+
+      let submitOnly = initValidationBinding(rules, "", ValidationReport.onSubmit)
+      discard submitOnly.evaluate("", trigger)
+      check submitOnly.shouldExpose() == (trigger == ValidationTrigger.submit)
 
   test "every built-in operation has an explicit outcome matrix":
     let alpha = compileRegex("^[a-z]+$")

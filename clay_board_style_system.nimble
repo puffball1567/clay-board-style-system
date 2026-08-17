@@ -58,6 +58,7 @@ task checkExplicitEventOutcomes, "Reject implicit boolean outcomes in first-part
   exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_door_button -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/door_button_canvas_demo.nim"
   exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_declarative_motion -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/declarative_motion_demo.nim"
   exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_orchestration -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/orchestration_demo.nim"
+  exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_validation -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/validation_demo.nim"
   exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_cue_motion_graphics -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/cue_motion_graphics_demo.nim"
   exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_cue_geometry_motion -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/cue_geometry_motion_demo.nim"
   exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_widget_lifecycle tests/memory/widget_lifecycle.nim"
@@ -87,7 +88,8 @@ task testMotionAsan, "Run retained runtime tests under AddressSanitizer":
       "frontend_trace",
       "validation",
       "validation_controls",
-      "form"
+      "form",
+      "text_input"
     ]:
       let suffix = testName & "_" & memoryModel & "_asan"
       let nimcache = sanitizerRoot & "/clay_board_style_system_" & suffix & "_nimcache"
@@ -143,29 +145,47 @@ task testLsan, "Run retained lifecycle tests under LeakSanitizer on Linux":
         ("frontend_trace", "tests/runtime/test_frontend_trace.nim"),
         ("validation", "tests/runtime/test_validation.nim"),
         ("validation_controls", "tests/runtime/test_validation_controls.nim"),
-        ("form", "tests/runtime/test_form.nim")
+        ("form", "tests/runtime/test_form.nim"),
+        ("text_input", "tests/runtime/test_text_input.nim")
       ]:
         let testName = test[0]
         let testPath = test[1]
         let suffix = testName & "_" & memoryModel & "_lsan"
         let nimcache = sanitizerRoot & "/clay_board_style_system_" & suffix & "_nimcache"
         let artifact = nimcache & "/clay_board_style_system_" & suffix
-        exec "nim c --forceBuild:on --cc:clang --clang.exe:" & clangExe & " --mm:" & memoryModel & " -d:release -d:cbssFrontendTrace -d:useMalloc --debugger:native --path:src --passC:-fsanitize=leak --passC:-fno-omit-frame-pointer --passL:-fsanitize=leak --nimcache:\"" & nimcache & "\" --out:\"" & artifact & "\" " & testPath
-        exec "env LSAN_OPTIONS=exitcode=99 \"" & artifact & "\""
+        # Some LLVM releases crash in standalone LSan while scanning nontrivial
+        # Nim ownership graphs. ASan's integrated detector is LSan, but keeps
+        # both ARC and ORC lifecycle execution stable with equivalent reports.
+        exec "nim c --forceBuild:on --cc:clang --clang.exe:" & clangExe & " --mm:" & memoryModel & " -d:release -d:cbssFrontendTrace -d:useMalloc --debugger:native --path:src --passC:-fsanitize=address --passC:-fno-omit-frame-pointer --passC:-fno-pie --passL:-fsanitize=address --passL:-no-pie --nimcache:\"" & nimcache & "\" --out:\"" & artifact & "\" " & testPath
+        exec "env ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:abort_on_error=1 \"" & artifact & "\""
   else:
-    echo "Standalone LeakSanitizer is verified only in the Linux CI lane."
+    echo "LeakSanitizer is verified only in the Linux CI lane."
 
 task testTsan, "Run worker-to-UI ownership races under ThreadSanitizer":
   when defined(linux) or defined(macosx):
     let sanitizerRoot = thisDir() & "/nimcache"
     let clangExe = getEnv("CBSS_CLANG", "clang")
+    let suppressions = thisDir() & "/tests/sanitizers/tsan.supp"
+    let addressLayoutFlags =
+      when defined(linux):
+        # Prevent PIE randomization from colliding with TSan shadow memory.
+        " --passC:-fno-pie --passL:-no-pie"
+      else:
+        ""
+    let runnerPrefix =
+      when defined(linux):
+        # Older LLVM TSan runtimes also require ASLR to be disabled while the
+        # test process reserves its shadow address range.
+        "setarch \"$(uname -m)\" -R "
+      else:
+        ""
     for memoryModel in ["arc", "orc"]:
       let suffix = "stream_mailbox_threaded_" & memoryModel & "_tsan"
       let nimcache = sanitizerRoot & "/clay_board_style_system_" & suffix & "_nimcache"
       let artifact = nimcache & "/clay_board_style_system_" & suffix
       let source = "tests/data/test_stream_mailbox_threaded.nim"
-      exec "nim c --forceBuild:on --cc:clang --clang.exe:" & clangExe & " --threads:on --mm:" & memoryModel & " -d:release -d:useMalloc --debugger:native --path:src --passC:-fsanitize=thread --passC:-fno-omit-frame-pointer --passL:-fsanitize=thread --nimcache:\"" & nimcache & "\" --out:\"" & artifact & "\" " & source
-      exec "env TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1 \"" & artifact & "\""
+      exec "nim c --forceBuild:on --cc:clang --clang.exe:" & clangExe & " --threads:on --mm:" & memoryModel & " -d:release -d:useMalloc --debugger:native --path:src --passC:-fsanitize=thread --passC:-fno-omit-frame-pointer --passL:-fsanitize=thread" & addressLayoutFlags & " --nimcache:\"" & nimcache & "\" --out:\"" & artifact & "\" " & source
+      exec runnerPrefix & "env TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1:suppressions=\"" & suppressions & "\" \"" & artifact & "\""
   else:
     echo "ThreadSanitizer is not supported by LLVM Clang on this platform."
 
@@ -195,6 +215,9 @@ task checkExamples, "Type-check every example in each supported link configurati
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_orchestration -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/orchestration_demo.nim"
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_orchestration_system -d:cbssSdl3LinkMode=system examples/orchestration_demo.nim"
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_orchestration_custom -d:cbssSdl3LinkMode=custom -d:cbssRuntimeRoot=vendor/sdl3 examples/orchestration_demo.nim"
+  exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_validation -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/validation_demo.nim"
+  exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_validation_system -d:cbssSdl3LinkMode=system examples/validation_demo.nim"
+  exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_validation_custom -d:cbssSdl3LinkMode=custom -d:cbssRuntimeRoot=vendor/sdl3 examples/validation_demo.nim"
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_cue_motion_graphics -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/cue_motion_graphics_demo.nim"
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_cue_motion_graphics_system -d:cbssSdl3LinkMode=system examples/cue_motion_graphics_demo.nim"
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_cue_motion_graphics_custom -d:cbssSdl3LinkMode=custom -d:cbssRuntimeRoot=vendor/sdl3 examples/cue_motion_graphics_demo.nim"
@@ -215,6 +238,7 @@ task checkExamplesOrc, "Type-check public examples under ORC":
   exec "nim check --mm:orc --path:src --nimcache:/tmp/clay_board_style_system_orc_check_door_button_canvas -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/door_button_canvas_demo.nim"
   exec "nim check --mm:orc --path:src --nimcache:/tmp/clay_board_style_system_orc_check_declarative_motion -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/declarative_motion_demo.nim"
   exec "nim check --mm:orc --path:src --nimcache:/tmp/clay_board_style_system_orc_check_orchestration -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/orchestration_demo.nim"
+  exec "nim check --mm:orc --path:src --nimcache:/tmp/clay_board_style_system_orc_check_validation -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/validation_demo.nim"
   exec "nim check --mm:orc --path:src --nimcache:/tmp/clay_board_style_system_orc_check_cue_motion_graphics -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/cue_motion_graphics_demo.nim"
   exec "nim check --mm:orc --path:src --nimcache:/tmp/clay_board_style_system_orc_check_cue_geometry_motion -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/cue_geometry_motion_demo.nim"
 
@@ -277,6 +301,22 @@ task testWidgetLifecycleValgrind, "Run ARC widget lifecycle checks under Valgrin
 task testEventLifecycleValgrind, "Run ARC event lifecycle checks under Valgrind":
   exec "nim c --mm:arc -d:release -d:useMalloc --path:src --nimcache:/tmp/clay_board_style_system_event_lifecycle_nimcache --out:/tmp/clay_board_style_system_event_lifecycle tests/memory/event_lifecycle.nim"
   exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 /tmp/clay_board_style_system_event_lifecycle"
+
+task testValidationValgrind, "Run ARC and ORC validation and password-input checks under Valgrind":
+  for memoryModel in ["arc", "orc"]:
+    for test in [
+      ("validation", "tests/runtime/test_validation.nim"),
+      ("validation_controls", "tests/runtime/test_validation_controls.nim"),
+      ("form", "tests/runtime/test_form.nim"),
+      ("text_input", "tests/runtime/test_text_input.nim")
+    ]:
+      let name = test[0]
+      let source = test[1]
+      let suffix = name & "_" & memoryModel & "_valgrind"
+      let artifact = "/tmp/clay_board_style_system_" & suffix
+      let nimcache = "/tmp/clay_board_style_system_" & suffix & "_nimcache"
+      exec "nim c --mm:" & memoryModel & " -d:release -d:useMalloc --path:src --nimcache:" & nimcache & " --out:" & artifact & " " & source
+      exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 " & artifact
 
 task testStreamMailboxValgrind, "Run the threaded ARC stream mailbox under Valgrind":
   exec "nim c --threads:on --mm:arc -d:release -d:useMalloc --path:src --nimcache:/tmp/clay_board_style_system_stream_mailbox_nimcache --out:/tmp/clay_board_style_system_stream_mailbox tests/data/test_stream_mailbox_threaded.nim"
@@ -362,6 +402,11 @@ task orchestrationDemo, "Run the Version 0.5 Cue orchestration demo":
   exec "cargo build --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml"
   exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
   exec "env LD_LIBRARY_PATH=native/cosmic_text_bridge/target/release:native/image_bridge/target/release nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_orchestration_demo_nimcache --out:/tmp/clay_board_style_system_orchestration_demo examples/orchestration_demo.nim"
+
+task validationDemo, "Run the Version 0.5 reactive form validation demo":
+  exec "cargo build --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml"
+  exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
+  exec "env LD_LIBRARY_PATH=native/cosmic_text_bridge/target/release:native/image_bridge/target/release nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_validation_demo_nimcache --out:/tmp/clay_board_style_system_validation_demo examples/validation_demo.nim"
 
 task cueMotionGraphicsDemo, "Run the Cue typography motion-graphics demo":
   exec "cargo build --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml"

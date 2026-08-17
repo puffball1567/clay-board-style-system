@@ -92,12 +92,10 @@ proc setChecked*(checkbox: CheckboxHandle; checked: bool; emitEvents = false) =
 proc syncValidationState(checkbox: CheckboxHandle) =
   if not checkbox.container.valid():
     return
-  let validation =
-    if checkbox.state.validation.isNil:
-      validValidationResult()
-    else:
-      checkbox.state.validation.result
-  checkbox.container.setState(esInvalid, not checkbox.state.disabled and not validation.isValid)
+  checkbox.container.setState(
+    esInvalid,
+    not checkbox.state.disabled and checkbox.state.validation.shouldExpose()
+  )
   checkbox.root.tree.setAttribute(
     checkbox.container.id,
     "validation-message",

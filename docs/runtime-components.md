@@ -76,6 +76,18 @@ let contact = ui.fieldset("Contact"):
   ui.label("Subscribe to updates", subscribe)
 ```
 
+Text inputs use an explicit input type when their presentation or semantics
+differs from ordinary text. Password input keeps the application value intact
+for validation and form collection, masks each rendered Unicode rune, and
+publishes a protected accessibility role and value:
+
+```nim
+let password = ui.textInput(TextInputParams(
+  placeholder: "Passphrase",
+  inputType: TextInputType.password
+))
+```
+
 `runtime/button.nim` provides the first minimal click component. It owns the
 label node, disabled state, disabled click suppression, and keyboard activation
 through Enter and Space. User code can still assign `button.onClick = handler`,

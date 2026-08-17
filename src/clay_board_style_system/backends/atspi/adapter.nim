@@ -29,7 +29,8 @@ type
     atrImage,
     atrStatic,
     atrLink,
-    atrToggleButton
+    atrToggleButton,
+    atrPasswordText
 
   AtspiState* = enum
     atsActive,
@@ -114,6 +115,7 @@ proc roleFor(role: AccessibleRole): AtspiRole =
   of arCheckBox: atrCheckBox
   of arRadio: atrRadioButton
   of arTextBox: atrEntry
+  of arPasswordText: atrPasswordText
   of arTextArea: atrText
   of arComboBox: atrComboBox
   of arOption, arListItem: atrListItem
