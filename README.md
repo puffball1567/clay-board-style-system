@@ -102,7 +102,7 @@ The exact workloads, machine-local interpretation, budgets, and regression
 gates are documented in [Performance Model](docs/performance-model.md) and can
 be run with `nimble bench`.
 
-The discovered ARC suite currently covers 99 independently compiled test
+The discovered ARC suite currently covers 116 independently compiled test
 files. The same suite and public examples also run under ORC as a compatibility
 gate, so applications may select either `--mm:arc` or `--mm:orc`. ARC remains
 the stricter ownership baseline. Separate Valgrind gates exercise the complete
@@ -144,6 +144,9 @@ nimble orchestrationDemo
 nimble validationDemo
 nimble cueMotionGraphicsDemo
 nimble cueGeometryMotionDemo
+nimble popInfographicDemo
+nimble kawaiiCompanionDemo
+nimble luxuryHotelDemo
 ```
 
 `cueMotionGraphicsDemo` demonstrates kinetic typography and sequenced visual
@@ -155,6 +158,18 @@ and a composed final poster.
 password, checkbox, cross-field, blur, input, and submit flows. Password inputs
 render one mask character per Unicode rune while retaining their typed value
 for validation and FormData collection.
+
+`popInfographicDemo` and `kawaiiCompanionDemo` use the same Box, Text, Style,
+Canvas, layout, and retained-rendering primitives to demonstrate two
+non-administrative application directions. The first is a colorful data story;
+the second is a daily companion in a youth-oriented Japanese kawaii visual
+language, including a two-head-tall character drawn with retained Canvas
+commands rather than a 3D asset.
+
+`luxuryHotelDemo` combines a fictional generated hospitality photograph with
+CBSS Image fitting and clipping, layered Style content, serif/sans typography,
+reservation details, and concierge panels. Asset provenance is recorded in
+`examples/assets/README.md`.
 
 [![Declarative transition and keyframe demo](sample/ClayBoardStyleSystem_declarative_motion_demo_preview.gif)](sample/ClayBoardStyleSystem_declarative_motion_demo.mp4)
 
@@ -185,8 +200,17 @@ cbss_configure system
 The selection is written to the application's ignored `.cbss/` directory.
 CBSS does not ship native runtime binaries inside its Nimble package.
 
-## What Version 0.4.2 Contains
+## What Version 0.5.0 Contains
 
+- An opt-in frontend runtime with retained typed State, transactional Stores,
+  selectors, component-owned watchers and effects, typed asynchronous Commands,
+  and dirty-domain invalidation without virtual-DOM replay.
+- Typed Cue orchestration with serial and parallel stages, relative timing,
+  joins, cancellation, pausable clocks, Signal/State/Store/Command/motion/Canvas
+  adapters, lifecycle ownership, and bounded diagnostic tracing.
+- Typed synchronous form validation with 40 composable rules, cross-field
+  dependencies, six reactive control families, submission gating, invalid
+  events, accessibility state, and C ABI invalid-state reporting.
 - Typed viewport, font-relative, font-metric-relative, percentage-spacing,
   intrinsic, and property-specific numeric unit authoring with deterministic
   resolution diagnostics.
@@ -230,7 +254,7 @@ Accepting a value as metadata does not mean that layout or paint consumes it.
 
 ## Current Boundaries
 
-Version 0.4.2 is a developer preview. Public APIs may change before 1.0.
+Version 0.5.0 is a developer preview. Public APIs may change before 1.0.
 
 - Linux x86_64 with SDL3 is the only Tier 1 runtime target.
 - Windows and macOS native runtime validation is incomplete.

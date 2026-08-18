@@ -7,6 +7,8 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-18
+
 ### Added
 
 - Added the first opt-in Version 0.5 frontend-runtime unit: retained typed
@@ -62,6 +64,10 @@ release. Before 1.0, minor releases may contain public API changes.
   public Style, keyframe, and Cue APIs. They demonstrate real-time serial and
   parallel visual orchestration without pre-rendered media or demo-specific
   runtime behavior.
+- Added pop-infographic, kawaii-companion, and luxury-hotel application demos
+  that exercise the same public Box, Text, Image, Canvas, Style, layout, and
+  retained-rendering APIs across distinct visual systems. The hotel demo also
+  includes deterministic desktop, compact, and mobile responsive-layout gates.
 - Added typed synchronous form validation with 40 composable rules, reactive
   validation for six form-control families, cross-field dependency tracking,
   form submission gating, invalid events and accessibility state, plus the

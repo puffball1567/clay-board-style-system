@@ -1430,7 +1430,7 @@ Planned work:
 
 ## Versions 0.5 And 0.6 - Parallel Foundation Tracks
 
-Status: `Version 0.5 implemented; Version 0.6 planned`
+Status: `Version 0.5 released on 2026-08-18; Version 0.6 planned`
 
 Version 0.5 and Version 0.6 are separate release scopes developed in the same
 foundation wave. Version 0.5 owns the first-party frontend runtime and general
@@ -1526,7 +1526,7 @@ is outside the CBSS guarantee.
 
 ### Frontend Runtime And General Cue Orchestration
 
-Status: `Version 0.5 runtime, adapters, bounded traces, and orchestration demo implemented`
+Status: `Released in Version 0.5`
 
 CBSS will include an opt-in first-party Nim frontend runtime that joins retained
 component state, typed Stores and Actions, selected subscriptions, owned
@@ -1605,7 +1605,7 @@ Implementation order reuses the current code rather than recreating it:
 
 ### Retained Reactive Form Validation
 
-Status: `Implemented on the Version 0.5 development branch`
+Status: `Released in Version 0.5`
 
 Version 0.5 adds reusable typed rule declarations for native forms. The API
 should feel familiar to engineers who have used JavaScript and TypeScript

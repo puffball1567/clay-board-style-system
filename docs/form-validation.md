@@ -1,6 +1,6 @@
 # Form Validation Design
 
-Status: `Version 0.5 implementation complete on the development branch`
+Status: `Released in Version 0.5`
 
 CBSS form validation is a retained UI capability, not a transport protocol or
 a replacement for backend validation. Applications declare reusable typed
