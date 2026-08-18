@@ -17,6 +17,7 @@ const portableExcludedTests = [
   "tests/backends/test_sdl3_stream_wake.nim",
   "tests/backends/test_sdl3_text_event_guard.nim",
   "tests/integration/test_demo_layout.nim",
+  "tests/integration/test_luxury_hotel_responsive.nim",
   "tests/integration/test_sdl3_navigation.nim",
   "tests/integration/test_sdl3_transform_render.nim",
   "tests/testing/test_sdl3_wayland_driver.nim"
