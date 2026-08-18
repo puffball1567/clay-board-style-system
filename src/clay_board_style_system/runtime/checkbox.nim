@@ -4,6 +4,7 @@ import ../core/[color, declaration, node, style_value]
 import ../input/events
 import ./form
 import ./ui_root
+import ./validation
 
 type
   CheckboxParams* = object
@@ -15,6 +16,7 @@ type
     label*: string
     checked*: bool
     disabled*: bool
+    validation*: ValidationBinding[bool]
 
   CheckboxHandle* = object
     root* {.cursor.}: UiRoot
@@ -24,8 +26,21 @@ type
     labelNode*: NodeHandle
     state*: CheckboxState
 
+proc evaluateValidation(
+    checkbox: CheckboxHandle;
+    trigger: ValidationTrigger;
+    forceReport = false
+): ValidationResult
+
+proc validationAdapterFor(checkbox: CheckboxHandle): ValidationAdapter
+
 proc register*(form: FormHandle; name: string; checkbox: CheckboxHandle) =
-  form.registerField(checkbox.container, name, ffCheckable)
+  form.registerField(
+    checkbox.container,
+    name,
+    ffCheckable,
+    validation = checkbox.validationAdapterFor()
+  )
 
 proc updateMarker(checkbox: CheckboxHandle) =
   if not checkbox.container.valid():
@@ -45,6 +60,9 @@ proc updateMarker(checkbox: CheckboxHandle) =
   )
 
 proc emitValueEvents(checkbox: CheckboxHandle) =
+  discard checkbox.evaluateValidation(ValidationTrigger.input)
+  if not checkbox.state.validation.isNil:
+    checkbox.root.notifyValidationDependencies(checkbox.state.validation.valueReference.identity)
   let value =
     if checkbox.state.checked: "true"
     else: "false"
@@ -66,6 +84,104 @@ proc setChecked*(checkbox: CheckboxHandle; checked: bool; emitEvents = false) =
   checkbox.updateMarker()
   if emitEvents:
     checkbox.emitValueEvents()
+  else:
+    discard checkbox.evaluateValidation(ValidationTrigger.explicit)
+    if not checkbox.state.validation.isNil:
+      checkbox.root.notifyValidationDependencies(checkbox.state.validation.valueReference.identity)
+
+proc syncValidationState(checkbox: CheckboxHandle) =
+  if not checkbox.container.valid():
+    return
+  checkbox.container.setState(
+    esInvalid,
+    not checkbox.state.disabled and checkbox.state.validation.shouldExpose()
+  )
+  checkbox.root.tree.setAttribute(
+    checkbox.container.id,
+    "validation-message",
+    if checkbox.state.disabled or checkbox.state.validation.isNil:
+      ""
+    else:
+      checkbox.state.validation.validationMessage()
+  )
+
+proc evaluateValidation(
+    checkbox: CheckboxHandle;
+    trigger: ValidationTrigger;
+    forceReport = false
+): ValidationResult =
+  if checkbox.state.validation.isNil:
+    return validValidationResult()
+  result = checkbox.state.validation.evaluate(
+    checkbox.state.checked,
+    trigger,
+    forceReport = forceReport
+  )
+  checkbox.syncValidationState()
+
+proc validationAdapterFor(checkbox: CheckboxHandle): ValidationAdapter =
+  validationAdapter(
+    proc(report: bool): ValidationResult =
+      checkbox.evaluateValidation(
+        if report: ValidationTrigger.submit else: ValidationTrigger.explicit,
+        forceReport = report
+      ),
+    proc(): ValidationResult =
+      if checkbox.state.validation.isNil:
+        validValidationResult()
+      else:
+        checkbox.state.validation.result
+  )
+
+proc setValidation*(
+    checkbox: CheckboxHandle;
+    rules: ValidationRules[bool];
+    reportOn = ValidationReport.onBlur
+) =
+  checkbox.root.clearValidationDependencies(checkbox.container.id)
+  checkbox.state.validation = initValidationBinding(rules, checkbox.state.checked, reportOn)
+  for peer in checkbox.state.validation.dependencyReferences:
+    let dependent = checkbox
+    checkbox.root.registerValidationDependency(
+      peer.identity,
+      checkbox.container.id,
+      proc() =
+        discard dependent.evaluateValidation(ValidationTrigger.explicit)
+    )
+  checkbox.syncValidationState()
+
+proc validationValue*(checkbox: CheckboxHandle): ValidationValueRef[bool] =
+  if checkbox.state.validation.isNil:
+    checkbox.setValidation(validationRules[bool]())
+  checkbox.state.validation.valueReference
+
+proc validationResult*(checkbox: CheckboxHandle): ValidationResult =
+  if checkbox.state.validation.isNil:
+    validValidationResult()
+  else:
+    checkbox.state.validation.result
+
+proc validationMessage*(checkbox: CheckboxHandle): string =
+  if checkbox.state.disabled or checkbox.state.validation.isNil:
+    ""
+  else:
+    checkbox.state.validation.validationMessage()
+
+proc checkValidity*(checkbox: CheckboxHandle): bool =
+  if checkbox.state.disabled:
+    return true
+  checkbox.evaluateValidation(ValidationTrigger.explicit).isValid
+
+proc reportValidity*(checkbox: CheckboxHandle): bool =
+  if checkbox.state.disabled:
+    return true
+  result = checkbox.evaluateValidation(
+    ValidationTrigger.explicit,
+    forceReport = true
+  ).isValid
+  if not result:
+    discard checkbox.container.emit(iekInvalid)
+    checkbox.root.requestFocus(some(checkbox.container.id))
 
 proc toggle*(checkbox: CheckboxHandle; emitEvents = true) =
   if not checkbox.container.valid() or checkbox.state.disabled:
@@ -77,6 +193,7 @@ proc setDisabled*(checkbox: CheckboxHandle; disabled: bool) =
     return
   checkbox.state.disabled = disabled
   checkbox.container.setState(esDisabled, disabled)
+  checkbox.syncValidationState()
 
 proc checked*(checkbox: CheckboxHandle): bool =
   checkbox.state.checked
@@ -163,6 +280,10 @@ proc checkbox*(
     checkbox.toggle()
     ignoredEvent()
   )
+  root.events.addInternalEventHandler(checkbox.container.id, iekBlur, proc(event: DispatchResult): EventOutcome =
+    discard checkbox.evaluateValidation(ValidationTrigger.blur)
+    ignoredEvent()
+  )
   root.events.addInternalEventHandler(checkbox.container.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =
     if checkbox.state.disabled:
       return stoppedEvent()
@@ -194,3 +315,26 @@ proc checkbox*(
     id = id,
     groups = groups
   )
+
+proc checkbox*(
+    root: UiRoot;
+    label: string;
+    validation: ValidationRules[bool];
+    reportOn = ValidationReport.onBlur;
+    checked = false;
+    style = UiStyle();
+    markerStyle = UiStyle();
+    labelStyle = UiStyle();
+    id = "";
+    groups: openArray[string] = ["checkbox"]
+): CheckboxHandle {.discardable.} =
+  result = root.checkbox(
+    label,
+    checked = checked,
+    style = style,
+    markerStyle = markerStyle,
+    labelStyle = labelStyle,
+    id = id,
+    groups = groups
+  )
+  result.setValidation(validation, reportOn)

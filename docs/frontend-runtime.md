@@ -1,11 +1,12 @@
 # Frontend Runtime Design
 
-Status: `Design and authoring direction adopted; implementation is planned`
+Status: `Version 0.5 runtime, adapters, bounded traces, and orchestration demo implemented`
 
 The authoring flow in this document is adopted. Exact generic constraints,
 result types, and individual identifiers may be refined during implementation,
 but such refinement must preserve this interaction model and its readability.
-Examples do not claim that the corresponding symbols are already exported.
+Examples identify planned APIs where noted; State through Command examples use
+the exported opt-in runtime.
 
 CBSS already provides retained components, typed events, signals, dependency
 injection, lifecycle ownership, dirty domains, transitions, and keyframes.
@@ -70,7 +71,10 @@ The design extends working CBSS mechanisms rather than replacing them.
 | Visual motion | transition and named keyframes | Cue orchestration over motion |
 | Worker delivery | bounded streams and UI mailbox | Command completion adapters |
 
-Selectors, effect sources, Commands, and Cue sessions are not implemented yet.
+Retained `State[T]`, nested `batch` publication, transactional Stores, selected
+subscriptions, component-owned `watch`, source-driven Effects, typed Commands,
+Cue sessions, runtime adapters, and bounded development traces are implemented
+in the opt-in `frontend_runtime` module.
 
 ## Adopted Authoring Contract
 
@@ -162,14 +166,35 @@ proc increment(self: Counter) =
   self.countLabel.setText($self.count)
 ```
 
-The frontend runtime should add concise helpers that pair a retained mutation
-with its exact invalidation. It must not make replaying `render(self)` the
-default update mechanism. A component may deliberately rebuild or replace a
-subtree, but ordinary text, value, selection, Style, and visibility changes
-patch stable handles.
+The opt-in frontend runtime adds `State[T]` for values that need typed
+subscriptions and `batch` for publishing several writes at one commit boundary.
 
-A later `State[T]` convenience may combine a current value with typed
-subscriptions. It is not a mandatory wrapper around every component field.
+```nim
+import std/options
+
+import clay_board_style_system
+import clay_board_style_system/frontend_runtime
+
+let count = initState(0)
+
+batch:
+  count.set(1)
+  count.set(2)
+
+self.watch(
+  count,
+  proc(value: int) = self.countLabel.setText($value),
+  dirtyDomains = {ddText, ddPaint},
+  target = some(self.countLabel.textNode)
+)
+```
+
+Component-owned `watch` subscriptions are disposed automatically at unmount
+and invalidate only the declared target and domains. They do not replay
+`render(self)`. A component may deliberately rebuild or replace a subtree,
+but ordinary text, value, selection, Style, and visibility changes patch
+stable handles. `State[T]` remains optional; an ordinary component field is
+still the smallest correct representation when no subscription is needed.
 
 ### Shared Store
 
@@ -203,6 +228,10 @@ proc reduce(state: var AppState; action: AppAction) =
 
 let appStore = createStore(AppState(), reduce)
 appStore.dispatch(AppAction(kind: akIncrement))
+
+appStore.transaction:
+  appStore.dispatch(AppAction(kind: akSaveStarted))
+  appStore.dispatch(AppAction(kind: akSaveFinished))
 ```
 
 Required behavior:
@@ -246,6 +275,11 @@ A Selector:
 - does not retain the owning component strongly; and
 - is detached automatically when owned by an unmounted component.
 
+Selectors intended for application-wide reuse may live with their Store.
+Dynamically created Selectors should call `dispose()` when no longer needed;
+component `watch` ownership applies to the UI subscription, not to a Selector
+that may be shared by several components.
+
 The default equality is typed `==`. Callers may provide a comparator for large
 or identity-bearing values. Expensive derived computation uses explicit input
 Selectors and caching; CBSS does not add a general `useMemo` equivalent.
@@ -288,6 +322,12 @@ when the typed source changes, cleans the previous resource before rerunning,
 and cleans the final resource during unmount. There is no dependency array:
 the source is the dependency.
 
+`State[T]` and `StoreSelector` Effects run once with the current value by
+default. Signal Effects wait for their first occurrence because a Signal has
+no retained current value. Reentrant source changes are processed in order;
+cleanup for the previous run always happens before the next run. Manual
+`dispose()` and component unmount use the same idempotent cleanup path.
+
 Simple mount-only work continues to use `onMount`; deterministic release uses
 `onUnmount` or `ComponentOwnedResource`. Timer choreography belongs to Cue,
 and network/storage work belongs to Command. A generic Effect must not become
@@ -299,16 +339,39 @@ Commands connect application Actions to asynchronous or external work without
 putting business logic in Style calculation or event propagation.
 
 ```nim
-let saveDocument = command(
-  proc(input: Document): Future[SaveResult] = repository.save(input)
+let saveDocument = self.command[Document, SaveResult, SaveError](
+  proc(document: Document;
+       sink: CommandSink[SaveResult, SaveError]): CommandCancel =
+    let saveSucceeded = proc(value: SaveResult) =
+      # A worker may own a copy of sink. It never calls UI code directly.
+      discard sink.succeed(value)
+    let saveFailed = proc(error: SaveError) =
+      discard sink.fail(error)
+    let operation = repository.startSave(
+      document,
+      saveSucceeded,
+      saveFailed
+    )
+    return proc() = operation.cancel()
 )
 
 saveDocument.onSuccess = proc(result: SaveResult) =
   appStore.dispatch(AppAction(kind: akSaveFinished))
+
+saveButton.onClick = proc(event: DispatchResult): EventOutcome =
+  discard saveDocument.run(currentDocument)
+  return handledEvent()
 ```
 
 The initial runtime does not choose one networking, storage, or async library.
-A Command adapter must provide:
+A Command adapter receives a copyable `CommandSink[Output, Failure]` and
+returns an idempotent, non-raising `CommandCancel`. The sink transfers typed
+success or failure values through the existing thread-safe bounded mailbox.
+The owning UI loop calls `pump(command)` after the command wake callback posts
+an SDL user event. Therefore worker code never invokes a component, Store, or
+application callback directly.
+
+A Command provides:
 
 - a completion handle;
 - cancellation;
@@ -316,6 +379,26 @@ A Command adapter must provide:
 - an ownership-transfer boundary for worker results;
 - marshaling to the owning UI thread; and
 - latest-only, ordered, or concurrent policy chosen explicitly by the caller.
+
+`cpLatestOnly` cancels the previous generation and ignores its late result.
+`cpOrdered` starts one operation at a time. `cpConcurrent` permits independent
+out-of-order completion. Every `run` returns a `CommandTicket` whose status is
+stable after completion or cancellation. Component-created Commands cancel
+active work, discard queued work, detach wake callbacks, and reject late sink
+offers during unmount. Application-owned Commands may use `dispose()` directly.
+
+`observeRun` attaches a no-throw settlement observer to one ticket without
+replacing the Command's application-level callbacks or copying its Output or
+Failure payload. A terminal ticket notifies immediately; a live subscription
+is removed on settlement, explicit unsubscribe, or Command disposal. This is
+the lifecycle boundary used by Cue and is also available to focused adapters.
+
+The completion queue has explicit item and weight bounds. `succeed` and `fail`
+return `StreamMailboxOfferResult`; adapters must react to `smorBackpressure`
+rather than dropping a terminal result. `pump(command, maxCompletions)` is an
+exact bound and leaves later completions queued. Processing cost is
+proportional to completions pumped plus policy-local active or queued runs; it
+does not scan the retained UI tree.
 
 The existing bounded stream/mailbox boundary remains the mechanism for
 progressive results. `joubako` may provide HTTP-facing Commands, but CBSS owns
@@ -338,13 +421,71 @@ simulation events, and independent Nim libraries. Cue does not reinterpret
 their payloads or force them into `InputEvent`; a typed adapter decides how an
 occurrence starts a session.
 
+The first source adapters are implemented for `Signal[T]`, retained `State[T]`,
+Store commit revisions, and `StoreSelector` values. A fixed graph may be shared
+by every occurrence, or a `CueGraphFactory[T]` may build a payload-specific
+graph without string identifiers or erased values. Component-owned triggers
+unsubscribe and cancel their still-active sessions during unmount.
+
+Commands are awaited as ordinary Cue actions. `cueCommand` calls its typed
+input factory once per session, completes only after the owning UI loop pumps
+the Command result, and maps Command failure or cancellation into Cue failure.
+Cancelling the Cue branch first detaches its ticket observer and then cancels
+the Command run, so a late worker result cannot resume the graph.
+
+Declarative transitions and named keyframes are awaited with `cueTransition`
+and `cueAnimation`. Each adapter installs additive lifecycle observers before
+calling its start procedure, then waits for the matching property or animation
+name. Existing `onTransition*` and `onAnimation*` handlers remain unchanged.
+Node disposal and an externally cancelled motion fail the waiting action;
+cancelled Cue branches detach first and may invoke an optional motion cleanup
+procedure. The cleanup is explicit because restoring or replacing an authored
+Style is an application decision.
+
+Retained Canvas work joins the same graph through `cueCanvas`. Its callback
+runs from the existing RenderSurface frame scheduler and returns
+`ccfdContinue` or `ccfdComplete`; continuation requests only the next frame for
+that surface. The adapter is additive, so it does not replace `Canvas2D.onFrame`,
+and multiple parallel Cue branches may observe one Canvas frame. Subscriptions
+are scoped by RenderSurface rather than only by `Canvas2D`, which keeps a
+shared retained display list safe when it is mounted in more than one place.
+Completion, cancellation, callback failure, direct surface unmount, and
+subtree disposal all detach the subscription deterministically.
+
 ```nim
-let presentation = cue(actionA)
-  .thenParallel(actionB, actionC, actionD)
-  .then(actionE)
+let loadDocument = cueCommand(
+  "load-document",
+  loadCommand,
+  proc(): DocumentId = selectedDocumentId
+)
+
+let presentation = cue(loadDocument)
+  .thenParallel(
+    cueTransition(
+      "show-editor",
+      editor,
+      dtpOpacity,
+      proc() = editor.applyStyle(visibleEditorStyle)
+    ),
+    updateRecentFiles
+  )
+  .then(announceReady)
+
+let chartReveal = cueCanvas(
+  "chart-reveal",
+  chartCanvas,
+  proc(
+      canvas: Canvas2D;
+      frame: RenderSurfaceFrame
+  ): CueCanvasFrameDecision =
+    drawChartFrame(canvas, frame.nowSeconds)
+    if chartIsComplete(): ccfdComplete else: ccfdContinue
+)
+
+let cueRuntime = initCueRuntime()
 
 saveButton.onClick = proc(event: DispatchResult): EventOutcome =
-  presentation.start()
+  discard cueRuntime.start(presentation)
   return handledEvent()
 ```
 
@@ -354,9 +495,9 @@ Semantics:
   successful completion;
 - `A -> (B + C + D) -> E` starts B, C, and D from one logical Cue tick and
   starts E only after the declared join condition is satisfied;
-- `cueStart(A)` triggers when A starts, `cueAfter(A, delay)` uses a monotonic
-  deadline relative to A's start, and `cueEnd(A)` triggers from A's terminal
-  completion contract;
+- `cueAfter(delay, action)` places a branch on a monotonic deadline relative
+  to its stage start; action start and terminal completion are the boundaries
+  used by graph progression and later typed adapters;
 - parallel groups define `all`, `any`, race, failure, and remaining-branch
   cancellation policies explicitly;
 - synchronous handlers complete on return;
@@ -515,10 +656,29 @@ Required coverage includes:
 - large unrelated component and Store populations proving local work remains
   local.
 
-Development builds may expose an action/session trace containing typed Action
-names, Store revisions, Selector changes, Command lifecycle, Cue steps, and
-dirty domains. The trace is development-only and is not linked into release
-artifacts unless explicitly enabled.
+Development builds expose a bounded typed trace for Cue sessions, stages, and
+branches, source triggers, Command runs, motion lifecycle, and dirty domains.
+It can be enabled per runtime without changing application control flow:
+
+```nim
+let runtime = initCueRuntime()
+let trace = runtime.enableTrace(capacity = 4096)
+
+discard runtime.start(graph)
+for event in trace.snapshot:
+  echo event.sequence, " ", event.kind, " ", event.name
+```
+
+The collector is an O(1) fixed-capacity ring. Once full, it overwrites the
+oldest event and increments `dropped`, so diagnostics cannot grow memory for
+the lifetime of an application. `snapshot` returns chronological events and
+`clear` releases retained event strings. Application callbacks are not used as
+the storage path, so diagnostic consumers cannot throw into Cue execution.
+
+Ordinary `-d:release` builds do not compile the trace types, runtime field, or
+recording branches. A diagnostic release build can opt in explicitly with
+`-d:cbssFrontendTrace`. This keeps production execution unchanged by default
+while allowing optimized builds to be investigated when necessary.
 
 ## Intentional Non-Goals
 
@@ -551,13 +711,21 @@ for the style/layout engine.
 4. Add source-driven `effect` and deterministic cleanup using the existing
    component ownership mechanism.
 5. Define Command completion and cancellation adapters over the implemented
-   bounded stream, UI mailbox, and SDL wake path.
-6. Implement the Cue graph core: typed triggers, serial edges, parallel
-   fan-out, joins, relative deadlines, cancellation, scoped ownership, and
-   virtual-clock tests.
-7. Connect Cue actions to the existing Signal, Store, transition, keyframe,
-   Canvas frame-request, and Command completion contracts.
+   bounded stream, UI mailbox, and SDL wake path. **Implemented.**
+6. Implement the Cue graph core: serial edges, parallel fan-out, joins,
+   relative deadlines, cancellation, scoped ownership, independent clocks,
+   and virtual-clock tests. **Implemented.**
+7. Connect Cue to existing runtime contracts. Typed Signal, State, Store
+   commit, StoreSelector, Command, transition, keyframe, and Canvas adapters
+   are **implemented**.
 8. Add optional traces, authoring conveniences, performance gates, and a demo
    that exercises event-, time-, and Signal-triggered parallel orchestration.
+   The bounded development trace and standalone orchestration demo are
+   **implemented**. Run the visual example with `nimble orchestrationDemo`;
+   its headless contract is covered by `test_orchestration_demo.nim`.
+   Two additional real-time visual examples are included:
+   `nimble cueMotionGraphicsDemo` exercises kinetic typography, while
+   `nimble cueGeometryMotionDemo` exercises the same Style and Cue contracts
+   with geometry, synchronized motion, and staggered composition.
 9. Consider C ABI exposure only after the Nim ownership and completion
    contracts are stable; generic Nim Store state does not cross the C ABI.

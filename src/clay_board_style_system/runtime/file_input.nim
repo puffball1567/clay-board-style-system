@@ -5,6 +5,7 @@ import ../data/blob
 import ../input/events
 import ./form
 import ./ui_root
+import ./validation
 
 const
   maxFileInputValues* = 1024
@@ -31,6 +32,7 @@ type
     multiple: bool
     disabled: bool
     fileState: FormFileFieldState
+    validation: ValidationBinding[seq[ValidationFile]]
 
   FileInputHandle* = object
     root* {.cursor.}: UiRoot
@@ -38,6 +40,14 @@ type
     actionNode*: NodeHandle
     valueNode*: NodeHandle
     state*: FileInputState
+
+proc evaluateValidation(
+    input: FileInputHandle;
+    trigger: ValidationTrigger;
+    forceReport = false
+): ValidationResult
+
+proc validationAdapterFor(input: FileInputHandle): ValidationAdapter
 
 proc fileInputValue*(blob: Blob; fileName = ""): FileInputValue =
   FileInputValue(blob: blob, fileName: fileName)
@@ -72,7 +82,12 @@ proc syncVisibleState(input: FileInputHandle) =
   input.container.setState(esDisabled, input.state.disabled)
 
 proc register*(form: FormHandle; name: string; input: FileInputHandle) =
-  form.registerFileField(input.container, name, input.state.fileState)
+  form.registerFileField(
+    input.container,
+    name,
+    input.state.fileState,
+    validation = input.validationAdapterFor()
+  )
 
 proc selectionRequest*(input: FileInputHandle): FileSelectionRequest =
   result.multiple = input.state.multiple
@@ -93,6 +108,9 @@ proc disabled*(input: FileInputHandle): bool =
   input.state.disabled
 
 proc emitValueEvents(input: FileInputHandle) =
+  discard input.evaluateValidation(ValidationTrigger.input)
+  if not input.state.validation.isNil:
+    input.root.notifyValidationDependencies(input.state.validation.valueReference.identity)
   let summary = input.selectedSummary()
   discard input.container.emit(inputEvent(summary))
   discard input.container.emit(changeEvent(summary))
@@ -117,6 +135,114 @@ proc setFiles*(
   input.syncVisibleState()
   if emitEvents:
     input.emitValueEvents()
+  else:
+    discard input.evaluateValidation(ValidationTrigger.explicit)
+    if not input.state.validation.isNil:
+      input.root.notifyValidationDependencies(input.state.validation.valueReference.identity)
+
+proc validationFiles(input: FileInputHandle): seq[ValidationFile] =
+  let files = input.state.fileState.values()
+  result = newSeqOfCap[ValidationFile](files.len)
+  for file in files:
+    result.add validationFile(
+      file.fileName,
+      file.blob.size,
+      if file.blob.mimeType.isSome: file.blob.mimeType.get else: ""
+    )
+
+proc syncValidationState(input: FileInputHandle) =
+  if not input.container.valid():
+    return
+  input.container.setState(
+    esInvalid,
+    not input.state.disabled and input.state.validation.shouldExpose()
+  )
+  input.root.tree.setAttribute(
+    input.container.id,
+    "validation-message",
+    if input.state.disabled or input.state.validation.isNil:
+      ""
+    else:
+      input.state.validation.validationMessage()
+  )
+
+proc evaluateValidation(
+    input: FileInputHandle;
+    trigger: ValidationTrigger;
+    forceReport = false
+): ValidationResult =
+  if input.state.validation.isNil:
+    return validValidationResult()
+  result = input.state.validation.evaluate(
+    input.validationFiles(),
+    trigger,
+    forceReport = forceReport
+  )
+  input.syncValidationState()
+
+proc validationAdapterFor(input: FileInputHandle): ValidationAdapter =
+  validationAdapter(
+    proc(report: bool): ValidationResult =
+      input.evaluateValidation(
+        if report: ValidationTrigger.submit else: ValidationTrigger.explicit,
+        forceReport = report
+      ),
+    proc(): ValidationResult =
+      if input.state.validation.isNil:
+        validValidationResult()
+      else:
+        input.state.validation.result
+  )
+
+proc setValidation*(
+    input: FileInputHandle;
+    rules: ValidationRules[seq[ValidationFile]];
+    reportOn = ValidationReport.onBlur
+) =
+  input.root.clearValidationDependencies(input.container.id)
+  input.state.validation = initValidationBinding(rules, input.validationFiles(), reportOn)
+  for peer in input.state.validation.dependencyReferences:
+    let dependent = input
+    input.root.registerValidationDependency(
+      peer.identity,
+      input.container.id,
+      proc() =
+        discard dependent.evaluateValidation(ValidationTrigger.explicit)
+    )
+  input.syncValidationState()
+
+proc validationValue*(input: FileInputHandle): ValidationValueRef[seq[ValidationFile]] =
+  if input.state.validation.isNil:
+    input.setValidation(validationRules[seq[ValidationFile]]())
+  input.state.validation.valueReference
+
+proc validationResult*(input: FileInputHandle): ValidationResult =
+  if input.state.validation.isNil:
+    validValidationResult()
+  else:
+    input.state.validation.result
+
+proc validationMessage*(input: FileInputHandle): string =
+  if input.state.disabled or input.state.validation.isNil:
+    ""
+  else:
+    input.state.validation.validationMessage()
+
+proc checkValidity*(input: FileInputHandle): bool =
+  if input.state.disabled:
+    return true
+  input.evaluateValidation(ValidationTrigger.explicit).isValid
+
+proc reportValidity*(input: FileInputHandle): bool =
+  if input.state.disabled:
+    return true
+  result = input.evaluateValidation(
+    ValidationTrigger.explicit,
+    forceReport = true
+  ).isValid
+  if not result:
+    discard input.container.emit(iekInvalid)
+    input.root.requestFocus(some(input.container.id))
 
 proc clear*(input: FileInputHandle; emitEvents = false) =
   input.setFiles([], emitEvents = emitEvents)
@@ -126,6 +252,7 @@ proc setDisabled*(input: FileInputHandle; disabled: bool) =
     return
   input.state.disabled = disabled
   input.syncVisibleState()
+  input.syncValidationState()
 
 proc setMultiple*(input: FileInputHandle; multiple: bool) =
   if not input.container.valid() or input.state.multiple == multiple:
@@ -224,3 +351,31 @@ proc fileInput*(
         return stoppedEvent()
       ignoredEvent()
   )
+  root.events.addInternalEventHandler(
+    input.container.id,
+    iekBlur,
+    proc(event: DispatchResult): EventOutcome =
+      discard input.evaluateValidation(ValidationTrigger.blur)
+      ignoredEvent()
+  )
+
+proc fileInput*(
+    root: UiRoot;
+    params: FileInputParams;
+    validation: ValidationRules[seq[ValidationFile]];
+    reportOn = ValidationReport.onBlur;
+    style = UiStyle();
+    actionStyle = UiStyle();
+    valueStyle = UiStyle();
+    id = "";
+    groups: openArray[string] = ["file-input"]
+): FileInputHandle {.discardable.} =
+  result = root.fileInput(
+    params,
+    style = style,
+    actionStyle = actionStyle,
+    valueStyle = valueStyle,
+    id = id,
+    groups = groups
+  )
+  result.setValidation(validation, reportOn)

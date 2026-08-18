@@ -45,6 +45,11 @@ jobs:
       - name: Run discovered ARC tests
         run: nimble test -y
 
+      - name: Verify development trace release gating
+        run: |
+          nim check -d:release --path:src tests/runtime/test_frontend_trace_release.nim
+          nim check -d:release -d:cbssFrontendTrace --path:src tests/runtime/test_frontend_trace_release.nim
+
       - name: Check examples and link profiles
         run: nimble checkExamples -y
 
@@ -135,6 +140,9 @@ jobs:
       - name: Check package metadata
         run: nimble check
 
+      - name: Install Nim dependencies
+        run: nimble install --depsOnly -y
+
       - name: Run portable ARC tests
         run: >-
           nim c -r --mm:arc
@@ -199,6 +207,9 @@ jobs:
       - name: Check threaded ARC stream ownership transfer
         run: nimble testStreamMailboxValgrind -y
 
+      - name: Check ARC Cue lifecycle
+        run: nimble testCueValgrind -y
+
       - name: Check shared and static C ABI lifecycles
         run: nimble testCAbiValgrind -y
 
@@ -231,11 +242,11 @@ jobs:
           nim --version
           nimble --version
 
-      - name: Check transition and keyframe lifecycles under ARC and ORC (Unix)
+      - name: Check motion and Cue lifecycles under ARC and ORC (Unix)
         if: runner.os != 'Windows'
         run: nimble testMotionAsan -y
 
-      - name: Check transition and keyframe lifecycles under ARC and ORC (Windows)
+      - name: Check motion and Cue lifecycles under ARC and ORC (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -325,8 +336,8 @@ jobs:
       - name: Verify LSan runtime availability
         run: |
           printf '%s\n' 'int main(void) { return 0; }' > "$RUNNER_TEMP/cbss_lsan_probe.c"
-          "$CBSS_CLANG" -fsanitize=leak "$RUNNER_TEMP/cbss_lsan_probe.c" -o "$RUNNER_TEMP/cbss_lsan_probe"
-          "$RUNNER_TEMP/cbss_lsan_probe"
+          "$CBSS_CLANG" -fsanitize=address "$RUNNER_TEMP/cbss_lsan_probe.c" -o "$RUNNER_TEMP/cbss_lsan_probe"
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 "$RUNNER_TEMP/cbss_lsan_probe"
 
       - name: Check retained lifecycles under ARC and ORC
         run: nimble testLsan -y

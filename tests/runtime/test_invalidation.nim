@@ -20,6 +20,23 @@ suite "runtime invalidation":
     check not ui.hasPendingInvalidation
     check ui.consumeInvalidation().roots.len == 0
 
+  test "dynamic node styles invalidate style resolution at the target":
+    let ui = initUiRoot()
+    let panel = ui.box()
+    discard ui.consumeInvalidation()
+
+    panel.applyStyle(uiStyle([decl("opacity", number(0.5))]))
+
+    let pending = ui.consumeInvalidation()
+    check pending.domains == {ddStyle}
+    check pending.roots == @[panel.id]
+
+    panel.applyStyle(uiStyle([decl("background-color", colorValue(rgb(1, 0, 0)))]))
+
+    let mergedUpdate = ui.consumeInvalidation()
+    check mergedUpdate.domains == {ddStyle}
+    check mergedUpdate.roots == @[panel.id]
+
   test "dirty domains accumulate and consume as a set":
     var invalidation = initInvalidationState()
 

@@ -76,6 +76,18 @@ let contact = ui.fieldset("Contact"):
   ui.label("Subscribe to updates", subscribe)
 ```
 
+Text inputs use an explicit input type when their presentation or semantics
+differs from ordinary text. Password input keeps the application value intact
+for validation and form collection, masks each rendered Unicode rune, and
+publishes a protected accessibility role and value:
+
+```nim
+let password = ui.textInput(TextInputParams(
+  placeholder: "Passphrase",
+  inputType: TextInputType.password
+))
+```
+
 `runtime/button.nim` provides the first minimal click component. It owns the
 label node, disabled state, disabled click suppression, and keyboard activation
 through Enter and Space. User code can still assign `button.onClick = handler`,
@@ -176,6 +188,14 @@ and unchecked controls follow the documented form rules, while disposed or
 value-less registrations produce diagnostics instead of being silently lost.
 Successful submission collects once and transports the resulting immutable
 snapshot on the submit event; later control mutations cannot change it.
+
+Version 0.5 extends this existing registration model with reusable typed
+validation rules attached to controls. Controls retain current validity while
+error reporting remains independently configurable for input, blur, or submit.
+Forms gain `checkValidity()` and `reportValidity()`; `submit()` validates before
+collecting the immutable snapshot. Network-backed checks remain explicit
+Commands rather than hidden rules. The implemented contract is documented in
+[Form Validation Design](form-validation.md).
 
 `runtime/file_input.nim` provides a style-neutral file-selection boundary. It
 does not open paths or own a platform picker. User activation gives application

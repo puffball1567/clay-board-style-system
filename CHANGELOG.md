@@ -7,6 +7,81 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-18
+
+### Added
+
+- Added the first opt-in Version 0.5 frontend-runtime unit: retained typed
+  `State[T]`, deterministic nested `batch` publication, component-owned
+  `watch`, and target-scoped dirty-domain invalidation without component replay.
+- Added transactional `StateRuntime` commits, queued reentrant dispatch,
+  `createStore`, typed `StoreSelector` projections, and component-owned
+  selected subscriptions that notify only when their selected value changes.
+- Added component-owned source Effects with immediate retained-value runs,
+  ordered reentrant updates, cleanup-before-rerun, failed-mount rollback, and
+  idempotent manual or unmount disposal.
+- Added typed asynchronous Commands with latest-only, ordered, and concurrent
+  policies; stable run tickets; cancellation; bounded worker-to-UI completion
+  delivery; exact bounded pumping; late-result rejection; and component-owned
+  lifecycle cleanup.
+- Added an indexed concurrent-Command performance gate; 10,000 reverse-order
+  completions remain constant-cost per result instead of linearly searching
+  the active run set.
+- Added the typed Cue graph core with automatic serial progression, parallel
+  `all` / `any` / `race` joins, relative deadlines, restart / ignore / queue /
+  parallel start policies, explicit failure and cancellation, component-owned
+  sessions, and independent pausable/rate-adjustable monotonic clocks.
+- Added virtual-clock and lifecycle coverage plus a parallel-Cue performance
+  gate; 10,000 branch completions remain constant-cost instead of rescanning
+  the complete stage for every result.
+- Added component-owned typed Cue source adapters for `Signal[T]`, retained
+  `State[T]`, Store commits, and selected Store values. Payload-aware graph
+  factories preserve source types, repeated-start policy, automatic
+  unsubscribe, active-session cancellation, and late-emission rejection.
+- Added ticket-scoped Command settlement subscriptions and `cueCommand`.
+  Cue graphs can now await typed asynchronous Commands without replacing
+  application `onSuccess` / `onFailure` callbacks or copying result payloads;
+  failure, cancellation, graph cancellation, and late completion remain
+  deterministic.
+- Added `cueTransition` and `cueAnimation` motion actions. They subscribe before
+  starting motion, wait for the matching lifecycle end, preserve public event
+  handlers, and detach deterministically on completion, cancellation, startup
+  failure, or node disposal.
+- Added `cueCanvas`, an additive frame adapter that lets retained Canvas work
+  participate in serial and parallel Cue graphs without replacing the public
+  `onFrame` callback. Frame subscriptions are scoped by RenderSurface, support
+  shared display lists, and detach on completion, cancellation, failure, or
+  surface disposal.
+- Added an opt-in bounded frontend trace that records Cue sessions, stages and
+  actions together with Signal / State / Store / Selector triggers, Command
+  run identifiers, motion lifecycle, and requested dirty domains. Ordinary
+  release builds compile the trace types and storage out; diagnostic release
+  builds can restore them with `-d:cbssFrontendTrace`.
+- Added a standalone Cue orchestration demo and matching headless contract
+  test for typed Signal entry, serial stages, stage-relative delayed parallel
+  branches, an all-join barrier, retained visual updates, and bounded tracing.
+- Added typography and geometry motion-graphics demos built entirely from the
+  public Style, keyframe, and Cue APIs. They demonstrate real-time serial and
+  parallel visual orchestration without pre-rendered media or demo-specific
+  runtime behavior.
+- Added pop-infographic, kawaii-companion, and luxury-hotel application demos
+  that exercise the same public Box, Text, Image, Canvas, Style, layout, and
+  retained-rendering APIs across distinct visual systems. The hotel demo also
+  includes deterministic desktop, compact, and mobile responsive-layout gates.
+- Added typed synchronous form validation with 40 composable rules, reactive
+  validation for six form-control families, cross-field dependency tracking,
+  form submission gating, invalid events and accessibility state, plus the
+  corresponding C ABI invalid-state flag. Prepared patterns use a linear-time
+  pure Nim regex engine without adding a native PCRE runtime dependency.
+
+### Fixed
+
+- Invalidating a dynamically replaced node style now schedules style
+  reconciliation, allowing completed Cue motion to start its following stage
+  without an unrelated redraw.
+- The cosmic-text bridge now source-over composites overlapping glyph pixels
+  instead of allowing later antialiased pixels to erase earlier glyph edges.
+
 ## [0.4.2] - 2026-08-13
 
 ### Added

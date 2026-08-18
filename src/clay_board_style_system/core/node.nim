@@ -38,7 +38,8 @@ type
     arImage,
     arStaticText,
     arLink,
-    arSwitch
+    arSwitch,
+    arPasswordText
 
   ElementState* = enum
     esHover,
@@ -48,7 +49,8 @@ type
     esDisabled,
     esChecked,
     esSelected,
-    esOpen
+    esOpen,
+    esInvalid
 
   SemanticInfo* = object
     role*: AccessibleRole

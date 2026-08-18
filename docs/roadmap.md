@@ -1430,7 +1430,7 @@ Planned work:
 
 ## Versions 0.5 And 0.6 - Parallel Foundation Tracks
 
-Status: `Planned`
+Status: `Version 0.5 released on 2026-08-18; Version 0.6 planned`
 
 Version 0.5 and Version 0.6 are separate release scopes developed in the same
 foundation wave. Version 0.5 owns the first-party frontend runtime and general
@@ -1492,16 +1492,30 @@ standalone LLVM installation first in `PATH`, so the sanitizer compiler and
 runtime remain the LLVM implementation. AddressSanitizer owns out-of-bounds,
 use-after-free, and double-free detection. UndefinedBehaviorSanitizer runs
 numeric, Flex, transform, transition, and keyframe paths on Linux and macOS.
-Standalone LeakSanitizer runs retained widget, event, transition, and keyframe
-lifecycles on Linux. ThreadSanitizer runs the concurrent worker-to-UI stream
-mailbox on Linux and macOS. Windows uses the portable suite and ASan instead of
-requiring sanitizer combinations whose runtime cannot be reliably linked with
-the CI toolchain. Every sanitizer lane exercises ARC and ORC.
+LeakSanitizer checks retained widget, event, transition, keyframe, validation,
+form, and text-input lifecycles on Linux through ASan's integrated LSan
+detector. Some LLVM releases crash while standalone LSan scans nontrivial Nim
+ownership graphs, so CI uses the integrated detector for both ARC and ORC.
+ThreadSanitizer runs the concurrent worker-to-UI stream mailbox on Linux and
+macOS. Windows uses the portable suite and ASan instead of requiring sanitizer
+combinations whose runtime cannot be reliably linked with the CI toolchain.
+Every sanitizer lane exercises ARC and ORC.
+
+Nim 2.2.10's `Channel.close` destroys its internal mutex while the standard
+library still holds it. The TSan task narrowly suppresses that teardown symbol;
+mailbox send, receive, disposal, wake, and ownership races remain fatal. CBSS
+also serializes `Channel.tryRecv` with producers because that Nim version reads
+channel state before acquiring the channel's internal lock.
 
 The Linux Valgrind lane remains the deterministic lifecycle and C ABI leak gate
 because Valgrind is not treated as a supported portable Windows or current
 macOS CI runtime. The `detect_leaks` ASan option is set only on Linux; neither
 that option nor standalone LSan is passed to macOS or Windows.
+Linux ASan test executables are linked as non-PIE to avoid address-space-layout
+collisions between PIE randomization and the sanitizer shadow mapping. This is
+a test-only linker policy and does not change release artifact hardening. The
+Linux TSan lane uses the same test-only non-PIE policy for its shadow-memory
+mapping and disables ASLR for the instrumented test process only.
 
 This verification is development-only. Ownership tracing, generated probes,
 sanitizer hooks, and verifier implementation code are not imported, linked, or
@@ -1512,7 +1526,7 @@ is outside the CBSS guarantee.
 
 ### Frontend Runtime And General Cue Orchestration
 
-Status: `Version 0.5 target; design adopted, integration not started`
+Status: `Released in Version 0.5`
 
 CBSS will include an opt-in first-party Nim frontend runtime that joins retained
 component state, typed Stores and Actions, selected subscriptions, owned
@@ -1577,13 +1591,124 @@ Implementation order reuses the current code rather than recreating it:
 2. Extend the existing `StateRuntime` with committed transactions and selected
    Store subscriptions.
 3. Add owned Effects and Command adapters over the implemented StreamMailbox,
-   StreamBridge, and UI-thread wake path.
-4. Implement typed Cue triggers, serial edges, parallel fan-out, joins,
-   deadlines, scoped cancellation, and virtual-clock tests.
-5. Connect Cue to the existing transition, keyframe, Signal, Store, Command,
-   Canvas scheduling, and component-lifecycle contracts.
+   StreamBridge, and UI-thread wake path. **Implemented.**
+4. Implement the Cue graph core with serial edges, parallel fan-out, joins,
+   deadlines, scoped cancellation, independent clocks, and virtual-clock
+   tests. **Implemented.**
+5. Connect Cue to the existing runtime contracts. Signal, retained State,
+   Store commit, StoreSelector, Command, transition, keyframe, Canvas, and
+   component lifecycle adapters are **implemented**.
 6. Add traces, ARC/ORC and performance gates, and event/time/Signal-triggered
    orchestration demos before considering a foreign-language ABI.
+   **Implemented**, including an opt-in bounded trace, release-build exclusion
+   gate, standalone SDL3 demo, and virtual-clock headless contract test.
+
+### Retained Reactive Form Validation
+
+Status: `Released in Version 0.5`
+
+Version 0.5 adds reusable typed rule declarations for native forms. The API
+should feel familiar to engineers who have used JavaScript and TypeScript
+validation libraries while remaining ordinary Nim with full LSP support. CBSS
+owns efficient rule execution, retained control validity, reporting policy,
+form coordination, focus, Style state, and accessibility semantics.
+Applications continue to own rule selection, error wording, business policy,
+transport, and authoritative backend validation.
+
+The normal authoring flow is intentionally direct:
+
+```nim
+let emailRules =
+  validationRules[string]()
+    .required("Email is required")
+    .maxLength(254, "Email is too long")
+    .email("Enter a valid email address")
+
+let emailInput = ui.textInput(
+  emailAddress,
+  validation = emailRules,
+  reportOn = ValidationReport.onBlur
+)
+```
+
+Rules are prepared once, can be imported or injected, and remain independently
+testable through `emailRules.validate(value)`. Attached controls keep validity
+current as values change while error reporting remains configurable as
+`onInput`, `onBlur`, or `onSubmit`. Invalid intermediate values remain editable
+rather than being rejected at the key-event boundary.
+
+The Version 0.5 built-in validator set contains these 40 synchronous
+operations:
+
+- **Presence and strings:** `required`, `optional`, `minLength`, `maxLength`,
+  `exactLength`, `notBlank`, `matches`, `contains`, `startsWith`, and
+  `endsWith`.
+- **Formats:** `email`, `url`, `uuid`, `ipAddress`, `date`, `time`, and
+  `dateTime`. The `matches` string validator provides explicit regular-
+  expression validation.
+- **Numbers:** `min`, `max`, `range`, `integer`, `positive`, `negative`,
+  `finite`, and `multipleOf`.
+- **Comparison and selection:** `equalTo`, `notEqualTo`, `oneOf`, `notOneOf`,
+  `sameAs`, and `differentFrom`.
+- **Collections and multiple selection:** `minItems`, `maxItems`, `exactItems`,
+  and `uniqueItems`.
+- **Files:** `maxFileSize`, `allowedMimeTypes`, `allowedExtensions`, and
+  `maxFiles`.
+- **Extension point:** `custom`.
+
+The implementation is subject to the following performance and behavior
+constraints:
+
+- Chaining builds typed descriptors or a bounded tagged representation once,
+  not a heap-allocated sequence of capturing closures per input event. Built-in
+  validators do not capture component or `UiRoot` ownership.
+- Synchronous validation borrows its input where possible, performs no string
+  copy on the success path, and stops at the first failure by default. Explicit
+  all-error collection is opt-in and may allocate only when recording failures.
+- `matches` accepts a compiled regular-expression value so input events do not
+  compile the same expression repeatedly. Pattern syntax errors are reported at
+  construction or compilation time where the selected Nim regex backend permits
+  it, never once per keystroke.
+- `optional` short-circuits validators that do not apply to an absent value;
+  `required` and `notBlank` remain distinct so an empty string and a
+  whitespace-only string have explicit behavior.
+- Cross-field comparisons declare an explicit peer dependency. A peer change
+  revalidates only registered dependants, with bounded cycle protection; it does
+  not subscribe every field to the entire form.
+- File validators inspect immutable Blob/file metadata and bounded counts. They
+  do not synchronously read file contents, infer MIME types from untrusted bytes,
+  or perform transport work on the UI thread.
+- `custom` accepts an ordinary typed Nim procedure. Capturing closures remain an
+  explicit opt-in cost rather than the built-in path.
+- Network-backed and application-state checks are Commands, not hidden
+  validators. Username availability and similar checks may use Joubako after
+  synchronous local validation succeeds; Command ownership handles
+  cancellation and stale-result rejection.
+- Validation and normalization remain separate. Operations such as trimming,
+  case conversion, Unicode normalization, coercion, parsing, and default-value
+  insertion must not silently mutate a value while a validation chain is being
+  evaluated.
+
+The first release is field- and form-focused rather than a clone of a
+TypeScript schema library. Later opt-in modules may add more string formats and
+runtime schemas for nested arrays, objects, tuples, records, enums, literals,
+unions, discriminated unions, intersections, defaults, preprocessing,
+transforms, pipelines, and recursive data. Nim already represents many of these
+statically, so they should be added only where runtime input validation provides
+clear value. The eventual validation surface may contain roughly 70 to 80
+focused operations without placing unused format or schema modules in a normal
+CBSS application binary.
+
+`form.checkValidity()` checks without forcing visible reports;
+`form.reportValidity()` exposes failures and focuses the first invalid control;
+and `form.submit()` validates before collecting one immutable FormData snapshot
+and dispatching application code. The full behavior, ownership, performance,
+and test contract is in [Form Validation Design](form-validation.md).
+
+Implementation coverage includes all 40 operations, six retained control
+families, invalid Style and AT-SPI state, form-level validation-first submit,
+first-invalid focus, explicit cross-field dependency updates, ARC/ORC tests,
+and a release benchmark for typed and precompiled-regex rule paths.
 
 ### Production Layout, Scrolling, Virtualization, And Accessibility
 
@@ -1794,6 +1919,22 @@ Raw events remain available to games, drawing tools, and specialized controls.
 The gesture layer is an opt-in interpretation above them, not a replacement for
 SDL3 input or an assumption that every touch must become a browser-style
 gesture.
+
+### Official Platform Primitive Candidates
+
+CBSS may provide more than the smallest paint and event mechanisms when a
+broadly reusable capability is difficult to implement correctly and must
+coordinate layout, rendering, input, focus, accessibility, or platform
+adapters. Brush and Stroke, a style-neutral Color Picker, and complete Drag and
+Drop are recorded as official implementation candidates.
+
+These candidates use a layered model: a small core mechanism, an official
+optional module that compiles out when unused, and replaceable reference
+controls where a usable default matters. Application workflows, business
+policy, branded component libraries, and content-specific tools remain outside
+CBSS. See [Official Platform Primitive Candidates](platform-primitives.md) for
+the inclusion test, current foundation, responsibility boundaries, and release
+gates.
 
 ## Later Milestones
 

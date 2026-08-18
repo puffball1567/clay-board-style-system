@@ -151,6 +151,20 @@ disables wall-clock gates that are not meaningful under Valgrind.
 The release ARC memory-check build completed this workload under Valgrind with
 zero bytes retained at exit and zero reported memory errors.
 
+### Version 0.5 validation gate
+
+`tests/perf/validation_benchmark.nim` measures prepared typed rule descriptors
+and a precompiled regular expression independently. It compares 10,000 and
+100,000 successful evaluations per operation and fails if mean cost scales
+superlinearly. It also compares one-dependant dispatch in trees with 100 and
+10,000 unrelated nodes, enforcing that notification remains indexed by source
+rather than scanning the tree. Rule construction and regular-expression
+compilation stay outside the input path. A control value change evaluates that
+control and its explicit cross-field dependants only; unrelated form controls
+are not scanned.
+Full registered-field traversal is reserved for `checkValidity`,
+`reportValidity`, and `submit`.
+
 ## Hot-path data rules
 
 The hot path is: input event → dispatch → dirty marking → subtree style →
@@ -329,6 +343,58 @@ The benchmark also asserts stable node/style counts and fails if the 10k result
 exceeds twice the 500-node result plus a one-microsecond noise allowance.
 Dynamic screen creation and physical subtree disposal remain separate work;
 this benchmark covers switching among already registered screens.
+
+### Frontend runtime Command and Cue gates (2026-08-13)
+
+Command completion must depend on the number of results drained in the current
+UI turn, not require a scan of the retained UI tree or a linear search through
+all concurrent runs. Active runs use their typed ticket ID as a hash index, and
+the ordered policy advances through an amortized O(1) queue head rather than
+shifting every remaining input after each completion.
+
+`tests/perf/frontend_runtime_benchmark.nim` creates concurrent Commands,
+delivers every result in reverse run order, and measures release ARC UI-pump
+cost. The initial same-machine baseline is:
+
+| active runs | mean pump cost per completion |
+| ---: | ---: |
+| 1,000 | 0.151 us |
+| 10,000 | 0.134 us |
+
+The gate fails if the 10,000-run per-completion cost exceeds four times the
+1,000-run cost plus a 0.5 microsecond noise allowance. Absolute time varies by
+host; the enforced property is that completion lookup is not O(active runs).
+The completion mailbox remains bounded, and `pump(maxCompletions)` leaves
+excess results queued rather than dropping or processing them invisibly.
+
+Parallel Cue completion likewise updates one indexed session branch and
+constant-size stage counters. It does not rescan every sibling branch after
+each completion. The same benchmark completes 1,000- and 10,000-branch `all`
+stages and applies the same ratio gate. The initial same-machine ARC baseline
+is:
+
+| parallel branches | mean completion cost per branch |
+| ---: | ---: |
+| 1,000 | 0.040 us |
+| 10,000 | 0.038 us |
+
+Session finalization may visit the stage once to release unfinished branches;
+the total completion path remains O(branches), not O(branches squared).
+
+Canvas Cue fan-out uses an indexed additive frame-subscription table. A frame
+may settle many parallel branches, marks each subscription inactive in O(1),
+and compacts the observer storage once after dispatch. It must not linearly
+search the observer sequence for every completed branch. The benchmark applies
+the same ratio gate to one RenderSurface frame:
+
+| parallel Canvas branches | mean dispatch + completion cost per branch |
+| ---: | ---: |
+| 1,000 | 0.086 us |
+| 10,000 | 0.089 us |
+
+The baseline is a release ARC run on the same development host. Canvas display
+list construction and rasterization are deliberately excluded; this gate
+isolates adapter dispatch, Cue settlement, observer removal, and compaction.
 
 ### Indexed event dispatch gate
 

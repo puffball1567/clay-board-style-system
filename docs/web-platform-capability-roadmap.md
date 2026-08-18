@@ -30,12 +30,12 @@ libraries practical.
 | Semantic document structure | roles, accessible names, state, labels, and relationships | In progress | The runtime model belongs in CBSS; operating-system accessibility export must be completed per platform. |
 | HTML custom elements | Nim modules exporting components, styles, and behavior | Runtime | Packages define their own components without a global tag registry. |
 | HTML forms | text input, textarea, select, checkbox, switch, radio, range, buttons, focus, and events | Runtime | Form behavior is native and typed, not HTML form submission. |
-| Constraint validation | typed validation state, validity messages, and native form policy | Planned | Core provides reusable control semantics; applications own business validation rules. |
+| Constraint validation | reusable typed rules attached to controls, retained validity, reporting policy, and form coordination | Version 0.5 implemented | The first field-focused set contains 40 synchronous presence, string, regex, format, number, comparison, collection, file, and custom rules. Network-backed checks remain explicit Commands or application operations; backend validation remains authoritative. |
 | Links and document navigation | native `Link` and navigation stack | Planned | In-process destinations replace browser document navigation. |
 | Canvas | first-class CBSS Canvas and 2D drawing context | Planned | Must behave as a normal CBSS box with clipping, focus, and retained rendering. |
 | SVG/vector drawing | paths, fills, strokes, images, and text through Canvas | Planned | SVG text parsing is not required; vector capabilities are exposed as typed APIs. |
 | Image, video, and camera elements | native media/image surfaces | Planned | Decoding and device access use dedicated adapters or packages. |
-| Drag and drop | pointer capture, drag lifecycle, data payloads, and native drop integration | Planned | Browser `DataTransfer` compatibility is not a goal. |
+| Drag and drop | existing synthetic lifecycle plus typed payloads, previews, automatic scrolling, accessibility, and native drop adapters | Runtime / Planned | Basic pointer events exist. The complete platform primitive is planned; browser `DataTransfer` compatibility is not a goal. |
 | Clipboard | typed clipboard actions and platform adapters | In progress | Clipboard policy remains explicit and local to the application. |
 | Browser document parser | HTML parser and document mutation API | No plan | Nim source constructs the UI directly. |
 | Browser tabs, SEO, page reload, browser history | browser navigation model | No plan | Native navigation has different requirements. |
@@ -68,7 +68,7 @@ libraries practical.
 | JavaScript language runtime | Nim | External | CBSS does not embed a scripting runtime. |
 | DOM event listeners | typed `onClick`, `onChange`, keyboard, pointer, focus, form, and gamepad handlers | Runtime / In progress | Event names and semantics are familiar where useful, while payloads remain native and typed. |
 | Component state and updates | Retained Nim fields, `StateRuntime`, and explicit invalidation | Runtime / Planned | The current primitives remain; concise `State[T]` and component-owned `watch` are planned without virtual-DOM-style reconstruction. |
-| Effects, derived state, and subscriptions | First-party opt-in frontend-runtime module | Planned | Typed selectors, owned effects, Commands, and Cue orchestration ship in the CBSS package but do not enter builds that omit the module. External state systems remain usable through ordinary Nim and Provider boundaries. |
+| Effects, derived state, and subscriptions | First-party opt-in frontend-runtime module | Runtime / Implemented | Typed State, Store transactions, selectors, owned watch/effects, bounded Commands, Cue graphs, typed source adapters, Command/motion/Canvas actions, bounded traces, and the orchestration demo are implemented. The module does not enter builds that omit it, and external state systems remain usable through ordinary Nim and Provider boundaries. |
 | Timers and animation frames | scheduler deadlines and frame requests | In progress / Planned | Idle applications block on events; animation explicitly requests frames. |
 | `fetch`, HTTP, retries, promises, and serialization | dedicated Nim networking packages | External | UI handlers may call those packages; transport policy is not CBSS core. |
 | Browser storage APIs | application persistence packages and native storage adapters | External | CBSS owns no database, cookie, or browser-origin model. |

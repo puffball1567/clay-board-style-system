@@ -142,6 +142,23 @@ proc node*(self: CBSSComponent): lent NodeHandle =
     raise newException(ComponentContextError, "component does not have a mounted root node")
   self.rootNode
 
+proc invalidate*(
+    self: CBSSComponent;
+    domains: set[DirtyDomain];
+    target = none(NodeHandle)
+) =
+  if self.isNil or self.mountState != cmsMounted or self.ownerRoot.isNil or
+      domains == {}:
+    return
+  let handle = if target.isSome: target.get else: self.rootNode
+  if handle.root != self.ownerRoot:
+    raise newException(
+      ComponentContextError,
+      "component invalidation target belongs to another UiRoot"
+    )
+  if handle.valid:
+    self.ownerRoot.invalidate(handle.id, domains)
+
 proc prepareRoot(root: UiRoot; self: CBSSComponent) =
   if self.isNil:
     raise newException(ComponentContextError, "component cannot be nil")

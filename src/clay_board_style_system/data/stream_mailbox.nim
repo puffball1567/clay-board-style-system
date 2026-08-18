@@ -56,6 +56,17 @@ type
 proc releaseShared[T](shared: ptr StreamMailboxShared[T])
 proc disposeShared[T](shared: ptr StreamMailboxShared[T]): bool
 
+proc tryReceive[T](
+    shared: ptr StreamMailboxShared[T]
+): tuple[dataAvailable: bool, msg: StreamEvent[T]] =
+  ## Nim's Channel.tryRecv inspects channel state before taking its internal
+  ## lock. Serialize it with producers through the mailbox gate as well.
+  acquire(shared.gate)
+  try:
+    result = shared.channel.tryRecv()
+  finally:
+    release(shared.gate)
+
 proc retainShared[T](shared: ptr StreamMailboxShared[T]) {.inline.} =
   if shared != nil:
     discard shared.references.fetchAdd(1, moRelaxed)
@@ -89,7 +100,7 @@ proc releaseShared[T](shared: ptr StreamMailboxShared[T]) =
     return
 
   while true:
-    let received = shared.channel.tryRecv()
+    let received = shared.tryReceive()
     if not received.dataAvailable:
       break
   shared.channel.close()
@@ -361,7 +372,7 @@ proc disposeShared[T](shared: ptr StreamMailboxShared[T]): bool =
 
   if result:
     while true:
-      let received = shared.channel.tryRecv()
+      let received = shared.tryReceive()
       if not received.dataAvailable:
         break
     acquire(shared.gate)
@@ -437,7 +448,7 @@ proc pumpInto*[T](
       event = move(mailbox.deferred)
       mailbox.hasDeferred = false
     else:
-      var received = shared.channel.tryRecv()
+      var received = shared.tryReceive()
       if not received.dataAvailable:
         break
       event = move(received.msg)

@@ -75,7 +75,10 @@ proc unsubscribe*[Value](
       subscription.owner != cast[pointer](signal) or
       subscription.id notin signal.bindingIndex:
     return false
-  let index = signal.bindingIndex[subscription.id]
+  let index = signal.bindingIndex.getOrDefault(subscription.id, -1)
+  if index < 0 or index >= signal.bindings.len:
+    signal.bindingIndex.del(subscription.id)
+    return false
   signal.bindingIndex.del(subscription.id)
   if signal.emitDepth > 0:
     signal.bindings[index].active = false
@@ -111,9 +114,16 @@ proc emit*[Value](signal: Signal[Value]; value: Value) =
   # A listener added by a callback observes the next emission, not the current
   # one. This keeps one emission deterministic under reentrant mutation.
   let bindingCount = signal.bindings.len
+  var firstFailure: ref CatchableError
   for index in 0 ..< bindingCount:
     if signal.bindings[index].active:
-      signal.bindings[index].listener(value)
+      try:
+        signal.bindings[index].listener(value)
+      except CatchableError as error:
+        if firstFailure.isNil:
+          firstFailure = error
+  if not firstFailure.isNil:
+    raise firstFailure
 
 proc listenerCount*[Value](signal: Signal[Value]): int =
   if not signal.isNil:
