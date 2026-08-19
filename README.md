@@ -171,6 +171,10 @@ CBSS Image fitting and clipping, layered Style content, serif/sans typography,
 reservation details, and concierge panels. Asset provenance is recorded in
 `examples/assets/README.md`.
 
+[Kawaii companion screenshot](sample/ClayBoardStyleSystem_kawaii_demo.png) |
+[Luxury hotel screenshot](sample/ClayBoardStyleSystem_luxury_hotel_demo.png) |
+[Cue motion graphics recording](sample/ClayBoardStyleSystem_cue_motion_graphics_demo.mp4)
+
 [![Declarative transition and keyframe demo](sample/ClayBoardStyleSystem_declarative_motion_demo_preview.gif)](sample/ClayBoardStyleSystem_declarative_motion_demo.mp4)
 
 Select the preview to open the full MP4 recording.
@@ -351,6 +355,7 @@ construction, ownership, callbacks, versioning, and static/shared linking.
 | Topic | Document |
 | --- | --- |
 | Product direction | [Roadmap](docs/roadmap.md) |
+| Craft components, styles, packs, and drivers | [Craft Ecosystem](docs/craft.md) |
 | Architecture and boundaries | [Architecture](docs/architecture.md) |
 | API stability and deprecation | [API Stability](docs/api-stability.md) |
 | Performance budgets | [Performance Model](docs/performance-model.md) |
