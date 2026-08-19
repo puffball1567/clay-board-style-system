@@ -1,8 +1,10 @@
 # CBSS C ABI
 
-The C ABI is CBSS's language-neutral runtime boundary. Nim remains the primary
-authoring API, while C++, Rust, Zig, Swift, and other native languages can
-build wrappers over the same engine without depending on Nim object layouts.
+The C ABI is CBSS's language-neutral engine protocol. It is not the intended
+application-authoring API. Nim remains the canonical authoring reference;
+Version 0.6 Craft Drivers give C++, Rust, and later host languages a high-level
+surface over the same engine without depending on Nim object layouts or making
+ordinary users manage opaque handles, callback userdata, and status codes.
 
 ## Build
 

@@ -220,20 +220,25 @@ valuable to design-tool vendors because it gives their users another practical
 application target, but CBSS should keep this as an interoperability goal rather
 than depending on any specific vendor relationship.
 
-## CBSS CLI And Plugin Templates
+## CBSS CLI And Craft Templates
 
 Status: `Planned`
 
-CBSS should provide a small CLI that creates project and plugin templates. The
+CBSS should provide a small CLI that creates project and Craft templates. The
 goal is to make CBSS feel like a shared native UI runtime rather than a library
 that every source file has to import directly.
+
+`Craft` is the public umbrella term for reusable work built on CBSS. Existing
+planning references to plugins describe ordinary Nim extension modules; their
+public templates and metadata should adopt the Craft vocabulary defined in
+[Craft Ecosystem](craft.md) before the CLI contract is frozen.
 
 The CLI should support at least:
 
 ```text
 cbss create app my_app
-cbss create plugin super_admin_ui
-cbss add plugin super_admin_ui
+cbss create craft super_admin_ui
+cbss add craft super_admin_ui
 cbss dev
 cbss build
 ```
@@ -246,7 +251,7 @@ my_app/
   nim.cfg
   cbss.nim
   main.nim
-  plugins/
+  crafts/
   styles/
   examples/
 ```
@@ -258,20 +263,20 @@ import clay_board_style_system
 export clay_board_style_system
 ```
 
-`nim.cfg` should make that facade available to project and plugin source files
+`nim.cfg` should make that facade available to project and Craft source files
 without requiring each file to write an explicit import:
 
 ```text
 --mm:arc
---path:"plugins"
+--path:"crafts"
 --import:cbss
 ```
 
-This makes plugin authoring closer to browser-based development: the shared UI
-runtime is already present in the project environment, and plugin authors focus
+This makes Craft authoring closer to browser-based development: the shared UI
+runtime is already present in the project environment, and Craft authors focus
 on the component, style, chart, widget, or theme they are publishing.
 
-Plugin source can then be written without direct CBSS imports:
+Craft source can then be written without direct CBSS imports:
 
 ```nim
 proc adminButtonStyle*(): UiStyle =
@@ -284,7 +289,7 @@ proc AdminButton*(ui: UiRoot; label: string): ButtonHandle =
   ui.button(label, style = adminButtonStyle())
 ```
 
-A user of that plugin should only need to import the plugin:
+A user of that Craft should only need to import its package:
 
 ```nim
 import super_admin_ui
@@ -293,16 +298,16 @@ let ui = initUiRoot()
 AdminButton(ui, "Save")
 ```
 
-The plugin should not vendor, copy, or statically embed a separate CBSS source
+The Craft should not vendor, copy, or statically embed a separate CBSS source
 tree. It is authored against the CBSS facade supplied by the generated
 application environment. This keeps the app on one CBSS runtime surface and
-avoids every plugin carrying its own style, layout, paint, text, and event
+avoids every Craft carrying its own style, layout, paint, text, and event
 engine.
 
-Initial plugin template:
+Initial Craft template:
 
 ```text
-plugins/super_admin_ui/
+crafts/super_admin_ui/
   super_admin_ui.nim
   styles.nim
   components/
@@ -311,7 +316,7 @@ plugins/super_admin_ui/
   examples/
   tests/
   README.md
-  cbss-plugin.toml
+  cbss-craft.toml
 ```
 
 The manifest should be light metadata, not a dynamic loader contract:
@@ -320,7 +325,7 @@ The manifest should be light metadata, not a dynamic loader contract:
 name = "super_admin_ui"
 version = "0.1.0"
 cbss = ">=0.1.0"
-kind = "ui-plugin"
+kind = "ui-craft"
 
 [capabilities]
 styles = ["layout", "background", "border", "shadow", "font"]
@@ -328,23 +333,25 @@ events = ["pointer", "keyboard"]
 paint = ["rect", "text", "gradient", "shadow"]
 ```
 
-The first implementation can treat plugins as normal Nim modules and packages.
-Dynamic plugin loading is not an initial goal. The important development
+The first implementation can treat Crafts as normal Nim modules and packages.
+Dynamic Craft loading is not an initial goal. The important development
 experience is:
 
 - app templates create the shared CBSS environment;
-- plugin templates assume that environment exists;
-- plugin users import the plugin, not CBSS internals;
-- plugins can expose styles that users import, merge, and override;
-- the CLI keeps `nim.cfg`, plugin paths, and generated facade files consistent.
+- Craft templates assume that environment exists;
+- Craft users import the Craft package, not CBSS internals;
+- Crafts can expose styles that users import, merge, and override;
+- the CLI keeps `nim.cfg`, Craft paths, and generated facade files consistent.
 
-The public plugin and component ecosystem is Nim-only. Every distributable
-CBSS extension has a Nim module as its entry point and participates in ordinary
-Nim import, type checking, ARC ownership, documentation, and tooling. A Nim
-package may privately bind a C, C++, or Rust implementation where that is useful,
-but the foreign implementation is a package detail: CBSS does not define a
-language-neutral plugin descriptor, a Rust plugin SDK, or a second package model
-beside Nimble modules.
+Nim modules and Nimble packages remain the reference Craft Component
+distribution path and participate in ordinary Nim import, type checking, ARC
+ownership, documentation, and tooling. A Nim package may privately bind a C,
+C++, or Rust implementation where that is useful. Version 0.6 additionally
+exposes high-level Craft Driver contracts for foreign-language applications and
+libraries; those Drivers share the same CBSS runtime and conformance model
+rather than creating a second layout, Style, event, or component engine.
+Dynamic loading of arbitrary foreign component binaries remains outside the
+initial contract.
 
 This approach keeps CBSS close to the role browsers play for Web UI libraries:
 the shared runtime provides style, layout, paint, text, and events, while
@@ -415,7 +422,7 @@ The public contract must provide:
 The contract is a public, versioned CBSS API. Libraries must use it rather than
 casting renderer internals or maintaining private copies of Canvas, event, or
 layout code. A package such as `cbss_charts` declares its CBSS compatibility in
-its Nimble/plugin metadata and imports the shared project facade internally;
+its Nimble/Craft metadata and imports the shared project facade internally;
 application authors import the library, not CBSS internals or a second runtime.
 
 Dynamic loading is not required for the initial model. Normal Nim imports and
@@ -819,11 +826,11 @@ model.
 - Generated code should not hide CBSS style rules behind opaque blobs.
 - Unsupported design-source features should be reported clearly instead of silently
   producing misleading UI.
-- Plugins should not vendor a private copy of CBSS.
-- Dynamic plugin loading is not required for the first plugin model; Nim modules
-  and project templates are enough for the initial workflow.
-- A language-neutral plugin SDK or a parallel Rust/C++ extension ecosystem is
-  not a goal. Published CBSS extensions use Nim entry points; foreign code may
-  remain an implementation detail behind them.
+- Crafts should not vendor a private copy of CBSS.
+- Dynamic Craft loading is not required; Nim modules and normal host-language
+  packages are sufficient for the initial component workflows.
+- A second foreign layout/event engine or unversioned binary-plugin protocol is
+  not a goal. Cross-language Craft Components use the Version 0.6 Driver and
+  capability contracts over the one CBSS runtime.
 - The test driver should not try to become a general-purpose browser automation
   compatibility layer.

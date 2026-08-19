@@ -1434,8 +1434,9 @@ Status: `Version 0.5 released on 2026-08-18; Version 0.6 planned`
 
 Version 0.5 and Version 0.6 are separate release scopes developed in the same
 foundation wave. Version 0.5 owns the first-party frontend runtime and general
-Cue orchestration. Version 0.6 owns the layout, scrolling, virtualization,
-accessibility-transport, ownership, and performance work required for
+Cue orchestration. Version 0.6 owns high-level authoring convergence,
+cross-language Craft Drivers, layout, scrolling, virtualization,
+accessibility transport, ownership, and the performance work required for
 data-dense production applications. Work may proceed concurrently where the
 contracts are independent, and Version 0.6 provides integrated production
 validation of the Version 0.5 authoring APIs.
@@ -1710,6 +1711,56 @@ families, invalid Style and AT-SPI state, form-level validation-first submit,
 first-invalid focus, explicit cross-field dependency updates, ARC/ORC tests,
 and a release benchmark for typed and precompiled-regex rule paths.
 
+### High-Level Authoring And Cross-Language Craft Drivers
+
+Status: `Version 0.6 target`
+
+The C ABI is a stable engine protocol, not the intended application-authoring
+experience. Version 0.6 adds a canonical high-level contract above it so a host
+language can use CBSS without exposing Nim memory management, raw opaque
+handles, explicit parent wiring, discarded construction results, dirty-domain
+plumbing, or callback trampolines in ordinary application code.
+
+The shared contract covers:
+
+- scoped application and `UiRoot` lifetime, nested Box/Text/Image/Canvas and
+  reference-control construction, component mount/unmount, and deterministic
+  resource disposal;
+- typed Style values, Craft Style loading, public Style Slots, Craft Pack
+  capability checks, atomic replacement, and diagnostics;
+- standard event properties, removable observers, focus, navigation, retained
+  State/Store updates, validation, Commands, and Cue entry points;
+- language-neutral status, error, callback-lifetime, cancellation,
+  thread-confinement, string, Blob, FormData, and ownership rules; and
+- bounded invalidation so a high-level Driver cannot regress retained updates
+  into whole-tree replay.
+
+Drivers use the idioms of their host language rather than transliterating Nim
+syntax. Rust may use ownership guards and `Drop`; C++ may use RAII and scoped
+builders. Those surfaces must still produce the same component nesting, Style
+precedence, event order, lifecycle, diagnostics, and dirty-domain effects.
+
+The contract is described by versioned machine-readable API and capability
+metadata. Generated low-level bindings and shared conformance fixtures prevent
+each Driver from becoming a handwritten reinterpretation of CBSS. ABI version
+negotiation and capability queries must fail before partial construction when
+a Craft requires unsupported behavior.
+
+Version 0.6 requires the canonical Nim facade plus maintained Rust and C++
+reference Drivers. Their integration suites construct and interact with the
+same reference applications, load the same Craft Style fixtures, compare
+resolved semantics and event traces, and exercise normal, error, cancellation,
+and teardown paths under the available memory tools. Adding another
+C-interoperable host must not require changes to layout, paint, event, or Style
+semantics in the CBSS core.
+
+This scope does not require one source syntax across languages, runtime loading
+of arbitrary foreign binaries, or pixel identity across different font and
+platform backends. It does require equivalent supported behavior and an
+authoring layer that is materially higher-level than calling C functions
+directly. The complete naming and distribution boundary is in
+[Craft Ecosystem](craft.md).
+
 ### Production Layout, Scrolling, Virtualization, And Accessibility
 
 Status: `Version 0.6 target`
@@ -1809,22 +1860,83 @@ target.
 
 ### Parallel Version 0.5 And 0.6 Delivery Order
 
-1. Freeze release baselines for layout, scrolling, focus, accessibility,
-   ownership, idle scheduling, and dirty-work complexity.
-2. Implement `State[T]`, owned `watch`, `batch`, selected Store transactions,
+1. Freeze release baselines for authoring, Driver semantics, layout, scrolling,
+   focus, accessibility, ownership, idle scheduling, and dirty-work complexity.
+2. Freeze the high-level API/capability schema and implement the Rust and C++
+   reference Craft Drivers over the versioned C ABI.
+3. Implement `State[T]`, owned `watch`, `batch`, selected Store transactions,
    Effects, and Commands over the existing runtime primitives.
-3. Complete the production layout consumers and their intrinsic, percentage,
+4. Complete the production layout consumers and their intrinsic, percentage,
    min/max, Flex, text, and writing-axis tests.
-4. Complete transform-only scrolling and add the typed virtualization contract
+5. Complete transform-only scrolling and add the typed virtualization contract
    with large-data performance tests.
-5. Connect the semantic tree to the Linux AT-SPI D-Bus transport and run
+6. Connect the semantic tree to the Linux AT-SPI D-Bus transport and run
    headless adapter plus real-session integration coverage.
-6. Implement Cue triggers, serial and parallel graphs, joins, clocks,
+7. Implement Cue triggers, serial and parallel graphs, joins, clocks,
    cancellation, and integration with Store, Signal, Command, transition,
    keyframes, Canvas, and component lifecycle.
-7. Run the integrated large-data application scenario under ARC and ORC,
-   sanitizers, Valgrind, Wayland E2E, accessibility inspection, and release
-   performance budgets before the Version 0.6 release branch is created.
+8. Rewrite first-party application demos through the canonical nested
+   component API so `parent = some(...)` and `discard` remain low-level escape
+   hatches rather than the advertised application workflow.
+9. Run the integrated large-data application scenario and Driver conformance
+   applications under ARC and ORC, sanitizers, Valgrind, Wayland E2E,
+   accessibility inspection, and release performance budgets before the
+   Version 0.6 release branch is created.
+
+## Craft Ecosystem And Portable Style Distribution
+
+Status: `Driver, Style, and Pack foundations are Version 0.6 targets;`
+`CLI and ecosystem expansion follow`
+
+`Craft` is the public umbrella term for reusable components, styles, design
+systems, and UI libraries built on Clay Board Style System. CBSS is the board
+and shared foundation; independent engineers distribute the work crafted on
+that foundation.
+
+The ecosystem vocabulary is:
+
+- **Craft Component:** a retained reusable component with explicit public
+  style slots and component-owned behavior;
+- **Craft Style:** an external, portable presentation definition that can be
+  replaced without replacing application behavior;
+- **Craft Pack:** a versioned distribution of components, styles, assets, and
+  compatibility metadata; and
+- **Craft Driver:** a host-language adapter that loads and applies Craft data
+  while preserving one CBSS semantic contract.
+
+The delivery sequence is:
+
+1. In Version 0.6, freeze the vocabulary, public style-slot contract,
+   precedence rules, and versioned capability identifiers.
+2. In Version 0.6, add atomic Craft Style replacement that preserves mounted
+   nodes, state, events, focus, and accessibility identity while invalidating
+   only affected dirty domains.
+3. In Version 0.6, define a deterministic language-neutral Craft Style
+   representation with parser diagnostics, validation, and compiled-cache
+   behavior. It remains CSS-inspired rather than CSS-compatible and cannot
+   embed arbitrary business callbacks.
+4. In Version 0.6, define the Craft Pack manifest foundation for components,
+   Style assets, fonts, images, optional visual capabilities, integrity
+   metadata, and CBSS compatibility.
+5. In Version 0.6, expose Craft Style loading through the versioned C ABI and
+   high-level Craft Drivers without creating separate layout, paint, or event
+   semantics for each host language.
+6. After the core contract is proven, update CLI templates and documentation
+   from generic plugin terminology to the Craft model, then prove that
+   independently authored packs can be installed, replaced, tested, and
+   removed without vendoring another CBSS runtime.
+7. Starting in Version 0.6, add cross-driver fixtures showing that one Craft
+   Style produces equivalent resolved values, dirty-domain behavior,
+   diagnostics, and reference images from multiple supported host languages.
+
+The canonical Craft Component implementation and examples remain normal Nim
+packages. Other supported hosts distribute components as normal packages for
+their language and author them through a conforming Craft Driver. Craft Style
+is the portable language-neutral presentation layer shared by those packages.
+This distinction avoids inventing a dynamic foreign-plugin ABI while still
+allowing one visual definition and one runtime contract to be reused across
+languages. The complete terminology and boundary design is in
+[Craft Ecosystem](craft.md).
 
 ## Version 0.7+ - Visual And Native Capability Sequence
 
