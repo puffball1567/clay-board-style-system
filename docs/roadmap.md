@@ -1757,9 +1757,11 @@ semantics in the CBSS core.
 Current implementation status: the machine-readable capability contract and
 runtime negotiation API are complete. The C++14 reference Driver now covers
 RAII lifetime, typed Style values, scoped Box/Text/Image construction, layout
-queries, structured failures, ARC/ORC linking, and Valgrind coverage. Event,
-state, lifecycle, Craft Style, and cross-Driver fixture parity remain Version
-0.6 work, together with the Rust reference Driver.
+queries, structured failures, ARC/ORC linking, and Valgrind coverage. The Rust
+reference Driver covers the same first reference tree with private FFI, `Drop`
+ownership, context-bound Nodes, and borrowed child Scopes under ARC and ORC.
+Event, state, lifecycle, Craft Style, and cross-Driver fixture parity remain
+Version 0.6 work.
 
 This scope does not require one source syntax across languages, runtime loading
 of arbitrary foreign binaries, or pixel identity across different font and

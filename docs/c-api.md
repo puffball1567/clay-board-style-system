@@ -157,6 +157,13 @@ remain available only as an advanced interoperability escape hatch. Run
 `nimble testCppDriver` to exercise the same reference tree against both shared
 and static C ABI builds.
 
+The maintained Rust reference Driver is in `drivers/rust`. It keeps the raw FFI
+module private, owns `Ui` and `Style` through `Drop`, and uses borrowed child
+Scopes instead of a mutable parent stack. Generated ABI and capability
+constants come from the same contract JSON as Nim and C. Run
+`nimble testRustDriver` for ARC shared/static integration and
+`nimble testRustDriverOrc` for the equivalent ORC boundary.
+
 ## Host Event Loop
 
 After the initial `cbss_context_compute`, feed backend events through

@@ -1,0 +1,13 @@
+[package]
+name = "cbss-craft"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["Clay Board Style System contributors"]
+description = "High-level Rust Craft Driver for Clay Board Style System"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
