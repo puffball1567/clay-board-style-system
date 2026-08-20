@@ -355,6 +355,11 @@ C++14 applications can use the higher-level reference Craft Driver in
 values, capability negotiation, and scoped nested UI construction while using
 the same C ABI engine underneath.
 
+Rust applications can use the maintained [`cbss-craft`](drivers/rust/README.md)
+Driver. Its raw FFI stays private; `Drop`, context-bound Nodes, typed Style
+values, and borrowed child Scopes provide the same engine contract through
+Rust-native ownership and error handling.
+
 ## Documentation
 
 | Topic | Document |

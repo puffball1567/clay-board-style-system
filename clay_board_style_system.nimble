@@ -299,6 +299,20 @@ task testCppDriver, "Build and exercise the C++ Craft Driver":
   exec "c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include tests/drivers/cpp_reference.cpp /tmp/libcbss.a -lm -lpthread -ldl -o /tmp/clay_board_style_system_cpp_driver_static"
   exec "/tmp/clay_board_style_system_cpp_driver_static"
 
+task testRustDriver, "Build and exercise the Rust Craft Driver":
+  exec "nim c --threads:on --app:lib --mm:arc -d:release --path:src --nimcache:/tmp/clay_board_style_system_rust_driver_shared_nimcache --out:/tmp/libcbss.so src/cbss_c_api.nim"
+  exec "env CBSS_LIB_DIR=/tmp LD_LIBRARY_PATH=/tmp CARGO_TARGET_DIR=/tmp/clay_board_style_system_rust_driver_shared_target cargo test --locked --release --manifest-path drivers/rust/Cargo.toml"
+  exec "nim c --threads:on --app:staticlib --mm:arc -d:release --path:src --nimcache:/tmp/clay_board_style_system_rust_driver_static_nimcache --out:/tmp/libcbss.a src/cbss_c_api.nim"
+  exec "env CBSS_LIB_DIR=/tmp CBSS_STATIC=1 CARGO_TARGET_DIR=/tmp/clay_board_style_system_rust_driver_static_target cargo test --locked --release --manifest-path drivers/rust/Cargo.toml"
+
+task testRustDriverOrc, "Exercise the Rust Craft Driver under ORC":
+  exec "mkdir -p /tmp/clay_board_style_system_rust_driver_orc_shared"
+  exec "nim c --threads:on --app:lib --mm:orc -d:release --path:src --nimcache:/tmp/clay_board_style_system_rust_driver_orc_shared_nimcache --out:/tmp/clay_board_style_system_rust_driver_orc_shared/libcbss.so src/cbss_c_api.nim"
+  exec "env CBSS_LIB_DIR=/tmp/clay_board_style_system_rust_driver_orc_shared LD_LIBRARY_PATH=/tmp/clay_board_style_system_rust_driver_orc_shared CARGO_TARGET_DIR=/tmp/clay_board_style_system_rust_driver_orc_shared_target cargo test --locked --release --manifest-path drivers/rust/Cargo.toml"
+  exec "mkdir -p /tmp/clay_board_style_system_rust_driver_orc_static"
+  exec "nim c --threads:on --app:staticlib --mm:orc -d:release --path:src --nimcache:/tmp/clay_board_style_system_rust_driver_orc_static_nimcache --out:/tmp/clay_board_style_system_rust_driver_orc_static/libcbss.a src/cbss_c_api.nim"
+  exec "env CBSS_LIB_DIR=/tmp/clay_board_style_system_rust_driver_orc_static CBSS_STATIC=1 CARGO_TARGET_DIR=/tmp/clay_board_style_system_rust_driver_orc_static_target cargo test --locked --release --manifest-path drivers/rust/Cargo.toml"
+
 task testCAbiOrc, "Exercise cross-thread C ABI streams under ORC":
   exec "nim c --threads:on --app:lib --mm:orc -d:release --path:src --nimcache:/tmp/clay_board_style_system_c_api_orc_shared_nimcache --out:/tmp/libcbss_orc.so src/cbss_c_api.nim"
   exec "c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include tests/drivers/cpp_reference.cpp -L/tmp -Wl,-rpath,/tmp -l:libcbss_orc.so -lm -o /tmp/clay_board_style_system_cpp_driver_orc_shared"

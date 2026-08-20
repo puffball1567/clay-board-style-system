@@ -59,6 +59,9 @@ jobs:
       - name: Test shared and static C ABI
         run: nimble testCAbi -y
 
+      - name: Test shared and static Rust Craft Driver
+        run: nimble testRustDriver -y
+
       - name: Verify source-only package with external bundled runtime
         run: |
           runtime_root="$GITHUB_WORKSPACE/vendor/sdl3"
@@ -108,6 +111,9 @@ jobs:
 
       - name: Check cross-thread C ABI streams under ORC
         run: nimble testCAbiOrc -y
+
+      - name: Test Rust Craft Driver under ORC
+        run: nimble testRustDriverOrc -y
 
   portable:
     name: Portable core (${{ matrix.platform }})
@@ -179,6 +185,9 @@ jobs:
           clang-cl /nologo /W4 /WX /c /TC /Iinclude tests\c_api\header_consumer.c /Fo"${{ runner.temp }}\cbss_header_c.obj"
           clang-cl /nologo /W4 /WX /EHsc /c /TP /std:c++14 /Iinclude /Idrivers\cpp\include tests\c_api\header_consumer.cpp /Fo"${{ runner.temp }}\cbss_header_cpp.obj"
           clang-cl /nologo /W4 /WX /EHsc /c /TP /std:c++14 /Iinclude /Idrivers\cpp\include tests\drivers\cpp_reference.cpp /Fo"${{ runner.temp }}\cbss_cpp_driver.obj"
+
+      - name: Check portable Rust Craft Driver
+        run: cargo check --locked --all-targets --manifest-path drivers/rust/Cargo.toml
 
       - name: Test native Rust bridges
         run: |
@@ -395,6 +404,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check Rust Craft Driver formatting and lints
+        run: |
+          cargo fmt --manifest-path drivers/rust/Cargo.toml -- --check
+          cargo clippy --locked --all-targets --manifest-path drivers/rust/Cargo.toml -- -D warnings
 
       - name: Test locked Rust bridge
         run: cargo test --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml
