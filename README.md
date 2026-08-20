@@ -375,6 +375,7 @@ Rust-native ownership and error handling.
 | Events and typed signals | [Events](docs/events.md) |
 | Blob, FormData, and Streams | [UI Data Interchange](docs/data-interchange.md) |
 | Canvas and custom drawing | [Render Surfaces](docs/render-surfaces.md) |
+| SDL3, CPU vector, bgfx, and color management | [Native Rendering Stack](docs/native-rendering-stack.md) |
 | Optional platform primitive candidates | [Platform Primitives](docs/platform-primitives.md) |
 | Navigation and Link | [Navigation](docs/navigation.md) |
 | Color model | [Color](docs/color.md) |
