@@ -350,6 +350,11 @@ Applications can wrap `include/cbss.h` from C, C++, Rust, Zig, Swift, or another
 language with C interoperability. See [C ABI Guide](docs/c-api.md) for
 construction, ownership, callbacks, versioning, and static/shared linking.
 
+C++14 applications can use the higher-level reference Craft Driver in
+[`drivers/cpp`](drivers/cpp/README.md). It provides RAII ownership, typed Style
+values, capability negotiation, and scoped nested UI construction while using
+the same C ABI engine underneath.
+
 ## Documentation
 
 | Topic | Document |

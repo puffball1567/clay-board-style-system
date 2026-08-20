@@ -1,4 +1,5 @@
 #include "cbss.h"
+#include <cbss/craft.hpp>
 
 static_assert(CBSS_ABI_VERSION == 0x00010015u,
               "unexpected CBSS ABI version");
@@ -11,5 +12,7 @@ CBSS_DEPRECATED("compile-only C++ deprecation contract probe")
 CBSS_API void deprecated_cpp_contract_probe(void);
 
 int main() {
+  cbss::Length length = cbss::px(1.0f);
+  (void)length;
   return 0;
 }

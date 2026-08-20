@@ -169,14 +169,16 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           cc -std=c11 -Wall -Wextra -Werror -Iinclude -fsyntax-only tests/c_api/header_consumer.c
-          c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -fsyntax-only tests/c_api/header_consumer.cpp
+          c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include -fsyntax-only tests/c_api/header_consumer.cpp
+          c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include -fsyntax-only tests/drivers/cpp_reference.cpp
 
       - name: Check C and C++ public headers (MSVC-compatible)
         if: runner.os == 'Windows'
         shell: cmd
         run: |
           clang-cl /nologo /W4 /WX /c /TC /Iinclude tests\c_api\header_consumer.c /Fo"${{ runner.temp }}\cbss_header_c.obj"
-          clang-cl /nologo /W4 /WX /c /TP /std:c++14 /Iinclude tests\c_api\header_consumer.cpp /Fo"${{ runner.temp }}\cbss_header_cpp.obj"
+          clang-cl /nologo /W4 /WX /EHsc /c /TP /std:c++14 /Iinclude /Idrivers\cpp\include tests\c_api\header_consumer.cpp /Fo"${{ runner.temp }}\cbss_header_cpp.obj"
+          clang-cl /nologo /W4 /WX /EHsc /c /TP /std:c++14 /Iinclude /Idrivers\cpp\include tests\drivers\cpp_reference.cpp /Fo"${{ runner.temp }}\cbss_cpp_driver.obj"
 
       - name: Test native Rust bridges
         run: |
