@@ -58,8 +58,8 @@ contract may include:
 - retained paths, stroke samples, brush descriptors, pressure, tilt, rotation,
   variable width, deterministic seeds, texture stamps, spacing, joins, and
   bounded caches;
-- CPU, optional Pixie, SDL GPU, and optional wgpu execution behind one authored
-  brush model;
+- the canonical CBSS CPU rasterizer and optional bgfx GPU execution behind one
+  authored brush model;
 - Canvas use for illustration, diagrams, signatures, and drawing tools; and
 - Style use for borders, outlines, masks, decorations, and authored visual
   effects.

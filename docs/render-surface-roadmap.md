@@ -49,10 +49,9 @@ external surface's interior.
   rendering plugin or a separate game engine.
 - GPU-specific extensions must be capability-gated and explicit. They must not
   silently change the appearance or behavior of ordinary CBSS UI.
-- CPU raster and image-processing implementations are also replaceable
-  internals. A Pixie-backed path may improve masks, gradients, shadows, blur,
-  blending, SVG, and image processing, but it remains behind the canonical
-  CBSS color, paint, cache, surface, and C ABI contracts.
+- The canonical CPU rasterizer is a CBSS implementation. It defines the
+  deterministic vector and headless baseline while remaining behind the
+  public CBSS color, paint, cache, surface, and C ABI contracts.
 
 ## Phase 1: Standard Canvas Element
 
@@ -124,12 +123,11 @@ and frame scheduling rules.
 The API should be designed around explicit commands and data, not a hidden
 per-frame component rebuild.
 
-### Optional CPU Raster And Effects Path
+### Canonical CPU Raster And Effects Path
 
-Pixie is a planned evaluation candidate for CPU rasterization and
-image-processing work used by Canvas and by baked CBSS visual effects. It is
-not required by the standard Canvas contract. A project must be able to build
-the core SDL3 Canvas path without importing Pixie.
+CBSS owns the CPU vector rasterization and baked-effects path used by Canvas
+and normal Style painting. SDL3 presents its retained texture output, but SDL
+line primitives do not define the vector quality model.
 
 For game-oriented applications, this path can provide a reusable authored and
 procedural visual layer rather than acting as the real-time scene renderer.
@@ -145,17 +143,15 @@ Candidate workloads include:
   own.
 
 Sprites, tile maps, particles, cameras, and continuously changing game scenes
-remain on the SDL3 real-time path or a GPU Canvas. Pixie output becomes a
-texture or cached layer consumed by that path. This combination should let a
-game use CSS-inspired CBSS layout and interaction, high-quality generated 2D
+remain on the SDL3 real-time path or the optional bgfx GPU Canvas. CPU output
+becomes a texture or cached layer consumed by that path. This combination lets
+a game use CSS-inspired CBSS layout and interaction, high-quality generated 2D
 art, and conventional real-time rendering in one window without forcing all
 three workloads through one implementation.
 
-The adapter owns conversion from resolved CBSS paint commands to Pixie
-operations and conversion of completed images into cacheable SDL3 resources.
-It must preserve the CSS Color compatibility contract established in
-`roadmap.md`; Pixie's internal color representation is not observable public
-behavior.
+The rasterizer consumes resolved CBSS paint commands and produces cacheable
+SDL3 resources. It preserves the color compatibility and color-management
+contracts established in `roadmap.md` and `native-rendering-stack.md`.
 
 CPU effect work follows retained invalidation:
 
@@ -166,9 +162,9 @@ CPU effect work follows retained invalidation:
 - application policy may restrict quality, cache memory, or dynamic effects
   for embedded Linux deployments.
 
-No Pixie type or owning object crosses the C ABI. Foreign callers select CBSS
-capabilities and policies through CBSS-owned versioned API, while the chosen
-backend remains an implementation detail.
+No rasterizer-internal type or owning object crosses the C ABI. Foreign callers
+select CBSS capabilities and policies through CBSS-owned versioned API, while
+the implementation remains private.
 
 ## Phase 2: Independent Visualization And Surface Libraries
 
@@ -264,10 +260,10 @@ Implementation order:
    semantics.
 2. A deterministic CPU reference renderer validates scene snapshots, stable
    identities, hit testing, frame replacement, and headless output.
-3. The SDL3 GPU backend batches scene data into graphics and compute passes and
+3. The bgfx GPU adapter batches scene data into graphics and compute passes and
    composites its offscreen result into the Canvas-owned region.
-4. An optional `wgpu-native` backend implements the same contract rather than
-   creating a second public scene model.
+4. Additional GPU adapters may implement the same CBSS-owned contract without
+   creating a second public scene model or becoming standard dependencies.
 
 The architectural contract is fixed before transition work completes: Canvas
 owns layout and presentation; Motion Scene owns its interior visual objects;
@@ -275,11 +271,11 @@ backend handles remain private; worker results are bounded immutable snapshots;
 and static scenes do not request idle frames.
 
 Deployment remains capability-based. The CPU Canvas and SDL 2D profile does
-not import, link, or package Motion GPU, `wgpu-native`, Pixie, media codecs, or
+not import, link, or package bgfx, Little CMS, Motion GPU, media codecs, or
 shader bundles unless selected by the application. This profile remains the
 baseline for 64-bit Raspberry Pi-class Linux targets. GPU-enabled profiles add
-only the chosen backend and report unsupported devices explicitly instead of
-silently falling back to an unbounded software workload.
+only the target's chosen bgfx renderers and report unsupported devices
+explicitly instead of silently falling back to an unbounded software workload.
 
 Capability selection occurs at compile/configure time. It controls source
 imports, native bridge builds, linker inputs, staged libraries, and assets;
@@ -288,14 +284,15 @@ generated `cbss_app` import for ergonomics, but that module re-exports only the
 selected profile. Release CI measures both artifact size and native dependency
 closure for the standard CPU/SDL 2D profile and the target's full profile.
 
-## Phase 3: SDL3 GPU Canvas Capability
+## Phase 3: bgfx GPU Canvas Capability
 
 Status: `Planned`
 
-The SDL3 GPU API provides portable graphics and compute primitives for custom
-GPU workloads. CBSS should expose this as an optional capability of the
+bgfx provides portable graphics and compute primitives across the GPU APIs
+selected for each target. CBSS exposes it as an optional capability of the
 standard Canvas surface, not as a second implementation of all CBSS UI
-properties.
+properties. SDL3 remains responsible for the window, native handle, input,
+event, and CPU presentation lifecycle.
 
 Targets:
 
@@ -321,16 +318,15 @@ Constraints:
   the Canvas interior, avoiding a second renderer-specific interpretation of
   normal CBSS properties.
 
-`wgpu-native` is a planned optional CBSS GPU Canvas backend for projects that
-specifically need a WebGPU/WGSL-oriented GPU contract. It can support custom
-visualization, camera-frame effects, tile-map rendering, and game scenes while
-remaining behind the same Canvas composition, input, and lifecycle contract.
-It is not a prerequisite for the standard Canvas roadmap, and it must not
-change the canonical renderer for ordinary CBSS UI.
+The bgfx binding is an independent low-level Nim package and is linked only by
+the selected GPU profile. A later wgpu-native or other provider may implement
+the same Canvas composition, input, resource, and lifecycle contract, but it
+is not a prerequisite for this roadmap and must not change the canonical
+renderer for ordinary CBSS UI.
 
 ### WGSL-Backed Custom Style Painting
 
-Status: `Design recorded; implementation milestone not assigned`
+Status: `Deferred adapter-specific design; not a bgfx release gate`
 
 The primary intended use of WGSL in ordinary CBSS UI is not to reimplement the
 layout engine, text stack, or every control on the GPU. CBSS first resolves
@@ -535,9 +531,14 @@ The integration model depends on the process and API boundary:
   frame scheduler instead of creating a second swapchain owner or submitting
   unsynchronized work behind CBSS.
 
-#### One wgpu Runtime And Binding Contract
+#### Conditional wgpu Runtime And Binding Contract
 
-A process using the `motion-wgpu` or WGSL Custom Style profile has exactly one
+This subsection is retained for a possible future wgpu adapter. D29 selects
+bgfx as the planned standard GPU capability, so none of the wgpu-specific
+runtime, binding, or release-gate requirements below apply to a standard or
+`gpu-bgfx` build.
+
+A process using an optional wgpu or WGSL Custom Style profile has exactly one
 selected low-level Nim binding package and one linked or dynamically loaded
 `wgpu-native` runtime. CBSS and every in-process Nim compute, visualization, or
 rendering package depend on that same package and resolved version. An adapter

@@ -362,7 +362,7 @@ only integration surface.
 The Version 0.4 release boundary includes the implemented unit-resolution
 contexts, conditional component flow, open event contract, Blob/FormData/stream
 data boundary, typed closed-value authoring, and declarative transitions and
-keyframes documented in this section. Optional Pixie effects, GPU Canvas,
+keyframes documented in this section. Advanced CPU raster effects, GPU Canvas,
 Motion Scene, media capabilities, complete 3D transforms, and additional
 property-specific motion values remain later roadmap work and are not Version
 0.4 release gates.
@@ -937,31 +937,28 @@ Validation should include:
 - platform coverage that records the browser engine, compositor, output color
   space, ICC profile availability, and renderer backend used by each run.
 
-Rendering backends receive resolved paint colors. SDL3, Pixie, a future GPU
-Canvas, or another backend may implement the final raster operation, but none
-may assign a different meaning to a public CBSS color value.
+Rendering backends receive resolved paint colors. The canonical CBSS CPU
+rasterizer, SDL3 presentation, the optional bgfx GPU Canvas, or another future
+adapter may implement final output, but none may assign a different meaning to
+a public CBSS color value.
 
-### Optional CPU Raster And Effects Backend
+### Canonical CPU Raster And Effects Backend
 
-Status: `Planned evaluation`
+Status: `Planned completion`
 
-Pixie is a candidate optional implementation backend for CPU-side raster and
-image-processing work. Its useful scope includes paths, anti-aliased masks,
-gradients, shadows, blur, blend modes, SVG rasterization, image transforms, and
-other operations that would otherwise require a substantial independent
-raster implementation.
+CBSS owns the CPU-side vector raster and baked-effects baseline. Its scope
+includes paths, coverage anti-aliasing, masks, gradients, shadows, blur, blend
+modes, image transforms, and other operations needed by ordinary UI and
+Canvas. SDL3 presents the retained output; repeated SDL line primitives are
+not the quality contract.
 
-Pixie is not the CBSS color specification, layout engine, public paint model,
-or canonical type system. In particular:
-
-- CBSS parses and resolves supported CSS Color 4 values before backend use.
-- A Pixie adapter converts resolved CBSS paint data into Pixie operations.
-- Backend-specific color, image, path, and allocation types do not enter the
-  public Nim component contract or the C ABI.
-- A Pixie-free build path remains supported for applications that do not need
-  these effects.
-- Cached Pixie output is uploaded or composed through the active SDL3 path;
-  static output is not rasterized again every frame.
+- CBSS parses and resolves supported CSS Color values before raster use.
+- Backend-internal color, image, path, tile, and allocation types do not enter
+  the public Nim component contract or the C ABI.
+- Static geometry, raster tiles, and uploaded textures are cached and rebuilt
+  only when relevant source, Style, size, scale, or color context changes.
+- Optional GPU acceleration consumes the same Path2D and Paint IR instead of
+  introducing another authored vector model.
 
 Effect execution policy must be selectable without changing the authored
 visual value. Provisional policy concepts are:
@@ -986,10 +983,10 @@ Deployment profiles should make capability and footprint intentional:
 - a full visual profile with CPU effects and later GPU capabilities.
 
 Microcontroller, RTOS, and bare-metal support is not an initial requirement.
-The embedded target begins with SDL3-capable Linux systems. Before Pixie can
-become a recommended dependency, release builds on amd64 and arm64 must measure
-binary size, startup time, idle and active RSS, first-generation cost, cached
-frame cost, and temporary-buffer peaks at embedded-relevant resolutions.
+The embedded target begins with SDL3-capable Linux systems. Release builds on
+amd64 and arm64 measure binary size, startup time, idle and active RSS,
+first-generation cost, cached frame cost, and temporary-buffer peaks at
+embedded-relevant resolutions.
 
 #### C ABI Boundary
 
@@ -999,10 +996,10 @@ new versioned constructors or opaque CBSS-owned color-value handles, with
 corresponding style setters. Existing RGBA callers remain source- and
 binary-compatible.
 
-Pixie handles and Nim-managed Pixie objects never cross `include/cbss.h`.
-Backend selection, effect policy, and capability queries are represented by
-CBSS-owned enums, options, opaque handles, and status codes. Static or shared
-CBSS artifacts may contain the selected implementation internally, but foreign
+Rasterizer handles and tile objects never cross `include/cbss.h`. Backend
+selection, effect policy, and capability queries are represented by CBSS-owned
+enums, options, opaque handles, and status codes. Static or shared CBSS
+artifacts may contain the selected implementation internally, but foreign
 callers depend only on the versioned CBSS ABI.
 
 ### Keywords And Closed Value Sets
@@ -1049,21 +1046,22 @@ processing, and other custom drawing workloads; it is not a second renderer
 for normal CBSS buttons, text, or style properties. Normal UI retains one
 canonical visual contract.
 
-The related ordinary-UI WGSL goal keeps that canonical contract: CBSS performs
-CPU-owned Style resolution, layout, text shaping, and normal paint first, then
-lets a typed GPU Style effect paint under, over, mask, or filter a bounded
-retained element/layer texture. It does not require a GPU-specific Button or a
-second interpretation of Flex, text, events, or accessibility. Static CPU
-content remains baked while an animated WGSL overlay runs, so shader-only
-frames do not repeat layout, shaping, or unrelated paint work.
+The related ordinary-UI shader goal keeps that canonical contract: CBSS
+performs CPU-owned Style resolution, layout, text shaping, and normal paint
+first, then lets a typed GPU Style effect paint under, over, mask, or filter a
+bounded retained element/layer texture. It does not require a GPU-specific
+Button or a second interpretation of Flex, text, events, or accessibility.
+Static CPU content remains baked while an animated shader overlay runs, so
+shader-only frames do not repeat layout, shaping, or unrelated paint work.
 
-The initial implementation target is the SDL3 GPU API, with explicit resource,
-swapchain, shader, synchronization, resize, and device-loss ownership rules.
-`wgpu-native` is also a planned optional CBSS GPU Canvas backend for workloads
-that benefit from a WebGPU/WGSL contract, such as custom visualizations,
-camera-frame effects, tile maps, and game scenes. It remains behind the same
-Canvas contract and must not create a second renderer-specific interpretation
-of ordinary CBSS UI properties.
+The planned standard GPU adapter is bgfx, with explicit resource, swapchain,
+shader, synchronization, resize, device-loss, and presentation ownership.
+SDL3 continues to own windows, native handles, input, event integration, and
+the canonical CPU presentation path. The independent low-level bgfx Nim C99
+binding remains useful outside CBSS and enters an application only when its
+GPU profile is selected. A later wgpu-native adapter may implement the same
+CBSS-owned contract, but it is no longer the standard provider or a release
+prerequisite.
 
 CBSS will not claim exclusive ownership of the machine's GPU. A separate
 backend process may own an independent compute device and return bounded Blob,
@@ -1074,28 +1072,33 @@ device-loss, and shutdown rules. Different GPU APIs use bounded CPU staging by
 default; platform-specific external-memory sharing is optional and never an
 implicit requirement.
 
-The wgpu profile additionally requires one canonical low-level Nim binding and
-one exact `wgpu-native` runtime version per process. A versioned `GpuHost`
-supports either a CBSS-owned Device/Queue or a compatible application-owned
-Device/Queue borrowed by CBSS; ownership is never inferred. CBSS remains the
-single Surface/Present owner for its window in both modes. Independent Nim GPU
-packages retain cross-frame pipelines, buffers, textures, and shaders through
-budgeted owner-specific resource namespaces and submit work through the shared
-frame scheduler rather than creating another swapchain or hidden queue policy.
-Release qualification includes a same-process real-GPU fixture combining CBSS
-Motion/WGSL rendering and an independent compute package on one Device, Queue,
-and Swapchain, including device loss, cancellation, teardown order, version
-mismatch, and GPU-memory limits.
+The GPU profile requires one selected provider and one presentation owner per
+window. A versioned `GpuHost` supports either CBSS-owned resources or a
+compatible application-owned host borrowed under explicit lifetime rules;
+ownership is never inferred. Independent Nim GPU packages retain cross-frame
+resources through budgeted owner-specific namespaces and submit work through
+the shared frame scheduler rather than creating another swapchain or hidden
+queue policy. Release qualification includes a same-process real-GPU fixture
+combining CBSS Motion rendering and an independent compute package, including
+device loss, cancellation, teardown order, version mismatch, and GPU-memory
+limits.
 
 The complete staged plan, including GPU Canvas composition, visualization APIs,
 application compute coexistence, game UI, external engine integration, and
 WGSL-backed Custom Styles, is maintained in
 [render-surface-roadmap.md](render-surface-roadmap.md). The Custom Style target
-ends at declaratively attaching packaged WGSL paint to a CPU-defined CBSS
+ends at declaratively attaching packaged shader paint to a CPU-defined CBSS
 element and composing it through the existing Style, layout, clip, state, and
 invalidation model. Shader-derived event geometry is a separate exploratory
 track, not a default cost or a Version 0.4 release gate; ordinary elements and
 Custom Styles retain their logical Box/transform hit path.
+
+The GPU plan is paired with optional Little CMS color management. CMYK and ICC
+source data remain canonical; monitor RGB is a derived soft-proof cache and is
+not reused as print source data. OS-specific release artifacts include only
+their selected bgfx renderers, while Little CMS and image codecs remain
+compile-time capabilities. See
+[Native Rendering And Color Capability Stack](native-rendering-stack.md).
 
 ## Motion, Transform, And Native Visual Surfaces
 
@@ -1231,11 +1234,10 @@ Dependency order is deliberate:
 2. Add a deterministic CPU Motion Scene reference path. It must support
    batched object storage, stable IDs, snapshot replacement, cancellation, and
    headless tests without requiring a GPU.
-3. Add an SDL3 GPU execution path using instancing, storage buffers, render
+3. Add the optional bgfx execution path using instancing, buffers, render
    passes, compute passes, and offscreen Canvas composition where appropriate.
-4. Add `wgpu-native` as an optional backend behind the same Motion Scene and
-   GPU Canvas contract for applications that require WebGPU/WGSL-oriented
-   shaders and compute.
+4. Keep additional GPU providers behind the same Motion Scene and GPU Canvas
+   contract rather than making them release prerequisites.
 5. Add higher-level generative-design and motion-graphics libraries as normal
    Nim packages rather than hard-coding an After Effects, chart, or game
    product into CBSS core.
@@ -1256,13 +1258,13 @@ apply immediately so transition work does not close the path:
 - Continuous frames are requested only while motion or rendering work is
   active; a static Motion Scene returns to event-driven idle behavior.
 
-Motion, GPU, Pixie, media, and shader packages remain opt-in imports. They are
-not re-exported by the standard umbrella module and are not linked or deployed
-for applications that do not select them. A CPU/SDL 2D profile remains a
-supported build target for 64-bit Raspberry Pi-class Linux systems. GPU
-capability is detected explicitly and has a deterministic CPU fallback or a
-clear diagnostic; installing CBSS source does not imply shipping every native
-backend in the application artifact.
+GPU, Little CMS color management, media, codec, and shader packages remain
+opt-in imports. They are not re-exported by the standard umbrella module and
+are not linked or deployed for applications that do not select them. A
+CPU/SDL 2D profile remains a supported build target for 64-bit Raspberry
+Pi-class Linux systems. GPU capability is detected explicitly and has a
+deterministic CPU fallback or a clear diagnostic; installing CBSS source does
+not imply shipping every native backend in the application artifact.
 
 Compile-time capability profiles enforce this boundary rather than relying
 only on linker dead-code elimination. A selected profile controls Nim imports,
@@ -1275,12 +1277,14 @@ generated module imports and re-exports only the selected capabilities.
 The supported profile families are:
 
 - `standard`: ordinary UI, text, SDL 2D, CPU Canvas, events, accessibility
-  semantics, transitions, and the default controls;
+  semantics, transitions, the canonical CPU vector renderer, and the default
+  controls;
 - `motion-cpu`: `standard` plus the deterministic CPU Motion Scene;
-- `motion-sdl-gpu`: Motion Scene and GPU Canvas through the SDL3 GPU backend;
-- `motion-wgpu`: the optional `wgpu-native` implementation of the same public
-  Motion Scene and GPU Canvas contract;
-- separate opt-ins for Pixie effects and media codecs; and
+- `gpu-bgfx`: Motion Scene and GPU Canvas through bgfx, including only the
+  target's selected renderer backends;
+- `color-managed`: `standard` plus Little CMS and ICC/CMYK soft proofing;
+- separate opt-ins for media and image codecs, with PNG as the first standard
+  lossless image capability and WebP remaining optional; and
 - `full`: a convenience development/distribution profile that selects every
   capability supported on the target without changing their public contracts.
 
@@ -1290,8 +1294,8 @@ representative `standard` and `full` builds. A feature may not silently enter
 Runtime memory budgets remain separate because textures, decoded frames, font
 caches, and scene buffers can dominate executable size on small systems.
 
-This track extends the browser CSS-plus-Canvas/WebGPU authoring model instead
-of reproducing JavaScript's main-thread limitations. Its product value depends
+This track extends the browser CSS-plus-Canvas/GPU authoring model instead of
+reproducing JavaScript's main-thread limitations. Its product value depends
 on hiding scheduling, batching, synchronization, and backend details behind a
 Web-like import-and-mount experience for Nim authors.
 
@@ -1300,7 +1304,7 @@ presentation owner rather than the gameplay engine. Fixed-step Nim simulation,
 ECS, physics, AI, persistence, and networking publish bounded immutable scene
 snapshots; a data-oriented Visual Scene batches tiles, sprites, particles,
 chart-like marks, and other repeated objects without creating one CBSS Node per
-item. CBSS composes that CPU/WGSL-rendered scene with its HUD, controls, dialogs,
+item. CBSS composes that CPU/GPU-rendered scene with its HUD, controls, dialogs,
 accessibility UI, and one final presentation owner. The detailed 2D target,
 thread/snapshot boundary, interaction model, batching rules, and separate 3D
 integration boundary are specified in
@@ -1855,8 +1859,9 @@ Candidate work packages:
 - **Visual effects and advanced text.** Connect `filter`, `backdrop-filter`,
   masks, blend/isolation behavior, and the remaining decoration and typography
   properties only through shared paint/text contracts with deterministic
-  headless references. Optional Pixie or GPU implementations must not change
-  authored semantics or make the standard profile depend on them.
+  headless references. The canonical CPU implementation and optional GPU
+  acceleration must not assign different authored semantics or make the
+  standard profile depend on a GPU.
 
 Every selected work package includes negative and unsupported-value
 diagnostics, cross-backend reference tests where pixels are affected, and
@@ -1951,9 +1956,9 @@ After the parallel Version 0.5 and Version 0.6 foundation work, the provisional
 sequence is:
 
 - **Version 0.7:** one visual-expression milestone combining complete color
-  authoring, advanced CPU Canvas, optional Pixie effects, SDL3 GPU Canvas,
-  optional `wgpu-native`, WGSL Custom Style, shared GPU ownership, and the
-  retained Motion Scene contract;
+  authoring, the canonical high-quality CPU vector Canvas, optional bgfx GPU
+  Canvas and compute, optional Little CMS color management, portable shader
+  Style stages, shared GPU ownership, and the retained Motion Scene contract;
 - **Version 0.8:** sprite animation, Tiled-output tile maps, richer game input,
   camera/video surfaces, audio, and media/game Cue adapters; and
 - **Version 0.9:** complete touch and expressive-input behavior, ecosystem
@@ -1971,23 +1976,25 @@ component libraries receive one coherent visual release rather than separate
 backend-shaped feature sets. Its release gates are:
 
 - complete CSS-inspired color authoring and defined interpolation behavior for
-  gradients, transitions, Canvas, Pixie, and GPU materials;
+  gradients, transitions, Canvas, ICC-managed source colors, and GPU materials;
 - advanced CPU Canvas paths, text, images, cached layers, masks, filters, blend
   behavior, and deterministic headless references;
-- optional Pixie raster/effects integration that consumes resolved CBSS paint
-  data without making Pixie a dependency of the standard profile;
-- an SDL3 GPU Canvas backend for textures, buffers, render targets, graphics
-  pipelines, compute pipelines, offscreen rendering, and composition inside a
-  normal Canvas-owned layout region;
-- an optional `wgpu-native` backend behind the same public GPU Canvas and
-  Motion Scene contracts rather than a second UI or layout implementation;
-- WGSL-backed Custom Style stages for bounded `underlay`, `overlay`, `mask`,
-  and `filter` painting over CPU-resolved Box geometry and retained content;
+- complete CBSS-owned CPU vector rasterization with fill rules, stroke
+  outlines, subpixel coverage, clipping, masks, and retained dirty tiles;
+- an optional bgfx GPU Canvas backend for textures, buffers, render targets,
+  graphics pipelines, compute pipelines, offscreen rendering, and composition
+  inside a normal Canvas-owned layout region;
+- backend-neutral Custom Style stages for bounded `underlay`, `overlay`,
+  `mask`, and `filter` painting over CPU-resolved Box geometry and retained
+  content, with provider-specific shader languages kept behind the adapter;
+- optional Little CMS integration that preserves CMYK and ICC source data,
+  provides display soft proofing and separation inspection, and never treats
+  monitor RGB as print source data;
 - a deterministic CPU Motion Scene reference path followed by batched GPU
   execution for shapes, text, images, particles, sprites, chart marks, and
   generative objects without one Box node per visual object;
-- one canonical low-level Nim binding and one compatible `wgpu-native` runtime
-  version per process;
+- one independently distributed low-level bgfx Nim C99 binding and one
+  compatible selected bgfx runtime configuration per process;
 - explicit owned and borrowed `GpuHost` modes, one Surface/Present owner, and
   documented Instance, Adapter, Device, Queue, swapchain, resize, and
   device-loss lifecycles;
@@ -2001,8 +2008,8 @@ backend-shaped feature sets. Its release gates are:
 - compile-time profiles that keep GPU source, native libraries, shaders, and
   assets out of the standard CPU/SDL 2D build when unused;
 - deterministic mock and CPU-reference tests plus a real Linux GPU integration
-  fixture combining CBSS Motion/WGSL rendering and independent compute work on
-  one Device, Queue, and Swapchain; and
+  fixture combining CBSS Motion rendering and independent compute work under
+  one presentation owner; and
 - device-loss, cancellation, teardown order, version mismatch, GPU-memory
   budget, idle-frame, and CPU fallback verification.
 

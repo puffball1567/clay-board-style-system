@@ -546,7 +546,11 @@ operation invoked by a public handler. Independent libraries can therefore
 compose behavior without replacing CBSS internals or requiring parents to wire
 their children's event bundles.
 
-## D23 — One wgpu provider and explicit shared-device ownership (Adopted)
+## D23 — One wgpu provider and explicit shared-device ownership (Conditional)
+
+**Status.** D29 supersedes wgpu-native as the planned standard GPU provider.
+This decision remains applicable only if a future optional wgpu adapter is
+selected; it is not a release requirement for the bgfx capability.
 
 **Context.** A WGSL Custom Style renderer and an independent in-process Nim
 compute or visualization package may need the same physical GPU, Device, Queue,
@@ -743,3 +747,37 @@ Version 0.6 supplies Rust and C++ reference Drivers in addition to the canonical
 Nim facade. Craft Style remains the portable presentation asset shared by all
 conforming Drivers. Dynamic loading of arbitrary foreign component binaries is
 not required.
+
+## D29 — Native capability uses a four-layer stack (Adopted)
+
+**Context.** A useful GUI foundation needs more than portable windows and
+styled controls. Professional drawing, media, visualization, and game-facing
+applications can be blocked by missing high-quality vectors, optional GPU
+compute, color-managed CMYK preview, or a deterministic CPU fallback. Putting
+all of those responsibilities into one renderer would reduce portability,
+increase every artifact, and make backend-specific types part of ordinary UI.
+
+**Decision.** The native capability stack has four explicit owners:
+
+- SDL3 owns cross-platform windows, input, native handles, event integration,
+  and baseline CPU presentation;
+- CBSS owns UI, layout, text integration, Paint IR, retained Canvas,
+  high-quality CPU vector rasterization, events, state, invalidation, and
+  scheduling;
+- optional bgfx owns cross-platform GPU graphics and compute for games,
+  visualization, image processing, and motion content; and
+- optional Little CMS owns ICC transforms, CMYK color management, black
+  preservation, rendering intents, and display soft proofing.
+
+The bgfx Nim C99 binding is distributed as an independent package and selected
+by CBSS only for a GPU-enabled build. Ordinary CBSS public APIs expose no bgfx
+handles. D23 remains a valid conditional ownership design if a wgpu adapter is
+implemented, but wgpu-native is no longer the planned standard GPU provider.
+
+CMYK and ICC source data remain canonical document data. RGB produced for an
+SDL3 or bgfx display is a derived soft-proof cache and cannot become the source
+for print/export. The standard profile includes neither bgfx nor Little CMS;
+operating-system artifacts include only target-relevant GPU backends, and
+codecs remain separate capabilities. The complete boundaries, profiles, and
+release gates are defined in
+[Native Rendering And Color Capability Stack](native-rendering-stack.md).
