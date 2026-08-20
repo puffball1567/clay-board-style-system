@@ -177,8 +177,8 @@ jobs:
         shell: cmd
         run: |
           clang-cl /nologo /W4 /WX /c /TC /Iinclude tests\c_api\header_consumer.c /Fo"${{ runner.temp }}\cbss_header_c.obj"
-          clang-cl /nologo /W4 /WX /c /TP /std:c++14 /Iinclude /Idrivers\cpp\include tests\c_api\header_consumer.cpp /Fo"${{ runner.temp }}\cbss_header_cpp.obj"
-          clang-cl /nologo /W4 /WX /c /TP /std:c++14 /Iinclude /Idrivers\cpp\include tests\drivers\cpp_reference.cpp /Fo"${{ runner.temp }}\cbss_cpp_driver.obj"
+          clang-cl /nologo /W4 /WX /EHsc /c /TP /std:c++14 /Iinclude /Idrivers\cpp\include tests\c_api\header_consumer.cpp /Fo"${{ runner.temp }}\cbss_header_cpp.obj"
+          clang-cl /nologo /W4 /WX /EHsc /c /TP /std:c++14 /Iinclude /Idrivers\cpp\include tests\drivers\cpp_reference.cpp /Fo"${{ runner.temp }}\cbss_cpp_driver.obj"
 
       - name: Test native Rust bridges
         run: |
