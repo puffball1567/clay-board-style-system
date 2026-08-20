@@ -5,6 +5,7 @@ import ./core/[color, color_conversion, color_mix, color_mix_parser,
   selector, style_resolver, style_value]
 import ./data/[blob, form_data, stream_bridge, stream_mailbox]
 import ./core/computed_style as computed_style_types
+import ./generated/craft_driver_contract
 import ./generated/default_properties
 import ./hit/hit_test
 import ./input/events
@@ -26,7 +27,6 @@ proc ensureNimRuntime() {.inline.} =
     NimMain()
 
 const
-  CbssAbiVersion* = 0x0001_0014'u32
   CbssMaxEagerBlobBytes* = 64'u64 * 1024'u64 * 1024'u64
   CbssMaxBlobMimeBytes* = 1024
   CbssMaxFormDataEntries* = 65_536
@@ -1389,6 +1389,52 @@ proc setContextFocus(
 proc cbssAbiVersion(): uint32 {.
     exportc: "cbss_abi_version", cdecl, dynlib, raises: [].} =
   CbssAbiVersion
+
+proc cbssDriverContractVersion(): uint32 {.
+    exportc: "cbss_driver_contract_version", cdecl, dynlib, raises: [].} =
+  CbssDriverContractVersion
+
+proc cbssCapabilityCount(): uint32 {.
+    exportc: "cbss_capability_count", cdecl, dynlib, raises: [].} =
+  uint32(CbssCapabilities.len)
+
+proc cbssCapabilityAt(
+    index: uint32;
+    output: ptr CbssCapabilityInfoC
+): int32 {.exportc: "cbss_capability_at", cdecl, dynlib, raises: [].} =
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = default(CbssCapabilityInfoC)
+  if index >= uint32(CbssCapabilities.len):
+    return CbssOutOfRange
+  let capability = CbssCapabilities[int(index)]
+  output[] = CbssCapabilityInfoC(
+    id: capability.id,
+    version: capability.version,
+    sinceAbi: capability.sinceAbi,
+    flags: CbssCapabilityAvailable,
+    nameBytes: uint32(capability.name.len)
+  )
+  CbssOk
+
+proc cbssHasCapability(capability, minimumVersion: uint32): uint8 {.
+    exportc: "cbss_has_capability", cdecl, dynlib, raises: [].} =
+  for item in CbssCapabilities:
+    if item.id == capability:
+      return uint8(item.version >= minimumVersion)
+  0'u8
+
+proc cbssCapabilityName(
+    capability: uint32;
+    buffer: cstring;
+    capacity: uint32
+): uint32 {.exportc: "cbss_capability_name", cdecl, dynlib, raises: [].} =
+  for item in CbssCapabilities:
+    if item.id == capability:
+      return copyString(item.name, buffer, capacity)
+  if not buffer.isNil and capacity > 0:
+    cast[ptr UncheckedArray[char]](buffer)[0] = '\0'
+  0'u32
 
 proc cbssThreadAttach() {.
     exportc: "cbss_thread_attach", cdecl, dynlib, raises: [].} =

@@ -39,6 +39,9 @@ jobs:
       - name: Check generated event surfaces
         run: nimble checkGeneratedEvents -y
 
+      - name: Check Craft Driver contract surfaces
+        run: nimble checkDriverContract -y
+
       - name: Check explicit first-party event outcomes
         run: nimble checkExplicitEventOutcomes -y
 

@@ -25,7 +25,40 @@
 extern "C" {
 #endif
 
-#define CBSS_ABI_VERSION 0x00010014u
+/* CBSS_GENERATED_DRIVER_CONTRACT_BEGIN */
+#define CBSS_ABI_VERSION 0x00010015u
+#define CBSS_DRIVER_CONTRACT_VERSION 0x00010000u
+
+typedef enum CbssCapabilityId {
+  CBSS_CAPABILITY_RETAINED_TREE = 1u,
+  CBSS_CAPABILITY_TYPED_STYLE = 2u,
+  CBSS_CAPABILITY_FLEX_LAYOUT = 3u,
+  CBSS_CAPABILITY_PAINT_COMMANDS = 4u,
+  CBSS_CAPABILITY_HIT_TEST = 5u,
+  CBSS_CAPABILITY_STANDARD_EVENTS = 6u,
+  CBSS_CAPABILITY_FOCUS = 7u,
+  CBSS_CAPABILITY_ACCESSIBILITY_SEMANTICS = 8u,
+  CBSS_CAPABILITY_RETAINED_SCROLL = 9u,
+  CBSS_CAPABILITY_DECLARATIVE_MOTION = 10u,
+  CBSS_CAPABILITY_RETAINED_CANVAS = 11u,
+  CBSS_CAPABILITY_RENDER_SURFACE = 12u,
+  CBSS_CAPABILITY_BLOB = 13u,
+  CBSS_CAPABILITY_FORM_DATA = 14u,
+  CBSS_CAPABILITY_STREAM = 15u
+} CbssCapabilityId;
+
+enum {
+  CBSS_CAPABILITY_AVAILABLE = 1u << 0
+};
+
+typedef struct CbssCapabilityInfo {
+  uint32_t id;
+  uint32_t version;
+  uint32_t since_abi;
+  uint32_t flags;
+  uint32_t name_bytes;
+} CbssCapabilityInfo;
+/* CBSS_GENERATED_DRIVER_CONTRACT_END */
 #define CBSS_NODE_NONE UINT32_MAX
 #define CBSS_MAX_EAGER_BLOB_BYTES (64ull * 1024ull * 1024ull)
 #define CBSS_MAX_FORM_DATA_ENTRIES 65536u
@@ -772,6 +805,18 @@ typedef CbssStatus (*CbssBlobProviderReadCallback)(
 typedef void (*CbssBlobProviderReleaseCallback)(void *user_data);
 
 CBSS_API uint32_t cbss_abi_version(void);
+/*
+ * Craft Drivers should negotiate this contract before constructing a tree.
+ * Capability names are stable diagnostics; numeric ids are the comparison key.
+ */
+CBSS_API uint32_t cbss_driver_contract_version(void);
+CBSS_API uint32_t cbss_capability_count(void);
+CBSS_API CbssStatus cbss_capability_at(
+    uint32_t index, CbssCapabilityInfo *output);
+CBSS_API uint8_t cbss_has_capability(
+    uint32_t capability, uint32_t minimum_version);
+CBSS_API uint32_t cbss_capability_name(
+    uint32_t capability, char *buffer, uint32_t capacity);
 /*
  * Foreign worker threads must attach before calling CBSS and detach before
  * exiting. Language wrappers should hide this pair in their worker adapter.

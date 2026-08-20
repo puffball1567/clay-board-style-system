@@ -30,8 +30,10 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x00010014` supports:
+ABI version `0x00010015` supports:
 
+- machine-readable Craft Driver contract metadata and runtime capability
+  negotiation through stable numeric identifiers before tree construction;
 - Opaque context and style handles.
 - Atomically reference-counted immutable Blob handles with advisory MIME
   metadata, bounded reads into host buffers, and a 64 MiB eager-construction
@@ -123,6 +125,29 @@ interpolation-space enum, so a foreign renderer can reproduce CBSS sampling.
 `currentColor`, and color-mix handles as gradient stops. It resolves them only
 when the style context is computed and copies every handle value during the
 setter call.
+
+## Craft Driver Negotiation
+
+`schema/craft_driver_contract.json` is the source of truth for the engine ABI,
+Driver contract version, stable capability identifiers, and capability
+versions. `tools/generate_driver_contract.nim` generates the corresponding Nim
+table and C declarations; `nimble checkDriverContract` rejects stale generated
+surfaces.
+
+A Driver must perform negotiation before it creates a `CbssContext` or mounts
+any Craft:
+
+1. Compare `cbss_abi_version()` with the ABI range supported by the Driver.
+2. Compare `cbss_driver_contract_version()` with the Driver contract range.
+3. Check every required numeric capability id and minimum version with
+   `cbss_has_capability()`.
+4. Use `cbss_capability_at()` and `cbss_capability_name()` for diagnostics and
+   tooling, not as substitutes for stable numeric identity.
+
+Failure aborts construction before application callbacks, resources, or a
+partial tree are installed. Capability identifiers are append-only. A
+capability version increases only when optional behavior is added under the
+same semantic family; incompatible semantics require a new capability id.
 
 ## Host Event Loop
 

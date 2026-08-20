@@ -4,7 +4,7 @@ description   = "A CSS-inspired primitive engine for native GUI toolkits"
 license       = "Apache-2.0"
 srcDir        = "src"
 bin           = @["cbss_configure"]
-installDirs   = @["include", "native", "licenses", "docs"]
+installDirs   = @["include", "native", "licenses", "docs", "schema"]
 installExt    = @["nim"]
 skipDirs      = @["target"]
 
@@ -37,11 +37,15 @@ before install:
 task test, "Run the test suite":
   exec "nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_property_support_nimcache --out:/tmp/clay_board_style_system_property_support tools/check_property_support.nim"
   exec "nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_event_generator_nimcache --out:/tmp/clay_board_style_system_event_generator tools/generate_events.nim --check"
+  exec "nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_driver_contract_generator_nimcache --out:/tmp/clay_board_style_system_driver_contract_generator tools/generate_driver_contract.nim --check"
   exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
   exec "nim c -r --mm:arc --nimcache:/tmp/clay_board_style_system_test_runner_nimcache --out:/tmp/clay_board_style_system_test_runner tools/run_tests.nim"
 
 task checkGeneratedEvents, "Verify generated Nim and C event surfaces":
   exec "nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_event_generator_nimcache --out:/tmp/clay_board_style_system_event_generator tools/generate_events.nim --check"
+
+task checkDriverContract, "Verify generated Craft Driver contract surfaces":
+  exec "nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_driver_contract_generator_nimcache --out:/tmp/clay_board_style_system_driver_contract_generator tools/generate_driver_contract.nim --check"
 
 task checkPropertySupport, "Verify CSS property support counts and registry coverage":
   exec "nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_property_support_nimcache --out:/tmp/clay_board_style_system_property_support tools/check_property_support.nim"
