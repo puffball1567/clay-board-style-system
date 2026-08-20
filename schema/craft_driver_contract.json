@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "engine_abi_version": 65557,
+  "driver_contract_version": 65536,
+  "capabilities": [
+    {"id": 1, "symbol": "RETAINED_TREE", "name": "tree.retained", "version": 1, "since_abi": 65557},
+    {"id": 2, "symbol": "TYPED_STYLE", "name": "style.typed", "version": 1, "since_abi": 65557},
+    {"id": 3, "symbol": "FLEX_LAYOUT", "name": "layout.flex", "version": 1, "since_abi": 65557},
+    {"id": 4, "symbol": "PAINT_COMMANDS", "name": "paint.commands", "version": 1, "since_abi": 65557},
+    {"id": 5, "symbol": "HIT_TEST", "name": "hit-test", "version": 1, "since_abi": 65557},
+    {"id": 6, "symbol": "STANDARD_EVENTS", "name": "events.standard", "version": 1, "since_abi": 65557},
+    {"id": 7, "symbol": "FOCUS", "name": "focus", "version": 1, "since_abi": 65557},
+    {"id": 8, "symbol": "ACCESSIBILITY_SEMANTICS", "name": "accessibility.semantics", "version": 1, "since_abi": 65557},
+    {"id": 9, "symbol": "RETAINED_SCROLL", "name": "scroll.retained", "version": 1, "since_abi": 65557},
+    {"id": 10, "symbol": "DECLARATIVE_MOTION", "name": "motion.declarative", "version": 1, "since_abi": 65557},
+    {"id": 11, "symbol": "RETAINED_CANVAS", "name": "canvas.retained", "version": 1, "since_abi": 65557},
+    {"id": 12, "symbol": "RENDER_SURFACE", "name": "render-surface", "version": 1, "since_abi": 65557},
+    {"id": 13, "symbol": "BLOB", "name": "data.blob", "version": 1, "since_abi": 65557},
+    {"id": 14, "symbol": "FORM_DATA", "name": "data.form-data", "version": 1, "since_abi": 65557},
+    {"id": 15, "symbol": "STREAM", "name": "data.stream", "version": 1, "since_abi": 65557}
+  ]
+}

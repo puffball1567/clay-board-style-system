@@ -1,6 +1,6 @@
 #include "cbss.h"
 
-_Static_assert(CBSS_ABI_VERSION == 0x00010014u, "unexpected CBSS ABI version");
+_Static_assert(CBSS_ABI_VERSION == 0x00010015u, "unexpected CBSS ABI version");
 _Static_assert(CBSS_ROLE_SWITCH == 22, "unexpected switch role value");
 _Static_assert(CBSS_ROLE_PASSWORD_TEXT == 23,
                "unexpected password text role value");
@@ -24,6 +24,8 @@ _Static_assert(sizeof(CbssPathSegment) == 28,
 _Static_assert(sizeof(CbssTextStyle) == 24, "CbssTextStyle ABI changed");
 _Static_assert(sizeof(CbssGradientStop) == 20,
                "CbssGradientStop ABI changed");
+_Static_assert(sizeof(CbssCapabilityInfo) == 20,
+               "CbssCapabilityInfo ABI changed");
 _Static_assert(sizeof(CbssColorValueGradientStop) == 16,
                "CbssColorValueGradientStop ABI changed");
 _Static_assert(sizeof(CbssTransformOperation) == 36,
@@ -275,6 +277,51 @@ static uint8_t handle_legacy_submit(
 
 int main(void) {
   assert(cbss_abi_version() == CBSS_ABI_VERSION);
+  assert(cbss_driver_contract_version() == CBSS_DRIVER_CONTRACT_VERSION);
+  assert(cbss_capability_count() == 15);
+  assert(cbss_has_capability(CBSS_CAPABILITY_RETAINED_TREE, 1));
+  assert(!cbss_has_capability(CBSS_CAPABILITY_RETAINED_TREE, 2));
+  assert(!cbss_has_capability(UINT32_MAX, 1));
+
+  CbssCapabilityInfo capability = {0};
+  assert(cbss_capability_at(0, &capability) == CBSS_OK);
+  assert(capability.id == CBSS_CAPABILITY_RETAINED_TREE);
+  assert(capability.version == 1);
+  assert(capability.since_abi == CBSS_ABI_VERSION);
+  assert(capability.flags == CBSS_CAPABILITY_AVAILABLE);
+  assert(capability.name_bytes == strlen("tree.retained"));
+  char capability_name[32];
+  assert(cbss_capability_name(
+      capability.id, capability_name, sizeof(capability_name)) ==
+      strlen("tree.retained"));
+  assert(strcmp(capability_name, "tree.retained") == 0);
+  memset(&capability, 0xff, sizeof(capability));
+  assert(cbss_capability_at(
+      cbss_capability_count(), &capability) == CBSS_OUT_OF_RANGE);
+  assert(capability.id == 0 && capability.flags == 0);
+  assert(cbss_capability_at(0, NULL) == CBSS_INVALID_ARGUMENT);
+  capability_name[0] = 'x';
+  assert(cbss_capability_name(
+      UINT32_MAX, capability_name, sizeof(capability_name)) == 0);
+  assert(capability_name[0] == '\0');
+  uint32_t previous_capability = 0;
+  for (uint32_t index = 0; index < cbss_capability_count(); ++index) {
+    assert(cbss_capability_at(index, &capability) == CBSS_OK);
+    assert(capability.id > previous_capability);
+    assert(capability.version > 0);
+    assert(capability.since_abi <= CBSS_ABI_VERSION);
+    assert(capability.flags & CBSS_CAPABILITY_AVAILABLE);
+    assert(capability.name_bytes > 0);
+    assert(capability.name_bytes < sizeof(capability_name));
+    assert(cbss_capability_name(capability.id, NULL, 0) ==
+           capability.name_bytes);
+    memset(capability_name, 0, sizeof(capability_name));
+    assert(cbss_capability_name(
+        capability.id, capability_name, sizeof(capability_name)) ==
+        capability.name_bytes);
+    assert(strlen(capability_name) == capability.name_bytes);
+    previous_capability = capability.id;
+  }
   assert(CBSS_PAINT_PUSH_LAYER == 11);
   assert(CBSS_PAINT_POP_LAYER == 12);
   assert(CBSS_LAYER_SOURCE_OVER == 0);
