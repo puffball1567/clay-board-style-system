@@ -149,6 +149,14 @@ partial tree are installed. Capability identifiers are append-only. A
 capability version increases only when optional behavior is added under the
 same semantic family; incompatible semantics require a new capability id.
 
+The maintained C++14 reference Driver is in `drivers/cpp`. Its header-only
+surface performs this negotiation automatically, owns contexts and Styles with
+RAII, translates status codes into typed exceptions, and provides scoped nested
+Box/Text/Image construction without explicit parent node identifiers. Raw handles
+remain available only as an advanced interoperability escape hatch. Run
+`nimble testCppDriver` to exercise the same reference tree against both shared
+and static C ABI builds.
+
 ## Host Event Loop
 
 After the initial `cbss_context_compute`, feed backend events through
