@@ -47,6 +47,10 @@ adds an observer and returns an `EventSubscription` that unregisters on `Drop`
 or explicit `close`. Callback event strings are copied before the C callback
 returns. Rust panics are contained at the FFI boundary and can be detected with
 `Ui::callback_panicked`; they never unwind through Nim or C.
+`Ui::remove_subtree` atomically removes a retained branch and releases the
+Driver-owned callback holders after native blur and motion-cancellation
+delivery completes. Existing subscription tokens immediately report inactive,
+and generation-checked `Node` values cannot alias later replacements.
 
 Portable presentation and package metadata use the same bounded JSON contracts
 as Nim and C. A component exposes only deliberate public targets with

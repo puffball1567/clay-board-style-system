@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstdint>
+#include <memory>
 
 int main() {
   cbss::Contract::requireAuthoring();
@@ -153,6 +154,102 @@ int main() {
     rejected_foreign_node = error.status() == CBSS_INVALID_HANDLE;
   }
   assert(rejected_foreign_node);
+
+  cbss::Ui lifecycle_ui;
+  cbss::Node removable;
+  cbss::Node lifecycle_child;
+  cbss::Node survivor;
+  const cbss::Node lifecycle_root = lifecycle_ui.box("lifecycle-root", [&] {
+    removable = lifecycle_ui.box("removable", [&] {
+      lifecycle_child = lifecycle_ui.box("lifecycle-child");
+    });
+    survivor = lifecycle_ui.box("survivor");
+  });
+
+  std::weak_ptr<int> handler_resource;
+  {
+    const std::shared_ptr<int> resource = std::make_shared<int>(1);
+    handler_resource = resource;
+    lifecycle_ui.on(lifecycle_child, CBSS_EVENT_CLICK,
+                    [resource](const cbss::Event&) {
+                      assert(*resource == 1);
+                      return cbss::EventOutcome::handled();
+                    });
+  }
+  std::weak_ptr<int> subscription_resource;
+  cbss::EventSubscription removed_subscription;
+  {
+    const std::shared_ptr<int> resource = std::make_shared<int>(2);
+    subscription_resource = resource;
+    removed_subscription = lifecycle_ui.subscribe(
+        removable, CBSS_EVENT_CHANGE, [resource](const cbss::Event&) {
+          assert(*resource == 2);
+          return cbss::EventOutcome::handled();
+        });
+  }
+  assert(!handler_resource.expired());
+  assert(!subscription_resource.expired());
+  assert(removed_subscription.active());
+  int surviving_observer_calls = 0;
+  cbss::EventSubscription surviving_subscription = lifecycle_ui.subscribe(
+      lifecycle_root, CBSS_EVENT_CLICK, [&](const cbss::Event& event) {
+        if (event.target == survivor.nativeId()) {
+          ++surviving_observer_calls;
+        }
+        return cbss::EventOutcome::handled();
+      });
+  lifecycle_ui.emit(lifecycle_child,
+                    cbss::InputEvent(CBSS_EVENT_CLICK));
+
+  bool rejected_nested_removal = false;
+  lifecycle_ui.within(lifecycle_root, [&] {
+    try {
+      lifecycle_ui.removeSubtree(removable);
+    } catch (const cbss::Error& error) {
+      rejected_nested_removal = error.status() == CBSS_INVALID_ARGUMENT;
+    }
+  });
+  assert(rejected_nested_removal);
+
+  assert(lifecycle_ui.removeSubtree(removable) == 2u);
+  assert(lifecycle_ui.childCount(lifecycle_root) == 1u);
+  assert(lifecycle_ui.parent(survivor) == lifecycle_root);
+  assert(!removed_subscription.active());
+  assert(surviving_subscription.active());
+  assert(handler_resource.expired());
+  assert(subscription_resource.expired());
+  removed_subscription.close();
+  lifecycle_ui.emit(survivor, cbss::InputEvent(CBSS_EVENT_CLICK));
+  assert(surviving_observer_calls == 1);
+  surviving_subscription.close();
+
+  bool rejected_stale_node = false;
+  try {
+    lifecycle_ui.rect(lifecycle_child);
+  } catch (const cbss::Error& error) {
+    rejected_stale_node = error.status() == CBSS_INVALID_ARGUMENT;
+  }
+  assert(rejected_stale_node);
+  bool rejected_stale_subtree = false;
+  try {
+    lifecycle_ui.removeSubtree(removable);
+  } catch (const cbss::Error& error) {
+    rejected_stale_subtree = error.status() == CBSS_INVALID_ARGUMENT;
+  }
+  assert(rejected_stale_subtree);
+  cbss::Node replacement;
+  lifecycle_ui.within(lifecycle_root, [&] {
+    replacement = lifecycle_ui.box("replacement");
+  });
+  assert(replacement.nativeId() != lifecycle_child.nativeId());
+
+  bool rejected_foreign_subtree = false;
+  try {
+    lifecycle_ui.removeSubtree(other_root);
+  } catch (const cbss::Error& error) {
+    rejected_foreign_subtree = error.status() == CBSS_INVALID_HANDLE;
+  }
+  assert(rejected_foreign_subtree);
 
   cbss::EventSubscription reset_observer = ui.subscribe(
       child, CBSS_EVENT_CHANGE, [](const cbss::Event&) {

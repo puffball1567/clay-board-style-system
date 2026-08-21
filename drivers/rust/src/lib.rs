@@ -3,7 +3,7 @@
 mod generated;
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString, NulError};
 use std::fmt;
 use std::marker::PhantomData;
@@ -261,6 +261,12 @@ mod ffi {
         pub fn cbss_context_node_count(context: *mut CbssContext) -> c_uint;
         pub fn cbss_node_parent(context: *mut CbssContext, node: c_uint) -> c_uint;
         pub fn cbss_node_child_count(context: *mut CbssContext, node: c_uint) -> c_uint;
+        pub fn cbss_node_child(context: *mut CbssContext, node: c_uint, index: c_uint) -> c_uint;
+        pub fn cbss_context_remove_subtree(
+            context: *mut CbssContext,
+            node: c_uint,
+            output_removed_count: *mut c_uint,
+        ) -> c_int;
         pub fn cbss_context_add_box(
             context: *mut CbssContext,
             parent: c_uint,
@@ -944,10 +950,16 @@ unsafe extern "C" fn event_trampoline(
     }
 }
 
+struct EventSubscriptionState {
+    node: u32,
+    callback: Rc<EventCallbackState>,
+}
+
 struct DriverEventState {
     context: Cell<*mut ffi::CbssContext>,
-    handlers: RefCell<HashMap<(u32, u32), Rc<EventCallbackState>>>,
-    subscriptions: RefCell<HashMap<u64, Rc<EventCallbackState>>>,
+    handlers: RefCell<HashMap<u32, HashMap<u32, Rc<EventCallbackState>>>>,
+    subscriptions: RefCell<HashMap<u64, EventSubscriptionState>>,
+    subscriptions_by_node: RefCell<HashMap<u32, HashSet<u64>>>,
 }
 
 impl DriverEventState {
@@ -956,6 +968,7 @@ impl DriverEventState {
             context: Cell::new(context),
             handlers: RefCell::new(HashMap::new()),
             subscriptions: RefCell::new(HashMap::new()),
+            subscriptions_by_node: RefCell::new(HashMap::new()),
         }
     }
 
@@ -966,14 +979,49 @@ impl DriverEventState {
         }
         let status = unsafe { ffi::cbss_context_unsubscribe_event(context, subscription) };
         if status == STATUS_OK {
-            self.subscriptions.borrow_mut().remove(&subscription);
+            let node = self
+                .subscriptions
+                .borrow_mut()
+                .remove(&subscription)
+                .map(|entry| entry.node);
+            if let Some(node) = node {
+                let mut index = self.subscriptions_by_node.borrow_mut();
+                if let Some(ids) = index.get_mut(&node) {
+                    ids.remove(&subscription);
+                    if ids.is_empty() {
+                        index.remove(&node);
+                    }
+                }
+            }
         }
         status
+    }
+
+    fn has_subscription(&self, subscription: u64) -> bool {
+        self.subscriptions
+            .try_borrow()
+            .map(|subscriptions| subscriptions.contains_key(&subscription))
+            .unwrap_or(false)
+    }
+
+    fn release_nodes(&self, nodes: &HashSet<u32>) {
+        let mut handlers = self.handlers.borrow_mut();
+        let mut subscriptions = self.subscriptions.borrow_mut();
+        let mut index = self.subscriptions_by_node.borrow_mut();
+        for node in nodes {
+            handlers.remove(node);
+            if let Some(ids) = index.remove(node) {
+                for id in ids {
+                    subscriptions.remove(&id);
+                }
+            }
+        }
     }
 
     fn clear_after_reset(&self) {
         self.handlers.borrow_mut().clear();
         self.subscriptions.borrow_mut().clear();
+        self.subscriptions_by_node.borrow_mut().clear();
     }
 
     fn shutdown(&self) {
@@ -983,13 +1031,16 @@ impl DriverEventState {
 
     fn callback_panicked(&self) -> bool {
         let handlers = self.handlers.borrow();
-        if handlers.values().any(|holder| holder.panicked.get()) {
+        if handlers
+            .values()
+            .any(|node| node.values().any(|holder| holder.panicked.get()))
+        {
             return true;
         }
         self.subscriptions
             .borrow()
             .values()
-            .any(|holder| holder.panicked.get())
+            .any(|subscription| subscription.callback.panicked.get())
     }
 }
 
@@ -1003,6 +1054,11 @@ pub struct EventSubscription {
 impl EventSubscription {
     pub fn active(&self) -> bool {
         self.active
+            && self
+                .state
+                .upgrade()
+                .map(|state| state.has_subscription(self.id))
+                .unwrap_or(false)
     }
 
     pub fn close(&mut self) -> Result<()> {
@@ -1302,6 +1358,22 @@ impl Ui {
         Ok(unsafe { ffi::cbss_node_child_count(self.context.as_ptr(), node.id) })
     }
 
+    pub fn remove_subtree(&mut self, root: Node) -> Result<u32> {
+        Contract::require(&[CapabilityRequirement {
+            id: CAPABILITY_SUBTREE_LIFECYCLE,
+            minimum_version: 1,
+        }])?;
+        self.require_node(root, "remove subtree")?;
+        let nodes = self.collect_subtree(root)?;
+        let mut removed = 0_u32;
+        let status = unsafe {
+            ffi::cbss_context_remove_subtree(self.context.as_ptr(), root.id, &mut removed)
+        };
+        self.check(status, "remove subtree")?;
+        self.events.release_nodes(&nodes);
+        Ok(removed)
+    }
+
     pub fn on<F>(&mut self, node: Node, kind: EventKind, callback: F) -> Result<()>
     where
         F: FnMut(&Event) -> EventOutcome + 'static,
@@ -1322,7 +1394,6 @@ impl Ui {
             )
         };
         self.check(status, "set event handler")?;
-        let key = (node.id, kind.code());
         if self.events.handlers.try_borrow_mut().is_err() {
             unsafe {
                 ffi::cbss_node_set_event_handler(
@@ -1338,7 +1409,12 @@ impl Ui {
                 "set event handler: callback registry is already borrowed",
             ));
         }
-        self.events.handlers.borrow_mut().insert(key, holder);
+        self.events
+            .handlers
+            .borrow_mut()
+            .entry(node.id)
+            .or_default()
+            .insert(kind.code(), holder);
         Ok(())
     }
 
@@ -1354,10 +1430,13 @@ impl Ui {
             )
         };
         self.check(status, "clear event handler")?;
-        self.events
-            .handlers
-            .borrow_mut()
-            .remove(&(node.id, kind.code()));
+        let mut handlers = self.events.handlers.borrow_mut();
+        if let Some(node_handlers) = handlers.get_mut(&node.id) {
+            node_handlers.remove(&kind.code());
+            if node_handlers.is_empty() {
+                handlers.remove(&node.id);
+            }
+        }
         Ok(())
     }
 
@@ -1388,8 +1467,18 @@ impl Ui {
             )
         };
         self.check(status, "subscribe event")?;
-        if let Ok(mut subscriptions) = self.events.subscriptions.try_borrow_mut() {
-            subscriptions.insert(subscription, holder);
+        if let (Ok(mut subscriptions), Ok(mut index)) = (
+            self.events.subscriptions.try_borrow_mut(),
+            self.events.subscriptions_by_node.try_borrow_mut(),
+        ) {
+            subscriptions.insert(
+                subscription,
+                EventSubscriptionState {
+                    node: node.id,
+                    callback: holder,
+                },
+            );
+            index.entry(node.id).or_default().insert(subscription);
         } else {
             unsafe {
                 ffi::cbss_context_unsubscribe_event(self.context.as_ptr(), subscription);
@@ -1566,6 +1655,28 @@ impl Ui {
             }
             None => Ok(NODE_NONE),
         }
+    }
+
+    fn collect_subtree(&self, root: Node) -> Result<HashSet<u32>> {
+        let mut result = HashSet::new();
+        let mut pending = vec![root.id];
+        while let Some(node) = pending.pop() {
+            if !result.insert(node) {
+                continue;
+            }
+            let count = unsafe { ffi::cbss_node_child_count(self.context.as_ptr(), node) };
+            for index in 0..count {
+                let child = unsafe { ffi::cbss_node_child(self.context.as_ptr(), node, index) };
+                if child == NODE_NONE {
+                    return Err(Error::status(
+                        STATUS_INTERNAL_ERROR,
+                        "remove subtree: unable to enumerate child Node",
+                    ));
+                }
+                pending.push(child);
+            }
+        }
+        Ok(result)
     }
 
     fn owned_node(&self, id: u32) -> Option<Node> {

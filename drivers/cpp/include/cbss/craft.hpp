@@ -15,6 +15,7 @@
 #include <string>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -456,8 +457,25 @@ struct EventCallbackState
   std::exception_ptr failure;
 };
 
+struct EventSubscriptionState {
+  std::uint32_t node;
+  std::shared_ptr<EventCallbackState> callback;
+};
+
 struct EventDriverState {
   explicit EventDriverState(CbssContext* value) : context(value) {}
+
+  void addSubscription(
+      std::uint64_t id, std::uint32_t node,
+      const std::shared_ptr<EventCallbackState>& callback) {
+    subscriptions.emplace(id, EventSubscriptionState{node, callback});
+    try {
+      subscriptions_by_node[node].insert(id);
+    } catch (...) {
+      subscriptions.erase(id);
+      throw;
+    }
+  }
 
   void unsubscribe(std::uint64_t id) noexcept {
     if (context == nullptr) {
@@ -468,20 +486,51 @@ struct EventDriverState {
       return;
     }
     if (cbss_context_unsubscribe_event(context, id) == CBSS_OK) {
+      const std::uint32_t node = found->second.node;
       subscriptions.erase(found);
+      const auto indexed = subscriptions_by_node.find(node);
+      if (indexed != subscriptions_by_node.end()) {
+        indexed->second.erase(id);
+        if (indexed->second.empty()) {
+          subscriptions_by_node.erase(indexed);
+        }
+      }
+    }
+  }
+
+  bool hasSubscription(std::uint64_t id) const noexcept {
+    return subscriptions.find(id) != subscriptions.end();
+  }
+
+  void releaseNodes(
+      const std::unordered_set<std::uint32_t>& nodes) noexcept {
+    for (const std::uint32_t node : nodes) {
+      handlers.erase(node);
+      const auto indexed = subscriptions_by_node.find(node);
+      if (indexed == subscriptions_by_node.end()) {
+        continue;
+      }
+      for (const std::uint64_t id : indexed->second) {
+        subscriptions.erase(id);
+      }
+      subscriptions_by_node.erase(indexed);
     }
   }
 
   void clear() noexcept {
     handlers.clear();
     subscriptions.clear();
+    subscriptions_by_node.clear();
   }
 
   CbssContext* context;
-  std::unordered_map<std::uint64_t, std::shared_ptr<EventCallbackState>>
+  std::unordered_map<
+      std::uint32_t,
+      std::unordered_map<std::uint32_t, std::shared_ptr<EventCallbackState>>>
       handlers;
-  std::unordered_map<std::uint64_t, std::shared_ptr<EventCallbackState>>
-      subscriptions;
+  std::unordered_map<std::uint64_t, EventSubscriptionState> subscriptions;
+  std::unordered_map<std::uint32_t, std::unordered_set<std::uint64_t>>
+      subscriptions_by_node;
 };
 
 }  // namespace detail
@@ -514,7 +563,13 @@ class EventSubscription {
     return *this;
   }
 
-  bool active() const noexcept { return active_; }
+  bool active() const noexcept {
+    if (!active_) {
+      return false;
+    }
+    const std::shared_ptr<detail::EventDriverState> state = state_.lock();
+    return state && state->hasSubscription(id_);
+  }
 
   void close() noexcept {
     if (!active_) {
@@ -773,6 +828,22 @@ class Ui {
     return cbss_node_child_count(context_, node.value_);
   }
 
+  std::uint32_t removeSubtree(Node root) {
+    Contract::require({{CBSS_CAPABILITY_SUBTREE_LIFECYCLE, 1u}});
+    requireNode(root, "remove subtree");
+    if (!parents_.empty()) {
+      throw Error(CBSS_INVALID_ARGUMENT,
+                  "remove subtree: nested construction is active");
+    }
+
+    const std::unordered_set<std::uint32_t> nodes = collectSubtree(root);
+    std::uint32_t removed = 0u;
+    check(cbss_context_remove_subtree(context_, root.value_, &removed),
+          "remove subtree");
+    events_->releaseNodes(nodes);
+    return removed;
+  }
+
   void on(Node node, CbssEventKind kind,
           std::function<EventOutcome(const Event&)> callback) {
     requireEvents();
@@ -787,9 +858,8 @@ class Ui {
               context_, node.value_, static_cast<std::uint32_t>(kind),
               &detail::EventCallbackState::invoke, holder.get()),
           "set event handler");
-    const std::uint64_t key = eventHandlerKey(node.value_, kind);
     try {
-      events_->handlers[key] = holder;
+      events_->handlers[node.value_][static_cast<std::uint32_t>(kind)] = holder;
     } catch (...) {
       cbss_node_set_event_handler(context_, node.value_,
                                   static_cast<std::uint32_t>(kind), nullptr,
@@ -804,7 +874,13 @@ class Ui {
               context_, node.value_, static_cast<std::uint32_t>(kind), nullptr,
               nullptr),
           "clear event handler");
-    events_->handlers.erase(eventHandlerKey(node.value_, kind));
+    const auto node_handlers = events_->handlers.find(node.value_);
+    if (node_handlers != events_->handlers.end()) {
+      node_handlers->second.erase(static_cast<std::uint32_t>(kind));
+      if (node_handlers->second.empty()) {
+        events_->handlers.erase(node_handlers);
+      }
+    }
   }
 
   EventSubscription subscribe(
@@ -824,7 +900,7 @@ class Ui {
               &subscription),
           "subscribe event");
     try {
-      events_->subscriptions.emplace(subscription, holder);
+      events_->addSubscription(subscription, node.value_, holder);
     } catch (...) {
       cbss_context_unsubscribe_event(context_, subscription);
       throw;
@@ -855,12 +931,14 @@ class Ui {
 
   bool callbackFailed() const noexcept {
     for (const auto& item : events_->handlers) {
-      if (item.second->failure) {
-        return true;
+      for (const auto& handler : item.second) {
+        if (handler.second->failure) {
+          return true;
+        }
       }
     }
     for (const auto& item : events_->subscriptions) {
-      if (item.second->failure) {
+      if (item.second.callback->failure) {
         return true;
       }
     }
@@ -869,16 +947,18 @@ class Ui {
 
   void rethrowCallbackFailure() {
     for (const auto& item : events_->handlers) {
-      if (item.second->failure) {
-        const std::exception_ptr failure = item.second->failure;
-        item.second->failure = nullptr;
-        std::rethrow_exception(failure);
+      for (const auto& handler : item.second) {
+        if (handler.second->failure) {
+          const std::exception_ptr failure = handler.second->failure;
+          handler.second->failure = nullptr;
+          std::rethrow_exception(failure);
+        }
       }
     }
     for (const auto& item : events_->subscriptions) {
-      if (item.second->failure) {
-        const std::exception_ptr failure = item.second->failure;
-        item.second->failure = nullptr;
+      if (item.second.callback->failure) {
+        const std::exception_ptr failure = item.second.callback->failure;
+        item.second.callback->failure = nullptr;
         std::rethrow_exception(failure);
       }
     }
@@ -915,10 +995,26 @@ class Ui {
     return parents_.empty() ? CBSS_NODE_NONE : parents_.back();
   }
 
-  static std::uint64_t eventHandlerKey(std::uint32_t node,
-                                       CbssEventKind kind) noexcept {
-    return (static_cast<std::uint64_t>(node) << 32u) |
-           static_cast<std::uint32_t>(kind);
+  std::unordered_set<std::uint32_t> collectSubtree(Node root) const {
+    std::unordered_set<std::uint32_t> result;
+    std::vector<std::uint32_t> pending(1u, root.value_);
+    while (!pending.empty()) {
+      const std::uint32_t node = pending.back();
+      pending.pop_back();
+      if (!result.insert(node).second) {
+        continue;
+      }
+      const std::uint32_t count = cbss_node_child_count(context_, node);
+      for (std::uint32_t index = 0u; index < count; ++index) {
+        const std::uint32_t child = cbss_node_child(context_, node, index);
+        if (child == CBSS_NODE_NONE) {
+          throw Error(CBSS_INTERNAL_ERROR,
+                      "remove subtree: unable to enumerate child Node");
+        }
+        pending.push_back(child);
+      }
+    }
+    return result;
   }
 
   static void requireEvents() {

@@ -21,6 +21,9 @@ release. Before 1.0, minor releases may contain public API changes.
   invalidates generation-checked Node IDs after synchronously releasing owned
   focus, pointer, event, Style, motion, scroll, Craft Slot, and Render Surface
   state.
+- Added high-level C++ and Rust subtree removal with generation-safe stale
+  handles, deterministic Driver callback release, and subscription tokens that
+  reflect lifecycle-driven detachment.
 
 ### Security
 
