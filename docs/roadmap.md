@@ -1759,13 +1759,14 @@ C-interoperable host must not require changes to layout, paint, event, or Style
 semantics in the CBSS core.
 
 Current implementation status: the machine-readable capability contract and
-runtime negotiation API are complete. The C++14 reference Driver now covers
-RAII lifetime, typed Style values, scoped Box/Text/Image construction, layout
-queries, structured failures, ARC/ORC linking, and Valgrind coverage. The Rust
-reference Driver covers the same first reference tree with private FFI, `Drop`
-ownership, context-bound Nodes, and borrowed child Scopes under ARC and ORC.
-Event, state, lifecycle, Craft Style, and cross-Driver fixture parity remain
-Version 0.6 work.
+runtime negotiation API are complete. The C++14 and Rust reference Drivers
+cover deterministic ownership, typed Style values, scoped Box/Text/Image
+construction, layout queries, structured failures, replacement event handlers,
+owned additive subscriptions, callback-boundary failure containment, synthetic
+event fixtures, ARC/ORC linking, and lifecycle checks. Event kinds are generated
+from the canonical registry rather than duplicated by a Driver. Retained state,
+Craft Style, component lifecycle, and broader cross-Driver fixture parity
+remain Version 0.6 work.
 
 This scope does not require one source syntax across languages, runtime loading
 of arbitrary foreign binaries, or pixel identity across different font and

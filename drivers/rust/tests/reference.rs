@@ -1,8 +1,11 @@
 use cbss_craft::{
-    keyword, px, rgb, Contract, ErrorKind, Style, Ui, ABI_VERSION, CAPABILITIES,
-    DRIVER_CONTRACT_VERSION, STATUS_INVALID_ARGUMENT, STATUS_INVALID_HANDLE, STATUS_STYLE_ERROR,
+    keyword, px, rgb, Contract, ErrorKind, EventKind, EventOutcome, InputEvent, Style, Ui,
+    ABI_VERSION, CAPABILITIES, DRIVER_CONTRACT_VERSION, STATUS_INVALID_ARGUMENT,
+    STATUS_INVALID_HANDLE, STATUS_STYLE_ERROR,
 };
+use std::cell::{Cell, RefCell};
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::rc::Rc;
 
 #[test]
 fn reference_tree_matches_the_driver_contract() {
@@ -67,12 +70,107 @@ fn reference_tree_matches_the_driver_contract() {
     assert!((child_rect.width - 40.0).abs() < 0.001);
     assert!((child_rect.height - 30.0).abs() < 0.001);
 
+    let replaced_handler_calls = Rc::new(Cell::new(0));
+    let active_handler_calls = Rc::new(Cell::new(0));
+    let parent_observer_calls = Rc::new(Cell::new(0));
+    let replaced_counter = Rc::clone(&replaced_handler_calls);
+    ui.on(child, EventKind::CLICK, move |_event| {
+        replaced_counter.set(replaced_counter.get() + 1);
+        EventOutcome::HANDLED
+    })
+    .expect("initial click handler");
+    let active_counter = Rc::clone(&active_handler_calls);
+    ui.on(child, EventKind::CLICK, move |event| {
+        active_counter.set(active_counter.get() + 1);
+        assert_eq!(event.target, child.native_id());
+        assert_eq!(event.current_target, child.native_id());
+        assert_eq!(event.position, Some((18.0, 22.0)));
+        EventOutcome::new(true, false, true)
+    })
+    .expect("replacement click handler");
+    let parent_counter = Rc::clone(&parent_observer_calls);
+    let mut parent_observer = ui
+        .subscribe(root, EventKind::CLICK, move |event| {
+            parent_counter.set(parent_counter.get() + 1);
+            assert_eq!(event.target, child.native_id());
+            assert_eq!(event.current_target, root.native_id());
+            EventOutcome::HANDLED
+        })
+        .expect("parent click observer");
+    let first_click = ui
+        .emit(
+            child,
+            &InputEvent::new(EventKind::CLICK)
+                .position(18.0, 22.0)
+                .button(1),
+        )
+        .expect("first click");
+    assert_eq!(first_click.target, child.native_id());
+    assert!(first_click.handled);
+    assert!(first_click.outcome.handled());
+    assert!(first_click.outcome.prevents_default());
+    assert_eq!(replaced_handler_calls.get(), 0);
+    assert_eq!(active_handler_calls.get(), 1);
+    assert_eq!(parent_observer_calls.get(), 1);
+
+    parent_observer.close().expect("close parent observer");
+    assert!(!parent_observer.active());
+    ui.emit(child, &InputEvent::new(EventKind::CLICK))
+        .expect("click after observer removal");
+    assert_eq!(active_handler_calls.get(), 2);
+    assert_eq!(parent_observer_calls.get(), 1);
+
+    let copied_key = Rc::new(RefCell::new(String::new()));
+    let callback_key = Rc::clone(&copied_key);
+    ui.on(child, EventKind::KEY_DOWN, move |event| {
+        *callback_key.borrow_mut() = event.key.clone().unwrap_or_default();
+        EventOutcome::HANDLED
+    })
+    .expect("key handler");
+    ui.emit(child, &InputEvent::new(EventKind::KEY_DOWN).key("+"))
+        .expect("key event");
+    assert_eq!(copied_key.borrow().as_str(), "+");
+
+    let scoped_observer_calls = Rc::new(Cell::new(0));
+    {
+        let scoped_counter = Rc::clone(&scoped_observer_calls);
+        let _scoped_observer = ui
+            .subscribe(child, EventKind::CHANGE, move |_event| {
+                scoped_counter.set(scoped_counter.get() + 1);
+                EventOutcome::HANDLED
+            })
+            .expect("scoped observer");
+        ui.emit(child, &InputEvent::new(EventKind::CHANGE))
+            .expect("change with observer");
+        assert_eq!(scoped_observer_calls.get(), 1);
+    }
+    ui.emit(child, &InputEvent::new(EventKind::CHANGE))
+        .expect("change after observer drop");
+    assert_eq!(scoped_observer_calls.get(), 1);
+
+    ui.on(child, EventKind::INPUT, |_event| {
+        panic!("callback failure");
+    })
+    .expect("panicking handler");
+    let failed_callback = ui
+        .emit(child, &InputEvent::new(EventKind::INPUT))
+        .expect("panic is contained at the FFI boundary");
+    assert!(failed_callback.outcome.handled());
+    assert!(failed_callback.outcome.stops_propagation());
+    assert!(failed_callback.outcome.prevents_default());
+    assert!(ui.callback_panicked());
+
     let mut other_ui = Ui::new().expect("other Ui");
     let other_root = other_ui.box_node("other-root", None).expect("other root");
     let foreign = ui.rect(other_root).expect_err("foreign Node must fail");
     assert_eq!(foreign.status_code(), Some(STATUS_INVALID_HANDLE));
 
+    let mut reset_observer = ui
+        .subscribe(child, EventKind::CHANGE, |_event| EventOutcome::HANDLED)
+        .expect("observer surviving reset token");
     ui.reset().expect("reset");
+    reset_observer.close().expect("close token after reset");
+    assert!(!reset_observer.active());
     let exception_root = ui.box_node("exception-root", None).expect("root");
     let panic = catch_unwind(AssertUnwindSafe(|| {
         ui.within(exception_root, |ui| {
@@ -113,4 +211,20 @@ fn reference_tree_matches_the_driver_contract() {
         .compute(100.0, 100.0)
         .expect_err("unknown property must fail at resolution");
     assert_eq!(invalid.status_code(), Some(STATUS_STYLE_ERROR));
+
+    let mut detached_observer = {
+        let mut temporary_ui = Ui::new().expect("temporary Ui");
+        let temporary_node = temporary_ui
+            .box_node("temporary", None)
+            .expect("temporary node");
+        temporary_ui
+            .subscribe(temporary_node, EventKind::CLICK, |_event| {
+                EventOutcome::HANDLED
+            })
+            .expect("temporary observer")
+    };
+    detached_observer
+        .close()
+        .expect("subscription may outlive its Ui safely");
+    assert!(!detached_observer.active());
 }

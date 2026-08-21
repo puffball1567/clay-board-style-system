@@ -6,7 +6,9 @@ CBSS resources with `Drop`, and both are intentionally confined to their UI
 thread.
 
 ```rust
-use cbss_craft::{keyword, px, rgb, Result, Style, Ui};
+use cbss_craft::{
+    keyword, px, rgb, EventKind, EventOutcome, InputEvent, Result, Style, Ui,
+};
 
 fn build() -> Result<()> {
     let mut panel = Style::new()?;
@@ -17,11 +19,17 @@ fn build() -> Result<()> {
         .set("background-color", rgb(0.12, 0.14, 0.18))?;
 
     let mut ui = Ui::new()?;
-    ui.box_with("panel", Some(&panel), |ui| {
+    let button = ui.box_with("panel", Some(&panel), |ui| {
         ui.text("Hello from Rust", "title", None)?;
         Ok(())
     })?;
-    ui.compute(800.0, 600.0)
+    ui.on(button, EventKind::CLICK, |_event| {
+        println!("Clicked");
+        EventOutcome::HANDLED
+    })?;
+    ui.compute(800.0, 600.0)?;
+    ui.emit(button, &InputEvent::new(EventKind::CLICK))?;
+    Ok(())
 }
 ```
 
@@ -33,3 +41,9 @@ The scoped authoring closure receives a `Scope` rather than exposing a parent
 Node identifier. This makes early `Result` returns and panic unwinding safe
 without replaying or repairing a mutable parent stack. Nodes also retain their
 owning context identity, so a Node from another `Ui` is rejected before FFI.
+
+`Ui::on` replaces the public handler for one node/event pair. `Ui::subscribe`
+adds an observer and returns an `EventSubscription` that unregisters on `Drop`
+or explicit `close`. Callback event strings are copied before the C callback
+returns. Rust panics are contained at the FFI boundary and can be detected with
+`Ui::callback_panicked`; they never unwind through Nim or C.
