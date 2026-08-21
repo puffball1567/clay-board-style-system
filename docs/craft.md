@@ -77,6 +77,11 @@ they must not reinterpret Style semantics or define backend-specific Style
 behavior. Pixel output may still vary within documented platform, font, and
 renderer contracts.
 
+The Version 1 JSON exchange representation, typed values, parser diagnostics,
+normalization, and safety limits are defined in
+[Craft Style Exchange Format](craft-style-format.md). JSON is the stable Driver
+boundary, not a commitment to the eventual human-oriented authoring syntax.
+
 ### High-Level Driver Contract
 
 The C ABI is the shared engine protocol below a Craft Driver. Ordinary Driver

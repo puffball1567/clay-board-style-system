@@ -1,0 +1,110 @@
+{
+  "format": "cbss-craft-style",
+  "version": 1,
+  "name": "reference-theme",
+  "rules": [
+    {
+      "selector": {
+        "element": "box",
+        "id": "dashboard",
+        "code": "primary-panel",
+        "groups": ["surface", "interactive"],
+        "attributes": {
+          "data-density": "compact",
+          "aria-busy": null
+        },
+        "states": ["hover", "focus-visible", "invalid"]
+      },
+      "priority": 7,
+      "declarations": [
+        {
+          "property": "width",
+          "value": {"type": "length", "unit": "percent", "value": 100}
+        },
+        {
+          "property": "height",
+          "value": {"type": "length", "unit": "auto"}
+        },
+        {
+          "property": "opacity",
+          "value": {"type": "number", "value": 0.75}
+        },
+        {
+          "property": "display",
+          "value": {"type": "keyword", "value": "flex"}
+        },
+        {
+          "property": "color",
+          "value": {"type": "color", "value": "oklch(62% 0.18 248)"}
+        },
+        {
+          "property": "background-color",
+          "value": {
+            "type": "color",
+            "value": "color-mix(in srgb, #336699 25%, white)"
+          }
+        },
+        {
+          "property": "border",
+          "value": {
+            "type": "border",
+            "width": {"type": "length", "unit": "px", "value": 2},
+            "style": "solid",
+            "color": "#1f2937"
+          }
+        },
+        {
+          "property": "box-shadow",
+          "value": {
+            "type": "shadow",
+            "offset-x": {"type": "length", "unit": "px", "value": 0},
+            "offset-y": {"type": "length", "unit": "px", "value": 8},
+            "blur": {"type": "length", "unit": "px", "value": 24},
+            "spread": {"type": "length", "unit": "px", "value": -4},
+            "color": "rgb(0 0 0 / 25%)"
+          }
+        },
+        {
+          "property": "background-image",
+          "value": {
+            "type": "linear-gradient",
+            "angle": 90,
+            "space": "oklab",
+            "stops": [
+              {"color": "#ff006e", "offset": 0},
+              {"color": "color-mix(in srgb, #3a86ff, white 20%)", "offset": 1}
+            ]
+          }
+        },
+        {
+          "property": "transform",
+          "value": {
+            "type": "transform",
+            "operations": [
+              {
+                "type": "translate",
+                "x": {"type": "length", "unit": "px", "value": 12},
+                "y": {"type": "length", "unit": "percent", "value": 25}
+              },
+              {"type": "scale", "x": 1.1, "y": 0.9},
+              {"type": "rotate", "angle": 15}
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "selector": {"element": "text", "groups": ["muted"]},
+      "declarations": [
+        {"property": "color", "operation": "inherit"},
+        {"property": "font-size", "operation": "initial"},
+        {"property": "line-height", "operation": "unset"},
+        {
+          "property": "letter-spacing",
+          "operation": "relative",
+          "value": {"type": "length", "unit": "em", "value": 0.05}
+        }
+      ]
+    }
+  ]
+}

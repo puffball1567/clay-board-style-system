@@ -1764,8 +1764,12 @@ cover deterministic ownership, typed Style values, scoped Box/Text/Image
 construction, layout queries, structured failures, replacement event handlers,
 owned additive subscriptions, callback-boundary failure containment, synthetic
 event fixtures, ARC/ORC linking, and lifecycle checks. Event kinds are generated
-from the canonical registry rather than duplicated by a Driver. Retained state,
-Craft Style, component lifecycle, and broader cross-Driver fixture parity
+from the canonical registry rather than duplicated by a Driver. The Version 1
+Craft Style JSON exchange format now has a strict bounded parser, typed
+`StyleSheet` compilation, stable diagnostics, canonical normalization, a
+machine-readable schema, and shared positive/negative fixtures. Retained state,
+Driver and C ABI Craft Style loading, public Style Slots, atomic replacement,
+Craft Pack loading, component lifecycle, and broader cross-Driver fixture parity
 remain Version 0.6 work.
 
 This scope does not require one source syntax across languages, runtime loading
