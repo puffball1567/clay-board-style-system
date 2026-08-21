@@ -7,6 +7,7 @@ destruction out of ordinary application code.
 
 ```cpp
 #include <cbss/craft.hpp>
+#include <iostream>
 
 cbss::Style panel;
 panel.set("width", cbss::px(320))
@@ -15,16 +16,27 @@ panel.set("width", cbss::px(320))
      .set("background-color", cbss::rgb(0.12f, 0.14f, 0.18f));
 
 cbss::Ui ui;
-ui.box("panel", panel, [&] {
+const cbss::Node button = ui.box("panel", panel, [&] {
   ui.text("Hello from C++", "title");
 });
+ui.on(button, CBSS_EVENT_CLICK, [](const cbss::Event&) {
+  std::cout << "Clicked\n";
+  return cbss::EventOutcome::handled();
+});
 ui.compute(800, 600);
+ui.emit(button, cbss::InputEvent(CBSS_EVENT_CLICK));
 ```
 
 The Driver negotiates the engine ABI, Driver contract, and baseline authoring
 capabilities before it constructs a context. `Ui` and `Style` use deterministic
 RAII lifetime. Nested callbacks maintain parentage with an exception-safe
 scope, so user code does not pass parent handles.
+
+`Ui::on` replaces one public node handler. `Ui::subscribe` adds an observer and
+returns a move-only `EventSubscription` that unregisters through RAII or
+explicit `close()`. Callback event strings are copied before the C callback
+returns. Exceptions are contained at the C boundary; `callbackFailed()` and
+`rethrowCallbackFailure()` let the application handle them on the C++ side.
 
 Compile against either the shared or static C ABI library:
 

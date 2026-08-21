@@ -2,15 +2,18 @@
 
 mod generated;
 
-use std::ffi::{CString, NulError};
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::ffi::{CStr, CString, NulError};
 use std::fmt;
 use std::marker::PhantomData;
-use std::os::raw::{c_char, c_float, c_int, c_uint};
+use std::os::raw::{c_char, c_float, c_int, c_uint, c_void};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr::NonNull;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 pub use generated::{
-    CapabilityDefinition, ABI_VERSION, CAPABILITIES, CAPABILITY_ACCESSIBILITY_SEMANTICS,
+    CapabilityDefinition, EventKind, ABI_VERSION, CAPABILITIES, CAPABILITY_ACCESSIBILITY_SEMANTICS,
     CAPABILITY_BLOB, CAPABILITY_DECLARATIVE_MOTION, CAPABILITY_FLEX_LAYOUT, CAPABILITY_FOCUS,
     CAPABILITY_FORM_DATA, CAPABILITY_HIT_TEST, CAPABILITY_PAINT_COMMANDS,
     CAPABILITY_RENDER_SURFACE, CAPABILITY_RETAINED_CANVAS, CAPABILITY_RETAINED_SCROLL,
@@ -27,9 +30,26 @@ pub const STATUS_INTERNAL_ERROR: i32 = 5;
 pub const STATUS_NOT_AVAILABLE: i32 = 6;
 
 const NODE_NONE: u32 = u32::MAX;
+const INPUT_HAS_POSITION: u32 = 1 << 0;
+const INPUT_HAS_DELTA: u32 = 1 << 1;
+const INPUT_HAS_BUTTON: u32 = 1 << 2;
+const INPUT_HAS_KEY: u32 = 1 << 3;
+const INPUT_HAS_TEXT: u32 = 1 << 4;
+const INPUT_HAS_POINTER: u32 = 1 << 5;
+const EVENT_HAS_LOCAL: u32 = 1 << 0;
+const EVENT_HAS_POSITION: u32 = 1 << 1;
+const EVENT_HAS_DELTA: u32 = 1 << 2;
+const EVENT_HAS_BUTTON: u32 = 1 << 3;
+const EVENT_HAS_KEY: u32 = 1 << 4;
+const EVENT_HAS_TEXT: u32 = 1 << 5;
+const EVENT_HAS_POINTER: u32 = 1 << 6;
+const EVENT_HAS_MOTION: u32 = 1 << 11;
+const OUTCOME_HANDLED: u8 = 1 << 0;
+const OUTCOME_STOP_PROPAGATION: u8 = 1 << 1;
+const OUTCOME_PREVENT_DEFAULT: u8 = 1 << 2;
 
 mod ffi {
-    use super::{c_char, c_float, c_int, c_uint, Color, Rect};
+    use super::{c_char, c_float, c_int, c_uint, c_void, Color, Rect};
 
     #[repr(C)]
     pub struct CbssContext {
@@ -40,6 +60,83 @@ mod ffi {
     pub struct CbssStyle {
         _private: [u8; 0],
     }
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct CbssPointerData {
+        pub device: c_uint,
+        pub axes: c_uint,
+        pub device_id: u64,
+        pub pressure: c_float,
+        pub tangential_pressure: c_float,
+        pub tilt_x: c_float,
+        pub tilt_y: c_float,
+        pub rotation: c_float,
+        pub distance: c_float,
+        pub slider: c_float,
+        pub buttons: c_uint,
+        pub contact: u8,
+        pub primary: u8,
+        pub eraser: u8,
+        pub in_proximity: u8,
+    }
+
+    #[repr(C)]
+    pub struct CbssInputEvent {
+        pub kind: c_uint,
+        pub flags: c_uint,
+        pub modifiers: c_uint,
+        pub button: c_int,
+        pub x: c_float,
+        pub y: c_float,
+        pub delta_x: c_float,
+        pub delta_y: c_float,
+        pub key: *const c_char,
+        pub text: *const c_char,
+        pub pointer: CbssPointerData,
+        pub timestamp: u64,
+    }
+
+    #[repr(C)]
+    pub struct CbssEvent {
+        pub kind: c_uint,
+        pub target: c_uint,
+        pub current_target: c_uint,
+        pub flags: c_uint,
+        pub local_x: c_float,
+        pub local_y: c_float,
+        pub x: c_float,
+        pub y: c_float,
+        pub delta_x: c_float,
+        pub delta_y: c_float,
+        pub button: c_int,
+        pub modifiers: c_uint,
+        pub key: *const c_char,
+        pub text: *const c_char,
+        pub pointer: CbssPointerData,
+        pub timestamp: u64,
+        pub motion_name: *const c_char,
+        pub motion_elapsed_seconds: f64,
+        pub motion_iteration: u64,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct CbssDispatchSummary {
+        pub target: c_uint,
+        pub dispatch_count: c_uint,
+        pub handled: u8,
+        pub outcome: u8,
+        pub needs_compute: u8,
+        pub paint_changed: u8,
+        pub focus_changed: u8,
+    }
+
+    pub type CbssEventCallback = unsafe extern "C" fn(
+        context: *mut CbssContext,
+        event: *const CbssEvent,
+        user_data: *mut c_void,
+    ) -> u8;
 
     extern "C" {
         pub fn cbss_abi_version() -> c_uint;
@@ -117,6 +214,31 @@ mod ffi {
             context: *mut CbssContext,
             node: c_uint,
             output: *mut Rect,
+        ) -> c_int;
+        pub fn cbss_node_set_event_handler(
+            context: *mut CbssContext,
+            node: c_uint,
+            kind: c_uint,
+            callback: Option<CbssEventCallback>,
+            user_data: *mut c_void,
+        ) -> c_int;
+        pub fn cbss_node_subscribe_event(
+            context: *mut CbssContext,
+            node: c_uint,
+            kind: c_uint,
+            callback: Option<CbssEventCallback>,
+            user_data: *mut c_void,
+            output_subscription: *mut u64,
+        ) -> c_int;
+        pub fn cbss_context_unsubscribe_event(
+            context: *mut CbssContext,
+            subscription: u64,
+        ) -> c_int;
+        pub fn cbss_context_emit_event(
+            context: *mut CbssContext,
+            node: c_uint,
+            event: *const CbssInputEvent,
+            output: *mut CbssDispatchSummary,
         ) -> c_int;
     }
 }
@@ -459,8 +581,342 @@ pub struct Rect {
     pub height: f32,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PointerData {
+    pub device: u32,
+    pub axes: u32,
+    pub device_id: u64,
+    pub pressure: f32,
+    pub tangential_pressure: f32,
+    pub tilt_x: f32,
+    pub tilt_y: f32,
+    pub rotation: f32,
+    pub distance: f32,
+    pub slider: f32,
+    pub buttons: u32,
+    pub contact: bool,
+    pub primary: bool,
+    pub eraser: bool,
+    pub in_proximity: bool,
+}
+
+impl From<PointerData> for ffi::CbssPointerData {
+    fn from(value: PointerData) -> Self {
+        Self {
+            device: value.device,
+            axes: value.axes,
+            device_id: value.device_id,
+            pressure: value.pressure,
+            tangential_pressure: value.tangential_pressure,
+            tilt_x: value.tilt_x,
+            tilt_y: value.tilt_y,
+            rotation: value.rotation,
+            distance: value.distance,
+            slider: value.slider,
+            buttons: value.buttons,
+            contact: value.contact as u8,
+            primary: value.primary as u8,
+            eraser: value.eraser as u8,
+            in_proximity: value.in_proximity as u8,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct EventOutcome(u8);
+
+impl EventOutcome {
+    pub const CONTINUE: Self = Self(0);
+    pub const HANDLED: Self = Self(OUTCOME_HANDLED);
+
+    pub const fn new(handled: bool, stop_propagation: bool, prevent_default: bool) -> Self {
+        Self(
+            (if handled { OUTCOME_HANDLED } else { 0 })
+                | (if stop_propagation {
+                    OUTCOME_STOP_PROPAGATION
+                } else {
+                    0
+                })
+                | (if prevent_default {
+                    OUTCOME_PREVENT_DEFAULT
+                } else {
+                    0
+                }),
+        )
+    }
+
+    pub const fn handled(self) -> bool {
+        self.0 & OUTCOME_HANDLED != 0
+    }
+
+    pub const fn stops_propagation(self) -> bool {
+        self.0 & OUTCOME_STOP_PROPAGATION != 0
+    }
+
+    pub const fn prevents_default(self) -> bool {
+        self.0 & OUTCOME_PREVENT_DEFAULT != 0
+    }
+
+    const fn bits(self) -> u8 {
+        self.0
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Event {
+    pub kind: EventKind,
+    pub target: u32,
+    pub current_target: u32,
+    pub flags: u32,
+    pub local_position: Option<(f32, f32)>,
+    pub position: Option<(f32, f32)>,
+    pub delta: Option<(f32, f32)>,
+    pub button: Option<i32>,
+    pub modifiers: u32,
+    pub key: Option<String>,
+    pub text: Option<String>,
+    pub pointer: Option<PointerData>,
+    pub timestamp: u64,
+    pub motion_name: Option<String>,
+    pub motion_elapsed_seconds: f64,
+    pub motion_iteration: u64,
+}
+
+impl Event {
+    unsafe fn from_raw(raw: &ffi::CbssEvent) -> Self {
+        Self {
+            kind: EventKind::from_code(raw.kind),
+            target: raw.target,
+            current_target: raw.current_target,
+            flags: raw.flags,
+            local_position: (raw.flags & EVENT_HAS_LOCAL != 0)
+                .then_some((raw.local_x, raw.local_y)),
+            position: (raw.flags & EVENT_HAS_POSITION != 0).then_some((raw.x, raw.y)),
+            delta: (raw.flags & EVENT_HAS_DELTA != 0).then_some((raw.delta_x, raw.delta_y)),
+            button: (raw.flags & EVENT_HAS_BUTTON != 0).then_some(raw.button),
+            modifiers: raw.modifiers,
+            key: copy_callback_string(raw.key, raw.flags & EVENT_HAS_KEY != 0),
+            text: copy_callback_string(raw.text, raw.flags & EVENT_HAS_TEXT != 0),
+            pointer: (raw.flags & EVENT_HAS_POINTER != 0).then_some(PointerData {
+                device: raw.pointer.device,
+                axes: raw.pointer.axes,
+                device_id: raw.pointer.device_id,
+                pressure: raw.pointer.pressure,
+                tangential_pressure: raw.pointer.tangential_pressure,
+                tilt_x: raw.pointer.tilt_x,
+                tilt_y: raw.pointer.tilt_y,
+                rotation: raw.pointer.rotation,
+                distance: raw.pointer.distance,
+                slider: raw.pointer.slider,
+                buttons: raw.pointer.buttons,
+                contact: raw.pointer.contact != 0,
+                primary: raw.pointer.primary != 0,
+                eraser: raw.pointer.eraser != 0,
+                in_proximity: raw.pointer.in_proximity != 0,
+            }),
+            timestamp: raw.timestamp,
+            motion_name: copy_callback_string(raw.motion_name, raw.flags & EVENT_HAS_MOTION != 0),
+            motion_elapsed_seconds: raw.motion_elapsed_seconds,
+            motion_iteration: raw.motion_iteration,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct InputEvent {
+    pub kind: EventKind,
+    pub modifiers: u32,
+    pub button: Option<i32>,
+    pub position: Option<(f32, f32)>,
+    pub delta: Option<(f32, f32)>,
+    pub key: Option<String>,
+    pub text: Option<String>,
+    pub pointer: Option<PointerData>,
+    pub timestamp: u64,
+}
+
+impl InputEvent {
+    pub fn new(kind: EventKind) -> Self {
+        Self {
+            kind,
+            modifiers: 0,
+            button: None,
+            position: None,
+            delta: None,
+            key: None,
+            text: None,
+            pointer: None,
+            timestamp: 0,
+        }
+    }
+
+    pub fn position(mut self, x: f32, y: f32) -> Self {
+        self.position = Some((x, y));
+        self
+    }
+
+    pub fn delta(mut self, x: f32, y: f32) -> Self {
+        self.delta = Some((x, y));
+        self
+    }
+
+    pub fn button(mut self, button: i32) -> Self {
+        self.button = Some(button);
+        self
+    }
+
+    pub fn key(mut self, key: impl Into<String>) -> Self {
+        self.key = Some(key.into());
+        self
+    }
+
+    pub fn text(mut self, text: impl Into<String>) -> Self {
+        self.text = Some(text.into());
+        self
+    }
+
+    pub fn pointer(mut self, pointer: PointerData) -> Self {
+        self.pointer = Some(pointer);
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DispatchSummary {
+    pub target: u32,
+    pub dispatch_count: u32,
+    pub handled: bool,
+    pub outcome: EventOutcome,
+    pub needs_compute: bool,
+    pub paint_changed: bool,
+    pub focus_changed: bool,
+}
+
+type EventCallback = dyn FnMut(&Event) -> EventOutcome;
+
+struct EventCallbackState {
+    callback: RefCell<Box<EventCallback>>,
+    panicked: Cell<bool>,
+}
+
+unsafe extern "C" fn event_trampoline(
+    _context: *mut ffi::CbssContext,
+    event: *const ffi::CbssEvent,
+    user_data: *mut c_void,
+) -> u8 {
+    if event.is_null() || user_data.is_null() {
+        return EventOutcome::new(true, true, true).bits();
+    }
+    let pointer = user_data.cast::<EventCallbackState>();
+    Rc::increment_strong_count(pointer);
+    let holder = Rc::from_raw(pointer);
+    let event = Event::from_raw(&*event);
+    match catch_unwind(AssertUnwindSafe(|| {
+        let mut callback = holder.callback.borrow_mut();
+        callback(&event)
+    })) {
+        Ok(outcome) => outcome.bits(),
+        Err(_) => {
+            holder.panicked.set(true);
+            EventOutcome::new(true, true, true).bits()
+        }
+    }
+}
+
+struct DriverEventState {
+    context: Cell<*mut ffi::CbssContext>,
+    handlers: RefCell<HashMap<(u32, u32), Rc<EventCallbackState>>>,
+    subscriptions: RefCell<HashMap<u64, Rc<EventCallbackState>>>,
+}
+
+impl DriverEventState {
+    fn new(context: *mut ffi::CbssContext) -> Self {
+        Self {
+            context: Cell::new(context),
+            handlers: RefCell::new(HashMap::new()),
+            subscriptions: RefCell::new(HashMap::new()),
+        }
+    }
+
+    fn unsubscribe(&self, subscription: u64) -> i32 {
+        let context = self.context.get();
+        if context.is_null() || !self.subscriptions.borrow().contains_key(&subscription) {
+            return STATUS_INVALID_HANDLE;
+        }
+        let status = unsafe { ffi::cbss_context_unsubscribe_event(context, subscription) };
+        if status == STATUS_OK {
+            self.subscriptions.borrow_mut().remove(&subscription);
+        }
+        status
+    }
+
+    fn clear_after_reset(&self) {
+        self.handlers.borrow_mut().clear();
+        self.subscriptions.borrow_mut().clear();
+    }
+
+    fn shutdown(&self) {
+        self.context.set(std::ptr::null_mut());
+        self.clear_after_reset();
+    }
+
+    fn callback_panicked(&self) -> bool {
+        let handlers = self.handlers.borrow();
+        if handlers.values().any(|holder| holder.panicked.get()) {
+            return true;
+        }
+        self.subscriptions
+            .borrow()
+            .values()
+            .any(|holder| holder.panicked.get())
+    }
+}
+
+pub struct EventSubscription {
+    state: Weak<DriverEventState>,
+    id: u64,
+    active: bool,
+    _not_send: PhantomData<Rc<()>>,
+}
+
+impl EventSubscription {
+    pub fn active(&self) -> bool {
+        self.active
+    }
+
+    pub fn close(&mut self) -> Result<()> {
+        if !self.active {
+            return Ok(());
+        }
+        let Some(state) = self.state.upgrade() else {
+            self.active = false;
+            return Ok(());
+        };
+        let status = state.unsubscribe(self.id);
+        if status != STATUS_OK && status != STATUS_INVALID_HANDLE {
+            return Err(Error::status(status, "unable to unsubscribe event"));
+        }
+        self.active = false;
+        Ok(())
+    }
+}
+
+impl Drop for EventSubscription {
+    fn drop(&mut self) {
+        let _ = self.close();
+    }
+}
+
+unsafe fn copy_callback_string(pointer: *const c_char, present: bool) -> Option<String> {
+    if !present || pointer.is_null() {
+        return None;
+    }
+    Some(CStr::from_ptr(pointer).to_string_lossy().into_owned())
+}
+
 pub struct Ui {
     context: NonNull<ffi::CbssContext>,
+    events: Rc<DriverEventState>,
     _not_send: PhantomData<Rc<()>>,
 }
 
@@ -471,6 +927,7 @@ impl Ui {
             .ok_or_else(|| Error::status(STATUS_INTERNAL_ERROR, "unable to create UI"))?;
         Ok(Self {
             context,
+            events: Rc::new(DriverEventState::new(context.as_ptr())),
             _not_send: PhantomData,
         })
     }
@@ -570,9 +1027,188 @@ impl Ui {
         Ok(unsafe { ffi::cbss_node_child_count(self.context.as_ptr(), node.id) })
     }
 
+    pub fn on<F>(&mut self, node: Node, kind: EventKind, callback: F) -> Result<()>
+    where
+        F: FnMut(&Event) -> EventOutcome + 'static,
+    {
+        self.require_event_capability()?;
+        self.require_node(node, "set event handler")?;
+        let holder = Rc::new(EventCallbackState {
+            callback: RefCell::new(Box::new(callback)),
+            panicked: Cell::new(false),
+        });
+        let status = unsafe {
+            ffi::cbss_node_set_event_handler(
+                self.context.as_ptr(),
+                node.id,
+                kind.code(),
+                Some(event_trampoline),
+                Rc::as_ptr(&holder).cast_mut().cast(),
+            )
+        };
+        self.check(status, "set event handler")?;
+        let key = (node.id, kind.code());
+        if self.events.handlers.try_borrow_mut().is_err() {
+            unsafe {
+                ffi::cbss_node_set_event_handler(
+                    self.context.as_ptr(),
+                    node.id,
+                    kind.code(),
+                    None,
+                    std::ptr::null_mut(),
+                );
+            }
+            return Err(Error::status(
+                STATUS_INTERNAL_ERROR,
+                "set event handler: callback registry is already borrowed",
+            ));
+        }
+        self.events.handlers.borrow_mut().insert(key, holder);
+        Ok(())
+    }
+
+    pub fn clear_handler(&mut self, node: Node, kind: EventKind) -> Result<()> {
+        self.require_node(node, "clear event handler")?;
+        let status = unsafe {
+            ffi::cbss_node_set_event_handler(
+                self.context.as_ptr(),
+                node.id,
+                kind.code(),
+                None,
+                std::ptr::null_mut(),
+            )
+        };
+        self.check(status, "clear event handler")?;
+        self.events
+            .handlers
+            .borrow_mut()
+            .remove(&(node.id, kind.code()));
+        Ok(())
+    }
+
+    pub fn subscribe<F>(
+        &mut self,
+        node: Node,
+        kind: EventKind,
+        callback: F,
+    ) -> Result<EventSubscription>
+    where
+        F: FnMut(&Event) -> EventOutcome + 'static,
+    {
+        self.require_event_capability()?;
+        self.require_node(node, "subscribe event")?;
+        let holder = Rc::new(EventCallbackState {
+            callback: RefCell::new(Box::new(callback)),
+            panicked: Cell::new(false),
+        });
+        let mut subscription = 0_u64;
+        let status = unsafe {
+            ffi::cbss_node_subscribe_event(
+                self.context.as_ptr(),
+                node.id,
+                kind.code(),
+                Some(event_trampoline),
+                Rc::as_ptr(&holder).cast_mut().cast(),
+                &mut subscription,
+            )
+        };
+        self.check(status, "subscribe event")?;
+        if let Ok(mut subscriptions) = self.events.subscriptions.try_borrow_mut() {
+            subscriptions.insert(subscription, holder);
+        } else {
+            unsafe {
+                ffi::cbss_context_unsubscribe_event(self.context.as_ptr(), subscription);
+            }
+            return Err(Error::status(
+                STATUS_INTERNAL_ERROR,
+                "subscribe event: callback registry is already borrowed",
+            ));
+        }
+        Ok(EventSubscription {
+            state: Rc::downgrade(&self.events),
+            id: subscription,
+            active: true,
+            _not_send: PhantomData,
+        })
+    }
+
+    pub fn emit(&mut self, node: Node, input: &InputEvent) -> Result<DispatchSummary> {
+        self.require_event_capability()?;
+        self.require_node(node, "emit event")?;
+        let key = input
+            .key
+            .as_deref()
+            .map(|value| c_string(value, "event key"))
+            .transpose()?;
+        let text = input
+            .text
+            .as_deref()
+            .map(|value| c_string(value, "event text"))
+            .transpose()?;
+        let mut flags = 0_u32;
+        let (x, y) = input.position.unwrap_or((0.0, 0.0));
+        if input.position.is_some() {
+            flags |= INPUT_HAS_POSITION;
+        }
+        let (delta_x, delta_y) = input.delta.unwrap_or((0.0, 0.0));
+        if input.delta.is_some() {
+            flags |= INPUT_HAS_DELTA;
+        }
+        if input.button.is_some() {
+            flags |= INPUT_HAS_BUTTON;
+        }
+        if key.is_some() {
+            flags |= INPUT_HAS_KEY;
+        }
+        if text.is_some() {
+            flags |= INPUT_HAS_TEXT;
+        }
+        if input.pointer.is_some() {
+            flags |= INPUT_HAS_POINTER;
+        }
+        let raw = ffi::CbssInputEvent {
+            kind: input.kind.code(),
+            flags,
+            modifiers: input.modifiers,
+            button: input.button.unwrap_or(0),
+            x,
+            y,
+            delta_x,
+            delta_y,
+            key: key
+                .as_ref()
+                .map_or(std::ptr::null(), |value| value.as_ptr()),
+            text: text
+                .as_ref()
+                .map_or(std::ptr::null(), |value| value.as_ptr()),
+            pointer: input.pointer.unwrap_or_default().into(),
+            timestamp: input.timestamp,
+        };
+        let mut summary = ffi::CbssDispatchSummary::default();
+        let status = unsafe {
+            ffi::cbss_context_emit_event(self.context.as_ptr(), node.id, &raw, &mut summary)
+        };
+        self.check(status, "emit event")?;
+        Ok(DispatchSummary {
+            target: summary.target,
+            dispatch_count: summary.dispatch_count,
+            handled: summary.handled != 0,
+            outcome: EventOutcome(summary.outcome),
+            needs_compute: summary.needs_compute != 0,
+            paint_changed: summary.paint_changed != 0,
+            focus_changed: summary.focus_changed != 0,
+        })
+    }
+
+    pub fn callback_panicked(&self) -> bool {
+        self.events.callback_panicked()
+    }
+
     pub fn reset(&mut self) -> Result<()> {
         let status = unsafe { ffi::cbss_context_reset(self.context.as_ptr()) };
-        self.check(status, "reset UI")
+        self.check(status, "reset UI")?;
+        self.events.clear_after_reset();
+        Ok(())
     }
 
     fn add_box(
@@ -693,6 +1329,13 @@ impl Ui {
         ))
     }
 
+    fn require_event_capability(&self) -> Result<()> {
+        Contract::require(&[CapabilityRequirement {
+            id: CAPABILITY_STANDARD_EVENTS,
+            minimum_version: 1,
+        }])
+    }
+
     fn context_error_message(&self) -> String {
         let mut buffer = [0_u8; 512];
         let length = unsafe {
@@ -716,6 +1359,7 @@ impl Ui {
 impl Drop for Ui {
     fn drop(&mut self) {
         unsafe { ffi::cbss_context_destroy(self.context.as_ptr()) }
+        self.events.shutdown();
     }
 }
 

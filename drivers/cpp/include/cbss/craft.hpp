@@ -4,12 +4,16 @@
 #include "cbss.h"
 
 #include <cstdint>
+#include <exception>
+#include <functional>
 #include <initializer_list>
+#include <memory>
 #include <new>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -240,6 +244,286 @@ class Node {
   friend class Ui;
 };
 
+class EventOutcome {
+ public:
+  constexpr EventOutcome(bool handled = false,
+                         bool stop_propagation = false,
+                         bool prevent_default = false) noexcept
+      : bits_((handled
+                   ? static_cast<std::uint8_t>(CBSS_EVENT_OUTCOME_HANDLED)
+                   : 0u) |
+              (stop_propagation
+                   ? static_cast<std::uint8_t>(
+                         CBSS_EVENT_OUTCOME_STOP_PROPAGATION)
+                   : 0u) |
+              (prevent_default
+                   ? static_cast<std::uint8_t>(
+                         CBSS_EVENT_OUTCOME_PREVENT_DEFAULT)
+                   : 0u)) {}
+
+  static constexpr EventOutcome handled() noexcept {
+    return EventOutcome(true, false, false);
+  }
+
+  constexpr bool isHandled() const noexcept {
+    return (bits_ & CBSS_EVENT_OUTCOME_HANDLED) != 0u;
+  }
+  constexpr bool stopsPropagation() const noexcept {
+    return (bits_ & CBSS_EVENT_OUTCOME_STOP_PROPAGATION) != 0u;
+  }
+  constexpr bool preventsDefault() const noexcept {
+    return (bits_ & CBSS_EVENT_OUTCOME_PREVENT_DEFAULT) != 0u;
+  }
+  constexpr std::uint8_t bits() const noexcept { return bits_; }
+
+ private:
+  std::uint8_t bits_;
+};
+
+struct Event {
+  CbssEventKind kind;
+  std::uint32_t target;
+  std::uint32_t current_target;
+  std::uint32_t flags;
+  float local_x;
+  float local_y;
+  float x;
+  float y;
+  float delta_x;
+  float delta_y;
+  std::int32_t button;
+  std::uint32_t modifiers;
+  std::string key;
+  std::string text;
+  CbssPointerData pointer;
+  std::uint64_t timestamp;
+  std::string motion_name;
+  double motion_elapsed_seconds;
+  std::uint64_t motion_iteration;
+
+  explicit Event(const CbssEvent& value)
+      : kind(static_cast<CbssEventKind>(value.kind)),
+        target(value.target),
+        current_target(value.current_target),
+        flags(value.flags),
+        local_x(value.local_x),
+        local_y(value.local_y),
+        x(value.x),
+        y(value.y),
+        delta_x(value.delta_x),
+        delta_y(value.delta_y),
+        button(value.button),
+        modifiers(value.modifiers),
+        key((value.flags & CBSS_EVENT_HAS_KEY) != 0u && value.key != nullptr
+                ? value.key
+                : ""),
+        text((value.flags & CBSS_EVENT_HAS_TEXT) != 0u && value.text != nullptr
+                 ? value.text
+                 : ""),
+        pointer(value.pointer),
+        timestamp(value.timestamp),
+        motion_name((value.flags & CBSS_EVENT_HAS_MOTION) != 0u &&
+                            value.motion_name != nullptr
+                        ? value.motion_name
+                        : ""),
+        motion_elapsed_seconds(value.motion_elapsed_seconds),
+        motion_iteration(value.motion_iteration) {}
+};
+
+struct InputEvent {
+  explicit InputEvent(CbssEventKind event_kind) : kind(event_kind) {}
+
+  InputEvent& position(float value_x, float value_y) noexcept {
+    flags |= CBSS_INPUT_HAS_POSITION;
+    x = value_x;
+    y = value_y;
+    return *this;
+  }
+
+  InputEvent& movement(float value_x, float value_y) noexcept {
+    flags |= CBSS_INPUT_HAS_DELTA;
+    delta_x = value_x;
+    delta_y = value_y;
+    return *this;
+  }
+
+  InputEvent& mouseButton(std::int32_t value) noexcept {
+    flags |= CBSS_INPUT_HAS_BUTTON;
+    button = value;
+    return *this;
+  }
+
+  InputEvent& keyValue(std::string value) {
+    flags |= CBSS_INPUT_HAS_KEY;
+    key = std::move(value);
+    return *this;
+  }
+
+  InputEvent& textValue(std::string value) {
+    flags |= CBSS_INPUT_HAS_TEXT;
+    text = std::move(value);
+    return *this;
+  }
+
+  InputEvent& pointerValue(const CbssPointerData& value) noexcept {
+    flags |= CBSS_INPUT_HAS_POINTER;
+    pointer = value;
+    return *this;
+  }
+
+  CbssEventKind kind;
+  std::uint32_t flags = 0u;
+  std::uint32_t modifiers = 0u;
+  std::int32_t button = 0;
+  float x = 0.0f;
+  float y = 0.0f;
+  float delta_x = 0.0f;
+  float delta_y = 0.0f;
+  std::string key;
+  std::string text;
+  CbssPointerData pointer = {};
+  std::uint64_t timestamp = 0u;
+
+ private:
+  CbssInputEvent native() const noexcept {
+    CbssInputEvent result = {};
+    result.kind = static_cast<std::uint32_t>(kind);
+    result.flags = flags;
+    result.modifiers = modifiers;
+    result.button = button;
+    result.x = x;
+    result.y = y;
+    result.delta_x = delta_x;
+    result.delta_y = delta_y;
+    result.key = (flags & CBSS_INPUT_HAS_KEY) != 0u ? key.c_str() : nullptr;
+    result.text =
+        (flags & CBSS_INPUT_HAS_TEXT) != 0u ? text.c_str() : nullptr;
+    result.pointer = pointer;
+    result.timestamp = timestamp;
+    return result;
+  }
+
+  friend class Ui;
+};
+
+struct DispatchSummary {
+  std::uint32_t target;
+  std::uint32_t dispatch_count;
+  bool handled;
+  EventOutcome outcome;
+  bool needs_compute;
+  bool paint_changed;
+  bool focus_changed;
+};
+
+namespace detail {
+
+struct EventCallbackState
+    : std::enable_shared_from_this<EventCallbackState> {
+  explicit EventCallbackState(std::function<EventOutcome(const Event&)> value)
+      : callback(std::move(value)) {}
+
+  static std::uint8_t invoke(CbssContext*, const CbssEvent* event,
+                             void* user_data) noexcept {
+    if (event == nullptr || user_data == nullptr) {
+      return EventOutcome(true, true, true).bits();
+    }
+    EventCallbackState* raw = static_cast<EventCallbackState*>(user_data);
+    try {
+      const std::shared_ptr<EventCallbackState> keep_alive =
+          raw->shared_from_this();
+      return keep_alive->callback(Event(*event)).bits();
+    } catch (...) {
+      raw->failure = std::current_exception();
+      return EventOutcome(true, true, true).bits();
+    }
+  }
+
+  std::function<EventOutcome(const Event&)> callback;
+  std::exception_ptr failure;
+};
+
+struct EventDriverState {
+  explicit EventDriverState(CbssContext* value) : context(value) {}
+
+  void unsubscribe(std::uint64_t id) noexcept {
+    if (context == nullptr) {
+      return;
+    }
+    const auto found = subscriptions.find(id);
+    if (found == subscriptions.end()) {
+      return;
+    }
+    if (cbss_context_unsubscribe_event(context, id) == CBSS_OK) {
+      subscriptions.erase(found);
+    }
+  }
+
+  void clear() noexcept {
+    handlers.clear();
+    subscriptions.clear();
+  }
+
+  CbssContext* context;
+  std::unordered_map<std::uint64_t, std::shared_ptr<EventCallbackState>>
+      handlers;
+  std::unordered_map<std::uint64_t, std::shared_ptr<EventCallbackState>>
+      subscriptions;
+};
+
+}  // namespace detail
+
+class EventSubscription {
+ public:
+  EventSubscription() noexcept : id_(0u), active_(false) {}
+  ~EventSubscription() { close(); }
+
+  EventSubscription(const EventSubscription&) = delete;
+  EventSubscription& operator=(const EventSubscription&) = delete;
+
+  EventSubscription(EventSubscription&& other) noexcept
+      : state_(std::move(other.state_)),
+        id_(other.id_),
+        active_(other.active_) {
+    other.id_ = 0u;
+    other.active_ = false;
+  }
+
+  EventSubscription& operator=(EventSubscription&& other) noexcept {
+    if (this != &other) {
+      close();
+      state_ = std::move(other.state_);
+      id_ = other.id_;
+      active_ = other.active_;
+      other.id_ = 0u;
+      other.active_ = false;
+    }
+    return *this;
+  }
+
+  bool active() const noexcept { return active_; }
+
+  void close() noexcept {
+    if (!active_) {
+      return;
+    }
+    if (const std::shared_ptr<detail::EventDriverState> state = state_.lock()) {
+      state->unsubscribe(id_);
+    }
+    active_ = false;
+  }
+
+ private:
+  EventSubscription(std::weak_ptr<detail::EventDriverState> state,
+                    std::uint64_t id) noexcept
+      : state_(std::move(state)), id_(id), active_(true) {}
+
+  std::weak_ptr<detail::EventDriverState> state_;
+  std::uint64_t id_;
+  bool active_;
+  friend class Ui;
+};
+
 class Ui {
  public:
   Ui() : context_(nullptr) {
@@ -248,9 +532,22 @@ class Ui {
     if (context_ == nullptr) {
       throw std::bad_alloc();
     }
+    try {
+      events_ = std::make_shared<detail::EventDriverState>(context_);
+    } catch (...) {
+      cbss_context_destroy(context_);
+      context_ = nullptr;
+      throw;
+    }
   }
 
-  ~Ui() { cbss_context_destroy(context_); }
+  ~Ui() {
+    cbss_context_destroy(context_);
+    if (events_) {
+      events_->context = nullptr;
+      events_->clear();
+    }
+  }
 
   Ui(const Ui&) = delete;
   Ui& operator=(const Ui&) = delete;
@@ -347,12 +644,124 @@ class Ui {
     return cbss_node_child_count(context_, node.value_);
   }
 
+  void on(Node node, CbssEventKind kind,
+          std::function<EventOutcome(const Event&)> callback) {
+    requireEvents();
+    requireNode(node, "set event handler");
+    if (!callback) {
+      throw Error(CBSS_INVALID_ARGUMENT,
+                  "set event handler: callback is empty");
+    }
+    const std::shared_ptr<detail::EventCallbackState> holder =
+        std::make_shared<detail::EventCallbackState>(std::move(callback));
+    check(cbss_node_set_event_handler(
+              context_, node.value_, static_cast<std::uint32_t>(kind),
+              &detail::EventCallbackState::invoke, holder.get()),
+          "set event handler");
+    const std::uint64_t key = eventHandlerKey(node.value_, kind);
+    try {
+      events_->handlers[key] = holder;
+    } catch (...) {
+      cbss_node_set_event_handler(context_, node.value_,
+                                  static_cast<std::uint32_t>(kind), nullptr,
+                                  nullptr);
+      throw;
+    }
+  }
+
+  void clearHandler(Node node, CbssEventKind kind) {
+    requireNode(node, "clear event handler");
+    check(cbss_node_set_event_handler(
+              context_, node.value_, static_cast<std::uint32_t>(kind), nullptr,
+              nullptr),
+          "clear event handler");
+    events_->handlers.erase(eventHandlerKey(node.value_, kind));
+  }
+
+  EventSubscription subscribe(
+      Node node, CbssEventKind kind,
+      std::function<EventOutcome(const Event&)> callback) {
+    requireEvents();
+    requireNode(node, "subscribe event");
+    if (!callback) {
+      throw Error(CBSS_INVALID_ARGUMENT, "subscribe event: callback is empty");
+    }
+    const std::shared_ptr<detail::EventCallbackState> holder =
+        std::make_shared<detail::EventCallbackState>(std::move(callback));
+    std::uint64_t subscription = 0u;
+    check(cbss_node_subscribe_event(
+              context_, node.value_, static_cast<std::uint32_t>(kind),
+              &detail::EventCallbackState::invoke, holder.get(),
+              &subscription),
+          "subscribe event");
+    try {
+      events_->subscriptions.emplace(subscription, holder);
+    } catch (...) {
+      cbss_context_unsubscribe_event(context_, subscription);
+      throw;
+    }
+    return EventSubscription(events_, subscription);
+  }
+
+  DispatchSummary emit(Node node, const InputEvent& input) {
+    requireEvents();
+    requireNode(node, "emit event");
+    const CbssInputEvent native = input.native();
+    CbssDispatchSummary summary = {};
+    check(cbss_context_emit_event(context_, node.value_, &native, &summary),
+          "emit event");
+    return DispatchSummary{
+        summary.target,
+        summary.dispatch_count,
+        summary.handled != 0u,
+        EventOutcome((summary.outcome & CBSS_EVENT_OUTCOME_HANDLED) != 0u,
+                     (summary.outcome &
+                      CBSS_EVENT_OUTCOME_STOP_PROPAGATION) != 0u,
+                     (summary.outcome & CBSS_EVENT_OUTCOME_PREVENT_DEFAULT) !=
+                         0u),
+        summary.needs_compute != 0u,
+        summary.paint_changed != 0u,
+        summary.focus_changed != 0u};
+  }
+
+  bool callbackFailed() const noexcept {
+    for (const auto& item : events_->handlers) {
+      if (item.second->failure) {
+        return true;
+      }
+    }
+    for (const auto& item : events_->subscriptions) {
+      if (item.second->failure) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void rethrowCallbackFailure() {
+    for (const auto& item : events_->handlers) {
+      if (item.second->failure) {
+        const std::exception_ptr failure = item.second->failure;
+        item.second->failure = nullptr;
+        std::rethrow_exception(failure);
+      }
+    }
+    for (const auto& item : events_->subscriptions) {
+      if (item.second->failure) {
+        const std::exception_ptr failure = item.second->failure;
+        item.second->failure = nullptr;
+        std::rethrow_exception(failure);
+      }
+    }
+  }
+
   void reset() {
     if (!parents_.empty()) {
       throw Error(CBSS_INVALID_ARGUMENT,
                   "reset UI: nested construction is active");
     }
     check(cbss_context_reset(context_), "reset UI");
+    events_->clear();
   }
 
   CbssContext* nativeHandle() const noexcept { return context_; }
@@ -375,6 +784,16 @@ class Ui {
 
   std::uint32_t currentParent() const noexcept {
     return parents_.empty() ? CBSS_NODE_NONE : parents_.back();
+  }
+
+  static std::uint64_t eventHandlerKey(std::uint32_t node,
+                                       CbssEventKind kind) noexcept {
+    return (static_cast<std::uint64_t>(node) << 32u) |
+           static_cast<std::uint32_t>(kind);
+  }
+
+  static void requireEvents() {
+    Contract::require({{CBSS_CAPABILITY_STANDARD_EVENTS, 1u}});
   }
 
   Node addBox(const std::string& identifier, const Style* style) {
@@ -449,6 +868,7 @@ class Ui {
 
   CbssContext* context_;
   std::vector<std::uint32_t> parents_;
+  std::shared_ptr<detail::EventDriverState> events_;
 };
 
 }  // namespace cbss
