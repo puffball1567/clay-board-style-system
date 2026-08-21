@@ -262,6 +262,18 @@ mod ffi {
         pub fn cbss_node_parent(context: *mut CbssContext, node: c_uint) -> c_uint;
         pub fn cbss_node_child_count(context: *mut CbssContext, node: c_uint) -> c_uint;
         pub fn cbss_node_child(context: *mut CbssContext, node: c_uint, index: c_uint) -> c_uint;
+        pub fn cbss_node_text(
+            context: *mut CbssContext,
+            node: c_uint,
+            buffer: *mut c_char,
+            capacity: c_uint,
+        ) -> c_uint;
+        pub fn cbss_node_image_source(
+            context: *mut CbssContext,
+            node: c_uint,
+            buffer: *mut c_char,
+            capacity: c_uint,
+        ) -> c_uint;
         pub fn cbss_context_remove_subtree(
             context: *mut CbssContext,
             node: c_uint,
@@ -286,6 +298,35 @@ mod ffi {
             height: c_float,
             identifier: *const c_char,
         ) -> c_uint;
+        pub fn cbss_node_set_text(
+            context: *mut CbssContext,
+            node: c_uint,
+            text: *const c_char,
+        ) -> c_int;
+        pub fn cbss_node_set_image(
+            context: *mut CbssContext,
+            node: c_uint,
+            source: *const c_char,
+            width: c_float,
+            height: c_float,
+        ) -> c_int;
+        pub fn cbss_node_add_group(
+            context: *mut CbssContext,
+            node: c_uint,
+            group: *const c_char,
+        ) -> c_int;
+        pub fn cbss_node_set_attribute(
+            context: *mut CbssContext,
+            node: c_uint,
+            name: *const c_char,
+            value: *const c_char,
+        ) -> c_int;
+        pub fn cbss_node_set_state(
+            context: *mut CbssContext,
+            node: c_uint,
+            state: c_uint,
+            enabled: u8,
+        ) -> c_int;
 
         pub fn cbss_style_create() -> *mut CbssStyle;
         pub fn cbss_style_destroy(style: *mut CbssStyle);
@@ -691,6 +732,45 @@ impl Drop for Style {
 pub struct Node {
     owner: NonNull<ffi::CbssContext>,
     id: u32,
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NodeState {
+    Hover = 0,
+    Active = 1,
+    Focus = 2,
+    FocusVisible = 3,
+    Disabled = 4,
+    Checked = 5,
+    Selected = 6,
+    Open = 7,
+    Invalid = 8,
+}
+
+#[derive(Debug)]
+pub struct CraftComponent {
+    root: Option<Node>,
+    craft_name: String,
+}
+
+impl CraftComponent {
+    pub fn active(&self) -> bool {
+        self.root.is_some()
+    }
+
+    pub fn root(&self) -> Result<Node> {
+        self.root.ok_or_else(|| {
+            Error::status(
+                STATUS_INVALID_HANDLE,
+                "access Craft Component: component is not mounted",
+            )
+        })
+    }
+
+    pub fn craft_name(&self) -> &str {
+        &self.craft_name
+    }
 }
 
 impl Node {
@@ -1153,6 +1233,100 @@ impl Ui {
         style: Option<&Style>,
     ) -> Result<Node> {
         self.add_image(None, source, width, height, identifier, style)
+    }
+
+    pub fn component_with<F>(
+        &mut self,
+        craft_name: &str,
+        identifier: &str,
+        owned_style: Option<&Style>,
+        children: F,
+    ) -> Result<CraftComponent>
+    where
+        F: FnOnce(&mut ComponentScope<'_>) -> Result<()>,
+    {
+        self.add_component(None, craft_name, identifier, owned_style, children)
+    }
+
+    pub fn unmount(&mut self, component: &mut CraftComponent) -> Result<u32> {
+        let root = component.root()?;
+        self.require_node(root, "unmount Craft Component")?;
+        let removed = self.remove_subtree(root)?;
+        component.root = None;
+        Ok(removed)
+    }
+
+    pub fn set_text(&mut self, node: Node, value: &str) -> Result<()> {
+        self.require_node(node, "set Text value")?;
+        let value = c_string(value, "Text value")?;
+        let status =
+            unsafe { ffi::cbss_node_set_text(self.context.as_ptr(), node.id, value.as_ptr()) };
+        self.check(status, "set Text value")
+    }
+
+    pub fn text_value(&mut self, node: Node) -> Result<String> {
+        self.require_node(node, "read Text value")?;
+        Ok(read_context_string(|buffer, capacity| unsafe {
+            ffi::cbss_node_text(self.context.as_ptr(), node.id, buffer, capacity)
+        }))
+    }
+
+    pub fn set_image(&mut self, node: Node, source: &str, width: f32, height: f32) -> Result<()> {
+        self.require_node(node, "set Image value")?;
+        let source = c_string(source, "Image source")?;
+        let status = unsafe {
+            ffi::cbss_node_set_image(
+                self.context.as_ptr(),
+                node.id,
+                source.as_ptr(),
+                width,
+                height,
+            )
+        };
+        self.check(status, "set Image value")
+    }
+
+    pub fn image_source(&mut self, node: Node) -> Result<String> {
+        self.require_node(node, "read Image source")?;
+        Ok(read_context_string(|buffer, capacity| unsafe {
+            ffi::cbss_node_image_source(self.context.as_ptr(), node.id, buffer, capacity)
+        }))
+    }
+
+    pub fn add_group(&mut self, node: Node, group: &str) -> Result<()> {
+        self.require_node(node, "add group")?;
+        let group = c_string(group, "group")?;
+        let status =
+            unsafe { ffi::cbss_node_add_group(self.context.as_ptr(), node.id, group.as_ptr()) };
+        self.check(status, "add group")
+    }
+
+    pub fn set_attribute(&mut self, node: Node, name: &str, value: &str) -> Result<()> {
+        self.require_node(node, "set attribute")?;
+        let name = c_string(name, "attribute name")?;
+        let value = c_string(value, "attribute value")?;
+        let status = unsafe {
+            ffi::cbss_node_set_attribute(
+                self.context.as_ptr(),
+                node.id,
+                name.as_ptr(),
+                value.as_ptr(),
+            )
+        };
+        self.check(status, "set attribute")
+    }
+
+    pub fn set_state(&mut self, node: Node, state: NodeState, enabled: bool) -> Result<()> {
+        self.require_node(node, "set retained state")?;
+        let status = unsafe {
+            ffi::cbss_node_set_state(
+                self.context.as_ptr(),
+                node.id,
+                state as u32,
+                u8::from(enabled),
+            )
+        };
+        self.check(status, "set retained state")
     }
 
     pub fn apply(
@@ -1647,6 +1821,59 @@ impl Ui {
         Ok(node)
     }
 
+    fn add_component<F>(
+        &mut self,
+        parent: Option<Node>,
+        craft_name: &str,
+        identifier: &str,
+        owned_style: Option<&Style>,
+        children: F,
+    ) -> Result<CraftComponent>
+    where
+        F: FnOnce(&mut ComponentScope<'_>) -> Result<()>,
+    {
+        if craft_name.is_empty() {
+            return Err(Error::status(
+                STATUS_INVALID_ARGUMENT,
+                "mount Craft Component: craft name is empty",
+            ));
+        }
+        let root = self.add_box(parent, identifier, owned_style)?;
+        let component = CraftComponent {
+            root: Some(root),
+            craft_name: craft_name.to_owned(),
+        };
+        if let Err(error) = self.expose_style_slot(root, root, craft_name, "root") {
+            let _ = self.remove_subtree(root);
+            return Err(error);
+        }
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let scope = Scope {
+                ui: self,
+                parent: root,
+            };
+            let mut component_scope = ComponentScope {
+                scope,
+                root,
+                craft_name: craft_name.to_owned(),
+            };
+            children(&mut component_scope)
+        }));
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                let _ = self.remove_subtree(root);
+                return Err(error);
+            }
+            Err(payload) => {
+                let _ = self.remove_subtree(root);
+                std::panic::resume_unwind(payload);
+            }
+        }
+        Ok(component)
+    }
+
     fn parent_id(&self, parent: Option<Node>) -> Result<u32> {
         match parent {
             Some(node) => {
@@ -1792,6 +2019,95 @@ impl Scope<'_> {
     ) -> Result<Node> {
         self.ui
             .add_image(Some(self.parent), source, width, height, identifier, style)
+    }
+
+    pub fn component_with<F>(
+        &mut self,
+        craft_name: &str,
+        identifier: &str,
+        owned_style: Option<&Style>,
+        children: F,
+    ) -> Result<CraftComponent>
+    where
+        F: FnOnce(&mut ComponentScope<'_>) -> Result<()>,
+    {
+        self.ui.add_component(
+            Some(self.parent),
+            craft_name,
+            identifier,
+            owned_style,
+            children,
+        )
+    }
+}
+
+pub struct ComponentScope<'ui> {
+    scope: Scope<'ui>,
+    root: Node,
+    craft_name: String,
+}
+
+impl ComponentScope<'_> {
+    pub fn root(&self) -> Node {
+        self.root
+    }
+
+    pub fn craft_name(&self) -> &str {
+        &self.craft_name
+    }
+
+    pub fn box_node(&mut self, identifier: &str, style: Option<&Style>) -> Result<Node> {
+        self.scope.box_node(identifier, style)
+    }
+
+    pub fn box_with<F>(
+        &mut self,
+        identifier: &str,
+        style: Option<&Style>,
+        children: F,
+    ) -> Result<Node>
+    where
+        F: FnOnce(&mut Scope<'_>) -> Result<()>,
+    {
+        self.scope.box_with(identifier, style, children)
+    }
+
+    pub fn text(&mut self, value: &str, identifier: &str, style: Option<&Style>) -> Result<Node> {
+        self.scope.text(value, identifier, style)
+    }
+
+    pub fn image(
+        &mut self,
+        source: &str,
+        width: f32,
+        height: f32,
+        identifier: &str,
+        style: Option<&Style>,
+    ) -> Result<Node> {
+        self.scope.image(source, width, height, identifier, style)
+    }
+
+    pub fn public_style_slot(&mut self, slot: &str, target: Option<Node>) -> Result<()> {
+        self.scope.ui.expose_style_slot(
+            self.root,
+            target.unwrap_or(self.root),
+            &self.craft_name,
+            slot,
+        )
+    }
+
+    pub fn on<F>(&mut self, node: Node, kind: EventKind, callback: F) -> Result<()>
+    where
+        F: FnMut(&Event) -> EventOutcome + 'static,
+    {
+        self.scope.ui.on(node, kind, callback)
+    }
+
+    pub fn on_root<F>(&mut self, kind: EventKind, callback: F) -> Result<()>
+    where
+        F: FnMut(&Event) -> EventOutcome + 'static,
+    {
+        self.scope.ui.on(self.root, kind, callback)
     }
 }
 

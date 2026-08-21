@@ -1780,8 +1780,13 @@ The same ABI now provides atomic subtree removal with generation-safe Node ID
 invalidation and deterministic cleanup of interaction, events, Style, motion,
 scroll, Craft Slots, and Render Surfaces. The C++ and Rust Drivers expose that
 lifecycle directly, release their callback holders only after native teardown,
-and make detached subscription tokens immediately observable. High-level
-component wrappers, retained-state parity, and the remaining cross-Driver
+and make detached subscription tokens immediately observable. Both reference
+Drivers now provide atomic `CraftComponent` construction, automatic component
+root Style Slots, component-scoped child Slot declarations, explicit unmount,
+and retained Text/Image/group/attribute/state mutation. Their shared behavior
+fixtures verify stable Node identity and handlers across updates, rollback on
+C++ exceptions and Rust `Err`/panic, and complete unmount. Retained Store,
+navigation, validation, Command, Cue, and the remaining cross-Driver
 application fixtures remain Version 0.6 work.
 
 This scope does not require one source syntax across languages, runtime loading

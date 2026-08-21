@@ -155,6 +155,103 @@ int main() {
   }
   assert(rejected_foreign_node);
 
+  cbss::Ui component_ui;
+  cbss::Node component_label;
+  cbss::Node component_image;
+  int retained_component_events = 0;
+  cbss::CraftComponent status_component = component_ui.component(
+      "status-card", "status-card-instance",
+      [&](cbss::ComponentScope& component) {
+        component_label = component.text("Idle", "status-label");
+        component_image =
+            component.image("idle.png", 16.0f, 16.0f, "status-icon");
+        component.publicStyleSlot("label", component_label);
+        component.publicStyleSlot("icon", component_image);
+        component.onRoot(CBSS_EVENT_CHANGE, [&](const cbss::Event&) {
+          ++retained_component_events;
+          return cbss::EventOutcome::handled();
+        });
+      });
+  assert(status_component.active());
+  assert(status_component.craftName() == "status-card");
+  assert(component_ui.parent(component_label) == status_component.root());
+  assert(component_ui.textValue(component_label) == "Idle");
+  assert(component_ui.imageSource(component_image) == "idle.png");
+  const std::string status_component_style = R"json({
+    "format":"cbss-craft-style",
+    "version":1,
+    "name":"status-theme",
+    "rules":[{
+      "selector":{"component":"status-card","slot":"root"},
+      "declarations":[{
+        "property":"width",
+        "value":{"type":"length","unit":"px","value":180}
+      }]
+    }]
+  })json";
+  component_ui.replaceCraftStyle(status_component_style);
+  component_ui.compute(320.0f, 120.0f);
+  assert(std::fabs(component_ui.rect(status_component.root()).w - 180.0f) <
+         0.001f);
+  component_ui.setText(component_label, "Idle");
+  component_ui.setImage(component_image, "idle.png", 16.0f, 16.0f);
+  component_ui.setState(status_component.root(), cbss::NodeState::checked,
+                        false);
+  (void)component_ui.rect(component_label);
+
+  const std::uint32_t retained_root_id = status_component.root().nativeId();
+  const std::uint32_t retained_label_id = component_label.nativeId();
+  component_ui.setText(component_label, "Ready");
+  component_ui.setImage(component_image, "ready.png", 20.0f, 12.0f);
+  component_ui.addGroup(status_component.root(), "interactive");
+  component_ui.setAttribute(status_component.root(), "data-status", "ready");
+  component_ui.setState(status_component.root(), cbss::NodeState::checked,
+                        true);
+  assert(status_component.root().nativeId() == retained_root_id);
+  assert(component_label.nativeId() == retained_label_id);
+  assert(component_ui.textValue(component_label) == "Ready");
+  assert(component_ui.imageSource(component_image) == "ready.png");
+  component_ui.emit(status_component.root(),
+                    cbss::InputEvent(CBSS_EVENT_CHANGE));
+  assert(retained_component_events == 1);
+
+  const std::uint32_t children_before_failed_component =
+      component_ui.childCount(status_component.root());
+  bool component_failure_rolled_back = false;
+  try {
+    component_ui.within(status_component.root(), [&] {
+      component_ui.component(
+          "failing-component", "failing-component-instance",
+          [](cbss::ComponentScope& component) {
+            component.text("temporary", "temporary-label");
+            throw std::runtime_error("component construction failed");
+          });
+    });
+  } catch (const std::runtime_error&) {
+    component_failure_rolled_back = true;
+  }
+  assert(component_failure_rolled_back);
+  assert(component_ui.childCount(status_component.root()) ==
+         children_before_failed_component);
+
+  bool empty_craft_name_rejected = false;
+  try {
+    component_ui.component("", "invalid-component",
+                           [](cbss::ComponentScope&) {});
+  } catch (const cbss::Error& error) {
+    empty_craft_name_rejected = error.status() == CBSS_INVALID_ARGUMENT;
+  }
+  assert(empty_craft_name_rejected);
+  assert(component_ui.unmount(status_component) == 3u);
+  assert(!status_component.active());
+  bool inactive_component_rejected = false;
+  try {
+    status_component.root();
+  } catch (const cbss::Error& error) {
+    inactive_component_rejected = error.status() == CBSS_INVALID_HANDLE;
+  }
+  assert(inactive_component_rejected);
+
   cbss::Ui lifecycle_ui;
   cbss::Node removable;
   cbss::Node lifecycle_child;
