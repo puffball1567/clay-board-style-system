@@ -30,7 +30,7 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x00010016` supports:
+ABI version `0x00010017` supports:
 
 - machine-readable Craft Driver contract metadata and runtime capability
   negotiation through stable numeric identifiers before tree construction;
@@ -55,6 +55,8 @@ ABI version `0x00010016` supports:
   progress, terminal states, cancellation, and deterministic late-offer
   rejection. Stream payloads cross the ABI only as retained Blob handles.
 - Generation-checked node handles plus box, text, and image node creation.
+- Atomic retained-subtree removal with synchronous cleanup of interaction,
+  event, Style, motion, scroll, Craft Slot, and Render Surface state.
 - Groups, attributes, pseudo-state flags, validation invalid-state exposure,
   and accessibility semantics, including an append-only protected-password
   text role.
@@ -307,8 +309,8 @@ it. Independent observers use `cbss_node_subscribe_event`, retain the returned
 target, and `PREVENT_DEFAULT` suppresses a cancelable intrinsic action when the
 hosted component defines one. Returning `1` remains the handled-only form.
 Callbacks may update nodes and styles, but must not destroy or reset the
-context currently dispatching. The callback and `user_data` remain owned by the
-host.
+context currently dispatching or remove a subtree containing the current
+dispatch path. The callback and `user_data` remain owned by the host.
 
 Use `cbss_node_set_event_view_handler` or
 `cbss_node_subscribe_event_view` when a callback needs a managed payload. The
@@ -425,7 +427,11 @@ ownership and synchronization contracts.
 - A worker not created by Nim brackets CBSS calls with `cbss_thread_attach` and
   `cbss_thread_detach`. ARC treats the pair as a no-op; ORC uses it to establish
   and release the foreign thread's runtime state.
-- Node IDs are values owned by their context. `CBSS_NODE_NONE` is never valid.
+- Node IDs are generation-checked values owned by their context.
+  `CBSS_NODE_NONE` is never valid. `cbss_context_remove_subtree` synchronously
+  releases all CBSS-owned state for the node and its descendants; every removed
+  ID becomes invalid before the call returns and cannot alias a later node that
+  reuses the same arena slot.
 - Strings passed into CBSS are copied before the call returns.
 - Strings returned by CBSS are copied into caller-owned buffers. Query with a
   null buffer or zero capacity to obtain the required byte count.

@@ -1771,13 +1771,16 @@ machine-readable schema, and shared positive/negative fixtures. Public Style
 Slots and atomic retained replacement are implemented for Nim components:
 component-owned invariants retain precedence, failed candidates leave the old
 Style active, mounted identity and interaction state survive replacement, and
-only matching Slot subtrees are invalidated. ABI `0x00010016` now exposes the
+only matching Slot subtrees are invalidated. ABI `0x00010017` now exposes the
 same Slot, Craft Style, Craft Pack, active-item, and structured-diagnostic
 contracts. The C++14 and Rust Drivers load and replace both formats through
 high-level APIs, and their reference suites verify Slot scoping,
 component-owned precedence, atomic failure, diagnostics, and Pack lifecycle.
-Retained state, broader component lifecycle parity, and the remaining
-cross-Driver application fixtures remain Version 0.6 work.
+The same ABI now provides atomic subtree removal with generation-safe Node ID
+invalidation and deterministic cleanup of interaction, events, Style, motion,
+scroll, Craft Slots, and Render Surfaces. High-level component wrappers,
+retained-state parity, and the remaining cross-Driver application fixtures
+remain Version 0.6 work.
 
 This scope does not require one source syntax across languages, runtime loading
 of arbitrary foreign binaries, or pixel identity across different font and

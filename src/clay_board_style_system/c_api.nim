@@ -1,4 +1,4 @@
-import std/[algorithm, atomics, locks, math, options, strutils, tables]
+import std/[algorithm, atomics, locks, math, options, sets, strutils, tables]
 
 import ./core/[color, color_conversion, color_mix, color_mix_parser,
   color_parser, color_value, declaration, diagnostics, geometry, node, rule,
@@ -1407,6 +1407,118 @@ proc setContextFocus(
     handled: dispatched.outcome.handled,
     dispatchCount: dispatched.count
   )
+
+proc collectSubtreeNodes(
+    context: CbssContextHandle;
+    root: NodeId
+): tuple[ids: seq[NodeId], members: HashSet[NodeId]] =
+  var pending = @[root]
+  while pending.len > 0:
+    let id = pending.pop()
+    if not context.tree.isValid(id) or id in result.members:
+      continue
+    result.members.incl id
+    result.ids.add id
+    for child in context.tree.nodes[id.nodeIndex].children:
+      pending.add child
+
+proc clearRemovedInteractionTargets(
+    context: CbssContextHandle;
+    removed: HashSet[NodeId]
+) =
+  if context.interaction.focusedTarget.isSome and
+      context.interaction.focusedTarget.get in removed:
+    discard context.setContextFocus(none(NodeId), focusVisible = false)
+
+  template clearTarget(field: untyped) =
+    if field.isSome and field.get in removed:
+      field = none(NodeId)
+
+  if context.interaction.pressedTarget.isSome and
+      context.interaction.pressedTarget.get in removed:
+    context.interaction.pressedTarget = none(NodeId)
+    context.interaction.pointerDownPosition = none(Vec2)
+  clearTarget(context.interaction.hoveredTarget)
+  clearTarget(context.interaction.pointerCaptureTarget)
+  clearTarget(context.interaction.lastClickTarget)
+  clearTarget(context.interaction.dragTarget)
+  clearTarget(context.interaction.dragOverTarget)
+  clearTarget(context.interaction.scrollTarget)
+  clearTarget(context.interaction.scrollbarPointerTarget)
+  if context.interaction.lastClickTarget.isNone:
+    context.interaction.clickCount = 0
+  if context.interaction.scrollbarPointerTarget.isNone:
+    context.interaction.scrollbarDragging = false
+
+proc removeSubtreeEventState(
+    context: CbssContextHandle;
+    removed: HashSet[NodeId]
+) =
+  discard context.events.removeEventHandlers(removed)
+  var staleSubscriptions: seq[uint64]
+  for id, subscription in context.eventSubscriptions.pairs:
+    if subscription.node in removed:
+      staleSubscriptions.add id
+  for id in staleSubscriptions:
+    context.eventSubscriptions.del(id)
+
+proc removeSubtreeStyleState(
+    context: CbssContextHandle;
+    removed: HashSet[NodeId]
+) =
+  var retained = newSeqOfCap[CbssAppliedStyle](context.appliedStyles.len)
+  var changed = false
+  for applied in context.appliedStyles:
+    if applied.node in removed:
+      changed = true
+    else:
+      retained.add applied
+  if changed:
+    context.appliedStyles = retained
+    for sourceOrder in 0 ..< context.appliedStyles.len:
+      context.appliedStyles[sourceOrder].sourceOrder = sourceOrder
+
+  let removedSlots = context.craftStyles.removePublicStyleSlots(
+    context.tree, removed
+  )
+  if changed or removedSlots.len > 0:
+    context.rebuildStyleSheets()
+
+proc removeSubtreeSurfaceState(
+    context: CbssContextHandle;
+    removedIds: openArray[NodeId]
+) =
+  var surfaces: seq[RenderSurfaceId]
+  for id in removedIds:
+    let surface = context.tree.nodes[id.nodeIndex].renderSurfaceId
+    if surface.isSome:
+      surfaces.add RenderSurfaceId(surface.get)
+  for surface in surfaces:
+    discard context.surfaces.unregisterSurface(surface)
+    context.surfaceBindings.del(surface)
+
+proc removeContextSubtree(
+    context: CbssContextHandle;
+    root: NodeId
+): int =
+  let subtree = context.collectSubtreeNodes(root)
+  if subtree.ids.len == 0:
+    return 0
+
+  context.clearRemovedInteractionTargets(subtree.members)
+  discard context.transitions.cancelTransitions(subtree.ids)
+  discard context.keyframes.cancelAnimations(subtree.ids)
+  context.dispatchPendingMotionLifecycle()
+  context.removeSubtreeEventState(subtree.members)
+  context.removeSubtreeStyleState(subtree.members)
+  context.scroll.clearNodes(subtree.ids)
+  context.removeSubtreeSurfaceState(subtree.ids)
+  result = context.tree.disposeSubtree(root).len
+  context.resolved.styles.setLen(0)
+  context.layout = LayoutResult(boxes: @[], overflowMetrics: @[])
+  context.commands.setLen(0)
+  context.hits.setLen(0)
+  context.invalidate()
 
 proc cbssAbiVersion(): uint32 {.
     exportc: "cbss_abi_version", cdecl, dynlib, raises: [].} =
@@ -2919,6 +3031,27 @@ proc cbssNodeImageSource(
   if value.kind != nkImage:
     return 0
   copyString(value.imageSource, buffer, capacity)
+
+proc cbssContextRemoveSubtree(
+    context: CbssContextHandle;
+    root: uint32;
+    outputRemovedCount: ptr uint32
+): int32 {.exportc: "cbss_context_remove_subtree", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if outputRemovedCount.isNil:
+    return CbssInvalidArgument
+  outputRemovedCount[] = 0
+  if not context.validNode(root):
+    return CbssInvalidArgument
+  try:
+    let removedCount = context.removeContextSubtree(root.nodeId)
+    outputRemovedCount[] = uint32(min(removedCount, int(high(uint32))))
+    context.lastError = ""
+    CbssOk
+  except CatchableError as error:
+    context.setError(error.msg)
+    CbssInternalError
 
 proc cbssContextAddBox(
     context: CbssContextHandle;

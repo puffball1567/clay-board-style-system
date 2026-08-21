@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "engine_abi_version": 65558,
+  "engine_abi_version": 65559,
   "driver_contract_version": 65536,
   "capabilities": [
     {"id": 1, "symbol": "RETAINED_TREE", "name": "tree.retained", "version": 1, "since_abi": 65557},
@@ -19,6 +19,7 @@
     {"id": 14, "symbol": "FORM_DATA", "name": "data.form-data", "version": 1, "since_abi": 65557},
     {"id": 15, "symbol": "STREAM", "name": "data.stream", "version": 1, "since_abi": 65557},
     {"id": 16, "symbol": "CRAFT_STYLE", "name": "craft.style", "version": 1, "since_abi": 65558},
-    {"id": 17, "symbol": "CRAFT_PACK", "name": "craft.pack", "version": 1, "since_abi": 65558}
+    {"id": 17, "symbol": "CRAFT_PACK", "name": "craft.pack", "version": 1, "since_abi": 65558},
+    {"id": 18, "symbol": "SUBTREE_LIFECYCLE", "name": "tree.subtree-lifecycle", "version": 1, "since_abi": 65559}
   ]
 }

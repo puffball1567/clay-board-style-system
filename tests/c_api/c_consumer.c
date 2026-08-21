@@ -1,6 +1,6 @@
 #include "cbss.h"
 
-_Static_assert(CBSS_ABI_VERSION == 0x00010016u, "unexpected CBSS ABI version");
+_Static_assert(CBSS_ABI_VERSION == 0x00010017u, "unexpected CBSS ABI version");
 _Static_assert(CBSS_ROLE_SWITCH == 22, "unexpected switch role value");
 _Static_assert(CBSS_ROLE_PASSWORD_TEXT == 23,
                "unexpected password text role value");
@@ -203,7 +203,7 @@ static void test_craft_loading(void) {
   static const char pack_json[] =
       "{\"format\":\"cbss-craft-pack\",\"version\":1,"
       "\"id\":\"org.example.c\",\"packVersion\":\"1.0.0\","
-      "\"compatibility\":{\"minimumAbi\":65558,"
+      "\"compatibility\":{\"minimumAbi\":65559,"
       "\"minimumDriverContract\":65536,\"capabilities\":["
       "{\"id\":16,\"minimumVersion\":1},"
       "{\"id\":17,\"minimumVersion\":1}]},"
@@ -375,11 +375,159 @@ static uint8_t handle_legacy_submit(
   return 0;
 }
 
+typedef struct LifecycleState {
+  int blur_events;
+  int click_events;
+  uint64_t surface;
+  int surface_mounts;
+  int surface_unmounts;
+} LifecycleState;
+
+static uint8_t handle_lifecycle_event(
+    CbssContext *context, const CbssEvent *event, void *user_data) {
+  LifecycleState *state = user_data;
+  assert(context != NULL);
+  assert(event != NULL);
+  if (event->kind == CBSS_EVENT_BLUR) {
+    ++state->blur_events;
+  } else if (event->kind == CBSS_EVENT_CLICK) {
+    ++state->click_events;
+  }
+  return CBSS_EVENT_OUTCOME_HANDLED;
+}
+
+static uint32_t handle_lifecycle_surface(
+    CbssContext *context, const CbssRenderSurfaceEvent *event,
+    void *user_data) {
+  LifecycleState *state = user_data;
+  assert(context != NULL);
+  assert(event != NULL);
+  assert(event->surface == state->surface);
+  if (event->kind == CBSS_SURFACE_MOUNT) {
+    ++state->surface_mounts;
+  } else if (event->kind == CBSS_SURFACE_UNMOUNT) {
+    ++state->surface_unmounts;
+  }
+  return 0;
+}
+
+static void test_subtree_lifecycle(void) {
+  static const char craft_style[] =
+      "{\"format\":\"cbss-craft-style\",\"version\":1,"
+      "\"name\":\"lifecycle-style\",\"rules\":[{"
+      "\"selector\":{\"component\":\"lifecycle-card\","
+      "\"slot\":\"root\"},\"declarations\":[{"
+      "\"property\":\"opacity\","
+      "\"value\":{\"type\":\"number\",\"value\":0.75}}]}]}";
+
+  CbssContext *context = cbss_context_create();
+  CbssStyle *style = cbss_style_create();
+  assert(context != NULL);
+  assert(style != NULL);
+
+  LifecycleState state = {0};
+  require_ok(context, cbss_context_register_render_surface(
+      context, "lifecycle-surface", handle_lifecycle_surface,
+      &state, &state.surface));
+  assert(state.surface != 0);
+
+  uint32_t root = cbss_context_add_box(
+      context, CBSS_NODE_NONE, "lifecycle-root");
+  uint32_t component = cbss_context_add_box(
+      context, root, "lifecycle-component");
+  uint32_t label = cbss_context_add_text(
+      context, component, "removable", "lifecycle-label");
+  uint32_t sibling = cbss_context_add_box(
+      context, root, "lifecycle-sibling");
+  uint32_t surface_node = cbss_context_add_render_surface(
+      context, component, state.surface, "lifecycle-surface-node");
+  assert(root != CBSS_NODE_NONE);
+  assert(component != CBSS_NODE_NONE);
+  assert(label != CBSS_NODE_NONE);
+  assert(sibling != CBSS_NODE_NONE);
+  assert(surface_node != CBSS_NODE_NONE);
+
+  require_ok(context, cbss_style_set_length(
+      style, "width", CBSS_UNIT_PX, 80.0f));
+  require_ok(context, cbss_style_set_length(
+      style, "height", CBSS_UNIT_PX, 40.0f));
+  require_ok(context, cbss_node_apply_style(
+      context, component, style, 0, 0));
+  require_ok(context, cbss_node_apply_style(
+      context, surface_node, style, 0, 0));
+  require_ok(context, cbss_node_expose_craft_style_slot(
+      context, component, component, "lifecycle-card", "root"));
+  require_ok(context, cbss_context_replace_craft_style_json(
+      context, (const uint8_t *)craft_style,
+      (uint32_t)(sizeof(craft_style) - 1)));
+
+  CbssEventSubscription subscription = 0;
+  require_ok(context, cbss_node_set_focusable(context, component, 1, 0));
+  require_ok(context, cbss_node_set_event_handler(
+      context, component, CBSS_EVENT_BLUR,
+      handle_lifecycle_event, &state));
+  require_ok(context, cbss_node_subscribe_event(
+      context, label, CBSS_EVENT_CLICK,
+      handle_lifecycle_event, &state, &subscription));
+  assert(subscription != 0);
+  require_ok(context, cbss_context_set_focus(context, component, 1));
+  require_ok(context, cbss_context_capture_pointer(context, label));
+  assert(cbss_context_focused_node(context) == component);
+  require_ok(context, cbss_context_compute(context, 320.0f, 180.0f));
+  assert(state.surface_mounts == 1);
+
+  uint32_t removed = UINT32_MAX;
+  require_ok(context, cbss_context_remove_subtree(
+      context, component, &removed));
+  assert(removed == 3);
+  assert(state.blur_events == 1);
+  assert(state.click_events == 0);
+  assert(state.surface_unmounts == 1);
+  assert(cbss_render_surface_update(
+      context, state.surface, 2) == CBSS_OUT_OF_RANGE);
+  assert(cbss_context_focused_node(context) == CBSS_NODE_NONE);
+  assert(cbss_context_needs_compute(context));
+  assert(cbss_node_child_count(context, root) == 1);
+  assert(cbss_node_child(context, root, 0) == sibling);
+  assert(cbss_node_kind(context, component) == UINT32_MAX);
+  assert(cbss_node_kind(context, label) == UINT32_MAX);
+  assert(cbss_node_apply_style(
+      context, component, style, 0, 0) == CBSS_INVALID_ARGUMENT);
+  assert(cbss_context_unsubscribe_event(
+      context, subscription) == CBSS_INVALID_ARGUMENT);
+
+  removed = UINT32_MAX;
+  assert(cbss_context_remove_subtree(
+      context, component, &removed) == CBSS_INVALID_ARGUMENT);
+  assert(removed == 0);
+  assert(cbss_context_remove_subtree(
+      context, sibling, NULL) == CBSS_INVALID_ARGUMENT);
+  assert(cbss_context_remove_subtree(
+      NULL, sibling, &removed) == CBSS_INVALID_HANDLE);
+
+  uint32_t replacement = cbss_context_add_box(
+      context, root, "lifecycle-replacement");
+  assert(replacement != CBSS_NODE_NONE);
+  assert(replacement != component);
+  assert(cbss_node_kind(context, replacement) == CBSS_NODE_BOX);
+  require_ok(context, cbss_context_compute(context, 320.0f, 180.0f));
+
+  removed = 0;
+  require_ok(context, cbss_context_remove_subtree(context, root, &removed));
+  assert(removed == 3);
+  assert(cbss_context_add_box(
+      context, CBSS_NODE_NONE, "new-root") != CBSS_NODE_NONE);
+
+  cbss_style_destroy(style);
+  cbss_context_destroy(context);
+}
+
 int main(void) {
   test_craft_loading();
+  test_subtree_lifecycle();
   assert(cbss_abi_version() == CBSS_ABI_VERSION);
   assert(cbss_driver_contract_version() == CBSS_DRIVER_CONTRACT_VERSION);
-  assert(cbss_capability_count() == 17);
+  assert(cbss_capability_count() == 18);
   assert(cbss_has_capability(CBSS_CAPABILITY_RETAINED_TREE, 1));
   assert(!cbss_has_capability(CBSS_CAPABILITY_RETAINED_TREE, 2));
   assert(!cbss_has_capability(UINT32_MAX, 1));
@@ -396,8 +544,8 @@ int main(void) {
       capability.id, capability_name, sizeof(capability_name)) ==
       strlen("tree.retained"));
   assert(strcmp(capability_name, "tree.retained") == 0);
-  assert(cbss_capability_at(16, &capability) == CBSS_OK);
-  assert(capability.id == CBSS_CAPABILITY_CRAFT_PACK);
+  assert(cbss_capability_at(17, &capability) == CBSS_OK);
+  assert(capability.id == CBSS_CAPABILITY_SUBTREE_LIFECYCLE);
   assert(capability.since_abi == CBSS_ABI_VERSION);
   memset(&capability, 0xff, sizeof(capability));
   assert(cbss_capability_at(

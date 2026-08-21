@@ -26,7 +26,7 @@ extern "C" {
 #endif
 
 /* CBSS_GENERATED_DRIVER_CONTRACT_BEGIN */
-#define CBSS_ABI_VERSION 0x00010016u
+#define CBSS_ABI_VERSION 0x00010017u
 #define CBSS_DRIVER_CONTRACT_VERSION 0x00010000u
 
 typedef enum CbssCapabilityId {
@@ -46,7 +46,8 @@ typedef enum CbssCapabilityId {
   CBSS_CAPABILITY_FORM_DATA = 14u,
   CBSS_CAPABILITY_STREAM = 15u,
   CBSS_CAPABILITY_CRAFT_STYLE = 16u,
-  CBSS_CAPABILITY_CRAFT_PACK = 17u
+  CBSS_CAPABILITY_CRAFT_PACK = 17u,
+  CBSS_CAPABILITY_SUBTREE_LIFECYCLE = 18u
 } CbssCapabilityId;
 
 enum {
@@ -1037,6 +1038,14 @@ CBSS_API uint32_t cbss_node_text(
     CbssContext *context, uint32_t node, char *buffer, uint32_t capacity);
 CBSS_API uint32_t cbss_node_image_source(
     CbssContext *context, uint32_t node, char *buffer, uint32_t capacity);
+/*
+ * Atomically removes node and all descendants from the retained tree. Event,
+ * interaction, Style, motion, scroll, Craft Style Slot, and Render Surface
+ * state owned by the removed subtree is released before the Node IDs become
+ * invalid. output_removed_count is required and receives zero on rejection.
+ */
+CBSS_API CbssStatus cbss_context_remove_subtree(
+    CbssContext *context, uint32_t node, uint32_t *output_removed_count);
 
 CBSS_API uint32_t cbss_context_add_box(
     CbssContext *context, uint32_t parent, const char *identifier);
