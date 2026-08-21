@@ -1,5 +1,6 @@
 import std/[algorithm, hashes, math, options, sets, tables]
 
+import ../craft/[style, style_slots]
 import ../core/[color, declaration, geometry, node, rule, selector, style_value]
 import ../core/style_resolver
 import ../input/events
@@ -70,6 +71,7 @@ type
     tree*: Tree
     events*: EventRegistry
     componentStyles*: seq[StyleSheet]
+    craftStyles: CraftStyleSlotRuntime
     appliedStyleIndices: Table[AppliedStyleKey, int]
     freeComponentStyleIndices: seq[int]
     textEngine*: TextEngine
@@ -124,6 +126,7 @@ proc initUiRoot*(): UiRoot =
     tree: initTree(),
     events: initEventRegistry(),
     componentStyles: @[],
+    craftStyles: initCraftStyleSlotRuntime(),
     appliedStyleIndices: initTable[AppliedStyleKey, int](),
     freeComponentStyleIndices: @[],
     textEngine: debugTextEngine(),
@@ -680,6 +683,75 @@ proc addStyles*(root: UiRoot; sheets: openArray[StyleSheet]) =
   for sheet in sheets:
     root.addStyle(sheet)
 
+const craftStyleDirtyDomains = {ddStyle, ddLayout, ddPaint, ddHit, ddText}
+
+proc exposePublicStyleSlot*(
+    root: UiRoot;
+    owner, target: NodeHandle;
+    component, name: string
+): bool {.discardable.} =
+  if root.isNil or owner.root != root or target.root != root:
+    raise newException(ValueError, "public Style Slot nodes must belong to this UiRoot")
+  result = root.craftStyles.exposePublicStyleSlot(
+    root.tree,
+    owner.id,
+    target.id,
+    component,
+    name
+  )
+  if result and root.craftStyles.targetsPublicStyleSlot(component, name):
+    root.invalidate(target.id, craftStyleDirtyDomains)
+
+proc publicStyleSlots*(root: UiRoot): seq[PublicStyleSlot] =
+  if root.isNil:
+    return @[]
+  root.craftStyles.publicStyleSlots()
+
+proc activeCraftStyleNames*(root: UiRoot): seq[string] =
+  if root.isNil:
+    return @[]
+  root.craftStyles.activeCraftStyleNames()
+
+proc invalidateCraftStyleTargets(root: UiRoot; targets: openArray[NodeId]) =
+  for target in targets:
+    root.invalidate(target, craftStyleDirtyDomains)
+
+proc replaceCraftStyle*(
+    root: UiRoot;
+    style: CraftStyle
+): CraftStyleReplacementResult =
+  if root.isNil:
+    result.diagnostics.add CraftStyleReplacementDiagnostic(
+      code: csrInvalidCraftStyle,
+      path: "$",
+      message: "Craft Style replacement requires a UiRoot"
+    )
+    return
+  result = root.craftStyles.replaceCraftStyle(root.tree, style)
+  if result.applied:
+    root.invalidateCraftStyleTargets(result.affectedNodes)
+
+proc replaceCraftStyle*(root: UiRoot; source: string): CraftStyleLoadResult =
+  if root.isNil:
+    result.replacementDiagnostics.add CraftStyleReplacementDiagnostic(
+      code: csrInvalidCraftStyle,
+      path: "$",
+      message: "Craft Style replacement requires a UiRoot"
+    )
+    return
+  result = root.craftStyles.replaceCraftStyle(root.tree, source)
+  if result.applied:
+    root.invalidateCraftStyleTargets(result.affectedNodes)
+
+proc removeCraftStyle*(root: UiRoot; name: string): bool {.discardable.} =
+  if root.isNil:
+    return false
+  let removed = root.craftStyles.removeCraftStyle(name)
+  if not removed.removed:
+    return false
+  root.invalidateCraftStyleTargets(removed.targets)
+  true
+
 proc setNodeStyle*(
     root: UiRoot;
     node: NodeId;
@@ -841,6 +913,7 @@ proc disposeSubtree*(
   let componentUnmountCallbacks = root.takeComponentUnmountCallbacks(removed)
   discard root.events.removeEventHandlers(removed)
   root.removeSubtreeStyles(removed)
+  discard root.craftStyles.removePublicStyleSlots(root.tree, removed)
   root.scroll.clearNodes(removedIds)
 
   var emptyValidationSources: seq[pointer]
@@ -987,6 +1060,8 @@ proc showDefaultContextMenu*(root: UiRoot; target: Option[NodeId]; position: Vec
 
 proc styleSheets*(root: UiRoot; externalStyles: openArray[StyleSheet] = []): seq[StyleSheet] =
   for sheet in externalStyles:
+    result.add sheet
+  for sheet in root.craftStyles.craftStyleSheets():
     result.add sheet
   for sheet in root.componentStyles:
     result.add sheet

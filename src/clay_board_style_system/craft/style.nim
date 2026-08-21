@@ -42,9 +42,14 @@ type
     path*: string
     message*: string
 
+  CraftStyleRuleTarget* = object
+    component*: Option[string]
+    slot*: Option[string]
+
   CraftStyle* = object
     name*: string
     sheet*: StyleSheet
+    targets*: seq[CraftStyleRuleTarget]
     normalizedJson*: string
 
   CraftStyleParseResult* = object
@@ -659,77 +664,118 @@ proc parseSelector(
     node: JsonNode;
     path: string;
     parsed: var CraftStyleParseResult
-): Option[SelectorCondition] =
+): tuple[
+    condition: Option[SelectorCondition],
+    target: CraftStyleRuleTarget
+] =
   if node.isNil or node.kind != JObject:
     parsed.addDiagnostic(csdcInvalidType, path, "expected a selector object")
-    return none(SelectorCondition)
+    return (none(SelectorCondition), CraftStyleRuleTarget())
   node.checkFields(path, ["element", "id", "code", "groups", "attributes",
-      "states"], parsed)
-  result = some(selector())
+      "states", "component", "slot"], parsed)
+  result.condition = some(selector())
+  for field in ["component", "slot"]:
+    if not node.hasKey(field):
+      continue
+    let value = parseString(node[field], path & "." & field, parsed)
+    if value.isNone:
+      result.condition = none(SelectorCondition)
+      return
+    if value.get.len == 0:
+      parsed.addDiagnostic(
+        csdcInvalidValue,
+        path & "." & field,
+        "public Style Slot names cannot be empty"
+      )
+      result.condition = none(SelectorCondition)
+      return
+    if field == "component":
+      result.target.component = value
+    else:
+      result.target.slot = value
+  if result.target.component.isSome != result.target.slot.isSome:
+    parsed.addDiagnostic(
+      csdcInvalidValue,
+      path,
+      "component and slot selectors must be declared together"
+    )
+    result.condition = none(SelectorCondition)
+    return
   if node.hasKey("element"):
     let value = parseString(node["element"], path & ".element", parsed)
     if value.isNone:
-      return none(SelectorCondition)
-    result.get.elementKind = case value.get
+      result.condition = none(SelectorCondition)
+      return
+    result.condition.get.elementKind = case value.get
     of "box": some(nkBox)
     of "text": some(nkText)
     of "image": some(nkImage)
     else:
       parsed.addDiagnostic(csdcInvalidValue, path & ".element",
           "unknown element kind '" & value.get & "'")
-      return none(SelectorCondition)
+      result.condition = none(SelectorCondition)
+      return
   if node.hasKey("id"):
     let value = parseString(node["id"], path & ".id", parsed)
     if value.isNone:
-      return none(SelectorCondition)
-    result.get.id = some(value.get)
+      result.condition = none(SelectorCondition)
+      return
+    result.condition.get.id = some(value.get)
   if node.hasKey("code"):
     let value = parseString(node["code"], path & ".code", parsed)
     if value.isNone:
-      return none(SelectorCondition)
-    result.get.code = some(value.get)
+      result.condition = none(SelectorCondition)
+      return
+    result.condition.get.code = some(value.get)
   for field in ["groups", "states"]:
     if not node.hasKey(field):
       continue
     if node[field].kind != JArray:
       parsed.addDiagnostic(csdcInvalidType, path & "." & field, "expected an array")
-      return none(SelectorCondition)
+      result.condition = none(SelectorCondition)
+      return
     if node[field].len > maxCraftStyleSelectorItems:
       parsed.addDiagnostic(csdcLimitExceeded, path & "." & field, "too many selector items")
-      return none(SelectorCondition)
+      result.condition = none(SelectorCondition)
+      return
     for index in 0 ..< node[field].len:
       let item = node[field][index]
       let itemPath = path & "." & field & "[" & $index & "]"
       let value = parseString(item, itemPath, parsed)
       if value.isNone:
-        return none(SelectorCondition)
+        result.condition = none(SelectorCondition)
+        return
       if field == "groups":
-        result.get.groups.add value.get
+        result.condition.get.groups.add value.get
       else:
         let state = parseState(value.get, itemPath, parsed)
         if state.isNone:
-          return none(SelectorCondition)
-        result.get.requiredStates.incl state.get
+          result.condition = none(SelectorCondition)
+          return
+        result.condition.get.requiredStates.incl state.get
   if node.hasKey("attributes"):
     if node["attributes"].kind != JObject:
       parsed.addDiagnostic(csdcInvalidType, path & ".attributes", "expected an object")
-      return none(SelectorCondition)
+      result.condition = none(SelectorCondition)
+      return
     if node["attributes"].len > maxCraftStyleSelectorItems:
       parsed.addDiagnostic(csdcLimitExceeded, path & ".attributes",
           "too many selector items")
-      return none(SelectorCondition)
+      result.condition = none(SelectorCondition)
+      return
     for name, value in node["attributes"]:
       if value.kind == JNull:
-        result.get.attrs.add attrExists(name)
+        result.condition.get.attrs.add attrExists(name)
       elif value.kind == JString:
-        result.get.attrs.add attr(name, value.getStr)
+        result.condition.get.attrs.add attr(name, value.getStr)
       else:
         parsed.addDiagnostic(
           csdcInvalidType,
           path & ".attributes." & name,
           "attribute selector values must be strings or null"
         )
-        return none(SelectorCondition)
+        result.condition = none(SelectorCondition)
+        return
 
 proc parseDeclaration(
     node: JsonNode;
@@ -785,31 +831,32 @@ proc parseRule(
     sourceOrder: int;
     registry: PropertyRegistry;
     parsed: var CraftStyleParseResult
-): Option[StyleRule] =
+): tuple[rule: Option[StyleRule], target: CraftStyleRuleTarget] =
   if node.isNil or node.kind != JObject:
     parsed.addDiagnostic(csdcInvalidType, path, "expected a rule object")
-    return none(StyleRule)
+    return (none(StyleRule), CraftStyleRuleTarget())
   node.checkFields(path, ["selector", "priority", "declarations"], parsed)
   let condition = parseSelector(node.requiredField("selector", path, parsed),
       path & ".selector", parsed)
+  result.target = condition.target
   var priority = 0
   if node.hasKey("priority"):
     let value = parseInteger(node["priority"], path & ".priority", parsed)
     if value.isNone:
-      return none(StyleRule)
+      return
     priority = value.get
   let declarationsNode = node.requiredField("declarations", path, parsed)
   if declarationsNode.isNil or declarationsNode.kind != JArray:
     parsed.addDiagnostic(csdcInvalidType, path & ".declarations", "expected an array")
-    return none(StyleRule)
+    return
   if declarationsNode.len == 0:
     parsed.addDiagnostic(csdcInvalidValue, path & ".declarations", "a rule requires at least one declaration")
-    return none(StyleRule)
+    return
   if declarationsNode.len > maxCraftStyleDeclarationsPerRule:
     parsed.addDiagnostic(csdcLimitExceeded, path & ".declarations", "too many declarations")
-    return none(StyleRule)
+    return
   var declarations: seq[Declaration]
-  var valid = condition.isSome
+  var valid = condition.condition.isSome
   for index in 0 ..< declarationsNode.len:
     let declarationNode = declarationsNode[index]
     let declaration = parseDeclaration(
@@ -824,9 +871,12 @@ proc parseRule(
     else:
       valid = false
   if valid:
-    some(rule(condition.get, declarations, priority, sourceOrder))
-  else:
-    none(StyleRule)
+    result.rule = some(rule(
+      condition.condition.get,
+      declarations,
+      priority,
+      sourceOrder
+    ))
 
 proc parseCraftStyle*(source: string): CraftStyleParseResult =
   if not sourceWithinLimits(source, result):
@@ -862,6 +912,7 @@ proc parseCraftStyle*(source: string): CraftStyleParseResult =
   let rulesNode = document.requiredField("rules", "$", result)
   let registry = defaultProperties()
   var rules: seq[StyleRule]
+  var targets: seq[CraftStyleRuleTarget]
   if not rulesNode.isNil:
     if rulesNode.kind != JArray:
       result.addDiagnostic(csdcInvalidType, "$.rules", "expected an array")
@@ -877,11 +928,13 @@ proc parseCraftStyle*(source: string): CraftStyleParseResult =
           registry,
           result
         )
-        if parsedRule.isSome:
-          rules.add parsedRule.get
+        if parsedRule.rule.isSome:
+          rules.add parsedRule.rule.get
+          targets.add parsedRule.target
   if result.diagnostics.len == 0 and name.isSome:
     result.value = some(CraftStyle(
       name: name.get,
       sheet: styleSheet(rules),
+      targets: targets,
       normalizedJson: canonicalJson(document)
     ))

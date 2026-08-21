@@ -1767,10 +1767,13 @@ event fixtures, ARC/ORC linking, and lifecycle checks. Event kinds are generated
 from the canonical registry rather than duplicated by a Driver. The Version 1
 Craft Style JSON exchange format now has a strict bounded parser, typed
 `StyleSheet` compilation, stable diagnostics, canonical normalization, a
-machine-readable schema, and shared positive/negative fixtures. Retained state,
-Driver and C ABI Craft Style loading, public Style Slots, atomic replacement,
-Craft Pack loading, component lifecycle, and broader cross-Driver fixture parity
-remain Version 0.6 work.
+machine-readable schema, and shared positive/negative fixtures. Public Style
+Slots and atomic retained replacement are now implemented for Nim
+components: component-owned invariants retain precedence, failed candidates
+leave the old Style active, mounted identity and interaction state survive
+replacement, and only matching Slot subtrees are invalidated. Retained state,
+Driver and C ABI Craft Style loading, Craft Pack loading, component lifecycle,
+and broader cross-Driver fixture parity remain Version 0.6 work.
 
 This scope does not require one source syntax across languages, runtime loading
 of arbitrary foreign binaries, or pixel identity across different font and

@@ -54,6 +54,14 @@ suite "Craft Style exchange format":
     check schema["$defs"]["selector"]["properties"]["attributes"][
         "maxProperties"].getInt ==
       maxCraftStyleSelectorItems
+    check schema["$defs"]["selector"]["properties"]["component"][
+        "minLength"].getInt == 1
+    check schema["$defs"]["selector"]["properties"]["slot"][
+        "minLength"].getInt == 1
+    check schema["$defs"]["selector"]["dependentRequired"]["component"][
+        0].getStr == "slot"
+    check schema["$defs"]["selector"]["dependentRequired"]["slot"][
+        0].getStr == "component"
 
   test "reference fixture preserves typed rules and selector semantics":
     let parsed = parseCraftStyle(readFile(fixturePath))
@@ -63,6 +71,9 @@ suite "Craft Style exchange format":
     let craft = parsed.value.get
     check craft.name == "reference-theme"
     check craft.sheet.rules.len == 2
+    check craft.targets.len == 2
+    check craft.targets[0].component.isNone
+    check craft.targets[0].slot.isNone
 
     let first = craft.sheet.rules[0]
     check first.priority == 7
