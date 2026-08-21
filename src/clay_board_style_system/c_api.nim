@@ -5,6 +5,7 @@ import ./core/[color, color_conversion, color_mix, color_mix_parser,
   selector, style_resolver, style_value]
 import ./data/[blob, form_data, stream_bridge, stream_mailbox]
 import ./core/computed_style as computed_style_types
+import ./craft/[pack, style, style_slots]
 import ./generated/craft_driver_contract
 import ./generated/default_properties
 import ./hit/hit_test
@@ -136,6 +137,12 @@ const
 
   CbssEventHasMotion* = 1'u32 shl 11
   CbssMaxKeyframeSteps* = 16_384'u32
+  CbssMaxCraftStyleSourceBytes* = uint32(maxCraftStyleSourceBytes)
+  CbssMaxCraftPackSourceBytes* = uint32(maxCraftPackSourceBytes)
+
+  CbssCraftDiagnosticStyleParse* = 0'u32
+  CbssCraftDiagnosticStyleReplacement* = 1'u32
+  CbssCraftDiagnosticPack* = 2'u32
 
 type
   CbssRectC* {.bycopy.} = object
@@ -273,6 +280,9 @@ type
     completed*, total*: uint64
     messageBytes*: uint32
 
+  CbssCraftDiagnosticC* {.bycopy.} = object
+    domain*, code*, pathBytes*, messageBytes*: uint32
+
   CbssContextHandle* = ptr CbssContextObj
   CbssStyleHandle* = ptr CbssStyleObj
   CbssKeyframesHandle* = ptr CbssKeyframesObj
@@ -330,10 +340,19 @@ type
     sourceOrder: int
     declarations: seq[Declaration]
 
+  CbssCraftDiagnosticRecord = object
+    domain: uint32
+    code: uint32
+    path: string
+    message: string
+
   CbssContextObj = object
     tree: Tree
     sheets: seq[StyleSheet]
     appliedStyles: seq[CbssAppliedStyle]
+    craftPacks: CraftPackRegistry
+    craftStyles: CraftStyleSlotRuntime
+    craftDiagnostics: seq[CbssCraftDiagnosticRecord]
     resolved: ResolvedTree
     layout: LayoutResult
     commands: seq[PaintCommand]
@@ -449,6 +468,7 @@ static:
   doAssert sizeof(CbssRenderSurfaceEventC) == 232
   doAssert sizeof(CbssStreamPumpResultC) == 12
   doAssert sizeof(CbssStreamEventC) == 48
+  doAssert sizeof(CbssCraftDiagnosticC) == 16
 
 proc retainBlobHandle(blob: CbssBlobHandle): int32 {.raises: [].}
 proc releaseBlobHandle(blob: CbssBlobHandle) {.raises: [].}
@@ -745,6 +765,8 @@ proc selectorFor(node: NodeId; stateMask: uint32): SelectorCondition =
 
 proc rebuildStyleSheets(context: CbssContextHandle) =
   context.sheets.setLen(0)
+  for sheet in context.craftStyles.craftStyleSheets():
+    context.sheets.add sheet
   for applied in context.appliedStyles:
     context.sheets.add styleSheet([
       rule(
@@ -2368,6 +2390,9 @@ proc cbssContextCreate(): CbssContextHandle {.
       tree: initTree(),
       sheets: @[],
       appliedStyles: @[],
+      craftPacks: initCraftPackRegistry(),
+      craftStyles: initCraftStyleSlotRuntime(),
+      craftDiagnostics: @[],
       resolved: ResolvedTree(styles: @[]),
       layout: LayoutResult(boxes: @[], overflowMetrics: @[]),
       commands: @[],
@@ -2434,6 +2459,9 @@ proc cbssContextReset(context: CbssContextHandle): int32 {.
     context.tree = initTree()
     context.sheets.setLen(0)
     context.appliedStyles.setLen(0)
+    context.craftPacks = initCraftPackRegistry()
+    context.craftStyles = initCraftStyleSlotRuntime()
+    context.craftDiagnostics.setLen(0)
     context.resolved.styles.setLen(0)
     context.layout = LayoutResult(boxes: @[], overflowMetrics: @[])
     context.commands.setLen(0)
@@ -2469,6 +2497,345 @@ proc cbssContextLastError(
   if context.isNil:
     return copyString("invalid CBSS context", buffer, capacity)
   copyString(context.lastError, buffer, capacity)
+
+proc craftStyleParseCode(code: CraftStyleDiagnosticCode): uint32 =
+  case code
+  of csdcInvalidJson: 0
+  of csdcInvalidDocument: 1
+  of csdcUnsupportedVersion: 2
+  of csdcMissingField: 3
+  of csdcUnknownField: 4
+  of csdcInvalidType: 5
+  of csdcInvalidValue: 6
+  of csdcUnknownProperty: 7
+  of csdcDuplicateField: 8
+  of csdcLimitExceeded: 9
+
+proc craftStyleReplacementCode(
+    code: CraftStyleReplacementDiagnosticCode
+): uint32 =
+  case code
+  of csrUnsupportedRuleTarget: 0
+  of csrUndeclaredStyleSlot: 1
+  of csrInvalidStyleSlot: 2
+  of csrInvalidCraftStyle: 3
+
+proc craftPackCode(code: CraftPackDiagnosticCode): uint32 =
+  case code
+  of cpdcInvalidJson: 0
+  of cpdcInvalidDocument: 1
+  of cpdcUnsupportedVersion: 2
+  of cpdcMissingField: 3
+  of cpdcUnknownField: 4
+  of cpdcInvalidType: 5
+  of cpdcInvalidValue: 6
+  of cpdcDuplicateField: 7
+  of cpdcDuplicateValue: 8
+  of cpdcLimitExceeded: 9
+  of cpdcIncompatibleAbi: 10
+  of cpdcIncompatibleDriverContract: 11
+  of cpdcMissingCapability: 12
+
+proc clearCraftDiagnostics(context: CbssContextHandle) =
+  context.craftDiagnostics.setLen(0)
+
+proc addCraftDiagnostic(
+    context: CbssContextHandle;
+    domain, code: uint32;
+    path, message: string
+) =
+  context.craftDiagnostics.add CbssCraftDiagnosticRecord(
+    domain: domain,
+    code: code,
+    path: path,
+    message: message
+  )
+
+proc recordCraftStyleDiagnostics(
+    context: CbssContextHandle;
+    loaded: CraftStyleLoadResult
+) =
+  context.clearCraftDiagnostics()
+  for diagnostic in loaded.parseDiagnostics:
+    context.addCraftDiagnostic(
+      CbssCraftDiagnosticStyleParse,
+      craftStyleParseCode(diagnostic.code),
+      diagnostic.path,
+      diagnostic.message
+    )
+  for diagnostic in loaded.replacementDiagnostics:
+    context.addCraftDiagnostic(
+      CbssCraftDiagnosticStyleReplacement,
+      craftStyleReplacementCode(diagnostic.code),
+      diagnostic.path,
+      diagnostic.message
+    )
+
+proc recordCraftPackDiagnostics(
+    context: CbssContextHandle;
+    loaded: CraftPackLoadResult
+) =
+  context.clearCraftDiagnostics()
+  for diagnostic in loaded.diagnostics:
+    context.addCraftDiagnostic(
+      CbssCraftDiagnosticPack,
+      craftPackCode(diagnostic.code),
+      diagnostic.path,
+      diagnostic.message
+    )
+
+proc setFirstCraftError(context: CbssContextHandle; fallback: string) =
+  if context.craftDiagnostics.len > 0:
+    context.setError(context.craftDiagnostics[0].message)
+  else:
+    context.setError(fallback)
+
+proc sourceFromBytes(
+    bytes: pointer;
+    length, maximum: uint32;
+    output: var string
+): int32 =
+  if bytes.isNil or length == 0:
+    return CbssInvalidArgument
+  if length > maximum or uint64(length) > uint64(high(int)):
+    return CbssOutOfRange
+  output = newString(int(length))
+  copyMem(addr output[0], bytes, int(length))
+  CbssOk
+
+proc cbssContextCraftDiagnosticCount(
+    context: CbssContextHandle
+): uint32 {.exportc: "cbss_context_craft_diagnostic_count", cdecl, dynlib.} =
+  if context.isNil:
+    return 0
+  uint32(min(context.craftDiagnostics.len, int(high(uint32))))
+
+proc cbssContextCraftDiagnosticAt(
+    context: CbssContextHandle;
+    index: uint32;
+    output: ptr CbssCraftDiagnosticC
+): int32 {.exportc: "cbss_context_craft_diagnostic_at", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  if index >= uint32(context.craftDiagnostics.len):
+    return CbssOutOfRange
+  let diagnostic = context.craftDiagnostics[int(index)]
+  output[] = CbssCraftDiagnosticC(
+    domain: diagnostic.domain,
+    code: diagnostic.code,
+    pathBytes: uint32(min(diagnostic.path.len, int(high(uint32)))),
+    messageBytes: uint32(min(diagnostic.message.len, int(high(uint32))))
+  )
+  CbssOk
+
+proc cbssContextCraftDiagnosticPath(
+    context: CbssContextHandle;
+    index: uint32;
+    buffer: cstring;
+    capacity: uint32
+): uint32 {.exportc: "cbss_context_craft_diagnostic_path", cdecl, dynlib.} =
+  if context.isNil or index >= uint32(context.craftDiagnostics.len):
+    return 0
+  copyString(context.craftDiagnostics[int(index)].path, buffer, capacity)
+
+proc cbssContextCraftDiagnosticMessage(
+    context: CbssContextHandle;
+    index: uint32;
+    buffer: cstring;
+    capacity: uint32
+): uint32 {.exportc: "cbss_context_craft_diagnostic_message", cdecl, dynlib.} =
+  if context.isNil or index >= uint32(context.craftDiagnostics.len):
+    return 0
+  copyString(context.craftDiagnostics[int(index)].message, buffer, capacity)
+
+proc cbssNodeExposeCraftStyleSlot(
+    context: CbssContextHandle;
+    owner, target: uint32;
+    component, slot: cstring
+): int32 {.exportc: "cbss_node_expose_craft_style_slot", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if not context.validNode(owner) or not context.validNode(target) or
+      component.isNil or slot.isNil:
+    return CbssInvalidArgument
+  let componentLength = boundedCStringLength(component, maxCraftPackStringBytes)
+  let slotLength = boundedCStringLength(slot, maxCraftPackStringBytes)
+  if componentLength <= 0 or componentLength > maxCraftPackStringBytes or
+      slotLength <= 0 or slotLength > maxCraftPackStringBytes:
+    return CbssInvalidArgument
+  try:
+    let componentName = fromCString(component)
+    let slotName = fromCString(slot)
+    let added = context.craftStyles.exposePublicStyleSlot(
+      context.tree,
+      owner.nodeId,
+      target.nodeId,
+      componentName,
+      slotName
+    )
+    if added:
+      context.rebuildStyleSheets()
+      if context.craftStyles.targetsPublicStyleSlot(componentName, slotName):
+        context.invalidate()
+    context.lastError = ""
+    CbssOk
+  except ValueError as error:
+    context.setError(error.msg)
+    CbssInvalidArgument
+  except CatchableError as error:
+    context.setError(error.msg)
+    CbssInternalError
+
+proc cbssContextReplaceCraftStyleJson(
+    context: CbssContextHandle;
+    bytes: pointer;
+    length: uint32
+): int32 {.exportc: "cbss_context_replace_craft_style_json", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  var source: string
+  let sourceStatus = sourceFromBytes(
+    bytes,
+    length,
+    CbssMaxCraftStyleSourceBytes,
+    source
+  )
+  if sourceStatus != CbssOk:
+    return sourceStatus
+  try:
+    let loaded = context.craftStyles.replaceCraftStyle(context.tree, source)
+    context.recordCraftStyleDiagnostics(loaded)
+    if not loaded.applied:
+      context.setFirstCraftError("Craft Style replacement failed")
+      return CbssStyleError
+    context.rebuildStyleSheets()
+    context.invalidate()
+    context.lastError = ""
+    CbssOk
+  except CatchableError as error:
+    context.setError(error.msg)
+    CbssInternalError
+
+proc cbssContextRemoveCraftStyle(
+    context: CbssContextHandle;
+    name: cstring;
+    outputRemoved: ptr uint8
+): int32 {.exportc: "cbss_context_remove_craft_style", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if name.isNil or outputRemoved.isNil:
+    return CbssInvalidArgument
+  let nameLength = boundedCStringLength(name, maxCraftPackStringBytes)
+  if nameLength <= 0 or nameLength > maxCraftPackStringBytes:
+    return CbssInvalidArgument
+  let removed = context.craftStyles.removeCraftStyle(fromCString(name))
+  outputRemoved[] = uint8(if removed.removed: 1 else: 0)
+  if removed.removed:
+    context.rebuildStyleSheets()
+    context.invalidate()
+  context.clearCraftDiagnostics()
+  context.lastError = ""
+  CbssOk
+
+proc cbssContextActiveCraftStyleCount(
+    context: CbssContextHandle
+): uint32 {.exportc: "cbss_context_active_craft_style_count", cdecl, dynlib.} =
+  if context.isNil:
+    return 0
+  uint32(min(context.craftStyles.activeCraftStyleNames().len, int(high(uint32))))
+
+proc cbssContextActiveCraftStyleName(
+    context: CbssContextHandle;
+    index: uint32;
+    buffer: cstring;
+    capacity: uint32
+): uint32 {.exportc: "cbss_context_active_craft_style_name", cdecl, dynlib.} =
+  if context.isNil:
+    return 0
+  let names = context.craftStyles.activeCraftStyleNames()
+  if index >= uint32(names.len):
+    return 0
+  copyString(names[int(index)], buffer, capacity)
+
+proc cbssContextReplaceCraftPackJson(
+    context: CbssContextHandle;
+    bytes: pointer;
+    length: uint32
+): int32 {.exportc: "cbss_context_replace_craft_pack_json", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  var source: string
+  let sourceStatus = sourceFromBytes(
+    bytes,
+    length,
+    CbssMaxCraftPackSourceBytes,
+    source
+  )
+  if sourceStatus != CbssOk:
+    return sourceStatus
+  try:
+    let loaded = context.craftPacks.replaceCraftPack(source)
+    context.recordCraftPackDiagnostics(loaded)
+    if not loaded.loaded:
+      context.setFirstCraftError("Craft Pack loading failed")
+      return CbssStyleError
+    context.lastError = ""
+    CbssOk
+  except CatchableError as error:
+    context.setError(error.msg)
+    CbssInternalError
+
+proc cbssContextRemoveCraftPack(
+    context: CbssContextHandle;
+    id: cstring;
+    outputRemoved: ptr uint8
+): int32 {.exportc: "cbss_context_remove_craft_pack", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if id.isNil or outputRemoved.isNil:
+    return CbssInvalidArgument
+  let idLength = boundedCStringLength(id, maxCraftPackStringBytes)
+  if idLength <= 0 or idLength > maxCraftPackStringBytes:
+    return CbssInvalidArgument
+  outputRemoved[] = uint8(if context.craftPacks.removeCraftPack(fromCString(id)): 1 else: 0)
+  context.clearCraftDiagnostics()
+  context.lastError = ""
+  CbssOk
+
+proc cbssContextActiveCraftPackCount(
+    context: CbssContextHandle
+): uint32 {.exportc: "cbss_context_active_craft_pack_count", cdecl, dynlib.} =
+  if context.isNil:
+    return 0
+  uint32(min(context.craftPacks.craftPackCount(), int(high(uint32))))
+
+proc cbssContextActiveCraftPackId(
+    context: CbssContextHandle;
+    index: uint32;
+    buffer: cstring;
+    capacity: uint32
+): uint32 {.exportc: "cbss_context_active_craft_pack_id", cdecl, dynlib.} =
+  if context.isNil:
+    return 0
+  let pack = context.craftPacks.craftPackAt(int(index))
+  if pack.isNone:
+    return 0
+  copyString(pack.get.id, buffer, capacity)
+
+proc cbssContextActiveCraftPackVersion(
+    context: CbssContextHandle;
+    index: uint32;
+    buffer: cstring;
+    capacity: uint32
+): uint32 {.exportc: "cbss_context_active_craft_pack_version", cdecl, dynlib.} =
+  if context.isNil:
+    return 0
+  let pack = context.craftPacks.craftPackAt(int(index))
+  if pack.isNone:
+    return 0
+  copyString(pack.get.version, buffer, capacity)
 
 proc cbssContextNodeCount(context: CbssContextHandle): uint32 {.
     exportc: "cbss_context_node_count", cdecl, dynlib.} =

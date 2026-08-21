@@ -7,6 +7,27 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+### Added
+
+- Added the bounded Craft Pack Version 1 manifest and JSON Schema for declaring
+  distributable Craft Components, public Style Slots, Craft Styles, assets,
+  feature profiles, platforms, and ABI/capability compatibility requirements.
+- Added atomic Craft Pack and Craft Style replacement through Nim, C, C++, and
+  Rust APIs, with stable typed diagnostics, copied input boundaries, explicit
+  source limits, and active-resource queries.
+- Added Craft Driver capabilities for Craft Style and Craft Pack loading. Both
+  ARC and ORC now exercise the new APIs through shared and static C ABI builds.
+
+### Security
+
+- Reject duplicate JSON keys, unsafe or non-normalized asset paths, duplicate
+  identities and paths, malformed digest metadata, unknown fields, excessive
+  nesting, oversized collections, and incompatible runtime requirements before
+  mutating an active Craft Pack.
+- Keep asset I/O outside manifest registration. Pack loading does not access the
+  filesystem or network, follow symlinks, load native code, or claim digest
+  verification without a host-authorized resolver.
+
 ## [0.5.0] - 2026-08-18
 
 ### Added

@@ -45,7 +45,7 @@ import clay_board_style_system/runtime/widgets/[command_menu, list_box, tabs]
 import clay_board_style_system/text/[cosmic_text_engine, font_registry, text_engine]
 import clay_board_style_system/design_source/model
 import clay_board_style_system/backends/atspi/adapter
-import clay_board_style_system/craft/[style, style_slots]
+import clay_board_style_system/craft/[pack, style, style_slots]
 
 export asset_resolver
 export blob
@@ -130,5 +130,6 @@ export cosmic_text_engine
 export text_engine
 export model
 export adapter
+export pack
 export style
 export style_slots

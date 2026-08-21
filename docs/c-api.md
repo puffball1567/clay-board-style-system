@@ -30,10 +30,14 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x00010015` supports:
+ABI version `0x00010016` supports:
 
 - machine-readable Craft Driver contract metadata and runtime capability
   negotiation through stable numeric identifiers before tree construction;
+- public Craft Style Slot exposure, bounded atomic Craft Style replacement,
+  active Style queries, and structured parse/replacement diagnostics;
+- bounded atomic Craft Pack manifest loading, compatibility negotiation,
+  active Pack queries, and structured Pack diagnostics;
 - Opaque context and style handles.
 - Atomically reference-counted immutable Blob handles with advisory MIME
   metadata, bounded reads into host buffers, and a 64 MiB eager-construction
@@ -163,6 +167,27 @@ Scopes instead of a mutable parent stack. Generated ABI and capability
 constants come from the same contract JSON as Nim and C. Run
 `nimble testRustDriver` for ARC shared/static integration and
 `nimble testRustDriverOrc` for the equivalent ORC boundary.
+
+## Craft Style And Pack Loading
+
+`cbss_node_expose_craft_style_slot` publishes an explicit component/Slot pair
+for a mounted node. `cbss_context_replace_craft_style_json` accepts copied
+bytes with an explicit length, compiles the candidate, validates all targets,
+and replaces the active Style with the same name only on success. Component-
+owned Style remains higher precedence than externally loaded Craft Style.
+
+`cbss_context_replace_craft_pack_json` validates and registers a Version 1
+manifest under the same atomic rule. It does not open declared asset paths or
+verify asset bytes. File access and digest verification belong to a separate
+host-authorized resolver described in
+[Craft Pack Manifest Format](craft-pack-format.md).
+
+Both inputs have public byte limits. A failure can be inspected through
+`cbss_context_craft_diagnostic_count`, `cbss_context_craft_diagnostic_at`, and
+the path/message copy functions. `CbssCraftDiagnosticDomain` and the three
+domain-specific diagnostic-code enums are the stable programmatic contract;
+text is explanatory. Active Style and Pack names are returned through
+caller-owned buffers. No Nim string or sequence crosses the ABI.
 
 ## Host Event Loop
 

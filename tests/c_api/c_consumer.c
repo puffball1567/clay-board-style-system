@@ -1,6 +1,6 @@
 #include "cbss.h"
 
-_Static_assert(CBSS_ABI_VERSION == 0x00010015u, "unexpected CBSS ABI version");
+_Static_assert(CBSS_ABI_VERSION == 0x00010016u, "unexpected CBSS ABI version");
 _Static_assert(CBSS_ROLE_SWITCH == 22, "unexpected switch role value");
 _Static_assert(CBSS_ROLE_PASSWORD_TEXT == 23,
                "unexpected password text role value");
@@ -45,6 +45,8 @@ _Static_assert(sizeof(CbssStreamPumpResult) == 12,
                "CbssStreamPumpResult ABI changed");
 _Static_assert(sizeof(CbssStreamEvent) == 48,
                "CbssStreamEvent ABI changed");
+_Static_assert(sizeof(CbssCraftDiagnostic) == 16,
+               "CbssCraftDiagnostic ABI changed");
 _Static_assert(sizeof(CbssAccessibility) == 32,
                "CbssAccessibility ABI changed");
 _Static_assert(sizeof(CbssRenderSurfacePlacement) == 40,
@@ -185,6 +187,104 @@ static void require_ok(CbssContext *context, CbssStatus status) {
   assert(status == CBSS_OK);
 }
 
+static void test_craft_loading(void) {
+  static const char style_json[] =
+      "{\"format\":\"cbss-craft-style\",\"version\":1,"
+      "\"name\":\"c-theme\",\"rules\":[{"
+      "\"selector\":{\"component\":\"c-card\",\"slot\":\"root\"},"
+      "\"declarations\":[{\"property\":\"width\","
+      "\"value\":{\"type\":\"length\",\"unit\":\"px\",\"value\":200}}]}]}";
+  static const char missing_slot_json[] =
+      "{\"format\":\"cbss-craft-style\",\"version\":1,"
+      "\"name\":\"c-theme\",\"rules\":[{"
+      "\"selector\":{\"component\":\"c-card\",\"slot\":\"missing\"},"
+      "\"declarations\":[{\"property\":\"opacity\","
+      "\"value\":{\"type\":\"number\",\"value\":0.5}}]}]}";
+  static const char pack_json[] =
+      "{\"format\":\"cbss-craft-pack\",\"version\":1,"
+      "\"id\":\"org.example.c\",\"packVersion\":\"1.0.0\","
+      "\"compatibility\":{\"minimumAbi\":65558,"
+      "\"minimumDriverContract\":65536,\"capabilities\":["
+      "{\"id\":16,\"minimumVersion\":1},"
+      "{\"id\":17,\"minimumVersion\":1}]},"
+      "\"components\":[{\"name\":\"c-card\",\"slots\":[\"root\"]}],"
+      "\"styles\":[],\"assets\":[]}";
+  static const char incompatible_pack_json[] =
+      "{\"format\":\"cbss-craft-pack\",\"version\":1,"
+      "\"id\":\"org.example.c\",\"packVersion\":\"2.0.0\","
+      "\"compatibility\":{\"minimumAbi\":4294967295,"
+      "\"minimumDriverContract\":65536,\"capabilities\":["
+      "{\"id\":16,\"minimumVersion\":1},"
+      "{\"id\":17,\"minimumVersion\":1}]},"
+      "\"components\":[{\"name\":\"c-card\",\"slots\":[\"root\"]}],"
+      "\"styles\":[],\"assets\":[]}";
+
+  CbssContext *context = cbss_context_create();
+  CbssStyle *owned_style = cbss_style_create();
+  assert(context != NULL);
+  assert(owned_style != NULL);
+  uint32_t root = cbss_context_add_box(context, CBSS_NODE_NONE, "craft-root");
+  assert(root != CBSS_NODE_NONE);
+  require_ok(context, cbss_style_set_length(
+      owned_style, "width", CBSS_UNIT_PX, 90.0f));
+  require_ok(context, cbss_node_apply_style(context, root, owned_style, 0, 0));
+  require_ok(context, cbss_node_expose_craft_style_slot(
+      context, root, root, "c-card", "root"));
+  require_ok(context, cbss_context_replace_craft_style_json(
+      context, (const uint8_t *)style_json, (uint32_t)(sizeof(style_json) - 1)));
+  assert(cbss_context_active_craft_style_count(context) == 1);
+  char value[64];
+  assert(cbss_context_active_craft_style_name(
+      context, 0, value, sizeof(value)) == strlen("c-theme"));
+  assert(strcmp(value, "c-theme") == 0);
+  require_ok(context, cbss_context_compute(context, 300.0f, 100.0f));
+  CbssRect rect;
+  require_ok(context, cbss_node_layout_rect(context, root, &rect));
+  assert(fabsf(rect.w - 90.0f) < 0.01f);
+
+  assert(cbss_context_replace_craft_style_json(
+      context, (const uint8_t *)missing_slot_json,
+      (uint32_t)(sizeof(missing_slot_json) - 1)) == CBSS_STYLE_ERROR);
+  assert(cbss_context_active_craft_style_count(context) == 1);
+  assert(cbss_context_craft_diagnostic_count(context) == 1);
+  CbssCraftDiagnostic diagnostic;
+  require_ok(context, cbss_context_craft_diagnostic_at(
+      context, 0, &diagnostic));
+  assert(diagnostic.domain == CBSS_CRAFT_DIAGNOSTIC_STYLE_REPLACEMENT);
+  assert(cbss_context_craft_diagnostic_path(
+      context, 0, value, sizeof(value)) > 0);
+
+  require_ok(context, cbss_context_replace_craft_pack_json(
+      context, (const uint8_t *)pack_json, (uint32_t)(sizeof(pack_json) - 1)));
+  assert(cbss_context_active_craft_pack_count(context) == 1);
+  assert(cbss_context_active_craft_pack_id(
+      context, 0, value, sizeof(value)) == strlen("org.example.c"));
+  assert(strcmp(value, "org.example.c") == 0);
+  assert(cbss_context_active_craft_pack_version(
+      context, 0, value, sizeof(value)) == strlen("1.0.0"));
+  assert(strcmp(value, "1.0.0") == 0);
+  assert(cbss_context_replace_craft_pack_json(
+      context, (const uint8_t *)incompatible_pack_json,
+      (uint32_t)(sizeof(incompatible_pack_json) - 1)) == CBSS_STYLE_ERROR);
+  assert(cbss_context_active_craft_pack_count(context) == 1);
+  assert(cbss_context_active_craft_pack_version(
+      context, 0, value, sizeof(value)) == strlen("1.0.0"));
+  assert(strcmp(value, "1.0.0") == 0);
+  require_ok(context, cbss_context_craft_diagnostic_at(
+      context, 0, &diagnostic));
+  assert(diagnostic.domain == CBSS_CRAFT_DIAGNOSTIC_PACK);
+
+  uint8_t removed = 0;
+  require_ok(context, cbss_context_remove_craft_style(
+      context, "c-theme", &removed));
+  assert(removed == 1);
+  require_ok(context, cbss_context_remove_craft_pack(
+      context, "org.example.c", &removed));
+  assert(removed == 1);
+  cbss_style_destroy(owned_style);
+  cbss_context_destroy(context);
+}
+
 static uint8_t handle_event(
     CbssContext *context, const CbssEvent *event, void *user_data) {
   CallbackState *state = user_data;
@@ -276,9 +376,10 @@ static uint8_t handle_legacy_submit(
 }
 
 int main(void) {
+  test_craft_loading();
   assert(cbss_abi_version() == CBSS_ABI_VERSION);
   assert(cbss_driver_contract_version() == CBSS_DRIVER_CONTRACT_VERSION);
-  assert(cbss_capability_count() == 15);
+  assert(cbss_capability_count() == 17);
   assert(cbss_has_capability(CBSS_CAPABILITY_RETAINED_TREE, 1));
   assert(!cbss_has_capability(CBSS_CAPABILITY_RETAINED_TREE, 2));
   assert(!cbss_has_capability(UINT32_MAX, 1));
@@ -287,7 +388,7 @@ int main(void) {
   assert(cbss_capability_at(0, &capability) == CBSS_OK);
   assert(capability.id == CBSS_CAPABILITY_RETAINED_TREE);
   assert(capability.version == 1);
-  assert(capability.since_abi == CBSS_ABI_VERSION);
+  assert(capability.since_abi == 0x00010015u);
   assert(capability.flags == CBSS_CAPABILITY_AVAILABLE);
   assert(capability.name_bytes == strlen("tree.retained"));
   char capability_name[32];
@@ -295,6 +396,9 @@ int main(void) {
       capability.id, capability_name, sizeof(capability_name)) ==
       strlen("tree.retained"));
   assert(strcmp(capability_name, "tree.retained") == 0);
+  assert(cbss_capability_at(16, &capability) == CBSS_OK);
+  assert(capability.id == CBSS_CAPABILITY_CRAFT_PACK);
+  assert(capability.since_abi == CBSS_ABI_VERSION);
   memset(&capability, 0xff, sizeof(capability));
   assert(cbss_capability_at(
       cbss_capability_count(), &capability) == CBSS_OUT_OF_RANGE);

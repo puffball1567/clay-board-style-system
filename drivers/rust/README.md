@@ -47,3 +47,9 @@ adds an observer and returns an `EventSubscription` that unregisters on `Drop`
 or explicit `close`. Callback event strings are copied before the C callback
 returns. Rust panics are contained at the FFI boundary and can be detected with
 `Ui::callback_panicked`; they never unwind through Nim or C.
+
+Portable presentation and package metadata use the same bounded JSON contracts
+as Nim and C. A component exposes only deliberate public targets with
+`expose_style_slot`; `replace_craft_style` and `replace_craft_pack` are atomic.
+`active_craft_styles`, `active_craft_packs`, and `craft_diagnostics` return
+owned Rust values. The Driver never reads asset paths from a Pack manifest.
