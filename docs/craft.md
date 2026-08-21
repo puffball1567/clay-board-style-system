@@ -130,6 +130,10 @@ Parsing, validation, and compiled Style caching belong to CBSS and its drivers,
 not to every application. Unused optional Craft capabilities must remain
 eligible for compile-time exclusion from normal application artifacts.
 
+The implemented Version 1 manifest parser, compatibility checks, security
+limits, integrity-metadata boundary, and loading APIs are specified in
+[Craft Pack Manifest Format](craft-pack-format.md).
+
 ## Non-Goals
 
 - Serializing application business logic or arbitrary native procedures.

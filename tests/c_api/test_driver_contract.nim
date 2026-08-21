@@ -4,9 +4,9 @@ import clay_board_style_system/generated/craft_driver_contract
 
 suite "Craft Driver contract metadata":
   test "publishes one ordered identity for every capability":
-    check CbssAbiVersion == 0x0001_0015'u32
+    check CbssAbiVersion == 0x0001_0016'u32
     check CbssDriverContractVersion == 0x0001_0000'u32
-    check CbssCapabilities.len == 15
+    check CbssCapabilities.len == 17
 
     var previousId = 0'u32
     for capability in CbssCapabilities:
@@ -18,6 +18,8 @@ suite "Craft Driver contract metadata":
 
   test "keeps generated constants aligned with the table":
     check CbssCapabilities[0].id == CbssCapabilityRetainedTree
-    check CbssCapabilities[^1].id == CbssCapabilityStream
+    check CbssCapabilities[14].id == CbssCapabilityStream
+    check CbssCapabilities[^2].id == CbssCapabilityCraftStyle
+    check CbssCapabilities[^1].id == CbssCapabilityCraftPack
     check CbssCapabilities[0].name == "tree.retained"
-    check CbssCapabilities[^1].name == "data.stream"
+    check CbssCapabilities[^1].name == "craft.pack"

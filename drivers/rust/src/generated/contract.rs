@@ -8,7 +8,7 @@ pub struct CapabilityDefinition {
     pub name: &'static str,
 }
 
-pub const ABI_VERSION: u32 = 0x00010015;
+pub const ABI_VERSION: u32 = 0x00010016;
 pub const DRIVER_CONTRACT_VERSION: u32 = 0x00010000;
 pub const CAPABILITY_RETAINED_TREE: u32 = 1;
 pub const CAPABILITY_TYPED_STYLE: u32 = 2;
@@ -25,6 +25,8 @@ pub const CAPABILITY_RENDER_SURFACE: u32 = 12;
 pub const CAPABILITY_BLOB: u32 = 13;
 pub const CAPABILITY_FORM_DATA: u32 = 14;
 pub const CAPABILITY_STREAM: u32 = 15;
+pub const CAPABILITY_CRAFT_STYLE: u32 = 16;
+pub const CAPABILITY_CRAFT_PACK: u32 = 17;
 
 pub const CAPABILITIES: &[CapabilityDefinition] = &[
     CapabilityDefinition {
@@ -116,5 +118,17 @@ pub const CAPABILITIES: &[CapabilityDefinition] = &[
         version: 1,
         since_abi: 0x00010015,
         name: "data.stream",
+    },
+    CapabilityDefinition {
+        id: 16,
+        version: 1,
+        since_abi: 0x00010016,
+        name: "craft.style",
+    },
+    CapabilityDefinition {
+        id: 17,
+        version: 1,
+        since_abi: 0x00010016,
+        name: "craft.pack",
     },
 ];

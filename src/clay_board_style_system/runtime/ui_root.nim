@@ -1,6 +1,6 @@
 import std/[algorithm, hashes, math, options, sets, tables]
 
-import ../craft/[style, style_slots]
+import ../craft/[pack, style, style_slots]
 import ../core/[color, declaration, geometry, node, rule, selector, style_value]
 import ../core/style_resolver
 import ../input/events
@@ -71,6 +71,7 @@ type
     tree*: Tree
     events*: EventRegistry
     componentStyles*: seq[StyleSheet]
+    craftPacks: CraftPackRegistry
     craftStyles: CraftStyleSlotRuntime
     appliedStyleIndices: Table[AppliedStyleKey, int]
     freeComponentStyleIndices: seq[int]
@@ -126,6 +127,7 @@ proc initUiRoot*(): UiRoot =
     tree: initTree(),
     events: initEventRegistry(),
     componentStyles: @[],
+    craftPacks: initCraftPackRegistry(),
     craftStyles: initCraftStyleSlotRuntime(),
     appliedStyleIndices: initTable[AppliedStyleKey, int](),
     freeComponentStyleIndices: @[],
@@ -711,6 +713,29 @@ proc activeCraftStyleNames*(root: UiRoot): seq[string] =
   if root.isNil:
     return @[]
   root.craftStyles.activeCraftStyleNames()
+
+proc replaceCraftPack*(root: UiRoot; source: string): CraftPackLoadResult =
+  if root.isNil:
+    result.diagnostics.add CraftPackDiagnostic(
+      code: cpdcInvalidDocument,
+      path: "$",
+      message: "Craft Pack loading requires a UiRoot"
+    )
+    return
+  result = root.craftPacks.replaceCraftPack(source)
+
+proc removeCraftPack*(root: UiRoot; id: string): bool {.discardable.} =
+  not root.isNil and root.craftPacks.removeCraftPack(id)
+
+proc activeCraftPackIds*(root: UiRoot): seq[string] =
+  if root.isNil:
+    return @[]
+  root.craftPacks.activeCraftPackIds()
+
+proc craftPackAt*(root: UiRoot; index: int): Option[CraftPack] =
+  if root.isNil:
+    return none(CraftPack)
+  root.craftPacks.craftPackAt(index)
 
 proc invalidateCraftStyleTargets(root: UiRoot; targets: openArray[NodeId]) =
   for target in targets:

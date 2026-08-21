@@ -367,6 +367,7 @@ Rust-native ownership and error handling.
 | Product direction | [Roadmap](docs/roadmap.md) |
 | Craft components, styles, packs, and drivers | [Craft Ecosystem](docs/craft.md) |
 | Portable Craft Style JSON contract | [Craft Style Exchange Format](docs/craft-style-format.md) |
+| Portable Craft Pack manifest contract | [Craft Pack Manifest Format](docs/craft-pack-format.md) |
 | Architecture and boundaries | [Architecture](docs/architecture.md) |
 | API stability and deprecation | [API Stability](docs/api-stability.md) |
 | Performance budgets | [Performance Model](docs/performance-model.md) |

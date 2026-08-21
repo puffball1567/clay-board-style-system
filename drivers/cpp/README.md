@@ -38,6 +38,13 @@ explicit `close()`. Callback event strings are copied before the C callback
 returns. Exceptions are contained at the C boundary; `callbackFailed()` and
 `rethrowCallbackFailure()` let the application handle them on the C++ side.
 
+Portable presentation and package metadata use the same bounded JSON contracts
+as Nim and C. A component exposes only deliberate public targets with
+`exposeStyleSlot`; `replaceCraftStyle` and `replaceCraftPack` are atomic.
+`activeCraftStyles`, `activeCraftPacks`, and `craftDiagnostics` provide typed
+queries without exposing C buffers. The Driver never reads asset paths from a
+Pack manifest.
+
 Compile against either the shared or static C ABI library:
 
 ```sh

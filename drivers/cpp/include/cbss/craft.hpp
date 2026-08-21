@@ -9,6 +9,7 @@
 #include <initializer_list>
 #include <memory>
 #include <new>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -136,6 +137,18 @@ struct Color {
   float green;
   float blue;
   float alpha;
+};
+
+struct CraftDiagnostic {
+  std::uint32_t domain;
+  std::uint32_t code;
+  std::string path;
+  std::string message;
+};
+
+struct CraftPackInfo {
+  std::string id;
+  std::string version;
 };
 
 inline Color rgb(float red, float green, float blue) {
@@ -618,6 +631,122 @@ class Ui {
           "apply Style");
   }
 
+  void exposeStyleSlot(Node owner, Node target,
+                       const std::string& component,
+                       const std::string& slot) {
+    Contract::require({{CBSS_CAPABILITY_CRAFT_STYLE, 1u}});
+    requireNode(owner, "expose Craft Style Slot owner");
+    requireNode(target, "expose Craft Style Slot target");
+    check(cbss_node_expose_craft_style_slot(
+              context_, owner.value_, target.value_, component.c_str(),
+              slot.c_str()),
+          "expose Craft Style Slot");
+  }
+
+  void replaceCraftStyle(const std::string& source) {
+    Contract::require({{CBSS_CAPABILITY_CRAFT_STYLE, 1u}});
+    if (source.empty()) {
+      throw Error(CBSS_INVALID_ARGUMENT,
+                  "replace Craft Style: source is empty");
+    }
+    check(cbss_context_replace_craft_style_json(
+              context_, reinterpret_cast<const std::uint8_t*>(source.data()),
+              checkedSourceLength(source, CBSS_MAX_CRAFT_STYLE_SOURCE_BYTES,
+                                  "replace Craft Style")),
+          "replace Craft Style");
+  }
+
+  bool removeCraftStyle(const std::string& name) {
+    std::uint8_t removed = 0u;
+    check(cbss_context_remove_craft_style(
+              context_, name.c_str(), &removed),
+          "remove Craft Style");
+    return removed != 0u;
+  }
+
+  std::vector<std::string> activeCraftStyles() const {
+    std::vector<std::string> result;
+    const std::uint32_t count =
+        cbss_context_active_craft_style_count(context_);
+    result.reserve(count);
+    for (std::uint32_t index = 0; index < count; ++index) {
+      result.push_back(readContextString(
+          [this, index](char* buffer, std::uint32_t capacity) {
+            return cbss_context_active_craft_style_name(
+                context_, index, buffer, capacity);
+          }));
+    }
+    return result;
+  }
+
+  void replaceCraftPack(const std::string& source) {
+    Contract::require({{CBSS_CAPABILITY_CRAFT_PACK, 1u}});
+    if (source.empty()) {
+      throw Error(CBSS_INVALID_ARGUMENT,
+                  "replace Craft Pack: source is empty");
+    }
+    check(cbss_context_replace_craft_pack_json(
+              context_, reinterpret_cast<const std::uint8_t*>(source.data()),
+              checkedSourceLength(source, CBSS_MAX_CRAFT_PACK_SOURCE_BYTES,
+                                  "replace Craft Pack")),
+          "replace Craft Pack");
+  }
+
+  bool removeCraftPack(const std::string& id) {
+    std::uint8_t removed = 0u;
+    check(cbss_context_remove_craft_pack(context_, id.c_str(), &removed),
+          "remove Craft Pack");
+    return removed != 0u;
+  }
+
+  std::vector<CraftPackInfo> activeCraftPacks() const {
+    std::vector<CraftPackInfo> result;
+    const std::uint32_t count =
+        cbss_context_active_craft_pack_count(context_);
+    result.reserve(count);
+    for (std::uint32_t index = 0; index < count; ++index) {
+      CraftPackInfo info;
+      info.id = readContextString(
+          [this, index](char* buffer, std::uint32_t capacity) {
+            return cbss_context_active_craft_pack_id(
+                context_, index, buffer, capacity);
+          });
+      info.version = readContextString(
+          [this, index](char* buffer, std::uint32_t capacity) {
+            return cbss_context_active_craft_pack_version(
+                context_, index, buffer, capacity);
+          });
+      result.push_back(std::move(info));
+    }
+    return result;
+  }
+
+  std::vector<CraftDiagnostic> craftDiagnostics() const {
+    std::vector<CraftDiagnostic> result;
+    const std::uint32_t count = cbss_context_craft_diagnostic_count(context_);
+    result.reserve(count);
+    for (std::uint32_t index = 0; index < count; ++index) {
+      CbssCraftDiagnostic native = {};
+      check(cbss_context_craft_diagnostic_at(context_, index, &native),
+            "read Craft diagnostic");
+      CraftDiagnostic diagnostic;
+      diagnostic.domain = native.domain;
+      diagnostic.code = native.code;
+      diagnostic.path = readContextString(
+          [this, index](char* buffer, std::uint32_t capacity) {
+            return cbss_context_craft_diagnostic_path(
+                context_, index, buffer, capacity);
+          });
+      diagnostic.message = readContextString(
+          [this, index](char* buffer, std::uint32_t capacity) {
+            return cbss_context_craft_diagnostic_message(
+                context_, index, buffer, capacity);
+          });
+      result.push_back(std::move(diagnostic));
+    }
+    return result;
+  }
+
   void compute(float width, float height) {
     check(cbss_context_compute(context_, width, height), "compute layout");
   }
@@ -794,6 +923,27 @@ class Ui {
 
   static void requireEvents() {
     Contract::require({{CBSS_CAPABILITY_STANDARD_EVENTS, 1u}});
+  }
+
+  static std::uint32_t checkedSourceLength(
+      const std::string& source, std::uint32_t maximum,
+      const std::string& operation) {
+    if (source.size() > maximum ||
+        source.size() > std::numeric_limits<std::uint32_t>::max()) {
+      throw Error(CBSS_OUT_OF_RANGE, operation + ": source is too large");
+    }
+    return static_cast<std::uint32_t>(source.size());
+  }
+
+  template <typename Reader>
+  static std::string readContextString(Reader reader) {
+    const std::uint32_t length = reader(nullptr, 0u);
+    if (length == 0u) {
+      return std::string();
+    }
+    std::vector<char> buffer(static_cast<std::size_t>(length) + 1u, '\0');
+    reader(buffer.data(), static_cast<std::uint32_t>(buffer.size()));
+    return std::string(buffer.data(), length);
   }
 
   Node addBox(const std::string& identifier, const Style* style) {

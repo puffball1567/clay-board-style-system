@@ -1,7 +1,9 @@
 use cbss_craft::{
     keyword, px, rgb, Contract, ErrorKind, EventKind, EventOutcome, InputEvent, Style, Ui,
-    ABI_VERSION, CAPABILITIES, DRIVER_CONTRACT_VERSION, STATUS_INVALID_ARGUMENT,
-    STATUS_INVALID_HANDLE, STATUS_STYLE_ERROR,
+    ABI_VERSION, CAPABILITIES, CRAFT_DIAGNOSTIC_PACK, CRAFT_DIAGNOSTIC_STYLE_REPLACEMENT,
+    CRAFT_PACK_MISSING_CAPABILITY, CRAFT_STYLE_PARSE_UNKNOWN_PROPERTY,
+    CRAFT_STYLE_REPLACEMENT_UNDECLARED_STYLE_SLOT, DRIVER_CONTRACT_VERSION,
+    STATUS_INVALID_ARGUMENT, STATUS_INVALID_HANDLE, STATUS_STYLE_ERROR,
 };
 use std::cell::{Cell, RefCell};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -12,7 +14,10 @@ fn reference_tree_matches_the_driver_contract() {
     Contract::require_authoring().expect("authoring contract");
     assert_eq!(Contract::abi_version(), ABI_VERSION);
     assert_eq!(Contract::driver_version(), DRIVER_CONTRACT_VERSION);
-    assert_eq!(CAPABILITIES.len(), 15);
+    assert_eq!(CAPABILITIES.len(), 17);
+    assert_eq!(CRAFT_STYLE_PARSE_UNKNOWN_PROPERTY, 7);
+    assert_eq!(CRAFT_STYLE_REPLACEMENT_UNDECLARED_STYLE_SLOT, 1);
+    assert_eq!(CRAFT_PACK_MISSING_CAPABILITY, 12);
 
     let missing = Contract::require(&[cbss_craft::CapabilityRequirement {
         id: u32::MAX,
@@ -227,4 +232,103 @@ fn reference_tree_matches_the_driver_contract() {
         .close()
         .expect("subscription may outlive its Ui safely");
     assert!(!detached_observer.active());
+}
+
+#[test]
+fn craft_style_and_pack_loading_are_atomic_and_slot_scoped() {
+    const STYLE: &str = r#"{
+      "format":"cbss-craft-style",
+      "version":1,
+      "name":"rust-theme",
+      "rules":[{
+        "selector":{"component":"rust-card","slot":"root"},
+        "declarations":[{
+          "property":"width",
+          "value":{"type":"length","unit":"px","value":200}
+        }]
+      }]
+    }"#;
+    const MISSING_SLOT_STYLE: &str = r#"{
+      "format":"cbss-craft-style",
+      "version":1,
+      "name":"rust-theme",
+      "rules":[{
+        "selector":{"component":"rust-card","slot":"missing"},
+        "declarations":[{
+          "property":"opacity",
+          "value":{"type":"number","value":0.5}
+        }]
+      }]
+    }"#;
+    const PACK: &str = include_str!("../../../tests/fixtures/craft_pack/reference.json");
+
+    let mut container_style = Style::new().expect("container Style");
+    container_style
+        .set("width", px(500.0))
+        .and_then(|style| style.set("height", px(300.0)))
+        .expect("container declarations");
+    let mut owned_style = Style::new().expect("component-owned Style");
+    owned_style
+        .set("width", px(90.0))
+        .and_then(|style| style.set("height", px(30.0)))
+        .expect("component-owned declarations");
+
+    let mut ui = Ui::new().expect("Ui");
+    let mut owned = None;
+    let mut replaceable = None;
+    ui.box_with("craft-root", Some(&container_style), |ui| {
+        owned = Some(ui.box_node("owned-card", Some(&owned_style))?);
+        replaceable = Some(ui.box_node("replaceable-card", None)?);
+        Ok(())
+    })
+    .expect("Craft component tree");
+    let owned = owned.expect("owned component");
+    let replaceable = replaceable.expect("replaceable component");
+    ui.expose_style_slot(owned, owned, "rust-card", "root")
+        .expect("owned Slot");
+    ui.expose_style_slot(replaceable, replaceable, "rust-card", "root")
+        .expect("replaceable Slot");
+
+    ui.replace_craft_style(STYLE).expect("replace Craft Style");
+    assert_eq!(ui.active_craft_styles(), vec!["rust-theme"]);
+    ui.compute(500.0, 300.0).expect("layout with Craft Style");
+    assert!((ui.rect(owned).expect("owned rect").width - 90.0).abs() < 0.001);
+    assert!((ui.rect(replaceable).expect("replaceable rect").width - 200.0).abs() < 0.001);
+
+    let rejected = ui
+        .replace_craft_style(MISSING_SLOT_STYLE)
+        .expect_err("undeclared Slot must fail");
+    assert_eq!(rejected.status_code(), Some(STATUS_STYLE_ERROR));
+    assert_eq!(ui.active_craft_styles(), vec!["rust-theme"]);
+    let diagnostics = ui.craft_diagnostics().expect("Craft diagnostics");
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].domain, CRAFT_DIAGNOSTIC_STYLE_REPLACEMENT);
+    assert!(!diagnostics[0].path.is_empty());
+    assert!(!diagnostics[0].message.is_empty());
+
+    ui.replace_craft_pack(PACK).expect("replace Craft Pack");
+    assert_eq!(
+        ui.active_craft_packs(),
+        vec![cbss_craft::CraftPackInfo {
+            id: "org.example.dashboard".to_owned(),
+            version: "1.2.0".to_owned(),
+        }]
+    );
+    let incompatible_pack = PACK.replace("\"minimumAbi\": 65558", "\"minimumAbi\": 4294967295");
+    let rejected_pack = ui
+        .replace_craft_pack(&incompatible_pack)
+        .expect_err("incompatible Pack must fail");
+    assert_eq!(rejected_pack.status_code(), Some(STATUS_STYLE_ERROR));
+    assert_eq!(ui.active_craft_packs()[0].version, "1.2.0");
+    let pack_diagnostics = ui.craft_diagnostics().expect("Pack diagnostics");
+    assert_eq!(pack_diagnostics.len(), 1);
+    assert_eq!(pack_diagnostics[0].domain, CRAFT_DIAGNOSTIC_PACK);
+    assert!(ui
+        .remove_craft_pack("org.example.dashboard")
+        .expect("remove Craft Pack"));
+    assert!(ui.active_craft_packs().is_empty());
+    assert!(ui
+        .remove_craft_style("rust-theme")
+        .expect("remove Craft Style"));
+    assert!(ui.active_craft_styles().is_empty());
 }

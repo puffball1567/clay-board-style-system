@@ -26,7 +26,7 @@ extern "C" {
 #endif
 
 /* CBSS_GENERATED_DRIVER_CONTRACT_BEGIN */
-#define CBSS_ABI_VERSION 0x00010015u
+#define CBSS_ABI_VERSION 0x00010016u
 #define CBSS_DRIVER_CONTRACT_VERSION 0x00010000u
 
 typedef enum CbssCapabilityId {
@@ -44,7 +44,9 @@ typedef enum CbssCapabilityId {
   CBSS_CAPABILITY_RENDER_SURFACE = 12u,
   CBSS_CAPABILITY_BLOB = 13u,
   CBSS_CAPABILITY_FORM_DATA = 14u,
-  CBSS_CAPABILITY_STREAM = 15u
+  CBSS_CAPABILITY_STREAM = 15u,
+  CBSS_CAPABILITY_CRAFT_STYLE = 16u,
+  CBSS_CAPABILITY_CRAFT_PACK = 17u
 } CbssCapabilityId;
 
 enum {
@@ -66,6 +68,8 @@ typedef struct CbssCapabilityInfo {
 #define CBSS_MAX_FORM_DATA_TEXT_BYTES (16u * 1024u * 1024u)
 #define CBSS_MAX_STREAM_ERROR_BYTES 65536u
 #define CBSS_MAX_KEYFRAME_STEPS 16384u
+#define CBSS_MAX_CRAFT_STYLE_SOURCE_BYTES (8u * 1024u * 1024u)
+#define CBSS_MAX_CRAFT_PACK_SOURCE_BYTES (4u * 1024u * 1024u)
 
 typedef struct CbssContext CbssContext;
 typedef struct CbssStyle CbssStyle;
@@ -89,6 +93,55 @@ enum {
   CBSS_INTERNAL_ERROR = 5,
   CBSS_NOT_AVAILABLE = 6
 };
+
+typedef enum CbssCraftDiagnosticDomain {
+  CBSS_CRAFT_DIAGNOSTIC_STYLE_PARSE = 0,
+  CBSS_CRAFT_DIAGNOSTIC_STYLE_REPLACEMENT = 1,
+  CBSS_CRAFT_DIAGNOSTIC_PACK = 2
+} CbssCraftDiagnosticDomain;
+
+typedef enum CbssCraftStyleParseDiagnosticCode {
+  CBSS_CRAFT_STYLE_PARSE_INVALID_JSON = 0,
+  CBSS_CRAFT_STYLE_PARSE_INVALID_DOCUMENT = 1,
+  CBSS_CRAFT_STYLE_PARSE_UNSUPPORTED_VERSION = 2,
+  CBSS_CRAFT_STYLE_PARSE_MISSING_FIELD = 3,
+  CBSS_CRAFT_STYLE_PARSE_UNKNOWN_FIELD = 4,
+  CBSS_CRAFT_STYLE_PARSE_INVALID_TYPE = 5,
+  CBSS_CRAFT_STYLE_PARSE_INVALID_VALUE = 6,
+  CBSS_CRAFT_STYLE_PARSE_UNKNOWN_PROPERTY = 7,
+  CBSS_CRAFT_STYLE_PARSE_DUPLICATE_FIELD = 8,
+  CBSS_CRAFT_STYLE_PARSE_LIMIT_EXCEEDED = 9
+} CbssCraftStyleParseDiagnosticCode;
+
+typedef enum CbssCraftStyleReplacementDiagnosticCode {
+  CBSS_CRAFT_STYLE_REPLACEMENT_UNSUPPORTED_RULE_TARGET = 0,
+  CBSS_CRAFT_STYLE_REPLACEMENT_UNDECLARED_STYLE_SLOT = 1,
+  CBSS_CRAFT_STYLE_REPLACEMENT_INVALID_STYLE_SLOT = 2,
+  CBSS_CRAFT_STYLE_REPLACEMENT_INVALID_CRAFT_STYLE = 3
+} CbssCraftStyleReplacementDiagnosticCode;
+
+typedef enum CbssCraftPackDiagnosticCode {
+  CBSS_CRAFT_PACK_INVALID_JSON = 0,
+  CBSS_CRAFT_PACK_INVALID_DOCUMENT = 1,
+  CBSS_CRAFT_PACK_UNSUPPORTED_VERSION = 2,
+  CBSS_CRAFT_PACK_MISSING_FIELD = 3,
+  CBSS_CRAFT_PACK_UNKNOWN_FIELD = 4,
+  CBSS_CRAFT_PACK_INVALID_TYPE = 5,
+  CBSS_CRAFT_PACK_INVALID_VALUE = 6,
+  CBSS_CRAFT_PACK_DUPLICATE_FIELD = 7,
+  CBSS_CRAFT_PACK_DUPLICATE_VALUE = 8,
+  CBSS_CRAFT_PACK_LIMIT_EXCEEDED = 9,
+  CBSS_CRAFT_PACK_INCOMPATIBLE_ABI = 10,
+  CBSS_CRAFT_PACK_INCOMPATIBLE_DRIVER_CONTRACT = 11,
+  CBSS_CRAFT_PACK_MISSING_CAPABILITY = 12
+} CbssCraftPackDiagnosticCode;
+
+typedef struct CbssCraftDiagnostic {
+  uint32_t domain;
+  uint32_t code;
+  uint32_t path_bytes;
+  uint32_t message_bytes;
+} CbssCraftDiagnostic;
 
 typedef enum CbssFormDataValueKind {
   CBSS_FORM_DATA_TEXT = 0,
@@ -934,6 +987,41 @@ CBSS_API void cbss_context_destroy(CbssContext *context);
 CBSS_API CbssStatus cbss_context_reset(CbssContext *context);
 CBSS_API uint32_t cbss_context_last_error(
     CbssContext *context, char *buffer, uint32_t capacity);
+/*
+ * Craft Style and Craft Pack sources are borrowed for the call duration and
+ * copied into CBSS-owned values on success. Failed replacements leave the
+ * previous retained Style or Pack active. Diagnostics remain owned by the
+ * context until the next Craft operation or reset.
+ */
+CBSS_API uint32_t cbss_context_craft_diagnostic_count(
+    CbssContext *context);
+CBSS_API CbssStatus cbss_context_craft_diagnostic_at(
+    CbssContext *context, uint32_t index, CbssCraftDiagnostic *output);
+CBSS_API uint32_t cbss_context_craft_diagnostic_path(
+    CbssContext *context, uint32_t index, char *buffer, uint32_t capacity);
+CBSS_API uint32_t cbss_context_craft_diagnostic_message(
+    CbssContext *context, uint32_t index, char *buffer, uint32_t capacity);
+CBSS_API CbssStatus cbss_node_expose_craft_style_slot(
+    CbssContext *context, uint32_t owner, uint32_t target,
+    const char *component, const char *slot);
+CBSS_API CbssStatus cbss_context_replace_craft_style_json(
+    CbssContext *context, const uint8_t *bytes, uint32_t length);
+CBSS_API CbssStatus cbss_context_remove_craft_style(
+    CbssContext *context, const char *name, uint8_t *output_removed);
+CBSS_API uint32_t cbss_context_active_craft_style_count(
+    CbssContext *context);
+CBSS_API uint32_t cbss_context_active_craft_style_name(
+    CbssContext *context, uint32_t index, char *buffer, uint32_t capacity);
+CBSS_API CbssStatus cbss_context_replace_craft_pack_json(
+    CbssContext *context, const uint8_t *bytes, uint32_t length);
+CBSS_API CbssStatus cbss_context_remove_craft_pack(
+    CbssContext *context, const char *id, uint8_t *output_removed);
+CBSS_API uint32_t cbss_context_active_craft_pack_count(
+    CbssContext *context);
+CBSS_API uint32_t cbss_context_active_craft_pack_id(
+    CbssContext *context, uint32_t index, char *buffer, uint32_t capacity);
+CBSS_API uint32_t cbss_context_active_craft_pack_version(
+    CbssContext *context, uint32_t index, char *buffer, uint32_t capacity);
 CBSS_API uint32_t cbss_context_node_count(CbssContext *context);
 CBSS_API uint32_t cbss_node_kind(
     CbssContext *context, uint32_t node);

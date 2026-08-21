@@ -201,6 +201,130 @@ int main() {
   }
   assert(rejected_invalid_style);
 
+  const std::string craft_style = R"json({
+    "format":"cbss-craft-style",
+    "version":1,
+    "name":"cpp-theme",
+    "rules":[{
+      "selector":{"component":"cpp-card","slot":"root"},
+      "declarations":[{
+        "property":"width",
+        "value":{"type":"length","unit":"px","value":200}
+      }]
+    }]
+  })json";
+  const std::string missing_slot_style = R"json({
+    "format":"cbss-craft-style",
+    "version":1,
+    "name":"cpp-theme",
+    "rules":[{
+      "selector":{"component":"cpp-card","slot":"missing"},
+      "declarations":[{
+        "property":"opacity",
+        "value":{"type":"number","value":0.5}
+      }]
+    }]
+  })json";
+  const std::string craft_pack = R"json({
+    "format":"cbss-craft-pack",
+    "version":1,
+    "id":"org.example.cpp-reference",
+    "packVersion":"1.0.0",
+    "compatibility":{
+      "minimumAbi":65558,
+      "minimumDriverContract":65536,
+      "capabilities":[
+        {"id":16,"minimumVersion":1},
+        {"id":17,"minimumVersion":1}
+      ]
+    },
+    "components":[{"name":"cpp-card","slots":["root"]}],
+    "styles":[],
+    "assets":[]
+  })json";
+  const std::string incompatible_craft_pack = R"json({
+    "format":"cbss-craft-pack",
+    "version":1,
+    "id":"org.example.cpp-reference",
+    "packVersion":"2.0.0",
+    "compatibility":{
+      "minimumAbi":4294967295,
+      "minimumDriverContract":65536,
+      "capabilities":[
+        {"id":16,"minimumVersion":1},
+        {"id":17,"minimumVersion":1}
+      ]
+    },
+    "components":[{"name":"cpp-card","slots":["root"]}],
+    "styles":[],
+    "assets":[]
+  })json";
+
+  cbss::Style craft_container_style;
+  craft_container_style.set("width", cbss::px(500.0f))
+      .set("height", cbss::px(300.0f));
+  cbss::Style component_owned_style;
+  component_owned_style.set("width", cbss::px(90.0f))
+      .set("height", cbss::px(30.0f));
+  cbss::Ui craft_ui;
+  cbss::Node owned_component;
+  cbss::Node replaceable_component;
+  craft_ui.box("craft-root", craft_container_style, [&] {
+    owned_component = craft_ui.box("owned-card", component_owned_style);
+    replaceable_component = craft_ui.box("replaceable-card");
+  });
+  craft_ui.exposeStyleSlot(owned_component, owned_component, "cpp-card",
+                           "root");
+  craft_ui.exposeStyleSlot(replaceable_component, replaceable_component,
+                           "cpp-card", "root");
+  craft_ui.replaceCraftStyle(craft_style);
+  assert(craft_ui.activeCraftStyles() ==
+         std::vector<std::string>{"cpp-theme"});
+  craft_ui.compute(500.0f, 300.0f);
+  assert(std::fabs(craft_ui.rect(owned_component).w - 90.0f) < 0.001f);
+  assert(std::fabs(craft_ui.rect(replaceable_component).w - 200.0f) <
+         0.001f);
+
+  bool rejected_missing_slot = false;
+  try {
+    craft_ui.replaceCraftStyle(missing_slot_style);
+  } catch (const cbss::Error& error) {
+    rejected_missing_slot = error.status() == CBSS_STYLE_ERROR;
+  }
+  assert(rejected_missing_slot);
+  assert(craft_ui.activeCraftStyles() ==
+         std::vector<std::string>{"cpp-theme"});
+  const std::vector<cbss::CraftDiagnostic> craft_diagnostics =
+      craft_ui.craftDiagnostics();
+  assert(craft_diagnostics.size() == 1u);
+  assert(craft_diagnostics[0].domain ==
+         CBSS_CRAFT_DIAGNOSTIC_STYLE_REPLACEMENT);
+  assert(!craft_diagnostics[0].path.empty());
+  assert(!craft_diagnostics[0].message.empty());
+
+  craft_ui.replaceCraftPack(craft_pack);
+  const std::vector<cbss::CraftPackInfo> craft_packs =
+      craft_ui.activeCraftPacks();
+  assert(craft_packs.size() == 1u);
+  assert(craft_packs[0].id == "org.example.cpp-reference");
+  assert(craft_packs[0].version == "1.0.0");
+  bool rejected_incompatible_pack = false;
+  try {
+    craft_ui.replaceCraftPack(incompatible_craft_pack);
+  } catch (const cbss::Error& error) {
+    rejected_incompatible_pack = error.status() == CBSS_STYLE_ERROR;
+  }
+  assert(rejected_incompatible_pack);
+  assert(craft_ui.activeCraftPacks()[0].version == "1.0.0");
+  const std::vector<cbss::CraftDiagnostic> pack_diagnostics =
+      craft_ui.craftDiagnostics();
+  assert(pack_diagnostics.size() == 1u);
+  assert(pack_diagnostics[0].domain == CBSS_CRAFT_DIAGNOSTIC_PACK);
+  assert(craft_ui.removeCraftPack("org.example.cpp-reference"));
+  assert(craft_ui.activeCraftPacks().empty());
+  assert(craft_ui.removeCraftStyle("cpp-theme"));
+  assert(craft_ui.activeCraftStyles().empty());
+
   cbss::EventSubscription detached_observer;
   {
     cbss::Ui temporary_ui;
