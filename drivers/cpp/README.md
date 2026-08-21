@@ -37,6 +37,10 @@ returns a move-only `EventSubscription` that unregisters through RAII or
 explicit `close()`. Callback event strings are copied before the C callback
 returns. Exceptions are contained at the C boundary; `callbackFailed()` and
 `rethrowCallbackFailure()` let the application handle them on the C++ side.
+`Ui::removeSubtree` atomically removes a retained branch and releases the
+Driver-owned callback holders after native blur and motion-cancellation
+delivery completes. Removed subscription tokens immediately report inactive,
+and generation-checked `Node` values cannot alias later replacements.
 
 Portable presentation and package metadata use the same bounded JSON contracts
 as Nim and C. A component exposes only deliberate public targets with

@@ -235,6 +235,103 @@ fn reference_tree_matches_the_driver_contract() {
 }
 
 #[test]
+fn subtree_removal_releases_driver_owned_callbacks_and_invalidates_nodes() {
+    let mut ui = Ui::new().expect("Ui");
+    let mut removable = None;
+    let mut child = None;
+    let mut survivor = None;
+    let root = ui
+        .box_with("lifecycle-root", None, |ui| {
+            removable = Some(ui.box_with("removable", None, |ui| {
+                child = Some(ui.box_node("lifecycle-child", None)?);
+                Ok(())
+            })?);
+            survivor = Some(ui.box_node("survivor", None)?);
+            Ok(())
+        })
+        .expect("lifecycle tree");
+    let removable = removable.expect("removable subtree");
+    let child = child.expect("subtree child");
+    let survivor = survivor.expect("surviving sibling");
+
+    let handler_resource = Rc::new(1_u8);
+    let weak_handler_resource = Rc::downgrade(&handler_resource);
+    let retained_handler_resource = Rc::clone(&handler_resource);
+    ui.on(child, EventKind::CLICK, move |_event| {
+        assert_eq!(*retained_handler_resource, 1);
+        EventOutcome::HANDLED
+    })
+    .expect("subtree handler");
+    drop(handler_resource);
+
+    let subscription_resource = Rc::new(2_u8);
+    let weak_subscription_resource = Rc::downgrade(&subscription_resource);
+    let retained_subscription_resource = Rc::clone(&subscription_resource);
+    let mut subscription = ui
+        .subscribe(removable, EventKind::CHANGE, move |_event| {
+            assert_eq!(*retained_subscription_resource, 2);
+            EventOutcome::HANDLED
+        })
+        .expect("subtree subscription");
+    drop(subscription_resource);
+
+    assert!(weak_handler_resource.upgrade().is_some());
+    assert!(weak_subscription_resource.upgrade().is_some());
+    assert!(subscription.active());
+    let surviving_observer_calls = Rc::new(Cell::new(0));
+    let surviving_counter = Rc::clone(&surviving_observer_calls);
+    let mut surviving_subscription = ui
+        .subscribe(root, EventKind::CLICK, move |event| {
+            if event.target == survivor.native_id() {
+                surviving_counter.set(surviving_counter.get() + 1);
+            }
+            EventOutcome::HANDLED
+        })
+        .expect("surviving subscription");
+    ui.emit(child, &InputEvent::new(EventKind::CLICK))
+        .expect("handler before removal");
+
+    assert_eq!(ui.remove_subtree(removable).expect("remove subtree"), 2);
+    assert_eq!(ui.child_count(root).expect("remaining root children"), 1);
+    assert_eq!(ui.parent(survivor).expect("survivor parent"), Some(root));
+    assert!(!subscription.active());
+    assert!(surviving_subscription.active());
+    assert!(weak_handler_resource.upgrade().is_none());
+    assert!(weak_subscription_resource.upgrade().is_none());
+    subscription.close().expect("close removed subscription");
+    ui.emit(survivor, &InputEvent::new(EventKind::CLICK))
+        .expect("surviving event");
+    assert_eq!(surviving_observer_calls.get(), 1);
+    surviving_subscription
+        .close()
+        .expect("close surviving subscription");
+
+    let stale = ui.rect(child).expect_err("removed Node must be stale");
+    assert_eq!(stale.status_code(), Some(STATUS_INVALID_ARGUMENT));
+    let stale_subtree = ui
+        .remove_subtree(removable)
+        .expect_err("removed subtree must stay stale");
+    assert_eq!(stale_subtree.status_code(), Some(STATUS_INVALID_ARGUMENT));
+    let mut replacement = None;
+    ui.within(root, |ui| {
+        replacement = Some(ui.box_node("replacement", None)?);
+        Ok(())
+    })
+    .expect("replacement child");
+    assert_ne!(
+        replacement.expect("replacement").native_id(),
+        child.native_id()
+    );
+
+    let mut other_ui = Ui::new().expect("other Ui");
+    let foreign = other_ui.box_node("foreign", None).expect("foreign Node");
+    let rejected = ui
+        .remove_subtree(foreign)
+        .expect_err("foreign subtree must fail");
+    assert_eq!(rejected.status_code(), Some(STATUS_INVALID_HANDLE));
+}
+
+#[test]
 fn craft_style_and_pack_loading_are_atomic_and_slot_scoped() {
     const STYLE: &str = r#"{
       "format":"cbss-craft-style",
