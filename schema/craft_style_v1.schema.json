@@ -1,0 +1,267 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/puffball1567/clay-board-style-system/schema/craft_style_v1.schema.json",
+  "title": "Clay Board Style System Craft Style Exchange Format",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "version", "name", "rules"],
+  "properties": {
+    "format": {"const": "cbss-craft-style"},
+    "version": {"const": 1},
+    "name": {"type": "string", "minLength": 1},
+    "rules": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {"$ref": "#/$defs/rule"}
+    }
+  },
+  "$defs": {
+    "length": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "unit", "value"],
+          "properties": {
+            "type": {"const": "length"},
+            "unit": {
+              "enum": [
+                "px", "percent", "em", "rem", "fill", "vw", "vh",
+                "vmin", "vmax", "lh", "rlh", "ex", "ch", "rex", "rch"
+              ]
+            },
+            "value": {"type": "number"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "unit"],
+          "properties": {
+            "type": {"const": "length"},
+            "unit": {
+              "enum": [
+                "content", "min-content", "max-content", "fit-content",
+                "auto", "none"
+              ]
+            },
+            "value": {"const": 0}
+          }
+        }
+      ]
+    },
+    "colorString": {"type": "string", "minLength": 1},
+    "gradientStop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["color", "offset"],
+      "properties": {
+        "color": {"$ref": "#/$defs/colorString"},
+        "offset": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "translate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "x", "y"],
+      "properties": {
+        "type": {"const": "translate"},
+        "x": {"$ref": "#/$defs/length"},
+        "y": {"$ref": "#/$defs/length"},
+        "z": {"$ref": "#/$defs/length"}
+      }
+    },
+    "scale": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "x"],
+      "properties": {
+        "type": {"const": "scale"},
+        "x": {"type": "number"},
+        "y": {"type": "number"},
+        "z": {"type": "number"}
+      }
+    },
+    "rotate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "angle"],
+      "properties": {
+        "type": {"const": "rotate"},
+        "angle": {"type": "number"}
+      }
+    },
+    "value": {
+      "oneOf": [
+        {"$ref": "#/$defs/length"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": {
+            "type": {"const": "number"},
+            "value": {"type": "number"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": {
+            "type": {"const": "keyword"},
+            "value": {"type": "string"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": {
+            "type": {"const": "color"},
+            "value": {"$ref": "#/$defs/colorString"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "first", "second"],
+          "properties": {
+            "type": {"const": "color-pair"},
+            "first": {"$ref": "#/$defs/colorString"},
+            "second": {"$ref": "#/$defs/colorString"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": {
+            "type": {"const": "border"},
+            "width": {"$ref": "#/$defs/length"},
+            "style": {"type": "string"},
+            "color": {"$ref": "#/$defs/colorString"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "offset-x", "offset-y"],
+          "properties": {
+            "type": {"const": "shadow"},
+            "offset-x": {"$ref": "#/$defs/length"},
+            "offset-y": {"$ref": "#/$defs/length"},
+            "blur": {"$ref": "#/$defs/length"},
+            "spread": {"$ref": "#/$defs/length"},
+            "color": {"$ref": "#/$defs/colorString"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "angle", "stops"],
+          "properties": {
+            "type": {"const": "linear-gradient"},
+            "angle": {"type": "number"},
+            "space": {"enum": ["srgb", "srgb-linear", "oklab"]},
+            "stops": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 4096,
+              "items": {"$ref": "#/$defs/gradientStop"}
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "operations"],
+          "properties": {
+            "type": {"const": "transform"},
+            "operations": {
+              "type": "array",
+              "maxItems": 4096,
+              "items": {
+                "oneOf": [
+                  {"$ref": "#/$defs/translate"},
+                  {"$ref": "#/$defs/scale"},
+                  {"$ref": "#/$defs/rotate"}
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "selector": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "element": {"enum": ["box", "text", "image"]},
+        "id": {"type": "string"},
+        "code": {"type": "string"},
+        "groups": {
+          "type": "array",
+          "maxItems": 1024,
+          "items": {"type": "string"}
+        },
+        "attributes": {
+          "type": "object",
+          "maxProperties": 1024,
+          "additionalProperties": {"type": ["string", "null"]}
+        },
+        "states": {
+          "type": "array",
+          "maxItems": 1024,
+          "items": {
+            "enum": [
+              "hover", "active", "focus", "focus-visible", "disabled",
+              "checked", "selected", "open", "invalid"
+            ]
+          }
+        }
+      }
+    },
+    "declaration": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["property", "value"],
+          "properties": {
+            "property": {"type": "string", "minLength": 1},
+            "operation": {"enum": ["overwrite", "relative"]},
+            "value": {"$ref": "#/$defs/value"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["property", "operation"],
+          "properties": {
+            "property": {"type": "string", "minLength": 1},
+            "operation": {"enum": ["inherit", "initial", "unset"]}
+          }
+        }
+      ]
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selector", "declarations"],
+      "properties": {
+        "selector": {"$ref": "#/$defs/selector"},
+        "priority": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "declarations": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4096,
+          "items": {"$ref": "#/$defs/declaration"}
+        }
+      }
+    }
+  }
+}
