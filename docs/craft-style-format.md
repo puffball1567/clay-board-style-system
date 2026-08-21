@@ -40,6 +40,8 @@ declarations:
 ```json
 {
   "selector": {
+    "component": "save-button",
+    "slot": "root",
     "element": "box",
     "id": "save-panel",
     "code": "primary-action",
@@ -62,9 +64,48 @@ an exact value; `null` means that the attribute only needs to exist. Supported
 states are `hover`, `active`, `focus`, `focus-visible`, `disabled`, `checked`,
 `selected`, `open`, and `invalid`.
 
-Craft Style selectors target public component slots and stable application
-identifiers. They do not introduce descendant selectors, structural selectors,
-or implicit access to private component structure.
+`component` and `slot` are a pair: specifying either without the other is an
+error. They address a public component contract rather than a node identifier.
+The remaining selector fields can further constrain the declared Slot target.
+
+Craft Style documents can represent stable application selectors, but
+`UiRoot.replaceCraftStyle` deliberately accepts only rules that contain a
+`component` and `slot` pair. Replaceable component presentation therefore
+cannot reach undeclared private structure, descendant order, application-wide
+classes, or arbitrary nodes. A replacement also fails if no mounted component
+declares a referenced Slot.
+
+## Public Style Slots
+
+A component gives itself a stable Craft name and exposes only the nodes that an
+external Style is allowed to change:
+
+```nim
+type SaveButton = ref object of CBSSComponent
+
+proc render(self: SaveButton) =
+  ui.box(self, ownedStyle = uiStyle([
+    decl("min-width", px(96))
+  ])):
+    self.publicStyleSlot("root")
+    let label = ui.text("Save")
+    self.publicStyleSlot("label", some(label))
+
+let button = SaveButton(craftName: "save-button")
+root.mount(button)
+let loaded = root.replaceCraftStyle(readFile("save-button.craft-style.json"))
+if not loaded.applied:
+  reportDiagnostics(loaded.parseDiagnostics, loaded.replacementDiagnostics)
+```
+
+Slot registration does not assign an `id`, `class`, `group`, or `code` to the
+node. Multiple mounted instances can expose the same component/Slot contract,
+and one replacement updates all matching instances. A Slot target must be the
+component root or one of its descendants.
+
+Craft Style is resolved below component-owned Style. Component-owned
+structural, behavioral, and accessibility invariants therefore win a property
+conflict, while visual defaults placed in public Slots remain replaceable.
 
 ## Declarations
 
@@ -129,10 +170,19 @@ The public limit constants are part of the Version 1 runtime contract. Craft
 Pack loading must additionally validate capabilities, assets, and integrity
 before atomically replacing an active Style.
 
+`UiRoot.replaceCraftStyle` parses and compiles a candidate before changing the
+active Style with the same `name`. Parse errors, undeclared Slots, and invalid
+target metadata leave the previous Style active. Successful replacement keeps
+the component tree, NodeIds, state, handlers, focus, and accessibility identity,
+then invalidates only matching Slot subtrees. Newly mounted instances of an
+active component/Slot contract receive the active Style without replaying the
+application component tree.
+
 ## Reference Files
 
 - Parser and compiler: `src/clay_board_style_system/craft/style.nim`
 - Machine-readable schema: `schema/craft_style_v1.schema.json`
 - Conformance fixture: `tests/fixtures/craft_style/reference.json`
 - Positive and negative matrix: `tests/craft/test_craft_style.nim`
+- Slot replacement integration matrix: `tests/craft/test_craft_style_slots.nim`
 - Ecosystem and replacement rules: [Craft Ecosystem](craft.md)

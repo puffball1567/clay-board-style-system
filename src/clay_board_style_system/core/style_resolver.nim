@@ -32,11 +32,15 @@ type
 
   MatchedDeclaration = object
     declaration: Declaration
+    cascadeLayer: int
     priority: int
     specificity: int
     sourceOrder: int
 
 proc compareMatched(a, b: MatchedDeclaration): int =
+  result = cmp(a.cascadeLayer, b.cascadeLayer)
+  if result != 0:
+    return
   result = cmp(a.priority, b.priority)
   if result != 0:
     return
@@ -90,6 +94,7 @@ proc addMatchingDeclarations(
       for declarationIndex, declaration in rule.declarations:
         matched.add MatchedDeclaration(
           declaration: declaration,
+          cascadeLayer: rule.cascadeLayer,
           priority: rule.priority,
           specificity: rule.selector.specificity,
           sourceOrder:

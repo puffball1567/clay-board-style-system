@@ -28,6 +28,7 @@ type
 
   CBSSComponent* = ref object of RootObj
     style*: UiStyle
+    craftName*: string
     rootNode: NodeHandle
     ownerRoot {.cursor.}: UiRoot
     mountState: ComponentMountState
@@ -141,6 +142,37 @@ proc node*(self: CBSSComponent): lent NodeHandle =
   if self.isNil or not self.rootNode.valid:
     raise newException(ComponentContextError, "component does not have a mounted root node")
   self.rootNode
+
+proc publicStyleSlot*(
+    self: CBSSComponent;
+    name: string;
+    target = none(NodeHandle)
+): bool {.discardable.} =
+  if self.isNil:
+    raise newException(ComponentContextError, "component cannot be nil")
+  if self.craftName.len == 0:
+    raise newException(
+      ComponentContextError,
+      "component craftName must be set before exposing a public Style Slot"
+    )
+  if self.mountState notin {cmsRendering, cmsMounted} or self.ownerRoot.isNil or
+      not self.rootNode.valid:
+    raise newException(
+      ComponentContextError,
+      "public Style Slots can only be exposed while a component is rendering or mounted"
+    )
+  let slotTarget = if target.isSome: target.get else: self.rootNode
+  if slotTarget.root != self.ownerRoot or not slotTarget.valid:
+    raise newException(
+      ComponentContextError,
+      "public Style Slot target belongs to another UiRoot or is stale"
+    )
+  self.ownerRoot.exposePublicStyleSlot(
+    self.rootNode,
+    slotTarget,
+    self.craftName,
+    name
+  )
 
 proc invalidate*(
     self: CBSSComponent;

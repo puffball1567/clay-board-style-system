@@ -60,6 +60,13 @@ Replacing a Craft Style or Craft Pack must:
 - apply atomically, leaving the previous Craft active if parsing, capability,
   or asset validation fails.
 
+Version 0.6 implements this contract for Craft Style through
+`CBSSComponent.craftName`, `publicStyleSlot`, and
+`UiRoot.replaceCraftStyle`. Slot identity is independent of `id`, `code`,
+groups, and node order. Replacement Style is kept below component-owned Style
+in the cascade, and failed parsing or Slot validation does not mutate the active
+Style.
+
 ## Distribution And Drivers
 
 Nim modules and Nimble packages remain the reference native Craft authoring
