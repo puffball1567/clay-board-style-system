@@ -14,7 +14,7 @@ fn reference_tree_matches_the_driver_contract() {
     Contract::require_authoring().expect("authoring contract");
     assert_eq!(Contract::abi_version(), ABI_VERSION);
     assert_eq!(Contract::driver_version(), DRIVER_CONTRACT_VERSION);
-    assert_eq!(CAPABILITIES.len(), 17);
+    assert_eq!(CAPABILITIES.len(), 18);
     assert_eq!(CRAFT_STYLE_PARSE_UNKNOWN_PROPERTY, 7);
     assert_eq!(CRAFT_STYLE_REPLACEMENT_UNDECLARED_STYLE_SLOT, 1);
     assert_eq!(CRAFT_PACK_MISSING_CAPABILITY, 12);
@@ -314,7 +314,7 @@ fn craft_style_and_pack_loading_are_atomic_and_slot_scoped() {
             version: "1.2.0".to_owned(),
         }]
     );
-    let incompatible_pack = PACK.replace("\"minimumAbi\": 65558", "\"minimumAbi\": 4294967295");
+    let incompatible_pack = PACK.replace("\"minimumAbi\": 65559", "\"minimumAbi\": 4294967295");
     let rejected_pack = ui
         .replace_craft_pack(&incompatible_pack)
         .expect_err("incompatible Pack must fail");

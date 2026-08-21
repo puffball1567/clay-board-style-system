@@ -17,6 +17,10 @@ release. Before 1.0, minor releases may contain public API changes.
   source limits, and active-resource queries.
 - Added Craft Driver capabilities for Craft Style and Craft Pack loading. Both
   ARC and ORC now exercise the new APIs through shared and static C ABI builds.
+- Added C ABI subtree lifecycle capability and atomic subtree removal. Removal
+  invalidates generation-checked Node IDs after synchronously releasing owned
+  focus, pointer, event, Style, motion, scroll, Craft Slot, and Render Surface
+  state.
 
 ### Security
 
