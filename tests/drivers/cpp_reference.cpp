@@ -875,5 +875,151 @@ int main() {
   assert(copied_state.count == 6);
   assert(*store_clone_count == 1);
 
+  auto navigator = cbss::createStackNavigator<std::string>("home");
+  assert(navigator.currentDestination().value() == "home");
+  assert(!navigator.canGoBack());
+  assert(!navigator.canGoForward());
+  assert(!navigator.back());
+  assert(navigator.snapshot().revision == 0u);
+
+  std::vector<cbss::NavigationChangeKind> navigation_kinds;
+  std::vector<std::string> navigation_destinations;
+  cbss::NavigationSubscription navigation_watch = navigator.subscribe(
+      [&](const cbss::NavigationChange<std::string>& change) {
+        navigation_kinds.push_back(change.kind);
+        navigation_destinations.push_back(change.current.value().destination);
+        assert(change.dirtyDomains == cbss::navigationScreenDirtyDomains);
+      });
+  assert(navigation_watch.active());
+  assert(navigator.listenerCount() == 1u);
+
+  assert(navigator.push("projects"));
+  const auto projects_entry = navigator.currentEntry().value();
+  assert(projects_entry.id == 2u);
+  assert(navigator.push("settings"));
+  assert(navigator.back());
+  assert(navigator.currentDestination().value() == "projects");
+  assert(navigator.canGoForward());
+  assert(navigator.replace("project-detail"));
+  const auto replaced_entry = navigator.currentEntry().value();
+  assert(replaced_entry.id == 4u);
+  assert(replaced_entry.id != projects_entry.id);
+  assert(navigator.forward());
+  assert(navigator.currentDestination().value() == "settings");
+  assert(!navigator.forward());
+  assert(navigator.back());
+  assert(navigator.push("activity"));
+  assert(!navigator.canGoForward());
+  assert(!navigator.forward());
+  const auto branched_snapshot = navigator.snapshot();
+  assert(branched_snapshot.entries.size() == 3u);
+  assert(branched_snapshot.entries[0].destination == "home");
+  assert(branched_snapshot.entries[1].destination == "project-detail");
+  assert(branched_snapshot.entries[2].destination == "activity");
+  assert(branched_snapshot.revision == 7u);
+  assert(navigation_kinds.size() == 7u);
+  assert(navigation_destinations.back() == "activity");
+
+  auto isolated_snapshot = navigator.snapshot();
+  isolated_snapshot.entries[0].destination = "mutated-copy";
+  isolated_snapshot.entries.clear();
+  assert(navigator.snapshot().entries[0].destination == "home");
+
+  auto mutation_navigator = cbss::createStackNavigator<int>(0);
+  int removed_navigation_calls = 0;
+  int late_navigation_calls = 0;
+  cbss::NavigationSubscription removed_navigation;
+  cbss::NavigationSubscription late_navigation;
+  cbss::NavigationSubscription mutating_navigation =
+      mutation_navigator.subscribe([&](const cbss::NavigationChange<int>&) {
+        removed_navigation.close();
+        if (!late_navigation.active()) {
+          late_navigation = mutation_navigator.subscribe(
+              [&](const cbss::NavigationChange<int>&) {
+                ++late_navigation_calls;
+              });
+        }
+      });
+  removed_navigation = mutation_navigator.subscribe(
+      [&](const cbss::NavigationChange<int>&) {
+        ++removed_navigation_calls;
+      });
+  mutation_navigator.push(1);
+  assert(removed_navigation_calls == 1);
+  assert(late_navigation_calls == 0);
+  mutation_navigator.push(2);
+  assert(removed_navigation_calls == 1);
+  assert(late_navigation_calls == 1);
+
+  int later_navigation_calls = 0;
+  cbss::NavigationSubscription failing_navigation =
+      mutation_navigator.subscribe([](const cbss::NavigationChange<int>&) {
+        throw std::runtime_error("navigation listener failed");
+      });
+  cbss::NavigationSubscription later_navigation =
+      mutation_navigator.subscribe([&](const cbss::NavigationChange<int>&) {
+        ++later_navigation_calls;
+      });
+  bool navigation_failure_seen = false;
+  try {
+    mutation_navigator.push(3);
+  } catch (const std::runtime_error&) {
+    navigation_failure_seen = true;
+  }
+  assert(navigation_failure_seen);
+  assert(later_navigation_calls == 1);
+  assert(mutation_navigator.currentDestination().value() == 3);
+  failing_navigation.close();
+  mutation_navigator.push(4);
+  assert(later_navigation_calls == 2);
+
+  const auto custom_state = std::make_shared<cbss::NavigationSnapshot<int>>();
+  custom_state->entries.push_back({41u, 10});
+  custom_state->currentIndex = 0;
+  cbss::NavigationDriver<int> custom_driver;
+  custom_driver.snapshot = [custom_state]() { return *custom_state; };
+  custom_driver.push = [custom_state](const int& destination) {
+    const auto previous = custom_state->currentEntry();
+    custom_state->entries.push_back({42u, destination});
+    custom_state->currentIndex = 1;
+    ++custom_state->revision;
+    const auto snapshot = *custom_state;
+    return cbss::NavigationOptional<cbss::NavigationChange<int>>(
+        {cbss::NavigationChangeKind::push, previous,
+         snapshot.currentEntry(), snapshot,
+         cbss::navigationScreenDirtyDomains});
+  };
+  custom_driver.replace = [](const int&) {
+    return cbss::NavigationOptional<cbss::NavigationChange<int>>();
+  };
+  custom_driver.back = [] {
+    return cbss::NavigationOptional<cbss::NavigationChange<int>>();
+  };
+  custom_driver.forward = [] {
+    return cbss::NavigationOptional<cbss::NavigationChange<int>>();
+  };
+  cbss::Navigator<int> custom_navigator(custom_driver);
+  assert(custom_navigator.push(20));
+  assert(custom_navigator.currentDestination().value() == 20);
+  assert(!custom_navigator.replace(30));
+
+  bool invalid_driver_rejected = false;
+  try {
+    cbss::Navigator<int> invalid_navigator{cbss::NavigationDriver<int>()};
+  } catch (const std::invalid_argument&) {
+    invalid_driver_rejected = true;
+  }
+  assert(invalid_driver_rejected);
+
+  cbss::NavigationSubscription expired_navigation;
+  {
+    auto temporary_navigator = cbss::createStackNavigator<int>(0);
+    expired_navigation = temporary_navigator.subscribe(
+        [](const cbss::NavigationChange<int>&) {});
+    assert(expired_navigation.active());
+  }
+  assert(!expired_navigation.active());
+  assert(!expired_navigation.close());
+
   return 0;
 }

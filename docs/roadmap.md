@@ -1790,7 +1790,12 @@ provide typed retained Stores with reducer dispatch, nested committed
 transactions, selected equality, deterministic subscriptions, queued
 reentrancy, and failure recovery. Component-owned selected watches and weak
 retained-mutation handles now connect changed projections to existing nodes and
-detach at component teardown. Navigation, validation, Command, Cue, and the
+detach at component teardown. Typed navigation is now implemented in both
+reference Drivers: application-defined destinations, stable stack-entry
+identities, push/replace/back/forward history, branch truncation, revisions,
+dirty-domain metadata, pluggable navigation drivers, deterministic listeners,
+failure recovery, and RAII/`Drop` teardown match the canonical Nim contract.
+Retained screen hosting, Link activation, validation, Command, Cue, and the
 remaining cross-Driver application fixtures remain Version 0.6 work.
 
 This scope does not require one source syntax across languages, runtime loading
