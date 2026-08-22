@@ -1788,9 +1788,10 @@ fixtures verify stable Node identity and handlers across updates, rollback on
 C++ exceptions and Rust `Err`/panic, and complete unmount. Both Drivers now
 provide typed retained Stores with reducer dispatch, nested committed
 transactions, selected equality, deterministic subscriptions, queued
-reentrancy, and failure recovery. Component-owned selected watches,
-navigation, validation, Command, Cue, and the remaining cross-Driver
-application fixtures remain Version 0.6 work.
+reentrancy, and failure recovery. Component-owned selected watches and weak
+retained-mutation handles now connect changed projections to existing nodes and
+detach at component teardown. Navigation, validation, Command, Cue, and the
+remaining cross-Driver application fixtures remain Version 0.6 work.
 
 This scope does not require one source syntax across languages, runtime loading
 of arbitrary foreign binaries, or pixel identity across different font and

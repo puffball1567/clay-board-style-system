@@ -611,6 +611,120 @@ int main() {
   assert(selector_evaluations == 4);
   assert(selected_counts == (std::vector<int>{1, 6}));
 
+  auto component_store = cbss::createStore<StoreModel, StoreAction>(
+      StoreModel(), reduceStore);
+  auto component_count = component_store.select<int>(
+      [](const StoreModel& state) { return state.count; });
+  cbss::Ui component_watch_ui;
+  cbss::Node watched_label;
+  cbss::Node component_marker;
+  cbss::CraftComponent watched_component = component_watch_ui.component(
+      "watched-counter", "watched-counter-instance",
+      [&](cbss::ComponentScope& component) {
+        watched_label = component.text("pending", "count-label");
+        component_marker = component.box("count-marker");
+      });
+  const cbss::UiHandle retained_ui = component_watch_ui.handle();
+  cbss::ComponentWatch component_watch = watched_component.watch(
+      component_count, [retained_ui, watched_label, component_marker](
+                           const int& value) {
+        retained_ui.setText(watched_label, std::to_string(value));
+        retained_ui.setState(component_marker, cbss::NodeState::checked,
+                            value % 2 != 0);
+      });
+  assert(component_watch.active());
+  assert(watched_component.watchCount() == 1u);
+  assert(component_count.subscriberCount() == 1u);
+  assert(component_watch_ui.textValue(watched_label) == "0");
+
+  component_store.dispatch({StoreActionKind::rename, 0, "unchanged"});
+  assert(component_watch_ui.textValue(watched_label) == "0");
+  component_store.dispatch({StoreActionKind::increment, 3, ""});
+  assert(component_watch_ui.textValue(watched_label) == "3");
+  assert(component_watch.close());
+  assert(!component_watch.close());
+  assert(!component_watch.active());
+  assert(watched_component.watchCount() == 0u);
+  assert(component_count.subscriberCount() == 0u);
+
+  bool initial_watch_failure_seen = false;
+  try {
+    watched_component.watch(component_count, [](const int&) {
+      throw std::runtime_error("initial watch failed");
+    });
+  } catch (const std::runtime_error&) {
+    initial_watch_failure_seen = true;
+  }
+  assert(initial_watch_failure_seen);
+  assert(watched_component.watchCount() == 0u);
+  assert(component_count.subscriberCount() == 0u);
+
+  bool rejected_foreign_retained_node = false;
+  try {
+    retained_ui.setText(other_root, "foreign");
+  } catch (const cbss::Error& error) {
+    rejected_foreign_retained_node = error.status() == CBSS_INVALID_HANDLE;
+  }
+  assert(rejected_foreign_retained_node);
+
+  cbss::ComponentWatch unmount_watch = watched_component.watch(
+      component_count,
+      [retained_ui, watched_label](const int& value) {
+        retained_ui.setText(watched_label, std::to_string(value));
+      },
+      false);
+  assert(unmount_watch.active());
+  assert(component_watch_ui.unmount(watched_component) == 3u);
+  assert(!unmount_watch.active());
+  assert(component_count.subscriberCount() == 0u);
+  bool rejected_inactive_watch = false;
+  try {
+    watched_component.watch(component_count, [](const int&) {});
+  } catch (const cbss::Error& error) {
+    rejected_inactive_watch = error.status() == CBSS_INVALID_HANDLE;
+  }
+  assert(rejected_inactive_watch);
+
+  cbss::UiHandle expired_ui;
+  cbss::Node expired_node;
+  {
+    cbss::Ui temporary_watch_ui;
+    expired_ui = temporary_watch_ui.handle();
+    temporary_watch_ui.box("temporary-root", [&] {
+      expired_node = temporary_watch_ui.text("active", "temporary-label");
+    });
+    expired_ui.setText(expired_node, "updated");
+    assert(expired_ui.active());
+  }
+  assert(!expired_ui.active());
+  bool rejected_expired_ui = false;
+  try {
+    expired_ui.setText(expired_node, "late");
+  } catch (const cbss::Error& error) {
+    rejected_expired_ui = error.status() == CBSS_INVALID_HANDLE;
+  }
+  assert(rejected_expired_ui);
+
+  {
+    auto dropped_component_store = cbss::createStore<StoreModel, StoreAction>(
+        StoreModel(), reduceStore);
+    auto dropped_component_count = dropped_component_store.select<int>(
+        [](const StoreModel& state) { return state.count; });
+    cbss::Ui dropped_component_ui;
+    {
+      cbss::CraftComponent dropped_component = dropped_component_ui.component(
+          "dropped-counter", "dropped-counter-instance",
+          [](cbss::ComponentScope& component) {
+            component.text("ready", "dropped-label");
+          });
+      cbss::ComponentWatch dropped_watch = dropped_component.watch(
+          dropped_component_count, [](const int&) {}, false);
+      assert(dropped_watch.active());
+      assert(dropped_component_count.subscriberCount() == 1u);
+    }
+    assert(dropped_component_count.subscriberCount() == 0u);
+  }
+
   bool queued_reentrant_action = false;
   std::vector<std::uint64_t> revisions;
   cbss::StoreSubscription commit_watch = store.subscribe(

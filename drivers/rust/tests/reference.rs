@@ -677,6 +677,161 @@ fn retained_store_transactions_selectors_and_failures_are_bounded() {
 }
 
 #[test]
+fn component_owned_selector_watch_updates_retained_nodes_and_detaches() {
+    let store = Store::new(
+        StoreModel {
+            count: 0,
+            name: "ready".to_owned(),
+        },
+        reduce_store,
+    );
+    let count = store.select(|state| state.count);
+    let mut ui = Ui::new().expect("Ui");
+    let mut label = None;
+    let mut marker = None;
+    let mut component = ui
+        .component_with(
+            "watched-counter",
+            "watched-counter-instance",
+            None,
+            |component| {
+                label = Some(component.text("pending", "count-label", None)?);
+                marker = Some(component.box_node("count-marker", None)?);
+                Ok(())
+            },
+        )
+        .expect("watched component");
+    let label = label.expect("label");
+    let marker = marker.expect("marker");
+    let retained_ui = ui.handle();
+    let update_ui = retained_ui.clone();
+    let watch = component
+        .watch(
+            &count,
+            move |value| {
+                update_ui
+                    .set_text(label, &value.to_string())
+                    .expect("update watched Text");
+                update_ui
+                    .set_state(marker, NodeState::Checked, value % 2 != 0)
+                    .expect("update watched state");
+            },
+            true,
+        )
+        .expect("component watch");
+
+    assert!(watch.active());
+    assert_eq!(component.watch_count(), 1);
+    assert_eq!(count.subscriber_count(), 1);
+    assert_eq!(ui.text_value(label).expect("initial watched Text"), "0");
+
+    store.dispatch(StoreAction::Rename("unchanged".to_owned()));
+    assert_eq!(ui.text_value(label).expect("unchanged watched Text"), "0");
+    store.dispatch(StoreAction::Increment(3));
+    assert_eq!(ui.text_value(label).expect("updated watched Text"), "3");
+    assert!(watch.close());
+    assert!(!watch.close());
+    assert!(!watch.active());
+    assert_eq!(component.watch_count(), 0);
+    assert_eq!(count.subscriber_count(), 0);
+
+    let initial_failure = catch_unwind(AssertUnwindSafe(|| {
+        let _ = component.watch(&count, |_| panic!("initial watch failed"), true);
+    }));
+    assert!(initial_failure.is_err());
+    assert_eq!(component.watch_count(), 0);
+    assert_eq!(count.subscriber_count(), 0);
+
+    let mut foreign_ui = Ui::new().expect("foreign Ui");
+    let foreign_node = foreign_ui
+        .box_node("foreign-node", None)
+        .expect("foreign Node");
+    let foreign = retained_ui
+        .set_text(foreign_node, "rejected")
+        .expect_err("foreign retained Node must fail");
+    assert_eq!(foreign.status_code(), Some(STATUS_INVALID_HANDLE));
+
+    let unmount_ui = retained_ui.clone();
+    let unmount_watch = component
+        .watch(
+            &count,
+            move |value| {
+                unmount_ui
+                    .set_text(label, &value.to_string())
+                    .expect("update before unmount");
+            },
+            false,
+        )
+        .expect("unmount watch");
+    assert!(unmount_watch.active());
+    assert_eq!(ui.unmount(&mut component).expect("unmount"), 3);
+    assert!(!unmount_watch.active());
+    assert_eq!(count.subscriber_count(), 0);
+    let inactive = component
+        .watch(&count, |_| {}, true)
+        .expect_err("inactive component watch must fail");
+    assert_eq!(inactive.status_code(), Some(STATUS_INVALID_HANDLE));
+
+    let expired_handle;
+    let expired_node;
+    {
+        let mut temporary_ui = Ui::new().expect("temporary Ui");
+        expired_handle = temporary_ui.handle();
+        let mut temporary_label = None;
+        temporary_ui
+            .box_with("temporary-root", None, |ui| {
+                temporary_label = Some(ui.text("active", "temporary-label", None)?);
+                Ok(())
+            })
+            .expect("temporary tree");
+        expired_node = temporary_label.expect("temporary Text");
+        expired_handle
+            .set_text(expired_node, "updated")
+            .expect("active UiHandle");
+        assert!(expired_handle.active());
+    }
+    assert!(!expired_handle.active());
+    let expired = expired_handle
+        .set_text(expired_node, "late")
+        .expect_err("expired UiHandle must fail");
+    assert_eq!(expired.status_code(), Some(STATUS_INVALID_HANDLE));
+}
+
+#[test]
+fn component_owned_selector_watch_detaches_when_component_is_dropped() {
+    let store = Store::new(
+        StoreModel {
+            count: 0,
+            name: "ready".to_owned(),
+        },
+        reduce_store,
+    );
+    let count = store.select(|state| state.count);
+    let mut ui = Ui::new().expect("Ui");
+
+    {
+        let mut component = ui
+            .component_with(
+                "dropped-counter",
+                "dropped-counter-instance",
+                None,
+                |component| {
+                    component.text("ready", "dropped-label", None)?;
+                    Ok(())
+                },
+            )
+            .expect("component");
+        let watch = component
+            .watch(&count, |_| {}, false)
+            .expect("component watch");
+        assert!(watch.active());
+        assert_eq!(count.subscriber_count(), 1);
+    }
+
+    assert_eq!(count.subscriber_count(), 0);
+}
+
+#[test]
 fn retained_store_custom_selector_equality_suppresses_equivalent_values() {
     let store = Store::new(
         StoreModel {

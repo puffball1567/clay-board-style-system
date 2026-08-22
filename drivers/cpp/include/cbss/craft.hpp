@@ -269,10 +269,50 @@ class Node {
   const CbssContext* owner_;
   std::uint32_t value_;
   friend class Ui;
+  friend class UiHandle;
 };
 
 class Ui;
 class ComponentScope;
+
+namespace detail {
+
+class ComponentWatchState {
+ public:
+  explicit ComponentWatchState(StoreSubscription subscription)
+      : subscription_(std::move(subscription)) {}
+
+  bool active() const noexcept { return subscription_.active(); }
+  bool close() noexcept { return subscription_.close(); }
+
+ private:
+  StoreSubscription subscription_;
+};
+
+}  // namespace detail
+
+class ComponentWatch {
+ public:
+  ComponentWatch() noexcept = default;
+
+  bool active() const noexcept {
+    const std::shared_ptr<detail::ComponentWatchState> state = state_.lock();
+    return state && state->active();
+  }
+
+  bool close() noexcept {
+    const std::shared_ptr<detail::ComponentWatchState> state = state_.lock();
+    return state && state->close();
+  }
+
+ private:
+  explicit ComponentWatch(
+      const std::shared_ptr<detail::ComponentWatchState>& state) noexcept
+      : state_(state) {}
+
+  std::weak_ptr<detail::ComponentWatchState> state_;
+  friend class CraftComponent;
+};
 
 class CraftComponent {
  public:
@@ -284,6 +324,7 @@ class CraftComponent {
   CraftComponent(CraftComponent&& other) noexcept
       : root_(other.root_),
         craft_name_(std::move(other.craft_name_)),
+        watches_(std::move(other.watches_)),
         active_(other.active_) {
     other.root_ = Node();
     other.active_ = false;
@@ -293,6 +334,7 @@ class CraftComponent {
     if (this != &other) {
       root_ = other.root_;
       craft_name_ = std::move(other.craft_name_);
+      watches_ = std::move(other.watches_);
       active_ = other.active_;
       other.root_ = Node();
       other.active_ = false;
@@ -312,12 +354,47 @@ class CraftComponent {
 
   const std::string& craftName() const noexcept { return craft_name_; }
 
+  std::size_t watchCount() const noexcept {
+    std::size_t result = 0u;
+    for (const auto& watch : watches_) {
+      if (watch && watch->active()) {
+        ++result;
+      }
+    }
+    return result;
+  }
+
+  template <typename Value, typename Listener>
+  ComponentWatch watch(Selector<Value>& selector, Listener&& listener,
+                       bool immediate = true) {
+    if (!active_) {
+      throw Error(CBSS_INVALID_HANDLE,
+                  "watch Selector: component is not mounted");
+    }
+    const std::function<void(const Value&)> callback =
+        std::forward<Listener>(listener);
+    if (!callback) {
+      throw std::invalid_argument("Component watch listener cannot be empty");
+    }
+    if (immediate) {
+      const Value current = selector.value();
+      callback(current);
+    }
+    StoreSubscription subscription = selector.subscribe(callback);
+    const std::shared_ptr<detail::ComponentWatchState> state =
+        std::make_shared<detail::ComponentWatchState>(
+            std::move(subscription));
+    watches_.push_back(state);
+    return ComponentWatch(state);
+  }
+
  private:
   CraftComponent(Node root, std::string craft_name)
       : root_(root), craft_name_(std::move(craft_name)), active_(true) {}
 
   Node root_;
   std::string craft_name_;
+  std::vector<std::shared_ptr<detail::ComponentWatchState>> watches_;
   bool active_;
   friend class Ui;
   friend class ComponentScope;
@@ -643,6 +720,94 @@ struct EventDriverState {
 
 }  // namespace detail
 
+class UiHandle {
+ public:
+  UiHandle() noexcept = default;
+
+  bool active() const noexcept {
+    const std::shared_ptr<detail::EventDriverState> state = state_.lock();
+    return state && state->context != nullptr;
+  }
+
+  void setText(Node node, const std::string& value) const {
+    CbssContext* context = requireNode(node, "set Text value");
+    check(context, cbss_node_set_text(context, node.value_, value.c_str()),
+          "set Text value");
+  }
+
+  void setImage(Node node, const std::string& source, float width,
+                float height) const {
+    CbssContext* context = requireNode(node, "set Image value");
+    check(context,
+          cbss_node_set_image(context, node.value_, source.c_str(), width,
+                              height),
+          "set Image value");
+  }
+
+  void addGroup(Node node, const std::string& group) const {
+    CbssContext* context = requireNode(node, "add group");
+    check(context, cbss_node_add_group(context, node.value_, group.c_str()),
+          "add group");
+  }
+
+  void setAttribute(Node node, const std::string& name,
+                    const std::string& value) const {
+    CbssContext* context = requireNode(node, "set attribute");
+    check(context,
+          cbss_node_set_attribute(context, node.value_, name.c_str(),
+                                  value.c_str()),
+          "set attribute");
+  }
+
+  void setState(Node node, NodeState state, bool enabled) const {
+    CbssContext* context = requireNode(node, "set retained state");
+    check(context,
+          cbss_node_set_state(context, node.value_,
+                              static_cast<std::uint32_t>(state),
+                              enabled ? 1u : 0u),
+          "set retained state");
+  }
+
+ private:
+  explicit UiHandle(
+      const std::shared_ptr<detail::EventDriverState>& state) noexcept
+      : state_(state) {}
+
+  CbssContext* requireNode(Node node, const std::string& operation) const {
+    const std::shared_ptr<detail::EventDriverState> state = state_.lock();
+    if (!state || state->context == nullptr) {
+      throw Error(CBSS_INVALID_HANDLE, operation + ": Ui is not active");
+    }
+    if (node.owner_ != state->context) {
+      throw Error(CBSS_INVALID_HANDLE,
+                  operation + ": Node belongs to another Ui");
+    }
+    return state->context;
+  }
+
+  static std::string contextError(CbssContext* context) {
+    const std::uint32_t length =
+        cbss_context_last_error(context, nullptr, 0u);
+    if (length == 0u) {
+      return "no diagnostic was provided";
+    }
+    std::vector<char> buffer(static_cast<std::size_t>(length) + 1u, '\0');
+    cbss_context_last_error(context, buffer.data(),
+                            static_cast<std::uint32_t>(buffer.size()));
+    return std::string(buffer.data(), length);
+  }
+
+  static void check(CbssContext* context, CbssStatus status,
+                    const std::string& operation) {
+    if (status != CBSS_OK) {
+      throw Error(status, operation + ": " + contextError(context));
+    }
+  }
+
+  std::weak_ptr<detail::EventDriverState> state_;
+  friend class Ui;
+};
+
 class EventSubscription {
  public:
   EventSubscription() noexcept : id_(0u), active_(false) {}
@@ -730,6 +895,8 @@ class Ui {
   Ui(Ui&&) = delete;
   Ui& operator=(Ui&&) = delete;
 
+  UiHandle handle() const noexcept { return UiHandle(events_); }
+
   Node box(const std::string& identifier = std::string()) {
     return addBox(identifier, nullptr);
   }
@@ -809,6 +976,7 @@ class Ui {
     }
     requireNode(component.root_, "unmount Craft Component");
     const std::uint32_t removed = removeSubtree(component.root_);
+    component.watches_.clear();
     component.root_ = Node();
     component.active_ = false;
     return removed;

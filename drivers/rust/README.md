@@ -45,9 +45,9 @@ let mut status = ui.component_with("status-card", "status", None, |component| {
     Ok(())
 })?;
 
-ui.set_text(label.expect("label"), "Ready")?;
+let label = label.expect("label");
+ui.set_text(label, "Ready")?;
 ui.set_state(status.root()?, cbss_craft::NodeState::Checked, true)?;
-ui.unmount(&mut status)?;
 ```
 
 Retained setters update existing nodes without rebuilding their component or
@@ -68,17 +68,27 @@ let store = cbss_craft::Store::new(Model { count: 0 }, |state, action| {
     }
 });
 let count = store.select(|state| state.count);
-let _watch = count.subscribe(|value| println!("Count: {value}"));
+let retained_ui = ui.handle();
+let _watch = status.watch(&count, move |value| {
+    retained_ui
+        .set_text(label, &value.to_string())
+        .expect("update retained Text");
+}, true)?;
 
 store.transaction(|| {
     store.dispatch(Action::Add(2));
     store.dispatch(Action::Add(3));
 });
+ui.unmount(&mut status)?;
 ```
 
-`StoreSubscription` detaches on `Drop` or explicit `close`. Reentrant dispatch
-is queued for a later commit. Selector equality suppresses unaffected updates,
-and `dispatch_silent` can be paired with explicit `Selector::refresh` when
+`CraftComponent::watch` applies the current selection by default and owns the
+subscription until explicit `ComponentWatch::close`, component drop, or
+successful `Ui::unmount`. The captured `UiHandle` is weak and UI-thread
+confined; it rejects foreign Nodes and a destroyed `Ui` instead of extending the
+engine lifetime. `StoreSubscription` detaches on `Drop` or explicit `close`.
+Reentrant dispatch is queued. Selector equality suppresses unaffected updates, and
+`dispatch_silent` can be paired with explicit `Selector::refresh` when
 publication is intentionally deferred. Commit notifications carry a revision
 rather than cloning the complete State; `Store::with_state` provides a borrowed
 read path when an owned snapshot is unnecessary. `Rc` ownership deliberately
