@@ -1771,7 +1771,7 @@ machine-readable schema, and shared positive/negative fixtures. Public Style
 Slots and atomic retained replacement are implemented for Nim components:
 component-owned invariants retain precedence, failed candidates leave the old
 Style active, mounted identity and interaction state survive replacement, and
-only matching Slot subtrees are invalidated. ABI `0x00010017` now exposes the
+only matching Slot subtrees are invalidated. ABI `0x00010018` now exposes the
 same Slot, Craft Style, Craft Pack, active-item, and structured-diagnostic
 contracts. The C++14 and Rust Drivers load and replace both formats through
 high-level APIs, and their reference suites verify Slot scoping,
@@ -1795,8 +1795,15 @@ reference Drivers: application-defined destinations, stable stack-entry
 identities, push/replace/back/forward history, branch truncation, revisions,
 dirty-domain metadata, pluggable navigation drivers, deterministic listeners,
 failure recovery, and RAII/`Drop` teardown match the canonical Nim contract.
-Retained screen hosting, Link activation, validation, Command, Cue, and the
-remaining cross-Driver application fixtures remain Version 0.6 work.
+Retained screen hosting and semantic typed Link activation now also match the
+canonical contract in both Drivers: disjoint screen roots remain mounted,
+inactive roots are inert and `display: none`, stable history entries restore
+their own focus, and click/Enter activation preserves user-handler ordering,
+disabled behavior, prevent-default, and accessible link semantics. ABI
+`0x00010018` adds inherited inert-state and subtree-first-focusable primitives
+so Drivers do not duplicate engine focus ordering. Validation, Command, Cue,
+screen-transition hooks, and the remaining cross-Driver application fixtures
+remain Version 0.6 work.
 
 This scope does not require one source syntax across languages, runtime loading
 of arbitrary foreign binaries, or pixel identity across different font and

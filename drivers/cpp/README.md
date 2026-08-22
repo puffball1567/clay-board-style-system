@@ -109,6 +109,33 @@ changing application destination types. `NavigationSubscription` is move-only
 and detaches through RAII or `close()`; listener changes made during a
 notification take effect on the next navigation change.
 
+`NavigationScreenHost` keeps each registered screen subtree mounted and changes
+only active/inert and `display` state. Focus is remembered by stable history
+entry, so back and forward restore the control used in that specific entry.
+`Link<Destination>` supplies the semantic click/Enter default while leaving
+application behavior replaceable through `onClick`:
+
+```cpp
+cbss::NavigationScreenHost<Screen> host(ui, navigator);
+host.registerScreen(Screen::dashboard, dashboardRoot, dashboardSearch);
+host.registerScreen(Screen::projects, projectsRoot, projectsFilter);
+host.sync();
+
+cbss::Link<Screen> projectsLink;
+ui.within(app, [&] {
+  projectsLink = cbss::Link<Screen>::mount(
+      ui, navigator, Screen::projects, "Projects");
+});
+projectsLink.onClick([](const cbss::Event&) {
+  return cbss::EventOutcome::handled();
+});
+```
+
+Inactive screens reject direct events and focus, and are excluded from layout,
+paint, hit testing, and accessibility without rebuilding their Nodes. A public
+Link click handler runs before navigation and may set prevent-default to cancel
+that intrinsic action.
+
 The Driver negotiates the engine ABI, Driver contract, and baseline authoring
 capabilities before it constructs a context. `Ui` and `Style` use deterministic
 RAII lifetime. Nested callbacks maintain parentage with an exception-safe

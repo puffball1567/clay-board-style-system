@@ -1,11 +1,12 @@
 use cbss_craft::{
-    keyword, px, rgb, Contract, ErrorKind, EventKind, EventOutcome, InputEvent, NavigationChange,
-    NavigationChangeKind, NavigationDriver, NavigationEntry, NavigationSnapshot, Navigator,
-    NodeState, Store, Style, Ui, ABI_VERSION, CAPABILITIES, CRAFT_DIAGNOSTIC_PACK,
-    CRAFT_DIAGNOSTIC_STYLE_REPLACEMENT, CRAFT_PACK_MISSING_CAPABILITY,
-    CRAFT_STYLE_PARSE_UNKNOWN_PROPERTY, CRAFT_STYLE_REPLACEMENT_UNDECLARED_STYLE_SLOT,
-    DRIVER_CONTRACT_VERSION, NAVIGATION_SCREEN_DIRTY_DOMAINS, STATUS_INVALID_ARGUMENT,
-    STATUS_INVALID_HANDLE, STATUS_STYLE_ERROR,
+    keyword, px, rgb, Contract, ErrorKind, EventKind, EventOutcome, InputEvent, Link,
+    NavigationChange, NavigationChangeKind, NavigationDriver, NavigationEntry,
+    NavigationScreenHost, NavigationSnapshot, Navigator, NodeState, Store, Style, Ui, ABI_VERSION,
+    CAPABILITIES, CRAFT_DIAGNOSTIC_PACK, CRAFT_DIAGNOSTIC_STYLE_REPLACEMENT,
+    CRAFT_PACK_MISSING_CAPABILITY, CRAFT_STYLE_PARSE_UNKNOWN_PROPERTY,
+    CRAFT_STYLE_REPLACEMENT_UNDECLARED_STYLE_SLOT, DRIVER_CONTRACT_VERSION,
+    NAVIGATION_SCREEN_DIRTY_DOMAINS, STATUS_INVALID_ARGUMENT, STATUS_INVALID_HANDLE,
+    STATUS_STYLE_ERROR,
 };
 use std::cell::{Cell, RefCell};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -234,6 +235,230 @@ fn reference_tree_matches_the_driver_contract() {
         .close()
         .expect("subscription may outlive its Ui safely");
     assert!(!detached_observer.active());
+}
+
+#[test]
+fn retained_navigation_and_links_match_the_nim_contract() {
+    let mut ui = Ui::new().expect("navigation Ui");
+    let app = ui
+        .box_node("navigation-app", None)
+        .expect("navigation root");
+    let mut home_root = None;
+    let mut home_first = None;
+    let mut home_last = None;
+    ui.within(app, |scope| {
+        home_root = Some(scope.box_with("home-screen", None, |screen| {
+            home_first = Some(screen.box_node("home-first", None)?);
+            home_last = Some(screen.box_node("home-last", None)?);
+            Ok(())
+        })?);
+        Ok(())
+    })
+    .expect("home screen");
+    let home_root = home_root.expect("home root");
+    let home_first = home_first.expect("home first");
+    let home_last = home_last.expect("home last");
+    ui.set_focusable(home_first, true, 0)
+        .expect("focusable home first");
+    ui.set_focusable(home_last, true, 0)
+        .expect("focusable home last");
+
+    let mut settings_root = None;
+    let mut settings_first = None;
+    let mut settings_last = None;
+    ui.within(app, |scope| {
+        settings_root = Some(scope.box_with("settings-screen", None, |screen| {
+            settings_first = Some(screen.box_node("settings-first", None)?);
+            settings_last = Some(screen.box_node("settings-last", None)?);
+            Ok(())
+        })?);
+        Ok(())
+    })
+    .expect("settings screen");
+    let settings_root = settings_root.expect("settings root");
+    let settings_first = settings_first.expect("settings first");
+    let settings_last = settings_last.expect("settings last");
+    ui.set_focusable(settings_first, true, 0)
+        .expect("focusable settings first");
+    ui.set_focusable(settings_last, true, 0)
+        .expect("focusable settings last");
+
+    let inactive_clicks = Rc::new(Cell::new(0));
+    let observed_inactive_clicks = Rc::clone(&inactive_clicks);
+    ui.on(settings_last, EventKind::CLICK, move |_| {
+        observed_inactive_clicks.set(observed_inactive_clicks.get() + 1);
+        EventOutcome::HANDLED
+    })
+    .expect("inactive click handler");
+
+    let navigator = Navigator::stack("home".to_owned());
+    let mut host = NavigationScreenHost::new(&ui, navigator.clone());
+    host.register_screen("home".to_owned(), home_root, None)
+        .expect("register home");
+    host.register_screen("settings".to_owned(), settings_root, Some(settings_first))
+        .expect("register settings");
+    assert_eq!(
+        host.register_screen("home".to_owned(), settings_root, None)
+            .expect_err("duplicate destination must fail")
+            .status_code(),
+        Some(STATUS_INVALID_ARGUMENT)
+    );
+    assert!(host.sync().expect("initial host sync"));
+    assert_eq!(
+        host.active_screen()
+            .expect("active home screen")
+            .destination,
+        "home"
+    );
+    assert!(!ui.inert(home_root).expect("home inert state"));
+    assert!(ui.inert(settings_root).expect("settings inert state"));
+    assert!(
+        !ui.emit(settings_last, &InputEvent::new(EventKind::CLICK))
+            .expect("inactive click")
+            .handled
+    );
+    assert_eq!(inactive_clicks.get(), 0);
+
+    ui.set_focus(Some(home_last), true)
+        .expect("focus home last");
+    assert!(navigator.push("settings".to_owned()));
+    assert!(host.sync().expect("settings sync"));
+    assert_eq!(ui.focused_node(), Some(settings_first));
+    ui.set_focus(Some(settings_last), true)
+        .expect("focus settings last");
+    assert!(navigator.back());
+    assert!(host.sync().expect("home back sync"));
+    assert_eq!(ui.focused_node(), Some(home_last));
+    assert!(navigator.forward());
+    assert!(host.sync().expect("settings forward sync"));
+    assert_eq!(ui.focused_node(), Some(settings_last));
+    assert!(navigator.back());
+    assert!(host.sync().expect("home link preparation"));
+
+    let link = Link::mount_in(
+        &mut ui,
+        app,
+        navigator.clone(),
+        "settings".to_owned(),
+        "Settings",
+        false,
+        None,
+        None,
+        "settings-link",
+    )
+    .expect("settings Link");
+    let link_clicks = Rc::new(Cell::new(0));
+    let link_bubbles = Rc::new(Cell::new(0));
+    let observed_bubbles = Rc::clone(&link_bubbles);
+    ui.on(app, EventKind::CLICK, move |_| {
+        observed_bubbles.set(observed_bubbles.get() + 1);
+        EventOutcome::HANDLED
+    })
+    .expect("Link bubble handler");
+    let destination_seen = Rc::new(RefCell::new(String::new()));
+    let observed_clicks = Rc::clone(&link_clicks);
+    let observed_destination = Rc::clone(&destination_seen);
+    let observed_navigator = navigator.clone();
+    link.on_click(move |_| {
+        observed_clicks.set(observed_clicks.get() + 1);
+        *observed_destination.borrow_mut() = observed_navigator
+            .current_destination()
+            .expect("destination before Link default");
+        EventOutcome::HANDLED
+    })
+    .expect("Link click handler");
+
+    assert!(
+        ui.emit(link.container(), &InputEvent::new(EventKind::CLICK))
+            .expect("Link click")
+            .handled
+    );
+    assert_eq!(link_clicks.get(), 1);
+    assert_eq!(link_bubbles.get(), 1);
+    assert_eq!(&*destination_seen.borrow(), "home");
+    assert_eq!(navigator.current_destination().as_deref(), Some("settings"));
+    assert!(host.sync().expect("Link destination sync"));
+
+    assert!(navigator.back());
+    assert!(host.sync().expect("Link Enter preparation"));
+    assert!(
+        ui.emit(
+            link.container(),
+            &InputEvent::new(EventKind::KEY_DOWN).key("Enter"),
+        )
+        .expect("Link Enter")
+        .handled
+    );
+    assert_eq!(link_clicks.get(), 2);
+    assert_eq!(link_bubbles.get(), 2);
+
+    let prevented_link = Link::mount_in(
+        &mut ui,
+        app,
+        navigator.clone(),
+        "blocked".to_owned(),
+        "Blocked",
+        false,
+        None,
+        None,
+        "blocked-link",
+    )
+    .expect("prevented Link");
+    prevented_link
+        .on_click(|_| EventOutcome::new(true, false, true))
+        .expect("prevented Link handler");
+    let before_prevented = navigator.current_destination();
+    assert!(ui
+        .emit(
+            prevented_link.container(),
+            &InputEvent::new(EventKind::CLICK),
+        )
+        .expect("prevented Link click")
+        .outcome
+        .prevents_default());
+    assert_eq!(navigator.current_destination(), before_prevented);
+    assert_eq!(link_bubbles.get(), 3);
+    assert!(
+        !ui.emit(
+            prevented_link.container(),
+            &InputEvent::new(EventKind::KEY_DOWN).key(" "),
+        )
+        .expect("Link Space")
+        .handled
+    );
+    assert_eq!(navigator.current_destination(), before_prevented);
+    assert_eq!(navigator.current_destination().as_deref(), Some("settings"));
+    assert!(host.sync().expect("Link Enter destination sync"));
+    link.set_label("Project settings")
+        .expect("update Link label");
+    assert_eq!(link.label(), "Project settings");
+    assert_eq!(
+        ui.text_value(link.label_node()).expect("Link label text"),
+        "Project settings"
+    );
+    link.set_disabled(true).expect("disable Link");
+    assert!(!link.activate());
+    assert!(
+        !ui.emit(link.container(), &InputEvent::new(EventKind::CLICK))
+            .expect("disabled Link click")
+            .handled
+    );
+    assert_eq!(link_clicks.get(), 2);
+    assert_eq!(link_bubbles.get(), 3);
+
+    assert!(host.connected());
+    assert!(host.disconnect());
+    assert!(!host.connected());
+    assert!(navigator.back());
+    assert!(!host.sync().expect("disconnected host sync"));
+    host.queue_current();
+    assert!(host.sync().expect("manual host sync"));
+    assert_eq!(
+        host.active_screen()
+            .expect("active home after manual sync")
+            .destination,
+        "home"
+    );
 }
 
 #[test]
@@ -543,7 +768,7 @@ fn craft_style_and_pack_loading_are_atomic_and_slot_scoped() {
             version: "1.2.0".to_owned(),
         }]
     );
-    let incompatible_pack = PACK.replace("\"minimumAbi\": 65559", "\"minimumAbi\": 4294967295");
+    let incompatible_pack = PACK.replace("\"minimumAbi\": 65560", "\"minimumAbi\": 4294967295");
     let rejected_pack = ui
         .replace_craft_pack(&incompatible_pack)
         .expect_err("incompatible Pack must fail");

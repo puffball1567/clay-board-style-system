@@ -4,7 +4,7 @@ import clay_board_style_system/generated/craft_driver_contract
 
 suite "Craft Driver contract metadata":
   test "publishes one ordered identity for every capability":
-    check CbssAbiVersion == 0x0001_0017'u32
+    check CbssAbiVersion == 0x0001_0018'u32
     check CbssDriverContractVersion == 0x0001_0000'u32
     check CbssCapabilities.len == 18
 

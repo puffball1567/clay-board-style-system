@@ -1144,6 +1144,39 @@ proc addInternalEventHandler*(
 ) =
   discard registry.addBinding(node, kind, handler, ebrDefaultAction)
 
+proc setInternalEventHandler*(
+    registry: var EventRegistry;
+    node: NodeId;
+    kind: InputEventKind;
+    handler: EventHandler
+) =
+  for index in countdown(registry.bindings.high, 0):
+    if registry.bindings[index].active and
+        registry.bindings[index].role == ebrDefaultAction and
+        registry.bindings[index].node == node and
+        registry.bindings[index].kind == kind:
+      registry.bindings[index].handler = handler
+      return
+  discard registry.addBinding(node, kind, handler, ebrDefaultAction)
+
+proc clearInternalEventHandler*(
+    registry: var EventRegistry;
+    node: NodeId;
+    kind: InputEventKind
+): bool {.discardable.} =
+  for index in countdown(registry.bindings.high, 0):
+    let binding = registry.bindings[index]
+    if binding.active and binding.role == ebrDefaultAction and
+        binding.node == node and binding.kind == kind:
+      if registry.dispatchDepth > 0:
+        registry.bindings[index].active = false
+        registry.bindings[index].handler = nil
+        inc registry.inactiveBindingCount
+      else:
+        registry.bindings.delete(index)
+      registry.rebuildBindingIndex()
+      return true
+
 proc bindingsNeedingComponentDispatch*(registry: EventRegistry): seq[EventBinding] =
   for binding in registry.bindings:
     if binding.active and binding.kind.needsComponentDispatch:

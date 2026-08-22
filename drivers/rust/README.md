@@ -100,7 +100,7 @@ strings. The retained stack keeps stable entry identities, revisions, back and
 forward state, and dirty-domain metadata without replaying the component tree:
 
 ```rust
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 enum Screen { Dashboard, Projects, Settings }
 
 let navigator = cbss_craft::Navigator::stack(Screen::Dashboard);
@@ -120,6 +120,37 @@ revision. `NavigationDriver` can replace the built-in stack policy without
 changing application destination types. `NavigationSubscription` detaches on
 `Drop` or explicit `close`; listener changes made during a notification take
 effect on the next navigation change.
+
+`NavigationScreenHost` keeps each registered screen subtree mounted and changes
+only active/inert and `display` state. Focus is remembered by stable history
+entry, so back and forward restore the control used in that specific entry.
+`Link<Destination>` supplies the semantic click/Enter default while allowing a
+public click handler to observe or prevent navigation:
+
+```rust
+let host = cbss_craft::NavigationScreenHost::new(&ui, navigator.clone());
+host.register_screen(Screen::Dashboard, dashboard_root, Some(search))?;
+host.register_screen(Screen::Projects, projects_root, Some(filter))?;
+host.sync()?;
+
+let projects = cbss_craft::Link::mount_in(
+    &mut ui,
+    app,
+    navigator.clone(),
+    Screen::Projects,
+    "Projects",
+    false,
+    None,
+    None,
+    "projects-link",
+)?;
+projects.on_click(|_| cbss_craft::EventOutcome::HANDLED)?;
+```
+
+Inactive screens reject direct events and focus, and are excluded from layout,
+paint, hit testing, and accessibility without rebuilding their Nodes. A public
+Link click handler runs before navigation and may set prevent-default to cancel
+that intrinsic action.
 
 Set `CBSS_LIB_DIR` to the directory containing the shared or static C ABI
 library. Set `CBSS_STATIC=1` for static linking. On Linux, a shared build also

@@ -154,6 +154,33 @@ enum class NodeState : std::uint32_t {
   invalid = CBSS_STATE_INVALID,
 };
 
+enum class AccessibleRole : std::uint32_t {
+  none = CBSS_ROLE_NONE,
+  application = CBSS_ROLE_APPLICATION,
+  generic = CBSS_ROLE_GENERIC,
+  button = CBSS_ROLE_BUTTON,
+  checkBox = CBSS_ROLE_CHECK_BOX,
+  radio = CBSS_ROLE_RADIO,
+  textBox = CBSS_ROLE_TEXT_BOX,
+  textArea = CBSS_ROLE_TEXT_AREA,
+  comboBox = CBSS_ROLE_COMBO_BOX,
+  option = CBSS_ROLE_OPTION,
+  slider = CBSS_ROLE_SLIDER,
+  disclosure = CBSS_ROLE_DISCLOSURE,
+  progressBar = CBSS_ROLE_PROGRESS_BAR,
+  listBox = CBSS_ROLE_LIST_BOX,
+  listItem = CBSS_ROLE_LIST_ITEM,
+  tabList = CBSS_ROLE_TAB_LIST,
+  tab = CBSS_ROLE_TAB,
+  dialog = CBSS_ROLE_DIALOG,
+  group = CBSS_ROLE_GROUP,
+  image = CBSS_ROLE_IMAGE,
+  staticText = CBSS_ROLE_STATIC_TEXT,
+  link = CBSS_ROLE_LINK,
+  switchControl = CBSS_ROLE_SWITCH,
+  passwordText = CBSS_ROLE_PASSWORD_TEXT,
+};
+
 struct CraftDiagnostic {
   std::uint32_t domain;
   std::uint32_t code;
@@ -604,6 +631,7 @@ struct InputEvent {
   }
 
   friend class Ui;
+  friend class UiHandle;
 };
 
 struct DispatchSummary {
@@ -692,6 +720,7 @@ struct EventDriverState {
       const std::unordered_set<std::uint32_t>& nodes) noexcept {
     for (const std::uint32_t node : nodes) {
       handlers.erase(node);
+      default_actions.erase(node);
       const auto indexed = subscriptions_by_node.find(node);
       if (indexed == subscriptions_by_node.end()) {
         continue;
@@ -705,6 +734,7 @@ struct EventDriverState {
 
   void clear() noexcept {
     handlers.clear();
+    default_actions.clear();
     subscriptions.clear();
     subscriptions_by_node.clear();
   }
@@ -714,6 +744,10 @@ struct EventDriverState {
       std::uint32_t,
       std::unordered_map<std::uint32_t, std::shared_ptr<EventCallbackState>>>
       handlers;
+  std::unordered_map<
+      std::uint32_t,
+      std::unordered_map<std::uint32_t, std::shared_ptr<EventCallbackState>>>
+      default_actions;
   std::unordered_map<std::uint64_t, EventSubscriptionState> subscriptions;
   std::unordered_map<std::uint32_t, std::unordered_set<std::uint64_t>>
       subscriptions_by_node;
@@ -767,6 +801,160 @@ class UiHandle {
                               static_cast<std::uint32_t>(state),
                               enabled ? 1u : 0u),
           "set retained state");
+  }
+
+  void setFocusable(Node node, bool focusable = true,
+                    std::int32_t tab_index = 0) const {
+    CbssContext* context = requireNode(node, "set focusable");
+    check(context,
+          cbss_node_set_focusable(context, node.value_,
+                                  focusable ? 1u : 0u, tab_index),
+          "set focusable");
+  }
+
+  void setInert(Node node, bool inert = true) const {
+    CbssContext* context = requireNode(node, "set inert");
+    check(context,
+          cbss_node_set_inert(context, node.value_, inert ? 1u : 0u),
+          "set inert");
+  }
+
+  bool inert(Node node) const {
+    CbssContext* context = requireNode(node, "read inert");
+    return cbss_node_inert(context, node.value_) != 0u;
+  }
+
+  void setAccessibility(Node node, AccessibleRole role,
+                        const std::string& name = std::string(),
+                        const std::string& description = std::string()) const {
+    CbssContext* context = requireNode(node, "set accessibility");
+    check(context,
+          cbss_node_set_accessibility(
+              context, node.value_, static_cast<std::uint32_t>(role),
+              name.c_str(), description.c_str()),
+          "set accessibility");
+  }
+
+  void apply(Node node, const Style& style, std::uint32_t state_mask = 0u,
+             std::int32_t priority = 0) const {
+    CbssContext* context = requireNode(node, "apply Style");
+    check(context,
+          cbss_node_apply_style(context, node.value_, style.nativeHandle(),
+                                state_mask, priority),
+          "apply Style");
+  }
+
+  Node focusedNode() const {
+    const std::shared_ptr<detail::EventDriverState> state = state_.lock();
+    if (!state || state->context == nullptr) {
+      return Node();
+    }
+    const std::uint32_t node = cbss_context_focused_node(state->context);
+    return node == CBSS_NODE_NONE ? Node() : Node(state->context, node);
+  }
+
+  Node firstFocusable(Node root) const {
+    CbssContext* context = requireNode(root, "find first focusable");
+    const std::uint32_t node =
+        cbss_context_first_focusable(context, root.value_);
+    return node == CBSS_NODE_NONE ? Node() : Node(context, node);
+  }
+
+  void setFocus(Node node = Node(), bool focus_visible = false) const {
+    CbssContext* context = nullptr;
+    if (node.valid()) {
+      context = requireNode(node, "set focus");
+    } else {
+      const std::shared_ptr<detail::EventDriverState> state = state_.lock();
+      if (!state || state->context == nullptr) {
+        throw Error(CBSS_INVALID_HANDLE, "set focus: Ui is not active");
+      }
+      context = state->context;
+    }
+    check(context,
+          cbss_context_set_focus(context,
+                                 node.valid() ? node.value_ : CBSS_NODE_NONE,
+                                 focus_visible ? 1u : 0u),
+          "set focus");
+  }
+
+  Node parent(Node node) const {
+    CbssContext* context = requireNode(node, "read parent");
+    const std::uint32_t parent = cbss_node_parent(context, node.value_);
+    return parent == CBSS_NODE_NONE ? Node() : Node(context, parent);
+  }
+
+  void on(Node node, CbssEventKind kind,
+          std::function<EventOutcome(const Event&)> callback) const {
+    CbssContext* context = requireNode(node, "set event handler");
+    if (!callback) {
+      throw Error(CBSS_INVALID_ARGUMENT,
+                  "set event handler: callback is empty");
+    }
+    const std::shared_ptr<detail::EventCallbackState> holder =
+        std::make_shared<detail::EventCallbackState>(std::move(callback));
+    check(context,
+          cbss_node_set_event_handler(
+              context, node.value_, static_cast<std::uint32_t>(kind),
+              &detail::EventCallbackState::invoke, holder.get()),
+          "set event handler");
+    const std::shared_ptr<detail::EventDriverState> state = state_.lock();
+    try {
+      state->handlers[node.value_][static_cast<std::uint32_t>(kind)] = holder;
+    } catch (...) {
+      cbss_node_set_event_handler(context, node.value_,
+                                  static_cast<std::uint32_t>(kind), nullptr,
+                                  nullptr);
+      throw;
+    }
+  }
+
+  void setDefaultAction(
+      Node node, CbssEventKind kind,
+      std::function<EventOutcome(const Event&)> callback) const {
+    CbssContext* context = requireNode(node, "set default action");
+    if (!callback) {
+      throw Error(CBSS_INVALID_ARGUMENT,
+                  "set default action: callback is empty");
+    }
+    const std::shared_ptr<detail::EventCallbackState> holder =
+        std::make_shared<detail::EventCallbackState>(std::move(callback));
+    check(context,
+          cbss_node_set_default_action(
+              context, node.value_, static_cast<std::uint32_t>(kind),
+              &detail::EventCallbackState::invoke, holder.get()),
+          "set default action");
+    const std::shared_ptr<detail::EventDriverState> state = state_.lock();
+    try {
+      state->default_actions[node.value_][static_cast<std::uint32_t>(kind)] =
+          holder;
+    } catch (...) {
+      cbss_node_set_default_action(context, node.value_,
+                                   static_cast<std::uint32_t>(kind), nullptr,
+                                   nullptr);
+      throw;
+    }
+  }
+
+  DispatchSummary emit(Node node, const InputEvent& input) const {
+    CbssContext* context = requireNode(node, "emit event");
+    const CbssInputEvent native = input.native();
+    CbssDispatchSummary summary = {};
+    check(context,
+          cbss_context_emit_event(context, node.value_, &native, &summary),
+          "emit event");
+    return DispatchSummary{
+        summary.target,
+        summary.dispatch_count,
+        summary.handled != 0u,
+        EventOutcome((summary.outcome & CBSS_EVENT_OUTCOME_HANDLED) != 0u,
+                     (summary.outcome &
+                      CBSS_EVENT_OUTCOME_STOP_PROPAGATION) != 0u,
+                     (summary.outcome &
+                      CBSS_EVENT_OUTCOME_PREVENT_DEFAULT) != 0u),
+        summary.needs_compute != 0u,
+        summary.paint_changed != 0u,
+        summary.focus_changed != 0u};
   }
 
  private:
@@ -1036,6 +1224,33 @@ class Ui {
           "set retained state");
   }
 
+  void setFocusable(Node node, bool focusable = true,
+                    std::int32_t tab_index = 0) {
+    handle().setFocusable(node, focusable, tab_index);
+  }
+
+  void setInert(Node node, bool inert = true) {
+    handle().setInert(node, inert);
+  }
+
+  bool inert(Node node) const { return handle().inert(node); }
+
+  void setAccessibility(Node node, AccessibleRole role,
+                        const std::string& name = std::string(),
+                        const std::string& description = std::string()) {
+    handle().setAccessibility(node, role, name, description);
+  }
+
+  Node focusedNode() const { return handle().focusedNode(); }
+
+  Node firstFocusable(Node root) const {
+    return handle().firstFocusable(root);
+  }
+
+  void setFocus(Node node = Node(), bool focus_visible = false) {
+    handle().setFocus(node, focus_visible);
+  }
+
   void apply(Node node, const Style& style, std::uint32_t state_mask = 0u,
              std::int32_t priority = 0) {
     requireNode(node, "apply Style");
@@ -1289,6 +1504,13 @@ class Ui {
         }
       }
     }
+    for (const auto& item : events_->default_actions) {
+      for (const auto& action : item.second) {
+        if (action.second->failure) {
+          return true;
+        }
+      }
+    }
     for (const auto& item : events_->subscriptions) {
       if (item.second.callback->failure) {
         return true;
@@ -1303,6 +1525,15 @@ class Ui {
         if (handler.second->failure) {
           const std::exception_ptr failure = handler.second->failure;
           handler.second->failure = nullptr;
+          std::rethrow_exception(failure);
+        }
+      }
+    }
+    for (const auto& item : events_->default_actions) {
+      for (const auto& action : item.second) {
+        if (action.second->failure) {
+          const std::exception_ptr failure = action.second->failure;
+          action.second->failure = nullptr;
           std::rethrow_exception(failure);
         }
       }
@@ -1573,5 +1804,7 @@ void ComponentScope::onRoot(CbssEventKind kind, Callback&& callback) {
 }
 
 }  // namespace cbss
+
+#include "navigation_ui.hpp"
 
 #endif
