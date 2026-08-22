@@ -1785,7 +1785,10 @@ Drivers now provide atomic `CraftComponent` construction, automatic component
 root Style Slots, component-scoped child Slot declarations, explicit unmount,
 and retained Text/Image/group/attribute/state mutation. Their shared behavior
 fixtures verify stable Node identity and handlers across updates, rollback on
-C++ exceptions and Rust `Err`/panic, and complete unmount. Retained Store,
+C++ exceptions and Rust `Err`/panic, and complete unmount. Both Drivers now
+provide typed retained Stores with reducer dispatch, nested committed
+transactions, selected equality, deterministic subscriptions, queued
+reentrancy, and failure recovery. Component-owned selected watches,
 navigation, validation, Command, Cue, and the remaining cross-Driver
 application fixtures remain Version 0.6 work.
 

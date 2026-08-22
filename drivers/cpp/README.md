@@ -45,8 +45,38 @@ ui.setState(status.root(), cbss::NodeState::checked, true);
 
 These retained setters update the existing nodes; they do not rebuild the
 component or replace its handlers. `Ui::unmount` removes the complete component
-subtree and invalidates the wrapper. Host-language state and store libraries
-can therefore drive CBSS without a Driver-specific virtual DOM.
+subtree and invalidates the wrapper.
+
+The Driver also provides a typed retained Store without introducing a virtual
+DOM. Reducers update one stable state object, selectors publish only changed
+projections, and nested transactions produce one committed revision:
+
+```cpp
+struct Model { int count = 0; };
+struct Add { int amount; };
+
+auto store = cbss::createStore<Model, Add>(
+    Model(), [](Model& state, const Add& action) {
+      state.count += action.amount;
+    });
+auto count = store.select<int>([](const Model& state) { return state.count; });
+auto watch = count.subscribe([](const int& value) {
+  std::cout << "Count: " << value << "\n";
+});
+
+store.transaction([&] {
+  store.dispatch({2});
+  store.dispatch({3});
+});
+```
+
+`StoreSubscription` is move-only and detaches through RAII or `close()`.
+Reentrant dispatch is queued for a later commit. Selector equality suppresses
+unaffected updates, and `dispatchSilent` can be paired with explicit
+`Selector::refresh` when publication is intentionally deferred. Commit
+notifications carry a revision rather than copying the complete State;
+`Store::read` provides a borrowed read path when a State copy is unnecessary.
+Store and UI operations remain confined to the owning UI thread.
 
 The Driver negotiates the engine ABI, Driver contract, and baseline authoring
 capabilities before it constructs a context. `Ui` and `Style` use deterministic

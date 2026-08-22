@@ -1,9 +1,59 @@
 #include <cbss/craft.hpp>
 
 #include <cassert>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
+
+namespace {
+
+enum class StoreActionKind { increment, rename };
+
+struct StoreAction {
+  StoreAction(StoreActionKind action_kind, int action_amount,
+              std::string action_name)
+      : kind(action_kind),
+        amount(action_amount),
+        name(std::move(action_name)) {}
+
+  StoreActionKind kind;
+  int amount;
+  std::string name;
+};
+
+struct StoreModel {
+  int count = 0;
+  std::string name = "ready";
+};
+
+struct CloneTrackedModel {
+  explicit CloneTrackedModel(std::shared_ptr<int> clone_count)
+      : clones(std::move(clone_count)) {}
+
+  CloneTrackedModel(const CloneTrackedModel& other)
+      : clones(other.clones), count(other.count) {
+    ++*clones;
+  }
+
+  CloneTrackedModel(CloneTrackedModel&&) noexcept = default;
+  CloneTrackedModel& operator=(const CloneTrackedModel&) = default;
+  CloneTrackedModel& operator=(CloneTrackedModel&&) noexcept = default;
+
+  std::shared_ptr<int> clones;
+  int count = 0;
+};
+
+void reduceStore(StoreModel& state, const StoreAction& action) {
+  if (action.kind == StoreActionKind::increment) {
+    state.count += action.amount;
+  } else {
+    state.name = action.name;
+  }
+}
+
+}  // namespace
 
 int main() {
   cbss::Contract::requireAuthoring();
@@ -530,5 +580,186 @@ int main() {
   }
   detached_observer.close();
   assert(!detached_observer.active());
+
+  auto store = cbss::createStore<StoreModel, StoreAction>(
+      StoreModel(), reduceStore);
+  int selector_evaluations = 0;
+  auto count = store.select<int>([&](const StoreModel& state) {
+    ++selector_evaluations;
+    return state.count;
+  });
+  std::vector<int> selected_counts;
+  cbss::StoreSubscription count_watch = count.subscribe(
+      [&](const int& value) { selected_counts.push_back(value); });
+
+  store.dispatch({StoreActionKind::increment, 1, ""});
+  store.dispatch({StoreActionKind::rename, 0, "done"});
+  assert(store.state().count == 1);
+  assert(store.state().name == "done");
+  assert(store.revision() == 2u);
+  assert(selector_evaluations == 3);
+  assert(selected_counts == std::vector<int>{1});
+
+  store.transaction([&] {
+    store.dispatch({StoreActionKind::increment, 2, ""});
+    store.transaction([&] {
+      store.dispatch({StoreActionKind::increment, 3, ""});
+    });
+  });
+  assert(store.state().count == 6);
+  assert(store.revision() == 3u);
+  assert(selector_evaluations == 4);
+  assert(selected_counts == (std::vector<int>{1, 6}));
+
+  bool queued_reentrant_action = false;
+  std::vector<std::uint64_t> revisions;
+  cbss::StoreSubscription commit_watch = store.subscribe(
+      [&](std::uint64_t revision) {
+        revisions.push_back(revision);
+        if (!queued_reentrant_action) {
+          queued_reentrant_action = true;
+          store.dispatch({StoreActionKind::increment, 4, ""});
+        }
+      });
+  store.dispatch({StoreActionKind::increment, 1, ""});
+  assert(store.state().count == 11);
+  assert(revisions == (std::vector<std::uint64_t>{4u, 5u}));
+
+  int later_listener_calls = 0;
+  cbss::StoreSubscription failing_watch = store.subscribe(
+      [](std::uint64_t) {
+        throw std::runtime_error("listener failed");
+      });
+  cbss::StoreSubscription later_watch = store.subscribe(
+      [&](std::uint64_t) { ++later_listener_calls; });
+  bool listener_failure_seen = false;
+  try {
+    store.dispatch({StoreActionKind::rename, 0, "failure-observed"});
+  } catch (const std::runtime_error&) {
+    listener_failure_seen = true;
+  }
+  assert(listener_failure_seen);
+  assert(later_listener_calls == 1);
+  failing_watch.close();
+  store.dispatch({StoreActionKind::rename, 0, "recovered"});
+  assert(store.state().name == "recovered");
+  assert(later_listener_calls == 2);
+
+  store.dispatchSilent({StoreActionKind::increment, 10, ""});
+  assert(count.value() == 11);
+  count.refresh();
+  assert(count.value() == 21);
+  assert(selected_counts.back() == 21);
+  assert(count_watch.active());
+  assert(count_watch.close());
+  assert(!count_watch.active());
+  const std::size_t subscribers_before_selector_dispose =
+      store.subscriberCount();
+  assert(count.dispose());
+  assert(!count.dispose());
+  assert(store.subscriberCount() + 1u ==
+         subscribers_before_selector_dispose);
+  bool rejected_disposed_selector = false;
+  try {
+    count.refresh();
+  } catch (const std::logic_error&) {
+    rejected_disposed_selector = true;
+  }
+  assert(rejected_disposed_selector);
+
+  bool transaction_failure_seen = false;
+  try {
+    store.transaction([&] {
+      store.dispatch({StoreActionKind::increment, 1, ""});
+      throw std::runtime_error("transaction body failed");
+    });
+  } catch (const std::runtime_error&) {
+    transaction_failure_seen = true;
+  }
+  assert(transaction_failure_seen);
+  assert(store.state().count == 22);
+
+  auto case_insensitive_name = store.select<std::string>(
+      [](const StoreModel& state) { return state.name; },
+      [](const std::string& left, const std::string& right) {
+        std::string folded_left = left;
+        std::string folded_right = right;
+        for (char& value : folded_left) {
+          value = static_cast<char>(std::tolower(static_cast<unsigned char>(value)));
+        }
+        for (char& value : folded_right) {
+          value = static_cast<char>(std::tolower(static_cast<unsigned char>(value)));
+        }
+        return folded_left == folded_right;
+      });
+  std::vector<std::string> selected_names;
+  cbss::StoreSubscription name_watch = case_insensitive_name.subscribe(
+      [&](const std::string& value) { selected_names.push_back(value); });
+  store.dispatch({StoreActionKind::rename, 0, "RECOVERED"});
+  store.dispatch({StoreActionKind::rename, 0, "final"});
+  assert(selected_names == std::vector<std::string>{"final"});
+
+  auto subscription_store = cbss::createStore<StoreModel, StoreAction>(
+      StoreModel(), reduceStore);
+  int removed_listener_calls = 0;
+  int late_listener_calls = 0;
+  cbss::StoreSubscription removed_listener;
+  cbss::StoreSubscription late_listener;
+  cbss::StoreSubscription mutating_listener = subscription_store.subscribe(
+      [&](std::uint64_t) {
+        removed_listener.close();
+        if (!late_listener.active()) {
+          late_listener = subscription_store.subscribe(
+              [&](std::uint64_t) { ++late_listener_calls; });
+        }
+      });
+  removed_listener = subscription_store.subscribe(
+      [&](std::uint64_t) { ++removed_listener_calls; });
+  subscription_store.dispatch({StoreActionKind::increment, 1, ""});
+  assert(removed_listener_calls == 0);
+  assert(late_listener_calls == 0);
+  subscription_store.dispatch({StoreActionKind::increment, 1, ""});
+  assert(late_listener_calls == 1);
+
+  auto fallible_store = cbss::createStore<StoreModel, StoreAction>(
+      StoreModel(), [](StoreModel& state, const StoreAction& action) {
+        if (action.kind == StoreActionKind::increment && action.amount < 0) {
+          throw std::invalid_argument("negative increment");
+        }
+        reduceStore(state, action);
+      });
+  bool reducer_failure_seen = false;
+  try {
+    fallible_store.dispatch({StoreActionKind::increment, -1, ""});
+  } catch (const std::invalid_argument&) {
+    reducer_failure_seen = true;
+  }
+  assert(reducer_failure_seen);
+  fallible_store.dispatch({StoreActionKind::increment, 3, ""});
+  assert(fallible_store.state().count == 3);
+  assert(fallible_store.revision() == 1u);
+
+  const std::shared_ptr<int> store_clone_count = std::make_shared<int>(0);
+  auto clone_tracked_store = cbss::createStore<CloneTrackedModel, int>(
+      CloneTrackedModel(store_clone_count),
+      [](CloneTrackedModel& state, const int& amount) {
+        state.count += amount;
+      });
+  auto tracked_count = clone_tracked_store.select<int>(
+      [](const CloneTrackedModel& state) { return state.count; });
+  clone_tracked_store.dispatch(1);
+  clone_tracked_store.transaction([&] {
+    clone_tracked_store.dispatch(2);
+    clone_tracked_store.dispatch(3);
+  });
+  assert(tracked_count.value() == 6);
+  assert(*store_clone_count == 0);
+  assert(clone_tracked_store.read(
+             [](const CloneTrackedModel& state) { return state.count; }) == 6);
+  assert(*store_clone_count == 0);
+  const CloneTrackedModel copied_state = clone_tracked_store.state();
+  assert(copied_state.count == 6);
+  assert(*store_clone_count == 1);
+
   return 0;
 }

@@ -1,9 +1,9 @@
 use cbss_craft::{
-    keyword, px, rgb, Contract, ErrorKind, EventKind, EventOutcome, InputEvent, NodeState, Style,
-    Ui, ABI_VERSION, CAPABILITIES, CRAFT_DIAGNOSTIC_PACK, CRAFT_DIAGNOSTIC_STYLE_REPLACEMENT,
-    CRAFT_PACK_MISSING_CAPABILITY, CRAFT_STYLE_PARSE_UNKNOWN_PROPERTY,
-    CRAFT_STYLE_REPLACEMENT_UNDECLARED_STYLE_SLOT, DRIVER_CONTRACT_VERSION,
-    STATUS_INVALID_ARGUMENT, STATUS_INVALID_HANDLE, STATUS_STYLE_ERROR,
+    keyword, px, rgb, Contract, ErrorKind, EventKind, EventOutcome, InputEvent, NodeState, Store,
+    Style, Ui, ABI_VERSION, CAPABILITIES, CRAFT_DIAGNOSTIC_PACK,
+    CRAFT_DIAGNOSTIC_STYLE_REPLACEMENT, CRAFT_PACK_MISSING_CAPABILITY,
+    CRAFT_STYLE_PARSE_UNKNOWN_PROPERTY, CRAFT_STYLE_REPLACEMENT_UNDECLARED_STYLE_SLOT,
+    DRIVER_CONTRACT_VERSION, STATUS_INVALID_ARGUMENT, STATUS_INVALID_HANDLE, STATUS_STYLE_ERROR,
 };
 use std::cell::{Cell, RefCell};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -558,4 +558,249 @@ fn craft_style_and_pack_loading_are_atomic_and_slot_scoped() {
         .remove_craft_style("rust-theme")
         .expect("remove Craft Style"));
     assert!(ui.active_craft_styles().is_empty());
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct StoreModel {
+    count: i32,
+    name: String,
+}
+
+enum StoreAction {
+    Increment(i32),
+    Rename(String),
+}
+
+fn reduce_store(state: &mut StoreModel, action: &StoreAction) {
+    match action {
+        StoreAction::Increment(amount) => state.count += amount,
+        StoreAction::Rename(name) => state.name.clone_from(name),
+    }
+}
+
+#[test]
+fn retained_store_transactions_selectors_and_failures_are_bounded() {
+    let store = Store::new(
+        StoreModel {
+            count: 0,
+            name: "ready".to_owned(),
+        },
+        reduce_store,
+    );
+    let selector_evaluations = Rc::new(Cell::new(0));
+    let evaluation_counter = Rc::clone(&selector_evaluations);
+    let count = store.select(move |state| {
+        evaluation_counter.set(evaluation_counter.get() + 1);
+        state.count
+    });
+    let selected_counts = Rc::new(RefCell::new(Vec::new()));
+    let observed_counts = Rc::clone(&selected_counts);
+    let mut count_watch = count.subscribe(move |value| {
+        observed_counts.borrow_mut().push(*value);
+    });
+
+    store.dispatch(StoreAction::Increment(1));
+    store.dispatch(StoreAction::Rename("done".to_owned()));
+    assert_eq!(store.state().count, 1);
+    assert_eq!(store.state().name, "done");
+    assert_eq!(store.revision(), 2);
+    assert_eq!(selector_evaluations.get(), 3);
+    assert_eq!(*selected_counts.borrow(), vec![1]);
+
+    store.transaction(|| {
+        store.dispatch(StoreAction::Increment(2));
+        store.transaction(|| {
+            store.dispatch(StoreAction::Increment(3));
+        });
+    });
+    assert_eq!(store.state().count, 6);
+    assert_eq!(store.revision(), 3);
+    assert_eq!(selector_evaluations.get(), 4);
+    assert_eq!(*selected_counts.borrow(), vec![1, 6]);
+
+    let revisions = Rc::new(RefCell::new(Vec::new()));
+    let observed_revisions = Rc::clone(&revisions);
+    let reentrant_store = store.clone();
+    let queued_reentrant_action = Rc::new(Cell::new(false));
+    let queued = Rc::clone(&queued_reentrant_action);
+    let _commit_watch = store.subscribe(move |revision| {
+        observed_revisions.borrow_mut().push(revision);
+        if !queued.replace(true) {
+            reentrant_store.dispatch(StoreAction::Increment(4));
+        }
+    });
+    store.dispatch(StoreAction::Increment(1));
+    assert_eq!(store.state().count, 11);
+    assert_eq!(*revisions.borrow(), vec![4, 5]);
+
+    let later_listener_calls = Rc::new(Cell::new(0));
+    let mut failing_watch = store.subscribe(|_| panic!("listener failed"));
+    let later_calls = Rc::clone(&later_listener_calls);
+    let _later_watch = store.subscribe(move |_| {
+        later_calls.set(later_calls.get() + 1);
+    });
+    let listener_failure = catch_unwind(AssertUnwindSafe(|| {
+        store.dispatch(StoreAction::Rename("failure-observed".to_owned()));
+    }));
+    assert!(listener_failure.is_err());
+    assert_eq!(later_listener_calls.get(), 1);
+    assert!(failing_watch.close());
+    store.dispatch(StoreAction::Rename("recovered".to_owned()));
+    assert_eq!(store.state().name, "recovered");
+    assert_eq!(later_listener_calls.get(), 2);
+
+    store.dispatch_silent(&StoreAction::Increment(10));
+    assert_eq!(count.value(), 11);
+    count.refresh();
+    assert_eq!(count.value(), 21);
+    assert_eq!(selected_counts.borrow().last(), Some(&21));
+    assert!(count_watch.active());
+    assert!(count_watch.close());
+    assert!(!count_watch.active());
+    let subscribers_before_selector_dispose = store.subscriber_count();
+    assert!(count.dispose());
+    assert!(!count.dispose());
+    assert_eq!(
+        store.subscriber_count() + 1,
+        subscribers_before_selector_dispose
+    );
+    assert!(catch_unwind(AssertUnwindSafe(|| count.refresh())).is_err());
+
+    let transaction_failure = catch_unwind(AssertUnwindSafe(|| {
+        store.transaction(|| {
+            store.dispatch(StoreAction::Increment(1));
+            panic!("transaction body failed");
+        });
+    }));
+    assert!(transaction_failure.is_err());
+    assert_eq!(store.state().count, 22);
+}
+
+#[test]
+fn retained_store_custom_selector_equality_suppresses_equivalent_values() {
+    let store = Store::new(
+        StoreModel {
+            count: 0,
+            name: "ready".to_owned(),
+        },
+        reduce_store,
+    );
+    let name = store.select_by(
+        |state| state.name.clone(),
+        |left, right| left.eq_ignore_ascii_case(right),
+    );
+    let values = Rc::new(RefCell::new(Vec::new()));
+    let observed = Rc::clone(&values);
+    let _watch = name.subscribe(move |value| observed.borrow_mut().push(value.clone()));
+
+    store.dispatch(StoreAction::Rename("READY".to_owned()));
+    store.dispatch(StoreAction::Rename("done".to_owned()));
+
+    assert_eq!(*values.borrow(), vec!["done"]);
+}
+
+#[test]
+fn retained_store_subscription_mutation_and_reducer_failure_recover() {
+    let store = Store::new(
+        StoreModel {
+            count: 0,
+            name: "ready".to_owned(),
+        },
+        reduce_store,
+    );
+    let removed_listener_calls = Rc::new(Cell::new(0));
+    let late_listener_calls = Rc::new(Cell::new(0));
+    let removed_listener = Rc::new(RefCell::new(None::<cbss_craft::StoreSubscription>));
+    let late_listener = Rc::new(RefCell::new(None::<cbss_craft::StoreSubscription>));
+
+    let removed_slot = Rc::clone(&removed_listener);
+    let late_slot = Rc::clone(&late_listener);
+    let late_calls = Rc::clone(&late_listener_calls);
+    let subscription_source = store.clone();
+    let _mutating_listener = store.subscribe(move |_| {
+        if let Some(listener) = removed_slot.borrow_mut().as_mut() {
+            listener.close();
+        }
+        if late_slot.borrow().is_none() {
+            let observed = Rc::clone(&late_calls);
+            late_slot
+                .borrow_mut()
+                .replace(subscription_source.subscribe(move |_| {
+                    observed.set(observed.get() + 1);
+                }));
+        }
+    });
+    let removed_calls = Rc::clone(&removed_listener_calls);
+    removed_listener
+        .borrow_mut()
+        .replace(store.subscribe(move |_| {
+            removed_calls.set(removed_calls.get() + 1);
+        }));
+
+    store.dispatch(StoreAction::Increment(1));
+    assert_eq!(removed_listener_calls.get(), 0);
+    assert_eq!(late_listener_calls.get(), 0);
+    store.dispatch(StoreAction::Increment(1));
+    assert_eq!(late_listener_calls.get(), 1);
+
+    let fallible = Store::new(
+        StoreModel {
+            count: 0,
+            name: "ready".to_owned(),
+        },
+        |state, action| {
+            if matches!(action, StoreAction::Increment(amount) if *amount < 0) {
+                panic!("negative increment");
+            }
+            reduce_store(state, action);
+        },
+    );
+    assert!(catch_unwind(AssertUnwindSafe(|| {
+        fallible.dispatch(StoreAction::Increment(-1));
+    }))
+    .is_err());
+    fallible.dispatch(StoreAction::Increment(3));
+    assert_eq!(fallible.state().count, 3);
+    assert_eq!(fallible.revision(), 1);
+}
+
+struct CloneTrackedModel {
+    clones: Rc<Cell<usize>>,
+    count: i32,
+}
+
+impl Clone for CloneTrackedModel {
+    fn clone(&self) -> Self {
+        self.clones.set(self.clones.get() + 1);
+        Self {
+            clones: Rc::clone(&self.clones),
+            count: self.count,
+        }
+    }
+}
+
+#[test]
+fn retained_store_commits_do_not_clone_the_complete_state() {
+    let clone_count = Rc::new(Cell::new(0));
+    let store = Store::new(
+        CloneTrackedModel {
+            clones: Rc::clone(&clone_count),
+            count: 0,
+        },
+        |state, amount| state.count += amount,
+    );
+    let count = store.select(|state| state.count);
+
+    store.dispatch(1);
+    store.transaction(|| {
+        store.dispatch(2);
+        store.dispatch(3);
+    });
+
+    assert_eq!(count.value(), 6);
+    assert_eq!(clone_count.get(), 0);
+    assert_eq!(store.with_state(|state| state.count), 6);
+    assert_eq!(clone_count.get(), 0);
+    assert_eq!(store.state().count, 6);
+    assert_eq!(clone_count.get(), 1);
 }

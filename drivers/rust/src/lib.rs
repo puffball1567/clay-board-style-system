@@ -1,6 +1,7 @@
 //! High-level Rust Craft Driver for Clay Board Style System.
 
 mod generated;
+mod store;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -21,6 +22,7 @@ pub use generated::{
     CAPABILITY_STREAM, CAPABILITY_SUBTREE_LIFECYCLE, CAPABILITY_TYPED_STYLE,
     DRIVER_CONTRACT_VERSION,
 };
+pub use store::{Selector, Store, StoreSubscription};
 
 pub const STATUS_OK: i32 = 0;
 pub const STATUS_INVALID_ARGUMENT: i32 = 1;

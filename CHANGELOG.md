@@ -30,6 +30,12 @@ release. Before 1.0, minor releases may contain public API changes.
 - Added retained Text, Image, group, attribute, and node-state mutation APIs to
   both reference Drivers. Cross-language fixtures verify that updates preserve
   Node identity and event handlers instead of rebuilding the component tree.
+- Added typed retained `Store<State, Action>` and selected subscriptions to the
+  C++14 and Rust reference Drivers. Both surfaces provide queued reentrant
+  dispatch, nested transactions, silent updates with explicit selector refresh,
+  custom selector equality, deterministic subscription disposal, and recovery
+  after listener or transaction failures without replaying the UI tree or
+  copying the complete Store state on each commit.
 
 ### Security
 
