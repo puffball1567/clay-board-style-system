@@ -95,6 +95,32 @@ read path when an owned snapshot is unnecessary. `Rc` ownership deliberately
 keeps the Store on its UI thread instead of suggesting unsupported concurrent
 mutation.
 
+Typed navigation uses application-defined destinations rather than URL
+strings. The retained stack keeps stable entry identities, revisions, back and
+forward state, and dirty-domain metadata without replaying the component tree:
+
+```rust
+#[derive(Clone)]
+enum Screen { Dashboard, Projects, Settings }
+
+let navigator = cbss_craft::Navigator::stack(Screen::Dashboard);
+let _navigation = navigator.subscribe(|change| {
+    // Update the retained screen host affected by this change.
+});
+
+navigator.push(Screen::Projects);
+navigator.replace(Screen::Settings);
+navigator.back();
+```
+
+Forward history is discarded after branching from an older entry. Replacing a
+destination creates a new entry identity, while back and forward preserve the
+existing identities. Boundary operations are no-ops and do not publish a
+revision. `NavigationDriver` can replace the built-in stack policy without
+changing application destination types. `NavigationSubscription` detaches on
+`Drop` or explicit `close`; listener changes made during a notification take
+effect on the next navigation change.
+
 Set `CBSS_LIB_DIR` to the directory containing the shared or static C ABI
 library. Set `CBSS_STATIC=1` for static linking. On Linux, a shared build also
 needs that directory in `LD_LIBRARY_PATH` when the application starts.

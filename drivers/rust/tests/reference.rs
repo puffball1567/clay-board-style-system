@@ -1,9 +1,11 @@
 use cbss_craft::{
-    keyword, px, rgb, Contract, ErrorKind, EventKind, EventOutcome, InputEvent, NodeState, Store,
-    Style, Ui, ABI_VERSION, CAPABILITIES, CRAFT_DIAGNOSTIC_PACK,
+    keyword, px, rgb, Contract, ErrorKind, EventKind, EventOutcome, InputEvent, NavigationChange,
+    NavigationChangeKind, NavigationDriver, NavigationEntry, NavigationSnapshot, Navigator,
+    NodeState, Store, Style, Ui, ABI_VERSION, CAPABILITIES, CRAFT_DIAGNOSTIC_PACK,
     CRAFT_DIAGNOSTIC_STYLE_REPLACEMENT, CRAFT_PACK_MISSING_CAPABILITY,
     CRAFT_STYLE_PARSE_UNKNOWN_PROPERTY, CRAFT_STYLE_REPLACEMENT_UNDECLARED_STYLE_SLOT,
-    DRIVER_CONTRACT_VERSION, STATUS_INVALID_ARGUMENT, STATUS_INVALID_HANDLE, STATUS_STYLE_ERROR,
+    DRIVER_CONTRACT_VERSION, NAVIGATION_SCREEN_DIRTY_DOMAINS, STATUS_INVALID_ARGUMENT,
+    STATUS_INVALID_HANDLE, STATUS_STYLE_ERROR,
 };
 use std::cell::{Cell, RefCell};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -958,4 +960,196 @@ fn retained_store_commits_do_not_clone_the_complete_state() {
     assert_eq!(clone_count.get(), 0);
     assert_eq!(store.state().count, 6);
     assert_eq!(clone_count.get(), 1);
+}
+
+#[test]
+fn typed_navigation_preserves_history_metadata_and_snapshot_isolation() {
+    let navigator = Navigator::stack("home".to_owned());
+    assert_eq!(navigator.current_destination().as_deref(), Some("home"));
+    assert!(!navigator.can_go_back());
+    assert!(!navigator.can_go_forward());
+    assert!(!navigator.back());
+    assert_eq!(navigator.snapshot().revision, 0);
+
+    let kinds = Rc::new(RefCell::new(Vec::new()));
+    let destinations = Rc::new(RefCell::new(Vec::new()));
+    let observed_kinds = Rc::clone(&kinds);
+    let observed_destinations = Rc::clone(&destinations);
+    let mut watch = navigator.subscribe(move |change| {
+        observed_kinds.borrow_mut().push(change.kind);
+        observed_destinations.borrow_mut().push(
+            change
+                .current
+                .as_ref()
+                .expect("current entry")
+                .destination
+                .clone(),
+        );
+        assert_eq!(change.dirty_domains, NAVIGATION_SCREEN_DIRTY_DOMAINS);
+    });
+    assert!(watch.active());
+    assert_eq!(navigator.listener_count(), 1);
+
+    assert!(navigator.push("projects".to_owned()));
+    let projects_entry = navigator.current_entry().expect("projects entry");
+    assert_eq!(projects_entry.id, 2);
+    assert!(navigator.push("settings".to_owned()));
+    assert!(navigator.back());
+    assert_eq!(navigator.current_destination().as_deref(), Some("projects"));
+    assert!(navigator.can_go_forward());
+    assert!(navigator.replace("project-detail".to_owned()));
+    let replaced_entry = navigator.current_entry().expect("replacement entry");
+    assert_eq!(replaced_entry.id, 4);
+    assert_ne!(replaced_entry.id, projects_entry.id);
+    assert!(navigator.forward());
+    assert_eq!(navigator.current_destination().as_deref(), Some("settings"));
+    assert!(!navigator.forward());
+    assert!(navigator.back());
+    assert!(navigator.push("activity".to_owned()));
+    assert!(!navigator.can_go_forward());
+    assert!(!navigator.forward());
+
+    let snapshot = navigator.snapshot();
+    assert_eq!(snapshot.entries.len(), 3);
+    assert_eq!(snapshot.entries[0].destination, "home");
+    assert_eq!(snapshot.entries[1].destination, "project-detail");
+    assert_eq!(snapshot.entries[2].destination, "activity");
+    assert_eq!(snapshot.revision, 7);
+    assert_eq!(kinds.borrow().len(), 7);
+    assert_eq!(
+        destinations.borrow().last().map(String::as_str),
+        Some("activity")
+    );
+
+    let mut isolated = navigator.snapshot();
+    isolated.entries[0].destination = "mutated-copy".to_owned();
+    isolated.entries.clear();
+    assert_eq!(navigator.snapshot().entries[0].destination, "home");
+
+    assert!(watch.close());
+    assert!(!watch.close());
+    assert!(!watch.active());
+    assert_eq!(navigator.listener_count(), 0);
+}
+
+#[test]
+fn navigation_listener_mutation_failure_and_lifetime_are_deterministic() {
+    let navigator = Navigator::stack(0);
+    let removed_calls = Rc::new(Cell::new(0));
+    let late_calls = Rc::new(Cell::new(0));
+    let removed = Rc::new(RefCell::new(None::<cbss_craft::NavigationSubscription>));
+    let late = Rc::new(RefCell::new(None::<cbss_craft::NavigationSubscription>));
+
+    let removed_slot = Rc::clone(&removed);
+    let late_slot = Rc::clone(&late);
+    let late_counter = Rc::clone(&late_calls);
+    let subscription_source = navigator.clone();
+    let _mutating = navigator.subscribe(move |_| {
+        if let Some(subscription) = removed_slot.borrow_mut().as_mut() {
+            subscription.close();
+        }
+        if late_slot.borrow().is_none() {
+            let observed = Rc::clone(&late_counter);
+            late_slot
+                .borrow_mut()
+                .replace(subscription_source.subscribe(move |_| {
+                    observed.set(observed.get() + 1);
+                }));
+        }
+    });
+    let removed_counter = Rc::clone(&removed_calls);
+    removed.borrow_mut().replace(navigator.subscribe(move |_| {
+        removed_counter.set(removed_counter.get() + 1);
+    }));
+
+    navigator.push(1);
+    assert_eq!(removed_calls.get(), 1);
+    assert_eq!(late_calls.get(), 0);
+    navigator.push(2);
+    assert_eq!(removed_calls.get(), 1);
+    assert_eq!(late_calls.get(), 1);
+
+    let later_calls = Rc::new(Cell::new(0));
+    let mut failing = navigator.subscribe(|_| panic!("navigation listener failed"));
+    let later_counter = Rc::clone(&later_calls);
+    let _later = navigator.subscribe(move |_| later_counter.set(later_counter.get() + 1));
+    let failure = catch_unwind(AssertUnwindSafe(|| navigator.push(3)));
+    assert!(failure.is_err());
+    assert_eq!(later_calls.get(), 1);
+    assert_eq!(navigator.current_destination(), Some(3));
+    assert!(failing.close());
+    assert!(navigator.push(4));
+    assert_eq!(later_calls.get(), 2);
+
+    navigator.clear_listeners();
+    assert_eq!(navigator.listener_count(), 0);
+
+    let mut expired;
+    {
+        let temporary = Navigator::stack(0);
+        expired = temporary.subscribe(|_| {});
+        assert!(expired.active());
+    }
+    assert!(!expired.active());
+    assert!(!expired.close());
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum StructuredDestination {
+    Dashboard,
+    Project { id: u64, tab: String },
+}
+
+#[test]
+fn navigation_supports_structured_destinations_and_custom_drivers() {
+    let structured = Navigator::stack(StructuredDestination::Dashboard);
+    assert!(structured.push(StructuredDestination::Project {
+        id: 17,
+        tab: "activity".to_owned(),
+    }));
+    assert_eq!(
+        structured.current_destination(),
+        Some(StructuredDestination::Project {
+            id: 17,
+            tab: "activity".to_owned(),
+        })
+    );
+
+    let state = Rc::new(RefCell::new(NavigationSnapshot {
+        entries: vec![NavigationEntry {
+            id: 41,
+            destination: 10,
+        }],
+        current_index: Some(0),
+        revision: 0,
+    }));
+    let snapshot_state = Rc::clone(&state);
+    let push_state = Rc::clone(&state);
+    let driver = NavigationDriver::new(
+        move || snapshot_state.borrow().clone(),
+        move |destination| {
+            let mut snapshot = push_state.borrow_mut();
+            let previous = snapshot.current_entry().cloned();
+            snapshot.entries.push(NavigationEntry {
+                id: 42,
+                destination,
+            });
+            snapshot.current_index = Some(1);
+            snapshot.revision += 1;
+            Some(NavigationChange {
+                kind: NavigationChangeKind::Push,
+                previous,
+                current: snapshot.current_entry().cloned(),
+                snapshot: snapshot.clone(),
+                dirty_domains: NAVIGATION_SCREEN_DIRTY_DOMAINS,
+            })
+        },
+        |_| None,
+        || None,
+        || None,
+    );
+    let custom = Navigator::new(driver);
+    assert!(custom.push(20));
+    assert_eq!(custom.current_destination(), Some(20));
+    assert!(!custom.replace(30));
 }

@@ -83,6 +83,32 @@ notifications carry a revision rather than copying the complete State;
 `Store::read` provides a borrowed read path when a State copy is unnecessary.
 Store and UI operations remain confined to the owning UI thread.
 
+Typed navigation uses application-defined destinations rather than URL
+strings. The retained stack keeps stable entry identities, revisions, back and
+forward state, and dirty-domain metadata without rebuilding the UI tree:
+
+```cpp
+enum class Screen { dashboard, projects, settings };
+
+auto navigator = cbss::createStackNavigator(Screen::dashboard);
+auto navigation = navigator.subscribe(
+    [](const cbss::NavigationChange<Screen>& change) {
+      // Update the retained screen host affected by this change.
+    });
+
+navigator.push(Screen::projects);
+navigator.replace(Screen::settings);
+navigator.back();
+```
+
+Forward history is discarded after branching from an older entry. Replacing a
+destination creates a new entry identity, while back and forward preserve the
+existing identities. Boundary operations are no-ops and do not publish a
+revision. `NavigationDriver` can replace the built-in stack policy without
+changing application destination types. `NavigationSubscription` is move-only
+and detaches through RAII or `close()`; listener changes made during a
+notification take effect on the next navigation change.
+
 The Driver negotiates the engine ABI, Driver contract, and baseline authoring
 capabilities before it constructs a context. `Ui` and `Style` use deterministic
 RAII lifetime. Nested callbacks maintain parentage with an exception-safe

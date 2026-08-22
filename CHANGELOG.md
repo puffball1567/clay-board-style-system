@@ -41,6 +41,11 @@ release. Before 1.0, minor releases may contain public API changes.
   value immediately, update existing Text/Image/group/attribute/state targets
   without rebuilding a component, and detach on explicit close, component drop,
   or successful unmount.
+- Added typed navigation to the C++14 and Rust reference Drivers with
+  application-defined destinations, stable entry identities, stack revisions,
+  push/replace/back/forward history, forward-branch truncation, dirty-domain
+  metadata, pluggable drivers, deterministic listener snapshots, failure
+  recovery, and lifecycle-bound RAII/`Drop` subscriptions.
 
 ### Security
 
