@@ -475,7 +475,7 @@ int main() {
     "id":"org.example.cpp-reference",
     "packVersion":"1.0.0",
     "compatibility":{
-      "minimumAbi":65560,
+      "minimumAbi":65561,
       "minimumDriverContract":65536,
       "capabilities":[
         {"id":16,"minimumVersion":1},
@@ -1170,6 +1170,157 @@ int main() {
   screen_host.queueCurrent();
   assert(screen_host.sync());
   assert(screen_host.activeScreen().value().destination == "home");
+
+  cbss::Contract::require({{CBSS_CAPABILITY_VALIDATION_PATTERN, 1u}});
+  const cbss::ValidationPattern identifier_pattern("^[A-Za-z0-9_]+$");
+  assert(identifier_pattern.test("account_42"));
+  assert(!identifier_pattern.test("account-42"));
+  bool malformed_pattern_rejected = false;
+  try {
+    const cbss::ValidationPattern malformed("[");
+  } catch (const std::invalid_argument&) {
+    malformed_pattern_rejected = true;
+  }
+  assert(malformed_pattern_rejected);
+
+  const auto account_rules = cbss::ValidationRules<std::string>()
+      .required("required")
+      .minLength(3, "minLength")
+      .maxLength(12, "maxLength")
+      .notBlank("notBlank")
+      .matches(identifier_pattern, "matches")
+      .contains("_", "contains")
+      .startsWith("ab", "startsWith")
+      .endsWith("cd", "endsWith");
+  assert(account_rules.validate("ab_cd").isValid);
+  assert(account_rules.validate("").issue.code == "required");
+  assert(account_rules.validate("a_").issue.code == "minLength");
+  assert(account_rules.validate("abc-cd").issue.code == "matches");
+  assert(account_rules.validate("abcd").issue.code == "contains");
+  assert(account_rules.validate("zz_cd").issue.code == "startsWith");
+  assert(account_rules.validate("ab_zz").issue.code == "endsWith");
+  assert(cbss::ValidationRules<std::string>()
+             .exactLength(2)
+             .validate("日本")
+             .isValid);
+  assert(cbss::ValidationRules<std::string>()
+             .optional()
+             .email()
+             .validate("")
+             .isValid);
+
+  assert(cbss::ValidationRules<std::string>()
+             .email()
+             .validate("person+tag@example.co.jp")
+             .isValid);
+  assert(cbss::ValidationRules<std::string>()
+             .url()
+             .validate("https://example.com/path?q=1")
+             .isValid);
+  assert(cbss::ValidationRules<std::string>()
+             .uuid()
+             .validate("550e8400-e29b-41d4-a716-446655440000")
+             .isValid);
+  assert(cbss::ValidationRules<std::string>()
+             .ipAddress()
+             .validate("2001:db8::1")
+             .isValid);
+  assert(cbss::ValidationRules<std::string>()
+             .date()
+             .validate("2024-02-29")
+             .isValid);
+  assert(cbss::ValidationRules<std::string>()
+             .time()
+             .validate("23:59:58.125")
+             .isValid);
+  assert(cbss::ValidationRules<std::string>()
+             .dateTime()
+             .validate("2024-02-29T23:59:58Z")
+             .isValid);
+
+  const auto number_rules = cbss::ValidationRules<double>()
+      .min(2.0, "min")
+      .max(10.0, "max")
+      .range(2.0, 10.0, "range")
+      .integer("integer")
+      .positive("positive")
+      .finite("finite")
+      .multipleOf(2.0, "multipleOf");
+  assert(number_rules.validate(4.0).isValid);
+  assert(number_rules.validate(1.0).issue.code == "min");
+  assert(number_rules.validate(11.0).issue.code == "max");
+  assert(number_rules.validate(5.0).issue.code == "multipleOf");
+  assert(!cbss::ValidationRules<double>().finite().validate(INFINITY).isValid);
+  assert(cbss::ValidationRules<double>().max(INFINITY).validate(42.0).isValid);
+  assert(cbss::ValidationRules<double>().min(-INFINITY).validate(42.0).isValid);
+  assert(!cbss::ValidationRules<double>().integer().validate(1.5).isValid);
+  assert(cbss::ValidationRules<int>().negative().validate(-1).isValid);
+  bool invalid_multiple_rejected = false;
+  try {
+    cbss::ValidationRules<double>().multipleOf(0.0);
+  } catch (const std::invalid_argument&) {
+    invalid_multiple_rejected = true;
+  }
+  assert(invalid_multiple_rejected);
+
+  cbss::ValidationValue<std::string> password("first");
+  const auto comparison_rules = cbss::ValidationRules<std::string>()
+      .equalTo("first", "equalTo")
+      .notEqualTo("blocked", "notEqualTo")
+      .oneOf({"first", "second"}, "oneOf")
+      .notOneOf({"blocked"}, "notOneOf")
+      .sameAs(password, "sameAs");
+  assert(comparison_rules.validate("first").isValid);
+  password.set("changed");
+  assert(comparison_rules.validate("first").issue.code == "sameAs");
+  assert(cbss::ValidationRules<std::string>()
+             .differentFrom(password)
+             .validate("other")
+             .isValid);
+
+  const auto item_rules = cbss::ValidationRules<std::vector<int>>()
+      .minItems(2, "minItems")
+      .maxItems(4, "maxItems")
+      .exactItems(3, "exactItems")
+      .uniqueItems("uniqueItems");
+  assert(item_rules.validate({1, 2, 3}).isValid);
+  assert(item_rules.validate({1}).issue.code == "minItems");
+  assert(item_rules.validate({1, 1, 2}).issue.code == "uniqueItems");
+
+  const std::vector<cbss::ValidationFile> files = {
+      {"photo.PNG", "image/png", 512},
+      {"icon.svg", "image/svg+xml", 1024}};
+  const auto file_rules =
+      cbss::ValidationRules<std::vector<cbss::ValidationFile>>()
+          .maxFileSize(1024, "maxFileSize")
+          .allowedMimeTypes({"image/*"}, "allowedMimeTypes")
+          .allowedExtensions({".png", "svg"}, "allowedExtensions")
+          .maxFiles(2, "maxFiles");
+  assert(file_rules.validate(files).isValid);
+  assert(file_rules.validate({{"large.png", "image/png", 1025}})
+             .issue.code == "maxFileSize");
+  assert(file_rules.validate({{"note.txt", "text/plain", 1}})
+             .issue.code == "allowedMimeTypes");
+
+  const auto custom_rules = cbss::ValidationRules<std::string>().custom(
+      [](const std::string& value) { return value == "approved"; },
+      "custom message");
+  assert(custom_rules.validate("approved").isValid);
+  assert(custom_rules.validate("rejected").issue.code == "custom");
+
+  cbss::ValidationBinding<std::string> validation_binding(
+      cbss::ValidationRules<std::string>().required("required"), "",
+      cbss::ValidationReport::onBlur);
+  assert(!validation_binding.current().isValid);
+  assert(!validation_binding.shouldExpose());
+  validation_binding.evaluate("", cbss::ValidationTrigger::input);
+  assert(!validation_binding.shouldExpose());
+  validation_binding.evaluate("", cbss::ValidationTrigger::blur);
+  assert(validation_binding.shouldExpose());
+  assert(validation_binding.validationMessage() == "required");
+  validation_binding.evaluate("valid", cbss::ValidationTrigger::input);
+  assert(validation_binding.current().isValid);
+  assert(!validation_binding.shouldExpose());
 
   return 0;
 }

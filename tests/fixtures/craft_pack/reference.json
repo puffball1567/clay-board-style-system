@@ -4,7 +4,7 @@
   "id": "org.example.dashboard",
   "packVersion": "1.2.0",
   "compatibility": {
-    "minimumAbi": 65560,
+    "minimumAbi": 65561,
     "minimumDriverContract": 65536,
     "capabilities": [
       {"id": 1, "minimumVersion": 1},

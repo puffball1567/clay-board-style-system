@@ -9,7 +9,7 @@ type
   ]
 
 const
-  CbssAbiVersion* = 0x00010018'u32
+  CbssAbiVersion* = 0x00010019'u32
   CbssDriverContractVersion* = 0x00010000'u32
   CbssCapabilityAvailable* = 1'u32 shl 0
   CbssCapabilityRetainedTree* = 1'u32
@@ -30,7 +30,8 @@ const
   CbssCapabilityCraftStyle* = 16'u32
   CbssCapabilityCraftPack* = 17'u32
   CbssCapabilitySubtreeLifecycle* = 18'u32
-  CbssCapabilities*: array[18, CbssCapabilityDefinition] = [
+  CbssCapabilityValidationPattern* = 19'u32
+  CbssCapabilities*: array[19, CbssCapabilityDefinition] = [
     (id: 1'u32, version: 1'u32, sinceAbi: 0x00010015'u32, name: "tree.retained"),
     (id: 2'u32, version: 1'u32, sinceAbi: 0x00010015'u32, name: "style.typed"),
     (id: 3'u32, version: 1'u32, sinceAbi: 0x00010015'u32, name: "layout.flex"),
@@ -48,5 +49,6 @@ const
     (id: 15'u32, version: 1'u32, sinceAbi: 0x00010015'u32, name: "data.stream"),
     (id: 16'u32, version: 1'u32, sinceAbi: 0x00010016'u32, name: "craft.style"),
     (id: 17'u32, version: 1'u32, sinceAbi: 0x00010016'u32, name: "craft.pack"),
-    (id: 18'u32, version: 1'u32, sinceAbi: 0x00010017'u32, name: "tree.subtree-lifecycle")
+    (id: 18'u32, version: 1'u32, sinceAbi: 0x00010017'u32, name: "tree.subtree-lifecycle"),
+    (id: 19'u32, version: 1'u32, sinceAbi: 0x00010019'u32, name: "validation.pattern")
   ]

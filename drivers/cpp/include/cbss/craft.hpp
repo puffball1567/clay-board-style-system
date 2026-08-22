@@ -4,6 +4,7 @@
 #include "cbss.h"
 #include "navigation.hpp"
 #include "store.hpp"
+#include "validation.hpp"
 
 #include <cstdint>
 #include <exception>

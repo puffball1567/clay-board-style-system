@@ -4,6 +4,7 @@ mod generated;
 mod navigation;
 mod navigation_ui;
 mod store;
+mod validation;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -22,7 +23,7 @@ pub use generated::{
     CAPABILITY_PAINT_COMMANDS, CAPABILITY_RENDER_SURFACE, CAPABILITY_RETAINED_CANVAS,
     CAPABILITY_RETAINED_SCROLL, CAPABILITY_RETAINED_TREE, CAPABILITY_STANDARD_EVENTS,
     CAPABILITY_STREAM, CAPABILITY_SUBTREE_LIFECYCLE, CAPABILITY_TYPED_STYLE,
-    DRIVER_CONTRACT_VERSION,
+    CAPABILITY_VALIDATION_PATTERN, DRIVER_CONTRACT_VERSION,
 };
 pub use navigation::{
     stack_navigation_driver, NavigationChange, NavigationChangeKind, NavigationDriver,
@@ -33,6 +34,10 @@ pub use navigation_ui::{
     Link, NavigationScreenBinding, NavigationScreenHost, NAVIGATION_SCREEN_HOST_STYLE_PRIORITY,
 };
 pub use store::{Selector, Store, StoreSubscription};
+pub use validation::{
+    ValidationBinding, ValidationFile, ValidationIssue, ValidationPattern, ValidationReport,
+    ValidationResult, ValidationRuleKind, ValidationRules, ValidationTrigger, ValidationValue,
+};
 
 pub const STATUS_OK: i32 = 0;
 pub const STATUS_INVALID_ARGUMENT: i32 = 1;
@@ -103,6 +108,11 @@ mod ffi {
 
     #[repr(C)]
     pub struct CbssStyle {
+        _private: [u8; 0],
+    }
+
+    #[repr(C)]
+    pub struct CbssValidationPattern {
         _private: [u8; 0],
     }
 
@@ -196,6 +206,26 @@ mod ffi {
         pub fn cbss_abi_version() -> c_uint;
         pub fn cbss_driver_contract_version() -> c_uint;
         pub fn cbss_has_capability(capability: c_uint, minimum_version: c_uint) -> u8;
+        pub fn cbss_validation_pattern_compile(
+            source: *const c_void,
+            length: c_uint,
+            output: *mut *mut CbssValidationPattern,
+            error_buffer: *mut c_char,
+            error_capacity: c_uint,
+        ) -> c_int;
+        pub fn cbss_validation_pattern_matches(
+            pattern: *const CbssValidationPattern,
+            value: *const c_void,
+            length: c_uint,
+            output: *mut u8,
+        ) -> c_int;
+        pub fn cbss_validation_pattern_destroy(pattern: *mut CbssValidationPattern);
+        pub fn cbss_validation_string_format(
+            format: c_uint,
+            value: *const c_void,
+            length: c_uint,
+            output: *mut u8,
+        ) -> c_int;
 
         pub fn cbss_context_create() -> *mut CbssContext;
         pub fn cbss_context_destroy(context: *mut CbssContext);

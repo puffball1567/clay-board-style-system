@@ -30,10 +30,13 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x00010018` supports:
+ABI version `0x00010019` supports:
 
 - machine-readable Craft Driver contract metadata and runtime capability
   negotiation through stable numeric identifiers before tree construction;
+- bounded compiled validation patterns and canonical string-format checks for
+  high-level foreign-language Validation APIs. Pattern/value bytes are copied
+  at the call boundary and no Nim-managed string escapes the ABI;
 - public Craft Style Slot exposure, bounded atomic Craft Style replacement,
   active Style queries, and structured parse/replacement diagnostics;
 - bounded atomic Craft Pack manifest loading, compatibility negotiation,

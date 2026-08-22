@@ -1,12 +1,13 @@
 use cbss_craft::{
     keyword, px, rgb, Contract, ErrorKind, EventKind, EventOutcome, InputEvent, Link,
     NavigationChange, NavigationChangeKind, NavigationDriver, NavigationEntry,
-    NavigationScreenHost, NavigationSnapshot, Navigator, NodeState, Store, Style, Ui, ABI_VERSION,
-    CAPABILITIES, CRAFT_DIAGNOSTIC_PACK, CRAFT_DIAGNOSTIC_STYLE_REPLACEMENT,
-    CRAFT_PACK_MISSING_CAPABILITY, CRAFT_STYLE_PARSE_UNKNOWN_PROPERTY,
-    CRAFT_STYLE_REPLACEMENT_UNDECLARED_STYLE_SLOT, DRIVER_CONTRACT_VERSION,
-    NAVIGATION_SCREEN_DIRTY_DOMAINS, STATUS_INVALID_ARGUMENT, STATUS_INVALID_HANDLE,
-    STATUS_STYLE_ERROR,
+    NavigationScreenHost, NavigationSnapshot, Navigator, NodeState, Store, Style, Ui,
+    ValidationBinding, ValidationFile, ValidationPattern, ValidationReport, ValidationRules,
+    ValidationTrigger, ValidationValue, ABI_VERSION, CAPABILITIES, CRAFT_DIAGNOSTIC_PACK,
+    CRAFT_DIAGNOSTIC_STYLE_REPLACEMENT, CRAFT_PACK_MISSING_CAPABILITY,
+    CRAFT_STYLE_PARSE_UNKNOWN_PROPERTY, CRAFT_STYLE_REPLACEMENT_UNDECLARED_STYLE_SLOT,
+    DRIVER_CONTRACT_VERSION, NAVIGATION_SCREEN_DIRTY_DOMAINS, STATUS_INVALID_ARGUMENT,
+    STATUS_INVALID_HANDLE, STATUS_STYLE_ERROR,
 };
 use std::cell::{Cell, RefCell};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -17,7 +18,7 @@ fn reference_tree_matches_the_driver_contract() {
     Contract::require_authoring().expect("authoring contract");
     assert_eq!(Contract::abi_version(), ABI_VERSION);
     assert_eq!(Contract::driver_version(), DRIVER_CONTRACT_VERSION);
-    assert_eq!(CAPABILITIES.len(), 18);
+    assert_eq!(CAPABILITIES.len(), 19);
     assert_eq!(CRAFT_STYLE_PARSE_UNKNOWN_PROPERTY, 7);
     assert_eq!(CRAFT_STYLE_REPLACEMENT_UNDECLARED_STYLE_SLOT, 1);
     assert_eq!(CRAFT_PACK_MISSING_CAPABILITY, 12);
@@ -768,7 +769,7 @@ fn craft_style_and_pack_loading_are_atomic_and_slot_scoped() {
             version: "1.2.0".to_owned(),
         }]
     );
-    let incompatible_pack = PACK.replace("\"minimumAbi\": 65560", "\"minimumAbi\": 4294967295");
+    let incompatible_pack = PACK.replace("\"minimumAbi\": 65561", "\"minimumAbi\": 4294967295");
     let rejected_pack = ui
         .replace_craft_pack(&incompatible_pack)
         .expect_err("incompatible Pack must fail");
@@ -1377,4 +1378,203 @@ fn navigation_supports_structured_destinations_and_custom_drivers() {
     assert!(custom.push(20));
     assert_eq!(custom.current_destination(), Some(20));
     assert!(!custom.replace(30));
+}
+
+#[test]
+fn validation_string_and_format_rules_match_the_canonical_runtime() {
+    let pattern = ValidationPattern::compile("^[A-Za-z0-9_]+$").expect("compiled pattern");
+    assert!(pattern.test("account_42").expect("pattern match"));
+    assert!(!pattern.test("account-42").expect("pattern mismatch"));
+    assert!(ValidationPattern::compile("[").is_err());
+
+    let rules = ValidationRules::<String>::new()
+        .required("required")
+        .min_length(3, "minLength")
+        .max_length(12, "maxLength")
+        .not_blank("notBlank")
+        .matches(pattern, "matches")
+        .contains("_", "contains")
+        .starts_with("ab", "startsWith")
+        .ends_with("cd", "endsWith");
+    assert!(rules.validate(&"ab_cd".to_owned()).is_valid);
+    assert_eq!(rules.validate(&String::new()).code(), "required");
+    assert_eq!(rules.validate(&"a_".to_owned()).code(), "minLength");
+    assert_eq!(rules.validate(&"abc-cd".to_owned()).code(), "matches");
+    assert_eq!(rules.validate(&"abcd".to_owned()).code(), "contains");
+    assert_eq!(rules.validate(&"zz_cd".to_owned()).code(), "startsWith");
+    assert_eq!(rules.validate(&"ab_zz".to_owned()).code(), "endsWith");
+    assert!(
+        ValidationRules::<String>::new()
+            .exact_length(2, "length")
+            .validate(&"日本".to_owned())
+            .is_valid
+    );
+    assert!(
+        ValidationRules::<String>::new()
+            .optional()
+            .email("email")
+            .validate(&String::new())
+            .is_valid
+    );
+
+    let valid_formats = [
+        ValidationRules::<String>::new()
+            .email("email")
+            .validate(&"person+tag@example.co.jp".to_owned()),
+        ValidationRules::<String>::new()
+            .url("url")
+            .validate(&"https://example.com/path?q=1".to_owned()),
+        ValidationRules::<String>::new()
+            .uuid("uuid")
+            .validate(&"550e8400-e29b-41d4-a716-446655440000".to_owned()),
+        ValidationRules::<String>::new()
+            .ip_address("ip")
+            .validate(&"2001:db8::1".to_owned()),
+        ValidationRules::<String>::new()
+            .date("date")
+            .validate(&"2024-02-29".to_owned()),
+        ValidationRules::<String>::new()
+            .time("time")
+            .validate(&"23:59:58.125".to_owned()),
+        ValidationRules::<String>::new()
+            .date_time("dateTime")
+            .validate(&"2024-02-29T23:59:58Z".to_owned()),
+    ];
+    assert!(valid_formats.iter().all(|result| result.is_valid));
+    assert!(
+        !ValidationRules::<String>::new()
+            .date("date")
+            .validate(&"2023-02-29".to_owned())
+            .is_valid
+    );
+}
+
+#[test]
+fn validation_numeric_comparison_collection_and_file_matrix_is_typed() {
+    let numeric = ValidationRules::<f64>::new()
+        .min(2.0, "min")
+        .expect("minimum")
+        .max(10.0, "max")
+        .expect("maximum")
+        .range(2.0, 10.0, "range")
+        .expect("range")
+        .integer("integer")
+        .positive("positive")
+        .finite("finite")
+        .multiple_of(2.0, "multipleOf")
+        .expect("multiple");
+    assert!(numeric.validate(&4.0).is_valid);
+    assert_eq!(numeric.validate(&1.0).code(), "min");
+    assert_eq!(numeric.validate(&11.0).code(), "max");
+    assert_eq!(numeric.validate(&5.0).code(), "multipleOf");
+    assert!(
+        !ValidationRules::<f64>::new()
+            .integer("integer")
+            .validate(&1.5)
+            .is_valid
+    );
+    assert!(
+        !ValidationRules::<f64>::new()
+            .finite("finite")
+            .validate(&f64::INFINITY)
+            .is_valid
+    );
+    assert!(ValidationRules::<f64>::new()
+        .multiple_of(0.0, "multiple")
+        .is_err());
+
+    let peer = ValidationValue::new("first".to_owned());
+    let comparisons = ValidationRules::<String>::new()
+        .equal_to("first".to_owned(), "equalTo")
+        .not_equal_to("blocked".to_owned(), "notEqualTo")
+        .one_of(vec!["first".to_owned(), "second".to_owned()], "oneOf")
+        .not_one_of(vec!["blocked".to_owned()], "notOneOf")
+        .same_as(peer.clone(), "sameAs");
+    assert!(comparisons.validate(&"first".to_owned()).is_valid);
+    assert_eq!(comparisons.dependency_references().len(), 1);
+    peer.set("changed".to_owned());
+    assert_eq!(comparisons.validate(&"first".to_owned()).code(), "sameAs");
+    assert!(
+        ValidationRules::<String>::new()
+            .different_from(peer, "differentFrom")
+            .validate(&"other".to_owned())
+            .is_valid
+    );
+
+    let items = ValidationRules::<Vec<i32>>::new()
+        .min_items(2, "minItems")
+        .max_items(4, "maxItems")
+        .exact_items(3, "exactItems")
+        .unique_items("uniqueItems");
+    assert!(items.validate(&vec![1, 2, 3]).is_valid);
+    assert_eq!(items.validate(&vec![1]).code(), "minItems");
+    assert_eq!(items.validate(&vec![1, 1, 2]).code(), "uniqueItems");
+
+    let files = vec![
+        ValidationFile::new("photo.PNG", 512, "image/png"),
+        ValidationFile::new("icon.svg", 1024, "image/svg+xml"),
+    ];
+    let file_rules = ValidationRules::<Vec<ValidationFile>>::new()
+        .max_file_size(1024, "maxFileSize")
+        .allowed_mime_types(["image/*"], "allowedMimeTypes")
+        .expect("MIME rules")
+        .allowed_extensions([".png", "svg"], "allowedExtensions")
+        .expect("extension rules")
+        .max_files(2, "maxFiles");
+    assert!(file_rules.validate(&files).is_valid);
+    assert_eq!(
+        file_rules
+            .validate(&vec![ValidationFile::new("large.png", 1025, "image/png")])
+            .code(),
+        "maxFileSize"
+    );
+    assert_eq!(
+        file_rules
+            .validate(&vec![ValidationFile::new("note.txt", 1, "text/plain")])
+            .code(),
+        "allowedMimeTypes"
+    );
+    assert!(ValidationRules::<Vec<ValidationFile>>::new()
+        .allowed_mime_types(["image"], "mime")
+        .is_err());
+
+    let custom =
+        ValidationRules::<String>::new().custom(|value| value == "approved", "custom message");
+    assert!(custom.validate(&"approved".to_owned()).is_valid);
+    assert_eq!(custom.validate(&"rejected".to_owned()).code(), "custom");
+}
+
+#[test]
+fn validation_binding_keeps_reporting_separate_from_current_validity() {
+    let rules = ValidationRules::<String>::new().required("required");
+    let mut binding = ValidationBinding::new(rules, String::new(), ValidationReport::OnBlur);
+    assert!(!binding.current().is_valid);
+    assert!(!binding.should_expose());
+    binding.evaluate(String::new(), ValidationTrigger::Input, false);
+    assert!(!binding.should_expose());
+    binding.evaluate(String::new(), ValidationTrigger::Blur, false);
+    assert!(binding.should_expose());
+    assert_eq!(binding.validation_message(), "required");
+    binding.evaluate("valid".to_owned(), ValidationTrigger::Input, false);
+    assert!(binding.current().is_valid);
+    assert!(!binding.should_expose());
+
+    for trigger in [
+        ValidationTrigger::Input,
+        ValidationTrigger::Blur,
+        ValidationTrigger::Submit,
+        ValidationTrigger::Explicit,
+    ] {
+        let rules = ValidationRules::<String>::new().required("required");
+        let mut live =
+            ValidationBinding::new(rules.clone(), String::new(), ValidationReport::OnInput);
+        live.evaluate(String::new(), trigger, false);
+        assert_eq!(
+            live.should_expose(),
+            matches!(trigger, ValidationTrigger::Input | ValidationTrigger::Blur)
+        );
+        let mut submit = ValidationBinding::new(rules, String::new(), ValidationReport::OnSubmit);
+        submit.evaluate(String::new(), trigger, false);
+        assert_eq!(submit.should_expose(), trigger == ValidationTrigger::Submit);
+    }
 }

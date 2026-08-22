@@ -1801,9 +1801,12 @@ inactive roots are inert and `display: none`, stable history entries restore
 their own focus, and click/Enter activation preserves user-handler ordering,
 disabled behavior, prevent-default, and accessible link semantics. ABI
 `0x00010018` adds inherited inert-state and subtree-first-focusable primitives
-so Drivers do not duplicate engine focus ordering. Validation, Command, Cue,
-screen-transition hooks, and the remaining cross-Driver application fixtures
-remain Version 0.6 work.
+so Drivers do not duplicate engine focus ordering. ABI `0x00010019` and both
+reference Drivers now provide the typed Validation core: all 40 synchronous
+rules, retained reporting policy, live peer references, custom checks, and one
+canonical bounded regex/string-format implementation. Automatic control/form
+attachment, Command, Cue, screen-transition hooks, and the remaining
+cross-Driver application fixtures remain Version 0.6 work.
 
 This scope does not require one source syntax across languages, runtime loading
 of arbitrary foreign binaries, or pixel identity across different font and
