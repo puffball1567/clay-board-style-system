@@ -46,6 +46,17 @@ release. Before 1.0, minor releases may contain public API changes.
   push/replace/back/forward history, forward-branch truncation, dirty-domain
   metadata, pluggable drivers, deterministic listener snapshots, failure
   recovery, and lifecycle-bound RAII/`Drop` subscriptions.
+- Added retained `NavigationScreenHost` and semantic typed `Link` authoring to
+  both reference Drivers. History entries preserve focus independently,
+  inactive screens remain mounted but inert and `display: none`, and Link
+  activation consistently supports click, Enter, disabled state, public click
+  handlers, prevent-default, and accessible link semantics.
+- Extended C ABI `0x00010018` with inherited inert-state mutation/query and a
+  subtree-scoped first-focusable query so foreign Drivers do not approximate
+  hidden-screen interaction or duplicate focus-order rules.
+- Exposed a replaceable C ABI default-action slot so foreign widgets preserve
+  public bubbling and prevent-default ordering instead of folding intrinsic
+  behavior into application handlers.
 
 ### Security
 

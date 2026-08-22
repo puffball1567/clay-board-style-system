@@ -8,7 +8,7 @@ pub struct CapabilityDefinition {
     pub name: &'static str,
 }
 
-pub const ABI_VERSION: u32 = 0x00010017;
+pub const ABI_VERSION: u32 = 0x00010018;
 pub const DRIVER_CONTRACT_VERSION: u32 = 0x00010000;
 pub const CAPABILITY_RETAINED_TREE: u32 = 1;
 pub const CAPABILITY_TYPED_STYLE: u32 = 2;

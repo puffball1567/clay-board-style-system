@@ -2,6 +2,7 @@
 
 mod generated;
 mod navigation;
+mod navigation_ui;
 mod store;
 
 use std::cell::{Cell, RefCell};
@@ -27,6 +28,9 @@ pub use navigation::{
     stack_navigation_driver, NavigationChange, NavigationChangeKind, NavigationDriver,
     NavigationEntry, NavigationSnapshot, NavigationSubscription, Navigator, DIRTY_HIT,
     DIRTY_LAYOUT, DIRTY_PAINT, DIRTY_STYLE, NAVIGATION_SCREEN_DIRTY_DOMAINS,
+};
+pub use navigation_ui::{
+    Link, NavigationScreenBinding, NavigationScreenHost, NAVIGATION_SCREEN_HOST_STYLE_PRIORITY,
 };
 pub use store::{Selector, Store, StoreSubscription};
 
@@ -335,6 +339,21 @@ mod ffi {
             state: c_uint,
             enabled: u8,
         ) -> c_int;
+        pub fn cbss_node_set_accessibility(
+            context: *mut CbssContext,
+            node: c_uint,
+            role: c_uint,
+            name: *const c_char,
+            description: *const c_char,
+        ) -> c_int;
+        pub fn cbss_node_set_focusable(
+            context: *mut CbssContext,
+            node: c_uint,
+            focusable: u8,
+            tab_index: c_int,
+        ) -> c_int;
+        pub fn cbss_node_set_inert(context: *mut CbssContext, node: c_uint, inert: u8) -> c_int;
+        pub fn cbss_node_inert(context: *mut CbssContext, node: c_uint) -> u8;
 
         pub fn cbss_style_create() -> *mut CbssStyle;
         pub fn cbss_style_destroy(style: *mut CbssStyle);
@@ -384,6 +403,13 @@ mod ffi {
             callback: Option<CbssEventCallback>,
             user_data: *mut c_void,
         ) -> c_int;
+        pub fn cbss_node_set_default_action(
+            context: *mut CbssContext,
+            node: c_uint,
+            kind: c_uint,
+            callback: Option<CbssEventCallback>,
+            user_data: *mut c_void,
+        ) -> c_int;
         pub fn cbss_node_subscribe_event(
             context: *mut CbssContext,
             node: c_uint,
@@ -401,6 +427,13 @@ mod ffi {
             node: c_uint,
             event: *const CbssInputEvent,
             output: *mut CbssDispatchSummary,
+        ) -> c_int;
+        pub fn cbss_context_focused_node(context: *mut CbssContext) -> c_uint;
+        pub fn cbss_context_first_focusable(context: *mut CbssContext, root: c_uint) -> c_uint;
+        pub fn cbss_context_set_focus(
+            context: *mut CbssContext,
+            node: c_uint,
+            focus_visible: u8,
         ) -> c_int;
     }
 }
@@ -754,6 +787,35 @@ pub enum NodeState {
     Selected = 6,
     Open = 7,
     Invalid = 8,
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AccessibleRole {
+    None = 0,
+    Application = 1,
+    Generic = 2,
+    Button = 3,
+    CheckBox = 4,
+    Radio = 5,
+    TextBox = 6,
+    TextArea = 7,
+    ComboBox = 8,
+    Option = 9,
+    Slider = 10,
+    Disclosure = 11,
+    ProgressBar = 12,
+    ListBox = 13,
+    ListItem = 14,
+    TabList = 15,
+    Tab = 16,
+    Dialog = 17,
+    Group = 18,
+    Image = 19,
+    StaticText = 20,
+    Link = 21,
+    Switch = 22,
+    PasswordText = 23,
 }
 
 struct ComponentWatchState {
@@ -1142,6 +1204,7 @@ struct EventSubscriptionState {
 struct DriverEventState {
     context: Cell<*mut ffi::CbssContext>,
     handlers: RefCell<HashMap<u32, HashMap<u32, Rc<EventCallbackState>>>>,
+    default_actions: RefCell<HashMap<u32, HashMap<u32, Rc<EventCallbackState>>>>,
     subscriptions: RefCell<HashMap<u64, EventSubscriptionState>>,
     subscriptions_by_node: RefCell<HashMap<u32, HashSet<u64>>>,
 }
@@ -1151,6 +1214,7 @@ impl DriverEventState {
         Self {
             context: Cell::new(context),
             handlers: RefCell::new(HashMap::new()),
+            default_actions: RefCell::new(HashMap::new()),
             subscriptions: RefCell::new(HashMap::new()),
             subscriptions_by_node: RefCell::new(HashMap::new()),
         }
@@ -1190,10 +1254,12 @@ impl DriverEventState {
 
     fn release_nodes(&self, nodes: &HashSet<u32>) {
         let mut handlers = self.handlers.borrow_mut();
+        let mut default_actions = self.default_actions.borrow_mut();
         let mut subscriptions = self.subscriptions.borrow_mut();
         let mut index = self.subscriptions_by_node.borrow_mut();
         for node in nodes {
             handlers.remove(node);
+            default_actions.remove(node);
             if let Some(ids) = index.remove(node) {
                 for id in ids {
                     subscriptions.remove(&id);
@@ -1204,6 +1270,7 @@ impl DriverEventState {
 
     fn clear_after_reset(&self) {
         self.handlers.borrow_mut().clear();
+        self.default_actions.borrow_mut().clear();
         self.subscriptions.borrow_mut().clear();
         self.subscriptions_by_node.borrow_mut().clear();
     }
@@ -1216,6 +1283,14 @@ impl DriverEventState {
     fn callback_panicked(&self) -> bool {
         let handlers = self.handlers.borrow();
         if handlers
+            .values()
+            .any(|node| node.values().any(|holder| holder.panicked.get()))
+        {
+            return true;
+        }
+        if self
+            .default_actions
+            .borrow()
             .values()
             .any(|node| node.values().any(|holder| holder.panicked.get()))
         {
@@ -1280,6 +1355,291 @@ impl UiHandle {
             ffi::cbss_node_set_state(context.as_ptr(), node.id, state as u32, u8::from(enabled))
         };
         self.check(context, status, "set retained state")
+    }
+
+    pub fn set_focusable(&self, node: Node, focusable: bool, tab_index: i32) -> Result<()> {
+        let context = self.require_node(node, "set focusable")?;
+        let status = unsafe {
+            ffi::cbss_node_set_focusable(context.as_ptr(), node.id, u8::from(focusable), tab_index)
+        };
+        self.check(context, status, "set focusable")
+    }
+
+    pub fn set_inert(&self, node: Node, inert: bool) -> Result<()> {
+        let context = self.require_node(node, "set inert")?;
+        let status =
+            unsafe { ffi::cbss_node_set_inert(context.as_ptr(), node.id, u8::from(inert)) };
+        self.check(context, status, "set inert")
+    }
+
+    pub fn inert(&self, node: Node) -> Result<bool> {
+        let context = self.require_node(node, "read inert")?;
+        Ok(unsafe { ffi::cbss_node_inert(context.as_ptr(), node.id) != 0 })
+    }
+
+    pub fn set_accessibility(
+        &self,
+        node: Node,
+        role: AccessibleRole,
+        name: &str,
+        description: &str,
+    ) -> Result<()> {
+        let context = self.require_node(node, "set accessibility")?;
+        let name = c_string(name, "accessible name")?;
+        let description = c_string(description, "accessible description")?;
+        let status = unsafe {
+            ffi::cbss_node_set_accessibility(
+                context.as_ptr(),
+                node.id,
+                role as u32,
+                name.as_ptr(),
+                description.as_ptr(),
+            )
+        };
+        self.check(context, status, "set accessibility")
+    }
+
+    pub fn apply(&self, node: Node, style: &Style, state_mask: u32, priority: i32) -> Result<()> {
+        let context = self.require_node(node, "apply Style")?;
+        let status = unsafe {
+            ffi::cbss_node_apply_style(
+                context.as_ptr(),
+                node.id,
+                style.handle.as_ptr(),
+                state_mask,
+                priority,
+            )
+        };
+        self.check(context, status, "apply Style")
+    }
+
+    pub fn focused_node(&self) -> Option<Node> {
+        let state = self.state.upgrade()?;
+        let context = NonNull::new(state.context.get())?;
+        let node = unsafe { ffi::cbss_context_focused_node(context.as_ptr()) };
+        (node != NODE_NONE).then_some(Node {
+            owner: context,
+            id: node,
+        })
+    }
+
+    pub fn first_focusable(&self, root: Node) -> Result<Option<Node>> {
+        let context = self.require_node(root, "find first focusable")?;
+        let node = unsafe { ffi::cbss_context_first_focusable(context.as_ptr(), root.id) };
+        Ok((node != NODE_NONE).then_some(Node {
+            owner: context,
+            id: node,
+        }))
+    }
+
+    pub fn set_focus(&self, node: Option<Node>, focus_visible: bool) -> Result<()> {
+        let context = match node {
+            Some(node) => self.require_node(node, "set focus")?,
+            None => {
+                let Some(state) = self.state.upgrade() else {
+                    return Err(Error::status(
+                        STATUS_INVALID_HANDLE,
+                        "set focus: Ui is not active",
+                    ));
+                };
+                NonNull::new(state.context.get()).ok_or_else(|| {
+                    Error::status(STATUS_INVALID_HANDLE, "set focus: Ui is not active")
+                })?
+            }
+        };
+        let status = unsafe {
+            ffi::cbss_context_set_focus(
+                context.as_ptr(),
+                node.map_or(NODE_NONE, |node| node.id),
+                u8::from(focus_visible),
+            )
+        };
+        self.check(context, status, "set focus")
+    }
+
+    pub fn parent(&self, node: Node) -> Result<Option<Node>> {
+        let context = self.require_node(node, "read parent")?;
+        let parent = unsafe { ffi::cbss_node_parent(context.as_ptr(), node.id) };
+        Ok((parent != NODE_NONE).then_some(Node {
+            owner: context,
+            id: parent,
+        }))
+    }
+
+    pub fn on<F>(&self, node: Node, kind: EventKind, callback: F) -> Result<()>
+    where
+        F: FnMut(&Event) -> EventOutcome + 'static,
+    {
+        Contract::require(&[CapabilityRequirement {
+            id: CAPABILITY_STANDARD_EVENTS,
+            minimum_version: 1,
+        }])?;
+        let context = self.require_node(node, "set event handler")?;
+        let holder = Rc::new(EventCallbackState {
+            callback: RefCell::new(Box::new(callback)),
+            panicked: Cell::new(false),
+        });
+        let status = unsafe {
+            ffi::cbss_node_set_event_handler(
+                context.as_ptr(),
+                node.id,
+                kind.code(),
+                Some(event_trampoline),
+                Rc::as_ptr(&holder).cast_mut().cast(),
+            )
+        };
+        self.check(context, status, "set event handler")?;
+        let Some(state) = self.state.upgrade() else {
+            return Err(Error::status(
+                STATUS_INVALID_HANDLE,
+                "set event handler: Ui is not active",
+            ));
+        };
+        if state.handlers.try_borrow_mut().is_err() {
+            unsafe {
+                ffi::cbss_node_set_event_handler(
+                    context.as_ptr(),
+                    node.id,
+                    kind.code(),
+                    None,
+                    std::ptr::null_mut(),
+                );
+            }
+            return Err(Error::status(
+                STATUS_INTERNAL_ERROR,
+                "set event handler: callback registry is already borrowed",
+            ));
+        }
+        state
+            .handlers
+            .borrow_mut()
+            .entry(node.id)
+            .or_default()
+            .insert(kind.code(), holder);
+        Ok(())
+    }
+
+    pub fn set_default_action<F>(&self, node: Node, kind: EventKind, callback: F) -> Result<()>
+    where
+        F: FnMut(&Event) -> EventOutcome + 'static,
+    {
+        Contract::require(&[CapabilityRequirement {
+            id: CAPABILITY_STANDARD_EVENTS,
+            minimum_version: 1,
+        }])?;
+        let context = self.require_node(node, "set default action")?;
+        let holder = Rc::new(EventCallbackState {
+            callback: RefCell::new(Box::new(callback)),
+            panicked: Cell::new(false),
+        });
+        let status = unsafe {
+            ffi::cbss_node_set_default_action(
+                context.as_ptr(),
+                node.id,
+                kind.code(),
+                Some(event_trampoline),
+                Rc::as_ptr(&holder).cast_mut().cast(),
+            )
+        };
+        self.check(context, status, "set default action")?;
+        let Some(state) = self.state.upgrade() else {
+            return Err(Error::status(
+                STATUS_INVALID_HANDLE,
+                "set default action: Ui is not active",
+            ));
+        };
+        if state.default_actions.try_borrow_mut().is_err() {
+            unsafe {
+                ffi::cbss_node_set_default_action(
+                    context.as_ptr(),
+                    node.id,
+                    kind.code(),
+                    None,
+                    std::ptr::null_mut(),
+                );
+            }
+            return Err(Error::status(
+                STATUS_INTERNAL_ERROR,
+                "set default action: callback registry is already borrowed",
+            ));
+        }
+        state
+            .default_actions
+            .borrow_mut()
+            .entry(node.id)
+            .or_default()
+            .insert(kind.code(), holder);
+        Ok(())
+    }
+
+    pub fn emit(&self, node: Node, input: &InputEvent) -> Result<DispatchSummary> {
+        Contract::require(&[CapabilityRequirement {
+            id: CAPABILITY_STANDARD_EVENTS,
+            minimum_version: 1,
+        }])?;
+        let context = self.require_node(node, "emit event")?;
+        let key = input
+            .key
+            .as_deref()
+            .map(|value| c_string(value, "event key"))
+            .transpose()?;
+        let text = input
+            .text
+            .as_deref()
+            .map(|value| c_string(value, "event text"))
+            .transpose()?;
+        let mut flags = 0_u32;
+        let (x, y) = input.position.unwrap_or((0.0, 0.0));
+        if input.position.is_some() {
+            flags |= INPUT_HAS_POSITION;
+        }
+        let (delta_x, delta_y) = input.delta.unwrap_or((0.0, 0.0));
+        if input.delta.is_some() {
+            flags |= INPUT_HAS_DELTA;
+        }
+        if input.button.is_some() {
+            flags |= INPUT_HAS_BUTTON;
+        }
+        if key.is_some() {
+            flags |= INPUT_HAS_KEY;
+        }
+        if text.is_some() {
+            flags |= INPUT_HAS_TEXT;
+        }
+        if input.pointer.is_some() {
+            flags |= INPUT_HAS_POINTER;
+        }
+        let raw = ffi::CbssInputEvent {
+            kind: input.kind.code(),
+            flags,
+            modifiers: input.modifiers,
+            button: input.button.unwrap_or(0),
+            x,
+            y,
+            delta_x,
+            delta_y,
+            key: key
+                .as_ref()
+                .map_or(std::ptr::null(), |value| value.as_ptr()),
+            text: text
+                .as_ref()
+                .map_or(std::ptr::null(), |value| value.as_ptr()),
+            pointer: input.pointer.unwrap_or_default().into(),
+            timestamp: input.timestamp,
+        };
+        let mut summary = ffi::CbssDispatchSummary::default();
+        let status =
+            unsafe { ffi::cbss_context_emit_event(context.as_ptr(), node.id, &raw, &mut summary) };
+        self.check(context, status, "emit event")?;
+        Ok(DispatchSummary {
+            target: summary.target,
+            dispatch_count: summary.dispatch_count,
+            handled: summary.handled != 0,
+            outcome: EventOutcome(summary.outcome),
+            needs_compute: summary.needs_compute != 0,
+            paint_changed: summary.paint_changed != 0,
+            focus_changed: summary.focus_changed != 0,
+        })
     }
 
     fn require_node(&self, node: Node, operation: &str) -> Result<NonNull<ffi::CbssContext>> {
@@ -1545,6 +1905,41 @@ impl Ui {
             )
         };
         self.check(status, "set retained state")
+    }
+
+    pub fn set_focusable(&mut self, node: Node, focusable: bool, tab_index: i32) -> Result<()> {
+        self.handle().set_focusable(node, focusable, tab_index)
+    }
+
+    pub fn set_inert(&mut self, node: Node, inert: bool) -> Result<()> {
+        self.handle().set_inert(node, inert)
+    }
+
+    pub fn inert(&self, node: Node) -> Result<bool> {
+        self.handle().inert(node)
+    }
+
+    pub fn set_accessibility(
+        &mut self,
+        node: Node,
+        role: AccessibleRole,
+        name: &str,
+        description: &str,
+    ) -> Result<()> {
+        self.handle()
+            .set_accessibility(node, role, name, description)
+    }
+
+    pub fn focused_node(&self) -> Option<Node> {
+        self.handle().focused_node()
+    }
+
+    pub fn first_focusable(&self, root: Node) -> Result<Option<Node>> {
+        self.handle().first_focusable(root)
+    }
+
+    pub fn set_focus(&mut self, node: Option<Node>, focus_visible: bool) -> Result<()> {
+        self.handle().set_focus(node, focus_visible)
     }
 
     pub fn apply(

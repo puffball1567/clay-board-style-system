@@ -80,6 +80,7 @@ const
   CbssEventCancelable* = 1'u32 shl 8
   CbssEventPhaseTarget* = 1'u32 shl 9
   CbssEventPhaseBubble* = 1'u32 shl 10
+  CbssEventPhaseDefaultAction* = 1'u32 shl 12
 
   CbssEventOutcomeHandled* = 1'u8 shl 0
   CbssEventOutcomeStopPropagation* = 1'u8 shl 1
@@ -1175,6 +1176,8 @@ proc eventFlags(dispatch: DispatchResult; includeLocal: bool): uint32 =
     result = result or CbssEventPhaseTarget
   of epBubble:
     result = result or CbssEventPhaseBubble
+  of epDefaultAction:
+    result = result or CbssEventPhaseDefaultAction
   else:
     discard
 
@@ -3923,6 +3926,37 @@ proc cbssNodeSetFocusable(
     context.invalidate()
   CbssOk
 
+proc cbssNodeSetInert(
+    context: CbssContextHandle;
+    node: uint32;
+    inert: uint8
+): int32 {.exportc: "cbss_node_set_inert", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if not context.validNode(node):
+    return CbssInvalidArgument
+  let index = node.nodeId.nodeIndex
+  let nextInert = inert != 0
+  if context.tree.nodes[index].inert == nextInert:
+    return CbssOk
+  context.tree.setInert(node.nodeId, nextInert)
+  if nextInert and context.interaction.focusedTarget.isSome and
+      context.tree.isDescendantOrSelf(
+        context.interaction.focusedTarget.get,
+        node.nodeId
+      ):
+    discard context.setContextFocus(none(NodeId), focusVisible = false)
+  context.invalidate()
+  CbssOk
+
+proc cbssNodeInert(
+    context: CbssContextHandle;
+    node: uint32
+): uint8 {.exportc: "cbss_node_inert", cdecl, dynlib.} =
+  if context.isNil or not context.validNode(node):
+    return 0
+  uint8(ord(context.tree.isInert(node.nodeId)))
+
 proc cbssNodeSetEventHandler(
     context: CbssContextHandle;
     node, kind: uint32;
@@ -3939,6 +3973,28 @@ proc cbssNodeSetEventHandler(
     discard context.events.clearEventHandler(node.nodeId, eventKind)
   else:
     context.events.setEventHandler(
+      node.nodeId,
+      eventKind,
+      cEventHandler(context, callback, userData)
+    )
+  CbssOk
+
+proc cbssNodeSetDefaultAction(
+    context: CbssContextHandle;
+    node, kind: uint32;
+    callback: CbssEventCallback;
+    userData: pointer
+): int32 {.exportc: "cbss_node_set_default_action", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if not context.validNode(node) or
+      kind > uint32(ord(high(InputEventKind))):
+    return CbssInvalidArgument
+  let eventKind = InputEventKind(kind)
+  if callback.isNil:
+    discard context.events.clearInternalEventHandler(node.nodeId, eventKind)
+  else:
+    context.events.setInternalEventHandler(
       node.nodeId,
       eventKind,
       cEventHandler(context, callback, userData)
@@ -5369,6 +5425,17 @@ proc cbssContextFocusedNode(context: CbssContextHandle): uint32 {.
   if context.isNil or context.interaction.focusedTarget.isNone:
     return CbssNodeNone
   context.interaction.focusedTarget.get.nodeRawValue()
+
+proc cbssContextFirstFocusable(
+    context: CbssContextHandle;
+    root: uint32
+): uint32 {.exportc: "cbss_context_first_focusable", cdecl, dynlib.} =
+  if context.isNil or not context.validNode(root):
+    return CbssNodeNone
+  for target in context.focusTargets():
+    if context.tree.isDescendantOrSelf(target, root.nodeId):
+      return target.nodeRawValue()
+  CbssNodeNone
 
 proc cbssContextSetFocus(
     context: CbssContextHandle;

@@ -30,7 +30,7 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x00010017` supports:
+ABI version `0x00010018` supports:
 
 - machine-readable Craft Driver contract metadata and runtime capability
   negotiation through stable numeric identifiers before tree construction;
@@ -108,6 +108,8 @@ ABI version `0x00010017` supports:
   tangential pressure, x/y tilt, rotation, distance, and slider values cross
   both ordinary event callbacks and RenderSurface input callbacks.
 - Hover, active, focus, focus-visible, pointer-capture, and focus-scope state.
+- Inherited inert-state mutation/query and subtree-scoped first-focusable
+  lookup for retained screen hosts.
 - Tab and Shift+Tab focus traversal.
 - Retained scrolling and scrollbar interaction without layout recomputation.
 - Versioned RenderSurface registration, Box attachment, placement, local input,
@@ -301,7 +303,12 @@ its final `cbss_stream_producer_release`.
 
 Event handlers are installed with `cbss_node_set_event_handler`. Reinstalling
 the same node/event pair replaces the callback; passing a null callback removes
-it. Independent observers use `cbss_node_subscribe_event`, retain the returned
+it. Intrinsic widget behavior uses `cbss_node_set_default_action`; it runs after
+public bubbling and is skipped when a cancelable event is marked
+prevent-default. Reinstalling the same node/event pair replaces the default
+action, and a null callback removes it. Its callback receives
+`CBSS_EVENT_PHASE_DEFAULT_ACTION` in `CbssEvent.flags`. Independent observers use
+`cbss_node_subscribe_event`, retain the returned
 `CbssEventSubscription`, and remove it with
 `cbss_context_unsubscribe_event`. The callback returns a bitwise combination of
 `CBSS_EVENT_OUTCOME_*`:

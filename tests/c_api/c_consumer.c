@@ -1,6 +1,6 @@
 #include "cbss.h"
 
-_Static_assert(CBSS_ABI_VERSION == 0x00010017u, "unexpected CBSS ABI version");
+_Static_assert(CBSS_ABI_VERSION == 0x00010018u, "unexpected CBSS ABI version");
 _Static_assert(CBSS_ROLE_SWITCH == 22, "unexpected switch role value");
 _Static_assert(CBSS_ROLE_PASSWORD_TEXT == 23,
                "unexpected password text role value");
@@ -71,6 +71,11 @@ typedef struct ObserverState {
   uint32_t child;
   int clicks;
 } ObserverState;
+
+typedef struct DefaultActionState {
+  CallbackState *callbacks;
+  int calls;
+} DefaultActionState;
 
 typedef struct EventViewState {
   uint32_t expected_target;
@@ -203,7 +208,7 @@ static void test_craft_loading(void) {
   static const char pack_json[] =
       "{\"format\":\"cbss-craft-pack\",\"version\":1,"
       "\"id\":\"org.example.c\",\"packVersion\":\"1.0.0\","
-      "\"compatibility\":{\"minimumAbi\":65559,"
+      "\"compatibility\":{\"minimumAbi\":65560,"
       "\"minimumDriverContract\":65536,\"capabilities\":["
       "{\"id\":16,\"minimumVersion\":1},"
       "{\"id\":17,\"minimumVersion\":1}]},"
@@ -339,6 +344,19 @@ static uint8_t observe_click(
   assert(event->current_target == state->child);
   ++state->clicks;
   return 0;
+}
+
+static uint8_t handle_default_action(
+    CbssContext *context, const CbssEvent *event, void *user_data) {
+  DefaultActionState *state = user_data;
+  assert(context != NULL);
+  assert(event->kind == CBSS_EVENT_CLICK);
+  assert(event->target != CBSS_NODE_NONE);
+  assert(event->current_target == state->callbacks->child);
+  assert((event->flags & CBSS_EVENT_PHASE_DEFAULT_ACTION) != 0);
+  assert(state->callbacks->child_clicks > state->calls);
+  ++state->calls;
+  return CBSS_EVENT_OUTCOME_HANDLED;
 }
 
 static uint8_t handle_event_view(
@@ -546,7 +564,7 @@ int main(void) {
   assert(strcmp(capability_name, "tree.retained") == 0);
   assert(cbss_capability_at(17, &capability) == CBSS_OK);
   assert(capability.id == CBSS_CAPABILITY_SUBTREE_LIFECYCLE);
-  assert(capability.since_abi == CBSS_ABI_VERSION);
+  assert(capability.since_abi == 0x00010017u);
   memset(&capability, 0xff, sizeof(capability));
   assert(cbss_capability_at(
       cbss_capability_count(), &capability) == CBSS_OUT_OF_RANGE);
@@ -1027,6 +1045,14 @@ int main(void) {
       context, surface_node, surface_style, 0, 0));
   require_ok(context, cbss_node_set_focusable(context, child, 1, 0));
   require_ok(context, cbss_node_set_focusable(context, sibling, 1, 0));
+  assert(cbss_context_first_focusable(context, root) == child);
+  assert(!cbss_node_inert(context, child));
+  require_ok(context, cbss_node_set_inert(context, child, 1));
+  assert(cbss_node_inert(context, child));
+  assert(cbss_context_first_focusable(context, root) == sibling);
+  require_ok(context, cbss_node_set_inert(context, child, 0));
+  assert(!cbss_node_inert(context, child));
+  assert(cbss_context_first_focusable(context, root) == child);
   require_ok(context, cbss_node_set_accessibility(
       context, child, CBSS_ROLE_BUTTON, "C button", "Runs the C action"));
   require_ok(context, cbss_node_set_accessibility(
@@ -1039,11 +1065,17 @@ int main(void) {
       .child = child
   };
   ObserverState observer_state = {.child = child};
+  DefaultActionState default_action_state = {
+      .callbacks = &callback_state
+  };
   CbssEventSubscription click_observer = 0;
   require_ok(context, cbss_node_set_event_handler(
       context, child, CBSS_EVENT_CLICK, handle_event, &callback_state));
   require_ok(context, cbss_node_set_event_handler(
       context, root, CBSS_EVENT_CLICK, handle_event, &callback_state));
+  require_ok(context, cbss_node_set_default_action(
+      context, child, CBSS_EVENT_CLICK,
+      handle_default_action, &default_action_state));
   require_ok(context, cbss_node_set_event_handler(
       context, child, CBSS_EVENT_FOCUS, handle_event, &callback_state));
   require_ok(context, cbss_node_set_event_handler(
@@ -1062,6 +1094,15 @@ int main(void) {
       context, child, CBSS_EVENT_CLICK, observe_click, &observer_state,
       &click_observer));
   assert(click_observer != 0);
+  CbssInputEvent inert_click = {.kind = CBSS_EVENT_CLICK};
+  CbssDispatchSummary inert_dispatch = {0};
+  require_ok(context, cbss_node_set_inert(context, child, 1));
+  require_ok(context, cbss_context_emit_event(
+      context, child, &inert_click, &inert_dispatch));
+  assert(!inert_dispatch.handled);
+  assert(callback_state.child_clicks == 0);
+  assert(observer_state.clicks == 0);
+  require_ok(context, cbss_node_set_inert(context, child, 0));
 
   EventViewState submit_view_state = {
       .expected_target = child,
@@ -1510,6 +1551,11 @@ int main(void) {
   assert(dispatch.needs_compute);
   assert(cbss_context_focused_node(context) == child);
   assert(callback_state.focus_events == 1);
+  require_ok(context, cbss_node_set_inert(context, child, 1));
+  assert(cbss_context_focused_node(context) == CBSS_NODE_NONE);
+  require_ok(context, cbss_node_set_inert(context, child, 0));
+  require_ok(context, cbss_context_set_focus(context, child, 1));
+  assert(cbss_context_focused_node(context) == child);
   require_ok(context, cbss_context_recompute(context));
 
   CbssInputEvent pen_button = {
@@ -1548,6 +1594,7 @@ int main(void) {
   assert(callback_state.child_clicks == 1);
   assert(callback_state.root_clicks == 1);
   assert(observer_state.clicks == 1);
+  assert(default_action_state.calls == 1);
   assert(dispatch.needs_compute);
   require_ok(context, cbss_context_recompute(context));
 
@@ -1563,11 +1610,14 @@ int main(void) {
   assert(callback_state.child_clicks == 2);
   assert(callback_state.root_clicks == 1);
   assert(observer_state.clicks == 1);
+  assert(default_action_state.calls == 2);
   assert(dispatch.handled);
   assert((dispatch.outcome & CBSS_EVENT_OUTCOME_HANDLED) != 0);
   assert((dispatch.outcome & CBSS_EVENT_OUTCOME_STOP_PROPAGATION) != 0);
   assert((dispatch.outcome & CBSS_EVENT_OUTCOME_PREVENT_DEFAULT) == 0);
   callback_state.stop_child_click = 0;
+  require_ok(context, cbss_node_set_default_action(
+      context, child, CBSS_EVENT_CLICK, NULL, NULL));
 
   CbssInputEvent text_input = {
       .kind = CBSS_EVENT_TEXT_INPUT,

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "engine_abi_version": 65559,
+  "engine_abi_version": 65560,
   "driver_contract_version": 65536,
   "capabilities": [
     {"id": 1, "symbol": "RETAINED_TREE", "name": "tree.retained", "version": 1, "since_abi": 65557},

@@ -26,7 +26,7 @@ extern "C" {
 #endif
 
 /* CBSS_GENERATED_DRIVER_CONTRACT_BEGIN */
-#define CBSS_ABI_VERSION 0x00010017u
+#define CBSS_ABI_VERSION 0x00010018u
 #define CBSS_DRIVER_CONTRACT_VERSION 0x00010000u
 
 typedef enum CbssCapabilityId {
@@ -372,7 +372,8 @@ enum {
   CBSS_EVENT_CANCELABLE = 1u << 8,
   CBSS_EVENT_PHASE_TARGET = 1u << 9,
   CBSS_EVENT_PHASE_BUBBLE = 1u << 10,
-  CBSS_EVENT_HAS_MOTION = 1u << 11
+  CBSS_EVENT_HAS_MOTION = 1u << 11,
+  CBSS_EVENT_PHASE_DEFAULT_ACTION = 1u << 12
 };
 
 typedef enum CbssDirtyDomain {
@@ -1155,7 +1156,13 @@ CBSS_API uint32_t cbss_node_accessible_value(
 CBSS_API CbssStatus cbss_node_set_focusable(
     CbssContext *context, uint32_t node, uint8_t focusable,
     int32_t tab_index);
+CBSS_API CbssStatus cbss_node_set_inert(
+    CbssContext *context, uint32_t node, uint8_t inert);
+CBSS_API uint8_t cbss_node_inert(CbssContext *context, uint32_t node);
 CBSS_API CbssStatus cbss_node_set_event_handler(
+    CbssContext *context, uint32_t node, uint32_t kind,
+    CbssEventCallback callback, void *user_data);
+CBSS_API CbssStatus cbss_node_set_default_action(
     CbssContext *context, uint32_t node, uint32_t kind,
     CbssEventCallback callback, void *user_data);
 CBSS_API CbssStatus cbss_node_subscribe_event(
@@ -1310,6 +1317,8 @@ CBSS_API CbssStatus cbss_context_emit_submit(
     CbssContext *context, uint32_t node, const CbssFormData *form_data,
     CbssDispatchSummary *output);
 CBSS_API uint32_t cbss_context_focused_node(CbssContext *context);
+CBSS_API uint32_t cbss_context_first_focusable(
+    CbssContext *context, uint32_t root);
 CBSS_API CbssStatus cbss_context_set_focus(
     CbssContext *context, uint32_t node, uint8_t focus_visible);
 CBSS_API CbssStatus cbss_context_move_focus(

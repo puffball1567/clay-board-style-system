@@ -475,7 +475,7 @@ int main() {
     "id":"org.example.cpp-reference",
     "packVersion":"1.0.0",
     "compatibility":{
-      "minimumAbi":65559,
+      "minimumAbi":65560,
       "minimumDriverContract":65536,
       "capabilities":[
         {"id":16,"minimumVersion":1},
@@ -1020,6 +1020,156 @@ int main() {
   }
   assert(!expired_navigation.active());
   assert(!expired_navigation.close());
+
+  cbss::Ui navigation_ui;
+  const cbss::Node navigation_app = navigation_ui.box("navigation-app");
+  cbss::Node home_root;
+  cbss::Node home_last;
+  navigation_ui.within(navigation_app, [&] {
+    home_root = navigation_ui.box("home-screen", [&] {
+      const cbss::Node home_first = navigation_ui.box("home-first");
+      home_last = navigation_ui.box("home-last");
+      navigation_ui.setFocusable(home_first);
+      navigation_ui.setFocusable(home_last);
+    });
+  });
+  cbss::Node settings_root;
+  cbss::Node settings_first;
+  cbss::Node settings_last;
+  navigation_ui.within(navigation_app, [&] {
+    settings_root = navigation_ui.box("settings-screen", [&] {
+      settings_first = navigation_ui.box("settings-first");
+      settings_last = navigation_ui.box("settings-last");
+      navigation_ui.setFocusable(settings_first);
+      navigation_ui.setFocusable(settings_last);
+    });
+  });
+  int inactive_clicks = 0;
+  navigation_ui.on(settings_last, CBSS_EVENT_CLICK,
+                   [&](const cbss::Event&) {
+                     ++inactive_clicks;
+                     return cbss::EventOutcome::handled();
+                   });
+
+  auto screen_navigator =
+      cbss::createStackNavigator<std::string>("home");
+  cbss::NavigationScreenHost<std::string> screen_host(
+      navigation_ui, screen_navigator);
+  screen_host.registerScreen("home", home_root);
+  screen_host.registerScreen("settings", settings_root, settings_first);
+  bool duplicate_screen_rejected = false;
+  try {
+    screen_host.registerScreen("home", settings_root);
+  } catch (const std::invalid_argument&) {
+    duplicate_screen_rejected = true;
+  }
+  assert(duplicate_screen_rejected);
+  assert(screen_host.sync());
+  assert(screen_host.activeScreen().value().destination == "home");
+  assert(!navigation_ui.inert(home_root));
+  assert(navigation_ui.inert(settings_root));
+  assert(!navigation_ui.emit(
+                           settings_last,
+                           cbss::InputEvent(CBSS_EVENT_CLICK))
+               .handled);
+  assert(inactive_clicks == 0);
+
+  navigation_ui.setFocus(home_last, true);
+  assert(screen_navigator.push("settings"));
+  assert(screen_host.sync());
+  assert(navigation_ui.focusedNode() == settings_first);
+  navigation_ui.setFocus(settings_last, true);
+  assert(screen_navigator.back());
+  assert(screen_host.sync());
+  assert(navigation_ui.focusedNode() == home_last);
+  assert(screen_navigator.forward());
+  assert(screen_host.sync());
+  assert(navigation_ui.focusedNode() == settings_last);
+  assert(screen_navigator.back());
+  assert(screen_host.sync());
+
+  cbss::Link<std::string> settings_link;
+  navigation_ui.within(navigation_app, [&] {
+    settings_link = cbss::Link<std::string>::mount(
+        navigation_ui, screen_navigator, "settings", "Settings");
+  });
+  int link_clicks = 0;
+  int link_bubbles = 0;
+  navigation_ui.on(navigation_app, CBSS_EVENT_CLICK,
+                   [&](const cbss::Event&) {
+                     ++link_bubbles;
+                     return cbss::EventOutcome::handled();
+                   });
+  std::string destination_seen_by_link;
+  settings_link.onClick([&](const cbss::Event&) {
+    ++link_clicks;
+    destination_seen_by_link =
+        screen_navigator.currentDestination().value();
+    return cbss::EventOutcome::handled();
+  });
+  const cbss::DispatchSummary link_click = navigation_ui.emit(
+      settings_link.container(), cbss::InputEvent(CBSS_EVENT_CLICK));
+  assert(link_click.handled);
+  assert(link_clicks == 1);
+  assert(link_bubbles == 1);
+  assert(destination_seen_by_link == "home");
+  assert(screen_navigator.currentDestination().value() == "settings");
+  assert(screen_host.sync());
+
+  assert(screen_navigator.back());
+  assert(screen_host.sync());
+  const cbss::DispatchSummary link_enter = navigation_ui.emit(
+      settings_link.container(),
+      cbss::InputEvent(CBSS_EVENT_KEY_DOWN).keyValue("Enter"));
+  assert(link_enter.handled);
+  assert(link_clicks == 2);
+  assert(link_bubbles == 2);
+  assert(screen_navigator.currentDestination().value() == "settings");
+  assert(screen_host.sync());
+  settings_link.setLabel("Project settings");
+  assert(settings_link.label() == "Project settings");
+  assert(navigation_ui.textValue(settings_link.labelNode()) ==
+         "Project settings");
+  settings_link.setDisabled(true);
+  assert(!settings_link.activate());
+  assert(!navigation_ui.emit(
+                           settings_link.container(),
+                           cbss::InputEvent(CBSS_EVENT_CLICK))
+               .handled);
+  assert(link_clicks == 2);
+  assert(link_bubbles == 2);
+
+  cbss::Link<std::string> prevented_link;
+  navigation_ui.within(navigation_app, [&] {
+    prevented_link = cbss::Link<std::string>::mount(
+        navigation_ui, screen_navigator, "blocked", "Blocked");
+  });
+  prevented_link.onClick([](const cbss::Event&) {
+    return cbss::EventOutcome(true, false, true);
+  });
+  const std::string before_prevented =
+      screen_navigator.currentDestination().value();
+  assert(navigation_ui.emit(
+                          prevented_link.container(),
+                          cbss::InputEvent(CBSS_EVENT_CLICK))
+             .outcome.preventsDefault());
+  assert(screen_navigator.currentDestination().value() == before_prevented);
+  assert(link_bubbles == 3);
+  assert(!navigation_ui.emit(
+                            prevented_link.container(),
+                            cbss::InputEvent(CBSS_EVENT_KEY_DOWN)
+                                .keyValue(" "))
+              .handled);
+  assert(screen_navigator.currentDestination().value() == before_prevented);
+
+  assert(screen_host.connected());
+  assert(screen_host.disconnect());
+  assert(!screen_host.connected());
+  assert(screen_navigator.back());
+  assert(!screen_host.sync());
+  screen_host.queueCurrent();
+  assert(screen_host.sync());
+  assert(screen_host.activeScreen().value().destination == "home");
 
   return 0;
 }
