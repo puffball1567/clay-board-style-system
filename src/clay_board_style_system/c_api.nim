@@ -3660,7 +3660,10 @@ proc cbssNodeSetText(
   if context.tree.nodes[node.nodeId.nodeIndex].kind != nkText:
     context.setError("node is not a text node")
     return CbssInvalidArgument
-  context.tree.nodes[node.nodeId.nodeIndex].text = fromCString(text)
+  let nextText = fromCString(text)
+  if context.tree.nodes[node.nodeId.nodeIndex].text == nextText:
+    return CbssOk
+  context.tree.nodes[node.nodeId.nodeIndex].text = nextText
   context.invalidate()
   CbssOk
 
@@ -3678,7 +3681,12 @@ proc cbssNodeSetImage(
   if context.tree.nodes[index].kind != nkImage:
     context.setError("node is not an image node")
     return CbssInvalidArgument
-  context.tree.nodes[index].imageSource = fromCString(source)
+  let nextSource = fromCString(source)
+  if context.tree.nodes[index].imageSource == nextSource and
+      context.tree.nodes[index].imageWidth == width and
+      context.tree.nodes[index].imageHeight == height:
+    return CbssOk
+  context.tree.nodes[index].imageSource = nextSource
   context.tree.nodes[index].imageWidth = width
   context.tree.nodes[index].imageHeight = height
   context.invalidate()
@@ -3710,7 +3718,12 @@ proc cbssNodeSetAttribute(
     return CbssInvalidHandle
   if not context.validNode(node) or name.isNil or value.isNil:
     return CbssInvalidArgument
-  context.tree.setAttribute(node.nodeId, fromCString(name), fromCString(value))
+  let attributeName = fromCString(name)
+  let attributeValue = fromCString(value)
+  for attribute in context.tree.nodes[node.nodeId.nodeIndex].attributes:
+    if attribute.name == attributeName and attribute.value == attributeValue:
+      return CbssOk
+  context.tree.setAttribute(node.nodeId, attributeName, attributeValue)
   context.invalidate()
   CbssOk
 
@@ -3723,7 +3736,12 @@ proc cbssNodeSetState(
     return CbssInvalidHandle
   if not context.validNode(node) or state > uint32(ord(high(ElementState))):
     return CbssInvalidArgument
-  context.tree.setState(node.nodeId, ElementState(state), enabled != 0)
+  let elementState = ElementState(state)
+  let nextEnabled = enabled != 0
+  if (elementState in context.tree.nodes[node.nodeId.nodeIndex].states) ==
+      nextEnabled:
+    return CbssOk
+  context.tree.setState(node.nodeId, elementState, nextEnabled)
   context.invalidate()
   CbssOk
 

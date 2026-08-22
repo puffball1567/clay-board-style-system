@@ -1,6 +1,6 @@
 use cbss_craft::{
-    keyword, px, rgb, Contract, ErrorKind, EventKind, EventOutcome, InputEvent, Style, Ui,
-    ABI_VERSION, CAPABILITIES, CRAFT_DIAGNOSTIC_PACK, CRAFT_DIAGNOSTIC_STYLE_REPLACEMENT,
+    keyword, px, rgb, Contract, ErrorKind, EventKind, EventOutcome, InputEvent, NodeState, Style,
+    Ui, ABI_VERSION, CAPABILITIES, CRAFT_DIAGNOSTIC_PACK, CRAFT_DIAGNOSTIC_STYLE_REPLACEMENT,
     CRAFT_PACK_MISSING_CAPABILITY, CRAFT_STYLE_PARSE_UNKNOWN_PROPERTY,
     CRAFT_STYLE_REPLACEMENT_UNDECLARED_STYLE_SLOT, DRIVER_CONTRACT_VERSION,
     STATUS_INVALID_ARGUMENT, STATUS_INVALID_HANDLE, STATUS_STYLE_ERROR,
@@ -232,6 +232,136 @@ fn reference_tree_matches_the_driver_contract() {
         .close()
         .expect("subscription may outlive its Ui safely");
     assert!(!detached_observer.active());
+}
+
+#[test]
+fn craft_components_support_retained_updates_and_atomic_lifecycle() {
+    let mut ui = Ui::new().expect("Ui");
+    let mut label = None;
+    let mut image = None;
+    let events = Rc::new(Cell::new(0));
+    let component_events = Rc::clone(&events);
+    let mut component = ui
+        .component_with("status-card", "status-card-instance", None, |component| {
+            label = Some(component.text("Idle", "status-label", None)?);
+            image = Some(component.image("idle.png", 16.0, 16.0, "status-icon", None)?);
+            component.public_style_slot("label", label)?;
+            component.public_style_slot("icon", image)?;
+            component.on_root(EventKind::CHANGE, move |_event| {
+                component_events.set(component_events.get() + 1);
+                EventOutcome::HANDLED
+            })?;
+            Ok(())
+        })
+        .expect("status component");
+    let label = label.expect("label");
+    let image = image.expect("image");
+    let root = component.root().expect("component root");
+    assert!(component.active());
+    assert_eq!(component.craft_name(), "status-card");
+    assert_eq!(ui.parent(label).expect("label parent"), Some(root));
+    assert_eq!(ui.text_value(label).expect("initial text"), "Idle");
+    assert_eq!(ui.image_source(image).expect("initial image"), "idle.png");
+    let status_component_style = r#"{
+      "format":"cbss-craft-style",
+      "version":1,
+      "name":"status-theme",
+      "rules":[{
+        "selector":{"component":"status-card","slot":"root"},
+        "declarations":[{
+          "property":"width",
+          "value":{"type":"length","unit":"px","value":180}
+        }]
+      }]
+    }"#;
+    ui.replace_craft_style(status_component_style)
+        .expect("component root Craft Style");
+    ui.compute(320.0, 120.0).expect("initial component layout");
+    assert!((ui.rect(root).expect("component root rect").width - 180.0).abs() < 0.001);
+    ui.set_text(label, "Idle").expect("unchanged Text update");
+    ui.set_image(image, "idle.png", 16.0, 16.0)
+        .expect("unchanged Image update");
+    ui.set_state(root, NodeState::Checked, false)
+        .expect("unchanged state update");
+    ui.rect(label)
+        .expect("unchanged retained values preserve computed layout");
+
+    let root_id = root.native_id();
+    let label_id = label.native_id();
+    ui.set_text(label, "Ready").expect("retained Text update");
+    ui.set_image(image, "ready.png", 20.0, 12.0)
+        .expect("retained Image update");
+    ui.add_group(root, "interactive").expect("retained group");
+    ui.set_attribute(root, "data-status", "ready")
+        .expect("retained attribute");
+    ui.set_state(root, NodeState::Checked, true)
+        .expect("retained state");
+    assert_eq!(
+        component.root().expect("retained root").native_id(),
+        root_id
+    );
+    assert_eq!(label.native_id(), label_id);
+    assert_eq!(ui.text_value(label).expect("updated text"), "Ready");
+    assert_eq!(ui.image_source(image).expect("updated image"), "ready.png");
+    ui.emit(root, &InputEvent::new(EventKind::CHANGE))
+        .expect("retained event");
+    assert_eq!(events.get(), 1);
+
+    let children_before_failure = ui.child_count(root).expect("children before failure");
+    let construction_error = ui
+        .within(root, |scope| {
+            scope.component_with(
+                "failing-component",
+                "failing-component-instance",
+                None,
+                |component| {
+                    component.text("temporary", "temporary-label", None)?;
+                    component.text("invalid\0text", "invalid-label", None)?;
+                    Ok(())
+                },
+            )?;
+            Ok(())
+        })
+        .expect_err("failed component must roll back");
+    assert_eq!(
+        construction_error.status_code(),
+        Some(STATUS_INVALID_ARGUMENT)
+    );
+    assert_eq!(
+        ui.child_count(root).expect("children after failure"),
+        children_before_failure
+    );
+
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        ui.within(root, |scope| {
+            scope.component_with(
+                "panicking-component",
+                "panicking-component-instance",
+                None,
+                |component| {
+                    component.text("temporary", "panic-label", None)?;
+                    panic!("component construction panic");
+                },
+            )?;
+            Ok(())
+        })
+    }));
+    assert!(panic.is_err());
+    assert_eq!(
+        ui.child_count(root).expect("children after panic"),
+        children_before_failure
+    );
+
+    let empty_name = ui
+        .component_with("", "invalid-component", None, |_component| Ok(()))
+        .expect_err("empty Craft name must fail");
+    assert_eq!(empty_name.status_code(), Some(STATUS_INVALID_ARGUMENT));
+    assert_eq!(ui.unmount(&mut component).expect("unmount component"), 3);
+    assert!(!component.active());
+    let inactive = component
+        .root()
+        .expect_err("inactive component root must fail");
+    assert_eq!(inactive.status_code(), Some(STATUS_INVALID_HANDLE));
 }
 
 #[test]

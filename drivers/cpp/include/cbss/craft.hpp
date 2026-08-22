@@ -140,6 +140,18 @@ struct Color {
   float alpha;
 };
 
+enum class NodeState : std::uint32_t {
+  hover = CBSS_STATE_HOVER,
+  active = CBSS_STATE_ACTIVE,
+  focus = CBSS_STATE_FOCUS,
+  focusVisible = CBSS_STATE_FOCUS_VISIBLE,
+  disabled = CBSS_STATE_DISABLED,
+  checked = CBSS_STATE_CHECKED,
+  selected = CBSS_STATE_SELECTED,
+  open = CBSS_STATE_OPEN,
+  invalid = CBSS_STATE_INVALID,
+};
+
 struct CraftDiagnostic {
   std::uint32_t domain;
   std::uint32_t code;
@@ -255,6 +267,101 @@ class Node {
 
   const CbssContext* owner_;
   std::uint32_t value_;
+  friend class Ui;
+};
+
+class Ui;
+class ComponentScope;
+
+class CraftComponent {
+ public:
+  CraftComponent() noexcept : active_(false) {}
+
+  CraftComponent(const CraftComponent&) = delete;
+  CraftComponent& operator=(const CraftComponent&) = delete;
+
+  CraftComponent(CraftComponent&& other) noexcept
+      : root_(other.root_),
+        craft_name_(std::move(other.craft_name_)),
+        active_(other.active_) {
+    other.root_ = Node();
+    other.active_ = false;
+  }
+
+  CraftComponent& operator=(CraftComponent&& other) noexcept {
+    if (this != &other) {
+      root_ = other.root_;
+      craft_name_ = std::move(other.craft_name_);
+      active_ = other.active_;
+      other.root_ = Node();
+      other.active_ = false;
+    }
+    return *this;
+  }
+
+  bool active() const noexcept { return active_; }
+
+  Node root() const {
+    if (!active_) {
+      throw Error(CBSS_INVALID_HANDLE,
+                  "access Craft Component: component is not mounted");
+    }
+    return root_;
+  }
+
+  const std::string& craftName() const noexcept { return craft_name_; }
+
+ private:
+  CraftComponent(Node root, std::string craft_name)
+      : root_(root), craft_name_(std::move(craft_name)), active_(true) {}
+
+  Node root_;
+  std::string craft_name_;
+  bool active_;
+  friend class Ui;
+  friend class ComponentScope;
+};
+
+class ComponentScope {
+ public:
+  Node root() const { return component_.root(); }
+  const std::string& craftName() const noexcept {
+    return component_.craftName();
+  }
+
+  Node box(const std::string& identifier = std::string());
+  Node box(const std::string& identifier, const Style& style);
+
+  template <typename Children>
+  Node box(const std::string& identifier, Children&& children);
+
+  template <typename Children>
+  Node box(const std::string& identifier, const Style& style,
+           Children&& children);
+
+  Node text(const std::string& value,
+            const std::string& identifier = std::string());
+  Node text(const std::string& value, const std::string& identifier,
+            const Style& style);
+  Node image(const std::string& source, float width, float height,
+             const std::string& identifier = std::string());
+  Node image(const std::string& source, float width, float height,
+             const std::string& identifier, const Style& style);
+  void publicStyleSlot(const std::string& slot);
+  void publicStyleSlot(const std::string& slot, Node target);
+
+  template <typename Callback>
+  void on(Node node, CbssEventKind kind, Callback&& callback);
+
+  template <typename Callback>
+  void onRoot(CbssEventKind kind, Callback&& callback);
+
+ private:
+  ComponentScope(Ui& ui, CraftComponent& component)
+      : ui_(ui), component_(component) {}
+
+  Ui& ui_;
+  CraftComponent& component_;
   friend class Ui;
 };
 
@@ -678,6 +785,87 @@ class Ui {
     return addImage(source, width, height, identifier, &style);
   }
 
+  template <typename Children>
+  CraftComponent component(const std::string& craft_name,
+                           const std::string& identifier,
+                           Children&& children) {
+    return addComponent(craft_name, identifier, nullptr,
+                        std::forward<Children>(children));
+  }
+
+  template <typename Children>
+  CraftComponent component(const std::string& craft_name,
+                           const std::string& identifier,
+                           const Style& owned_style, Children&& children) {
+    return addComponent(craft_name, identifier, &owned_style,
+                        std::forward<Children>(children));
+  }
+
+  std::uint32_t unmount(CraftComponent& component) {
+    if (!component.active_) {
+      throw Error(CBSS_INVALID_HANDLE,
+                  "unmount Craft Component: component is not mounted");
+    }
+    requireNode(component.root_, "unmount Craft Component");
+    const std::uint32_t removed = removeSubtree(component.root_);
+    component.root_ = Node();
+    component.active_ = false;
+    return removed;
+  }
+
+  void setText(Node node, const std::string& value) {
+    requireNode(node, "set Text value");
+    check(cbss_node_set_text(context_, node.value_, value.c_str()),
+          "set Text value");
+  }
+
+  std::string textValue(Node node) const {
+    requireNode(node, "read Text value");
+    return readContextString(
+        [this, node](char* buffer, std::uint32_t capacity) {
+          return cbss_node_text(context_, node.value_, buffer, capacity);
+        });
+  }
+
+  void setImage(Node node, const std::string& source, float width,
+                float height) {
+    requireNode(node, "set Image value");
+    check(cbss_node_set_image(context_, node.value_, source.c_str(), width,
+                              height),
+          "set Image value");
+  }
+
+  std::string imageSource(Node node) const {
+    requireNode(node, "read Image source");
+    return readContextString(
+        [this, node](char* buffer, std::uint32_t capacity) {
+          return cbss_node_image_source(context_, node.value_, buffer,
+                                        capacity);
+        });
+  }
+
+  void addGroup(Node node, const std::string& group) {
+    requireNode(node, "add group");
+    check(cbss_node_add_group(context_, node.value_, group.c_str()),
+          "add group");
+  }
+
+  void setAttribute(Node node, const std::string& name,
+                    const std::string& value) {
+    requireNode(node, "set attribute");
+    check(cbss_node_set_attribute(context_, node.value_, name.c_str(),
+                                  value.c_str()),
+          "set attribute");
+  }
+
+  void setState(Node node, NodeState state, bool enabled) {
+    requireNode(node, "set retained state");
+    check(cbss_node_set_state(context_, node.value_,
+                              static_cast<std::uint32_t>(state),
+                              enabled ? 1u : 0u),
+          "set retained state");
+  }
+
   void apply(Node node, const Style& style, std::uint32_t state_mask = 0u,
              std::int32_t priority = 0) {
     requireNode(node, "apply Style");
@@ -835,13 +1023,7 @@ class Ui {
       throw Error(CBSS_INVALID_ARGUMENT,
                   "remove subtree: nested construction is active");
     }
-
-    const std::unordered_set<std::uint32_t> nodes = collectSubtree(root);
-    std::uint32_t removed = 0u;
-    check(cbss_context_remove_subtree(context_, root.value_, &removed),
-          "remove subtree");
-    events_->releaseNodes(nodes);
-    return removed;
+    return removeSubtreeNow(root);
   }
 
   void on(Node node, CbssEventKind kind,
@@ -1017,6 +1199,15 @@ class Ui {
     return result;
   }
 
+  std::uint32_t removeSubtreeNow(Node root) {
+    const std::unordered_set<std::uint32_t> nodes = collectSubtree(root);
+    std::uint32_t removed = 0u;
+    check(cbss_context_remove_subtree(context_, root.value_, &removed),
+          "remove subtree");
+    events_->releaseNodes(nodes);
+    return removed;
+  }
+
   static void requireEvents() {
     Contract::require({{CBSS_CAPABILITY_STANDARD_EVENTS, 1u}});
   }
@@ -1075,6 +1266,37 @@ class Ui {
     return node;
   }
 
+  template <typename Children>
+  CraftComponent addComponent(const std::string& craft_name,
+                              const std::string& identifier,
+                              const Style* owned_style,
+                              Children&& children) {
+    if (craft_name.empty() || craft_name.find('\0') != std::string::npos) {
+      throw Error(CBSS_INVALID_ARGUMENT,
+                  "mount Craft Component: craft name is empty or contains "
+                  "an interior NUL byte");
+    }
+    const Node root = addBox(identifier, owned_style);
+    CraftComponent component(root, craft_name);
+    try {
+      exposeStyleSlot(root, root, craft_name, "root");
+      {
+        ParentScope parent(*this, root);
+        ComponentScope scope(*this, component);
+        std::forward<Children>(children)(scope);
+      }
+    } catch (...) {
+      try {
+        removeSubtreeNow(root);
+      } catch (...) {
+      }
+      component.root_ = Node();
+      component.active_ = false;
+      throw;
+    }
+    return component;
+  }
+
   void checkAdded(Node node, const std::string& operation) const {
     if (!node.valid()) {
       throw Error(CBSS_INTERNAL_ERROR,
@@ -1116,6 +1338,69 @@ class Ui {
   std::vector<std::uint32_t> parents_;
   std::shared_ptr<detail::EventDriverState> events_;
 };
+
+inline Node ComponentScope::box(const std::string& identifier) {
+  return ui_.box(identifier);
+}
+
+inline Node ComponentScope::box(const std::string& identifier,
+                                const Style& style) {
+  return ui_.box(identifier, style);
+}
+
+template <typename Children>
+Node ComponentScope::box(const std::string& identifier, Children&& children) {
+  return ui_.box(identifier, std::forward<Children>(children));
+}
+
+template <typename Children>
+Node ComponentScope::box(const std::string& identifier, const Style& style,
+                         Children&& children) {
+  return ui_.box(identifier, style, std::forward<Children>(children));
+}
+
+inline Node ComponentScope::text(const std::string& value,
+                                 const std::string& identifier) {
+  return ui_.text(value, identifier);
+}
+
+inline Node ComponentScope::text(const std::string& value,
+                                 const std::string& identifier,
+                                 const Style& style) {
+  return ui_.text(value, identifier, style);
+}
+
+inline Node ComponentScope::image(const std::string& source, float width,
+                                  float height,
+                                  const std::string& identifier) {
+  return ui_.image(source, width, height, identifier);
+}
+
+inline Node ComponentScope::image(const std::string& source, float width,
+                                  float height,
+                                  const std::string& identifier,
+                                  const Style& style) {
+  return ui_.image(source, width, height, identifier, style);
+}
+
+inline void ComponentScope::publicStyleSlot(const std::string& slot) {
+  publicStyleSlot(slot, component_.root());
+}
+
+inline void ComponentScope::publicStyleSlot(const std::string& slot,
+                                            Node target) {
+  ui_.exposeStyleSlot(component_.root(), target, component_.craftName(), slot);
+}
+
+template <typename Callback>
+void ComponentScope::on(Node node, CbssEventKind kind, Callback&& callback) {
+  ui_.on(node, kind, std::forward<Callback>(callback));
+}
+
+template <typename Callback>
+void ComponentScope::onRoot(CbssEventKind kind, Callback&& callback) {
+  on(component_.root(), kind, std::forward<Callback>(callback));
+}
 
 }  // namespace cbss
 

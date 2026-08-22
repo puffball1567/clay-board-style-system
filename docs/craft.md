@@ -118,6 +118,15 @@ Rust and C++ are the Version 0.6 reference Drivers because they exercise
 different ownership and authoring idioms. Additional C-interoperable languages
 can build on the same generated low-level bindings and conformance suite.
 
+The reference Drivers expose `CraftComponent` as a stable retained root with
+component-scoped construction and public Style Slots. Construction failure is
+atomic: C++ exceptions and Rust `Err`/panic paths remove the incomplete
+subtree. Retained Text, Image, attribute, group, and state mutations preserve
+Node identity and event registrations. Host-language State or Store
+implementations connect to those mutations; a Driver does not impose a second
+virtual DOM or require one shared state-library implementation in every
+language.
+
 The Version 0.6 Craft Pack manifest foundation declares:
 
 - its identity, version, CBSS compatibility range, and required capabilities;

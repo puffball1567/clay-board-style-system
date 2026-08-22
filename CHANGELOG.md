@@ -24,6 +24,12 @@ release. Before 1.0, minor releases may contain public API changes.
 - Added high-level C++ and Rust subtree removal with generation-safe stale
   handles, deterministic Driver callback release, and subscription tokens that
   reflect lifecycle-driven detachment.
+- Added atomic high-level `CraftComponent` construction to the C++14 and Rust
+  reference Drivers, including automatic root Style Slots, scoped public child
+  Slots, failed-construction rollback, and explicit subtree unmount.
+- Added retained Text, Image, group, attribute, and node-state mutation APIs to
+  both reference Drivers. Cross-language fixtures verify that updates preserve
+  Node identity and event handlers instead of rebuilding the component tree.
 
 ### Security
 

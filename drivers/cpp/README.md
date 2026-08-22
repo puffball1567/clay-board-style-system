@@ -27,6 +27,27 @@ ui.compute(800, 600);
 ui.emit(button, cbss::InputEvent(CBSS_EVENT_CLICK));
 ```
 
+Reusable component functions can return a retained `CraftComponent`. The
+Driver creates one stable root, exposes its `root` Style Slot, and rolls the
+whole subtree back if construction throws:
+
+```cpp
+cbss::Node label;
+cbss::CraftComponent status = ui.component(
+    "status-card", "status", [&](cbss::ComponentScope& component) {
+      label = component.text("Idle", "label");
+      component.publicStyleSlot("label", label);
+    });
+
+ui.setText(label, "Ready");
+ui.setState(status.root(), cbss::NodeState::checked, true);
+```
+
+These retained setters update the existing nodes; they do not rebuild the
+component or replace its handlers. `Ui::unmount` removes the complete component
+subtree and invalidates the wrapper. Host-language state and store libraries
+can therefore drive CBSS without a Driver-specific virtual DOM.
+
 The Driver negotiates the engine ABI, Driver contract, and baseline authoring
 capabilities before it constructs a context. `Ui` and `Style` use deterministic
 RAII lifetime. Nested callbacks maintain parentage with an exception-safe

@@ -33,6 +33,27 @@ fn build() -> Result<()> {
 }
 ```
 
+Reusable component functions can return a retained `CraftComponent`. The
+Driver creates one stable root, exposes its `root` Style Slot, and rolls the
+whole subtree back on either `Err` or panic:
+
+```rust
+let mut label = None;
+let mut status = ui.component_with("status-card", "status", None, |component| {
+    label = Some(component.text("Idle", "label", None)?);
+    component.public_style_slot("label", label)?;
+    Ok(())
+})?;
+
+ui.set_text(label.expect("label"), "Ready")?;
+ui.set_state(status.root()?, cbss_craft::NodeState::Checked, true)?;
+ui.unmount(&mut status)?;
+```
+
+Retained setters update existing nodes without rebuilding their component or
+replacing handlers. Rust state crates or application-owned values can drive
+this surface without introducing a Driver-specific virtual DOM.
+
 Set `CBSS_LIB_DIR` to the directory containing the shared or static C ABI
 library. Set `CBSS_STATIC=1` for static linking. On Linux, a shared build also
 needs that directory in `LD_LIBRARY_PATH` when the application starts.
