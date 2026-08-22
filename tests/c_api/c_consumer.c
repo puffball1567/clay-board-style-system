@@ -1,6 +1,6 @@
 #include "cbss.h"
 
-_Static_assert(CBSS_ABI_VERSION == 0x00010018u, "unexpected CBSS ABI version");
+_Static_assert(CBSS_ABI_VERSION == 0x00010019u, "unexpected CBSS ABI version");
 _Static_assert(CBSS_ROLE_SWITCH == 22, "unexpected switch role value");
 _Static_assert(CBSS_ROLE_PASSWORD_TEXT == 23,
                "unexpected password text role value");
@@ -208,7 +208,7 @@ static void test_craft_loading(void) {
   static const char pack_json[] =
       "{\"format\":\"cbss-craft-pack\",\"version\":1,"
       "\"id\":\"org.example.c\",\"packVersion\":\"1.0.0\","
-      "\"compatibility\":{\"minimumAbi\":65560,"
+      "\"compatibility\":{\"minimumAbi\":65561,"
       "\"minimumDriverContract\":65536,\"capabilities\":["
       "{\"id\":16,\"minimumVersion\":1},"
       "{\"id\":17,\"minimumVersion\":1}]},"
@@ -545,7 +545,7 @@ int main(void) {
   test_subtree_lifecycle();
   assert(cbss_abi_version() == CBSS_ABI_VERSION);
   assert(cbss_driver_contract_version() == CBSS_DRIVER_CONTRACT_VERSION);
-  assert(cbss_capability_count() == 18);
+  assert(cbss_capability_count() == 19);
   assert(cbss_has_capability(CBSS_CAPABILITY_RETAINED_TREE, 1));
   assert(!cbss_has_capability(CBSS_CAPABILITY_RETAINED_TREE, 2));
   assert(!cbss_has_capability(UINT32_MAX, 1));
@@ -565,6 +565,9 @@ int main(void) {
   assert(cbss_capability_at(17, &capability) == CBSS_OK);
   assert(capability.id == CBSS_CAPABILITY_SUBTREE_LIFECYCLE);
   assert(capability.since_abi == 0x00010017u);
+  assert(cbss_capability_at(18, &capability) == CBSS_OK);
+  assert(capability.id == CBSS_CAPABILITY_VALIDATION_PATTERN);
+  assert(capability.since_abi == 0x00010019u);
   memset(&capability, 0xff, sizeof(capability));
   assert(cbss_capability_at(
       cbss_capability_count(), &capability) == CBSS_OUT_OF_RANGE);
@@ -597,6 +600,50 @@ int main(void) {
   assert(CBSS_LAYER_SOURCE_OVER == 0);
   assert(CBSS_LAYER_COPY == 1);
   assert(CBSS_LAYER_ADDITIVE == 2);
+
+  CbssValidationPattern *validation_pattern = NULL;
+  char validation_error[128] = {0};
+  const char validation_source[] = "^[A-Za-z0-9_]+$";
+  assert(cbss_validation_pattern_compile(
+      validation_source, sizeof(validation_source) - 1,
+      &validation_pattern, validation_error, sizeof(validation_error)) ==
+      CBSS_OK);
+  assert(validation_pattern != NULL);
+  uint8_t validation_match = 0;
+  assert(cbss_validation_pattern_matches(
+      validation_pattern, "account_42", 10, &validation_match) == CBSS_OK);
+  assert(validation_match == 1);
+  assert(cbss_validation_pattern_matches(
+      validation_pattern, "account-42", 10, &validation_match) == CBSS_OK);
+  assert(validation_match == 0);
+  assert(cbss_validation_pattern_matches(
+      validation_pattern, NULL, 0, &validation_match) == CBSS_OK);
+  assert(validation_match == 0);
+  assert(cbss_validation_pattern_matches(
+      NULL, "value", 5, &validation_match) == CBSS_INVALID_ARGUMENT);
+  cbss_validation_pattern_destroy(validation_pattern);
+  validation_pattern = NULL;
+  assert(cbss_validation_pattern_compile(
+      "[", 1, &validation_pattern, validation_error,
+      sizeof(validation_error)) == CBSS_INVALID_ARGUMENT);
+  assert(validation_pattern == NULL);
+  assert(validation_error[0] != '\0');
+  assert(cbss_validation_pattern_compile(
+      NULL, 0, &validation_pattern, NULL, 0) == CBSS_INVALID_ARGUMENT);
+  assert(validation_pattern == NULL);
+
+  uint8_t format_valid = 0;
+  assert(cbss_validation_string_format(
+      CBSS_VALIDATION_FORMAT_EMAIL, "person@example.com", 18,
+      &format_valid) == CBSS_OK);
+  assert(format_valid == 1);
+  assert(cbss_validation_string_format(
+      CBSS_VALIDATION_FORMAT_DATE, "2023-02-29", 10,
+      &format_valid) == CBSS_OK);
+  assert(format_valid == 0);
+  assert(cbss_validation_string_format(
+      (CbssValidationStringFormat)99, "value", 5,
+      &format_valid) == CBSS_INVALID_ARGUMENT);
 
   uint8_t blob_source[] = {1, 2, 3, 4};
   CbssBlob *blob = NULL;

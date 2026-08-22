@@ -136,6 +136,30 @@ paint, hit testing, and accessibility without rebuilding their Nodes. A public
 Link click handler runs before navigation and may set prevent-default to cancel
 that intrinsic action.
 
+Typed validation chains are ordinary retained C++ values. Built-in rules are
+declared once, stop at the first failure, and keep reporting policy separate
+from current validity:
+
+```cpp
+const cbss::ValidationPattern accountPattern("^[A-Za-z0-9_]+$");
+const auto accountRules = cbss::ValidationRules<std::string>()
+    .required("Account is required")
+    .minLength(3)
+    .matches(accountPattern);
+
+cbss::ValidationBinding<std::string> account(
+    accountRules, "", cbss::ValidationReport::onBlur);
+account.evaluate("invalid-name", cbss::ValidationTrigger::blur);
+if (account.shouldExpose()) {
+  showError(account.validationMessage());
+}
+```
+
+The Driver exposes all 40 canonical string, format, numeric, comparison,
+collection, file-metadata, and custom operations. Regex and format checks use
+the bounded engine capability, so C++ does not silently substitute
+`std::regex` or platform-specific URL/date parsing.
+
 The Driver negotiates the engine ABI, Driver contract, and baseline authoring
 capabilities before it constructs a context. `Ui` and `Style` use deterministic
 RAII lifetime. Nested callbacks maintain parentage with an exception-safe

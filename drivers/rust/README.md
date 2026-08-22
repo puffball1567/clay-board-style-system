@@ -152,6 +152,37 @@ paint, hit testing, and accessibility without rebuilding their Nodes. A public
 Link click handler runs before navigation and may set prevent-default to cancel
 that intrinsic action.
 
+Typed validation chains are ordinary retained Rust values. Built-in rules are
+declared once, stop at the first failure, and keep reporting policy separate
+from current validity:
+
+```rust
+let pattern = cbss_craft::ValidationPattern::compile("^[A-Za-z0-9_]+$")?;
+let rules = cbss_craft::ValidationRules::<String>::new()
+    .required("Account is required")
+    .min_length(3, "Account is too short")
+    .matches(pattern, "Use letters, digits, or underscores");
+
+let mut account = cbss_craft::ValidationBinding::new(
+    rules,
+    String::new(),
+    cbss_craft::ValidationReport::OnBlur,
+);
+account.evaluate(
+    "invalid-name".to_owned(),
+    cbss_craft::ValidationTrigger::Blur,
+    false,
+);
+if account.should_expose() {
+    show_error(account.validation_message());
+}
+```
+
+The Driver exposes all 40 canonical string, format, numeric, comparison,
+collection, file-metadata, and custom operations. Regex and format checks use
+the bounded engine capability rather than host-specific regex, URL, or date
+semantics.
+
 Set `CBSS_LIB_DIR` to the directory containing the shared or static C ABI
 library. Set `CBSS_STATIC=1` for static linking. On Linux, a shared build also
 needs that directory in `LD_LIBRARY_PATH` when the application starts.

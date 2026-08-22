@@ -113,9 +113,13 @@ proc compileRegex*(source: string): ValidationPattern =
   if source.len == 0:
     raise newException(ValueError, "validation regular expression cannot be empty")
   try:
-    result = ValidationPattern(source: source, compiled: re2(source))
+    let compiled = re2(source)
+    result = ValidationPattern(source: source, compiled: compiled)
   except RegexError as error:
     raise newException(ValueError, "invalid validation regular expression: " & error.msg)
+
+proc matches*(pattern: ValidationPattern; value: string): bool {.inline.} =
+  value.match(pattern.compiled)
 
 proc validationFile*(name: string; size: uint64; mimeType = ""): ValidationFile =
   ValidationFile(name: name, mimeType: mimeType, size: size)
@@ -437,7 +441,7 @@ proc lengthOf[T](value: T): int =
     -1
 
 proc exactPatternMatch(value: string; pattern: ValidationPattern): bool =
-  value.match(pattern.compiled)
+  pattern.matches(value)
 
 proc validEmail(value: string): bool =
   if value.len < 3 or value.contains({' ', '\t', '\r', '\n'}):
@@ -544,6 +548,18 @@ proc validDateTime(value: string): bool =
       return false
     timeEnd -= 6
   value[11 ..< timeEnd].validTime()
+
+proc validateStringFormat*(kind: ValidationRuleKind; value: string): bool =
+  case kind
+  of ValidationRuleKind.email: value.validEmail()
+  of ValidationRuleKind.url: value.validUrl()
+  of ValidationRuleKind.uuid: value.validUuid()
+  of ValidationRuleKind.ipAddress: value.validIpAddress()
+  of ValidationRuleKind.date: value.validDate()
+  of ValidationRuleKind.time: value.validTime()
+  of ValidationRuleKind.dateTime: value.validDateTime()
+  else:
+    raise newException(ValueError, "validation rule is not a string format")
 
 proc containsValue[T](values: openArray[T]; value: T): bool =
   for candidate in values:

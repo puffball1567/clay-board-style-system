@@ -9,6 +9,15 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added typed validation cores to the C++14 and Rust Craft Drivers with the
+  same 40 synchronous operations, first-failure ordering, optional/required
+  precedence, current peer references, custom rules, and retained reporting
+  policies as the canonical Nim API.
+- Extended C ABI `0x00010019` with bounded compiled validation-pattern and
+  canonical string-format checks. Foreign Drivers share Nim's linear-time
+  regex and email/URL/UUID/IP/date/time semantics instead of depending on
+  host-specific regex or parser behavior.
+
 - Added the bounded Craft Pack Version 1 manifest and JSON Schema for declaring
   distributable Craft Components, public Style Slots, Craft Styles, assets,
   feature profiles, platforms, and ABI/capability compatibility requirements.

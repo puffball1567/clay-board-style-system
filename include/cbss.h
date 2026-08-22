@@ -26,7 +26,7 @@ extern "C" {
 #endif
 
 /* CBSS_GENERATED_DRIVER_CONTRACT_BEGIN */
-#define CBSS_ABI_VERSION 0x00010018u
+#define CBSS_ABI_VERSION 0x00010019u
 #define CBSS_DRIVER_CONTRACT_VERSION 0x00010000u
 
 typedef enum CbssCapabilityId {
@@ -47,7 +47,8 @@ typedef enum CbssCapabilityId {
   CBSS_CAPABILITY_STREAM = 15u,
   CBSS_CAPABILITY_CRAFT_STYLE = 16u,
   CBSS_CAPABILITY_CRAFT_PACK = 17u,
-  CBSS_CAPABILITY_SUBTREE_LIFECYCLE = 18u
+  CBSS_CAPABILITY_SUBTREE_LIFECYCLE = 18u,
+  CBSS_CAPABILITY_VALIDATION_PATTERN = 19u
 } CbssCapabilityId;
 
 enum {
@@ -71,11 +72,14 @@ typedef struct CbssCapabilityInfo {
 #define CBSS_MAX_KEYFRAME_STEPS 16384u
 #define CBSS_MAX_CRAFT_STYLE_SOURCE_BYTES (8u * 1024u * 1024u)
 #define CBSS_MAX_CRAFT_PACK_SOURCE_BYTES (4u * 1024u * 1024u)
+#define CBSS_MAX_VALIDATION_PATTERN_BYTES 65536u
+#define CBSS_MAX_VALIDATION_VALUE_BYTES (16u * 1024u * 1024u)
 
 typedef struct CbssContext CbssContext;
 typedef struct CbssStyle CbssStyle;
 typedef struct CbssKeyframes CbssKeyframes;
 typedef struct CbssColorValue CbssColorValue;
+typedef struct CbssValidationPattern CbssValidationPattern;
 typedef struct CbssBlob CbssBlob;
 typedef struct CbssFormDataBuilder CbssFormDataBuilder;
 typedef struct CbssFormData CbssFormData;
@@ -100,6 +104,16 @@ typedef enum CbssCraftDiagnosticDomain {
   CBSS_CRAFT_DIAGNOSTIC_STYLE_REPLACEMENT = 1,
   CBSS_CRAFT_DIAGNOSTIC_PACK = 2
 } CbssCraftDiagnosticDomain;
+
+typedef enum CbssValidationStringFormat {
+  CBSS_VALIDATION_FORMAT_EMAIL = 0,
+  CBSS_VALIDATION_FORMAT_URL = 1,
+  CBSS_VALIDATION_FORMAT_UUID = 2,
+  CBSS_VALIDATION_FORMAT_IP_ADDRESS = 3,
+  CBSS_VALIDATION_FORMAT_DATE = 4,
+  CBSS_VALIDATION_FORMAT_TIME = 5,
+  CBSS_VALIDATION_FORMAT_DATE_TIME = 6
+} CbssValidationStringFormat;
 
 typedef enum CbssCraftStyleParseDiagnosticCode {
   CBSS_CRAFT_STYLE_PARSE_INVALID_JSON = 0,
@@ -1197,6 +1211,25 @@ CBSS_API CbssStatus cbss_color_mix_create(
 CBSS_API CbssStatus cbss_color_value_resolve(
     const CbssColorValue *value, CbssColor current, CbssColor *output);
 CBSS_API void cbss_color_value_destroy(CbssColorValue *value);
+
+/* Compiled validation patterns use the canonical CBSS regex engine. */
+CBSS_API CbssStatus cbss_validation_pattern_compile(
+    const void *source,
+    uint32_t length,
+    CbssValidationPattern **output,
+    char *error_buffer,
+    uint32_t error_capacity);
+CBSS_API CbssStatus cbss_validation_pattern_matches(
+    const CbssValidationPattern *pattern,
+    const void *value,
+    uint32_t length,
+    uint8_t *output);
+CBSS_API void cbss_validation_pattern_destroy(CbssValidationPattern *pattern);
+CBSS_API CbssStatus cbss_validation_string_format(
+    CbssValidationStringFormat format,
+    const void *value,
+    uint32_t length,
+    uint8_t *output);
 
 CBSS_API CbssStyle *cbss_style_create(void);
 CBSS_API void cbss_style_destroy(CbssStyle *style);

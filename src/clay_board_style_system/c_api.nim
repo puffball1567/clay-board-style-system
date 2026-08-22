@@ -13,7 +13,7 @@ import ./input/events
 import ./layout/[layout, presentation, scroll_state]
 import ./paint/[paint, paint_command, path_geometry]
 import ./runtime/[canvas, declarative_keyframes, declarative_transition,
-  frame_scheduler, invalidation, motion_lifecycle, render_surface]
+  frame_scheduler, invalidation, motion_lifecycle, render_surface, validation]
 
 var cbssRuntimeInitialized: bool
 cbssRuntimeInitialized = true
@@ -140,10 +140,20 @@ const
   CbssMaxKeyframeSteps* = 16_384'u32
   CbssMaxCraftStyleSourceBytes* = uint32(maxCraftStyleSourceBytes)
   CbssMaxCraftPackSourceBytes* = uint32(maxCraftPackSourceBytes)
+  CbssMaxValidationPatternBytes* = 65_536'u32
+  CbssMaxValidationValueBytes* = 16'u32 * 1024'u32 * 1024'u32
 
   CbssCraftDiagnosticStyleParse* = 0'u32
   CbssCraftDiagnosticStyleReplacement* = 1'u32
   CbssCraftDiagnosticPack* = 2'u32
+
+  CbssValidationFormatEmail* = 0'u32
+  CbssValidationFormatUrl* = 1'u32
+  CbssValidationFormatUuid* = 2'u32
+  CbssValidationFormatIpAddress* = 3'u32
+  CbssValidationFormatDate* = 4'u32
+  CbssValidationFormatTime* = 5'u32
+  CbssValidationFormatDateTime* = 6'u32
 
 type
   CbssRectC* {.bycopy.} = object
@@ -288,6 +298,7 @@ type
   CbssStyleHandle* = ptr CbssStyleObj
   CbssKeyframesHandle* = ptr CbssKeyframesObj
   CbssColorValueHandle* = ptr CbssColorValueObj
+  CbssValidationPatternHandle* = ptr CbssValidationPatternObj
   CbssBlobHandle* = ptr CbssBlobObj
   CbssFormDataBuilderHandle* = ptr CbssFormDataBuilderObj
   CbssFormDataHandle* = ptr CbssFormDataObj
@@ -398,6 +409,9 @@ type
       value: ColorValue
     of ccvMix:
       mix: ColorMixValue
+
+  CbssValidationPatternObj = object
+    pattern: ValidationPattern
 
   CbssBlobObj = object
     bytes: pointer
@@ -4367,6 +4381,85 @@ proc cbssColorValueDestroy(value: CbssColorValueHandle) {.
     return
   `=destroy`(value[])
   dealloc(value)
+
+proc cbssValidationPatternCompile(
+    source: pointer;
+    length: uint32;
+    output: ptr CbssValidationPatternHandle;
+    errorBuffer: cstring;
+    errorCapacity: uint32
+): int32 {.exportc: "cbss_validation_pattern_compile", cdecl, dynlib.} =
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  if source.isNil or length == 0 or
+      length > CbssMaxValidationPatternBytes:
+    return CbssInvalidArgument
+  ensureNimRuntime()
+  try:
+    let handle = create(CbssValidationPatternObj)
+    try:
+      handle[].pattern = compileRegex(copiedString(source, length))
+      output[] = handle
+      CbssOk
+    except CatchableError as error:
+      `=destroy`(handle[])
+      dealloc(handle)
+      discard copyString(error.msg, errorBuffer, errorCapacity)
+      CbssInvalidArgument
+  except CatchableError:
+    CbssInternalError
+
+proc cbssValidationPatternMatches(
+    pattern: CbssValidationPatternHandle;
+    value: pointer;
+    length: uint32;
+    output: ptr uint8
+): int32 {.exportc: "cbss_validation_pattern_matches", cdecl, dynlib.} =
+  if pattern.isNil or output.isNil or
+      (value.isNil and length != 0) or length > CbssMaxValidationValueBytes:
+    return CbssInvalidArgument
+  output[] = 0
+  ensureNimRuntime()
+  try:
+    let text = if length == 0: "" else: copiedString(value, length)
+    output[] = uint8(pattern.pattern.matches(text))
+    CbssOk
+  except CatchableError:
+    CbssInternalError
+
+proc cbssValidationPatternDestroy(pattern: CbssValidationPatternHandle) {.
+    exportc: "cbss_validation_pattern_destroy", cdecl, dynlib.} =
+  if pattern.isNil:
+    return
+  `=destroy`(pattern[])
+  dealloc(pattern)
+
+proc cbssValidationStringFormat(
+    kind: uint32;
+    value: pointer;
+    length: uint32;
+    output: ptr uint8
+): int32 {.exportc: "cbss_validation_string_format", cdecl, dynlib.} =
+  if output.isNil or kind > CbssValidationFormatDateTime or
+      (value.isNil and length != 0) or length > CbssMaxValidationValueBytes:
+    return CbssInvalidArgument
+  output[] = 0
+  ensureNimRuntime()
+  try:
+    let text = if length == 0: "" else: copiedString(value, length)
+    let ruleKind = case kind
+      of CbssValidationFormatEmail: ValidationRuleKind.email
+      of CbssValidationFormatUrl: ValidationRuleKind.url
+      of CbssValidationFormatUuid: ValidationRuleKind.uuid
+      of CbssValidationFormatIpAddress: ValidationRuleKind.ipAddress
+      of CbssValidationFormatDate: ValidationRuleKind.date
+      of CbssValidationFormatTime: ValidationRuleKind.time
+      else: ValidationRuleKind.dateTime
+    output[] = uint8(validateStringFormat(ruleKind, text))
+    CbssOk
+  except CatchableError:
+    CbssInternalError
 
 proc cbssStyleSetLength(
     style: CbssStyleHandle;
