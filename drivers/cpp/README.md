@@ -60,8 +60,9 @@ auto store = cbss::createStore<Model, Add>(
       state.count += action.amount;
     });
 auto count = store.select<int>([](const Model& state) { return state.count; });
-auto watch = count.subscribe([](const int& value) {
-  std::cout << "Count: " << value << "\n";
+auto retainedUi = ui.handle();
+auto watch = status.watch(count, [retainedUi, label](const int& value) {
+  retainedUi.setText(label, std::to_string(value));
 });
 
 store.transaction([&] {
@@ -70,10 +71,14 @@ store.transaction([&] {
 });
 ```
 
-`StoreSubscription` is move-only and detaches through RAII or `close()`.
-Reentrant dispatch is queued for a later commit. Selector equality suppresses
-unaffected updates, and `dispatchSilent` can be paired with explicit
-`Selector::refresh` when publication is intentionally deferred. Commit
+`CraftComponent::watch` applies the current selection by default and owns the
+subscription until explicit `ComponentWatch::close`, component destruction, or
+successful `Ui::unmount`. The captured `UiHandle` is a weak, UI-thread-confined
+retained-mutation handle; it rejects foreign Nodes and a destroyed `Ui` rather
+than extending the engine lifetime. `StoreSubscription` is move-only and
+detaches through RAII or `close()`. Reentrant dispatch is queued. Selector
+equality suppresses unaffected updates, and `dispatchSilent` can be paired with
+explicit `Selector::refresh` when publication is intentionally deferred. Commit
 notifications carry a revision rather than copying the complete State;
 `Store::read` provides a borrowed read path when a State copy is unnecessary.
 Store and UI operations remain confined to the owning UI thread.

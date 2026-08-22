@@ -750,10 +750,54 @@ pub enum NodeState {
     Invalid = 8,
 }
 
-#[derive(Debug)]
+struct ComponentWatchState {
+    subscription: RefCell<Option<StoreSubscription>>,
+}
+
+impl ComponentWatchState {
+    fn active(&self) -> bool {
+        self.subscription
+            .borrow()
+            .as_ref()
+            .is_some_and(StoreSubscription::active)
+    }
+
+    fn close(&self) -> bool {
+        self.subscription
+            .borrow_mut()
+            .take()
+            .is_some_and(|mut subscription| subscription.close())
+    }
+}
+
+pub struct ComponentWatch {
+    state: Weak<ComponentWatchState>,
+    _not_send: PhantomData<Rc<()>>,
+}
+
+impl fmt::Debug for ComponentWatch {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ComponentWatch")
+            .field("active", &self.active())
+            .finish()
+    }
+}
+
+impl ComponentWatch {
+    pub fn active(&self) -> bool {
+        self.state.upgrade().is_some_and(|state| state.active())
+    }
+
+    pub fn close(&self) -> bool {
+        self.state.upgrade().is_some_and(|state| state.close())
+    }
+}
+
 pub struct CraftComponent {
     root: Option<Node>,
     craft_name: String,
+    watches: Vec<Rc<ComponentWatchState>>,
 }
 
 impl CraftComponent {
@@ -772,6 +816,58 @@ impl CraftComponent {
 
     pub fn craft_name(&self) -> &str {
         &self.craft_name
+    }
+
+    pub fn watch_count(&self) -> usize {
+        self.watches.iter().filter(|watch| watch.active()).count()
+    }
+
+    pub fn watch<T: Clone + 'static>(
+        &mut self,
+        selector: &Selector<T>,
+        listener: impl Fn(&T) + 'static,
+        immediate: bool,
+    ) -> Result<ComponentWatch> {
+        self.root()?;
+        if selector.disposed() {
+            return Err(Error::status(
+                STATUS_INVALID_HANDLE,
+                "watch Selector: Selector is disposed",
+            ));
+        }
+
+        let listener: Rc<dyn Fn(&T)> = Rc::new(listener);
+        if immediate {
+            listener(&selector.value());
+        }
+        let retained_listener = Rc::clone(&listener);
+        let subscription = selector.subscribe(move |value| retained_listener(value));
+        let state = Rc::new(ComponentWatchState {
+            subscription: RefCell::new(Some(subscription)),
+        });
+        self.watches.push(Rc::clone(&state));
+        Ok(ComponentWatch {
+            state: Rc::downgrade(&state),
+            _not_send: PhantomData,
+        })
+    }
+
+    fn close_watches(&mut self) {
+        for watch in &self.watches {
+            watch.close();
+        }
+        self.watches.clear();
+    }
+}
+
+impl fmt::Debug for CraftComponent {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CraftComponent")
+            .field("root", &self.root)
+            .field("craft_name", &self.craft_name)
+            .field("watch_count", &self.watch_count())
+            .finish()
     }
 }
 
@@ -1126,6 +1222,112 @@ impl DriverEventState {
     }
 }
 
+#[derive(Clone)]
+pub struct UiHandle {
+    state: Weak<DriverEventState>,
+    _not_send: PhantomData<Rc<()>>,
+}
+
+impl UiHandle {
+    pub fn active(&self) -> bool {
+        self.state
+            .upgrade()
+            .is_some_and(|state| !state.context.get().is_null())
+    }
+
+    pub fn set_text(&self, node: Node, value: &str) -> Result<()> {
+        let context = self.require_node(node, "set Text value")?;
+        let value = c_string(value, "Text value")?;
+        let status = unsafe { ffi::cbss_node_set_text(context.as_ptr(), node.id, value.as_ptr()) };
+        self.check(context, status, "set Text value")
+    }
+
+    pub fn set_image(&self, node: Node, source: &str, width: f32, height: f32) -> Result<()> {
+        let context = self.require_node(node, "set Image value")?;
+        let source = c_string(source, "Image source")?;
+        let status = unsafe {
+            ffi::cbss_node_set_image(context.as_ptr(), node.id, source.as_ptr(), width, height)
+        };
+        self.check(context, status, "set Image value")
+    }
+
+    pub fn add_group(&self, node: Node, group: &str) -> Result<()> {
+        let context = self.require_node(node, "add group")?;
+        let group = c_string(group, "group")?;
+        let status = unsafe { ffi::cbss_node_add_group(context.as_ptr(), node.id, group.as_ptr()) };
+        self.check(context, status, "add group")
+    }
+
+    pub fn set_attribute(&self, node: Node, name: &str, value: &str) -> Result<()> {
+        let context = self.require_node(node, "set attribute")?;
+        let name = c_string(name, "attribute name")?;
+        let value = c_string(value, "attribute value")?;
+        let status = unsafe {
+            ffi::cbss_node_set_attribute(context.as_ptr(), node.id, name.as_ptr(), value.as_ptr())
+        };
+        self.check(context, status, "set attribute")
+    }
+
+    pub fn set_state(&self, node: Node, state: NodeState, enabled: bool) -> Result<()> {
+        let context = self.require_node(node, "set retained state")?;
+        let status = unsafe {
+            ffi::cbss_node_set_state(context.as_ptr(), node.id, state as u32, u8::from(enabled))
+        };
+        self.check(context, status, "set retained state")
+    }
+
+    fn require_node(&self, node: Node, operation: &str) -> Result<NonNull<ffi::CbssContext>> {
+        let Some(state) = self.state.upgrade() else {
+            return Err(Error::status(
+                STATUS_INVALID_HANDLE,
+                format!("{operation}: Ui is not active"),
+            ));
+        };
+        let Some(context) = NonNull::new(state.context.get()) else {
+            return Err(Error::status(
+                STATUS_INVALID_HANDLE,
+                format!("{operation}: Ui is not active"),
+            ));
+        };
+        if node.owner != context {
+            return Err(Error::status(
+                STATUS_INVALID_HANDLE,
+                format!("{operation}: Node belongs to another Ui"),
+            ));
+        }
+        Ok(context)
+    }
+
+    fn check(
+        &self,
+        context: NonNull<ffi::CbssContext>,
+        status: i32,
+        operation: &str,
+    ) -> Result<()> {
+        if status == STATUS_OK {
+            return Ok(());
+        }
+        let mut buffer = [0_u8; 512];
+        let length = unsafe {
+            ffi::cbss_context_last_error(
+                context.as_ptr(),
+                buffer.as_mut_ptr().cast(),
+                buffer.len() as u32,
+            )
+        };
+        let message = if length == 0 {
+            "no diagnostic was provided".to_owned()
+        } else {
+            let end = buffer
+                .iter()
+                .position(|byte| *byte == 0)
+                .unwrap_or(buffer.len());
+            String::from_utf8_lossy(&buffer[..end]).into_owned()
+        };
+        Err(Error::status(status, format!("{operation}: {message}")))
+    }
+}
+
 pub struct EventSubscription {
     state: Weak<DriverEventState>,
     id: u64,
@@ -1191,6 +1393,13 @@ impl Ui {
         })
     }
 
+    pub fn handle(&self) -> UiHandle {
+        UiHandle {
+            state: Rc::downgrade(&self.events),
+            _not_send: PhantomData,
+        }
+    }
+
     pub fn box_node(&mut self, identifier: &str, style: Option<&Style>) -> Result<Node> {
         self.add_box(None, identifier, style)
     }
@@ -1254,6 +1463,7 @@ impl Ui {
         let root = component.root()?;
         self.require_node(root, "unmount Craft Component")?;
         let removed = self.remove_subtree(root)?;
+        component.close_watches();
         component.root = None;
         Ok(removed)
     }
@@ -1844,6 +2054,7 @@ impl Ui {
         let component = CraftComponent {
             root: Some(root),
             craft_name: craft_name.to_owned(),
+            watches: Vec::new(),
         };
         if let Err(error) = self.expose_style_slot(root, root, craft_name, "root") {
             let _ = self.remove_subtree(root);

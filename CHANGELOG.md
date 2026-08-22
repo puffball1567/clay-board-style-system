@@ -36,6 +36,11 @@ release. Before 1.0, minor releases may contain public API changes.
   custom selector equality, deterministic subscription disposal, and recovery
   after listener or transaction failures without replaying the UI tree or
   copying the complete Store state on each commit.
+- Added component-owned selected watches and weak `UiHandle` retained-mutation
+  handles to both reference Drivers. Watches can apply the current selected
+  value immediately, update existing Text/Image/group/attribute/state targets
+  without rebuilding a component, and detach on explicit close, component drop,
+  or successful unmount.
 
 ### Security
 

@@ -125,8 +125,12 @@ subtree. Retained Text, Image, attribute, group, and state mutations preserve
 Node identity and event registrations. Their typed host-language Stores now
 share reducer, committed transaction, reentrant dispatch, selected equality,
 subscription, and failure-recovery semantics without exporting arbitrary
-managed values through the C ABI. Component-owned selected watches are the next
-connection to those retained mutations. A Driver does not impose a second
+managed values through the C ABI. Component-owned selected watches now connect
+those selected values to retained mutations. They apply an optional initial value,
+own only the selected subscription, and detach on manual close, component drop,
+or successful unmount. Weak `UiHandle` values let callbacks mutate retained
+Text, Image, group, attribute, and state targets without borrowing the complete
+Driver or keeping a destroyed UI alive. A Driver does not impose a second
 virtual DOM or require one binary state-library implementation in every
 language.
 
