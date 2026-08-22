@@ -122,9 +122,12 @@ The reference Drivers expose `CraftComponent` as a stable retained root with
 component-scoped construction and public Style Slots. Construction failure is
 atomic: C++ exceptions and Rust `Err`/panic paths remove the incomplete
 subtree. Retained Text, Image, attribute, group, and state mutations preserve
-Node identity and event registrations. Host-language State or Store
-implementations connect to those mutations; a Driver does not impose a second
-virtual DOM or require one shared state-library implementation in every
+Node identity and event registrations. Their typed host-language Stores now
+share reducer, committed transaction, reentrant dispatch, selected equality,
+subscription, and failure-recovery semantics without exporting arbitrary
+managed values through the C ABI. Component-owned selected watches are the next
+connection to those retained mutations. A Driver does not impose a second
+virtual DOM or require one binary state-library implementation in every
 language.
 
 The Version 0.6 Craft Pack manifest foundation declares:

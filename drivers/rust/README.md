@@ -51,8 +51,39 @@ ui.unmount(&mut status)?;
 ```
 
 Retained setters update existing nodes without rebuilding their component or
-replacing handlers. Rust state crates or application-owned values can drive
-this surface without introducing a Driver-specific virtual DOM.
+replacing handlers.
+
+The Driver also provides a typed retained Store without introducing a virtual
+DOM. Reducers update stable state, selectors publish only changed projections,
+and nested transactions produce one committed revision:
+
+```rust
+#[derive(Clone)]
+struct Model { count: i32 }
+enum Action { Add(i32) }
+
+let store = cbss_craft::Store::new(Model { count: 0 }, |state, action| {
+    match action {
+        Action::Add(amount) => state.count += amount,
+    }
+});
+let count = store.select(|state| state.count);
+let _watch = count.subscribe(|value| println!("Count: {value}"));
+
+store.transaction(|| {
+    store.dispatch(Action::Add(2));
+    store.dispatch(Action::Add(3));
+});
+```
+
+`StoreSubscription` detaches on `Drop` or explicit `close`. Reentrant dispatch
+is queued for a later commit. Selector equality suppresses unaffected updates,
+and `dispatch_silent` can be paired with explicit `Selector::refresh` when
+publication is intentionally deferred. Commit notifications carry a revision
+rather than cloning the complete State; `Store::with_state` provides a borrowed
+read path when an owned snapshot is unnecessary. `Rc` ownership deliberately
+keeps the Store on its UI thread instead of suggesting unsupported concurrent
+mutation.
 
 Set `CBSS_LIB_DIR` to the directory containing the shared or static C ABI
 library. Set `CBSS_STATIC=1` for static linking. On Linux, a shared build also
