@@ -1,0 +1,16 @@
+{
+  "format": "cbss-craft-style",
+  "version": 1,
+  "name": "reference-application-theme",
+  "rules": [
+    {
+      "selector": {"component": "reference-card", "slot": "root"},
+      "declarations": [
+        {"property": "width", "value": {"type": "length", "unit": "px", "value": 240}},
+        {"property": "height", "value": {"type": "length", "unit": "px", "value": 80}},
+        {"property": "padding", "value": {"type": "length", "unit": "px", "value": 8}},
+        {"property": "background-color", "value": {"type": "color", "value": "#336699"}}
+      ]
+    }
+  ]
+}

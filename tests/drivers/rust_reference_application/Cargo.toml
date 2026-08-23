@@ -1,0 +1,8 @@
+[package]
+name = "cbss-rust-reference-application"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+cbss-craft = { path = "../../../drivers/rust" }

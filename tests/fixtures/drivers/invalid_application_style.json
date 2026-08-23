@@ -1,0 +1,13 @@
+{
+  "format": "cbss-craft-style",
+  "version": 1,
+  "name": "reference-application-theme",
+  "rules": [
+    {
+      "selector": {"component": "reference-card", "slot": "missing"},
+      "declarations": [
+        {"property": "opacity", "value": {"type": "number", "value": 0.5}}
+      ]
+    }
+  ]
+}
