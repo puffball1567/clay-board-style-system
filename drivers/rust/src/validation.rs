@@ -290,6 +290,10 @@ impl<T> ValidationValue<T> {
     pub fn same_identity(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.0, &other.0)
     }
+
+    pub fn identity(&self) -> usize {
+        Rc::as_ptr(&self.0) as usize
+    }
 }
 
 pub trait ValidationValueType {

@@ -186,6 +186,33 @@ collection, file-metadata, and custom operations. Regex and format checks use
 the bounded engine capability, so C++ does not silently substitute
 `std::regex` or platform-specific URL/date parsing.
 
+Include `<cbss/validation_ui.hpp>` to attach those rules to an existing
+retained control without replacing its public event handler:
+
+```cpp
+auto account = cbss::attachTextValidation(
+    ui, accountNode, accountRules, "",
+    cbss::ValidationReport::onBlur);
+
+cbss::ValidationForm validationForm(ui, formNode);
+validationForm.add(account);
+
+if (validationForm.reportValidity()) {
+  saveAccount(account.validationValue().get());
+}
+```
+
+The attachment observes full values carried by `input`, keeps invalid Style
+state and `validation-message` synchronized, and reports `invalid` without
+removing application observers. Generic typed controls use `attachValidation`
+with an event-to-value extractor and an optional value-event kind.
+`ValidationForm` skips disabled controls and focuses the first invalid control.
+Registering controls also wires `sameAs`/`differentFrom` peer edges so a source
+change rechecks only its declared dependants. The weak edges expire with either
+attachment and do not extend a component lifetime.
+The separate immutable FormData/submit Driver surface is not approximated by
+this validation-only adapter.
+
 Typed Commands connect UI actions to asynchronous work without allowing a
 worker to call UI code directly:
 

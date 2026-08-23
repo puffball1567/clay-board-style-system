@@ -1,4 +1,4 @@
-#include <cbss/craft.hpp>
+#include <cbss/validation_ui.hpp>
 
 #include <cassert>
 #include <cctype>
@@ -1462,6 +1462,237 @@ int main() {
   validation_binding.evaluate("valid", cbss::ValidationTrigger::input);
   assert(validation_binding.current().isValid);
   assert(!validation_binding.shouldExpose());
+
+  cbss::Ui validation_ui;
+  cbss::Node validation_form_node;
+  cbss::Node validation_first;
+  cbss::Node validation_second;
+  cbss::Node validation_outside;
+  validation_ui.box("validation-root", [&] {
+    validation_form_node = validation_ui.box("validation-form", [&] {
+      validation_first = validation_ui.box("validation-first");
+      validation_second = validation_ui.box("validation-second");
+    });
+    validation_outside = validation_ui.box("validation-outside");
+  });
+  validation_ui.setFocusable(validation_first);
+  validation_ui.setFocusable(validation_second);
+  int validation_input_observers = 0;
+  int validation_invalid_events = 0;
+  cbss::EventSubscription validation_input_observer = validation_ui.subscribe(
+      validation_first, CBSS_EVENT_INPUT, [&](const cbss::Event&) {
+        ++validation_input_observers;
+        return cbss::EventOutcome();
+      });
+  cbss::EventSubscription validation_first_invalid = validation_ui.subscribe(
+      validation_first, CBSS_EVENT_INVALID, [&](const cbss::Event&) {
+        ++validation_invalid_events;
+        return cbss::EventOutcome();
+      });
+  cbss::EventSubscription validation_second_invalid = validation_ui.subscribe(
+      validation_second, CBSS_EVENT_INVALID, [&](const cbss::Event&) {
+        ++validation_invalid_events;
+        return cbss::EventOutcome();
+      });
+  auto validation_first_control = cbss::attachTextValidation(
+      validation_ui, validation_first,
+      cbss::ValidationRules<std::string>().required("first required"));
+  auto validation_second_control = cbss::attachTextValidation(
+      validation_ui, validation_second,
+      cbss::ValidationRules<std::string>()
+          .required("second required")
+          .sameAs(validation_first_control.validationValue(),
+                  "values must match"));
+  cbss::ValidationForm validation_form(validation_ui, validation_form_node);
+  validation_form.add(validation_first_control);
+  validation_form.add(validation_second_control);
+  assert(validation_form.size() == 2u);
+  assert(!validation_first_control.validationResult().isValid);
+  assert(validation_first_control.validationMessage().empty());
+  assert(!validation_form.checkValidity());
+  assert(validation_invalid_events == 0);
+  assert(!validation_form.reportValidity());
+  assert(validation_invalid_events == 2);
+  assert(validation_ui.focusedNode() == validation_first);
+  assert(validation_first_control.validationMessage() == "first required");
+
+  cbss::InputEvent valid_first_input(CBSS_EVENT_INPUT);
+  valid_first_input.textValue("ready");
+  validation_ui.emit(validation_first, valid_first_input);
+  assert(validation_input_observers == 1);
+  assert(validation_first_control.validationResult().isValid);
+  assert(validation_first_control.validationValue().get() == "ready");
+  assert(!validation_form.reportValidity());
+  assert(validation_ui.focusedNode() == validation_second);
+
+  cbss::InputEvent valid_second_input(CBSS_EVENT_INPUT);
+  valid_second_input.textValue("ready");
+  validation_ui.emit(validation_second, valid_second_input);
+  assert(validation_form.reportValidity());
+  cbss::InputEvent changed_first_input(CBSS_EVENT_INPUT);
+  changed_first_input.textValue("changed");
+  validation_ui.emit(validation_first, changed_first_input);
+  assert(!validation_second_control.validationResult().isValid);
+  assert(validation_second_control.validationResult().issue.code == "sameAs");
+  assert(validation_second_control.validationMessage() == "values must match");
+  validation_ui.emit(validation_first, valid_first_input);
+  assert(validation_second_control.validationResult().isValid);
+  validation_second_control.change("manual");
+  assert(!validation_second_control.validationResult().isValid);
+  validation_first_control.change("manual");
+  assert(validation_second_control.validationResult().isValid);
+
+  validation_form.setDisabled(true);
+  assert(!validation_form.checkValidity());
+  assert(!validation_form.reportValidity());
+  validation_form.setDisabled(false);
+
+  validation_second_control.setDisabled(true);
+  validation_second_control.input("");
+  assert(validation_second_control.checkValidity());
+  assert(validation_second_control.validationMessage().empty());
+  assert(validation_form.checkValidity());
+  validation_second_control.setDisabled(false);
+
+  bool duplicate_validation_control_rejected = false;
+  try {
+    validation_form.add(validation_first_control);
+  } catch (const cbss::Error& error) {
+    duplicate_validation_control_rejected =
+        error.status() == CBSS_INVALID_ARGUMENT;
+  }
+  assert(duplicate_validation_control_rejected);
+  auto validation_outside_control = cbss::attachTextValidation(
+      validation_ui, validation_outside,
+      cbss::ValidationRules<std::string>().required("outside required"));
+  bool foreign_validation_control_rejected = false;
+  try {
+    validation_form.add(validation_outside_control);
+  } catch (const cbss::Error& error) {
+    foreign_validation_control_rejected =
+        error.status() == CBSS_INVALID_ARGUMENT;
+  }
+  assert(foreign_validation_control_rejected);
+  cbss::Ui foreign_validation_ui;
+  const cbss::Node foreign_form_node =
+      foreign_validation_ui.box("foreign-validation-form");
+  bool foreign_validation_form_rejected = false;
+  try {
+    cbss::ValidationForm foreign_validation_form(validation_ui,
+                                                 foreign_form_node);
+  } catch (const cbss::Error& error) {
+    foreign_validation_form_rejected =
+        error.status() == CBSS_INVALID_HANDLE;
+  }
+  assert(foreign_validation_form_rejected);
+  assert(validation_form.remove(validation_second));
+  assert(!validation_form.remove(validation_second));
+  validation_second_control.input("detached");
+  assert(!validation_second_control.validationResult().isValid);
+  validation_first_control.input("detached");
+  assert(validation_second_control.validationResult().isValid);
+  validation_first_control.close();
+  assert(!validation_first_control.active());
+  bool closed_validation_control_rejected = false;
+  try {
+    validation_first_control.checkValidity();
+  } catch (const cbss::Error& error) {
+    closed_validation_control_rejected =
+        error.status() == CBSS_INVALID_HANDLE;
+  }
+  assert(closed_validation_control_rejected);
+
+  cbss::Ui validation_policy_ui;
+  cbss::Node validation_live_node;
+  cbss::Node validation_blur_node;
+  cbss::Node validation_submit_node;
+  cbss::Node validation_boolean_node;
+  validation_policy_ui.box("validation-policy-root", [&] {
+    validation_live_node = validation_policy_ui.box("validation-live");
+    validation_blur_node = validation_policy_ui.box("validation-blur");
+    validation_submit_node = validation_policy_ui.box("validation-submit");
+    validation_boolean_node = validation_policy_ui.box("validation-boolean");
+  });
+  auto validation_live_control = cbss::attachTextValidation(
+      validation_policy_ui, validation_live_node,
+      cbss::ValidationRules<std::string>().required("live required"), "",
+      cbss::ValidationReport::onInput);
+  auto validation_blur_control = cbss::attachTextValidation(
+      validation_policy_ui, validation_blur_node,
+      cbss::ValidationRules<std::string>().required("blur required"));
+  auto validation_submit_control = cbss::attachTextValidation(
+      validation_policy_ui, validation_submit_node,
+      cbss::ValidationRules<std::string>().required("submit required"), "",
+      cbss::ValidationReport::onSubmit);
+  auto validation_boolean_control = cbss::attachValidation<bool>(
+      validation_policy_ui, validation_boolean_node,
+      cbss::ValidationRules<bool>().custom(
+          [](const bool& value) { return value; }, "must be true"),
+      false,
+      [](const cbss::Event& event) { return event.text == "true"; },
+      cbss::ValidationReport::onInput, CBSS_EVENT_CHANGE);
+  cbss::InputEvent empty_validation_input(CBSS_EVENT_INPUT);
+  empty_validation_input.textValue("");
+  validation_policy_ui.emit(validation_live_node, empty_validation_input);
+  validation_policy_ui.emit(validation_blur_node, empty_validation_input);
+  validation_policy_ui.emit(validation_submit_node, empty_validation_input);
+  assert(validation_live_control.validationMessage() == "live required");
+  assert(validation_blur_control.validationMessage().empty());
+  assert(validation_submit_control.validationMessage().empty());
+  validation_policy_ui.emit(
+      validation_blur_node, cbss::InputEvent(CBSS_EVENT_BLUR));
+  validation_policy_ui.emit(
+      validation_submit_node, cbss::InputEvent(CBSS_EVENT_BLUR));
+  assert(validation_blur_control.validationMessage() == "blur required");
+  assert(validation_submit_control.validationMessage().empty());
+  assert(!validation_submit_control.reportValidity());
+  assert(validation_submit_control.validationMessage() == "submit required");
+  cbss::InputEvent true_change(CBSS_EVENT_CHANGE);
+  true_change.textValue("true");
+  validation_policy_ui.emit(validation_boolean_node, true_change);
+  assert(validation_boolean_control.validationResult().isValid);
+
+  cbss::Ui mutation_validation_ui;
+  cbss::Node mutation_form_node;
+  cbss::Node mutation_first_node;
+  cbss::Node mutation_second_node;
+  mutation_validation_ui.box("mutation-validation-root", [&] {
+    mutation_form_node = mutation_validation_ui.box(
+        "mutation-validation-form", [&] {
+          mutation_first_node =
+              mutation_validation_ui.box("mutation-validation-first");
+          mutation_second_node =
+              mutation_validation_ui.box("mutation-validation-second");
+        });
+  });
+  auto mutation_first_control = cbss::attachTextValidation(
+      mutation_validation_ui, mutation_first_node,
+      cbss::ValidationRules<std::string>().required("first required"));
+  auto mutation_second_control = cbss::attachTextValidation(
+      mutation_validation_ui, mutation_second_node,
+      cbss::ValidationRules<std::string>().required("second required"));
+  cbss::ValidationForm mutation_form(mutation_validation_ui,
+                                     mutation_form_node);
+  mutation_form.add(mutation_first_control);
+  mutation_form.add(mutation_second_control);
+  int mutation_second_invalid_events = 0;
+  cbss::EventSubscription mutation_first_invalid =
+      mutation_validation_ui.subscribe(
+          mutation_first_node, CBSS_EVENT_INVALID,
+          [&](const cbss::Event&) {
+            assert(mutation_form.remove(mutation_second_node));
+            return cbss::EventOutcome();
+          });
+  cbss::EventSubscription mutation_second_invalid =
+      mutation_validation_ui.subscribe(
+          mutation_second_node, CBSS_EVENT_INVALID,
+          [&](const cbss::Event&) {
+            ++mutation_second_invalid_events;
+            return cbss::EventOutcome();
+          });
+  assert(!mutation_form.reportValidity());
+  assert(mutation_form.size() == 1u);
+  assert(mutation_second_invalid_events == 1);
 
   using StringCommand = cbss::Command<int, std::string, std::string>;
   using StringSink = cbss::CommandSink<std::string, std::string>;

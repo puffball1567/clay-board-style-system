@@ -1,5 +1,6 @@
 #include "cbss.h"
 #include <cbss/craft.hpp>
+#include <cbss/validation_ui.hpp>
 
 static_assert(CBSS_ABI_VERSION == 0x00010019u,
               "unexpected CBSS ABI version");

@@ -1,13 +1,14 @@
 use cbss_craft::{
-    cue, cue_action, cue_action_with_completion, cue_after, keyword, px, rgb, Command,
-    CommandOfferResult, CommandPolicy, CommandStatus, Contract, CueCancel, CueCompletion,
-    CueJoinPolicy, CueRuntime, CueSessionStatus, CueStartPolicy, ErrorKind, EventKind,
-    EventOutcome, InputEvent, Link, NavigationChange, NavigationChangeKind, NavigationDriver,
-    NavigationEntry, NavigationScreenHost, NavigationSnapshot, NavigationTransitionContext,
+    attach_text_validation, attach_text_validation_with, attach_validation_with, cue, cue_action,
+    cue_action_with_completion, cue_after, keyword, px, rgb, Command, CommandOfferResult,
+    CommandPolicy, CommandStatus, Contract, CueCancel, CueCompletion, CueJoinPolicy, CueRuntime,
+    CueSessionStatus, CueStartPolicy, ErrorKind, EventKind, EventOutcome, InputEvent, Link,
+    NavigationChange, NavigationChangeKind, NavigationDriver, NavigationEntry,
+    NavigationScreenHost, NavigationSnapshot, NavigationTransitionContext,
     NavigationTransitionPhase, NavigationTransitionSpec, Navigator, NodeState, Store, Style, Ui,
-    ValidationBinding, ValidationFile, ValidationPattern, ValidationReport, ValidationRules,
-    ValidationTrigger, ValidationValue, ABI_VERSION, CAPABILITIES, CRAFT_DIAGNOSTIC_PACK,
-    CRAFT_DIAGNOSTIC_STYLE_REPLACEMENT, CRAFT_PACK_MISSING_CAPABILITY,
+    ValidationBinding, ValidationFile, ValidationForm, ValidationPattern, ValidationReport,
+    ValidationRules, ValidationTrigger, ValidationValue, ABI_VERSION, CAPABILITIES,
+    CRAFT_DIAGNOSTIC_PACK, CRAFT_DIAGNOSTIC_STYLE_REPLACEMENT, CRAFT_PACK_MISSING_CAPABILITY,
     CRAFT_STYLE_PARSE_UNKNOWN_PROPERTY, CRAFT_STYLE_REPLACEMENT_UNDECLARED_STYLE_SLOT,
     DRIVER_CONTRACT_VERSION, NAVIGATION_SCREEN_DIRTY_DOMAINS, STATUS_INVALID_ARGUMENT,
     STATUS_INVALID_HANDLE, STATUS_STYLE_ERROR,
@@ -1737,6 +1738,250 @@ fn validation_binding_keeps_reporting_separate_from_current_validity() {
         submit.evaluate(String::new(), trigger, false);
         assert_eq!(submit.should_expose(), trigger == ValidationTrigger::Submit);
     }
+}
+
+#[test]
+fn validation_controls_and_forms_attach_to_retained_events() {
+    let mut ui = Ui::new().expect("validation Ui");
+    let mut form_node = None;
+    let mut first = None;
+    let mut second = None;
+    let mut outside = None;
+    ui.box_with("validation-root", None, |ui| {
+        form_node = Some(ui.box_with("validation-form", None, |ui| {
+            first = Some(ui.box_node("validation-first", None)?);
+            second = Some(ui.box_node("validation-second", None)?);
+            Ok(())
+        })?);
+        outside = Some(ui.box_node("validation-outside", None)?);
+        Ok(())
+    })
+    .expect("validation form tree");
+    let form_node = form_node.expect("form node");
+    let first = first.expect("first control");
+    let second = second.expect("second control");
+    let outside = outside.expect("outside control");
+    ui.set_focusable(first, true, 0).expect("first focusable");
+    ui.set_focusable(second, true, 0).expect("second focusable");
+
+    let input_observers = Rc::new(Cell::new(0));
+    let invalid_events = Rc::new(Cell::new(0));
+    let input_counter = Rc::clone(&input_observers);
+    let _input_observer = ui
+        .subscribe(first, EventKind::INPUT, move |_| {
+            input_counter.set(input_counter.get() + 1);
+            EventOutcome::default()
+        })
+        .expect("input observer");
+    let first_invalid_counter = Rc::clone(&invalid_events);
+    let _first_invalid = ui
+        .subscribe(first, EventKind::INVALID, move |_| {
+            first_invalid_counter.set(first_invalid_counter.get() + 1);
+            EventOutcome::default()
+        })
+        .expect("first invalid observer");
+    let second_invalid_counter = Rc::clone(&invalid_events);
+    let _second_invalid = ui
+        .subscribe(second, EventKind::INVALID, move |_| {
+            second_invalid_counter.set(second_invalid_counter.get() + 1);
+            EventOutcome::default()
+        })
+        .expect("second invalid observer");
+
+    let first_control = attach_text_validation(
+        &mut ui,
+        first,
+        ValidationRules::<String>::new().required("first required"),
+        "",
+    )
+    .expect("first validation attachment");
+    let second_control = attach_text_validation(
+        &mut ui,
+        second,
+        ValidationRules::<String>::new()
+            .required("second required")
+            .same_as(first_control.validation_value(), "values must match"),
+        "",
+    )
+    .expect("second validation attachment");
+    let mut form = ValidationForm::new(&ui, form_node).expect("Validation Form");
+    form.add(&first_control).expect("first registration");
+    form.add(&second_control).expect("second registration");
+    assert_eq!(form.len(), 2);
+    assert!(!first_control.validation_result().is_valid);
+    assert_eq!(first_control.validation_message(), "");
+    assert!(!form.check_validity().expect("silent form check"));
+    assert_eq!(invalid_events.get(), 0);
+    assert!(!form.report_validity().expect("reported form check"));
+    assert_eq!(invalid_events.get(), 2);
+    assert_eq!(ui.focused_node(), Some(first));
+    assert_eq!(first_control.validation_message(), "first required");
+
+    ui.emit(first, &InputEvent::new(EventKind::INPUT).text("ready"))
+        .expect("valid first input");
+    assert_eq!(input_observers.get(), 1);
+    assert!(first_control.validation_result().is_valid);
+    assert_eq!(first_control.validation_value().with(Clone::clone), "ready");
+    assert!(!form.report_validity().expect("invalid form report"));
+    assert_eq!(ui.focused_node(), Some(second));
+
+    ui.emit(second, &InputEvent::new(EventKind::INPUT).text("ready"))
+        .expect("valid second input");
+    assert!(form.report_validity().expect("valid form report"));
+    ui.emit(first, &InputEvent::new(EventKind::INPUT).text("changed"))
+        .expect("peer change");
+    assert!(!second_control.validation_result().is_valid);
+    assert_eq!(second_control.validation_result().code(), "sameAs");
+    assert_eq!(second_control.validation_message(), "values must match");
+    ui.emit(first, &InputEvent::new(EventKind::INPUT).text("ready"))
+        .expect("peer restored");
+    assert!(second_control.validation_result().is_valid);
+    second_control
+        .change("manual".to_owned())
+        .expect("manual dependent change");
+    assert!(!second_control.validation_result().is_valid);
+    first_control
+        .change("manual".to_owned())
+        .expect("manual source change");
+    assert!(second_control.validation_result().is_valid);
+
+    form.set_disabled(true).expect("disable form");
+    assert!(!form.check_validity().expect("disabled form check"));
+    assert!(!form.report_validity().expect("disabled form report"));
+    form.set_disabled(false).expect("enable form");
+
+    second_control
+        .set_disabled(true)
+        .expect("disable second control");
+    second_control
+        .input(String::new())
+        .expect("disabled input is ignored");
+    assert!(second_control
+        .check_validity()
+        .expect("disabled control is valid"));
+    assert_eq!(second_control.validation_message(), "");
+    assert!(form.check_validity().expect("disabled field skipped"));
+    second_control
+        .set_disabled(false)
+        .expect("enable second control");
+
+    let duplicate = form
+        .add(&first_control)
+        .expect_err("duplicate registration must fail");
+    assert_eq!(duplicate.status_code(), Some(STATUS_INVALID_ARGUMENT));
+    let outside_control = attach_text_validation(
+        &mut ui,
+        outside,
+        ValidationRules::<String>::new().required("outside required"),
+        "",
+    )
+    .expect("outside attachment");
+    let foreign = form
+        .add(&outside_control)
+        .expect_err("outside registration must fail");
+    assert_eq!(foreign.status_code(), Some(STATUS_INVALID_ARGUMENT));
+    assert!(form.remove(second));
+    assert!(!form.remove(second));
+    second_control
+        .input("detached".to_owned())
+        .expect("detached dependent input");
+    assert!(!second_control.validation_result().is_valid);
+    first_control
+        .input("detached".to_owned())
+        .expect("detached source input");
+    assert!(second_control.validation_result().is_valid);
+    first_control.close();
+    assert!(!first_control.active());
+    let closed = first_control
+        .check_validity()
+        .expect_err("closed Validation Control must fail");
+    assert_eq!(closed.status_code(), Some(STATUS_INVALID_HANDLE));
+
+    let mut policy_ui = Ui::new().expect("validation policy Ui");
+    let mut live_node = None;
+    let mut blur_node = None;
+    let mut submit_node = None;
+    let mut boolean_node = None;
+    policy_ui
+        .box_with("validation-policy-root", None, |ui| {
+            live_node = Some(ui.box_node("validation-live", None)?);
+            blur_node = Some(ui.box_node("validation-blur", None)?);
+            submit_node = Some(ui.box_node("validation-submit", None)?);
+            boolean_node = Some(ui.box_node("validation-boolean", None)?);
+            Ok(())
+        })
+        .expect("validation policy tree");
+    let live_node = live_node.expect("live node");
+    let blur_node = blur_node.expect("blur node");
+    let submit_node = submit_node.expect("submit node");
+    let boolean_node = boolean_node.expect("boolean node");
+    let live_control = attach_text_validation_with(
+        &mut policy_ui,
+        live_node,
+        ValidationRules::<String>::new().required("live required"),
+        "",
+        ValidationReport::OnInput,
+        EventKind::INPUT,
+    )
+    .expect("live validation");
+    let blur_control = attach_text_validation(
+        &mut policy_ui,
+        blur_node,
+        ValidationRules::<String>::new().required("blur required"),
+        "",
+    )
+    .expect("blur validation");
+    let submit_control = attach_text_validation_with(
+        &mut policy_ui,
+        submit_node,
+        ValidationRules::<String>::new().required("submit required"),
+        "",
+        ValidationReport::OnSubmit,
+        EventKind::INPUT,
+    )
+    .expect("submit validation");
+    let boolean_control = attach_validation_with(
+        &mut policy_ui,
+        boolean_node,
+        ValidationRules::<bool>::new().custom(|value| *value, "must be true"),
+        false,
+        |event| event.text.as_deref() == Some("true"),
+        ValidationReport::OnInput,
+        EventKind::CHANGE,
+    )
+    .expect("boolean validation");
+    let empty_input = InputEvent::new(EventKind::INPUT).text("");
+    policy_ui
+        .emit(live_node, &empty_input)
+        .expect("live empty input");
+    policy_ui
+        .emit(blur_node, &empty_input)
+        .expect("blur empty input");
+    policy_ui
+        .emit(submit_node, &empty_input)
+        .expect("submit empty input");
+    assert_eq!(live_control.validation_message(), "live required");
+    assert_eq!(blur_control.validation_message(), "");
+    assert_eq!(submit_control.validation_message(), "");
+    policy_ui
+        .emit(blur_node, &InputEvent::new(EventKind::BLUR))
+        .expect("blur report");
+    policy_ui
+        .emit(submit_node, &InputEvent::new(EventKind::BLUR))
+        .expect("submit blur");
+    assert_eq!(blur_control.validation_message(), "blur required");
+    assert_eq!(submit_control.validation_message(), "");
+    assert!(!submit_control
+        .report_validity()
+        .expect("explicit submit report"));
+    assert_eq!(submit_control.validation_message(), "submit required");
+    policy_ui
+        .emit(
+            boolean_node,
+            &InputEvent::new(EventKind::CHANGE).text("true"),
+        )
+        .expect("typed change");
+    assert!(boolean_control.validation_result().is_valid);
 }
 
 #[test]

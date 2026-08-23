@@ -1816,8 +1816,11 @@ sync remains immediate, the time-aware path keeps old and new retained roots
 visible with input restricted to the incoming screen, and the host exposes a
 monotonic next-frame deadline for event-wait integration. Start, advance,
 completion, cancellation, navigation reentry, and screen-disposal ordering are
-covered by Driver fixtures. Automatic control/form attachment and the remaining
-cross-Driver application fixtures remain Version 0.6 work.
+covered by Driver fixtures. Retained
+`ValidationControl[T]` attachment and heterogeneous `ValidationForm`
+check/report coordination are now implemented in both reference Drivers.
+High-level immutable FormData construction, payload-bearing submit delivery,
+and the remaining cross-Driver application fixtures remain Version 0.6 work.
 
 This scope does not require one source syntax across languages, runtime loading
 of arbitrary foreign binaries, or pixel identity across different font and

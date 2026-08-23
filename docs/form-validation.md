@@ -120,6 +120,18 @@ The callback runs only after local validation succeeds. Backend code must still
 validate the submitted data authoritatively because frontend validation is a
 usability and early-rejection boundary, not a security boundary.
 
+The Version 0.6 C++14 and Rust reference Drivers expose the same retained
+control-reporting path through `ValidationControl[T]` and `ValidationForm`.
+Attachments use additive `input` and `blur` observers, update only the changed
+control, preserve application handlers, synchronize invalid Style/message
+state, skip disabled controls, and focus the first invalid registered control.
+Form registration also connects declared peer identities with weak dependency
+edges, so a changed source rechecks only `sameAs`/`differentFrom` dependants;
+cycle guards prevent recursive re-entry and the edges do not retain controls.
+The high-level foreign FormData builder and payload-bearing submit event remain
+a separate Driver task; the validation adapter does not emit a payload-free
+event under the canonical `submit` name.
+
 ## Built-In Rules
 
 The first field-focused release contains 40 synchronous operations:
