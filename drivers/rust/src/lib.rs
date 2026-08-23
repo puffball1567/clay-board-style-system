@@ -632,7 +632,7 @@ impl Error {
         }
     }
 
-    fn status(status: i32, message: impl Into<String>) -> Self {
+    pub fn status(status: i32, message: impl Into<String>) -> Self {
         Self {
             kind: ErrorKind::Status(status),
             message: message.into(),

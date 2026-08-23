@@ -1888,11 +1888,15 @@ fn validation_controls_and_forms_attach_to_retained_events() {
     let mut form_node = None;
     let mut first = None;
     let mut second = None;
+    let mut enabled = None;
+    let mut failing = None;
     let mut outside = None;
     ui.box_with("validation-root", None, |ui| {
         form_node = Some(ui.box_with("validation-form", None, |ui| {
             first = Some(ui.box_node("validation-first", None)?);
             second = Some(ui.box_node("validation-second", None)?);
+            enabled = Some(ui.box_node("validation-enabled", None)?);
+            failing = Some(ui.box_node("validation-failing", None)?);
             Ok(())
         })?);
         outside = Some(ui.box_node("validation-outside", None)?);
@@ -1902,6 +1906,8 @@ fn validation_controls_and_forms_attach_to_retained_events() {
     let form_node = form_node.expect("form node");
     let first = first.expect("first control");
     let second = second.expect("second control");
+    let enabled = enabled.expect("enabled control");
+    let failing = failing.expect("failing control");
     let outside = outside.expect("outside control");
     ui.set_focusable(first, true, 0).expect("first focusable");
     ui.set_focusable(second, true, 0).expect("second focusable");
@@ -1946,9 +1952,26 @@ fn validation_controls_and_forms_attach_to_retained_events() {
         "",
     )
     .expect("second validation attachment");
+    let enabled_control = attach_validation_with(
+        &mut ui,
+        enabled,
+        ValidationRules::<bool>::new(),
+        false,
+        |event| event.text.as_deref() == Some("true"),
+        ValidationReport::OnBlur,
+        EventKind::INPUT,
+    )
+    .expect("enabled validation attachment");
     let mut form = ValidationForm::new(&ui, form_node).expect("Validation Form");
-    form.add(&first_control).expect("first registration");
-    form.add(&second_control).expect("second registration");
+    form.register_text_field("first", &first_control)
+        .expect("first field registration");
+    form.register_text_field("second", &second_control)
+        .expect("second field registration");
+    form.register_field(&enabled_control, |value, builder| {
+        builder.add_text("enabled", if *value { "true" } else { "false" })?;
+        Ok(())
+    })
+    .expect("custom field registration");
     let submit_events = Rc::new(Cell::new(0));
     let submit_payload = Rc::new(RefCell::new(None::<FormData>));
     let submit_counter = Rc::clone(&submit_events);
@@ -1966,7 +1989,7 @@ fn validation_controls_and_forms_attach_to_retained_events() {
         .and_then(|builder| builder.add_text("second", "ready"))
         .expect("validation payload values");
     let validation_payload = payload_builder.finish().expect("validation payload");
-    assert_eq!(form.len(), 2);
+    assert_eq!(form.len(), 3);
     assert!(!first_control.validation_result().is_valid);
     assert_eq!(first_control.validation_message(), "");
     assert!(!form.check_validity().expect("silent form check"));
@@ -1989,7 +2012,24 @@ fn validation_controls_and_forms_attach_to_retained_events() {
 
     ui.emit(second, &InputEvent::new(EventKind::INPUT).text("ready"))
         .expect("valid second input");
+    enabled_control
+        .change(true)
+        .expect("enable collected value");
     assert!(form.report_validity().expect("valid form report"));
+    let collected = form.collect_data().expect("collect validation values");
+    assert_eq!(collected.len(), 3);
+    assert!(matches!(
+        collected.entry(0).expect("first collected entry").value,
+        FormDataValue::Text(ref value) if value == "ready"
+    ));
+    assert!(matches!(
+        collected.entry(1).expect("second collected entry").value,
+        FormDataValue::Text(ref value) if value == "ready"
+    ));
+    assert!(matches!(
+        collected.entry(2).expect("custom collected entry").value,
+        FormDataValue::Text(ref value) if value == "true"
+    ));
     assert!(form.submit(&validation_payload).expect("valid submit"));
     assert_eq!(submit_events.get(), 1);
     assert!(matches!(
@@ -2002,6 +2042,16 @@ fn validation_controls_and_forms_attach_to_retained_events() {
             .value,
         FormDataValue::Text(ref value) if value == "ready"
     ));
+    assert!(form.submit_collected().expect("collected submit"));
+    assert_eq!(submit_events.get(), 2);
+    assert_eq!(
+        submit_payload
+            .borrow()
+            .as_ref()
+            .expect("retained collected payload")
+            .len(),
+        3
+    );
     ui.emit(first, &InputEvent::new(EventKind::INPUT).text("changed"))
         .expect("peer change");
     assert!(!second_control.validation_result().is_valid);
@@ -2025,7 +2075,8 @@ fn validation_controls_and_forms_attach_to_retained_events() {
     assert!(!form
         .submit(&validation_payload)
         .expect("disabled form submit"));
-    assert_eq!(submit_events.get(), 1);
+    assert!(!form.submit_collected().expect("disabled collected submit"));
+    assert_eq!(submit_events.get(), 2);
     form.set_disabled(false).expect("enable form");
 
     second_control
@@ -2039,9 +2090,45 @@ fn validation_controls_and_forms_attach_to_retained_events() {
         .expect("disabled control is valid"));
     assert_eq!(second_control.validation_message(), "");
     assert!(form.check_validity().expect("disabled field skipped"));
+    assert_eq!(
+        form.collect_data()
+            .expect("disabled field collection")
+            .len(),
+        2
+    );
     second_control
         .set_disabled(false)
         .expect("enable second control");
+
+    let duplicate_field = form
+        .register_text_field("first-again", &first_control)
+        .expect_err("duplicate field registration must fail");
+    assert_eq!(duplicate_field.status_code(), Some(STATUS_INVALID_ARGUMENT));
+    let empty_field = form
+        .register_text_field("", &first_control)
+        .expect_err("empty field name must fail");
+    assert_eq!(empty_field.status_code(), Some(STATUS_INVALID_ARGUMENT));
+
+    let failing_control =
+        attach_text_validation(&mut ui, failing, ValidationRules::<String>::new(), "value")
+            .expect("failing collector attachment");
+    form.register_field(&failing_control, |_, builder| {
+        builder.add_text("partial", "must-not-escape")?;
+        Err(cbss_craft::Error::status(
+            STATUS_INVALID_ARGUMENT,
+            "collector failed",
+        ))
+    })
+    .expect("failing collector registration");
+    let failed_collection = form
+        .submit_collected()
+        .expect_err("collector failure must abort submit");
+    assert_eq!(
+        failed_collection.status_code(),
+        Some(STATUS_INVALID_ARGUMENT)
+    );
+    assert_eq!(submit_events.get(), 2);
+    assert!(form.remove(failing));
 
     let duplicate = form
         .add(&first_control)
@@ -2074,6 +2161,11 @@ fn validation_controls_and_forms_attach_to_retained_events() {
         .check_validity()
         .expect_err("closed Validation Control must fail");
     assert_eq!(closed.status_code(), Some(STATUS_INVALID_HANDLE));
+    let closed_collection = match form.collect_data() {
+        Ok(_) => panic!("closed form field collection must fail"),
+        Err(error) => error,
+    };
+    assert_eq!(closed_collection.status_code(), Some(STATUS_INVALID_HANDLE));
 
     let mut policy_ui = Ui::new().expect("validation policy Ui");
     let mut live_node = None;

@@ -1576,11 +1576,15 @@ int main() {
   cbss::Node validation_form_node;
   cbss::Node validation_first;
   cbss::Node validation_second;
+  cbss::Node validation_enabled;
+  cbss::Node validation_failing;
   cbss::Node validation_outside;
   validation_ui.box("validation-root", [&] {
     validation_form_node = validation_ui.box("validation-form", [&] {
       validation_first = validation_ui.box("validation-first");
       validation_second = validation_ui.box("validation-second");
+      validation_enabled = validation_ui.box("validation-enabled");
+      validation_failing = validation_ui.box("validation-failing");
     });
     validation_outside = validation_ui.box("validation-outside");
   });
@@ -1612,9 +1616,17 @@ int main() {
           .required("second required")
           .sameAs(validation_first_control.validationValue(),
                   "values must match"));
+  auto validation_enabled_control = cbss::attachValidation<bool>(
+      validation_ui, validation_enabled, cbss::ValidationRules<bool>(), false,
+      [](const cbss::Event& event) { return event.text == "true"; });
   cbss::ValidationForm validation_form(validation_ui, validation_form_node);
-  validation_form.add(validation_first_control);
-  validation_form.add(validation_second_control);
+  validation_form.registerTextField("first", validation_first_control);
+  validation_form.registerTextField("second", validation_second_control);
+  validation_form.registerField(
+      validation_enabled_control,
+      [](const bool& value, cbss::FormDataBuilder& builder) {
+        builder.addText("enabled", value ? "true" : "false");
+      });
   int validation_submit_events = 0;
   std::shared_ptr<cbss::FormData> validation_submit_payload;
   validation_form.onSubmit([&](const cbss::EventView& view) {
@@ -1630,7 +1642,7 @@ int main() {
       .addText("second", "ready");
   const cbss::FormData validation_payload =
       validation_payload_builder.finish();
-  assert(validation_form.size() == 2u);
+  assert(validation_form.size() == 3u);
   assert(!validation_first_control.validationResult().isValid);
   assert(validation_first_control.validationMessage().empty());
   assert(!validation_form.checkValidity());
@@ -1655,11 +1667,24 @@ int main() {
   cbss::InputEvent valid_second_input(CBSS_EVENT_INPUT);
   valid_second_input.textValue("ready");
   validation_ui.emit(validation_second, valid_second_input);
+  validation_enabled_control.change(true);
   assert(validation_form.reportValidity());
+  const cbss::FormData collected_validation_data =
+      validation_form.collectData();
+  assert(collected_validation_data.size() == 3u);
+  assert(collected_validation_data.entry(0u).name == "first");
+  assert(collected_validation_data.entry(0u).text == "ready");
+  assert(collected_validation_data.entry(1u).name == "second");
+  assert(collected_validation_data.entry(1u).text == "ready");
+  assert(collected_validation_data.entry(2u).name == "enabled");
+  assert(collected_validation_data.entry(2u).text == "true");
   assert(validation_form.submit(validation_payload));
   assert(validation_submit_events == 1);
   assert(validation_submit_payload);
   assert(validation_submit_payload->entry(0u).text == "ready");
+  assert(validation_form.submitCollected());
+  assert(validation_submit_events == 2);
+  assert(validation_submit_payload->size() == 3u);
   cbss::InputEvent changed_first_input(CBSS_EVENT_INPUT);
   changed_first_input.textValue("changed");
   validation_ui.emit(validation_first, changed_first_input);
@@ -1677,7 +1702,8 @@ int main() {
   assert(!validation_form.checkValidity());
   assert(!validation_form.reportValidity());
   assert(!validation_form.submit(validation_payload));
-  assert(validation_submit_events == 1);
+  assert(!validation_form.submitCollected());
+  assert(validation_submit_events == 2);
   validation_form.setDisabled(false);
 
   validation_second_control.setDisabled(true);
@@ -1685,7 +1711,45 @@ int main() {
   assert(validation_second_control.checkValidity());
   assert(validation_second_control.validationMessage().empty());
   assert(validation_form.checkValidity());
+  assert(validation_form.collectData().size() == 2u);
   validation_second_control.setDisabled(false);
+
+  bool duplicate_validation_field_rejected = false;
+  try {
+    validation_form.registerTextField("first-again",
+                                      validation_first_control);
+  } catch (const cbss::Error& error) {
+    duplicate_validation_field_rejected =
+        error.status() == CBSS_INVALID_ARGUMENT;
+  }
+  assert(duplicate_validation_field_rejected);
+  bool empty_validation_field_rejected = false;
+  try {
+    validation_form.registerTextField("", validation_first_control);
+  } catch (const cbss::Error& error) {
+    empty_validation_field_rejected =
+        error.status() == CBSS_INVALID_ARGUMENT;
+  }
+  assert(empty_validation_field_rejected);
+
+  auto validation_failing_control = cbss::attachTextValidation(
+      validation_ui, validation_failing,
+      cbss::ValidationRules<std::string>(), "value");
+  validation_form.registerField(
+      validation_failing_control,
+      [](const std::string&, cbss::FormDataBuilder& builder) {
+        builder.addText("partial", "must-not-escape");
+        throw std::runtime_error("collector failed");
+      });
+  bool failed_collection_rejected = false;
+  try {
+    validation_form.submitCollected();
+  } catch (const std::runtime_error&) {
+    failed_collection_rejected = true;
+  }
+  assert(failed_collection_rejected);
+  assert(validation_submit_events == 2);
+  assert(validation_form.remove(validation_failing));
 
   bool duplicate_validation_control_rejected = false;
   try {
@@ -1734,6 +1798,14 @@ int main() {
         error.status() == CBSS_INVALID_HANDLE;
   }
   assert(closed_validation_control_rejected);
+  bool closed_validation_field_rejected = false;
+  try {
+    validation_form.collectData();
+  } catch (const cbss::Error& error) {
+    closed_validation_field_rejected =
+        error.status() == CBSS_INVALID_HANDLE;
+  }
+  assert(closed_validation_field_rejected);
 
   cbss::Ui validation_policy_ui;
   cbss::Node validation_live_node;

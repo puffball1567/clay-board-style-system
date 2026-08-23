@@ -130,13 +130,17 @@ edges, so a changed source rechecks only `sameAs`/`differentFrom` dependants;
 cycle guards prevent recursive re-entry and the edges do not retain controls.
 Both Drivers now also expose owned Blob values, immutable ordered FormData
 builders, payload-aware event handlers/subscriptions, and validation-first
-submit. Foreign applications pass the snapshot to `submit(snapshot)`; invalid
-or disabled forms do not emit. The submitted snapshot can outlive the callback,
-and an intentionally empty snapshot remains distinct from a synthetic
-payload-free submit. Automatic collection from arbitrary foreign controls is
-not inferred: the application supplies field values explicitly until a control
-declares a serializer contract. Multipart encoding and transport remain outside
-CBSS.
+submit. `registerTextField`/`register_text_field` cover ordinary text controls;
+`registerField`/`register_field` accept an explicit typed collector for numbers,
+checkable values, Blob-backed files, and application-defined values. Collection
+reads retained validation values in registration order, skips disabled fields,
+and rejects inactive fields instead of silently dropping data. Applications may
+call `collectData`/`collect_data` independently or use
+`submitCollected`/`submit_collected` to validate, snapshot, and emit once.
+The existing `submit(snapshot)` API remains available when the application
+already owns a snapshot. A submitted snapshot can outlive the callback, and an
+intentionally empty snapshot remains distinct from a synthetic payload-free
+submit. Multipart encoding and transport remain outside CBSS.
 
 ## Built-In Rules
 

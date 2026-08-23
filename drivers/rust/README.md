@@ -225,7 +225,7 @@ let account = cbss_craft::attach_text_validation(
 )?;
 
 let mut validation_form = cbss_craft::ValidationForm::new(&ui, form_node)?;
-validation_form.add(&account)?;
+validation_form.register_text_field("account", &account)?;
 
 if validation_form.report_validity()? {
     save_account(account.validation_value().with(Clone::clone));
@@ -242,25 +242,26 @@ source change rechecks only its declared dependants. The weak edges expire with
 either attachment and do not extend a component lifetime.
 
 The Driver owns Blob and immutable FormData handles through Rust ownership.
-Repeated names and ordered text/Blob values are preserved, and submit handlers
-may retain a cloned snapshot after the callback returns:
+Registered fields are collected from retained values without walking the UI
+tree. Repeated names and ordered text/Blob values are preserved, and submit
+handlers may retain a cloned snapshot after the callback returns:
 
 ```rust
-let mut data = cbss_craft::FormDataBuilder::new()?;
-data.add_text("account", &account.validation_value().with(Clone::clone))?
-    .add_blob("avatar", &avatar_blob, Some("avatar.png"))?;
-let snapshot = data.finish()?;
-
 validation_form.on_submit(|event| {
     queue_request(event.form_data().expect("submit payload").clone());
     cbss_craft::EventOutcome::HANDLED
 })?;
-validation_form.submit(&snapshot)?; // validates before emitting submit
+validation_form.submit_collected()?; // validates, snapshots, then emits
 ```
 
-`submit(&snapshot)` does not emit when validation fails or the form is
-disabled. FormData is transport-neutral; multipart encoding and network
-delivery belong to the application or a transport library such as Joubako.
+Use `register_field(control, collector)` for non-text values or Blob-backed file
+values. `collect_data()` can produce the same immutable snapshot without
+submitting. Disabled fields are omitted; inactive fields fail collection rather
+than disappearing silently. The existing `submit(&snapshot)` path remains for
+application-owned snapshots. Neither submit path emits when validation fails or
+the form is disabled. FormData is transport-neutral; multipart encoding and
+network delivery belong to the application or a transport library such as
+Joubako.
 
 Typed Commands connect UI actions to asynchronous work while keeping UI
 mutation on the owning thread:
