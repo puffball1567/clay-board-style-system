@@ -1811,7 +1811,12 @@ Drivers now also expose typed Cue graphs with iterative serial progression,
 delayed parallel branches, all/any/race joins, restart/ignore/queue/parallel
 start policies, monotonic logical clocks, pause/resume and rate control,
 cancellation, late-completion rejection, and component-owned teardown.
-Automatic control/form attachment, screen-transition hooks, and the remaining
+Screen-transition hooks now also match across Nim, C++14, and Rust: the legacy
+sync remains immediate, the time-aware path keeps old and new retained roots
+visible with input restricted to the incoming screen, and the host exposes a
+monotonic next-frame deadline for event-wait integration. Start, advance,
+completion, cancellation, navigation reentry, and screen-disposal ordering are
+covered by Driver fixtures. Automatic control/form attachment and the remaining
 cross-Driver application fixtures remain Version 0.6 work.
 
 This scope does not require one source syntax across languages, runtime loading

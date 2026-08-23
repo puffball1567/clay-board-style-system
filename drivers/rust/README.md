@@ -152,6 +152,36 @@ paint, hit testing, and accessibility without rebuilding their Nodes. A public
 Link click handler runs before navigation and may set prevent-default to cancel
 that intrinsic action.
 
+Optional screen transitions keep the outgoing and incoming retained roots
+mounted together while making only the incoming root interactive. Calling
+`sync()` keeps the legacy immediate behavior; `sync_at(now)` starts the
+configured transition from a monotonic timestamp:
+
+```rust
+let transition = cbss_craft::NavigationTransitionSpec::new(0.2, |frame| {
+    // Apply retained Style changes from frame.phase and frame.progress.
+})?;
+let host = cbss_craft::NavigationScreenHost::with_transition(
+    &ui,
+    navigator.clone(),
+    transition,
+)?;
+
+host.sync_at(monotonic_seconds())?;
+while host.transition_active() {
+    // Wait until input arrives or next_transition_deadline() becomes due.
+    host.advance_transition(monotonic_seconds())?;
+}
+```
+
+`Started`, `Advanced`, `Completed`, and `Cancelled` callbacks carry typed old
+and new entries plus both roots. The host returns a next-frame deadline instead
+of creating a continuous frame loop, so an idle application can remain blocked
+in its platform event wait. A transition hook may enqueue another navigation
+without borrowing the screen-host state. A newer navigation cancels the current
+transition before starting the next one, and screen removal cancels before
+invalidating either callback root.
+
 Typed validation chains are ordinary retained Rust values. Built-in rules are
 declared once, stop at the first failure, and keep reporting policy separate
 from current validity:
