@@ -7,6 +7,7 @@ mod navigation;
 mod navigation_ui;
 mod store;
 mod validation;
+mod validation_ui;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -50,6 +51,11 @@ pub use store::{Selector, Store, StoreSubscription};
 pub use validation::{
     ValidationBinding, ValidationFile, ValidationIssue, ValidationPattern, ValidationReport,
     ValidationResult, ValidationRuleKind, ValidationRules, ValidationTrigger, ValidationValue,
+    ValidationValueType,
+};
+pub use validation_ui::{
+    attach_text_validation, attach_text_validation_with, attach_validation, attach_validation_with,
+    ValidationControl, ValidationForm,
 };
 
 pub const STATUS_OK: i32 = 0;

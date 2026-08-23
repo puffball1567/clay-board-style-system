@@ -113,6 +113,7 @@ class ValidationValue {
       : value_(std::make_shared<T>(std::move(value))) {}
   const T& get() const { return *value_; }
   void set(T value) { *value_ = std::move(value); }
+  const void* identity() const noexcept { return value_.get(); }
 
  private:
   explicit ValidationValue(std::shared_ptr<T> value) : value_(std::move(value)) {}

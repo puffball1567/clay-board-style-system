@@ -13,6 +13,12 @@ release. Before 1.0, minor releases may contain public API changes.
   same 40 synchronous operations, first-failure ordering, optional/required
   precedence, current peer references, custom rules, and retained reporting
   policies as the canonical Nim API.
+- Added retained `ValidationControl<T>` attachment and heterogeneous
+  `ValidationForm` coordination to both reference Drivers. Additive input/blur
+  observation now synchronizes invalid state and messages, skips disabled
+  controls, preserves application handlers, and focuses the first invalid
+  registered control without replaying the form tree. Weak peer-dependency
+  edges revalidate only declared cross-field dependants.
 - Extended C ABI `0x00010019` with bounded compiled validation-pattern and
   canonical string-format checks. Foreign Drivers share Nim's linear-time
   regex and email/URL/UUID/IP/date/time semantics instead of depending on

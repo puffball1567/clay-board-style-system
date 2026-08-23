@@ -213,6 +213,36 @@ collection, file-metadata, and custom operations. Regex and format checks use
 the bounded engine capability rather than host-specific regex, URL, or date
 semantics.
 
+Rules can be attached to existing retained controls without replacing public
+event handlers:
+
+```rust
+let account = cbss_craft::attach_text_validation(
+    &mut ui,
+    account_node,
+    rules,
+    "",
+)?;
+
+let mut validation_form = cbss_craft::ValidationForm::new(&ui, form_node)?;
+validation_form.add(&account)?;
+
+if validation_form.report_validity()? {
+    save_account(account.validation_value().with(Clone::clone));
+}
+```
+
+The attachment observes full values carried by `input`, keeps invalid Style
+state and `validation-message` synchronized, and reports `invalid` through
+additive subscriptions. Generic typed controls use `attach_validation` or
+`attach_validation_with` with an event-to-value extractor. `ValidationForm`
+skips disabled controls and focuses the first invalid control. Registering
+controls also wires `same_as`/`different_from` peer edges so a
+source change rechecks only its declared dependants. The weak edges expire with
+either attachment and do not extend a component lifetime. The separate
+immutable FormData/submit Driver surface is not approximated by this
+validation-only adapter.
+
 Typed Commands connect UI actions to asynchronous work while keeping UI
 mutation on the owning thread:
 
