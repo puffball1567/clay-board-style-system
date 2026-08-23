@@ -17,6 +17,10 @@ release. Before 1.0, minor releases may contain public API changes.
   canonical string-format checks. Foreign Drivers share Nim's linear-time
   regex and email/URL/UUID/IP/date/time semantics instead of depending on
   host-specific regex or parser behavior.
+- Added typed asynchronous Commands to the C++14 and Rust Craft Drivers with
+  latest-only, ordered, and concurrent policies, bounded worker-to-UI
+  completion queues, stable tickets, cancellation, settlement observers,
+  wake coalescing, backpressure, and deterministic late-result rejection.
 
 - Added the bounded Craft Pack Version 1 manifest and JSON Schema for declaring
   distributable Craft Components, public Style Slots, Craft Styles, assets,

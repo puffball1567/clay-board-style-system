@@ -160,6 +160,33 @@ collection, file-metadata, and custom operations. Regex and format checks use
 the bounded engine capability, so C++ does not silently substitute
 `std::regex` or platform-specific URL/date parsing.
 
+Typed Commands connect UI actions to asynchronous work without allowing a
+worker to call UI code directly:
+
+```cpp
+using SaveCommand = cbss::Command<Document, SaveResult, SaveError>;
+
+SaveCommand save([&](Document document, SaveCommand::Sink sink) {
+  auto request = repository.save(
+      std::move(document),
+      [sink](SaveResult result) mutable { sink.succeed(std::move(result)); },
+      [sink](SaveError error) mutable { sink.fail(std::move(error)); });
+  return SaveCommand::Cancel([request]() mutable { request.cancel(); });
+});
+
+save.onSuccess([&](SaveResult result) { showSaved(std::move(result)); });
+const cbss::CommandTicket ticket = save.run(currentDocument());
+```
+
+`latestOnly`, `ordered`, and `concurrent` policies are explicit. Copyable
+`CommandSink` values cross worker boundaries through a bounded queue; the UI
+thread applies completions with `pump`. Tickets retain terminal status,
+ticket-scoped observers detach through RAII, cancellation advances ordered
+work, and disposal rejects late completion offers. Queue item and weight
+limits report backpressure instead of silently dropping a result. A wake
+callback may post one host event when an empty completion queue becomes
+non-empty.
+
 The Driver negotiates the engine ABI, Driver contract, and baseline authoring
 capabilities before it constructs a context. `Ui` and `Style` use deterministic
 RAII lifetime. Nested callbacks maintain parentage with an exception-safe
