@@ -70,6 +70,115 @@ int main() {
   }
   assert(rejected_missing_capability);
 
+  std::vector<std::uint8_t> blob_source = {0u, 1u, 2u, 255u};
+  cbss::Blob attachment(blob_source, "application/octet-stream");
+  assert(attachment.size() == 4u);
+  assert(attachment.mimeType() == "application/octet-stream");
+  assert((attachment.read(1u, 2u) == std::vector<std::uint8_t>{1u, 2u}));
+  assert(attachment.read(4u, 8u).empty());
+  blob_source[1] = 99u;
+  assert((attachment.read(0u, 4u) ==
+          std::vector<std::uint8_t>{0u, 1u, 2u, 255u}));
+
+  cbss::FormDataBuilder form_data_builder;
+  form_data_builder.addText("tag", "first")
+      .addText("tag", "second")
+      .addBlob("attachment", attachment, "sample.bin");
+  const cbss::FormData form_data = form_data_builder.finish();
+  assert(form_data.size() == 3u);
+  assert(!form_data.empty());
+  const auto tag_values = form_data.values("tag");
+  assert(tag_values.size() == 2u);
+  assert(tag_values[0].kind == cbss::FormDataValueKind::text);
+  assert(tag_values[0].text == "first");
+  assert(tag_values[1].text == "second");
+  const cbss::FormDataEntry attachment_entry = form_data.entry(2u);
+  assert(attachment_entry.name == "attachment");
+  assert(attachment_entry.kind == cbss::FormDataValueKind::blob);
+  assert(attachment_entry.fileName == "sample.bin");
+  assert(attachment_entry.blob);
+  assert((attachment_entry.blob->read(0u, 4u) ==
+          std::vector<std::uint8_t>{0u, 1u, 2u, 255u}));
+  bool rejected_form_data_index = false;
+  try {
+    (void)form_data.entry(3u);
+  } catch (const cbss::Error& error) {
+    rejected_form_data_index = error.status() == CBSS_OUT_OF_RANGE;
+  }
+  assert(rejected_form_data_index);
+  const cbss::FormData copied_form_data = form_data;
+  assert(copied_form_data.entry(0u).text == "first");
+  bool rejected_embedded_nul = false;
+  try {
+    cbss::FormDataBuilder invalid_builder;
+    invalid_builder.addText(std::string("bad\0name", 8u), "value");
+  } catch (const cbss::Error& error) {
+    rejected_embedded_nul = error.status() == CBSS_INVALID_ARGUMENT;
+  }
+  assert(rejected_embedded_nul);
+
+  cbss::Ui payload_ui;
+  cbss::Node payload_target;
+  const cbss::Node payload_root = payload_ui.box("payload-root", [&] {
+    payload_target = payload_ui.box("payload-target");
+  });
+  int payload_handler_calls = 0;
+  int payload_observer_calls = 0;
+  int payload_free_calls = 0;
+  std::shared_ptr<cbss::FormData> retained_payload;
+  payload_ui.onView(
+      payload_target, CBSS_EVENT_SUBMIT,
+      [&](const cbss::EventView& view) {
+        ++payload_handler_calls;
+        assert(view.event().target == payload_target.nativeId());
+        if (view.hasFormData()) {
+          retained_payload =
+              std::make_shared<cbss::FormData>(view.formData());
+        } else {
+          ++payload_free_calls;
+        }
+        return cbss::EventOutcome::handled();
+      });
+  cbss::EventSubscription payload_observer = payload_ui.subscribeView(
+      payload_root, CBSS_EVENT_SUBMIT,
+      [&](const cbss::EventView& view) {
+        ++payload_observer_calls;
+        assert(view.hasFormData());
+        assert(view.formData().size() == 3u);
+        return cbss::EventOutcome::handled();
+      });
+  const cbss::DispatchSummary payload_submit =
+      payload_ui.emitSubmit(payload_target, form_data);
+  assert(payload_submit.handled);
+  assert(payload_handler_calls == 1);
+  assert(payload_observer_calls == 1);
+  assert(retained_payload);
+  assert(retained_payload->entry(1u).text == "second");
+  payload_observer.close();
+  payload_ui.emit(payload_target, cbss::InputEvent(CBSS_EVENT_SUBMIT));
+  assert(payload_handler_calls == 2);
+  assert(payload_observer_calls == 1);
+  assert(payload_free_calls == 1);
+  payload_ui.onView(
+      payload_target, CBSS_EVENT_SUBMIT,
+      [](const cbss::EventView&) -> cbss::EventOutcome {
+        throw std::runtime_error("EventView callback failure");
+      });
+  const cbss::DispatchSummary failed_payload_callback =
+      payload_ui.emitSubmit(payload_target, form_data);
+  assert(failed_payload_callback.outcome.isHandled());
+  assert(failed_payload_callback.outcome.stopsPropagation());
+  assert(failed_payload_callback.outcome.preventsDefault());
+  assert(payload_ui.callbackFailed());
+  bool payload_callback_failure_rethrown = false;
+  try {
+    payload_ui.rethrowCallbackFailure();
+  } catch (const std::runtime_error&) {
+    payload_callback_failure_rethrown = true;
+  }
+  assert(payload_callback_failure_rethrown);
+  assert(!payload_ui.callbackFailed());
+
   cbss::Style root_style;
   root_style.set("width", cbss::px(200.0f))
       .set("height", cbss::px(80.0f))
@@ -1506,13 +1615,31 @@ int main() {
   cbss::ValidationForm validation_form(validation_ui, validation_form_node);
   validation_form.add(validation_first_control);
   validation_form.add(validation_second_control);
+  int validation_submit_events = 0;
+  std::shared_ptr<cbss::FormData> validation_submit_payload;
+  validation_form.onSubmit([&](const cbss::EventView& view) {
+    ++validation_submit_events;
+    assert(view.event().kind == CBSS_EVENT_SUBMIT);
+    assert(view.hasFormData());
+    validation_submit_payload =
+        std::make_shared<cbss::FormData>(view.formData());
+    return cbss::EventOutcome::handled();
+  });
+  cbss::FormDataBuilder validation_payload_builder;
+  validation_payload_builder.addText("first", "ready")
+      .addText("second", "ready");
+  const cbss::FormData validation_payload =
+      validation_payload_builder.finish();
   assert(validation_form.size() == 2u);
   assert(!validation_first_control.validationResult().isValid);
   assert(validation_first_control.validationMessage().empty());
   assert(!validation_form.checkValidity());
   assert(validation_invalid_events == 0);
-  assert(!validation_form.reportValidity());
+  assert(!validation_form.submit(validation_payload));
+  assert(validation_submit_events == 0);
   assert(validation_invalid_events == 2);
+  assert(!validation_form.reportValidity());
+  assert(validation_invalid_events == 4);
   assert(validation_ui.focusedNode() == validation_first);
   assert(validation_first_control.validationMessage() == "first required");
 
@@ -1529,6 +1656,10 @@ int main() {
   valid_second_input.textValue("ready");
   validation_ui.emit(validation_second, valid_second_input);
   assert(validation_form.reportValidity());
+  assert(validation_form.submit(validation_payload));
+  assert(validation_submit_events == 1);
+  assert(validation_submit_payload);
+  assert(validation_submit_payload->entry(0u).text == "ready");
   cbss::InputEvent changed_first_input(CBSS_EVENT_INPUT);
   changed_first_input.textValue("changed");
   validation_ui.emit(validation_first, changed_first_input);
@@ -1545,6 +1676,8 @@ int main() {
   validation_form.setDisabled(true);
   assert(!validation_form.checkValidity());
   assert(!validation_form.reportValidity());
+  assert(!validation_form.submit(validation_payload));
+  assert(validation_submit_events == 1);
   validation_form.setDisabled(false);
 
   validation_second_control.setDisabled(true);

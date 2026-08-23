@@ -1,21 +1,163 @@
 use cbss_craft::{
     attach_text_validation, attach_text_validation_with, attach_validation_with, cue, cue_action,
-    cue_action_with_completion, cue_after, keyword, px, rgb, Command, CommandOfferResult,
+    cue_action_with_completion, cue_after, keyword, px, rgb, Blob, Command, CommandOfferResult,
     CommandPolicy, CommandStatus, Contract, CueCancel, CueCompletion, CueJoinPolicy, CueRuntime,
-    CueSessionStatus, CueStartPolicy, ErrorKind, EventKind, EventOutcome, InputEvent, Link,
-    NavigationChange, NavigationChangeKind, NavigationDriver, NavigationEntry,
-    NavigationScreenHost, NavigationSnapshot, NavigationTransitionContext,
-    NavigationTransitionPhase, NavigationTransitionSpec, Navigator, NodeState, Store, Style, Ui,
-    ValidationBinding, ValidationFile, ValidationForm, ValidationPattern, ValidationReport,
-    ValidationRules, ValidationTrigger, ValidationValue, ABI_VERSION, CAPABILITIES,
-    CRAFT_DIAGNOSTIC_PACK, CRAFT_DIAGNOSTIC_STYLE_REPLACEMENT, CRAFT_PACK_MISSING_CAPABILITY,
-    CRAFT_STYLE_PARSE_UNKNOWN_PROPERTY, CRAFT_STYLE_REPLACEMENT_UNDECLARED_STYLE_SLOT,
-    DRIVER_CONTRACT_VERSION, NAVIGATION_SCREEN_DIRTY_DOMAINS, STATUS_INVALID_ARGUMENT,
-    STATUS_INVALID_HANDLE, STATUS_STYLE_ERROR,
+    CueSessionStatus, CueStartPolicy, ErrorKind, EventKind, EventOutcome, FormData,
+    FormDataBuilder, FormDataValue, InputEvent, Link, NavigationChange, NavigationChangeKind,
+    NavigationDriver, NavigationEntry, NavigationScreenHost, NavigationSnapshot,
+    NavigationTransitionContext, NavigationTransitionPhase, NavigationTransitionSpec, Navigator,
+    NodeState, Store, Style, Ui, ValidationBinding, ValidationFile, ValidationForm,
+    ValidationPattern, ValidationReport, ValidationRules, ValidationTrigger, ValidationValue,
+    ABI_VERSION, CAPABILITIES, CRAFT_DIAGNOSTIC_PACK, CRAFT_DIAGNOSTIC_STYLE_REPLACEMENT,
+    CRAFT_PACK_MISSING_CAPABILITY, CRAFT_STYLE_PARSE_UNKNOWN_PROPERTY,
+    CRAFT_STYLE_REPLACEMENT_UNDECLARED_STYLE_SLOT, DRIVER_CONTRACT_VERSION,
+    NAVIGATION_SCREEN_DIRTY_DOMAINS, STATUS_INVALID_ARGUMENT, STATUS_INVALID_HANDLE,
+    STATUS_STYLE_ERROR,
 };
 use std::cell::{Cell, RefCell};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
+
+#[test]
+fn blob_form_data_and_submit_payload_are_owned_and_ordered() {
+    let mut source = vec![0_u8, 1, 2, 255];
+    let blob = Blob::new(&source, "application/octet-stream").expect("Blob");
+    assert_eq!(blob.size(), 4);
+    assert_eq!(
+        blob.mime_type().expect("Blob MIME type"),
+        "application/octet-stream"
+    );
+    assert_eq!(blob.read(1, 2).expect("bounded Blob read"), vec![1, 2]);
+    assert!(blob.read(4, 8).expect("Blob end read").is_empty());
+    source[1] = 99;
+    assert_eq!(
+        blob.read(0, 4).expect("immutable Blob read"),
+        vec![0, 1, 2, 255]
+    );
+
+    let mut builder = FormDataBuilder::new().expect("FormData builder");
+    builder
+        .add_text("tag", "first")
+        .and_then(|builder| builder.add_text("tag", "second"))
+        .and_then(|builder| builder.add_blob("attachment", &blob, Some("sample.bin")))
+        .expect("FormData values");
+    let data = builder.finish().expect("FormData snapshot");
+    assert_eq!(data.len(), 3);
+    assert!(!data.is_empty());
+    let tags = data.values("tag").expect("repeated FormData values");
+    assert_eq!(tags.len(), 2);
+    assert!(matches!(&tags[0].value, FormDataValue::Text(value) if value == "first"));
+    assert!(matches!(&tags[1].value, FormDataValue::Text(value) if value == "second"));
+    let attachment = data.entry(2).expect("Blob FormData entry");
+    assert_eq!(attachment.name, "attachment");
+    match attachment.value {
+        FormDataValue::Blob { blob, file_name } => {
+            assert_eq!(file_name.as_deref(), Some("sample.bin"));
+            assert_eq!(
+                blob.read(0, 4).expect("FormData Blob read"),
+                vec![0, 1, 2, 255]
+            );
+        }
+        FormDataValue::Text(_) => panic!("expected a Blob FormData value"),
+    }
+    let out_of_range = match data.entry(3) {
+        Ok(_) => panic!("out-of-range FormData entry must fail"),
+        Err(error) => error,
+    };
+    assert_eq!(
+        out_of_range.status_code(),
+        Some(cbss_craft::STATUS_OUT_OF_RANGE)
+    );
+    let copied_data = data.clone();
+    assert!(matches!(
+        copied_data.entry(0).expect("copied FormData entry").value,
+        FormDataValue::Text(value) if value == "first"
+    ));
+    let mut invalid_builder = FormDataBuilder::new().expect("invalid FormData builder");
+    assert!(invalid_builder.add_text("bad\0name", "value").is_err());
+
+    let mut ui = Ui::new().expect("payload Ui");
+    let mut target = None;
+    let root = ui
+        .box_with("payload-root", None, |ui| {
+            target = Some(ui.box_node("payload-target", None)?);
+            Ok(())
+        })
+        .expect("payload tree");
+    let target = target.expect("payload target");
+    let handler_calls = Rc::new(Cell::new(0));
+    let observer_calls = Rc::new(Cell::new(0));
+    let payload_free_calls = Rc::new(Cell::new(0));
+    let retained = Rc::new(RefCell::new(None::<FormData>));
+    let handler_counter = Rc::clone(&handler_calls);
+    let payload_free_counter = Rc::clone(&payload_free_calls);
+    let retained_payload = Rc::clone(&retained);
+    ui.on_view(target, EventKind::SUBMIT, move |view| {
+        handler_counter.set(handler_counter.get() + 1);
+        assert_eq!(view.event().target, target.native_id());
+        if let Some(payload) = view.form_data() {
+            retained_payload.replace(Some(payload.clone()));
+        } else {
+            payload_free_counter.set(payload_free_counter.get() + 1);
+        }
+        EventOutcome::HANDLED
+    })
+    .expect("payload handler");
+    let observer_counter = Rc::clone(&observer_calls);
+    let mut observer = ui
+        .subscribe_view(root, EventKind::SUBMIT, move |view| {
+            observer_counter.set(observer_counter.get() + 1);
+            assert_eq!(view.form_data().expect("submit payload").len(), 3);
+            EventOutcome::HANDLED
+        })
+        .expect("payload observer");
+    let summary = ui.emit_submit(target, &data).expect("payload submit");
+    assert!(summary.handled);
+    assert_eq!(handler_calls.get(), 1);
+    assert_eq!(observer_calls.get(), 1);
+    assert!(matches!(
+        retained
+            .borrow()
+            .as_ref()
+            .expect("retained payload")
+            .entry(1)
+            .expect("retained payload entry")
+            .value,
+        FormDataValue::Text(ref value) if value == "second"
+    ));
+    observer.close().expect("close payload observer");
+    ui.emit(target, &InputEvent::new(EventKind::SUBMIT))
+        .expect("payload-free submit");
+    assert_eq!(handler_calls.get(), 2);
+    assert_eq!(observer_calls.get(), 1);
+    assert_eq!(payload_free_calls.get(), 1);
+
+    let empty = FormDataBuilder::new()
+        .expect("empty FormData builder")
+        .finish()
+        .expect("empty FormData");
+    ui.emit_submit(target, &empty)
+        .expect("empty payload submit");
+    assert_eq!(
+        retained
+            .borrow()
+            .as_ref()
+            .expect("empty retained payload")
+            .len(),
+        0
+    );
+    ui.on_view(target, EventKind::SUBMIT, |_| {
+        panic!("EventView callback failure");
+    })
+    .expect("panicking EventView handler");
+    let failed = ui
+        .emit_submit(target, &data)
+        .expect("EventView panic is contained at the FFI boundary");
+    assert!(failed.outcome.handled());
+    assert!(failed.outcome.stops_propagation());
+    assert!(failed.outcome.prevents_default());
+    assert!(ui.callback_panicked());
+}
 
 #[test]
 fn reference_tree_matches_the_driver_contract() {
@@ -1807,13 +1949,33 @@ fn validation_controls_and_forms_attach_to_retained_events() {
     let mut form = ValidationForm::new(&ui, form_node).expect("Validation Form");
     form.add(&first_control).expect("first registration");
     form.add(&second_control).expect("second registration");
+    let submit_events = Rc::new(Cell::new(0));
+    let submit_payload = Rc::new(RefCell::new(None::<FormData>));
+    let submit_counter = Rc::clone(&submit_events);
+    let retained_submit_payload = Rc::clone(&submit_payload);
+    form.on_submit(move |view| {
+        submit_counter.set(submit_counter.get() + 1);
+        assert_eq!(view.event().kind, EventKind::SUBMIT);
+        retained_submit_payload.replace(view.form_data().cloned());
+        EventOutcome::HANDLED
+    })
+    .expect("Validation Form submit handler");
+    let mut payload_builder = FormDataBuilder::new().expect("validation payload builder");
+    payload_builder
+        .add_text("first", "ready")
+        .and_then(|builder| builder.add_text("second", "ready"))
+        .expect("validation payload values");
+    let validation_payload = payload_builder.finish().expect("validation payload");
     assert_eq!(form.len(), 2);
     assert!(!first_control.validation_result().is_valid);
     assert_eq!(first_control.validation_message(), "");
     assert!(!form.check_validity().expect("silent form check"));
     assert_eq!(invalid_events.get(), 0);
-    assert!(!form.report_validity().expect("reported form check"));
+    assert!(!form.submit(&validation_payload).expect("invalid submit"));
+    assert_eq!(submit_events.get(), 0);
     assert_eq!(invalid_events.get(), 2);
+    assert!(!form.report_validity().expect("reported form check"));
+    assert_eq!(invalid_events.get(), 4);
     assert_eq!(ui.focused_node(), Some(first));
     assert_eq!(first_control.validation_message(), "first required");
 
@@ -1828,6 +1990,18 @@ fn validation_controls_and_forms_attach_to_retained_events() {
     ui.emit(second, &InputEvent::new(EventKind::INPUT).text("ready"))
         .expect("valid second input");
     assert!(form.report_validity().expect("valid form report"));
+    assert!(form.submit(&validation_payload).expect("valid submit"));
+    assert_eq!(submit_events.get(), 1);
+    assert!(matches!(
+        submit_payload
+            .borrow()
+            .as_ref()
+            .expect("retained validation payload")
+            .entry(0)
+            .expect("validation payload entry")
+            .value,
+        FormDataValue::Text(ref value) if value == "ready"
+    ));
     ui.emit(first, &InputEvent::new(EventKind::INPUT).text("changed"))
         .expect("peer change");
     assert!(!second_control.validation_result().is_valid);
@@ -1848,6 +2022,10 @@ fn validation_controls_and_forms_attach_to_retained_events() {
     form.set_disabled(true).expect("disable form");
     assert!(!form.check_validity().expect("disabled form check"));
     assert!(!form.report_validity().expect("disabled form report"));
+    assert!(!form
+        .submit(&validation_payload)
+        .expect("disabled form submit"));
+    assert_eq!(submit_events.get(), 1);
     form.set_disabled(false).expect("enable form");
 
     second_control

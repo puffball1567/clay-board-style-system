@@ -2,6 +2,7 @@
 
 mod command;
 mod cue;
+mod data;
 mod generated;
 mod navigation;
 mod navigation_ui;
@@ -28,6 +29,7 @@ pub use cue::{
     CueCancel, CueCompletion, CueGraph, CueJoinPolicy, CueRuntime, CueSession, CueSessionStatus,
     CueStartPolicy,
 };
+pub use data::{Blob, FormData, FormDataBuilder, FormDataEntry, FormDataValue};
 pub use generated::{
     CapabilityDefinition, EventKind, ABI_VERSION, CAPABILITIES, CAPABILITY_ACCESSIBILITY_SEMANTICS,
     CAPABILITY_BLOB, CAPABILITY_CRAFT_PACK, CAPABILITY_CRAFT_STYLE, CAPABILITY_DECLARATIVE_MOTION,
@@ -136,6 +138,26 @@ mod ffi {
     }
 
     #[repr(C)]
+    pub struct CbssBlob {
+        _private: [u8; 0],
+    }
+
+    #[repr(C)]
+    pub struct CbssFormDataBuilder {
+        _private: [u8; 0],
+    }
+
+    #[repr(C)]
+    pub struct CbssFormData {
+        _private: [u8; 0],
+    }
+
+    #[repr(C)]
+    pub struct CbssEventView {
+        _private: [u8; 0],
+    }
+
+    #[repr(C)]
     #[derive(Clone, Copy, Debug, Default)]
     pub struct CbssPointerData {
         pub device: c_uint,
@@ -221,6 +243,12 @@ mod ffi {
         user_data: *mut c_void,
     ) -> u8;
 
+    pub type CbssEventViewCallback = unsafe extern "C" fn(
+        context: *mut CbssContext,
+        view: *const CbssEventView,
+        user_data: *mut c_void,
+    ) -> u8;
+
     extern "C" {
         pub fn cbss_abi_version() -> c_uint;
         pub fn cbss_driver_contract_version() -> c_uint;
@@ -244,6 +272,82 @@ mod ffi {
             value: *const c_void,
             length: c_uint,
             output: *mut u8,
+        ) -> c_int;
+
+        pub fn cbss_blob_create(
+            bytes: *const u8,
+            length: u64,
+            mime_type: *const c_char,
+            output: *mut *mut CbssBlob,
+        ) -> c_int;
+        pub fn cbss_blob_retain(blob: *mut CbssBlob) -> c_int;
+        pub fn cbss_blob_release(blob: *mut CbssBlob);
+        pub fn cbss_blob_size(blob: *const CbssBlob) -> u64;
+        pub fn cbss_blob_mime_type(
+            blob: *const CbssBlob,
+            buffer: *mut c_char,
+            capacity: c_uint,
+        ) -> c_uint;
+        pub fn cbss_blob_read(
+            blob: *const CbssBlob,
+            offset: u64,
+            output: *mut u8,
+            capacity: c_uint,
+            output_read: *mut c_uint,
+        ) -> c_int;
+
+        pub fn cbss_form_data_builder_create() -> *mut CbssFormDataBuilder;
+        pub fn cbss_form_data_builder_destroy(builder: *mut CbssFormDataBuilder);
+        pub fn cbss_form_data_builder_add_text(
+            builder: *mut CbssFormDataBuilder,
+            name: *const c_char,
+            value: *const c_char,
+        ) -> c_int;
+        pub fn cbss_form_data_builder_add_blob(
+            builder: *mut CbssFormDataBuilder,
+            name: *const c_char,
+            blob: *mut CbssBlob,
+            file_name: *const c_char,
+        ) -> c_int;
+        pub fn cbss_form_data_builder_finish(
+            builder: *mut CbssFormDataBuilder,
+            output: *mut *mut CbssFormData,
+        ) -> c_int;
+        pub fn cbss_form_data_retain(data: *mut CbssFormData) -> c_int;
+        pub fn cbss_form_data_release(data: *mut CbssFormData);
+        pub fn cbss_form_data_length(data: *const CbssFormData) -> c_uint;
+        pub fn cbss_form_data_entry_kind(
+            data: *const CbssFormData,
+            index: c_uint,
+            output: *mut c_uint,
+        ) -> c_int;
+        pub fn cbss_form_data_entry_name(
+            data: *const CbssFormData,
+            index: c_uint,
+            buffer: *mut c_char,
+            capacity: c_uint,
+        ) -> c_uint;
+        pub fn cbss_form_data_entry_text(
+            data: *const CbssFormData,
+            index: c_uint,
+            buffer: *mut c_char,
+            capacity: c_uint,
+        ) -> c_uint;
+        pub fn cbss_form_data_entry_file_name(
+            data: *const CbssFormData,
+            index: c_uint,
+            buffer: *mut c_char,
+            capacity: c_uint,
+        ) -> c_uint;
+        pub fn cbss_form_data_entry_blob(
+            data: *const CbssFormData,
+            index: c_uint,
+            output: *mut *mut CbssBlob,
+        ) -> c_int;
+        pub fn cbss_event_view_event(view: *const CbssEventView) -> *const CbssEvent;
+        pub fn cbss_event_view_form_data(
+            view: *const CbssEventView,
+            output: *mut *mut CbssFormData,
         ) -> c_int;
 
         pub fn cbss_context_create() -> *mut CbssContext;
@@ -467,6 +571,21 @@ mod ffi {
             user_data: *mut c_void,
             output_subscription: *mut u64,
         ) -> c_int;
+        pub fn cbss_node_set_event_view_handler(
+            context: *mut CbssContext,
+            node: c_uint,
+            kind: c_uint,
+            callback: Option<CbssEventViewCallback>,
+            user_data: *mut c_void,
+        ) -> c_int;
+        pub fn cbss_node_subscribe_event_view(
+            context: *mut CbssContext,
+            node: c_uint,
+            kind: c_uint,
+            callback: Option<CbssEventViewCallback>,
+            user_data: *mut c_void,
+            output_subscription: *mut u64,
+        ) -> c_int;
         pub fn cbss_context_unsubscribe_event(
             context: *mut CbssContext,
             subscription: u64,
@@ -475,6 +594,12 @@ mod ffi {
             context: *mut CbssContext,
             node: c_uint,
             event: *const CbssInputEvent,
+            output: *mut CbssDispatchSummary,
+        ) -> c_int;
+        pub fn cbss_context_emit_submit(
+            context: *mut CbssContext,
+            node: c_uint,
+            form_data: *const CbssFormData,
             output: *mut CbssDispatchSummary,
         ) -> c_int;
         pub fn cbss_context_focused_node(context: *mut CbssContext) -> c_uint;
@@ -1246,11 +1371,90 @@ pub struct DispatchSummary {
     pub focus_changed: bool,
 }
 
+fn dispatch_summary(summary: ffi::CbssDispatchSummary) -> DispatchSummary {
+    DispatchSummary {
+        target: summary.target,
+        dispatch_count: summary.dispatch_count,
+        handled: summary.handled != 0,
+        outcome: EventOutcome(summary.outcome),
+        needs_compute: summary.needs_compute != 0,
+        paint_changed: summary.paint_changed != 0,
+        focus_changed: summary.focus_changed != 0,
+    }
+}
+
+pub struct EventView {
+    event: Event,
+    form_data: Option<FormData>,
+}
+
+impl EventView {
+    pub fn event(&self) -> &Event {
+        &self.event
+    }
+
+    pub fn form_data(&self) -> Option<&FormData> {
+        self.form_data.as_ref()
+    }
+
+    unsafe fn from_raw(view: *const ffi::CbssEventView) -> Result<Self> {
+        if view.is_null() {
+            return Err(Error::status(
+                STATUS_INVALID_HANDLE,
+                "read EventView: view is null",
+            ));
+        }
+        let event = ffi::cbss_event_view_event(view);
+        if event.is_null() {
+            return Err(Error::status(
+                STATUS_INVALID_HANDLE,
+                "read EventView: event is unavailable",
+            ));
+        }
+        let mut payload = std::ptr::null_mut();
+        let status = ffi::cbss_event_view_form_data(view, &mut payload);
+        let form_data = match status {
+            STATUS_OK => Some(FormData::from_owned(payload, "read event FormData")?),
+            STATUS_NOT_AVAILABLE => None,
+            _ => return Err(Error::status(status, "read event FormData")),
+        };
+        Ok(Self {
+            event: Event::from_raw(&*event),
+            form_data,
+        })
+    }
+}
+
 type EventCallback = dyn FnMut(&Event) -> EventOutcome;
+type EventViewCallback = dyn FnMut(&EventView) -> EventOutcome;
+
+trait CallbackStatus {
+    fn panicked(&self) -> bool;
+}
+
+type CallbackHolder = Rc<dyn CallbackStatus>;
+type CallbackRegistry = HashMap<u32, HashMap<u32, CallbackHolder>>;
 
 struct EventCallbackState {
     callback: RefCell<Box<EventCallback>>,
     panicked: Cell<bool>,
+}
+
+impl CallbackStatus for EventCallbackState {
+    fn panicked(&self) -> bool {
+        self.panicked.get()
+    }
+}
+
+struct EventViewCallbackState {
+    callback: RefCell<Box<EventViewCallback>>,
+    panicked: Cell<bool>,
+}
+
+impl CallbackStatus for EventViewCallbackState {
+    fn panicked(&self) -> bool {
+        self.panicked.get()
+    }
 }
 
 unsafe extern "C" fn event_trampoline(
@@ -1277,14 +1481,40 @@ unsafe extern "C" fn event_trampoline(
     }
 }
 
+unsafe extern "C" fn event_view_trampoline(
+    _context: *mut ffi::CbssContext,
+    view: *const ffi::CbssEventView,
+    user_data: *mut c_void,
+) -> u8 {
+    if view.is_null() || user_data.is_null() {
+        return EventOutcome::new(true, true, true).bits();
+    }
+    let pointer = user_data.cast::<EventViewCallbackState>();
+    Rc::increment_strong_count(pointer);
+    let holder = Rc::from_raw(pointer);
+    match catch_unwind(AssertUnwindSafe(|| {
+        let view = EventView::from_raw(view).unwrap_or_else(|error| {
+            panic!("EventView conversion failed: {error}");
+        });
+        let mut callback = holder.callback.borrow_mut();
+        callback(&view)
+    })) {
+        Ok(outcome) => outcome.bits(),
+        Err(_) => {
+            holder.panicked.set(true);
+            EventOutcome::new(true, true, true).bits()
+        }
+    }
+}
+
 struct EventSubscriptionState {
     node: u32,
-    callback: Rc<EventCallbackState>,
+    callback: CallbackHolder,
 }
 
 struct DriverEventState {
     context: Cell<*mut ffi::CbssContext>,
-    handlers: RefCell<HashMap<u32, HashMap<u32, Rc<EventCallbackState>>>>,
+    handlers: RefCell<CallbackRegistry>,
     default_actions: RefCell<HashMap<u32, HashMap<u32, Rc<EventCallbackState>>>>,
     subscriptions: RefCell<HashMap<u64, EventSubscriptionState>>,
     subscriptions_by_node: RefCell<HashMap<u32, HashSet<u64>>>,
@@ -1365,7 +1595,7 @@ impl DriverEventState {
         let handlers = self.handlers.borrow();
         if handlers
             .values()
-            .any(|node| node.values().any(|holder| holder.panicked.get()))
+            .any(|node| node.values().any(|holder| holder.panicked()))
         {
             return true;
         }
@@ -1373,14 +1603,14 @@ impl DriverEventState {
             .default_actions
             .borrow()
             .values()
-            .any(|node| node.values().any(|holder| holder.panicked.get()))
+            .any(|node| node.values().any(|holder| holder.panicked()))
         {
             return true;
         }
         self.subscriptions
             .borrow()
             .values()
-            .any(|subscription| subscription.callback.panicked.get())
+            .any(|subscription| subscription.callback.panicked())
     }
 }
 
@@ -1600,6 +1830,65 @@ impl UiHandle {
         Ok(())
     }
 
+    pub fn on_view<F>(&self, node: Node, kind: EventKind, callback: F) -> Result<()>
+    where
+        F: FnMut(&EventView) -> EventOutcome + 'static,
+    {
+        Contract::require(&[
+            CapabilityRequirement {
+                id: CAPABILITY_STANDARD_EVENTS,
+                minimum_version: 1,
+            },
+            CapabilityRequirement {
+                id: CAPABILITY_FORM_DATA,
+                minimum_version: 1,
+            },
+        ])?;
+        let context = self.require_node(node, "set EventView handler")?;
+        let holder = Rc::new(EventViewCallbackState {
+            callback: RefCell::new(Box::new(callback)),
+            panicked: Cell::new(false),
+        });
+        let status = unsafe {
+            ffi::cbss_node_set_event_view_handler(
+                context.as_ptr(),
+                node.id,
+                kind.code(),
+                Some(event_view_trampoline),
+                Rc::as_ptr(&holder).cast_mut().cast(),
+            )
+        };
+        self.check(context, status, "set EventView handler")?;
+        let Some(state) = self.state.upgrade() else {
+            return Err(Error::status(
+                STATUS_INVALID_HANDLE,
+                "set EventView handler: Ui is not active",
+            ));
+        };
+        if state.handlers.try_borrow_mut().is_err() {
+            unsafe {
+                ffi::cbss_node_set_event_view_handler(
+                    context.as_ptr(),
+                    node.id,
+                    kind.code(),
+                    None,
+                    std::ptr::null_mut(),
+                );
+            }
+            return Err(Error::status(
+                STATUS_INTERNAL_ERROR,
+                "set EventView handler: callback registry is already borrowed",
+            ));
+        }
+        state
+            .handlers
+            .borrow_mut()
+            .entry(node.id)
+            .or_default()
+            .insert(kind.code(), holder);
+        Ok(())
+    }
+
     pub fn set_default_action<F>(&self, node: Node, kind: EventKind, callback: F) -> Result<()>
     where
         F: FnMut(&Event) -> EventOutcome + 'static,
@@ -1721,6 +2010,26 @@ impl UiHandle {
             paint_changed: summary.paint_changed != 0,
             focus_changed: summary.focus_changed != 0,
         })
+    }
+
+    pub fn emit_submit(&self, node: Node, data: &FormData) -> Result<DispatchSummary> {
+        Contract::require(&[
+            CapabilityRequirement {
+                id: CAPABILITY_STANDARD_EVENTS,
+                minimum_version: 1,
+            },
+            CapabilityRequirement {
+                id: CAPABILITY_FORM_DATA,
+                minimum_version: 1,
+            },
+        ])?;
+        let context = self.require_node(node, "emit submit event")?;
+        let mut summary = ffi::CbssDispatchSummary::default();
+        let status = unsafe {
+            ffi::cbss_context_emit_submit(context.as_ptr(), node.id, data.as_ptr(), &mut summary)
+        };
+        self.check(context, status, "emit submit event")?;
+        Ok(dispatch_summary(summary))
     }
 
     fn require_node(&self, node: Node, operation: &str) -> Result<NonNull<ffi::CbssContext>> {
@@ -2287,6 +2596,54 @@ impl Ui {
         Ok(())
     }
 
+    pub fn on_view<F>(&mut self, node: Node, kind: EventKind, callback: F) -> Result<()>
+    where
+        F: FnMut(&EventView) -> EventOutcome + 'static,
+    {
+        self.require_event_capability()?;
+        Contract::require(&[CapabilityRequirement {
+            id: CAPABILITY_FORM_DATA,
+            minimum_version: 1,
+        }])?;
+        self.require_node(node, "set EventView handler")?;
+        let holder = Rc::new(EventViewCallbackState {
+            callback: RefCell::new(Box::new(callback)),
+            panicked: Cell::new(false),
+        });
+        let status = unsafe {
+            ffi::cbss_node_set_event_view_handler(
+                self.context.as_ptr(),
+                node.id,
+                kind.code(),
+                Some(event_view_trampoline),
+                Rc::as_ptr(&holder).cast_mut().cast(),
+            )
+        };
+        self.check(status, "set EventView handler")?;
+        if self.events.handlers.try_borrow_mut().is_err() {
+            unsafe {
+                ffi::cbss_node_set_event_view_handler(
+                    self.context.as_ptr(),
+                    node.id,
+                    kind.code(),
+                    None,
+                    std::ptr::null_mut(),
+                );
+            }
+            return Err(Error::status(
+                STATUS_INTERNAL_ERROR,
+                "set EventView handler: callback registry is already borrowed",
+            ));
+        }
+        self.events
+            .handlers
+            .borrow_mut()
+            .entry(node.id)
+            .or_default()
+            .insert(kind.code(), holder);
+        Ok(())
+    }
+
     pub fn clear_handler(&mut self, node: Node, kind: EventKind) -> Result<()> {
         self.require_node(node, "clear event handler")?;
         let status = unsafe {
@@ -2365,6 +2722,66 @@ impl Ui {
         })
     }
 
+    pub fn subscribe_view<F>(
+        &mut self,
+        node: Node,
+        kind: EventKind,
+        callback: F,
+    ) -> Result<EventSubscription>
+    where
+        F: FnMut(&EventView) -> EventOutcome + 'static,
+    {
+        self.require_event_capability()?;
+        Contract::require(&[CapabilityRequirement {
+            id: CAPABILITY_FORM_DATA,
+            minimum_version: 1,
+        }])?;
+        self.require_node(node, "subscribe EventView")?;
+        let holder = Rc::new(EventViewCallbackState {
+            callback: RefCell::new(Box::new(callback)),
+            panicked: Cell::new(false),
+        });
+        let mut subscription = 0_u64;
+        let status = unsafe {
+            ffi::cbss_node_subscribe_event_view(
+                self.context.as_ptr(),
+                node.id,
+                kind.code(),
+                Some(event_view_trampoline),
+                Rc::as_ptr(&holder).cast_mut().cast(),
+                &mut subscription,
+            )
+        };
+        self.check(status, "subscribe EventView")?;
+        if let (Ok(mut subscriptions), Ok(mut index)) = (
+            self.events.subscriptions.try_borrow_mut(),
+            self.events.subscriptions_by_node.try_borrow_mut(),
+        ) {
+            subscriptions.insert(
+                subscription,
+                EventSubscriptionState {
+                    node: node.id,
+                    callback: holder,
+                },
+            );
+            index.entry(node.id).or_default().insert(subscription);
+        } else {
+            unsafe {
+                ffi::cbss_context_unsubscribe_event(self.context.as_ptr(), subscription);
+            }
+            return Err(Error::status(
+                STATUS_INTERNAL_ERROR,
+                "subscribe EventView: callback registry is already borrowed",
+            ));
+        }
+        Ok(EventSubscription {
+            state: Rc::downgrade(&self.events),
+            id: subscription,
+            active: true,
+            _not_send: PhantomData,
+        })
+    }
+
     pub fn emit(&mut self, node: Node, input: &InputEvent) -> Result<DispatchSummary> {
         self.require_event_capability()?;
         self.require_node(node, "emit event")?;
@@ -2431,6 +2848,26 @@ impl Ui {
             paint_changed: summary.paint_changed != 0,
             focus_changed: summary.focus_changed != 0,
         })
+    }
+
+    pub fn emit_submit(&mut self, node: Node, data: &FormData) -> Result<DispatchSummary> {
+        self.require_event_capability()?;
+        Contract::require(&[CapabilityRequirement {
+            id: CAPABILITY_FORM_DATA,
+            minimum_version: 1,
+        }])?;
+        self.require_node(node, "emit submit event")?;
+        let mut summary = ffi::CbssDispatchSummary::default();
+        let status = unsafe {
+            ffi::cbss_context_emit_submit(
+                self.context.as_ptr(),
+                node.id,
+                data.as_ptr(),
+                &mut summary,
+            )
+        };
+        self.check(status, "emit submit event")?;
+        Ok(dispatch_summary(summary))
     }
 
     pub fn callback_panicked(&self) -> bool {

@@ -128,9 +128,15 @@ state, skip disabled controls, and focus the first invalid registered control.
 Form registration also connects declared peer identities with weak dependency
 edges, so a changed source rechecks only `sameAs`/`differentFrom` dependants;
 cycle guards prevent recursive re-entry and the edges do not retain controls.
-The high-level foreign FormData builder and payload-bearing submit event remain
-a separate Driver task; the validation adapter does not emit a payload-free
-event under the canonical `submit` name.
+Both Drivers now also expose owned Blob values, immutable ordered FormData
+builders, payload-aware event handlers/subscriptions, and validation-first
+submit. Foreign applications pass the snapshot to `submit(snapshot)`; invalid
+or disabled forms do not emit. The submitted snapshot can outlive the callback,
+and an intentionally empty snapshot remains distinct from a synthetic
+payload-free submit. Automatic collection from arbitrary foreign controls is
+not inferred: the application supplies field values explicitly until a control
+declares a serializer contract. Multipart encoding and transport remain outside
+CBSS.
 
 ## Built-In Rules
 

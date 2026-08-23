@@ -382,6 +382,16 @@ class ValidationForm {
     return valid;
   }
 
+  void onSubmit(std::function<EventOutcome(const EventView&)> callback) {
+    ui_.onView(form_, CBSS_EVENT_SUBMIT, std::move(callback));
+  }
+
+  bool submit(const FormData& data) {
+    if (disabled_ || !reportValidity()) return false;
+    ui_.emitSubmit(form_, data);
+    return true;
+  }
+
   std::size_t size() const noexcept { return controls_.size(); }
 
  private:
