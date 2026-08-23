@@ -29,6 +29,11 @@ class ControlAdapter {
   virtual void refreshDependency() = 0;
 };
 
+struct FormFieldRegistration {
+  Node node;
+  std::function<void(FormDataBuilder&)> collect;
+};
+
 template <typename T>
 struct ControlState : ControlAdapter,
                       std::enable_shared_from_this<ControlState<T>> {
@@ -334,11 +339,74 @@ class ValidationForm {
     controls_.push_back(added);
   }
 
+  template <typename T, typename Collector>
+  void registerField(const ValidationControl<T>& control,
+                     Collector&& collect) {
+    std::function<void(const T&, FormDataBuilder&)> collector =
+        std::forward<Collector>(collect);
+    if (!collector) {
+      throw std::invalid_argument(
+          "Validation Form field collector cannot be empty");
+    }
+    for (const auto& field : fields_) {
+      if (field.node == control.node()) {
+        throw Error(CBSS_INVALID_ARGUMENT,
+                    "Validation Control is already registered as a form field");
+      }
+    }
+
+    bool registered = false;
+    for (const auto& existing : controls_) {
+      if (!existing || existing->node() != control.node()) continue;
+      if (existing.get() != control.state_.get()) {
+        throw Error(CBSS_INVALID_ARGUMENT,
+                    "another Validation Control is registered for this form field");
+      }
+      registered = true;
+      break;
+    }
+    if (!registered) add(control);
+
+    typedef validation_ui_detail::ControlState<T> State;
+    const std::weak_ptr<State> weak = control.state_;
+    const Node node = control.node();
+    fields_.push_back(validation_ui_detail::FormFieldRegistration{
+        node, [weak, collector](FormDataBuilder& builder) {
+          const std::shared_ptr<State> state = weak.lock();
+          if (!state || !state->active()) {
+            throw Error(
+                CBSS_INVALID_HANDLE,
+                "collect Validation Form data: field is no longer active");
+          }
+          (void)state->ui.parent(state->control);
+          if (state->is_disabled) return;
+          collector(state->binding.valueReference().get(), builder);
+        }});
+  }
+
+  void registerTextField(const std::string& name,
+                         const ValidationControl<std::string>& control) {
+    if (name.empty()) {
+      throw Error(CBSS_INVALID_ARGUMENT,
+                  "Validation Form field name cannot be empty");
+    }
+    registerField(control,
+                  [name](const std::string& value, FormDataBuilder& builder) {
+                    builder.addText(name, value);
+                  });
+  }
+
   bool remove(Node node) {
     for (auto position = controls_.begin(); position != controls_.end();
          ++position) {
       if (*position && (*position)->node() == node) {
         controls_.erase(position);
+        fields_.erase(
+            std::remove_if(fields_.begin(), fields_.end(),
+                           [node](const validation_ui_detail::FormFieldRegistration& field) {
+                             return field.node == node;
+                           }),
+            fields_.end());
         return true;
       }
     }
@@ -392,12 +460,27 @@ class ValidationForm {
     return true;
   }
 
+  FormData collectData() const {
+    (void)ui_.parent(form_);
+    FormDataBuilder builder;
+    for (const auto& field : fields_) field.collect(builder);
+    return builder.finish();
+  }
+
+  bool submitCollected() {
+    if (disabled_ || !reportValidity()) return false;
+    const FormData data = collectData();
+    ui_.emitSubmit(form_, data);
+    return true;
+  }
+
   std::size_t size() const noexcept { return controls_.size(); }
 
  private:
   UiHandle ui_;
   Node form_;
   std::vector<std::shared_ptr<validation_ui_detail::ControlAdapter>> controls_;
+  std::vector<validation_ui_detail::FormFieldRegistration> fields_;
   bool disabled_ = false;
 };
 

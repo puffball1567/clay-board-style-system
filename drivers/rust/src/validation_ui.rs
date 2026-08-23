@@ -2,10 +2,10 @@ use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
 use crate::{
-    Error, Event, EventKind, EventOutcome, EventSubscription, EventView, FormData, Node, NodeState,
-    Result, Ui, UiHandle, ValidationBinding, ValidationReport, ValidationResult, ValidationRules,
-    ValidationTrigger, ValidationValue, ValidationValueType, STATUS_INVALID_ARGUMENT,
-    STATUS_INVALID_HANDLE,
+    Error, Event, EventKind, EventOutcome, EventSubscription, EventView, FormData, FormDataBuilder,
+    Node, NodeState, Result, Ui, UiHandle, ValidationBinding, ValidationReport, ValidationResult,
+    ValidationRules, ValidationTrigger, ValidationValue, ValidationValueType,
+    STATUS_INVALID_ARGUMENT, STATUS_INVALID_HANDLE,
 };
 
 trait ValidationControlAdapter {
@@ -18,6 +18,13 @@ trait ValidationControlAdapter {
     fn dependency_identities(&self) -> &[usize];
     fn add_dependent(&self, dependent: Weak<dyn ValidationControlAdapter>);
     fn refresh_dependency(&self) -> Result<()>;
+}
+
+type FormFieldCollector = dyn Fn(&mut FormDataBuilder) -> Result<()>;
+
+struct FormFieldRegistration {
+    node: Node,
+    collect: Box<FormFieldCollector>,
 }
 
 struct EvaluationGuard<'a>(&'a Cell<bool>);
@@ -437,6 +444,7 @@ pub struct ValidationForm {
     ui: UiHandle,
     node: Node,
     controls: Vec<Rc<dyn ValidationControlAdapter>>,
+    fields: Vec<FormFieldRegistration>,
     disabled: bool,
 }
 
@@ -448,6 +456,7 @@ impl ValidationForm {
             ui: handle,
             node,
             controls: Vec::new(),
+            fields: Vec::new(),
             disabled: false,
         })
     }
@@ -507,11 +516,85 @@ impl ValidationForm {
         Ok(())
     }
 
+    pub fn register_field<T, F>(&mut self, control: &ValidationControl<T>, collect: F) -> Result<()>
+    where
+        T: Clone + ValidationValueType + 'static,
+        F: Fn(&T, &mut FormDataBuilder) -> Result<()> + 'static,
+    {
+        if self.fields.iter().any(|entry| entry.node == control.node()) {
+            return Err(Error::status(
+                STATUS_INVALID_ARGUMENT,
+                "Validation Control is already registered as a form field",
+            ));
+        }
+
+        if let Some(existing) = self
+            .controls
+            .iter()
+            .find(|entry| entry.node() == control.node())
+        {
+            let candidate: Rc<dyn ValidationControlAdapter> = control.state.clone();
+            if !Rc::ptr_eq(existing, &candidate) {
+                return Err(Error::status(
+                    STATUS_INVALID_ARGUMENT,
+                    "another Validation Control is registered for this form field",
+                ));
+            }
+        } else {
+            self.add(control)?;
+        }
+
+        let weak = Rc::downgrade(&control.state);
+        let node = control.node();
+        self.fields.push(FormFieldRegistration {
+            node,
+            collect: Box::new(move |builder| {
+                let state = weak.upgrade().ok_or_else(|| {
+                    Error::status(
+                        STATUS_INVALID_HANDLE,
+                        "collect Validation Form data: field is no longer active",
+                    )
+                })?;
+                if !state.active() {
+                    return Err(Error::status(
+                        STATUS_INVALID_HANDLE,
+                        "collect Validation Form data: field is no longer active",
+                    ));
+                }
+                let _ = state.ui.parent(state.node)?;
+                if state.disabled.get() {
+                    return Ok(());
+                }
+                collect(&state.current_value(), builder)
+            }),
+        });
+        Ok(())
+    }
+
+    pub fn register_text_field(
+        &mut self,
+        name: impl Into<String>,
+        control: &ValidationControl<String>,
+    ) -> Result<()> {
+        let name = name.into();
+        if name.is_empty() {
+            return Err(Error::status(
+                STATUS_INVALID_ARGUMENT,
+                "Validation Form field name cannot be empty",
+            ));
+        }
+        self.register_field(control, move |value, builder| {
+            builder.add_text(&name, value)?;
+            Ok(())
+        })
+    }
+
     pub fn remove(&mut self, node: Node) -> bool {
         let Some(index) = self.controls.iter().position(|entry| entry.node() == node) else {
             return false;
         };
         self.controls.remove(index);
+        self.fields.retain(|entry| entry.node != node);
         true
     }
 
@@ -570,6 +653,24 @@ impl ValidationForm {
             return Ok(false);
         }
         self.ui.emit_submit(self.node, data)?;
+        Ok(true)
+    }
+
+    pub fn collect_data(&self) -> Result<FormData> {
+        let _ = self.ui.parent(self.node)?;
+        let mut builder = FormDataBuilder::new()?;
+        for field in &self.fields {
+            (field.collect)(&mut builder)?;
+        }
+        builder.finish()
+    }
+
+    pub fn submit_collected(&self) -> Result<bool> {
+        if self.disabled || !self.report_validity()? {
+            return Ok(false);
+        }
+        let data = self.collect_data()?;
+        self.ui.emit_submit(self.node, &data)?;
         Ok(true)
     }
 

@@ -1821,9 +1821,10 @@ covered by Driver fixtures. Retained
 check/report coordination are now implemented in both reference Drivers.
 High-level Blob ownership, immutable ordered FormData construction,
 payload-bearing handlers/subscriptions, and validation-first submit delivery
-are now implemented in both reference Drivers. Automatic foreign-control
-collection and the remaining cross-Driver application fixtures remain Version
-0.6 work.
+are now implemented in both reference Drivers. Typed field registration,
+automatic retained-value collection, disabled-field exclusion, and collected
+submit delivery now also match in C++14 and Rust. The remaining cross-Driver
+application fixtures remain Version 0.6 work.
 
 This scope does not require one source syntax across languages, runtime loading
 of arbitrary foreign binaries, or pixel identity across different font and
