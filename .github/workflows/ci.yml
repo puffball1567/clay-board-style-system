@@ -62,6 +62,9 @@ jobs:
       - name: Test shared and static Rust Craft Driver
         run: nimble testRustDriver -y
 
+      - name: Compare C++ and Rust reference applications
+        run: nimble testDriverConformance -y
+
       - name: Verify source-only package with external bundled runtime
         run: |
           runtime_root="$GITHUB_WORKSPACE/vendor/sdl3"
@@ -177,6 +180,7 @@ jobs:
           cc -std=c11 -Wall -Wextra -Werror -Iinclude -fsyntax-only tests/c_api/header_consumer.c
           c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include -fsyntax-only tests/c_api/header_consumer.cpp
           c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include -fsyntax-only tests/drivers/cpp_reference.cpp
+          c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include -fsyntax-only tests/drivers/cpp_reference_application.cpp
 
       - name: Check C and C++ public headers (MSVC-compatible)
         if: runner.os == 'Windows'
@@ -185,9 +189,13 @@ jobs:
           clang-cl /nologo /W4 /WX /c /TC /Iinclude tests\c_api\header_consumer.c /Fo"${{ runner.temp }}\cbss_header_c.obj"
           clang-cl /nologo /W4 /WX /EHsc /c /TP /std:c++14 /Iinclude /Idrivers\cpp\include tests\c_api\header_consumer.cpp /Fo"${{ runner.temp }}\cbss_header_cpp.obj"
           clang-cl /nologo /W4 /WX /EHsc /c /TP /std:c++14 /Iinclude /Idrivers\cpp\include tests\drivers\cpp_reference.cpp /Fo"${{ runner.temp }}\cbss_cpp_driver.obj"
+          clang-cl /nologo /W4 /WX /EHsc /c /TP /std:c++14 /Iinclude /Idrivers\cpp\include tests\drivers\cpp_reference_application.cpp /Fo"${{ runner.temp }}\cbss_cpp_reference_application.obj"
 
       - name: Check portable Rust Craft Driver
         run: cargo check --locked --all-targets --manifest-path drivers/rust/Cargo.toml
+
+      - name: Check Rust reference application
+        run: cargo check --locked --manifest-path tests/drivers/rust_reference_application/Cargo.toml
 
       - name: Test native Rust bridges
         run: |

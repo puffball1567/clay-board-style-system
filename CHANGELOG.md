@@ -9,6 +9,11 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added a test-only cross-Driver reference application. C++14 and Rust now run
+  the same Craft Style, layout, event ordering, invalidation, FormData submit,
+  Store transaction, Navigation, diagnostic, and teardown scenario and must
+  produce the same versioned trace and checked-in expected result.
+
 - Added RAII/owned Blob and immutable FormData APIs to the C++14 and Rust Craft
   Drivers. Ordered repeated text and Blob values, bounded reads, payload-aware
   handlers/subscriptions, callback-lifetime-safe snapshots, and
