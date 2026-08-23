@@ -214,6 +214,41 @@ weight limits return `Backpressure` instead of dropping a result. A thread-safe
 wake callback may post one host event when an empty completion queue becomes
 non-empty.
 
+Cue graphs coordinate serial actions, delayed parallel work, and explicit
+joins without application-maintained completion flags:
+
+```rust
+let timeline = status.cue_runtime()?;
+let reveal = cbss_craft::cue(cbss_craft::cue_action("prepare", prepare_card)?)
+    .then_stage(
+        vec![
+            cbss_craft::cue_after(
+                0.1,
+                cbss_craft::cue_action("title", reveal_title)?,
+            )?,
+            cbss_craft::cue_after(
+                0.1,
+                cbss_craft::cue_action("chart", reveal_chart)?,
+            )?,
+        ],
+        cbss_craft::CueJoinPolicy::All,
+    )?
+    .then(cbss_craft::cue_action("ready", mark_ready)?)?;
+
+let session = timeline.start(&reveal, cbss_craft::CueStartPolicy::Restart)?;
+timeline.tick(0.1)?;
+```
+
+Actions may retain their `CueCompletion` and return a cancellation closure for
+asynchronous work. `All`, `Any`, and `Race` joins and `Restart`, `Ignore`,
+`Queue`, and `Parallel` repeated-start policies are explicit. Each runtime owns
+an independent monotonic logical clock with pause/resume, rate, and
+next-deadline queries. A runtime created through
+`CraftComponent::cue_runtime` is cancelled when its component is unmounted or
+dropped, even if application code still holds a cloned runtime or session
+handle. Standalone `CueRuntime` values remain available for
+application-scoped orchestration.
+
 Set `CBSS_LIB_DIR` to the directory containing the shared or static C ABI
 library. Set `CBSS_STATIC=1` for static linking. On Linux, a shared build also
 needs that directory in `LD_LIBRARY_PATH` when the application starts.

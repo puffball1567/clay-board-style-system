@@ -3,6 +3,7 @@
 
 #include "cbss.h"
 #include "command.hpp"
+#include "cue.hpp"
 #include "navigation.hpp"
 #include "store.hpp"
 #include "validation.hpp"
@@ -347,6 +348,7 @@ class ComponentWatch {
 class CraftComponent {
  public:
   CraftComponent() noexcept : active_(false) {}
+  ~CraftComponent() { closeOwnedCueRuntimes(); }
 
   CraftComponent(const CraftComponent&) = delete;
   CraftComponent& operator=(const CraftComponent&) = delete;
@@ -355,6 +357,7 @@ class CraftComponent {
       : root_(other.root_),
         craft_name_(std::move(other.craft_name_)),
         watches_(std::move(other.watches_)),
+        cue_runtimes_(std::move(other.cue_runtimes_)),
         active_(other.active_) {
     other.root_ = Node();
     other.active_ = false;
@@ -362,9 +365,11 @@ class CraftComponent {
 
   CraftComponent& operator=(CraftComponent&& other) noexcept {
     if (this != &other) {
+      closeOwnedCueRuntimes();
       root_ = other.root_;
       craft_name_ = std::move(other.craft_name_);
       watches_ = std::move(other.watches_);
+      cue_runtimes_ = std::move(other.cue_runtimes_);
       active_ = other.active_;
       other.root_ = Node();
       other.active_ = false;
@@ -388,6 +393,26 @@ class CraftComponent {
     std::size_t result = 0u;
     for (const auto& watch : watches_) {
       if (watch && watch->active()) {
+        ++result;
+      }
+    }
+    return result;
+  }
+
+  CueRuntime cueRuntime(double initial_time = 0.0) {
+    if (!active_) {
+      throw Error(CBSS_INVALID_HANDLE,
+                  "create Cue runtime: component is not mounted");
+    }
+    CueRuntime runtime(initial_time);
+    cue_runtimes_.push_back(runtime);
+    return runtime;
+  }
+
+  std::size_t cueRuntimeCount() const noexcept {
+    std::size_t result = 0u;
+    for (const CueRuntime& runtime : cue_runtimes_) {
+      if (runtime.active()) {
         ++result;
       }
     }
@@ -422,9 +447,18 @@ class CraftComponent {
   CraftComponent(Node root, std::string craft_name)
       : root_(root), craft_name_(std::move(craft_name)), active_(true) {}
 
+  void closeOwnedCueRuntimes() noexcept {
+    for (auto position = cue_runtimes_.rbegin();
+         position != cue_runtimes_.rend(); ++position) {
+      position->dispose();
+    }
+    cue_runtimes_.clear();
+  }
+
   Node root_;
   std::string craft_name_;
   std::vector<std::shared_ptr<detail::ComponentWatchState>> watches_;
+  std::vector<CueRuntime> cue_runtimes_;
   bool active_;
   friend class Ui;
   friend class ComponentScope;
@@ -1168,6 +1202,7 @@ class Ui {
     requireNode(component.root_, "unmount Craft Component");
     const std::uint32_t removed = removeSubtree(component.root_);
     component.watches_.clear();
+    component.closeOwnedCueRuntimes();
     component.root_ = Node();
     component.active_ = false;
     return removed;

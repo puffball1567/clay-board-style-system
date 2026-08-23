@@ -1,14 +1,15 @@
 use cbss_craft::{
-    keyword, px, rgb, Command, CommandOfferResult, CommandPolicy, CommandStatus, Contract,
-    ErrorKind, EventKind, EventOutcome, InputEvent, Link, NavigationChange, NavigationChangeKind,
-    NavigationDriver, NavigationEntry, NavigationScreenHost, NavigationSnapshot, Navigator,
-    NodeState, Store, Style, Ui, ValidationBinding, ValidationFile, ValidationPattern,
-    ValidationReport, ValidationRules, ValidationTrigger, ValidationValue, ABI_VERSION,
-    CAPABILITIES, CRAFT_DIAGNOSTIC_PACK, CRAFT_DIAGNOSTIC_STYLE_REPLACEMENT,
-    CRAFT_PACK_MISSING_CAPABILITY, CRAFT_STYLE_PARSE_UNKNOWN_PROPERTY,
-    CRAFT_STYLE_REPLACEMENT_UNDECLARED_STYLE_SLOT, DRIVER_CONTRACT_VERSION,
-    NAVIGATION_SCREEN_DIRTY_DOMAINS, STATUS_INVALID_ARGUMENT, STATUS_INVALID_HANDLE,
-    STATUS_STYLE_ERROR,
+    cue, cue_action, cue_action_with_completion, cue_after, keyword, px, rgb, Command,
+    CommandOfferResult, CommandPolicy, CommandStatus, Contract, CueCancel, CueCompletion,
+    CueJoinPolicy, CueRuntime, CueSessionStatus, CueStartPolicy, ErrorKind, EventKind,
+    EventOutcome, InputEvent, Link, NavigationChange, NavigationChangeKind, NavigationDriver,
+    NavigationEntry, NavigationScreenHost, NavigationSnapshot, Navigator, NodeState, Store, Style,
+    Ui, ValidationBinding, ValidationFile, ValidationPattern, ValidationReport, ValidationRules,
+    ValidationTrigger, ValidationValue, ABI_VERSION, CAPABILITIES, CRAFT_DIAGNOSTIC_PACK,
+    CRAFT_DIAGNOSTIC_STYLE_REPLACEMENT, CRAFT_PACK_MISSING_CAPABILITY,
+    CRAFT_STYLE_PARSE_UNKNOWN_PROPERTY, CRAFT_STYLE_REPLACEMENT_UNDECLARED_STYLE_SLOT,
+    DRIVER_CONTRACT_VERSION, NAVIGATION_SCREEN_DIRTY_DOMAINS, STATUS_INVALID_ARGUMENT,
+    STATUS_INVALID_HANDLE, STATUS_STYLE_ERROR,
 };
 use std::cell::{Cell, RefCell};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -1994,4 +1995,458 @@ fn command_large_concurrent_sets_complete_in_reverse_order() {
     assert_eq!(command.active_count(), 0);
     assert_eq!(completed.borrow()[0], RUN_COUNT - 1);
     assert_eq!(completed.borrow()[RUN_COUNT - 1], 0);
+}
+
+#[test]
+fn cue_serial_parallel_join_and_delayed_clock_match_canonical_runtime() {
+    let runtime = CueRuntime::default();
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let graph = cue(cue_action("A", {
+        let events = Rc::clone(&events);
+        move || events.borrow_mut().push("A")
+    })
+    .expect("A"))
+    .then(
+        cue_action("B", {
+            let events = Rc::clone(&events);
+            move || events.borrow_mut().push("B")
+        })
+        .expect("B"),
+    )
+    .and_then(|graph| {
+        graph.then(
+            cue_action("C", {
+                let events = Rc::clone(&events);
+                move || events.borrow_mut().push("C")
+            })
+            .expect("C"),
+        )
+    })
+    .expect("serial graph");
+    let serial = runtime
+        .start(&graph, CueStartPolicy::Restart)
+        .expect("serial session");
+    assert_eq!(*events.borrow(), vec!["A", "B", "C"]);
+    assert_eq!(serial.status(), CueSessionStatus::Succeeded);
+    assert_eq!(runtime.active_count(), 0);
+    assert_eq!(runtime.next_deadline(), None);
+
+    let completions = Rc::new(RefCell::new(Vec::<CueCompletion>::new()));
+    let cancellations = Rc::new(Cell::new(0));
+    let deferred = |name: &str| {
+        cue_action_with_completion(name.to_owned(), {
+            let completions = Rc::clone(&completions);
+            let cancellations = Rc::clone(&cancellations);
+            move |completion| {
+                completions.borrow_mut().push(completion);
+                let cancellation = Rc::clone(&cancellations);
+                Some(Box::new(move || cancellation.set(cancellation.get() + 1)) as CueCancel)
+            }
+        })
+        .expect("deferred action")
+    };
+    let tail_runs = Rc::new(Cell::new(0));
+    let parallel = cue(cue_action("start", || {}).expect("start"))
+        .then_parallel(vec![deferred("first"), deferred("second")])
+        .and_then(|graph| {
+            graph.then(
+                cue_action("tail", {
+                    let tail_runs = Rc::clone(&tail_runs);
+                    move || tail_runs.set(tail_runs.get() + 1)
+                })
+                .expect("tail"),
+            )
+        })
+        .expect("parallel graph");
+    let parallel_session = runtime
+        .start(&parallel, CueStartPolicy::Restart)
+        .expect("parallel session");
+    assert_eq!(completions.borrow().len(), 2);
+    let first_completion = completions.borrow()[0].clone();
+    first_completion.succeed();
+    assert_eq!(tail_runs.get(), 0);
+    let second_completion = completions.borrow()[1].clone();
+    second_completion.succeed();
+    assert_eq!(tail_runs.get(), 1);
+    assert_eq!(parallel_session.status(), CueSessionStatus::Succeeded);
+    assert_eq!(cancellations.get(), 0);
+
+    let clock = CueRuntime::new(10.0).expect("clock runtime");
+    let delayed_events = Rc::new(RefCell::new(Vec::new()));
+    let delayed = cue(cue_action("start", {
+        let delayed_events = Rc::clone(&delayed_events);
+        move || delayed_events.borrow_mut().push("start")
+    })
+    .expect("start"))
+    .then_stage(
+        vec![
+            cue_after(
+                0.5,
+                cue_action("half", {
+                    let delayed_events = Rc::clone(&delayed_events);
+                    move || delayed_events.borrow_mut().push("half")
+                })
+                .expect("half"),
+            )
+            .expect("half delay"),
+            cue_after(
+                2.0,
+                cue_action("two", {
+                    let delayed_events = Rc::clone(&delayed_events);
+                    move || delayed_events.borrow_mut().push("two")
+                })
+                .expect("two"),
+            )
+            .expect("two delay"),
+        ],
+        CueJoinPolicy::All,
+    )
+    .expect("delayed graph");
+    let delayed_session = clock
+        .start(&delayed, CueStartPolicy::Restart)
+        .expect("delayed session");
+    assert_eq!(clock.next_deadline(), Some(10.5));
+    clock.tick(10.5).expect("half deadline");
+    assert_eq!(*delayed_events.borrow(), vec!["start", "half"]);
+    clock.pause();
+    clock.tick(20.0).expect("paused tick");
+    assert_eq!(clock.now(), 10.5);
+    assert_eq!(clock.next_deadline(), None);
+    clock.resume();
+    clock.set_rate(2.0).expect("double rate");
+    assert_eq!(clock.next_deadline(), Some(20.75));
+    clock.tick(20.75).expect("two deadline");
+    assert_eq!(delayed_session.status(), CueSessionStatus::Succeeded);
+    assert!(clock.tick(20.0).is_err());
+}
+
+#[test]
+fn cue_any_race_panics_and_late_completions_are_contained() {
+    let runtime = CueRuntime::default();
+    let completions = Rc::new(RefCell::new(Vec::<CueCompletion>::new()));
+    let cancellations = Rc::new(Cell::new(0));
+    let deferred = |name: &str| {
+        cue_action_with_completion(name.to_owned(), {
+            let completions = Rc::clone(&completions);
+            let cancellations = Rc::clone(&cancellations);
+            move |completion| {
+                completions.borrow_mut().push(completion);
+                let cancellation = Rc::clone(&cancellations);
+                Some(Box::new(move || cancellation.set(cancellation.get() + 1)) as CueCancel)
+            }
+        })
+        .expect("deferred action")
+    };
+    let tail_runs = Rc::new(Cell::new(0));
+    let graph = cue(cue_action("start", || {}).expect("start"))
+        .then_any(vec![
+            deferred("failed"),
+            deferred("winner"),
+            deferred("pending"),
+        ])
+        .and_then(|graph| {
+            graph.then(
+                cue_action("tail", {
+                    let tail_runs = Rc::clone(&tail_runs);
+                    move || tail_runs.set(tail_runs.get() + 1)
+                })
+                .expect("tail"),
+            )
+        })
+        .expect("any graph");
+    let session = runtime
+        .start(&graph, CueStartPolicy::Restart)
+        .expect("any session");
+    completions.borrow()[0]
+        .fail("not this one")
+        .expect("failure");
+    completions.borrow()[1].succeed();
+    assert_eq!(session.status(), CueSessionStatus::Succeeded);
+    assert_eq!(tail_runs.get(), 1);
+    assert_eq!(cancellations.get(), 1);
+    let third_completion = completions.borrow()[2].clone();
+    third_completion.succeed();
+    assert_eq!(tail_runs.get(), 1);
+
+    completions.borrow_mut().clear();
+    let race = cue(cue_action("start", || {}).expect("start"))
+        .then_race(vec![deferred("loser"), deferred("pending")])
+        .expect("race graph");
+    let race_session = runtime
+        .start(&race, CueStartPolicy::Restart)
+        .expect("race session");
+    completions.borrow()[0]
+        .fail("network unavailable")
+        .expect("race failure");
+    assert_eq!(race_session.status(), CueSessionStatus::Failed);
+    assert_eq!(race_session.failure(), "network unavailable");
+
+    let panic_cancellations = Rc::new(Cell::new(0));
+    let throwing = cue_action_with_completion("throwing", |_| -> Option<CueCancel> {
+        panic!("action crashed")
+    })
+    .expect("throwing action");
+    let pending = cue_action_with_completion("pending", {
+        let panic_cancellations = Rc::clone(&panic_cancellations);
+        move |_| {
+            let cancellation = Rc::clone(&panic_cancellations);
+            Some(Box::new(move || cancellation.set(cancellation.get() + 1)))
+        }
+    })
+    .expect("pending action");
+    let panic_graph = cue(cue_action("start", || {}).expect("start"))
+        .then_parallel(vec![throwing, pending])
+        .expect("panic graph");
+    let panic_session = runtime
+        .start(&panic_graph, CueStartPolicy::Restart)
+        .expect("panic session");
+    assert_eq!(panic_session.status(), CueSessionStatus::Failed);
+    assert_eq!(panic_session.failure(), "Cue action panicked");
+    assert_eq!(panic_cancellations.get(), 1);
+}
+
+#[test]
+fn cue_start_policies_queue_cancellation_and_disposal_are_deterministic() {
+    let runtime = CueRuntime::default();
+    let completions = Rc::new(RefCell::new(Vec::<CueCompletion>::new()));
+    let cancellations = Rc::new(Cell::new(0));
+    let action = cue_action_with_completion("pending", {
+        let completions = Rc::clone(&completions);
+        let cancellations = Rc::clone(&cancellations);
+        move |completion| {
+            completions.borrow_mut().push(completion);
+            let cancellation = Rc::clone(&cancellations);
+            Some(Box::new(move || cancellation.set(cancellation.get() + 1)))
+        }
+    })
+    .expect("pending action");
+    let graph = cue(action);
+    let first = runtime
+        .start(&graph, CueStartPolicy::Parallel)
+        .expect("first");
+    let ignored = runtime
+        .start(&graph, CueStartPolicy::Ignore)
+        .expect("ignored");
+    let parallel = runtime
+        .start(&graph, CueStartPolicy::Parallel)
+        .expect("parallel");
+    let queued = runtime
+        .start(&graph, CueStartPolicy::Queue)
+        .expect("queued");
+    assert_eq!(ignored.id(), first.id());
+    assert_ne!(parallel.id(), first.id());
+    assert_eq!(queued.status(), CueSessionStatus::Queued);
+    let replacement = runtime
+        .start(&graph, CueStartPolicy::Restart)
+        .expect("replacement");
+    assert_eq!(first.status(), CueSessionStatus::Cancelled);
+    assert_eq!(parallel.status(), CueSessionStatus::Cancelled);
+    assert_eq!(queued.status(), CueSessionStatus::Cancelled);
+    assert_eq!(replacement.status(), CueSessionStatus::Running);
+    assert_eq!(cancellations.get(), 2);
+    assert!(graph
+        .clone()
+        .then(cue_action("late", || {}).expect("late"))
+        .is_err());
+    assert!(cue_after(-1.0, cue_action("invalid", || {}).expect("invalid")).is_err());
+
+    assert!(runtime.dispose());
+    assert_eq!(replacement.status(), CueSessionStatus::Cancelled);
+    assert_eq!(cancellations.get(), 3);
+    completions
+        .borrow()
+        .last()
+        .expect("late completion")
+        .succeed();
+    assert_eq!(replacement.status(), CueSessionStatus::Cancelled);
+    assert!(!runtime.cancel(&replacement));
+    assert!(!runtime.dispose());
+}
+
+#[test]
+fn cue_large_synchronous_and_parallel_graphs_do_not_recurse_or_rescan() {
+    const ACTION_COUNT: usize = 5_000;
+    let runtime = CueRuntime::default();
+    let runs = Rc::new(Cell::new(0));
+    let action = cue_action("increment", {
+        let runs = Rc::clone(&runs);
+        move || runs.set(runs.get() + 1)
+    })
+    .expect("increment");
+    let mut graph = cue(action.clone());
+    for _ in 1..ACTION_COUNT {
+        graph = graph.then(action.clone()).expect("append action");
+    }
+    let session = runtime
+        .start(&graph, CueStartPolicy::Restart)
+        .expect("large serial session");
+    assert_eq!(runs.get(), ACTION_COUNT);
+    assert_eq!(session.status(), CueSessionStatus::Succeeded);
+
+    let completions = Rc::new(RefCell::new(Vec::<CueCompletion>::new()));
+    let pending = cue_action_with_completion("parallel", {
+        let completions = Rc::clone(&completions);
+        move |completion| {
+            completions.borrow_mut().push(completion);
+            None
+        }
+    })
+    .expect("parallel action");
+    let branches = (0..ACTION_COUNT)
+        .map(|_| cbss_craft::cue_branch(pending.clone(), 0.0).expect("branch"))
+        .collect();
+    let parallel = cue(cue_action("start", || {}).expect("start"))
+        .then_stage(branches, CueJoinPolicy::All)
+        .expect("large parallel graph");
+    let parallel_session = runtime
+        .start(&parallel, CueStartPolicy::Restart)
+        .expect("large parallel session");
+    assert_eq!(completions.borrow().len(), ACTION_COUNT);
+    for completion in completions.borrow().iter() {
+        completion.succeed();
+    }
+    assert_eq!(parallel_session.status(), CueSessionStatus::Succeeded);
+    assert_eq!(runtime.active_count(), 0);
+}
+
+#[test]
+fn component_owned_cue_runtimes_cancel_on_unmount_and_drop() {
+    let mut ui = Ui::new().expect("Ui");
+    let mut component = ui
+        .component_with("owned-cue", "owned-cue", None, |_scope| Ok(()))
+        .expect("component");
+    assert!(component.cue_runtime_at(f64::NAN).is_err());
+    assert_eq!(component.cue_runtime_count(), 0);
+    let runtime = component.cue_runtime().expect("owned Cue runtime");
+    let cancellation_count = Rc::new(Cell::new(0));
+    let graph = cue(cue_action_with_completion("pending", {
+        let cancellation_count = Rc::clone(&cancellation_count);
+        move |_| {
+            let cancellation_count = Rc::clone(&cancellation_count);
+            Some(Box::new(move || {
+                cancellation_count.set(cancellation_count.get() + 1)
+            }))
+        }
+    })
+    .expect("pending action"));
+    let session = runtime
+        .start(&graph, CueStartPolicy::Restart)
+        .expect("owned Cue session");
+    assert_eq!(component.cue_runtime_count(), 1);
+    assert_eq!(ui.unmount(&mut component).expect("unmount"), 1);
+    assert!(!runtime.active());
+    assert_eq!(session.status(), CueSessionStatus::Cancelled);
+    assert_eq!(cancellation_count.get(), 1);
+    assert_eq!(component.cue_runtime_count(), 0);
+    assert!(component.cue_runtime().is_err());
+
+    let dropped_runtime;
+    let dropped_session;
+    let dropped_cancellations = Rc::new(Cell::new(0));
+    {
+        let mut dropped = ui
+            .component_with("dropped-cue", "dropped-cue", None, |_scope| Ok(()))
+            .expect("dropped component");
+        dropped_runtime = dropped.cue_runtime().expect("dropped runtime");
+        let graph = cue(cue_action_with_completion("pending", {
+            let dropped_cancellations = Rc::clone(&dropped_cancellations);
+            move |_| {
+                let dropped_cancellations = Rc::clone(&dropped_cancellations);
+                Some(Box::new(move || {
+                    dropped_cancellations.set(dropped_cancellations.get() + 1)
+                }))
+            }
+        })
+        .expect("pending action"));
+        dropped_session = dropped_runtime
+            .start(&graph, CueStartPolicy::Restart)
+            .expect("dropped session");
+    }
+    assert!(!dropped_runtime.active());
+    assert_eq!(dropped_session.status(), CueSessionStatus::Cancelled);
+    assert_eq!(dropped_cancellations.get(), 1);
+}
+
+#[test]
+fn cue_fifo_equal_deadlines_and_cancel_failures_are_deterministic() {
+    let runtime = CueRuntime::default();
+    let completions = Rc::new(RefCell::new(Vec::<CueCompletion>::new()));
+    let graph = cue(cue_action_with_completion("fifo", {
+        let completions = Rc::clone(&completions);
+        move |completion| {
+            completions.borrow_mut().push(completion);
+            None
+        }
+    })
+    .expect("FIFO action"));
+    let first = runtime
+        .start(&graph, CueStartPolicy::Restart)
+        .expect("first");
+    let second = runtime
+        .start(&graph, CueStartPolicy::Queue)
+        .expect("second");
+    let third = runtime.start(&graph, CueStartPolicy::Queue).expect("third");
+    assert_eq!(completions.borrow().len(), 1);
+    let first_completion = completions.borrow()[0].clone();
+    first_completion.succeed();
+    assert_eq!(first.status(), CueSessionStatus::Succeeded);
+    assert_eq!(second.status(), CueSessionStatus::Running);
+    assert_eq!(third.status(), CueSessionStatus::Queued);
+    assert_eq!(completions.borrow().len(), 2);
+    let second_completion = completions.borrow()[1].clone();
+    second_completion.succeed();
+    assert_eq!(second.status(), CueSessionStatus::Succeeded);
+    assert_eq!(third.status(), CueSessionStatus::Running);
+    assert_eq!(completions.borrow().len(), 3);
+    let third_completion = completions.borrow()[2].clone();
+    third_completion.succeed();
+    assert_eq!(third.status(), CueSessionStatus::Succeeded);
+
+    let deadline_runtime = CueRuntime::default();
+    let deadline_order = Rc::new(RefCell::new(Vec::new()));
+    let delayed = cue(cue_action("start", || {}).expect("start"))
+        .then_stage(
+            vec![
+                cue_after(
+                    1.0,
+                    cue_action("first", {
+                        let deadline_order = Rc::clone(&deadline_order);
+                        move || deadline_order.borrow_mut().push(1)
+                    })
+                    .expect("first"),
+                )
+                .expect("first delay"),
+                cue_after(
+                    1.0,
+                    cue_action("second", {
+                        let deadline_order = Rc::clone(&deadline_order);
+                        move || deadline_order.borrow_mut().push(2)
+                    })
+                    .expect("second"),
+                )
+                .expect("second delay"),
+            ],
+            CueJoinPolicy::All,
+        )
+        .expect("delayed graph");
+    let delayed_session = deadline_runtime
+        .start(&delayed, CueStartPolicy::Restart)
+        .expect("delayed session");
+    deadline_runtime.tick(1.0).expect("equal deadline");
+    assert_eq!(*deadline_order.borrow(), vec![1, 2]);
+    assert_eq!(delayed_session.status(), CueSessionStatus::Succeeded);
+
+    let cancellation_runtime = CueRuntime::default();
+    let cancellation_graph =
+        cue(
+            cue_action_with_completion("pending", |_| Some(Box::new(|| panic!("cancel failed"))))
+                .expect("pending action"),
+        );
+    let cancellation_session = cancellation_runtime
+        .start(&cancellation_graph, CueStartPolicy::Restart)
+        .expect("cancellation session");
+    assert!(cancellation_runtime.cancel(&cancellation_session));
+    assert_eq!(cancellation_session.status(), CueSessionStatus::Cancelled);
+    let foreign_runtime = CueRuntime::default();
+    assert!(!foreign_runtime.cancel(&cancellation_session));
 }

@@ -187,6 +187,34 @@ limits report backpressure instead of silently dropping a result. A wake
 callback may post one host event when an empty completion queue becomes
 non-empty.
 
+Cue graphs coordinate serial actions, delayed parallel work, and explicit
+joins without application-maintained completion flags:
+
+```cpp
+cbss::CueRuntime timeline = status.cueRuntime();
+
+cbss::CueGraph reveal = cbss::cue(
+    cbss::cueAction("prepare", [&] { prepareCard(); }));
+reveal.thenStage(
+    {cbss::cueAfter(0.1, cbss::cueAction("title", [&] { revealTitle(); })),
+     cbss::cueAfter(0.1, cbss::cueAction("chart", [&] { revealChart(); }))},
+    cbss::CueJoinPolicy::all);
+reveal.then(cbss::cueAction("ready", [&] { markReady(); }));
+
+const cbss::CueSession session = timeline.start(reveal);
+timeline.tick(0.1);
+```
+
+Actions may retain their `CueCompletion` and return a cancellation callback
+when work completes asynchronously. `all`, `any`, and `race` joins and
+`restart`, `ignore`, `queue`, and `parallel` repeated-start policies are
+explicit. Each runtime owns an independent monotonic logical clock with
+pause/resume, rate, and next-deadline queries. A runtime created through
+`CraftComponent::cueRuntime` is cancelled when its component is unmounted or
+destroyed, even if application code still holds a runtime or session handle.
+Standalone `CueRuntime` values remain available for application-scoped
+orchestration.
+
 The Driver negotiates the engine ABI, Driver contract, and baseline authoring
 capabilities before it constructs a context. `Ui` and `Style` use deterministic
 RAII lifetime. Nested callbacks maintain parentage with an exception-safe

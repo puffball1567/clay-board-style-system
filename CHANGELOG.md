@@ -21,6 +21,10 @@ release. Before 1.0, minor releases may contain public API changes.
   latest-only, ordered, and concurrent policies, bounded worker-to-UI
   completion queues, stable tickets, cancellation, settlement observers,
   wake coalescing, backpressure, and deterministic late-result rejection.
+- Added typed Cue graphs to the C++14 and Rust Craft Drivers with iterative
+  serial progression, delayed parallel branches, all/any/race joins,
+  restart/ignore/queue/parallel start policies, independent monotonic clocks,
+  cancellation and late-result containment, and component-owned teardown.
 
 - Added the bounded Craft Pack Version 1 manifest and JSON Schema for declaring
   distributable Craft Components, public Style Slots, Craft Styles, assets,

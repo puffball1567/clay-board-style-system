@@ -1,6 +1,7 @@
 //! High-level Rust Craft Driver for Clay Board Style System.
 
 mod command;
+mod cue;
 mod generated;
 mod navigation;
 mod navigation_ui;
@@ -20,6 +21,11 @@ use std::rc::{Rc, Weak};
 pub use command::{
     command, Command, CommandCancel, CommandOfferResult, CommandPolicy, CommandRunSubscription,
     CommandSink, CommandStatus, CommandTicket,
+};
+pub use cue::{
+    cue, cue_action, cue_action_with_completion, cue_after, cue_branch, CueAction, CueBranch,
+    CueCancel, CueCompletion, CueGraph, CueJoinPolicy, CueRuntime, CueSession, CueSessionStatus,
+    CueStartPolicy,
 };
 pub use generated::{
     CapabilityDefinition, EventKind, ABI_VERSION, CAPABILITIES, CAPABILITY_ACCESSIBILITY_SEMANTICS,
@@ -901,6 +907,7 @@ pub struct CraftComponent {
     root: Option<Node>,
     craft_name: String,
     watches: Vec<Rc<ComponentWatchState>>,
+    cue_runtimes: Vec<CueRuntime>,
 }
 
 impl CraftComponent {
@@ -923,6 +930,24 @@ impl CraftComponent {
 
     pub fn watch_count(&self) -> usize {
         self.watches.iter().filter(|watch| watch.active()).count()
+    }
+
+    pub fn cue_runtime(&mut self) -> Result<CueRuntime> {
+        self.cue_runtime_at(0.0)
+    }
+
+    pub fn cue_runtime_at(&mut self, initial_time: f64) -> Result<CueRuntime> {
+        self.root()?;
+        let runtime = CueRuntime::new(initial_time)?;
+        self.cue_runtimes.push(runtime.clone());
+        Ok(runtime)
+    }
+
+    pub fn cue_runtime_count(&self) -> usize {
+        self.cue_runtimes
+            .iter()
+            .filter(|runtime| runtime.active())
+            .count()
     }
 
     pub fn watch<T: Clone + 'static>(
@@ -960,6 +985,19 @@ impl CraftComponent {
             watch.close();
         }
         self.watches.clear();
+    }
+
+    fn close_owned_cue_runtimes(&mut self) {
+        for runtime in self.cue_runtimes.iter().rev() {
+            runtime.dispose();
+        }
+        self.cue_runtimes.clear();
+    }
+}
+
+impl Drop for CraftComponent {
+    fn drop(&mut self) {
+        self.close_owned_cue_runtimes();
     }
 }
 
@@ -1865,6 +1903,7 @@ impl Ui {
         self.require_node(root, "unmount Craft Component")?;
         let removed = self.remove_subtree(root)?;
         component.close_watches();
+        component.close_owned_cue_runtimes();
         component.root = None;
         Ok(removed)
     }
@@ -2491,6 +2530,7 @@ impl Ui {
             root: Some(root),
             craft_name: craft_name.to_owned(),
             watches: Vec::new(),
+            cue_runtimes: Vec::new(),
         };
         if let Err(error) = self.expose_style_slot(root, root, craft_name, "root") {
             let _ = self.remove_subtree(root);

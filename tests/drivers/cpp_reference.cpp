@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 
@@ -1663,6 +1664,344 @@ int main() {
     command_limits_rejected = true;
   }
   assert(command_limits_rejected);
+
+  std::vector<std::string> cue_events;
+  cbss::CueRuntime cue_runtime;
+  cbss::CueGraph serial_cue = cbss::cue(cbss::cueAction(
+      "A", [&]() { cue_events.push_back("A"); }));
+  serial_cue.then(cbss::cueAction(
+      "B", [&]() { cue_events.push_back("B"); }))
+      .then(cbss::cueAction(
+          "C", [&]() { cue_events.push_back("C"); }));
+  const cbss::CueSession serial_session = cue_runtime.start(serial_cue);
+  assert((cue_events == std::vector<std::string>{"A", "B", "C"}));
+  assert(serial_session.status() == cbss::CueSessionStatus::succeeded);
+  assert(cue_runtime.activeCount() == 0u);
+  assert(!cue_runtime.hasDeadline());
+
+  const std::shared_ptr<std::vector<cbss::CueCompletion>> all_completions =
+      std::make_shared<std::vector<cbss::CueCompletion>>();
+  int all_cancellations = 0;
+  const cbss::CueAction first_deferred = cbss::cueAction(
+      "first", [all_completions, &all_cancellations](
+                   cbss::CueCompletion completion) {
+        all_completions->push_back(completion);
+        return cbss::CueCancel([&all_cancellations]() {
+          ++all_cancellations;
+        });
+      });
+  const cbss::CueAction second_deferred = cbss::cueAction(
+      "second", [all_completions, &all_cancellations](
+                    cbss::CueCompletion completion) {
+        all_completions->push_back(completion);
+        return cbss::CueCancel([&all_cancellations]() {
+          ++all_cancellations;
+        });
+      });
+  int all_tail = 0;
+  cbss::CueGraph all_graph = cbss::cue(cbss::cueAction("start", []() {}));
+  all_graph.thenParallel({first_deferred, second_deferred})
+      .then(cbss::cueAction("tail", [&]() { ++all_tail; }));
+  const cbss::CueSession all_session = cue_runtime.start(all_graph);
+  assert(all_completions->size() == 2u);
+  (*all_completions)[0].succeed();
+  assert(all_tail == 0);
+  (*all_completions)[1].succeed();
+  assert(all_tail == 1);
+  assert(all_session.status() == cbss::CueSessionStatus::succeeded);
+  assert(all_cancellations == 0);
+
+  cbss::CueRuntime clock_runtime(10.0);
+  std::vector<std::string> delayed_events;
+  cbss::CueGraph delayed = cbss::cue(cbss::cueAction(
+      "start", [&]() { delayed_events.push_back("start"); }));
+  delayed.thenStage({
+      cbss::cueAfter(0.5, cbss::cueAction(
+          "half", [&]() { delayed_events.push_back("half"); })),
+      cbss::cueAfter(2.0, cbss::cueAction(
+          "two", [&]() { delayed_events.push_back("two"); }))});
+  const cbss::CueSession delayed_session = clock_runtime.start(delayed);
+  assert(clock_runtime.hasDeadline());
+  assert(clock_runtime.nextDeadline() == 10.5);
+  clock_runtime.tick(10.5);
+  assert((delayed_events == std::vector<std::string>{"start", "half"}));
+  assert(clock_runtime.nextDeadline() == 12.0);
+  clock_runtime.pause();
+  clock_runtime.tick(20.0);
+  assert(clock_runtime.now() == 10.5);
+  assert(!clock_runtime.hasDeadline());
+  clock_runtime.resume();
+  clock_runtime.setRate(2.0);
+  assert(clock_runtime.nextDeadline() == 20.75);
+  clock_runtime.tick(20.75);
+  assert(delayed_session.status() == cbss::CueSessionStatus::succeeded);
+
+  const std::shared_ptr<std::vector<cbss::CueCompletion>> any_completions =
+      std::make_shared<std::vector<cbss::CueCompletion>>();
+  int pending_cancelled = 0;
+  auto deferred_cue = [&](const std::string& name) {
+    return cbss::cueAction(name, [any_completions, &pending_cancelled](
+                                     cbss::CueCompletion completion) {
+      any_completions->push_back(completion);
+      return cbss::CueCancel([&pending_cancelled]() {
+        ++pending_cancelled;
+      });
+    });
+  };
+  int any_tail = 0;
+  cbss::CueGraph any_graph = cbss::cue(cbss::cueAction("start", []() {}));
+  any_graph.thenAny(
+      {deferred_cue("failed"), deferred_cue("winner"),
+       deferred_cue("pending")})
+      .then(cbss::cueAction("tail", [&]() { ++any_tail; }));
+  const cbss::CueSession any_session = cue_runtime.start(any_graph);
+  (*any_completions)[0].fail("not this one");
+  (*any_completions)[1].succeed();
+  assert(any_session.status() == cbss::CueSessionStatus::succeeded);
+  assert(any_tail == 1);
+  assert(pending_cancelled == 1);
+  (*any_completions)[2].succeed();
+  assert(any_tail == 1);
+
+  const std::shared_ptr<std::vector<cbss::CueCompletion>> race_completions =
+      std::make_shared<std::vector<cbss::CueCompletion>>();
+  int race_cancelled = 0;
+  auto race_action = [&](const std::string& name) {
+    return cbss::cueAction(name, [race_completions, &race_cancelled](
+                                     cbss::CueCompletion completion) {
+      race_completions->push_back(completion);
+      return cbss::CueCancel([&race_cancelled]() { ++race_cancelled; });
+    });
+  };
+  cbss::CueGraph race_graph = cbss::cue(cbss::cueAction("start", []() {}));
+  race_graph.thenRace({race_action("loser"), race_action("pending")});
+  const cbss::CueSession race_session = cue_runtime.start(race_graph);
+  (*race_completions)[0].fail("network unavailable");
+  assert(race_session.status() == cbss::CueSessionStatus::failed);
+  assert(race_session.failure() == "network unavailable");
+  assert(race_cancelled == 1);
+
+  int thrown_cancelled = 0;
+  const cbss::CueAction throwing_cue = cbss::cueAction(
+      "throwing", [](cbss::CueCompletion) -> cbss::CueCancel {
+        throw std::runtime_error("action crashed");
+      });
+  const cbss::CueAction thrown_pending = cbss::cueAction(
+      "pending", [&thrown_cancelled](cbss::CueCompletion) {
+        return cbss::CueCancel(
+            [&thrown_cancelled]() { ++thrown_cancelled; });
+      });
+  cbss::CueGraph thrown_graph =
+      cbss::cue(cbss::cueAction("start", []() {}));
+  thrown_graph.thenParallel({throwing_cue, thrown_pending});
+  const cbss::CueSession thrown_session = cue_runtime.start(thrown_graph);
+  assert(thrown_session.status() == cbss::CueSessionStatus::failed);
+  assert(thrown_session.failure() == "action crashed");
+  assert(thrown_cancelled == 1);
+
+  const std::shared_ptr<std::vector<cbss::CueCompletion>> policy_completions =
+      std::make_shared<std::vector<cbss::CueCompletion>>();
+  int policy_cancelled = 0;
+  const cbss::CueAction policy_action = cbss::cueAction(
+      "policy", [policy_completions, &policy_cancelled](
+                    cbss::CueCompletion completion) {
+        policy_completions->push_back(completion);
+        return cbss::CueCancel(
+            [&policy_cancelled]() { ++policy_cancelled; });
+      });
+  cbss::CueGraph policy_graph = cbss::cue(policy_action);
+  const cbss::CueSession policy_first = cue_runtime.start(policy_graph);
+  const cbss::CueSession policy_ignored =
+      cue_runtime.start(policy_graph, cbss::CueStartPolicy::ignore);
+  const cbss::CueSession policy_parallel =
+      cue_runtime.start(policy_graph, cbss::CueStartPolicy::parallel);
+  const cbss::CueSession policy_queued =
+      cue_runtime.start(policy_graph, cbss::CueStartPolicy::queue);
+  assert(policy_ignored.id() == policy_first.id());
+  assert(policy_parallel.id() != policy_first.id());
+  assert(policy_queued.status() == cbss::CueSessionStatus::queued);
+  const cbss::CueSession policy_restart =
+      cue_runtime.start(policy_graph, cbss::CueStartPolicy::restart);
+  assert(policy_first.status() == cbss::CueSessionStatus::cancelled);
+  assert(policy_parallel.status() == cbss::CueSessionStatus::cancelled);
+  assert(policy_queued.status() == cbss::CueSessionStatus::cancelled);
+  assert(policy_restart.status() == cbss::CueSessionStatus::running);
+  assert(policy_cancelled == 2);
+
+  bool sealed_graph_rejected = false;
+  try {
+    policy_graph.then(cbss::cueAction("late", []() {}));
+  } catch (const std::logic_error&) {
+    sealed_graph_rejected = true;
+  }
+  assert(sealed_graph_rejected);
+  bool invalid_delay_rejected = false;
+  try {
+    cbss::branch(policy_action, -1.0);
+  } catch (const std::invalid_argument&) {
+    invalid_delay_rejected = true;
+  }
+  assert(invalid_delay_rejected);
+
+  cbss::CueRuntime chain_runtime;
+  int chain_runs = 0;
+  const cbss::CueAction chain_action =
+      cbss::cueAction("chain", [&]() { ++chain_runs; });
+  cbss::CueGraph chain_graph = cbss::cue(chain_action);
+  for (std::size_t index = 1u; index < 5000u; ++index) {
+    chain_graph.then(chain_action);
+  }
+  const cbss::CueSession chain_session = chain_runtime.start(chain_graph);
+  assert(chain_runs == 5000);
+  assert(chain_session.status() == cbss::CueSessionStatus::succeeded);
+
+  const std::shared_ptr<std::vector<cbss::CueCompletion>> large_completions =
+      std::make_shared<std::vector<cbss::CueCompletion>>();
+  large_completions->reserve(5000u);
+  const cbss::CueAction large_parallel_action = cbss::cueAction(
+      "parallel", [large_completions](cbss::CueCompletion completion) {
+        large_completions->push_back(completion);
+        return cbss::CueCancel();
+      });
+  std::vector<cbss::CueBranch> large_branches;
+  large_branches.reserve(5000u);
+  for (std::size_t index = 0u; index < 5000u; ++index) {
+    large_branches.push_back(cbss::branch(large_parallel_action));
+  }
+  cbss::CueGraph large_parallel_graph =
+      cbss::cue(cbss::cueAction("start", []() {}));
+  large_parallel_graph.thenStage(std::move(large_branches));
+  const cbss::CueSession large_parallel_session =
+      chain_runtime.start(large_parallel_graph);
+  assert(large_completions->size() == 5000u);
+  for (const cbss::CueCompletion& completion : *large_completions) {
+    completion.succeed();
+  }
+  assert(large_parallel_session.status() ==
+         cbss::CueSessionStatus::succeeded);
+
+  const std::shared_ptr<std::vector<cbss::CueCompletion>> fifo_completions =
+      std::make_shared<std::vector<cbss::CueCompletion>>();
+  const cbss::CueAction fifo_action = cbss::cueAction(
+      "fifo", [fifo_completions](cbss::CueCompletion completion) {
+        fifo_completions->push_back(completion);
+        return cbss::CueCancel();
+      });
+  cbss::CueGraph fifo_graph = cbss::cue(fifo_action);
+  const cbss::CueSession fifo_first = chain_runtime.start(fifo_graph);
+  const cbss::CueSession fifo_second =
+      chain_runtime.start(fifo_graph, cbss::CueStartPolicy::queue);
+  const cbss::CueSession fifo_third =
+      chain_runtime.start(fifo_graph, cbss::CueStartPolicy::queue);
+  assert(fifo_completions->size() == 1u);
+  const cbss::CueCompletion fifo_first_completion = (*fifo_completions)[0];
+  fifo_first_completion.succeed();
+  assert(fifo_first.status() == cbss::CueSessionStatus::succeeded);
+  assert(fifo_second.status() == cbss::CueSessionStatus::running);
+  assert(fifo_third.status() == cbss::CueSessionStatus::queued);
+  assert(fifo_completions->size() == 2u);
+  const cbss::CueCompletion fifo_second_completion = (*fifo_completions)[1];
+  fifo_second_completion.succeed();
+  assert(fifo_second.status() == cbss::CueSessionStatus::succeeded);
+  assert(fifo_third.status() == cbss::CueSessionStatus::running);
+  assert(fifo_completions->size() == 3u);
+  const cbss::CueCompletion fifo_third_completion = (*fifo_completions)[2];
+  fifo_third_completion.succeed();
+  assert(fifo_third.status() == cbss::CueSessionStatus::succeeded);
+
+  cbss::CueRuntime equal_deadline_runtime;
+  std::vector<int> equal_deadline_order;
+  cbss::CueGraph equal_deadline_graph =
+      cbss::cue(cbss::cueAction("start", []() {}));
+  equal_deadline_graph.thenStage(
+      {cbss::cueAfter(1.0, cbss::cueAction(
+                               "first", [&equal_deadline_order]() {
+                                 equal_deadline_order.push_back(1);
+                               })),
+       cbss::cueAfter(1.0, cbss::cueAction(
+                               "second", [&equal_deadline_order]() {
+                                 equal_deadline_order.push_back(2);
+                               }))});
+  const cbss::CueSession equal_deadline_session =
+      equal_deadline_runtime.start(equal_deadline_graph);
+  equal_deadline_runtime.tick(1.0);
+  assert((equal_deadline_order == std::vector<int>{1, 2}));
+  assert(equal_deadline_session.status() ==
+         cbss::CueSessionStatus::succeeded);
+
+  cbss::CueRuntime throwing_cancel_runtime;
+  cbss::CueGraph throwing_cancel_graph = cbss::cue(cbss::cueAction(
+      "pending", [](cbss::CueCompletion) {
+        return cbss::CueCancel(
+            []() { throw std::runtime_error("cancel failed"); });
+      }));
+  const cbss::CueSession throwing_cancel_session =
+      throwing_cancel_runtime.start(throwing_cancel_graph);
+  assert(throwing_cancel_runtime.cancel(throwing_cancel_session));
+  assert(throwing_cancel_session.status() ==
+         cbss::CueSessionStatus::cancelled);
+  cbss::CueRuntime foreign_cancel_runtime;
+  assert(!foreign_cancel_runtime.cancel(throwing_cancel_session));
+
+  cbss::Ui owned_cue_ui;
+  cbss::CraftComponent owned_cue_component = owned_cue_ui.component(
+      "owned-cue", "owned-cue", [](cbss::ComponentScope&) {});
+  bool invalid_owned_clock_rejected = false;
+  try {
+    owned_cue_component.cueRuntime(
+        std::numeric_limits<double>::quiet_NaN());
+  } catch (const std::invalid_argument&) {
+    invalid_owned_clock_rejected = true;
+  }
+  assert(invalid_owned_clock_rejected);
+  assert(owned_cue_component.cueRuntimeCount() == 0u);
+  cbss::CueRuntime owned_cue_runtime = owned_cue_component.cueRuntime();
+  int owned_cue_cancelled = 0;
+  cbss::CueGraph owned_cue_graph = cbss::cue(cbss::cueAction(
+      "pending", [&owned_cue_cancelled](cbss::CueCompletion) {
+        return cbss::CueCancel(
+            [&owned_cue_cancelled]() { ++owned_cue_cancelled; });
+      }));
+  const cbss::CueSession owned_cue_session =
+      owned_cue_runtime.start(owned_cue_graph);
+  assert(owned_cue_component.cueRuntimeCount() == 1u);
+  assert(owned_cue_ui.unmount(owned_cue_component) == 1u);
+  assert(!owned_cue_runtime.active());
+  assert(owned_cue_session.status() == cbss::CueSessionStatus::cancelled);
+  assert(owned_cue_cancelled == 1);
+  assert(owned_cue_component.cueRuntimeCount() == 0u);
+  bool unmounted_cue_rejected = false;
+  try {
+    owned_cue_component.cueRuntime();
+  } catch (const cbss::Error& error) {
+    unmounted_cue_rejected = error.status() == CBSS_INVALID_HANDLE;
+  }
+  assert(unmounted_cue_rejected);
+
+  cbss::CueRuntime dropped_cue_runtime;
+  cbss::CueSession dropped_cue_session;
+  int dropped_cue_cancelled = 0;
+  {
+    cbss::Ui dropped_cue_ui;
+    cbss::CraftComponent dropped_cue_component = dropped_cue_ui.component(
+        "dropped-cue", "dropped-cue", [](cbss::ComponentScope&) {});
+    dropped_cue_runtime = dropped_cue_component.cueRuntime();
+    cbss::CueGraph dropped_cue_graph = cbss::cue(cbss::cueAction(
+        "pending", [&dropped_cue_cancelled](cbss::CueCompletion) {
+          return cbss::CueCancel(
+              [&dropped_cue_cancelled]() { ++dropped_cue_cancelled; });
+        }));
+    dropped_cue_session = dropped_cue_runtime.start(dropped_cue_graph);
+  }
+  assert(!dropped_cue_runtime.active());
+  assert(dropped_cue_session.status() == cbss::CueSessionStatus::cancelled);
+  assert(dropped_cue_cancelled == 1);
+
+  cue_runtime.dispose();
+  assert(policy_restart.status() == cbss::CueSessionStatus::cancelled);
+  assert(policy_cancelled == 3);
+  (*policy_completions).back().succeed();
+  assert(policy_restart.status() == cbss::CueSessionStatus::cancelled);
 
   return 0;
 }

@@ -1806,9 +1806,13 @@ reference Drivers now provide the typed Validation core: all 40 synchronous
 rules, retained reporting policy, live peer references, custom checks, and one
 canonical bounded regex/string-format implementation. Both Drivers now also
 provide typed Commands with matching policy, worker-to-UI delivery,
-cancellation, backpressure, ticket observation, and disposal semantics.
-Automatic control/form attachment, Cue, screen-transition hooks, and the
-remaining cross-Driver application fixtures remain Version 0.6 work.
+cancellation, backpressure, ticket observation, and disposal semantics. Both
+Drivers now also expose typed Cue graphs with iterative serial progression,
+delayed parallel branches, all/any/race joins, restart/ignore/queue/parallel
+start policies, monotonic logical clocks, pause/resume and rate control,
+cancellation, late-completion rejection, and component-owned teardown.
+Automatic control/form attachment, screen-transition hooks, and the remaining
+cross-Driver application fixtures remain Version 0.6 work.
 
 This scope does not require one source syntax across languages, runtime loading
 of arbitrary foreign binaries, or pixel identity across different font and
