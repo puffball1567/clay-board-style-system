@@ -1322,5 +1322,347 @@ int main() {
   assert(validation_binding.current().isValid);
   assert(!validation_binding.shouldExpose());
 
+  using StringCommand = cbss::Command<int, std::string, std::string>;
+  using StringSink = cbss::CommandSink<std::string, std::string>;
+  const std::shared_ptr<std::vector<StringSink>> latest_sinks =
+      std::make_shared<std::vector<StringSink>>();
+  const std::shared_ptr<int> latest_cancellations = std::make_shared<int>(0);
+  StringCommand latest_command(
+      [latest_sinks, latest_cancellations](int, StringSink sink) {
+        latest_sinks->push_back(sink);
+        return StringCommand::Cancel(
+            [latest_cancellations]() { ++*latest_cancellations; });
+      });
+  std::vector<std::string> command_successes;
+  latest_command.onSuccess(
+      [&](std::string value) { command_successes.push_back(std::move(value)); });
+  const cbss::CommandTicket latest_first = latest_command.run(1);
+  const cbss::CommandTicket latest_second = latest_command.run(2);
+  assert(latest_first.status() == cbss::CommandStatus::cancelled);
+  assert(latest_second.status() == cbss::CommandStatus::running);
+  assert(*latest_cancellations == 1);
+  assert((*latest_sinks)[0].succeed("stale") ==
+         cbss::CommandOfferResult::accepted);
+  assert((*latest_sinks)[1].succeed("current") ==
+         cbss::CommandOfferResult::accepted);
+  assert(latest_command.pump() == 2u);
+  assert(command_successes == std::vector<std::string>({"current"}));
+  assert(latest_second.status() == cbss::CommandStatus::succeeded);
+
+  const std::shared_ptr<std::vector<StringSink>> ordered_sinks =
+      std::make_shared<std::vector<StringSink>>();
+  StringCommand ordered_command(
+      [ordered_sinks](int, StringSink sink) {
+        ordered_sinks->push_back(sink);
+        return StringCommand::Cancel();
+      },
+      cbss::CommandPolicy::ordered, 2u);
+  std::vector<std::string> ordered_results;
+  ordered_command.onSuccess(
+      [&](std::string value) { ordered_results.push_back(std::move(value)); });
+  const cbss::CommandTicket ordered_first = ordered_command.run(1);
+  const cbss::CommandTicket ordered_second = ordered_command.run(2);
+  const cbss::CommandTicket ordered_third = ordered_command.run(3);
+  assert(ordered_first.status() == cbss::CommandStatus::running);
+  assert(ordered_second.status() == cbss::CommandStatus::queued);
+  assert(ordered_third.status() == cbss::CommandStatus::queued);
+  assert(ordered_command.activeCount() == 1u);
+  assert(ordered_command.queuedCount() == 2u);
+  assert((*ordered_sinks)[0].succeed("one") ==
+         cbss::CommandOfferResult::accepted);
+  assert(ordered_command.pump(1u) == 1u);
+  assert(ordered_second.status() == cbss::CommandStatus::running);
+  assert((*ordered_sinks)[1].fail("two") ==
+         cbss::CommandOfferResult::accepted);
+  assert(ordered_command.pump(1u) == 1u);
+  assert(ordered_second.status() == cbss::CommandStatus::failed);
+  assert(ordered_third.status() == cbss::CommandStatus::running);
+  assert((*ordered_sinks)[2].succeed("three") ==
+         cbss::CommandOfferResult::accepted);
+  assert(ordered_command.pump(1u) == 1u);
+  assert(ordered_results == std::vector<std::string>({"one", "three"}));
+  assert(!ordered_command.pending());
+
+  const std::shared_ptr<std::vector<StringSink>> concurrent_sinks =
+      std::make_shared<std::vector<StringSink>>();
+  StringCommand concurrent_command(
+      [concurrent_sinks](int, StringSink sink) {
+        concurrent_sinks->push_back(sink);
+        return StringCommand::Cancel();
+      },
+      cbss::CommandPolicy::concurrent, 1u);
+  std::vector<std::string> concurrent_results;
+  concurrent_command.onSuccess([&](std::string value) {
+    concurrent_results.push_back(std::move(value));
+  });
+  const cbss::CommandTicket concurrent_first = concurrent_command.run(1);
+  const cbss::CommandTicket concurrent_second = concurrent_command.run(2);
+  assert((*concurrent_sinks)[0].succeed("first") ==
+         cbss::CommandOfferResult::accepted);
+  assert((*concurrent_sinks)[1].succeed("second") ==
+         cbss::CommandOfferResult::backpressure);
+  assert(concurrent_command.pump(1u) == 1u);
+  assert((*concurrent_sinks)[1].succeed("second") ==
+         cbss::CommandOfferResult::accepted);
+  assert(concurrent_command.pump(1u) == 1u);
+  assert(concurrent_first.status() == cbss::CommandStatus::succeeded);
+  assert(concurrent_second.status() == cbss::CommandStatus::succeeded);
+
+  const std::shared_ptr<std::vector<StringSink>> observed_sinks =
+      std::make_shared<std::vector<StringSink>>();
+  StringCommand observed_command(
+      [observed_sinks](int, StringSink sink) {
+        observed_sinks->push_back(sink);
+        return StringCommand::Cancel();
+      },
+      cbss::CommandPolicy::concurrent);
+  const cbss::CommandTicket observed_ticket = observed_command.run(1);
+  cbss::CommandStatus observed_status = cbss::CommandStatus::running;
+  cbss::CommandRunSubscription observed_subscription =
+      observed_command.observeRun(
+          observed_ticket,
+          [&](cbss::CommandTicket ticket, cbss::CommandStatus status) {
+            assert(ticket.id() == observed_ticket.id());
+            observed_status = status;
+          });
+  assert(observed_subscription.active());
+  assert((*observed_sinks)[0].succeed("done") ==
+         cbss::CommandOfferResult::accepted);
+  assert(observed_command.pump() == 1u);
+  assert(observed_status == cbss::CommandStatus::succeeded);
+  assert(!observed_subscription.active());
+
+  cbss::CommandStatus immediate_status = cbss::CommandStatus::running;
+  cbss::CommandRunSubscription immediate_subscription =
+      observed_command.observeRun(
+          observed_ticket,
+          [&](cbss::CommandTicket, cbss::CommandStatus status) {
+            immediate_status = status;
+          });
+  assert(!immediate_subscription.active());
+  assert(immediate_status == cbss::CommandStatus::succeeded);
+
+  const std::shared_ptr<std::vector<StringSink>> disposable_sinks =
+      std::make_shared<std::vector<StringSink>>();
+  const std::shared_ptr<int> dispose_cancellations = std::make_shared<int>(0);
+  StringCommand disposable_command(
+      [disposable_sinks, dispose_cancellations](int, StringSink sink) {
+        disposable_sinks->push_back(sink);
+        return StringCommand::Cancel(
+            [dispose_cancellations]() { ++*dispose_cancellations; });
+      });
+  const cbss::CommandTicket disposable_ticket = disposable_command.run(1);
+  assert(disposable_command.dispose());
+  assert(!disposable_command.dispose());
+  assert(disposable_ticket.status() == cbss::CommandStatus::cancelled);
+  assert(*dispose_cancellations == 1);
+  assert((*disposable_sinks)[0].succeed("late") ==
+         cbss::CommandOfferResult::disposed);
+  assert(disposable_command.pump() == 0u);
+
+  const std::shared_ptr<std::vector<StringSink>> cancellation_sinks =
+      std::make_shared<std::vector<StringSink>>();
+  const std::shared_ptr<int> explicit_cancellations = std::make_shared<int>(0);
+  StringCommand cancellation_command(
+      [cancellation_sinks, explicit_cancellations](int, StringSink sink) {
+        cancellation_sinks->push_back(sink);
+        return StringCommand::Cancel(
+            [explicit_cancellations]() { ++*explicit_cancellations; });
+      },
+      cbss::CommandPolicy::ordered);
+  const cbss::CommandTicket cancellation_first = cancellation_command.run(1);
+  const cbss::CommandTicket cancellation_second = cancellation_command.run(2);
+  const cbss::CommandTicket cancellation_third = cancellation_command.run(3);
+  assert(cancellation_command.cancel(cancellation_second));
+  assert(cancellation_second.status() == cbss::CommandStatus::cancelled);
+  assert(cancellation_command.cancel(cancellation_first));
+  assert(cancellation_third.status() == cbss::CommandStatus::running);
+  assert(cancellation_command.cancelAll() == 1u);
+  assert(cancellation_third.status() == cbss::CommandStatus::cancelled);
+  assert(*explicit_cancellations == 2);
+  assert(!cancellation_command.pending());
+
+  StringCommand foreign_command(
+      [](int, StringSink) { return StringCommand::Cancel(); });
+  const cbss::CommandTicket foreign_ticket = foreign_command.run(1);
+  assert(!cancellation_command.cancel(foreign_ticket));
+  bool foreign_observer_rejected = false;
+  try {
+    cancellation_command.observeRun(
+        foreign_ticket, [](cbss::CommandTicket, cbss::CommandStatus) {});
+  } catch (const std::invalid_argument&) {
+    foreign_observer_rejected = true;
+  }
+  assert(foreign_observer_rejected);
+
+  const std::shared_ptr<std::vector<StringSink>> callback_sinks =
+      std::make_shared<std::vector<StringSink>>();
+  StringCommand callback_command(
+      [callback_sinks](int, StringSink sink) {
+        callback_sinks->push_back(sink);
+        return StringCommand::Cancel();
+      },
+      cbss::CommandPolicy::concurrent);
+  int callback_count = 0;
+  callback_command.onSuccess([&](std::string value) {
+    ++callback_count;
+    if (value == "first") {
+      throw std::runtime_error("first callback failed");
+    }
+  });
+  const cbss::CommandTicket callback_first = callback_command.run(1);
+  const cbss::CommandTicket callback_second = callback_command.run(2);
+  assert((*callback_sinks)[0].succeed("first") ==
+         cbss::CommandOfferResult::accepted);
+  assert((*callback_sinks)[1].succeed("second") ==
+         cbss::CommandOfferResult::accepted);
+  bool callback_failure_reported = false;
+  try {
+    callback_command.pump();
+  } catch (const std::runtime_error&) {
+    callback_failure_reported = true;
+  }
+  assert(callback_failure_reported);
+  assert(callback_count == 2);
+  assert(callback_first.status() == cbss::CommandStatus::succeeded);
+  assert(callback_second.status() == cbss::CommandStatus::succeeded);
+  assert(!callback_command.pending());
+
+  const std::shared_ptr<std::vector<StringSink>> executor_sinks =
+      std::make_shared<std::vector<StringSink>>();
+  int executor_attempts = 0;
+  StringCommand executor_command(
+      [executor_sinks, &executor_attempts](int input, StringSink sink) {
+        ++executor_attempts;
+        if (input == 2) {
+          throw std::runtime_error("queued executor failed");
+        }
+        executor_sinks->push_back(sink);
+        return StringCommand::Cancel();
+      },
+      cbss::CommandPolicy::ordered);
+  const cbss::CommandTicket executor_first = executor_command.run(1);
+  const cbss::CommandTicket executor_second = executor_command.run(2);
+  const cbss::CommandTicket executor_third = executor_command.run(3);
+  assert((*executor_sinks)[0].succeed("one") ==
+         cbss::CommandOfferResult::accepted);
+  bool executor_failure_reported = false;
+  try {
+    executor_command.pump();
+  } catch (const std::runtime_error&) {
+    executor_failure_reported = true;
+  }
+  assert(executor_failure_reported);
+  assert(executor_first.status() == cbss::CommandStatus::succeeded);
+  assert(executor_second.status() == cbss::CommandStatus::cancelled);
+  assert(executor_third.status() == cbss::CommandStatus::running);
+  assert(executor_attempts == 3);
+  assert((*executor_sinks)[1].succeed("three") ==
+         cbss::CommandOfferResult::accepted);
+  assert(executor_command.pump() == 1u);
+  assert(!executor_command.pending());
+
+  const std::shared_ptr<std::vector<StringSink>> wake_sinks =
+      std::make_shared<std::vector<StringSink>>();
+  StringCommand wake_command(
+      [wake_sinks](int, StringSink sink) {
+        wake_sinks->push_back(sink);
+        return StringCommand::Cancel();
+      },
+      cbss::CommandPolicy::concurrent);
+  int wake_count = 0;
+  wake_command.setWakeCallback([&]() { ++wake_count; });
+  int removed_observer_calls = 0;
+  const cbss::CommandTicket wake_first = wake_command.run(1);
+  {
+    cbss::CommandRunSubscription removed = wake_command.observeRun(
+        wake_first, [&](cbss::CommandTicket, cbss::CommandStatus) {
+          ++removed_observer_calls;
+        });
+    assert(removed.active());
+  }
+  const cbss::CommandTicket wake_second = wake_command.run(2);
+  assert((*wake_sinks)[0].succeed("one") ==
+         cbss::CommandOfferResult::accepted);
+  assert((*wake_sinks)[1].succeed("two") ==
+         cbss::CommandOfferResult::accepted);
+  assert(wake_count == 1);
+  assert(wake_command.pump() == 2u);
+  assert(removed_observer_calls == 0);
+  assert(wake_first.status() == cbss::CommandStatus::succeeded);
+  assert(wake_second.status() == cbss::CommandStatus::succeeded);
+  const cbss::CommandTicket wake_third = wake_command.run(3);
+  assert((*wake_sinks)[2].succeed("three") ==
+         cbss::CommandOfferResult::accepted);
+  assert(wake_count == 2);
+  assert(wake_command.pump() == 1u);
+  assert(wake_third.status() == cbss::CommandStatus::succeeded);
+
+  const std::shared_ptr<std::vector<StringSink>> robust_dispose_sinks =
+      std::make_shared<std::vector<StringSink>>();
+  StringCommand robust_dispose_command(
+      [robust_dispose_sinks](int, StringSink sink) {
+        robust_dispose_sinks->push_back(sink);
+        return StringCommand::Cancel();
+      },
+      cbss::CommandPolicy::ordered);
+  const cbss::CommandTicket robust_active = robust_dispose_command.run(1);
+  const cbss::CommandTicket robust_queued = robust_dispose_command.run(2);
+  cbss::CommandRunSubscription throwing_observer =
+      robust_dispose_command.observeRun(
+          robust_active, [](cbss::CommandTicket, cbss::CommandStatus) {
+            throw std::runtime_error("observer failed during disposal");
+          });
+  assert(robust_dispose_command.dispose());
+  assert(robust_active.status() == cbss::CommandStatus::cancelled);
+  assert(robust_queued.status() == cbss::CommandStatus::cancelled);
+
+  const std::size_t large_command_count = 2000u;
+  using NumericCommand = cbss::Command<std::size_t, std::size_t, std::string>;
+  using NumericSink = cbss::CommandSink<std::size_t, std::string>;
+  const std::shared_ptr<std::vector<NumericSink>> large_sinks =
+      std::make_shared<std::vector<NumericSink>>();
+  large_sinks->reserve(large_command_count);
+  NumericCommand large_command(
+      [large_sinks](std::size_t, NumericSink sink) {
+        large_sinks->push_back(sink);
+        return NumericCommand::Cancel();
+      },
+      cbss::CommandPolicy::concurrent, large_command_count,
+      static_cast<std::int64_t>(large_command_count));
+  std::vector<std::size_t> large_results;
+  large_results.reserve(large_command_count);
+  large_command.onSuccess(
+      [&](std::size_t value) { large_results.push_back(value); });
+  for (std::size_t value = 0u; value < large_command_count; ++value) {
+    large_command.run(value);
+  }
+  for (std::size_t value = large_command_count; value > 0u; --value) {
+    assert((*large_sinks)[value - 1u].succeed(value - 1u) ==
+           cbss::CommandOfferResult::accepted);
+  }
+  assert(large_command.pump() == large_command_count);
+  assert(large_results.front() == large_command_count - 1u);
+  assert(large_results.back() == 0u);
+  assert(!large_command.pending());
+
+  bool negative_weight_rejected = false;
+  try {
+    (*large_sinks)[0].succeed(0u, -1);
+  } catch (const std::invalid_argument&) {
+    negative_weight_rejected = true;
+  }
+  assert(negative_weight_rejected);
+
+  bool command_limits_rejected = false;
+  try {
+    StringCommand invalid_command(
+        [](int, StringSink) { return StringCommand::Cancel(); },
+        cbss::CommandPolicy::latestOnly, 0u);
+  } catch (const std::invalid_argument&) {
+    command_limits_rejected = true;
+  }
+  assert(command_limits_rejected);
+
   return 0;
 }

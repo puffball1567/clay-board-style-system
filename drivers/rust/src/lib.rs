@@ -1,5 +1,6 @@
 //! High-level Rust Craft Driver for Clay Board Style System.
 
+mod command;
 mod generated;
 mod navigation;
 mod navigation_ui;
@@ -16,6 +17,10 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr::NonNull;
 use std::rc::{Rc, Weak};
 
+pub use command::{
+    command, Command, CommandCancel, CommandOfferResult, CommandPolicy, CommandRunSubscription,
+    CommandSink, CommandStatus, CommandTicket,
+};
 pub use generated::{
     CapabilityDefinition, EventKind, ABI_VERSION, CAPABILITIES, CAPABILITY_ACCESSIBILITY_SEMANTICS,
     CAPABILITY_BLOB, CAPABILITY_CRAFT_PACK, CAPABILITY_CRAFT_STYLE, CAPABILITY_DECLARATIVE_MOTION,

@@ -1,13 +1,14 @@
 use cbss_craft::{
-    keyword, px, rgb, Contract, ErrorKind, EventKind, EventOutcome, InputEvent, Link,
-    NavigationChange, NavigationChangeKind, NavigationDriver, NavigationEntry,
-    NavigationScreenHost, NavigationSnapshot, Navigator, NodeState, Store, Style, Ui,
-    ValidationBinding, ValidationFile, ValidationPattern, ValidationReport, ValidationRules,
-    ValidationTrigger, ValidationValue, ABI_VERSION, CAPABILITIES, CRAFT_DIAGNOSTIC_PACK,
-    CRAFT_DIAGNOSTIC_STYLE_REPLACEMENT, CRAFT_PACK_MISSING_CAPABILITY,
-    CRAFT_STYLE_PARSE_UNKNOWN_PROPERTY, CRAFT_STYLE_REPLACEMENT_UNDECLARED_STYLE_SLOT,
-    DRIVER_CONTRACT_VERSION, NAVIGATION_SCREEN_DIRTY_DOMAINS, STATUS_INVALID_ARGUMENT,
-    STATUS_INVALID_HANDLE, STATUS_STYLE_ERROR,
+    keyword, px, rgb, Command, CommandOfferResult, CommandPolicy, CommandStatus, Contract,
+    ErrorKind, EventKind, EventOutcome, InputEvent, Link, NavigationChange, NavigationChangeKind,
+    NavigationDriver, NavigationEntry, NavigationScreenHost, NavigationSnapshot, Navigator,
+    NodeState, Store, Style, Ui, ValidationBinding, ValidationFile, ValidationPattern,
+    ValidationReport, ValidationRules, ValidationTrigger, ValidationValue, ABI_VERSION,
+    CAPABILITIES, CRAFT_DIAGNOSTIC_PACK, CRAFT_DIAGNOSTIC_STYLE_REPLACEMENT,
+    CRAFT_PACK_MISSING_CAPABILITY, CRAFT_STYLE_PARSE_UNKNOWN_PROPERTY,
+    CRAFT_STYLE_REPLACEMENT_UNDECLARED_STYLE_SLOT, DRIVER_CONTRACT_VERSION,
+    NAVIGATION_SCREEN_DIRTY_DOMAINS, STATUS_INVALID_ARGUMENT, STATUS_INVALID_HANDLE,
+    STATUS_STYLE_ERROR,
 };
 use std::cell::{Cell, RefCell};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -1577,4 +1578,420 @@ fn validation_binding_keeps_reporting_separate_from_current_validity() {
         submit.evaluate(String::new(), trigger, false);
         assert_eq!(submit.should_expose(), trigger == ValidationTrigger::Submit);
     }
+}
+
+#[test]
+fn command_policies_preserve_typed_completion_and_ordering() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let sinks = Rc::new(RefCell::new(Vec::new()));
+    let cancellations = Rc::new(RefCell::new(0));
+    let command = Command::<i32, String, String>::with_defaults({
+        let sinks = Rc::clone(&sinks);
+        let cancellations = Rc::clone(&cancellations);
+        move |_input, sink| {
+            sinks.borrow_mut().push(sink);
+            let cancellations = Rc::clone(&cancellations);
+            Some(Box::new(move || *cancellations.borrow_mut() += 1))
+        }
+    })
+    .expect("latest-only Command");
+    let successes = Rc::new(RefCell::new(Vec::new()));
+    command
+        .on_success({
+            let successes = Rc::clone(&successes);
+            move |value| successes.borrow_mut().push(value)
+        })
+        .expect("success callback");
+
+    let first = command.run(1).expect("first run");
+    let second = command.run(2).expect("second run");
+    assert_eq!(first.status(), CommandStatus::Cancelled);
+    assert_eq!(second.status(), CommandStatus::Running);
+    assert_eq!(*cancellations.borrow(), 1);
+    assert_eq!(
+        sinks.borrow()[0].succeed("stale".to_owned()),
+        CommandOfferResult::Accepted
+    );
+    assert_eq!(
+        sinks.borrow()[1].succeed("current".to_owned()),
+        CommandOfferResult::Accepted
+    );
+    assert_eq!(command.pump_all(), 2);
+    assert_eq!(&*successes.borrow(), &["current"]);
+    assert_eq!(second.status(), CommandStatus::Succeeded);
+
+    let ordered_sinks = Rc::new(RefCell::new(Vec::new()));
+    let ordered = Command::<i32, String, String>::new(
+        {
+            let ordered_sinks = Rc::clone(&ordered_sinks);
+            move |_input, sink| {
+                ordered_sinks.borrow_mut().push(sink);
+                None
+            }
+        },
+        CommandPolicy::Ordered,
+        2,
+        1024,
+    )
+    .expect("ordered Command");
+    let first = ordered.run(1).expect("first ordered run");
+    let second = ordered.run(2).expect("second ordered run");
+    let third = ordered.run(3).expect("third ordered run");
+    assert_eq!(first.status(), CommandStatus::Running);
+    assert_eq!(second.status(), CommandStatus::Queued);
+    assert_eq!(third.status(), CommandStatus::Queued);
+    assert_eq!(ordered.queued_count(), 2);
+    assert_eq!(
+        ordered_sinks.borrow()[0].succeed("one".to_owned()),
+        CommandOfferResult::Accepted
+    );
+    assert_eq!(ordered.pump(1), 1);
+    assert_eq!(second.status(), CommandStatus::Running);
+    assert_eq!(
+        ordered_sinks.borrow()[1].fail("two".to_owned()),
+        CommandOfferResult::Accepted
+    );
+    assert_eq!(ordered.pump(1), 1);
+    assert_eq!(second.status(), CommandStatus::Failed);
+    assert_eq!(third.status(), CommandStatus::Running);
+    assert_eq!(
+        ordered_sinks.borrow()[2].succeed("three".to_owned()),
+        CommandOfferResult::Accepted
+    );
+    assert_eq!(ordered.pump(1), 1);
+    assert!(!ordered.pending());
+}
+
+#[test]
+fn command_backpressure_observers_worker_delivery_and_disposal_are_bounded() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::sync::mpsc;
+
+    let (sender, receiver) = mpsc::channel();
+    let command = Command::<i32, i32, String>::new(
+        move |_input, sink| {
+            sender.send(sink).expect("send worker sink");
+            None
+        },
+        CommandPolicy::Concurrent,
+        1,
+        8,
+    )
+    .expect("concurrent Command");
+    let first = command.run(1).expect("first concurrent run");
+    let second = command.run(2).expect("second concurrent run");
+    let first_sink = receiver.recv().expect("first sink");
+    let second_sink = receiver.recv().expect("second sink");
+    let worker = std::thread::spawn(move || {
+        assert_eq!(
+            first_sink.succeed_weighted(10, 8),
+            CommandOfferResult::Accepted
+        );
+        assert_eq!(second_sink.succeed(20), CommandOfferResult::Backpressure);
+        second_sink
+    });
+    let second_sink = worker.join().expect("worker completion");
+    assert_eq!(first.status(), CommandStatus::Running);
+    assert_eq!(command.pump(1), 1);
+    assert_eq!(first.status(), CommandStatus::Succeeded);
+    assert_eq!(second_sink.succeed(20), CommandOfferResult::Accepted);
+
+    let observed = Rc::new(RefCell::new(Vec::new()));
+    let subscription = command
+        .observe_run(&second, {
+            let observed = Rc::clone(&observed);
+            move |ticket, status| observed.borrow_mut().push((ticket.id(), status))
+        })
+        .expect("run observer");
+    assert!(subscription.active());
+    assert_eq!(command.pump_all(), 1);
+    assert_eq!(
+        &*observed.borrow(),
+        &[(second.id(), CommandStatus::Succeeded)]
+    );
+    assert!(!subscription.active());
+
+    let immediate = Rc::new(RefCell::new(None));
+    let terminal = command
+        .observe_run(&second, {
+            let immediate = Rc::clone(&immediate);
+            move |_ticket, status| *immediate.borrow_mut() = Some(status)
+        })
+        .expect("terminal observer");
+    assert!(!terminal.active());
+    assert_eq!(*immediate.borrow(), Some(CommandStatus::Succeeded));
+
+    let disposable_sink = Rc::new(RefCell::new(None));
+    let cancellations = Rc::new(RefCell::new(0));
+    let disposable = Command::<i32, i32, String>::with_defaults({
+        let disposable_sink = Rc::clone(&disposable_sink);
+        let cancellations = Rc::clone(&cancellations);
+        move |_input, sink| {
+            disposable_sink.borrow_mut().replace(sink);
+            let cancellations = Rc::clone(&cancellations);
+            Some(Box::new(move || *cancellations.borrow_mut() += 1))
+        }
+    })
+    .expect("disposable Command");
+    let ticket = disposable.run(1).expect("disposable run");
+    assert!(disposable.dispose());
+    assert!(!disposable.dispose());
+    assert_eq!(ticket.status(), CommandStatus::Cancelled);
+    assert_eq!(*cancellations.borrow(), 1);
+    assert_eq!(
+        disposable_sink
+            .borrow()
+            .as_ref()
+            .expect("retained sink")
+            .succeed(1),
+        CommandOfferResult::Disposed
+    );
+    assert_eq!(disposable.pump_all(), 0);
+
+    assert!(Command::<i32, i32, String>::new(
+        |_input, _sink| None,
+        CommandPolicy::LatestOnly,
+        0,
+        1,
+    )
+    .is_err());
+}
+
+#[test]
+fn command_cancellation_and_foreign_tickets_preserve_queue_state() {
+    let sinks = Rc::new(RefCell::new(Vec::new()));
+    let cancellations = Rc::new(Cell::new(0));
+    let command = Command::<i32, i32, String>::new(
+        {
+            let sinks = Rc::clone(&sinks);
+            let cancellations = Rc::clone(&cancellations);
+            move |_input, sink| {
+                sinks.borrow_mut().push(sink);
+                let cancellations = Rc::clone(&cancellations);
+                Some(Box::new(move || cancellations.set(cancellations.get() + 1)))
+            }
+        },
+        CommandPolicy::Ordered,
+        8,
+        1024,
+    )
+    .expect("ordered Command");
+    let first = command.run(1).expect("first run");
+    let second = command.run(2).expect("second run");
+    let third = command.run(3).expect("third run");
+
+    assert!(command.cancel(&second));
+    assert_eq!(second.status(), CommandStatus::Cancelled);
+    assert!(command.cancel(&first));
+    assert_eq!(first.status(), CommandStatus::Cancelled);
+    assert_eq!(third.status(), CommandStatus::Running);
+    assert_eq!(command.cancel_all(), 1);
+    assert_eq!(third.status(), CommandStatus::Cancelled);
+    assert_eq!(cancellations.get(), 2);
+    assert!(!command.cancel(&first));
+    assert!(!command.pending());
+
+    let foreign = Command::<i32, i32, String>::with_defaults(|_, _| None).expect("foreign Command");
+    let foreign_ticket = foreign.run(1).expect("foreign run");
+    assert!(!command.cancel(&foreign_ticket));
+    assert!(command.observe_run(&foreign_ticket, |_, _| {}).is_err());
+}
+
+#[test]
+fn command_callback_and_executor_panics_do_not_wedge_dispatch() {
+    let sinks = Rc::new(RefCell::new(Vec::new()));
+    let command = Command::<i32, i32, String>::new(
+        {
+            let sinks = Rc::clone(&sinks);
+            move |_input, sink| {
+                sinks.borrow_mut().push(sink);
+                None
+            }
+        },
+        CommandPolicy::Concurrent,
+        4,
+        1024,
+    )
+    .expect("concurrent Command");
+    let callback_count = Rc::new(Cell::new(0));
+    command
+        .on_success({
+            let callback_count = Rc::clone(&callback_count);
+            move |value| {
+                callback_count.set(callback_count.get() + 1);
+                if value == 1 {
+                    panic!("first callback failed");
+                }
+            }
+        })
+        .expect("success callback");
+    let first = command.run(1).expect("first run");
+    let second = command.run(2).expect("second run");
+    assert_eq!(sinks.borrow()[0].succeed(1), CommandOfferResult::Accepted);
+    assert_eq!(sinks.borrow()[1].succeed(2), CommandOfferResult::Accepted);
+    assert!(catch_unwind(AssertUnwindSafe(|| command.pump_all())).is_err());
+    assert_eq!(callback_count.get(), 2);
+    assert_eq!(first.status(), CommandStatus::Succeeded);
+    assert_eq!(second.status(), CommandStatus::Succeeded);
+    assert!(!command.pending());
+
+    let ordered_sinks = Rc::new(RefCell::new(Vec::new()));
+    let attempts = Rc::new(Cell::new(0));
+    let ordered = Command::<i32, i32, String>::new(
+        {
+            let ordered_sinks = Rc::clone(&ordered_sinks);
+            let attempts = Rc::clone(&attempts);
+            move |input, sink| {
+                attempts.set(attempts.get() + 1);
+                if input == 2 {
+                    panic!("queued executor failed");
+                }
+                ordered_sinks.borrow_mut().push(sink);
+                None
+            }
+        },
+        CommandPolicy::Ordered,
+        4,
+        1024,
+    )
+    .expect("ordered Command");
+    let first = ordered.run(1).expect("first ordered run");
+    let second = ordered.run(2).expect("second ordered run");
+    let third = ordered.run(3).expect("third ordered run");
+    assert_eq!(
+        ordered_sinks.borrow()[0].succeed(1),
+        CommandOfferResult::Accepted
+    );
+    assert!(catch_unwind(AssertUnwindSafe(|| ordered.pump_all())).is_err());
+    assert_eq!(first.status(), CommandStatus::Succeeded);
+    assert_eq!(second.status(), CommandStatus::Cancelled);
+    assert_eq!(third.status(), CommandStatus::Running);
+    assert_eq!(attempts.get(), 3);
+    assert_eq!(
+        ordered_sinks.borrow()[1].succeed(3),
+        CommandOfferResult::Accepted
+    );
+    assert_eq!(ordered.pump_all(), 1);
+    assert!(!ordered.pending());
+}
+
+#[test]
+fn command_observer_lifetime_wake_coalescing_and_disposal_are_deterministic() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let sinks = Rc::new(RefCell::new(Vec::new()));
+    let command = Command::<i32, i32, String>::new(
+        {
+            let sinks = Rc::clone(&sinks);
+            move |_input, sink| {
+                sinks.borrow_mut().push(sink);
+                None
+            }
+        },
+        CommandPolicy::Concurrent,
+        4,
+        1024,
+    )
+    .expect("concurrent Command");
+    let wake_count = Arc::new(AtomicUsize::new(0));
+    command.set_wake_callback({
+        let wake_count = Arc::clone(&wake_count);
+        move || {
+            wake_count.fetch_add(1, Ordering::Relaxed);
+        }
+    });
+    let observed = Rc::new(Cell::new(0));
+    let first = command.run(1).expect("first run");
+    {
+        let subscription = command
+            .observe_run(&first, {
+                let observed = Rc::clone(&observed);
+                move |_, _| observed.set(observed.get() + 1)
+            })
+            .expect("observer");
+        assert!(subscription.active());
+    }
+    let second = command.run(2).expect("second run");
+    assert_eq!(sinks.borrow()[0].succeed(1), CommandOfferResult::Accepted);
+    assert_eq!(sinks.borrow()[1].succeed(2), CommandOfferResult::Accepted);
+    assert_eq!(wake_count.load(Ordering::Relaxed), 1);
+    assert_eq!(command.pump_all(), 2);
+    assert_eq!(observed.get(), 0);
+    assert_eq!(first.status(), CommandStatus::Succeeded);
+    assert_eq!(second.status(), CommandStatus::Succeeded);
+
+    let third = command.run(3).expect("third run");
+    assert_eq!(sinks.borrow()[2].succeed(3), CommandOfferResult::Accepted);
+    assert_eq!(wake_count.load(Ordering::Relaxed), 2);
+    assert_eq!(command.pump_all(), 1);
+    assert_eq!(third.status(), CommandStatus::Succeeded);
+
+    let disposable_sinks = Rc::new(RefCell::new(Vec::new()));
+    let disposable = Command::<i32, i32, String>::new(
+        {
+            let disposable_sinks = Rc::clone(&disposable_sinks);
+            move |_input, sink| {
+                disposable_sinks.borrow_mut().push(sink);
+                None
+            }
+        },
+        CommandPolicy::Ordered,
+        4,
+        1024,
+    )
+    .expect("disposable Command");
+    let active = disposable.run(1).expect("active run");
+    let queued = disposable.run(2).expect("queued run");
+    let _panicking_observer = disposable
+        .observe_run(&active, |_, _| panic!("observer failed during disposal"))
+        .expect("active observer");
+    assert!(disposable.dispose());
+    assert_eq!(active.status(), CommandStatus::Cancelled);
+    assert_eq!(queued.status(), CommandStatus::Cancelled);
+    assert_eq!(disposable.active_count(), 0);
+    assert_eq!(disposable.queued_count(), 0);
+}
+
+#[test]
+fn command_large_concurrent_sets_complete_in_reverse_order() {
+    const RUN_COUNT: usize = 2_000;
+    let sinks = Rc::new(RefCell::new(Vec::with_capacity(RUN_COUNT)));
+    let command = Command::<usize, usize, String>::new(
+        {
+            let sinks = Rc::clone(&sinks);
+            move |_input, sink| {
+                sinks.borrow_mut().push(sink);
+                None
+            }
+        },
+        CommandPolicy::Concurrent,
+        RUN_COUNT,
+        RUN_COUNT,
+    )
+    .expect("large concurrent Command");
+    let completed = Rc::new(RefCell::new(Vec::with_capacity(RUN_COUNT)));
+    command
+        .on_success({
+            let completed = Rc::clone(&completed);
+            move |value| completed.borrow_mut().push(value)
+        })
+        .expect("success callback");
+    for value in 0..RUN_COUNT {
+        command.run(value).expect("concurrent run");
+    }
+    assert_eq!(command.active_count(), RUN_COUNT);
+    for value in (0..RUN_COUNT).rev() {
+        assert_eq!(
+            sinks.borrow()[value].succeed(value),
+            CommandOfferResult::Accepted
+        );
+    }
+    assert_eq!(command.pump_all(), RUN_COUNT);
+    assert_eq!(command.active_count(), 0);
+    assert_eq!(completed.borrow()[0], RUN_COUNT - 1);
+    assert_eq!(completed.borrow()[RUN_COUNT - 1], 0);
 }

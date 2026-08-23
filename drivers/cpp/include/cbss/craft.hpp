@@ -2,6 +2,7 @@
 #define CBSS_CRAFT_HPP
 
 #include "cbss.h"
+#include "command.hpp"
 #include "navigation.hpp"
 #include "store.hpp"
 #include "validation.hpp"

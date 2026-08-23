@@ -1804,9 +1804,11 @@ disabled behavior, prevent-default, and accessible link semantics. ABI
 so Drivers do not duplicate engine focus ordering. ABI `0x00010019` and both
 reference Drivers now provide the typed Validation core: all 40 synchronous
 rules, retained reporting policy, live peer references, custom checks, and one
-canonical bounded regex/string-format implementation. Automatic control/form
-attachment, Command, Cue, screen-transition hooks, and the remaining
-cross-Driver application fixtures remain Version 0.6 work.
+canonical bounded regex/string-format implementation. Both Drivers now also
+provide typed Commands with matching policy, worker-to-UI delivery,
+cancellation, backpressure, ticket observation, and disposal semantics.
+Automatic control/form attachment, Cue, screen-transition hooks, and the
+remaining cross-Driver application fixtures remain Version 0.6 work.
 
 This scope does not require one source syntax across languages, runtime loading
 of arbitrary foreign binaries, or pixel identity across different font and

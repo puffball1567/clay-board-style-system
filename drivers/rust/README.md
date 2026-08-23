@@ -183,6 +183,37 @@ collection, file-metadata, and custom operations. Regex and format checks use
 the bounded engine capability rather than host-specific regex, URL, or date
 semantics.
 
+Typed Commands connect UI actions to asynchronous work while keeping UI
+mutation on the owning thread:
+
+```rust
+let save = cbss_craft::Command::<Document, SaveResult, SaveError>::with_defaults(
+    move |document, sink| {
+        let request = repository.save(
+            document,
+            {
+                let sink = sink.clone();
+                move |result| { let _ = sink.succeed(result); }
+            },
+            move |error| { let _ = sink.fail(error); },
+        );
+        Some(Box::new(move || request.cancel()))
+    },
+)?;
+
+save.on_success(|result| show_saved(result))?;
+let ticket = save.run(current_document())?;
+```
+
+`LatestOnly`, `Ordered`, and `Concurrent` policies are explicit. A cloneable,
+`Send` `CommandSink` crosses worker boundaries through a bounded queue; the UI
+thread applies completions with `pump` or `pump_all`. Tickets retain terminal
+status, ticket-scoped observers detach on `Drop`, cancellation advances
+ordered work, and disposal rejects late completion offers. Queue item and
+weight limits return `Backpressure` instead of dropping a result. A thread-safe
+wake callback may post one host event when an empty completion queue becomes
+non-empty.
+
 Set `CBSS_LIB_DIR` to the directory containing the shared or static C ABI
 library. Set `CBSS_STATIC=1` for static linking. On Linux, a shared build also
 needs that directory in `LD_LIBRARY_PATH` when the application starts.
