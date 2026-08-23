@@ -12,6 +12,93 @@ use crate::{
 };
 
 pub const NAVIGATION_SCREEN_HOST_STYLE_PRIORITY: i32 = 1_000_000;
+pub const DEFAULT_NAVIGATION_TRANSITION_FRAME_INTERVAL: f64 = 1.0 / 60.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NavigationTransitionPhase {
+    Started,
+    Advanced,
+    Completed,
+    Cancelled,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NavigationTransitionContext<D> {
+    pub phase: NavigationTransitionPhase,
+    pub kind: NavigationChangeKind,
+    pub previous: NavigationEntry<D>,
+    pub current: NavigationEntry<D>,
+    pub outgoing_root: Node,
+    pub incoming_root: Node,
+    pub progress: f32,
+}
+
+type NavigationTransitionHook<D> = Rc<RefCell<Box<dyn FnMut(&NavigationTransitionContext<D>)>>>;
+
+pub struct NavigationTransitionSpec<D> {
+    pub duration_seconds: f64,
+    pub frame_interval_seconds: f64,
+    hook: NavigationTransitionHook<D>,
+}
+
+impl<D> NavigationTransitionSpec<D> {
+    pub fn new(
+        duration_seconds: f64,
+        hook: impl FnMut(&NavigationTransitionContext<D>) + 'static,
+    ) -> Result<Self> {
+        Self::with_frame_interval(
+            duration_seconds,
+            DEFAULT_NAVIGATION_TRANSITION_FRAME_INTERVAL,
+            hook,
+        )
+    }
+
+    pub fn with_frame_interval(
+        duration_seconds: f64,
+        frame_interval_seconds: f64,
+        hook: impl FnMut(&NavigationTransitionContext<D>) + 'static,
+    ) -> Result<Self> {
+        let result = Self {
+            duration_seconds,
+            frame_interval_seconds,
+            hook: Rc::new(RefCell::new(Box::new(hook))),
+        };
+        result.validate()?;
+        Ok(result)
+    }
+
+    fn validate(&self) -> Result<()> {
+        if !self.duration_seconds.is_finite() || self.duration_seconds <= 0.0 {
+            return Err(Error::contract(
+                "navigation transition duration must be finite and positive",
+            ));
+        }
+        if !self.frame_interval_seconds.is_finite() || self.frame_interval_seconds <= 0.0 {
+            return Err(Error::contract(
+                "navigation transition frame interval must be finite and positive",
+            ));
+        }
+        Ok(())
+    }
+}
+
+pub fn navigation_transition<D>(
+    duration_seconds: f64,
+    hook: impl FnMut(&NavigationTransitionContext<D>) + 'static,
+) -> Result<NavigationTransitionSpec<D>> {
+    NavigationTransitionSpec::new(duration_seconds, hook)
+}
+
+#[derive(Clone)]
+struct ActiveNavigationTransition<D> {
+    started_at: f64,
+    last_progress: f32,
+    outgoing_index: usize,
+    incoming_index: usize,
+    previous: NavigationEntry<D>,
+    current: NavigationEntry<D>,
+    kind: NavigationChangeKind,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NavigationScreenBinding<D> {
@@ -32,6 +119,9 @@ struct ScreenHostCore<D> {
     pending_kind: Option<NavigationChangeKind>,
     pending_change: bool,
     saved_focus: HashMap<u64, Node>,
+    transition_spec: Option<NavigationTransitionSpec<D>>,
+    active_transition: Option<ActiveNavigationTransition<D>>,
+    transition_deadline: Option<f64>,
 }
 
 impl<D: Clone + PartialEq + 'static> ScreenHostCore<D> {
@@ -47,6 +137,9 @@ impl<D: Clone + PartialEq + 'static> ScreenHostCore<D> {
             pending_kind: None,
             pending_change: true,
             saved_focus: HashMap::new(),
+            transition_spec: None,
+            active_transition: None,
+            transition_deadline: None,
         }
     }
 
@@ -168,6 +261,17 @@ impl<D: Clone + PartialEq + 'static> NavigationScreenHost<D> {
         Self { core, subscription }
     }
 
+    pub fn with_transition(
+        ui: &Ui,
+        navigator: Navigator<D>,
+        transition: NavigationTransitionSpec<D>,
+    ) -> Result<Self> {
+        transition.validate()?;
+        let result = Self::new(ui, navigator);
+        result.core.borrow_mut().transition_spec = Some(transition);
+        Ok(result)
+    }
+
     pub fn connected(&self) -> bool {
         self.subscription.active()
     }
@@ -178,6 +282,85 @@ impl<D: Clone + PartialEq + 'static> NavigationScreenHost<D> {
 
     pub fn screen_count(&self) -> usize {
         self.core.borrow().screens.len()
+    }
+
+    pub fn transition_active(&self) -> bool {
+        self.core.borrow().active_transition.is_some()
+    }
+
+    pub fn next_transition_deadline(&self) -> Option<f64> {
+        self.core.borrow().transition_deadline
+    }
+
+    pub fn set_transition(&self, transition: Option<NavigationTransitionSpec<D>>) -> Result<()> {
+        let mut core = self.core.borrow_mut();
+        if core.active_transition.is_some() {
+            return Err(Error::contract(
+                "cannot replace an active navigation transition",
+            ));
+        }
+        if let Some(spec) = transition.as_ref() {
+            spec.validate()?;
+        }
+        core.transition_spec = transition;
+        Ok(())
+    }
+
+    pub fn cancel_transition(&self) -> Result<bool> {
+        let transition = {
+            let mut core = self.core.borrow_mut();
+            let Some(transition) = core.active_transition.take() else {
+                return Ok(false);
+            };
+            core.transition_deadline = None;
+            if transition.outgoing_index != transition.incoming_index {
+                core.set_screen_active(transition.outgoing_index, false)?;
+            }
+            transition
+        };
+        self.emit_transition(
+            &transition,
+            NavigationTransitionPhase::Cancelled,
+            transition.last_progress,
+        );
+        Ok(true)
+    }
+
+    pub fn advance_transition(&self, now_seconds: f64) -> Result<bool> {
+        Self::validate_time(now_seconds)?;
+        let update = {
+            let mut core = self.core.borrow_mut();
+            let Some((duration_seconds, frame_interval_seconds)) = core
+                .transition_spec
+                .as_ref()
+                .map(|spec| (spec.duration_seconds, spec.frame_interval_seconds))
+            else {
+                return Ok(false);
+            };
+            let Some(mut transition) = core.active_transition.clone() else {
+                return Ok(false);
+            };
+            let elapsed = (now_seconds - transition.started_at).max(0.0);
+            let progress = (elapsed / duration_seconds).min(1.0) as f32;
+            transition.last_progress = progress;
+            if progress >= 1.0 {
+                core.active_transition = None;
+                core.transition_deadline = None;
+                if transition.outgoing_index != transition.incoming_index {
+                    core.set_screen_active(transition.outgoing_index, false)?;
+                }
+                (transition, NavigationTransitionPhase::Completed, 1.0)
+            } else {
+                core.active_transition = Some(transition.clone());
+                core.transition_deadline = Some(
+                    (now_seconds + frame_interval_seconds)
+                        .min(transition.started_at + duration_seconds),
+                );
+                (transition, NavigationTransitionPhase::Advanced, progress)
+            }
+        };
+        self.emit_transition(&update.0, update.1, update.2);
+        Ok(true)
     }
 
     pub fn active_screen(&self) -> Option<NavigationScreenBinding<D>> {
@@ -241,6 +424,9 @@ impl<D: Clone + PartialEq + 'static> NavigationScreenHost<D> {
     }
 
     pub fn unregister_screen(&self, destination: &D, ui: &mut Ui) -> Result<bool> {
+        if self.core.borrow().find_screen_index(destination).is_some() {
+            self.cancel_transition()?;
+        }
         let mut core = self.core.borrow_mut();
         let Some(index) = core.find_screen_index(destination) else {
             return Ok(false);
@@ -312,6 +498,9 @@ impl<D: Clone + PartialEq + 'static> NavigationScreenHost<D> {
                 ));
             }
         }
+        drop(core);
+        self.cancel_transition()?;
+        let mut core = self.core.borrow_mut();
         let was_active = core.active_index == Some(index);
         core.screens[index] = NavigationScreenBinding {
             destination: destination.clone(),
@@ -338,60 +527,147 @@ impl<D: Clone + PartialEq + 'static> NavigationScreenHost<D> {
     }
 
     pub fn sync(&self) -> Result<bool> {
-        let mut core = self.core.borrow_mut();
-        if !core.pending_change {
+        self.sync_pending(None)
+    }
+
+    pub fn sync_at(&self, now_seconds: f64) -> Result<bool> {
+        Self::validate_time(now_seconds)?;
+        self.sync_pending(Some(now_seconds))
+    }
+
+    fn validate_time(now_seconds: f64) -> Result<()> {
+        if !now_seconds.is_finite() {
+            return Err(Error::contract("navigation transition time must be finite"));
+        }
+        Ok(())
+    }
+
+    fn emit_transition(
+        &self,
+        transition: &ActiveNavigationTransition<D>,
+        phase: NavigationTransitionPhase,
+        progress: f32,
+    ) {
+        let (hook, context) = {
+            let core = self.core.borrow();
+            let Some(spec) = core.transition_spec.as_ref() else {
+                return;
+            };
+            let context = NavigationTransitionContext {
+                phase,
+                kind: transition.kind,
+                previous: transition.previous.clone(),
+                current: transition.current.clone(),
+                outgoing_root: core.screens[transition.outgoing_index].screen_root,
+                incoming_root: core.screens[transition.incoming_index].screen_root,
+                progress,
+            };
+            (Rc::clone(&spec.hook), context)
+        };
+        (hook.borrow_mut())(&context);
+    }
+
+    fn sync_pending(&self, transition_time: Option<f64>) -> Result<bool> {
+        if !self.core.borrow().pending_change {
             return Ok(false);
         }
-        let Some(target) = core.pending_entry.clone() else {
-            if let Some(previous) = core.active_index {
-                core.ui.set_focus(None, false)?;
-                core.set_screen_active(previous, false)?;
-                core.active_index = None;
-                core.active_entry_id = None;
+        self.cancel_transition()?;
+
+        let started_transition = {
+            let mut core = self.core.borrow_mut();
+            let Some(target) = core.pending_entry.clone() else {
+                if let Some(previous) = core.active_index {
+                    core.ui.set_focus(None, false)?;
+                    core.set_screen_active(previous, false)?;
+                    core.active_index = None;
+                    core.active_entry_id = None;
+                    core.finish_pending();
+                    return Ok(true);
+                }
                 core.finish_pending();
-                return Ok(true);
+                return Ok(false);
+            };
+            let change_kind = core.pending_kind;
+            let Some(target_index) = core.find_screen_index(&target.destination) else {
+                return Ok(false);
+            };
+            if core.active_entry_id == Some(target.id) {
+                core.finish_pending();
+                return Ok(false);
             }
+
+            let previous_index = core.active_index;
+            let previous_entry = core.active_entry_id;
+            if let (Some(index), Some(entry), Some(focused)) =
+                (previous_index, previous_entry, core.ui.focused_node())
+            {
+                if core.descendant_or_self(focused, core.screens[index].screen_root)? {
+                    core.saved_focus.insert(entry, focused);
+                }
+            }
+            if core.pending_kind == Some(NavigationChangeKind::Replace) {
+                if let Some(entry) = previous_entry {
+                    core.saved_focus.remove(&entry);
+                }
+            } else if let Some(snapshot) = core.pending_snapshot.clone() {
+                core.retain_entries(&snapshot);
+            }
+
+            if previous_index != Some(target_index) {
+                core.set_screen_active(target_index, true)?;
+            }
+            core.active_index = Some(target_index);
+            core.active_entry_id = Some(target.id);
             core.finish_pending();
-            return Ok(false);
-        };
-        let Some(target_index) = core.find_screen_index(&target.destination) else {
-            return Ok(false);
-        };
-        if core.active_entry_id == Some(target.id) {
-            core.finish_pending();
-            return Ok(false);
-        }
 
-        let previous_index = core.active_index;
-        let previous_entry = core.active_entry_id;
-        if let (Some(index), Some(entry), Some(focused)) =
-            (previous_index, previous_entry, core.ui.focused_node())
-        {
-            if core.descendant_or_self(focused, core.screens[index].screen_root)? {
-                core.saved_focus.insert(entry, focused);
+            if previous_entry.is_some() {
+                let screen = core.screens[target_index].clone();
+                core.restore_focus(target.id, screen.screen_root, screen.focus_fallback)?;
             }
-        }
-        if core.pending_kind == Some(NavigationChangeKind::Replace) {
-            if let Some(entry) = previous_entry {
-                core.saved_focus.remove(&entry);
+            let mut started_transition = None;
+            if let Some(previous) = previous_index.filter(|index| *index != target_index) {
+                let transition_timing = core
+                    .transition_spec
+                    .as_ref()
+                    .map(|spec| (spec.duration_seconds, spec.frame_interval_seconds));
+                if let (
+                    Some(now_seconds),
+                    Some((duration_seconds, frame_interval_seconds)),
+                    Some(kind),
+                    Some(previous_entry),
+                ) = (
+                    transition_time,
+                    transition_timing,
+                    change_kind,
+                    previous_entry,
+                ) {
+                    core.ui
+                        .set_inert(core.screens[previous].screen_root, true)?;
+                    let transition = ActiveNavigationTransition {
+                        started_at: now_seconds,
+                        last_progress: 0.0,
+                        outgoing_index: previous,
+                        incoming_index: target_index,
+                        previous: NavigationEntry {
+                            id: previous_entry,
+                            destination: core.screens[previous].destination.clone(),
+                        },
+                        current: target,
+                        kind,
+                    };
+                    core.transition_deadline = Some(
+                        (now_seconds + frame_interval_seconds).min(now_seconds + duration_seconds),
+                    );
+                    core.active_transition = Some(transition.clone());
+                    started_transition = Some(transition);
+                } else {
+                    core.set_screen_active(previous, false)?;
+                }
             }
-        } else if let Some(snapshot) = core.pending_snapshot.clone() {
-            core.retain_entries(&snapshot);
-        }
-
-        if previous_index != Some(target_index) {
-            core.set_screen_active(target_index, true)?;
-        }
-        core.active_index = Some(target_index);
-        core.active_entry_id = Some(target.id);
-        core.finish_pending();
-
-        if previous_entry.is_some() {
-            let screen = core.screens[target_index].clone();
-            core.restore_focus(target.id, screen.screen_root, screen.focus_fallback)?;
-        }
-        if let Some(previous) = previous_index.filter(|index| *index != target_index) {
-            core.set_screen_active(previous, false)?;
+            started_transition
+        };
+        if let Some(transition) = started_transition {
+            self.emit_transition(&transition, NavigationTransitionPhase::Started, 0.0);
         }
         Ok(true)
     }

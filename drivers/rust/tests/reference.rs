@@ -3,8 +3,9 @@ use cbss_craft::{
     CommandOfferResult, CommandPolicy, CommandStatus, Contract, CueCancel, CueCompletion,
     CueJoinPolicy, CueRuntime, CueSessionStatus, CueStartPolicy, ErrorKind, EventKind,
     EventOutcome, InputEvent, Link, NavigationChange, NavigationChangeKind, NavigationDriver,
-    NavigationEntry, NavigationScreenHost, NavigationSnapshot, Navigator, NodeState, Store, Style,
-    Ui, ValidationBinding, ValidationFile, ValidationPattern, ValidationReport, ValidationRules,
+    NavigationEntry, NavigationScreenHost, NavigationSnapshot, NavigationTransitionContext,
+    NavigationTransitionPhase, NavigationTransitionSpec, Navigator, NodeState, Store, Style, Ui,
+    ValidationBinding, ValidationFile, ValidationPattern, ValidationReport, ValidationRules,
     ValidationTrigger, ValidationValue, ABI_VERSION, CAPABILITIES, CRAFT_DIAGNOSTIC_PACK,
     CRAFT_DIAGNOSTIC_STYLE_REPLACEMENT, CRAFT_PACK_MISSING_CAPABILITY,
     CRAFT_STYLE_PARSE_UNKNOWN_PROPERTY, CRAFT_STYLE_REPLACEMENT_UNDECLARED_STYLE_SLOT,
@@ -462,6 +463,163 @@ fn retained_navigation_and_links_match_the_nim_contract() {
             .destination,
         "home"
     );
+}
+
+#[test]
+fn navigation_screen_transitions_are_retained_deadline_driven_and_reentrant() {
+    assert!(NavigationTransitionSpec::<String>::new(0.0, |_| {}).is_err());
+    assert!(NavigationTransitionSpec::<String>::with_frame_interval(0.2, 0.0, |_| {}).is_err());
+
+    let mut ui = Ui::new().expect("transition Ui");
+    let app = ui.box_node("transition-app", None).expect("transition app");
+    let mut home = None;
+    let mut settings = None;
+    let mut details = None;
+    ui.within(app, |scope| {
+        home = Some(scope.box_node("transition-home", None)?);
+        settings = Some(scope.box_node("transition-settings", None)?);
+        details = Some(scope.box_node("transition-details", None)?);
+        Ok(())
+    })
+    .expect("transition screens");
+    let home = home.expect("transition home");
+    let settings = settings.expect("transition settings");
+    let details = details.expect("transition details");
+
+    let navigator = Navigator::stack("home".to_owned());
+    let contexts = Rc::new(RefCell::new(
+        Vec::<NavigationTransitionContext<String>>::new(),
+    ));
+    let observed_contexts = Rc::clone(&contexts);
+    let callback_navigator = navigator.clone();
+    let queued_reentrant_navigation = Rc::new(Cell::new(false));
+    let callback_reentry = Rc::clone(&queued_reentrant_navigation);
+    let transition = NavigationTransitionSpec::with_frame_interval(
+        0.2,
+        0.05,
+        move |context: &NavigationTransitionContext<String>| {
+            observed_contexts.borrow_mut().push(context.clone());
+            if context.phase == NavigationTransitionPhase::Started
+                && context.current.destination == "settings"
+                && !callback_reentry.replace(true)
+            {
+                assert!(callback_navigator.push("details".to_owned()));
+            }
+        },
+    )
+    .expect("navigation transition");
+    let host = NavigationScreenHost::with_transition(&ui, navigator.clone(), transition)
+        .expect("transition host");
+    host.register_screen("home".to_owned(), home, None)
+        .expect("register transition home");
+    host.register_screen("settings".to_owned(), settings, None)
+        .expect("register transition settings");
+    host.register_screen("details".to_owned(), details, None)
+        .expect("register transition details");
+
+    assert!(host.sync_at(1.0).expect("initial transition sync"));
+    assert!(!host.transition_active());
+    assert!(contexts.borrow().is_empty());
+
+    assert!(navigator.push("settings".to_owned()));
+    assert!(host.sync_at(2.0).expect("start settings transition"));
+    assert!(host.transition_active());
+    assert_eq!(navigator.current_destination().as_deref(), Some("details"));
+    {
+        let contexts = contexts.borrow();
+        let started = contexts.last().expect("started context");
+        assert_eq!(started.phase, NavigationTransitionPhase::Started);
+        assert_eq!(started.kind, NavigationChangeKind::Push);
+        assert_eq!(started.previous.destination, "home");
+        assert_eq!(started.current.destination, "settings");
+        assert_eq!(started.outgoing_root, home);
+        assert_eq!(started.incoming_root, settings);
+        assert_eq!(started.progress, 0.0);
+    }
+    assert!(ui.inert(home).expect("outgoing screen inert"));
+    assert!(!ui.inert(settings).expect("incoming screen active"));
+    assert!(
+        (host
+            .next_transition_deadline()
+            .expect("transition deadline")
+            - 2.05)
+            .abs()
+            < 1e-9
+    );
+
+    assert!(host.sync_at(2.01).expect("reentrant details sync"));
+    {
+        let contexts = contexts.borrow();
+        assert_eq!(contexts[1].phase, NavigationTransitionPhase::Cancelled);
+        assert_eq!(contexts[2].phase, NavigationTransitionPhase::Started);
+        assert_eq!(contexts[2].current.destination, "details");
+    }
+    assert!(host.advance_transition(2.11).expect("advance details"));
+    assert!(host.transition_active());
+    assert_eq!(
+        contexts.borrow().last().expect("advanced context").phase,
+        NavigationTransitionPhase::Advanced
+    );
+    assert!(host.advance_transition(2.21).expect("complete details"));
+    assert!(!host.transition_active());
+    assert!(host.next_transition_deadline().is_none());
+    assert_eq!(
+        contexts.borrow().last().expect("completed context").phase,
+        NavigationTransitionPhase::Completed
+    );
+
+    let contexts_before_immediate_sync = contexts.borrow().len();
+    assert!(navigator.back());
+    assert!(host.sync().expect("legacy immediate back sync"));
+    assert!(!host.transition_active());
+    assert_eq!(contexts.borrow().len(), contexts_before_immediate_sync);
+    assert!(navigator.forward());
+    assert!(host.sync().expect("legacy immediate forward sync"));
+    assert_eq!(contexts.borrow().len(), contexts_before_immediate_sync);
+
+    assert!(navigator.back());
+    assert!(host.sync_at(3.0).expect("start cancellation transition"));
+    assert!(host.set_transition(None).is_err());
+    assert!(host.cancel_transition().expect("manual cancellation"));
+    assert!(!host.cancel_transition().expect("idempotent cancellation"));
+    host.set_transition(None).expect("disable transition");
+    assert!(navigator.forward());
+    assert!(host.sync_at(4.0).expect("immediate sync without spec"));
+    assert!(!host.transition_active());
+
+    let disposal_phases = Rc::new(RefCell::new(Vec::new()));
+    let observed_disposal_phases = Rc::clone(&disposal_phases);
+    let disposal_ui = ui.handle();
+    host.set_transition(Some(
+        NavigationTransitionSpec::new(0.5, move |context: &NavigationTransitionContext<String>| {
+            assert_eq!(context.outgoing_root, details);
+            assert_eq!(context.incoming_root, settings);
+            disposal_ui
+                .inert(context.outgoing_root)
+                .expect("outgoing root remains valid during callback");
+            disposal_ui
+                .inert(context.incoming_root)
+                .expect("incoming root remains valid during callback");
+            observed_disposal_phases.borrow_mut().push(context.phase);
+        })
+        .expect("disposal transition"),
+    ))
+    .expect("enable disposal transition");
+    assert!(navigator.back());
+    assert!(host.sync_at(5.0).expect("start disposal transition"));
+    assert!(host.transition_active());
+    assert!(host
+        .unregister_screen(&"details".to_owned(), &mut ui)
+        .expect("unregister outgoing screen"));
+    assert!(!host.transition_active());
+    assert_eq!(
+        &*disposal_phases.borrow(),
+        &[
+            NavigationTransitionPhase::Started,
+            NavigationTransitionPhase::Cancelled
+        ]
+    );
+    assert!(host.sync_at(f64::NAN).is_err());
 }
 
 #[test]

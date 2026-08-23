@@ -42,7 +42,9 @@ pub use navigation::{
     DIRTY_LAYOUT, DIRTY_PAINT, DIRTY_STYLE, NAVIGATION_SCREEN_DIRTY_DOMAINS,
 };
 pub use navigation_ui::{
-    Link, NavigationScreenBinding, NavigationScreenHost, NAVIGATION_SCREEN_HOST_STYLE_PRIORITY,
+    navigation_transition, Link, NavigationScreenBinding, NavigationScreenHost,
+    NavigationTransitionContext, NavigationTransitionPhase, NavigationTransitionSpec,
+    DEFAULT_NAVIGATION_TRANSITION_FRAME_INTERVAL, NAVIGATION_SCREEN_HOST_STYLE_PRIORITY,
 };
 pub use store::{Selector, Store, StoreSubscription};
 pub use validation::{

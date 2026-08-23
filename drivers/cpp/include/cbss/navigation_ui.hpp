@@ -3,6 +3,8 @@
 
 #include "craft.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -17,6 +19,71 @@
 namespace cbss {
 
 constexpr std::int32_t navigationScreenHostStylePriority = 1000000;
+constexpr double defaultNavigationTransitionFrameInterval = 1.0 / 60.0;
+
+enum class NavigationTransitionPhase {
+  started,
+  advanced,
+  completed,
+  cancelled
+};
+
+template <typename Destination>
+struct NavigationTransitionContext {
+  NavigationTransitionPhase phase;
+  NavigationChangeKind kind;
+  NavigationEntry<Destination> previous;
+  NavigationEntry<Destination> current;
+  Node outgoingRoot;
+  Node incomingRoot;
+  float progress;
+};
+
+template <typename Destination>
+class NavigationTransitionSpec {
+ public:
+  using Context = NavigationTransitionContext<Destination>;
+  using Hook = std::function<void(const Context&)>;
+
+  NavigationTransitionSpec(double duration_seconds, Hook hook,
+                           double frame_interval_seconds =
+                               defaultNavigationTransitionFrameInterval)
+      : durationSeconds(duration_seconds),
+        frameIntervalSeconds(frame_interval_seconds),
+        onTransition(std::move(hook)) {
+    validate();
+  }
+
+  void validate() const {
+    if (!std::isfinite(durationSeconds) || durationSeconds <= 0.0) {
+      throw std::invalid_argument(
+          "navigation transition duration must be finite and positive");
+    }
+    if (!std::isfinite(frameIntervalSeconds) ||
+        frameIntervalSeconds <= 0.0) {
+      throw std::invalid_argument(
+          "navigation transition frame interval must be finite and positive");
+    }
+    if (!onTransition) {
+      throw std::invalid_argument(
+          "navigation transition hook must not be empty");
+    }
+  }
+
+  double durationSeconds;
+  double frameIntervalSeconds;
+  Hook onTransition;
+};
+
+template <typename Destination>
+NavigationTransitionSpec<Destination> navigationTransition(
+    double duration_seconds,
+    typename NavigationTransitionSpec<Destination>::Hook hook,
+    double frame_interval_seconds =
+        defaultNavigationTransitionFrameInterval) {
+  return NavigationTransitionSpec<Destination>(
+      duration_seconds, std::move(hook), frame_interval_seconds);
+}
 
 template <typename Destination>
 struct NavigationScreenBinding {
@@ -28,6 +95,16 @@ struct NavigationScreenBinding {
 
 template <typename Destination>
 class NavigationScreenHost {
+  struct ActiveNavigationTransition {
+    double startedAt;
+    float lastProgress;
+    std::size_t outgoingIndex;
+    std::size_t incomingIndex;
+    NavigationEntry<Destination> previous;
+    NavigationEntry<Destination> current;
+    NavigationChangeKind kind;
+  };
+
  public:
   NavigationScreenHost(Ui& ui, Navigator<Destination> navigator)
       : core_(std::make_shared<Core>(ui.handle(), std::move(navigator))) {
@@ -45,6 +122,13 @@ class NavigationScreenHost {
         });
   }
 
+  NavigationScreenHost(Ui& ui, Navigator<Destination> navigator,
+                       NavigationTransitionSpec<Destination> transition)
+      : NavigationScreenHost(ui, std::move(navigator)) {
+    transition.validate();
+    core_->transitionSpec = std::move(transition);
+  }
+
   NavigationScreenHost(const NavigationScreenHost&) = delete;
   NavigationScreenHost& operator=(const NavigationScreenHost&) = delete;
   NavigationScreenHost(NavigationScreenHost&&) noexcept = default;
@@ -53,6 +137,75 @@ class NavigationScreenHost {
   bool connected() const noexcept { return subscription_.active(); }
   bool disconnect() noexcept { return subscription_.close(); }
   std::size_t screenCount() const noexcept { return core_->screens.size(); }
+
+  bool transitionActive() const noexcept {
+    return static_cast<bool>(core_->activeTransition);
+  }
+
+  NavigationOptional<double> nextTransitionDeadline() const {
+    return core_->transitionDeadline;
+  }
+
+  void setTransition(
+      NavigationOptional<NavigationTransitionSpec<Destination>> transition) {
+    if (core_->activeTransition) {
+      throw std::logic_error(
+          "cannot replace an active navigation transition");
+    }
+    if (transition) {
+      transition.value().validate();
+    }
+    core_->transitionSpec = std::move(transition);
+  }
+
+  bool cancelTransition() {
+    if (!core_->activeTransition) {
+      return false;
+    }
+    const ActiveNavigationTransition transition =
+        core_->activeTransition.value();
+    core_->activeTransition = {};
+    core_->transitionDeadline = {};
+    if (transition.outgoingIndex != transition.incomingIndex) {
+      core_->setScreenActive(transition.outgoingIndex, false);
+    }
+    core_->emitTransition(transition, NavigationTransitionPhase::cancelled,
+                          transition.lastProgress);
+    return true;
+  }
+
+  bool advanceTransition(double now_seconds) {
+    validateTime(now_seconds);
+    if (!core_->activeTransition || !core_->transitionSpec) {
+      return false;
+    }
+    ActiveNavigationTransition transition = core_->activeTransition.value();
+    const NavigationTransitionSpec<Destination>& spec =
+        core_->transitionSpec.value();
+    const double elapsed = std::max(0.0, now_seconds - transition.startedAt);
+    const float progress = static_cast<float>(
+        std::min(1.0, elapsed / spec.durationSeconds));
+    transition.lastProgress = progress;
+    core_->activeTransition = transition;
+
+    if (progress >= 1.0f) {
+      core_->activeTransition = {};
+      core_->transitionDeadline = {};
+      if (transition.outgoingIndex != transition.incomingIndex) {
+        core_->setScreenActive(transition.outgoingIndex, false);
+      }
+      core_->emitTransition(transition, NavigationTransitionPhase::completed,
+                            1.0f);
+      return true;
+    }
+
+    core_->transitionDeadline = std::min(
+        now_seconds + spec.frameIntervalSeconds,
+        transition.startedAt + spec.durationSeconds);
+    core_->emitTransition(transition, NavigationTransitionPhase::advanced,
+                          progress);
+    return true;
+  }
 
   NavigationOptional<NavigationScreenBinding<Destination>> activeScreen()
       const {
@@ -104,6 +257,7 @@ class NavigationScreenHost {
     if (index < 0) {
       return false;
     }
+    cancelTransition();
     const std::size_t position = static_cast<std::size_t>(index);
     const Node screen_root = core_->screens[position].screenRoot;
     const bool was_active = index == core_->activeIndex;
@@ -162,6 +316,8 @@ class NavigationScreenHost {
       }
     }
 
+    cancelTransition();
+
     const bool was_active = index == core_->activeIndex;
     core_->screens[position] =
         {destination, screen_root, focus_fallback, !was_active};
@@ -181,10 +337,26 @@ class NavigationScreenHost {
     core_->pendingChange = true;
   }
 
-  bool sync() {
+  bool sync() { return syncPending(false, 0.0); }
+
+  bool sync(double now_seconds) {
+    validateTime(now_seconds);
+    return syncPending(true, now_seconds);
+  }
+
+ private:
+  static void validateTime(double now_seconds) {
+    if (!std::isfinite(now_seconds)) {
+      throw std::invalid_argument(
+          "navigation transition time must be finite");
+    }
+  }
+
+  bool syncPending(bool transition_aware, double now_seconds) {
     if (!core_->pendingChange) {
       return false;
     }
+    cancelTransition();
     if (!core_->pendingEntry) {
       if (core_->activeIndex >= 0) {
         const std::size_t previous =
@@ -201,6 +373,8 @@ class NavigationScreenHost {
     }
 
     const NavigationEntry<Destination> target = core_->pendingEntry.value();
+    const NavigationOptional<NavigationChangeKind> change_kind =
+        core_->pendingKind;
     const std::ptrdiff_t target_index =
         core_->findScreenIndex(target.destination);
     if (target_index < 0) {
@@ -247,12 +421,24 @@ class NavigationScreenHost {
                           core_->screens[target_position].focusFallback);
     }
     if (previous_index >= 0 && previous_index != target_index) {
-      core_->setScreenActive(static_cast<std::size_t>(previous_index), false);
+      if (transition_aware && core_->transitionSpec && change_kind &&
+          previous_entry) {
+        core_->startTransition(
+            now_seconds, static_cast<std::size_t>(previous_index),
+            target_position,
+            NavigationEntry<Destination>{
+                previous_entry.value(),
+                core_->screens[static_cast<std::size_t>(previous_index)]
+                    .destination},
+            target, change_kind.value());
+      } else {
+        core_->setScreenActive(static_cast<std::size_t>(previous_index),
+                               false);
+      }
     }
     return true;
   }
 
- private:
   struct Core {
     Core(UiHandle ui_handle, Navigator<Destination> source)
         : ui(std::move(ui_handle)),
@@ -355,6 +541,39 @@ class NavigationScreenHost {
       pendingKind = NavigationOptional<NavigationChangeKind>();
     }
 
+    void emitTransition(const ActiveNavigationTransition& transition,
+                        NavigationTransitionPhase phase, float progress) {
+      if (!transitionSpec) {
+        return;
+      }
+      transitionSpec.value().onTransition(
+          NavigationTransitionContext<Destination>{
+              phase,
+              transition.kind,
+              transition.previous,
+              transition.current,
+              screens[transition.outgoingIndex].screenRoot,
+              screens[transition.incomingIndex].screenRoot,
+              progress});
+    }
+
+    void startTransition(double now_seconds, std::size_t outgoing_index,
+                         std::size_t incoming_index,
+                         NavigationEntry<Destination> previous,
+                         NavigationEntry<Destination> current,
+                         NavigationChangeKind kind) {
+      const NavigationTransitionSpec<Destination>& spec =
+          transitionSpec.value();
+      const ActiveNavigationTransition transition{
+          now_seconds, 0.0f, outgoing_index, incoming_index,
+          std::move(previous), std::move(current), kind};
+      ui.setInert(screens[outgoing_index].screenRoot, true);
+      activeTransition = transition;
+      transitionDeadline = std::min(now_seconds + spec.frameIntervalSeconds,
+                                    now_seconds + spec.durationSeconds);
+      emitTransition(transition, NavigationTransitionPhase::started, 0.0f);
+    }
+
     UiHandle ui;
     Navigator<Destination> navigator;
     std::vector<NavigationScreenBinding<Destination>> screens;
@@ -365,6 +584,9 @@ class NavigationScreenHost {
     NavigationOptional<NavigationChangeKind> pendingKind;
     bool pendingChange;
     std::unordered_map<std::uint64_t, Node> savedFocus;
+    NavigationOptional<NavigationTransitionSpec<Destination>> transitionSpec;
+    NavigationOptional<ActiveNavigationTransition> activeTransition;
+    NavigationOptional<double> transitionDeadline;
   };
 
   std::shared_ptr<Core> core_;

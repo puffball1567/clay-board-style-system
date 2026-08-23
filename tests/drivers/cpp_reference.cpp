@@ -1172,6 +1172,146 @@ int main() {
   assert(screen_host.sync());
   assert(screen_host.activeScreen().value().destination == "home");
 
+  bool invalid_transition_rejected = false;
+  try {
+    cbss::navigationTransition<std::string>(
+        0.0, [](const cbss::NavigationTransitionContext<std::string>&) {});
+  } catch (const std::invalid_argument&) {
+    invalid_transition_rejected = true;
+  }
+  assert(invalid_transition_rejected);
+  invalid_transition_rejected = false;
+  try {
+    cbss::navigationTransition<std::string>(
+        0.2, {}, cbss::defaultNavigationTransitionFrameInterval);
+  } catch (const std::invalid_argument&) {
+    invalid_transition_rejected = true;
+  }
+  assert(invalid_transition_rejected);
+
+  cbss::Ui transition_ui;
+  const cbss::Node transition_app = transition_ui.box("transition-app");
+  cbss::Node transition_home;
+  cbss::Node transition_settings;
+  cbss::Node transition_details;
+  transition_ui.within(transition_app, [&] {
+    transition_home = transition_ui.box("transition-home");
+    transition_settings = transition_ui.box("transition-settings");
+    transition_details = transition_ui.box("transition-details");
+  });
+  std::vector<cbss::NavigationTransitionContext<std::string>>
+      transition_contexts;
+  auto transition_navigator =
+      cbss::createStackNavigator<std::string>("home");
+  cbss::NavigationScreenHost<std::string> transition_host(
+      transition_ui, transition_navigator,
+      cbss::navigationTransition<std::string>(
+          0.2,
+          [&](const cbss::NavigationTransitionContext<std::string>& context) {
+            transition_contexts.push_back(context);
+          },
+          0.05));
+  transition_host.registerScreen("home", transition_home);
+  transition_host.registerScreen("settings", transition_settings);
+  transition_host.registerScreen("details", transition_details);
+  assert(transition_host.sync(1.0));
+  assert(!transition_host.transitionActive());
+  assert(transition_contexts.empty());
+
+  assert(transition_navigator.push("settings"));
+  assert(transition_host.sync(2.0));
+  assert(transition_host.transitionActive());
+  assert(transition_contexts.size() == 1u);
+  assert(transition_contexts.back().phase ==
+         cbss::NavigationTransitionPhase::started);
+  assert(transition_contexts.back().kind ==
+         cbss::NavigationChangeKind::push);
+  assert(transition_contexts.back().previous.destination == "home");
+  assert(transition_contexts.back().current.destination == "settings");
+  assert(transition_contexts.back().outgoingRoot == transition_home);
+  assert(transition_contexts.back().incomingRoot == transition_settings);
+  assert(transition_contexts.back().progress == 0.0f);
+  assert(transition_ui.inert(transition_home));
+  assert(!transition_ui.inert(transition_settings));
+  assert(transition_host.nextTransitionDeadline());
+  assert(std::abs(transition_host.nextTransitionDeadline().value() - 2.05) <
+         0.000001);
+
+  assert(transition_host.advanceTransition(2.1));
+  assert(transition_host.transitionActive());
+  assert(transition_contexts.back().phase ==
+         cbss::NavigationTransitionPhase::advanced);
+  assert(std::abs(transition_contexts.back().progress - 0.5f) < 0.0001f);
+  assert(transition_host.advanceTransition(2.2));
+  assert(!transition_host.transitionActive());
+  assert(!transition_host.nextTransitionDeadline());
+  assert(transition_contexts.back().phase ==
+         cbss::NavigationTransitionPhase::completed);
+  assert(transition_contexts.back().progress == 1.0f);
+
+  const std::size_t contexts_before_immediate_sync =
+      transition_contexts.size();
+  assert(transition_navigator.back());
+  assert(transition_host.sync());
+  assert(!transition_host.transitionActive());
+  assert(transition_contexts.size() == contexts_before_immediate_sync);
+  assert(transition_navigator.forward());
+  assert(transition_host.sync());
+  assert(transition_contexts.size() == contexts_before_immediate_sync);
+
+  assert(transition_navigator.push("details"));
+  assert(transition_host.sync(3.0));
+  assert(transition_host.transitionActive());
+  assert(transition_navigator.back());
+  assert(transition_host.sync(3.05));
+  assert(transition_contexts[transition_contexts.size() - 2u].phase ==
+         cbss::NavigationTransitionPhase::cancelled);
+  assert(transition_contexts.back().phase ==
+         cbss::NavigationTransitionPhase::started);
+  bool active_transition_replacement_rejected = false;
+  try {
+    transition_host.setTransition(
+        cbss::NavigationOptional<
+            cbss::NavigationTransitionSpec<std::string>>());
+  } catch (const std::logic_error&) {
+    active_transition_replacement_rejected = true;
+  }
+  assert(active_transition_replacement_rejected);
+  assert(transition_host.cancelTransition());
+  assert(!transition_host.cancelTransition());
+  transition_host.setTransition(
+      cbss::NavigationOptional<
+          cbss::NavigationTransitionSpec<std::string>>());
+  assert(transition_navigator.forward());
+  assert(transition_host.sync(4.0));
+  assert(!transition_host.transitionActive());
+
+  std::vector<cbss::NavigationTransitionPhase> disposal_phases;
+  transition_host.setTransition(
+      cbss::navigationTransition<std::string>(
+          0.5,
+          [&](const cbss::NavigationTransitionContext<std::string>& context) {
+            disposal_phases.push_back(context.phase);
+            static_cast<void>(transition_ui.inert(context.outgoingRoot));
+            static_cast<void>(transition_ui.inert(context.incomingRoot));
+          }));
+  assert(transition_navigator.back());
+  assert(transition_host.sync(5.0));
+  assert(transition_host.transitionActive());
+  assert(transition_host.unregisterScreen("details", transition_ui));
+  assert(!transition_host.transitionActive());
+  assert(disposal_phases.size() == 2u);
+  assert(disposal_phases[0] == cbss::NavigationTransitionPhase::started);
+  assert(disposal_phases[1] == cbss::NavigationTransitionPhase::cancelled);
+
+  bool invalid_time_rejected = false;
+  try {
+    transition_host.sync(NAN);
+  } catch (const std::invalid_argument&) {
+    invalid_time_rejected = true;
+  }
+  assert(invalid_time_rejected);
+
   cbss::Contract::require({{CBSS_CAPABILITY_VALIDATION_PATTERN, 1u}});
   const cbss::ValidationPattern identifier_pattern("^[A-Za-z0-9_]+$");
   assert(identifier_pattern.test("account_42"));

@@ -136,6 +136,32 @@ paint, hit testing, and accessibility without rebuilding their Nodes. A public
 Link click handler runs before navigation and may set prevent-default to cancel
 that intrinsic action.
 
+Optional screen transitions keep the outgoing and incoming retained roots
+mounted together while making only the incoming root interactive. Calling
+`sync()` keeps the legacy immediate behavior; passing monotonic time to
+`sync(now)` starts the configured transition:
+
+```cpp
+auto transition = cbss::navigationTransition<Screen>(
+    0.2, [](const cbss::NavigationTransitionContext<Screen>& frame) {
+      // Apply retained Style changes from frame.phase and frame.progress.
+    });
+cbss::NavigationScreenHost<Screen> host(ui, navigator, transition);
+
+host.sync(monotonicSeconds());
+while (host.transitionActive()) {
+  // Wait until input arrives or nextTransitionDeadline() becomes due.
+  host.advanceTransition(monotonicSeconds());
+}
+```
+
+`Started`, `Advanced`, `Completed`, and `Cancelled` callbacks carry typed old
+and new entries plus both roots. The host returns a next-frame deadline instead
+of creating a continuous frame loop, so an idle application can remain blocked
+in its platform event wait. A newer navigation cancels the current transition
+before starting the next one, and screen removal cancels before invalidating
+either callback root.
+
 Typed validation chains are ordinary retained C++ values. Built-in rules are
 declared once, stop at the first failure, and keep reporting policy separate
 from current validity:

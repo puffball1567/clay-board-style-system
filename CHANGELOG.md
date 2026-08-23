@@ -25,6 +25,11 @@ release. Before 1.0, minor releases may contain public API changes.
   serial progression, delayed parallel branches, all/any/race joins,
   restart/ignore/queue/parallel start policies, independent monotonic clocks,
   cancellation and late-result containment, and component-owned teardown.
+- Added typed screen-transition hooks to the C++14 and Rust Craft Drivers.
+  Retained outgoing and incoming roots, deterministic phase/progress context,
+  monotonic next-frame deadlines, immediate legacy sync, navigation reentry,
+  cancellation, and teardown now match the canonical Nim screen host without
+  requiring a continuous frame loop.
 
 - Added the bounded Craft Pack Version 1 manifest and JSON Schema for declaring
   distributable Craft Components, public Style Slots, Craft Styles, assets,
