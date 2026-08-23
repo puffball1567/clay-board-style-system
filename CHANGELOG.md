@@ -9,6 +9,13 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added RAII/owned Blob and immutable FormData APIs to the C++14 and Rust Craft
+  Drivers. Ordered repeated text and Blob values, bounded reads, payload-aware
+  handlers/subscriptions, callback-lifetime-safe snapshots, and
+  validation-first submit now share the canonical C ABI semantics. FormData
+  remains transport-neutral and does not pull multipart or network behavior
+  into CBSS.
+
 - Added typed validation cores to the C++14 and Rust Craft Drivers with the
   same 40 synchronous operations, first-failure ordering, optional/required
   precedence, current peer references, custom rules, and retained reporting

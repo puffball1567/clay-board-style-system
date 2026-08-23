@@ -210,8 +210,27 @@ with an event-to-value extractor and an optional value-event kind.
 Registering controls also wires `sameAs`/`differentFrom` peer edges so a source
 change rechecks only its declared dependants. The weak edges expire with either
 attachment and do not extend a component lifetime.
-The separate immutable FormData/submit Driver surface is not approximated by
-this validation-only adapter.
+
+The Driver also owns Blob and immutable FormData handles through RAII. Repeated
+names and ordered text/Blob values are preserved, and submit handlers may keep
+the snapshot after the callback returns:
+
+```cpp
+cbss::FormDataBuilder data;
+data.addText("account", account.validationValue().get())
+    .addBlob("avatar", avatarBlob, "avatar.png");
+const cbss::FormData snapshot = data.finish();
+
+validationForm.onSubmit([](const cbss::EventView& event) {
+  queueRequest(event.formData());
+  return cbss::EventOutcome::handled();
+});
+validationForm.submit(snapshot); // validates before emitting submit
+```
+
+`submit(snapshot)` does not emit when validation fails or the form is disabled.
+FormData is transport-neutral; multipart encoding and network delivery belong
+to the application or a transport library such as Joubako.
 
 Typed Commands connect UI actions to asynchronous work without allowing a
 worker to call UI code directly:

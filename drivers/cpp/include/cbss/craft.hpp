@@ -95,6 +95,318 @@ class Contract {
   }
 };
 
+namespace data_detail {
+
+template <typename Reader>
+std::string readString(Reader reader, std::size_t maximum,
+                       const std::string& operation) {
+  const std::uint32_t length = reader(nullptr, 0u);
+  if (static_cast<std::size_t>(length) > maximum) {
+    throw Error(CBSS_OUT_OF_RANGE, operation + ": value is too large");
+  }
+  if (length == 0u) return std::string();
+  std::vector<char> buffer(static_cast<std::size_t>(length) + 1u, '\0');
+  const std::uint32_t written =
+      reader(buffer.data(), static_cast<std::uint32_t>(buffer.size()));
+  if (written != length) {
+    throw Error(CBSS_INTERNAL_ERROR,
+                operation + ": runtime returned an inconsistent length");
+  }
+  return std::string(buffer.data(), length);
+}
+
+inline void check(CbssStatus status, const std::string& operation) {
+  if (status != CBSS_OK) throw Error(status, operation);
+}
+
+inline void requireCString(const std::string& value,
+                           const std::string& operation) {
+  if (value.find('\0') != std::string::npos) {
+    throw Error(CBSS_INVALID_ARGUMENT,
+                operation + ": embedded NUL is not allowed");
+  }
+}
+
+}  // namespace data_detail
+
+class Blob {
+ public:
+  Blob(const std::vector<std::uint8_t>& bytes,
+       const std::string& mime_type = std::string()) {
+    Contract::require({{CBSS_CAPABILITY_BLOB, 1u}});
+    data_detail::requireCString(mime_type, "create Blob MIME type");
+    data_detail::check(
+        cbss_blob_create(bytes.empty() ? nullptr : bytes.data(), bytes.size(),
+                         mime_type.c_str(), &handle_),
+        "create Blob");
+    if (handle_ == nullptr) {
+      throw Error(CBSS_INVALID_HANDLE,
+                  "create Blob: runtime returned no handle");
+    }
+  }
+
+  Blob(const Blob& other) : handle_(other.handle_) {
+    data_detail::check(cbss_blob_retain(handle_), "retain Blob");
+  }
+
+  Blob& operator=(const Blob& other) {
+    if (this == &other) return *this;
+    data_detail::check(cbss_blob_retain(other.handle_), "retain Blob");
+    cbss_blob_release(handle_);
+    handle_ = other.handle_;
+    return *this;
+  }
+
+  Blob(Blob&& other) noexcept : handle_(other.handle_) {
+    other.handle_ = nullptr;
+  }
+
+  Blob& operator=(Blob&& other) noexcept {
+    if (this == &other) return *this;
+    if (handle_ != nullptr) cbss_blob_release(handle_);
+    handle_ = other.handle_;
+    other.handle_ = nullptr;
+    return *this;
+  }
+
+  ~Blob() {
+    if (handle_ != nullptr) cbss_blob_release(handle_);
+  }
+
+  std::uint64_t size() const noexcept { return cbss_blob_size(handle_); }
+
+  std::string mimeType() const {
+    return data_detail::readString(
+        [this](char* buffer, std::uint32_t capacity) {
+          return cbss_blob_mime_type(handle_, buffer, capacity);
+        },
+        CBSS_MAX_FORM_DATA_NAME_BYTES, "read Blob MIME type");
+  }
+
+  std::vector<std::uint8_t> read(std::uint64_t offset,
+                                 std::uint32_t capacity) const {
+    std::vector<std::uint8_t> bytes(capacity);
+    std::uint32_t read = 0u;
+    data_detail::check(
+        cbss_blob_read(handle_, offset,
+                       bytes.empty() ? nullptr : bytes.data(), capacity, &read),
+        "read Blob");
+    bytes.resize(read);
+    return bytes;
+  }
+
+ private:
+  explicit Blob(CbssBlob* owned) : handle_(owned) {
+    if (handle_ == nullptr) {
+      throw Error(CBSS_INVALID_HANDLE, "adopt Blob: handle is null");
+    }
+  }
+
+  CbssBlob* nativeHandle() const noexcept { return handle_; }
+
+  CbssBlob* handle_ = nullptr;
+  friend class FormData;
+  friend class FormDataBuilder;
+};
+
+enum class FormDataValueKind {
+  text = CBSS_FORM_DATA_TEXT,
+  blob = CBSS_FORM_DATA_BLOB,
+};
+
+struct FormDataEntry {
+  std::string name;
+  FormDataValueKind kind;
+  std::string text;
+  std::shared_ptr<Blob> blob;
+  std::string fileName;
+};
+
+class FormData {
+ public:
+  FormData(const FormData& other) : handle_(other.handle_) {
+    data_detail::check(cbss_form_data_retain(handle_), "retain FormData");
+  }
+
+  FormData& operator=(const FormData& other) {
+    if (this == &other) return *this;
+    data_detail::check(cbss_form_data_retain(other.handle_),
+                       "retain FormData");
+    cbss_form_data_release(handle_);
+    handle_ = other.handle_;
+    return *this;
+  }
+
+  FormData(FormData&& other) noexcept : handle_(other.handle_) {
+    other.handle_ = nullptr;
+  }
+
+  FormData& operator=(FormData&& other) noexcept {
+    if (this == &other) return *this;
+    if (handle_ != nullptr) cbss_form_data_release(handle_);
+    handle_ = other.handle_;
+    other.handle_ = nullptr;
+    return *this;
+  }
+
+  ~FormData() {
+    if (handle_ != nullptr) cbss_form_data_release(handle_);
+  }
+
+  std::size_t size() const noexcept { return cbss_form_data_length(handle_); }
+  bool empty() const noexcept { return size() == 0u; }
+
+  FormDataEntry entry(std::size_t index) const {
+    if (index > std::numeric_limits<std::uint32_t>::max()) {
+      throw Error(CBSS_OUT_OF_RANGE, "read FormData entry: index is too large");
+    }
+    const std::uint32_t native_index = static_cast<std::uint32_t>(index);
+    std::uint32_t kind = 0u;
+    data_detail::check(
+        cbss_form_data_entry_kind(handle_, native_index, &kind),
+        "read FormData entry kind");
+    FormDataEntry result;
+    result.name = data_detail::readString(
+        [this, native_index](char* buffer, std::uint32_t capacity) {
+          return cbss_form_data_entry_name(handle_, native_index, buffer,
+                                           capacity);
+        },
+        CBSS_MAX_FORM_DATA_NAME_BYTES, "read FormData entry name");
+    if (kind == CBSS_FORM_DATA_TEXT) {
+      result.kind = FormDataValueKind::text;
+      result.text = data_detail::readString(
+          [this, native_index](char* buffer, std::uint32_t capacity) {
+            return cbss_form_data_entry_text(handle_, native_index, buffer,
+                                             capacity);
+          },
+          CBSS_MAX_FORM_DATA_TEXT_BYTES, "read FormData text value");
+    } else if (kind == CBSS_FORM_DATA_BLOB) {
+      result.kind = FormDataValueKind::blob;
+      CbssBlob* blob = nullptr;
+      data_detail::check(
+          cbss_form_data_entry_blob(handle_, native_index, &blob),
+          "read FormData Blob value");
+      result.blob = std::make_shared<Blob>(Blob(blob));
+      result.fileName = data_detail::readString(
+          [this, native_index](char* buffer, std::uint32_t capacity) {
+            return cbss_form_data_entry_file_name(handle_, native_index,
+                                                  buffer, capacity);
+          },
+          CBSS_MAX_FORM_DATA_NAME_BYTES, "read FormData file name");
+    } else {
+      throw Error(CBSS_INTERNAL_ERROR,
+                  "read FormData entry: runtime returned an unknown kind");
+    }
+    return result;
+  }
+
+  std::vector<FormDataEntry> entries() const {
+    std::vector<FormDataEntry> result;
+    result.reserve(size());
+    for (std::size_t index = 0u; index < size(); ++index) {
+      result.push_back(entry(index));
+    }
+    return result;
+  }
+
+  std::vector<FormDataEntry> values(const std::string& name) const {
+    std::vector<FormDataEntry> result;
+    for (std::size_t index = 0u; index < size(); ++index) {
+      FormDataEntry current = entry(index);
+      if (current.name == name) result.push_back(std::move(current));
+    }
+    return result;
+  }
+
+ private:
+  explicit FormData(CbssFormData* owned) : handle_(owned) {
+    if (handle_ == nullptr) {
+      throw Error(CBSS_INVALID_HANDLE, "adopt FormData: handle is null");
+    }
+  }
+
+  CbssFormData* nativeHandle() const noexcept { return handle_; }
+
+  CbssFormData* handle_ = nullptr;
+  friend class EventView;
+  friend class FormDataBuilder;
+  friend class Ui;
+  friend class UiHandle;
+};
+
+class FormDataBuilder {
+ public:
+  FormDataBuilder() {
+    Contract::require({{CBSS_CAPABILITY_FORM_DATA, 1u}});
+    handle_ = cbss_form_data_builder_create();
+    if (handle_ == nullptr) {
+      throw Error(CBSS_INVALID_HANDLE,
+                  "create FormData builder: runtime returned no handle");
+    }
+  }
+
+  ~FormDataBuilder() {
+    if (handle_ != nullptr) cbss_form_data_builder_destroy(handle_);
+  }
+
+  FormDataBuilder(const FormDataBuilder&) = delete;
+  FormDataBuilder& operator=(const FormDataBuilder&) = delete;
+
+  FormDataBuilder(FormDataBuilder&& other) noexcept : handle_(other.handle_) {
+    other.handle_ = nullptr;
+  }
+
+  FormDataBuilder& operator=(FormDataBuilder&& other) noexcept {
+    if (this == &other) return *this;
+    if (handle_ != nullptr) cbss_form_data_builder_destroy(handle_);
+    handle_ = other.handle_;
+    other.handle_ = nullptr;
+    return *this;
+  }
+
+  FormDataBuilder& addText(const std::string& name,
+                           const std::string& value) {
+    requireActive();
+    data_detail::requireCString(name, "add FormData field name");
+    data_detail::requireCString(value, "add FormData text value");
+    data_detail::check(
+        cbss_form_data_builder_add_text(handle_, name.c_str(), value.c_str()),
+        "add FormData text value");
+    return *this;
+  }
+
+  FormDataBuilder& addBlob(const std::string& name, const Blob& blob,
+                           const std::string& file_name = std::string()) {
+    requireActive();
+    data_detail::requireCString(name, "add FormData field name");
+    data_detail::requireCString(file_name, "add FormData file name");
+    data_detail::check(cbss_form_data_builder_add_blob(
+                           handle_, name.c_str(), blob.nativeHandle(),
+                           file_name.c_str()),
+                       "add FormData Blob value");
+    return *this;
+  }
+
+  FormData finish() {
+    requireActive();
+    CbssFormData* output = nullptr;
+    data_detail::check(cbss_form_data_builder_finish(handle_, &output),
+                       "finish FormData builder");
+    cbss_form_data_builder_destroy(handle_);
+    handle_ = nullptr;
+    return FormData(output);
+  }
+
+ private:
+  void requireActive() const {
+    if (handle_ == nullptr) {
+      throw Error(CBSS_INVALID_HANDLE, "FormData builder is finished");
+    }
+  }
+
+  CbssFormDataBuilder* handle_ = nullptr;
+};
+
 enum class Unit : std::uint32_t {
   px = CBSS_UNIT_PX,
   percent = CBSS_UNIT_PERCENT,
@@ -681,9 +993,60 @@ struct DispatchSummary {
 };
 
 namespace detail {
+struct EventViewCallbackState;
+}
+
+class EventView {
+ public:
+  const Event& event() const noexcept { return event_; }
+  bool hasFormData() const noexcept { return form_data_ != nullptr; }
+
+  const FormData& formData() const {
+    if (!form_data_) {
+      throw Error(CBSS_NOT_AVAILABLE,
+                  "read event FormData: payload is not available");
+    }
+    return *form_data_;
+  }
+
+ private:
+  explicit EventView(const CbssEventView* view)
+      : event_(requireEvent(view)) {
+    CbssFormData* payload = nullptr;
+    const CbssStatus status = cbss_event_view_form_data(view, &payload);
+    if (status == CBSS_OK) {
+      form_data_ = std::make_shared<FormData>(FormData(payload));
+    } else if (status != CBSS_NOT_AVAILABLE) {
+      throw Error(status, "read event FormData");
+    }
+  }
+
+  static const CbssEvent& requireEvent(const CbssEventView* view) {
+    if (view == nullptr) {
+      throw Error(CBSS_INVALID_HANDLE, "read EventView: view is null");
+    }
+    const CbssEvent* event = cbss_event_view_event(view);
+    if (event == nullptr) {
+      throw Error(CBSS_INVALID_HANDLE, "read EventView: event is unavailable");
+    }
+    return *event;
+  }
+
+  Event event_;
+  std::shared_ptr<FormData> form_data_;
+  friend struct detail::EventViewCallbackState;
+};
+
+namespace detail {
+
+struct CallbackState {
+  virtual ~CallbackState() {}
+  std::exception_ptr failure;
+};
 
 struct EventCallbackState
-    : std::enable_shared_from_this<EventCallbackState> {
+    : CallbackState,
+      std::enable_shared_from_this<EventCallbackState> {
   explicit EventCallbackState(std::function<EventOutcome(const Event&)> value)
       : callback(std::move(value)) {}
 
@@ -704,12 +1067,38 @@ struct EventCallbackState
   }
 
   std::function<EventOutcome(const Event&)> callback;
-  std::exception_ptr failure;
+};
+
+struct EventViewCallbackState
+    : CallbackState,
+      std::enable_shared_from_this<EventViewCallbackState> {
+  explicit EventViewCallbackState(
+      std::function<EventOutcome(const EventView&)> value)
+      : callback(std::move(value)) {}
+
+  static std::uint8_t invoke(CbssContext*, const CbssEventView* view,
+                             void* user_data) noexcept {
+    if (view == nullptr || user_data == nullptr) {
+      return EventOutcome(true, true, true).bits();
+    }
+    EventViewCallbackState* raw =
+        static_cast<EventViewCallbackState*>(user_data);
+    try {
+      const std::shared_ptr<EventViewCallbackState> keep_alive =
+          raw->shared_from_this();
+      return keep_alive->callback(EventView(view)).bits();
+    } catch (...) {
+      raw->failure = std::current_exception();
+      return EventOutcome(true, true, true).bits();
+    }
+  }
+
+  std::function<EventOutcome(const EventView&)> callback;
 };
 
 struct EventSubscriptionState {
   std::uint32_t node;
-  std::shared_ptr<EventCallbackState> callback;
+  std::shared_ptr<CallbackState> callback;
 };
 
 struct EventDriverState {
@@ -717,7 +1106,7 @@ struct EventDriverState {
 
   void addSubscription(
       std::uint64_t id, std::uint32_t node,
-      const std::shared_ptr<EventCallbackState>& callback) {
+      const std::shared_ptr<CallbackState>& callback) {
     subscriptions.emplace(id, EventSubscriptionState{node, callback});
     try {
       subscriptions_by_node[node].insert(id);
@@ -778,7 +1167,7 @@ struct EventDriverState {
   CbssContext* context;
   std::unordered_map<
       std::uint32_t,
-      std::unordered_map<std::uint32_t, std::shared_ptr<EventCallbackState>>>
+      std::unordered_map<std::uint32_t, std::shared_ptr<CallbackState>>>
       handlers;
   std::unordered_map<
       std::uint32_t,
@@ -945,6 +1334,33 @@ class UiHandle {
     }
   }
 
+  void onView(
+      Node node, CbssEventKind kind,
+      std::function<EventOutcome(const EventView&)> callback) const {
+    CbssContext* context = requireNode(node, "set EventView handler");
+    if (!callback) {
+      throw Error(CBSS_INVALID_ARGUMENT,
+                  "set EventView handler: callback is empty");
+    }
+    Contract::require({{CBSS_CAPABILITY_FORM_DATA, 1u}});
+    const std::shared_ptr<detail::EventViewCallbackState> holder =
+        std::make_shared<detail::EventViewCallbackState>(std::move(callback));
+    check(context,
+          cbss_node_set_event_view_handler(
+              context, node.value_, static_cast<std::uint32_t>(kind),
+              &detail::EventViewCallbackState::invoke, holder.get()),
+          "set EventView handler");
+    const std::shared_ptr<detail::EventDriverState> state = state_.lock();
+    try {
+      state->handlers[node.value_][static_cast<std::uint32_t>(kind)] = holder;
+    } catch (...) {
+      cbss_node_set_event_view_handler(context, node.value_,
+                                       static_cast<std::uint32_t>(kind),
+                                       nullptr, nullptr);
+      throw;
+    }
+  }
+
   void setDefaultAction(
       Node node, CbssEventKind kind,
       std::function<EventOutcome(const Event&)> callback) const {
@@ -979,6 +1395,28 @@ class UiHandle {
     check(context,
           cbss_context_emit_event(context, node.value_, &native, &summary),
           "emit event");
+    return DispatchSummary{
+        summary.target,
+        summary.dispatch_count,
+        summary.handled != 0u,
+        EventOutcome((summary.outcome & CBSS_EVENT_OUTCOME_HANDLED) != 0u,
+                     (summary.outcome &
+                      CBSS_EVENT_OUTCOME_STOP_PROPAGATION) != 0u,
+                     (summary.outcome &
+                      CBSS_EVENT_OUTCOME_PREVENT_DEFAULT) != 0u),
+        summary.needs_compute != 0u,
+        summary.paint_changed != 0u,
+        summary.focus_changed != 0u};
+  }
+
+  DispatchSummary emitSubmit(Node node, const FormData& data) const {
+    Contract::require({{CBSS_CAPABILITY_FORM_DATA, 1u}});
+    CbssContext* context = requireNode(node, "emit submit event");
+    CbssDispatchSummary summary = {};
+    check(context,
+          cbss_context_emit_submit(context, node.value_, data.nativeHandle(),
+                                   &summary),
+          "emit submit event");
     return DispatchSummary{
         summary.target,
         summary.dispatch_count,
@@ -1472,6 +1910,31 @@ class Ui {
     }
   }
 
+  void onView(Node node, CbssEventKind kind,
+              std::function<EventOutcome(const EventView&)> callback) {
+    requireEvents();
+    requireNode(node, "set EventView handler");
+    if (!callback) {
+      throw Error(CBSS_INVALID_ARGUMENT,
+                  "set EventView handler: callback is empty");
+    }
+    Contract::require({{CBSS_CAPABILITY_FORM_DATA, 1u}});
+    const std::shared_ptr<detail::EventViewCallbackState> holder =
+        std::make_shared<detail::EventViewCallbackState>(std::move(callback));
+    check(cbss_node_set_event_view_handler(
+              context_, node.value_, static_cast<std::uint32_t>(kind),
+              &detail::EventViewCallbackState::invoke, holder.get()),
+          "set EventView handler");
+    try {
+      events_->handlers[node.value_][static_cast<std::uint32_t>(kind)] = holder;
+    } catch (...) {
+      cbss_node_set_event_view_handler(context_, node.value_,
+                                       static_cast<std::uint32_t>(kind),
+                                       nullptr, nullptr);
+      throw;
+    }
+  }
+
   void clearHandler(Node node, CbssEventKind kind) {
     requireNode(node, "clear event handler");
     check(cbss_node_set_event_handler(
@@ -1512,6 +1975,33 @@ class Ui {
     return EventSubscription(events_, subscription);
   }
 
+  EventSubscription subscribeView(
+      Node node, CbssEventKind kind,
+      std::function<EventOutcome(const EventView&)> callback) {
+    requireEvents();
+    requireNode(node, "subscribe EventView");
+    if (!callback) {
+      throw Error(CBSS_INVALID_ARGUMENT,
+                  "subscribe EventView: callback is empty");
+    }
+    Contract::require({{CBSS_CAPABILITY_FORM_DATA, 1u}});
+    const std::shared_ptr<detail::EventViewCallbackState> holder =
+        std::make_shared<detail::EventViewCallbackState>(std::move(callback));
+    std::uint64_t subscription = 0u;
+    check(cbss_node_subscribe_event_view(
+              context_, node.value_, static_cast<std::uint32_t>(kind),
+              &detail::EventViewCallbackState::invoke, holder.get(),
+              &subscription),
+          "subscribe EventView");
+    try {
+      events_->addSubscription(subscription, node.value_, holder);
+    } catch (...) {
+      cbss_context_unsubscribe_event(context_, subscription);
+      throw;
+    }
+    return EventSubscription(events_, subscription);
+  }
+
   DispatchSummary emit(Node node, const InputEvent& input) {
     requireEvents();
     requireNode(node, "emit event");
@@ -1528,6 +2018,28 @@ class Ui {
                       CBSS_EVENT_OUTCOME_STOP_PROPAGATION) != 0u,
                      (summary.outcome & CBSS_EVENT_OUTCOME_PREVENT_DEFAULT) !=
                          0u),
+        summary.needs_compute != 0u,
+        summary.paint_changed != 0u,
+        summary.focus_changed != 0u};
+  }
+
+  DispatchSummary emitSubmit(Node node, const FormData& data) {
+    requireEvents();
+    requireNode(node, "emit submit event");
+    Contract::require({{CBSS_CAPABILITY_FORM_DATA, 1u}});
+    CbssDispatchSummary summary = {};
+    check(cbss_context_emit_submit(context_, node.value_, data.nativeHandle(),
+                                   &summary),
+          "emit submit event");
+    return DispatchSummary{
+        summary.target,
+        summary.dispatch_count,
+        summary.handled != 0u,
+        EventOutcome((summary.outcome & CBSS_EVENT_OUTCOME_HANDLED) != 0u,
+                     (summary.outcome &
+                      CBSS_EVENT_OUTCOME_STOP_PROPAGATION) != 0u,
+                     (summary.outcome &
+                      CBSS_EVENT_OUTCOME_PREVENT_DEFAULT) != 0u),
         summary.needs_compute != 0u,
         summary.paint_changed != 0u,
         summary.focus_changed != 0u};

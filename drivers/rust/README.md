@@ -239,9 +239,28 @@ additive subscriptions. Generic typed controls use `attach_validation` or
 skips disabled controls and focuses the first invalid control. Registering
 controls also wires `same_as`/`different_from` peer edges so a
 source change rechecks only its declared dependants. The weak edges expire with
-either attachment and do not extend a component lifetime. The separate
-immutable FormData/submit Driver surface is not approximated by this
-validation-only adapter.
+either attachment and do not extend a component lifetime.
+
+The Driver owns Blob and immutable FormData handles through Rust ownership.
+Repeated names and ordered text/Blob values are preserved, and submit handlers
+may retain a cloned snapshot after the callback returns:
+
+```rust
+let mut data = cbss_craft::FormDataBuilder::new()?;
+data.add_text("account", &account.validation_value().with(Clone::clone))?
+    .add_blob("avatar", &avatar_blob, Some("avatar.png"))?;
+let snapshot = data.finish()?;
+
+validation_form.on_submit(|event| {
+    queue_request(event.form_data().expect("submit payload").clone());
+    cbss_craft::EventOutcome::HANDLED
+})?;
+validation_form.submit(&snapshot)?; // validates before emitting submit
+```
+
+`submit(&snapshot)` does not emit when validation fails or the form is
+disabled. FormData is transport-neutral; multipart encoding and network
+delivery belong to the application or a transport library such as Joubako.
 
 Typed Commands connect UI actions to asynchronous work while keeping UI
 mutation on the owning thread:

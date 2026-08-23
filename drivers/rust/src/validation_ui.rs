@@ -2,8 +2,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
 use crate::{
-    Error, Event, EventKind, EventOutcome, EventSubscription, Node, NodeState, Result, Ui,
-    UiHandle, ValidationBinding, ValidationReport, ValidationResult, ValidationRules,
+    Error, Event, EventKind, EventOutcome, EventSubscription, EventView, FormData, Node, NodeState,
+    Result, Ui, UiHandle, ValidationBinding, ValidationReport, ValidationResult, ValidationRules,
     ValidationTrigger, ValidationValue, ValidationValueType, STATUS_INVALID_ARGUMENT,
     STATUS_INVALID_HANDLE,
 };
@@ -556,6 +556,21 @@ impl ValidationForm {
             self.ui.set_focus(Some(node), true)?;
         }
         Ok(valid)
+    }
+
+    pub fn on_submit<F>(&self, callback: F) -> Result<()>
+    where
+        F: FnMut(&EventView) -> EventOutcome + 'static,
+    {
+        self.ui.on_view(self.node, EventKind::SUBMIT, callback)
+    }
+
+    pub fn submit(&self, data: &FormData) -> Result<bool> {
+        if self.disabled || !self.report_validity()? {
+            return Ok(false);
+        }
+        self.ui.emit_submit(self.node, data)?;
+        Ok(true)
     }
 
     pub fn len(&self) -> usize {

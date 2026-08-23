@@ -1819,8 +1819,11 @@ completion, cancellation, navigation reentry, and screen-disposal ordering are
 covered by Driver fixtures. Retained
 `ValidationControl[T]` attachment and heterogeneous `ValidationForm`
 check/report coordination are now implemented in both reference Drivers.
-High-level immutable FormData construction, payload-bearing submit delivery,
-and the remaining cross-Driver application fixtures remain Version 0.6 work.
+High-level Blob ownership, immutable ordered FormData construction,
+payload-bearing handlers/subscriptions, and validation-first submit delivery
+are now implemented in both reference Drivers. Automatic foreign-control
+collection and the remaining cross-Driver application fixtures remain Version
+0.6 work.
 
 This scope does not require one source syntax across languages, runtime loading
 of arbitrary foreign binaries, or pixel identity across different font and
