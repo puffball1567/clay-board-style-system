@@ -1,7 +1,10 @@
 use cbss_craft::{
-    attach_text_validation, keyword, px, EventKind, EventOutcome, InputEvent, Navigator, NodeState,
-    Store, Style, Ui, ValidationForm, ValidationRules, STATUS_STYLE_ERROR,
+    attach_text_validation, cue, cue_action, cue_action_with_completion, keyword, px, Command,
+    CommandOfferResult, CueCancel, CueCompletion, CueRuntime, CueSessionStatus, CueStartPolicy,
+    EventKind, EventOutcome, InputEvent, Navigator, NodeState, Store, Style, Ui, ValidationForm,
+    ValidationRules, STATUS_STYLE_ERROR,
 };
+use std::cell::Cell;
 use std::cell::RefCell;
 use std::env;
 use std::fs;
@@ -98,6 +101,62 @@ fn trace() -> Result<String, Box<dyn std::error::Error>> {
     navigator.push("settings".to_owned());
     navigator.back();
 
+    let command_sinks = Rc::new(RefCell::new(Vec::new()));
+    let command_cancellations = Rc::new(Cell::new(0));
+    let command = Command::<i32, String, String>::with_defaults({
+        let command_sinks = Rc::clone(&command_sinks);
+        let command_cancellations = Rc::clone(&command_cancellations);
+        move |_, sink| {
+            command_sinks.borrow_mut().push(sink);
+            let command_cancellations = Rc::clone(&command_cancellations);
+            Some(Box::new(move || {
+                command_cancellations.set(command_cancellations.get() + 1)
+            }))
+        }
+    })?;
+    let command_successes = Rc::new(RefCell::new(Vec::new()));
+    command.on_success({
+        let command_successes = Rc::clone(&command_successes);
+        move |value| command_successes.borrow_mut().push(value)
+    })?;
+    let command_first = command.run(1)?;
+    let command_second = command.run(2)?;
+    let command_first_cancelled = command_first.status() == cbss_craft::CommandStatus::Cancelled;
+    command_sinks.borrow()[0].succeed("stale".to_owned());
+    command_sinks.borrow()[1].succeed("current".to_owned());
+    command.pump_all();
+    let command_second_succeeded = command_second.status() == cbss_craft::CommandStatus::Succeeded;
+    let command_stale_ignored = command_successes.borrow().as_slice() == ["current"];
+    let command_third = command.run(3)?;
+    let command_late_sink = command_sinks.borrow()[2].clone();
+    command.dispose();
+    let command_third_cancelled = command_third.status() == cbss_craft::CommandStatus::Cancelled;
+    let command_late_disposed =
+        command_late_sink.succeed("late".to_owned()) == CommandOfferResult::Disposed;
+
+    let cue_completions = Rc::new(RefCell::new(Vec::<CueCompletion>::new()));
+    let cue_cancellations = Rc::new(Cell::new(0));
+    let cue_tail_runs = Rc::new(Cell::new(0));
+    let cue_graph = cue(cue_action_with_completion("pending", {
+        let cue_completions = Rc::clone(&cue_completions);
+        let cue_cancellations = Rc::clone(&cue_cancellations);
+        move |completion| {
+            cue_completions.borrow_mut().push(completion);
+            let cue_cancellations = Rc::clone(&cue_cancellations);
+            Some(Box::new(move || cue_cancellations.set(cue_cancellations.get() + 1)) as CueCancel)
+        }
+    })?)
+    .then(cue_action("tail", {
+        let cue_tail_runs = Rc::clone(&cue_tail_runs);
+        move || cue_tail_runs.set(cue_tail_runs.get() + 1)
+    })?)?;
+    let cue_runtime = CueRuntime::default();
+    let cue_session = cue_runtime.start(&cue_graph, CueStartPolicy::Restart)?;
+    let cue_cancelled = cue_runtime.cancel(&cue_session);
+    cue_completions.borrow()[0].succeed();
+    let cue_late_ignored =
+        cue_tail_runs.get() == 0 && cue_session.status() == CueSessionStatus::Cancelled;
+
     let invalid_status = ui
         .replace_craft_style(INVALID_STYLE)
         .expect_err("invalid Craft Style must fail")
@@ -131,6 +190,36 @@ fn trace() -> Result<String, Box<dyn std::error::Error>> {
     output.push_str(&format!(
         "navigation.revision={}\n",
         navigator.snapshot().revision
+    ));
+    output.push_str(&format!(
+        "command.first-cancelled={}\n",
+        i32::from(command_first_cancelled)
+    ));
+    output.push_str(&format!(
+        "command.second-succeeded={}\n",
+        i32::from(command_second_succeeded)
+    ));
+    output.push_str(&format!(
+        "command.third-cancelled={}\n",
+        i32::from(command_third_cancelled)
+    ));
+    output.push_str(&format!(
+        "command.cancel-count={}\n",
+        command_cancellations.get()
+    ));
+    output.push_str(&format!(
+        "command.stale-ignored={}\n",
+        i32::from(command_stale_ignored)
+    ));
+    output.push_str(&format!(
+        "command.late-disposed={}\n",
+        i32::from(command_late_disposed)
+    ));
+    output.push_str(&format!("cue.cancelled={}\n", i32::from(cue_cancelled)));
+    output.push_str(&format!("cue.cancel-count={}\n", cue_cancellations.get()));
+    output.push_str(&format!(
+        "cue.late-ignored={}\n",
+        i32::from(cue_late_ignored)
     ));
     output.push_str(&format!("style.active={}\n", ui.active_craft_styles()[0]));
     output.push_str(&format!("style.invalid-status={invalid_status}\n"));

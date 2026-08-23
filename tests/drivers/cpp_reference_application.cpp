@@ -102,6 +102,60 @@ void writeTrace(std::ostream& output) {
   navigator.push("settings");
   navigator.back();
 
+  using ReferenceCommand = cbss::Command<int, std::string, std::string>;
+  using ReferenceSink = cbss::CommandSink<std::string, std::string>;
+  const std::shared_ptr<std::vector<ReferenceSink>> command_sinks =
+      std::make_shared<std::vector<ReferenceSink>>();
+  const std::shared_ptr<int> command_cancellations = std::make_shared<int>(0);
+  ReferenceCommand command(
+      [command_sinks, command_cancellations](int, ReferenceSink sink) {
+        command_sinks->push_back(sink);
+        return ReferenceCommand::Cancel(
+            [command_cancellations]() { ++*command_cancellations; });
+      });
+  std::vector<std::string> command_successes;
+  command.onSuccess([&](std::string value) {
+    command_successes.push_back(std::move(value));
+  });
+  const cbss::CommandTicket command_first = command.run(1);
+  const cbss::CommandTicket command_second = command.run(2);
+  const bool command_first_cancelled =
+      command_first.status() == cbss::CommandStatus::cancelled;
+  (*command_sinks)[0].succeed("stale");
+  (*command_sinks)[1].succeed("current");
+  command.pump();
+  const bool command_second_succeeded =
+      command_second.status() == cbss::CommandStatus::succeeded;
+  const bool command_stale_ignored =
+      command_successes == std::vector<std::string>({"current"});
+  const cbss::CommandTicket command_third = command.run(3);
+  const ReferenceSink command_late_sink = (*command_sinks)[2];
+  command.dispose();
+  const bool command_third_cancelled =
+      command_third.status() == cbss::CommandStatus::cancelled;
+  const bool command_late_disposed =
+      command_late_sink.succeed("late") == cbss::CommandOfferResult::disposed;
+
+  const std::shared_ptr<std::vector<cbss::CueCompletion>> cue_completions =
+      std::make_shared<std::vector<cbss::CueCompletion>>();
+  const std::shared_ptr<int> cue_cancellations = std::make_shared<int>(0);
+  int cue_tail_runs = 0;
+  cbss::CueGraph cue_graph = cbss::cue(cbss::cueAction(
+      "pending", [cue_completions, cue_cancellations](
+                     cbss::CueCompletion completion) {
+        cue_completions->push_back(completion);
+        return cbss::CueCancel(
+            [cue_cancellations]() { ++*cue_cancellations; });
+      }));
+  cue_graph.then(cbss::cueAction("tail", [&]() { ++cue_tail_runs; }));
+  cbss::CueRuntime cue_runtime;
+  const cbss::CueSession cue_session = cue_runtime.start(cue_graph);
+  const bool cue_cancelled = cue_runtime.cancel(cue_session);
+  (*cue_completions)[0].succeed();
+  const bool cue_late_ignored =
+      cue_tail_runs == 0 &&
+      cue_session.status() == cbss::CueSessionStatus::cancelled;
+
   int invalid_status = 0;
   try {
     ui.replaceCraftStyle(invalid_style);
@@ -127,6 +181,20 @@ void writeTrace(std::ostream& output) {
   output << "navigation.current="
          << navigator.currentDestination().value() << '\n';
   output << "navigation.revision=" << navigator.snapshot().revision << '\n';
+  output << "command.first-cancelled=" << (command_first_cancelled ? 1 : 0)
+         << '\n';
+  output << "command.second-succeeded=" << (command_second_succeeded ? 1 : 0)
+         << '\n';
+  output << "command.third-cancelled=" << (command_third_cancelled ? 1 : 0)
+         << '\n';
+  output << "command.cancel-count=" << *command_cancellations << '\n';
+  output << "command.stale-ignored=" << (command_stale_ignored ? 1 : 0)
+         << '\n';
+  output << "command.late-disposed=" << (command_late_disposed ? 1 : 0)
+         << '\n';
+  output << "cue.cancelled=" << (cue_cancelled ? 1 : 0) << '\n';
+  output << "cue.cancel-count=" << *cue_cancellations << '\n';
+  output << "cue.late-ignored=" << (cue_late_ignored ? 1 : 0) << '\n';
   output << "style.active=" << ui.activeCraftStyles().at(0) << '\n';
   output << "style.invalid-status=" << invalid_status << '\n';
   output << "style.diagnostics=" << diagnostics.size() << '\n';

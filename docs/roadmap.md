@@ -1826,9 +1826,9 @@ automatic retained-value collection, disabled-field exclusion, and collected
 submit delivery now also match in C++14 and Rust. The first integrated
 cross-Driver reference application now compares a versioned C++14/Rust trace
 covering Craft Style layout, event order and invalidation, FormData submit,
-Store transactions, Navigation, diagnostics, and subtree teardown against one
-checked-in expectation. Additional cancellation and reference-image fixtures
-remain Version 0.6 work.
+Store transactions, Navigation, Command and Cue cancellation, late-completion
+containment, diagnostics, and subtree teardown against one checked-in
+expectation. Additional reference-image fixtures remain Version 0.6 work.
 
 This scope does not require one source syntax across languages, runtime loading
 of arbitrary foreign binaries, or pixel identity across different font and
