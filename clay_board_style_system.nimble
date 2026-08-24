@@ -419,6 +419,7 @@ task bench, "Run compiled pipeline benchmarks (not part of the product build)":
   exec "nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_render_surface_bench_nimcache --out:/tmp/clay_board_style_system_render_surface_benchmark tests/perf/render_surface_benchmark.nim"
   exec "nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_validation_bench_nimcache --out:/tmp/clay_board_style_system_validation_benchmark tests/perf/validation_benchmark.nim"
   exec "nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_virtualization_bench_nimcache --out:/tmp/clay_board_style_system_virtualization_benchmark tests/perf/virtualization_benchmark.nim"
+  exec "nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_virtual_node_pool_bench_nimcache --out:/tmp/clay_board_style_system_virtual_node_pool_benchmark tests/perf/virtual_node_pool_benchmark.nim"
 
 task demo, "Run the paint command demo":
   exec "nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_nimcache --out:/tmp/clay_board_style_system_paint_demo examples/paint_demo.nim"

@@ -318,9 +318,24 @@ when measurements change; scroll-time planning accepts a viewport, overscan,
 and a hard materialization limit without sorting those measurements again. The
 result contains geometry only for the bounded materialized range plus leading
 and trailing spacer extents. It does not allocate or scan one record per
-logical item. Components remain responsible for assigning stable item keys and
-reusing the bounded node pool; focus and accessibility range semantics attach
-to those keys rather than to transient materialization slots.
+logical item.
+
+`VirtualNodePool[Key]` consumes that plan for one dedicated item host. The pool
+retains generation-checked Node IDs and mounted component lifecycle for keys
+that stay materialized, mounts and disposes only entering or leaving keys, and
+reorders the complete direct-child set when reverse scrolling or application
+data order changes. Duplicate keys, shared hosts, foreign nodes, inconsistent
+plans, and factories that create more than one direct root are explicit errors.
+Partial factory failure removes every node added during the failed reconcile.
+The pool remains bounded by the plan's materialization limit; at most another
+bounded range can exist transiently while a disjoint replacement is prepared
+before stale roots are torn down.
+
+Leading and trailing spacers live outside the dedicated item host. Retained
+refresh callbacks use normal node/component mutation and invalidation rather
+than replaying component render procedures. Focus retention and accessibility
+range semantics still attach to stable keys in later virtualization layers,
+not to transient materialization positions.
 
 The runtime may still offer declarative construction helpers. Those helpers
 should compile down to stable tree and style objects, and later updates should

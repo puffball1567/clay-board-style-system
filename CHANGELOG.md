@@ -9,6 +9,14 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added stable-key virtual node materialization on top of the bounded range
+  planner. `VirtualNodePool` retains Node IDs and mounted component lifecycle
+  for keys that remain visible, mounts and disposes only entering/leaving keys,
+  restores child order during reverse scrolling or data reordering, rejects
+  shared hosts and duplicate keys, and rolls back partial mount failures.
+  A release benchmark keeps 30 materialized nodes and a 36-slot node arena for
+  both 100,000 and 10,000,000 logical items.
+
 - Added the first production data-virtualization primitive: a typed virtual
   range planner with sparse measured-extent correction, asymmetric overscan,
   bounded materialization, clamped scroll offsets, and anchor correction. It
