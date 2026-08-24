@@ -336,9 +336,28 @@ silently omitting visible UI.
 
 The gate rejects logical-count scaling beyond a deliberately broad noise
 margin and asserts the same bounded materialized count. This covers range
-planning only. Stable-key node reuse, component reconciliation, focus
-retention, and accessibility range integration need separate behavior and
-performance gates before viewport virtualization is production-complete.
+planning itself.
+
+`VirtualNodePool` now performs stable-key node/component reconciliation over
+that bounded result. Lookup, validation, ordering, mount/disposal, and retained
+refresh work are proportional to materialized entries, not logical item count.
+The pool never stores one entry per logical row. A fully disjoint range may
+transiently hold the old and new bounded ranges so factory failure can roll back
+without losing the previous pool; stale roots are then retired through the
+normal `UiRoot.disposeSubtree` lifecycle.
+
+`tests/perf/virtual_node_pool_benchmark.nim` alternates adjacent ranges for
+20,000 reconciliations. The 2026-08-24 release ARC run measured:
+
+| logical items | mean reconcile time | materialized items | node arena slots |
+| ---: | ---: | ---: | ---: |
+| 100,000 | 8.513 us | 30 | 36 |
+| 10,000,000 | 8.057 us | 30 | 36 |
+
+The gate rejects logical-count scaling and requires identical bounded node
+capacity. Focus retention and accessibility range integration still need
+separate behavior and performance gates before viewport virtualization is
+production-complete.
 
 ### Retained navigation status (2026-08-01)
 

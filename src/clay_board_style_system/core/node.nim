@@ -245,6 +245,41 @@ proc disposeSubtree*(tree: var Tree; root: NodeId): seq[NodeId] =
         tree.root = tree.nodeIdAt(index)
         break
 
+proc reorderChildren*(
+    tree: var Tree;
+    parent: NodeId;
+    ordered: openArray[NodeId]
+): bool {.discardable.} =
+  ## Reorder every direct child of `parent` without changing node identity.
+  ## The complete child set is required so callers cannot accidentally detach
+  ## nodes or move a node across parents while changing paint/focus order.
+  if not tree.isValid(parent):
+    raise newException(ValueError, "child-order parent is not active")
+  let current = tree.nodes[parent.nodeIndex].children
+  if ordered.len != current.len:
+    raise newException(ValueError, "child order must contain every direct child exactly once")
+
+  var expected = initHashSet[NodeId]()
+  for child in current:
+    if not tree.isValid(child) or tree.nodes[child.nodeIndex].parent != some(parent):
+      raise newException(ValueError, "parent contains an invalid direct child")
+    if child in expected:
+      raise newException(ValueError, "parent contains a duplicate direct child")
+    expected.incl child
+
+  var supplied = initHashSet[NodeId]()
+  var changed = false
+  for index, child in ordered:
+    if child notin expected or child in supplied:
+      raise newException(ValueError, "child order must contain every direct child exactly once")
+    supplied.incl child
+    if current[index] != child:
+      changed = true
+
+  if changed:
+    tree.nodes[parent.nodeIndex].children = @ordered
+  changed
+
 proc addBox*(tree: var Tree; parent = none(NodeId); id = ""; code = ""; groups: openArray[string] = []): NodeId =
   result = tree.addNode(nkBox, parent)
   tree.nodes[result.nodeIndex].id = id
