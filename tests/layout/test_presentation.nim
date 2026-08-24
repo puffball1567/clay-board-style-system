@@ -13,6 +13,7 @@ suite "shared presentation coordinates":
         decl("width", px(100)),
         decl("height", px(50)),
         decl("padding", px(10)),
+        decl("box-sizing", keyword("border-box")),
         decl("flex-direction", keyword("column")),
         decl("overflow-y", keyword("auto")),
         decl("opacity", number(0.5))

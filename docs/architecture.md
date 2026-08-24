@@ -1591,6 +1591,27 @@ invalidation.
 
 CBSS layout should feel familiar to developers who use modern CSS Flexbox.
 
+### Box Sizing Contract
+
+`LayoutBox.rect` always represents the outer border box. The authored
+quantitative `width`, `height`, min/max constraints, and `flex-basis` values
+are interpreted according to `box-sizing` before layout stores that rectangle:
+
+- `content-box` is the default and adds resolved padding plus visible border
+  widths around the authored sizing box.
+- `border-box` treats the authored value as the outer size and clamps it to at
+  least the combined padding and visible border widths.
+- child percentages, alignment, absolute positioning, overflow, and clipping
+  use the content box derived from the same outer rectangle.
+- automatic and intrinsic dimensions produce the same natural outer size in
+  either mode because `box-sizing` does not change non-quantitative sizing
+  keywords such as `auto`, `min-content`, and `max-content`.
+
+CBSS does not silently apply a universal `border-box` reset. Applications and
+component libraries that prefer fixed outer dimensions can inject one explicit
+`element(nkBox)` rule, as the bundled demos do. This keeps the engine default
+familiar to CSS while making the application policy visible and replaceable.
+
 The goal is not DOM or browser compatibility. CBSS should reproduce what Flexbox
 is trying to achieve for application UI: predictable distribution, alignment,
 sizing, and wrapping behavior. It can simplify browser-specific details when a

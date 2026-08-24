@@ -1546,6 +1546,13 @@ proc buttonStateStyles(): StyleSheet =
     ])
   ])
 
+proc demoBoxModelStyles(): StyleSheet =
+  ## The catalog treats authored dimensions as stable component outer sizes,
+  ## matching the common Web application border-box reset.
+  styleSheet([
+    rule(element(nkBox), [decl("box-sizing", keyword("border-box"))])
+  ])
+
 proc addButtonStateOverrides(ui: UiRoot; button: ButtonHandle) =
   button.container.applyHoverStyle(hoverButtonStyle())
   button.container.applyActiveStyle(activeButtonStyle())
@@ -2024,6 +2031,7 @@ proc App(
     refs: DemoViewRefs;
     onRun: proc() {.closure.}
 ): NodeHandle {.discardable.} =
+  ui.addStyle(demoBoxModelStyles())
   ui.addStyle(buttonStateStyles())
   ui.box(result, surfaceStyle(), "demo-surface"):
     Header(ui)

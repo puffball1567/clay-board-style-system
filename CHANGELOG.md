@@ -9,6 +9,12 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Connected `box-sizing` to the layout runtime. `content-box` remains the CSS
+  default, while `border-box` now keeps quantitative width, height, min/max,
+  and flex-basis values as outer dimensions. Padding, visible borders, percentage
+  child sizing, intrinsic sizing, aspect ratios, scrolling gutters, clipping,
+  and absolute positioning share the resulting content-box geometry.
+
 - Added logical accessibility range semantics for virtualized collections.
   Materialized item roots expose one-based `positionInSet` and total `setSize`
   values through the neutral accessibility tree, AT-SPI snapshots and diffs,

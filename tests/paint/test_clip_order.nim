@@ -64,6 +64,7 @@ suite "paint clipping":
         decl("width", px(112)),
         decl("height", px(30)),
         decl("padding", px(6)),
+        decl("box-sizing", keyword("border-box")),
         decl("overflow", keyword("hidden")),
         decl("background-color", colorValue(rgb(0, 0, 0)))
       ]),
