@@ -13,7 +13,11 @@ release. Before 1.0, minor releases may contain public API changes.
   the same Craft Style, layout, event ordering, invalidation, FormData submit,
   Store transaction, Navigation, Command/Cue cancellation, late-completion
   containment, diagnostic, and teardown scenario and must produce the same
-  versioned trace and checked-in expected result.
+  versioned trace and checked-in expected result. The same applications now
+  also produce byte-identical deterministic PPM reference images covering
+  layout, border, shadow, rounded background, and `oklab` linear-gradient
+  paint. The reference raster entry point is compiled only for this test and
+  is absent from normal C ABI artifacts.
 
 - Added RAII/owned Blob and immutable FormData APIs to the C++14 and Rust Craft
   Drivers. Ordered repeated text and Blob values, bounded reads, payload-aware

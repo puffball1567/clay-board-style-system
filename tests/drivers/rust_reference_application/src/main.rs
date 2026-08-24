@@ -14,7 +14,7 @@ const STYLE: &str = include_str!("../../../fixtures/drivers/reference_applicatio
 const INVALID_STYLE: &str =
     include_str!("../../../fixtures/drivers/invalid_application_style.json");
 
-fn trace() -> Result<String, Box<dyn std::error::Error>> {
+fn trace(image_path: Option<&str>) -> Result<String, Box<dyn std::error::Error>> {
     let mut root_style = Style::new()?;
     root_style
         .set("width", px(320.0))?
@@ -45,6 +45,16 @@ fn trace() -> Result<String, Box<dyn std::error::Error>> {
     ui.replace_craft_style(STYLE)?;
     ui.compute(320.0, 200.0)?;
     let panel_rect = ui.rect(panel)?;
+    if let Some(path) = image_path {
+        let invalid = ui
+            .write_reference_ppm(path, 0, 200)
+            .expect_err("invalid reference PPM dimensions must fail");
+        assert_eq!(
+            invalid.status_code(),
+            Some(cbss_craft::STATUS_INVALID_ARGUMENT)
+        );
+        ui.write_reference_ppm(path, 320, 200)?;
+    }
 
     let event_order = Rc::new(RefCell::new(Vec::<String>::new()));
     let handler_order = Rc::clone(&event_order);
@@ -233,8 +243,12 @@ fn trace() -> Result<String, Box<dyn std::error::Error>> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let output = trace()?;
-    if let Some(path) = env::args().nth(1) {
+    let arguments: Vec<String> = env::args().skip(1).collect();
+    if arguments.len() > 2 {
+        return Err("expected at most a trace path and a reference image path".into());
+    }
+    let output = trace(arguments.get(1).map(String::as_str))?;
+    if let Some(path) = arguments.first() {
         fs::write(path, output)?;
     } else {
         print!("{output}");

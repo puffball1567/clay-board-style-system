@@ -306,12 +306,14 @@ task testRustDriver, "Build and exercise the Rust Craft Driver":
   exec "env CBSS_LIB_DIR=/tmp CBSS_STATIC=1 CARGO_TARGET_DIR=/tmp/clay_board_style_system_rust_driver_static_target cargo test --locked --release --manifest-path drivers/rust/Cargo.toml"
 
 task testDriverConformance, "Compare the C++ and Rust reference applications":
-  exec "nim c --threads:on --app:lib --mm:arc -d:release --path:src --nimcache:/tmp/clay_board_style_system_driver_conformance_nimcache --out:/tmp/libcbss.so src/cbss_c_api.nim"
+  exec "nim c --threads:on --app:lib --mm:arc -d:release -d:cbssReferenceTestSupport --path:src --nimcache:/tmp/clay_board_style_system_driver_conformance_nimcache --out:/tmp/libcbss.so src/cbss_c_api.nim"
   exec "c++ -std=c++14 -Wall -Wextra -Werror -pedantic -Iinclude -Idrivers/cpp/include tests/drivers/cpp_reference_application.cpp -L/tmp -Wl,-rpath,/tmp -lcbss -lm -o /tmp/cbss_cpp_reference_application"
-  exec "/tmp/cbss_cpp_reference_application /tmp/cbss_cpp_reference_application.trace"
-  exec "env CBSS_LIB_DIR=/tmp LD_LIBRARY_PATH=/tmp CARGO_TARGET_DIR=/tmp/cbss_rust_reference_application_target cargo run --locked --quiet --release --manifest-path tests/drivers/rust_reference_application/Cargo.toml -- /tmp/cbss_rust_reference_application.trace"
+  exec "/tmp/cbss_cpp_reference_application /tmp/cbss_cpp_reference_application.trace /tmp/cbss_cpp_reference_application.ppm"
+  exec "env CBSS_LIB_DIR=/tmp LD_LIBRARY_PATH=/tmp CARGO_TARGET_DIR=/tmp/cbss_rust_reference_application_target cargo run --locked --quiet --release --manifest-path tests/drivers/rust_reference_application/Cargo.toml -- /tmp/cbss_rust_reference_application.trace /tmp/cbss_rust_reference_application.ppm"
   exec "cmp tests/fixtures/drivers/reference_application.expected /tmp/cbss_cpp_reference_application.trace"
   exec "cmp /tmp/cbss_cpp_reference_application.trace /tmp/cbss_rust_reference_application.trace"
+  exec "cmp tests/fixtures/drivers/reference_application.ppm /tmp/cbss_cpp_reference_application.ppm"
+  exec "cmp /tmp/cbss_cpp_reference_application.ppm /tmp/cbss_rust_reference_application.ppm"
 
 task testRustDriverOrc, "Exercise the Rust Craft Driver under ORC":
   exec "mkdir -p /tmp/clay_board_style_system_rust_driver_orc_shared"

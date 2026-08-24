@@ -1828,7 +1828,13 @@ cross-Driver reference application now compares a versioned C++14/Rust trace
 covering Craft Style layout, event order and invalidation, FormData submit,
 Store transactions, Navigation, Command and Cue cancellation, late-completion
 containment, diagnostics, and subtree teardown against one checked-in
-expectation. Additional reference-image fixtures remain Version 0.6 work.
+expectation. The same C++14 and Rust applications now render their shared Craft
+Style through one test-only deterministic PPM backend. Both outputs must match
+each other and a checked-in baseline byte for byte; the fixture covers layout,
+rounded background, border, shadow, and `oklab` linear-gradient paint without
+introducing platform-font variance. The PPM entry point is excluded from normal
+C ABI artifacts. Cross-Driver trace and reference-image conformance are now
+complete for the Version 0.6 Driver contract.
 
 This scope does not require one source syntax across languages, runtime loading
 of arbitrary foreign binaries, or pixel identity across different font and

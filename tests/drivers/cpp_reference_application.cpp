@@ -11,6 +11,10 @@
 
 namespace {
 
+extern "C" CbssStatus cbss_test_context_write_ppm(
+    CbssContext* context, const char* path, std::uint32_t width,
+    std::uint32_t height);
+
 std::string readFile(const std::string& path) {
   std::ifstream input(path.c_str(), std::ios::binary);
   if (!input) throw std::runtime_error("unable to open fixture: " + path);
@@ -32,7 +36,7 @@ struct Counter {
   int value = 0;
 };
 
-void writeTrace(std::ostream& output) {
+void writeTrace(std::ostream& output, const char* image_path = nullptr) {
   const std::string style = readFile(
       "tests/fixtures/drivers/reference_application_style.json");
   const std::string invalid_style = readFile(
@@ -57,6 +61,17 @@ void writeTrace(std::ostream& output) {
   ui.replaceCraftStyle(style);
   ui.compute(320.0f, 200.0f);
   const CbssRect panel_rect = ui.rect(panel);
+  if (image_path != nullptr) {
+    if (cbss_test_context_write_ppm(ui.nativeHandle(), image_path, 0u, 200u) !=
+        CBSS_INVALID_ARGUMENT) {
+      throw std::runtime_error("invalid reference PPM dimensions were accepted");
+    }
+    const CbssStatus image_status = cbss_test_context_write_ppm(
+        ui.nativeHandle(), image_path, 320u, 200u);
+    if (image_status != CBSS_OK) {
+      throw std::runtime_error("unable to write reference PPM");
+    }
+  }
 
   std::vector<std::string> event_order;
   const cbss::UiHandle event_ui = ui.handle();
@@ -211,10 +226,10 @@ int main(int argc, char** argv) {
       writeTrace(std::cout);
       return 0;
     }
-    if (argc != 2) return 2;
+    if (argc != 2 && argc != 3) return 2;
     std::ofstream output(argv[1], std::ios::binary | std::ios::trunc);
     if (!output) return 3;
-    writeTrace(output);
+    writeTrace(output, argc == 3 ? argv[2] : nullptr);
     return output ? 0 : 4;
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

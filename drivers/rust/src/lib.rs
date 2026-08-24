@@ -353,6 +353,13 @@ mod ffi {
         pub fn cbss_context_create() -> *mut CbssContext;
         pub fn cbss_context_destroy(context: *mut CbssContext);
         pub fn cbss_context_reset(context: *mut CbssContext) -> c_int;
+        #[cfg(feature = "reference-test-support")]
+        pub fn cbss_test_context_write_ppm(
+            context: *mut CbssContext,
+            path: *const c_char,
+            width: c_uint,
+            height: c_uint,
+        ) -> c_int;
         pub fn cbss_context_last_error(
             context: *mut CbssContext,
             buffer: *mut c_char,
@@ -2510,6 +2517,16 @@ impl Ui {
     pub fn compute(&mut self, width: f32, height: f32) -> Result<()> {
         let status = unsafe { ffi::cbss_context_compute(self.context.as_ptr(), width, height) };
         self.check(status, "compute layout")
+    }
+
+    #[cfg(feature = "reference-test-support")]
+    #[doc(hidden)]
+    pub fn write_reference_ppm(&self, path: &str, width: u32, height: u32) -> Result<()> {
+        let path = c_string(path, "reference PPM path")?;
+        let status = unsafe {
+            ffi::cbss_test_context_write_ppm(self.context.as_ptr(), path.as_ptr(), width, height)
+        };
+        self.check(status, "write reference PPM")
     }
 
     pub fn rect(&mut self, node: Node) -> Result<Rect> {
