@@ -333,9 +333,20 @@ before stale roots are torn down.
 
 Leading and trailing spacers live outside the dedicated item host. Retained
 refresh callbacks use normal node/component mutation and invalidation rather
-than replaying component render procedures. Focus retention and accessibility
-range semantics still attach to stable keys in later virtualization layers,
-not to transient materialization positions.
+than replaying component render procedures.
+
+`VirtualFocusMemory[Key]` optionally attaches focus retention to that pool. When
+a focused item leaves the materialized range, it records only one stable item
+key, the focus-visible state, and a locator relative to the item root. An
+explicit node `code` is the preferred locator and survives internal child
+reordering; a child-index path is the fallback when no code is authored. A
+missing or duplicate explicit code fails closed instead of redirecting focus to
+another control. The interaction focus serial arms the record after disposal.
+Any later focus operation changes that serial and cancels restoration, so an
+item returning to the viewport cannot steal focus chosen by the user or the
+application. Accessibility range semantics remain a separate virtualization
+layer and likewise attach to stable logical items rather than materialization
+slots.
 
 The runtime may still offer declarative construction helpers. Those helpers
 should compile down to stable tree and style objects, and later updates should

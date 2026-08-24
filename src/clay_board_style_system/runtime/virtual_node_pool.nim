@@ -11,6 +11,7 @@ import ../core/node
 import ../input/events
 import ./invalidation
 import ./ui_root
+import ./virtual_focus
 import ./virtualization
 
 type
@@ -178,7 +179,8 @@ proc reconcileVirtualNodes*[Key](
     plan: VirtualRangePlan;
     keys: openArray[Key];
     mount: VirtualNodeMountProc[Key];
-    refresh: VirtualNodeRefreshProc[Key] = nil
+    refresh: VirtualNodeRefreshProc[Key] = nil;
+    focusMemory: VirtualFocusMemory[Key] = nil
 ): VirtualNodeReconcileResult =
   ## Reconcile a bounded materialized range by stable key. The host is an
   ## exclusive item container; leading/trailing spacers belong outside it.
@@ -190,6 +192,8 @@ proc reconcileVirtualNodes*[Key](
     raise newException(ValueError, "virtual node mount callback cannot be nil")
   validatePlanAndKeys(plan, keys)
   pool.validateHost(root, host)
+  if not focusMemory.isNil:
+    discard focusMemory.cancelSupersededVirtualFocus(interaction)
 
   var oldByKey = initTable[Key, int]()
   for index, entry in pool.entries:
@@ -237,11 +241,22 @@ proc reconcileVirtualNodes*[Key](
       stale.add entry.node
   result.disposed = stale.len
 
+  var capturedFocus = false
+  if not focusMemory.isNil and interaction.focusedTarget.isSome:
+    for index, entry in pool.entries:
+      if not retainedOld[index] and focusMemory.captureVirtualFocus(
+          root, interaction, entry.key, entry.node
+      ):
+        capturedFocus = true
+        break
+
   # Publish the valid retained/new set before teardown callbacks run. Even if a
   # user unmount hook fails, the pool never points at a generation that teardown
   # has already retired.
   pool.entries = nextEntries
   let unmountFailure = root.disposeAll(stale, interaction)
+  if capturedFocus:
+    focusMemory.armVirtualFocus(interaction)
 
   var ordered = newSeqOfCap[NodeId](pool.entries.len)
   for entry in pool.entries:
@@ -250,6 +265,11 @@ proc reconcileVirtualNodes*[Key](
   if result.mounted > 0 or result.disposed > 0 or result.reordered:
     root.invalidate(host.id, {ddLayout, ddPaint, ddHit})
 
+  if not focusMemory.isNil:
+    for entry in pool.entries:
+      if focusMemory.restoreVirtualFocus(root, interaction, entry.key, entry.node):
+        break
+
   if not unmountFailure.isNil:
     raise unmountFailure
 
@@ -257,15 +277,27 @@ proc clearVirtualNodes*[Key](
     pool: var VirtualNodePool[Key];
     root: UiRoot;
     host: NodeHandle;
-    interaction: var InteractionState
+    interaction: var InteractionState;
+    focusMemory: VirtualFocusMemory[Key] = nil
 ): int {.discardable.} =
   pool.validateHost(root, host)
   var nodes = newSeqOfCap[NodeHandle](pool.entries.len)
   for entry in pool.entries:
     nodes.add entry.node
   result = nodes.len
+  var capturedFocus = false
+  if not focusMemory.isNil:
+    discard focusMemory.cancelSupersededVirtualFocus(interaction)
+    for entry in pool.entries:
+      if focusMemory.captureVirtualFocus(
+          root, interaction, entry.key, entry.node
+      ):
+        capturedFocus = true
+        break
   pool.entries.setLen(0)
   let unmountFailure = root.disposeAll(nodes, interaction)
+  if capturedFocus:
+    focusMemory.armVirtualFocus(interaction)
   discard root.tree.reorderChildren(host.id, [])
   if result > 0:
     root.invalidate(host.id, {ddLayout, ddPaint, ddHit})

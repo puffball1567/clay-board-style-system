@@ -1847,7 +1847,7 @@ directly. The complete naming and distribution boundary is in
 
 ### Production Layout, Scrolling, Virtualization, And Accessibility
 
-Status: `Version 0.6 in progress; range planning and stable-key node reuse implemented`
+Status: `Version 0.6 in progress; range planning, stable-key node reuse, and focus retention implemented`
 
 The existing percentage, automatic, intrinsic, min/max, Flex, retained-scroll,
 semantic-tree, focus, and AT-SPI adapter foundations are not restarted. Version
@@ -1891,8 +1891,16 @@ entering/leaving keys mount or unmount, reverse scrolling and reordered data
 restore direct-child order, and partial factory failures roll back newly added
 roots. Dedicated-host validation prevents the pool from disposing unrelated
 UI, while release benchmarks prove retained node capacity and reconcile cost do
-not scale with logical row count. Focus retention and accessibility range
-exposure are still required before this section is complete.
+not scale with logical row count.
+
+Stable-key focus retention is now available through `VirtualFocusMemory`. It
+captures a focused descendant before its item root is disposed, restores it
+when the same logical key is rematerialized, preserves focus-visible state, and
+uses the global interaction focus serial to avoid stealing focus after another
+operation. Explicit node codes survive internal component reordering; the
+automatic relative path keeps the feature usable without requiring IDs or test
+codes on every control. Accessibility range exposure is the remaining
+virtualization-specific semantic task.
 
 ### CSS Property Runtime Completion
 
@@ -1970,8 +1978,8 @@ target.
    min/max, Flex, text, and writing-axis tests.
 5. Complete transform-only scrolling and the typed virtualization stack. Range
    planning, stable-key bounded node reuse, component lifecycle reconciliation,
-   and their large-data performance gates are implemented; focus retention and
-   accessibility integration remain.
+   focus retention, and their large-data performance gates are implemented;
+   accessibility integration remains.
 6. Connect the semantic tree to the Linux AT-SPI D-Bus transport and run
    headless adapter plus real-session integration coverage.
 7. Implement Cue triggers, serial and parallel graphs, joins, clocks,

@@ -355,9 +355,15 @@ normal `UiRoot.disposeSubtree` lifecycle.
 | 10,000,000 | 8.057 us | 30 | 36 |
 
 The gate rejects logical-count scaling and requires identical bounded node
-capacity. Focus retention and accessibility range integration still need
-separate behavior and performance gates before viewport virtualization is
-production-complete.
+capacity.
+
+Optional `VirtualFocusMemory` stores at most one pending stable key. Capture
+walks only from the focused descendant to its materialized item root. Restore
+resolves either that bounded child path or scans one materialized item subtree
+for a unique explicit node code. It never scans logical rows or retains a Node
+ID after disposal. Focus retention therefore preserves the same bounded-memory
+model. Accessibility range integration still needs a separate behavior and
+performance gate before viewport virtualization is production-complete.
 
 ### Retained navigation status (2026-08-01)
 
