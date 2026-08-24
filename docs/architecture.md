@@ -312,6 +312,16 @@ Three separate mechanisms must not be grouped under the word "virtualization":
   the next timer deadline. This avoids unnecessary frames but does not by itself
   reduce the number of retained rows in a 100,000-row grid.
 
+The viewport/data path starts with `VirtualExtentIndex` and
+`planVirtualRange`. The reusable index prepares sparse measured corrections
+when measurements change; scroll-time planning accepts a viewport, overscan,
+and a hard materialization limit without sorting those measurements again. The
+result contains geometry only for the bounded materialized range plus leading
+and trailing spacer extents. It does not allocate or scan one record per
+logical item. Components remain responsible for assigning stable item keys and
+reusing the bounded node pool; focus and accessibility range semantics attach
+to those keys rather than to transient materialization slots.
+
 The runtime may still offer declarative construction helpers. Those helpers
 should compile down to stable tree and style objects, and later updates should
 be able to target those existing objects directly.

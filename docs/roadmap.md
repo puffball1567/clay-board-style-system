@@ -1847,7 +1847,7 @@ directly. The complete naming and distribution boundary is in
 
 ### Production Layout, Scrolling, Virtualization, And Accessibility
 
-Status: `Version 0.6 target`
+Status: `Version 0.6 in progress; range planning foundation implemented`
 
 The existing percentage, automatic, intrinsic, min/max, Flex, retained-scroll,
 semantic-tree, focus, and AT-SPI adapter foundations are not restarted. Version
@@ -1878,6 +1878,16 @@ than a bundled styled Data Grid widget. It must exercise large logical data,
 virtualized materialization, keyboard and pointer interaction, scrolling,
 focus, semantic range exposure, Store updates, asynchronous Commands, and Cue
 feedback without retaining one node per logical row.
+
+The first virtualization unit is implemented. `VirtualExtentIndex` prepares
+sparse measured corrections once, and `planVirtualRange` computes visible and
+overscan ranges from a logical item count without re-sorting them during
+scroll. It supports scroll anchoring, enforces a hard materialization cap, and
+emits only bounded item geometry plus leading/trailing spacer extents. Its
+storage and planning work do not grow linearly with the logical row count.
+Stable-key component reconciliation, bounded node reuse, focus retention, and
+accessibility range exposure are still required before this section is
+complete.
 
 ### CSS Property Runtime Completion
 
@@ -1953,8 +1963,9 @@ target.
    Effects, and Commands over the existing runtime primitives.
 4. Complete the production layout consumers and their intrinsic, percentage,
    min/max, Flex, text, and writing-axis tests.
-5. Complete transform-only scrolling and add the typed virtualization contract
-   with large-data performance tests.
+5. Complete transform-only scrolling and the typed virtualization stack. Range
+   planning and its large-data performance gate are implemented; stable-key
+   node reuse, focus retention, and accessibility integration remain.
 6. Connect the semantic tree to the Linux AT-SPI D-Bus transport and run
    headless adapter plus real-session integration coverage.
 7. Implement Cue triggers, serial and parallel graphs, joins, clocks,
