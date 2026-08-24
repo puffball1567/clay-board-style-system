@@ -351,8 +351,8 @@ normal `UiRoot.disposeSubtree` lifecycle.
 
 | logical items | mean reconcile time | materialized items | node arena slots |
 | ---: | ---: | ---: | ---: |
-| 100,000 | 8.513 us | 30 | 36 |
-| 10,000,000 | 8.057 us | 30 | 36 |
+| 100,000 | 14.109 us | 30 | 36 |
+| 10,000,000 | 15.345 us | 30 | 36 |
 
 The gate rejects logical-count scaling and requires identical bounded node
 capacity.
@@ -362,8 +362,14 @@ walks only from the focused descendant to its materialized item root. Restore
 resolves either that bounded child path or scans one materialized item subtree
 for a unique explicit node code. It never scans logical rows or retains a Node
 ID after disposal. Focus retention therefore preserves the same bounded-memory
-model. Accessibility range integration still needs a separate behavior and
-performance gate before viewport virtualization is production-complete.
+model.
+
+Accessibility range integration adds two optional integers to each retained
+semantic record and writes them only for the bounded materialized entries
+during reconciliation. It does not create semantic placeholders for logical
+rows. The virtual-node benchmark now verifies the logical set size on the
+bounded pool in addition to identical node capacity for 100,000 and 10,000,000
+items; runtime and AT-SPI tests verify position updates and snapshot diffs.
 
 ### Retained navigation status (2026-08-01)
 

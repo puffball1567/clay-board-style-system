@@ -1678,6 +1678,12 @@ proc setAccessibleRange*(
 ) =
   handle.root.tree.setAccessibleRange(handle.id, valueNow, valueMin, valueMax)
 
+proc setAccessibleSetPosition*(
+    handle: NodeHandle;
+    positionInSet, setSize: Option[int]
+) =
+  handle.root.tree.setAccessibleSetPosition(handle.id, positionInSet, setSize)
+
 proc setAccessibleLabelledBy*(handle: NodeHandle; label: Option[NodeHandle]) =
   if label.isSome and label.get.root != handle.root:
     raise newException(ValueError, "accessible label belongs to another UiRoot")

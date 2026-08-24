@@ -9,6 +9,11 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added logical accessibility range semantics for virtualized collections.
+  Materialized item roots expose one-based `positionInSet` and total `setSize`
+  values through the neutral accessibility tree, AT-SPI snapshots and diffs,
+  and append-only C ABI accessors without retaining one node per logical item.
+
 - Added stable-key focus retention for virtualized items. `VirtualFocusMemory`
   restores a focusable descendant after its logical item is rematerialized,
   prefers explicit node `code` over structural paths, preserves focus-visible
@@ -28,7 +33,7 @@ release. Before 1.0, minor releases may contain public API changes.
   bounded materialization, clamped scroll offsets, and anchor correction. It
   plans 100,000 and 10,000,000 logical rows without retaining or scanning one
   entry per row. Stable-key node reuse, focus retention, and accessibility
-  range integration remain separate Version 0.6 work.
+  range integration are layered over that bounded plan.
 
 - Named the independently released
   [`bgfxim`](https://github.com/puffball1567/bgfxim) package as the low-level

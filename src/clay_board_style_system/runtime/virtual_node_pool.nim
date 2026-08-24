@@ -230,6 +230,12 @@ proc reconcileVirtualNodes*[Key](
       for entry in nextEntries:
         if entry.key in oldByKey:
           refresh(entry.node, entry.index, entry.key, entry.geometry)
+
+    for entry in nextEntries:
+      entry.node.setAccessibleSetPosition(
+        some(entry.index + 1),
+        some(plan.itemCount)
+      )
   except CatchableError:
     let failure = getCurrentException()
     discard root.disposeAll(newlyMounted, interaction)

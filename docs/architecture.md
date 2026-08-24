@@ -246,8 +246,9 @@ Production-oriented runtime updates should be dirty-driven:
   for narrower updates.
 
 CBSS also owns UI semantics, while application behavior remains outside it.
-Nodes expose typed accessible roles, names, descriptions, values, state, and
-relations through a platform-neutral semantic tree. Standard controls own
+Nodes expose typed accessible roles, names, descriptions, values, state,
+relations, and logical set position/size through a platform-neutral semantic
+tree. Standard controls own
 intrinsic behavior such as keyboard activation, selection, disabled handling,
 and disclosure expansion. A user callback owns what happens after activation,
 such as saving, printing, or calling a backend. AT-SPI, UIA, and
@@ -344,9 +345,16 @@ missing or duplicate explicit code fails closed instead of redirecting focus to
 another control. The interaction focus serial arms the record after disposal.
 Any later focus operation changes that serial and cancels restoration, so an
 item returning to the viewport cannot steal focus chosen by the user or the
-application. Accessibility range semantics remain a separate virtualization
-layer and likewise attach to stable logical items rather than materialization
-slots.
+application.
+
+Logical collection semantics attach to the same stable item roots rather than
+materialization slots. `VirtualNodePool` writes one-based `positionInSet` and
+the plan's logical `setSize` after successful mount/refresh. Retained keys
+therefore update their positions when application data is reordered, while a
+100,000-item collection still exposes only the bounded accessible nodes that
+are currently materialized. The pool does not guess List, Grid, Tree, or item
+roles; component authors retain ownership of that meaning. The neutral tree,
+AT-SPI snapshot/diff, and append-only C ABI carry the same range contract.
 
 The runtime may still offer declarative construction helpers. Those helpers
 should compile down to stable tree and style objects, and later updates should

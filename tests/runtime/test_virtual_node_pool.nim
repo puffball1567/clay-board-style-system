@@ -47,6 +47,15 @@ proc nodeIds[Key](pool: VirtualNodePool[Key]): seq[NodeId] =
   for entry in pool.bindings:
     result.add entry.node.id
 
+proc accessibleNodeFor(
+    nodes: openArray[AccessibleNode];
+    id: NodeId
+): Option[AccessibleNode] =
+  for node in nodes:
+    if node.node == id:
+      return some(node)
+  none(AccessibleNode)
+
 suite "stable-key virtual node pool":
   test "forward and reverse ranges retain keyed nodes and restore child order":
     let root = initUiRoot()
@@ -135,6 +144,76 @@ suite "stable-key virtual node pool":
     check pool.nodeForKey("alpha").get.id == alpha
     check refreshed == @["gamma:0", "alpha:1"]
     check root.tree.nodes[host.id.nodeIndex].children == pool.nodeIds()
+
+  test "materialized roots expose logical positions without allocating every item":
+    let root = initUiRoot()
+    let host = root.box()
+    var interaction = initInteractionState()
+    var pool = initVirtualNodePool[int]()
+    let plan = planVirtualRange(
+      100_000,
+      virtualViewport(5_000, 30),
+      virtualizationConfig(
+        estimatedItemExtent = 10,
+        maxMaterializedItems = 8
+      )
+    )
+    var keys: seq[int]
+    for item in plan.items:
+      keys.add item.index
+    let mount = proc(
+        index: int;
+        key: int;
+        geometry: VirtualItemGeometry
+    ): NodeHandle =
+      result = root.box()
+      result.setAccessibleRole(arListItem)
+      result.setAccessibleName("Row " & $(index + 1))
+
+    discard pool.reconcileVirtualNodes(
+      root, host, interaction, plan, keys, mount
+    )
+
+    check pool.len <= 8
+    check root.tree.activeNodeCount() == pool.len + 1
+    for binding in pool.bindings:
+      let semantic = root.tree.semanticInfo(binding.node.id)
+      check semantic.positionInSet == some(binding.index + 1)
+      check semantic.setSize == some(100_000)
+      let accessible = root.accessibilityTree()
+        .accessibleNodeFor(binding.node.id).get
+      check accessible.positionInSet == semantic.positionInSet
+      check accessible.setSize == semantic.setSize
+
+  test "retained nodes update logical positions after data reordering":
+    let root = initUiRoot()
+    let host = root.box()
+    var interaction = initInteractionState()
+    var pool = initVirtualNodePool[string]()
+    let plan = planAt(0, itemCount = 10)
+    let mount = proc(
+        index: int;
+        key: string;
+        geometry: VirtualItemGeometry
+    ): NodeHandle =
+      result = root.box()
+      result.setAccessibleRole(arListItem)
+
+    discard pool.reconcileVirtualNodes(
+      root, host, interaction, plan, ["alpha", "beta", "gamma"], mount
+    )
+    let alpha = pool.nodeForKey("alpha").get
+    let gamma = pool.nodeForKey("gamma").get
+
+    discard pool.reconcileVirtualNodes(
+      root, host, interaction, plan, ["gamma", "alpha", "delta"], mount
+    )
+
+    check pool.nodeForKey("alpha").get.id == alpha.id
+    check pool.nodeForKey("gamma").get.id == gamma.id
+    check root.tree.semanticInfo(gamma.id).positionInSet == some(1)
+    check root.tree.semanticInfo(alpha.id).positionInSet == some(2)
+    check root.tree.semanticInfo(alpha.id).setSize == some(10)
 
   test "unchanged range performs no structural work":
     let root = initUiRoot()

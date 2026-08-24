@@ -49,6 +49,8 @@ _Static_assert(sizeof(CbssCraftDiagnostic) == 16,
                "CbssCraftDiagnostic ABI changed");
 _Static_assert(sizeof(CbssAccessibility) == 32,
                "CbssAccessibility ABI changed");
+_Static_assert(sizeof(CbssAccessibleSetPosition) == 24,
+               "CbssAccessibleSetPosition ABI changed");
 _Static_assert(sizeof(CbssRenderSurfacePlacement) == 40,
                "CbssRenderSurfacePlacement ABI changed");
 _Static_assert(sizeof(CbssRenderSurfaceEvent) == 232,
@@ -1106,6 +1108,17 @@ int main(void) {
       context, sibling, CBSS_ROLE_LINK, "C link", "Opens a destination"));
   require_ok(context, cbss_node_set_accessible_value(
       context, child, "ready"));
+  require_ok(context, cbss_node_set_accessible_set_position(
+      context, child,
+      CBSS_ACCESSIBLE_HAS_POSITION_IN_SET | CBSS_ACCESSIBLE_HAS_SET_SIZE,
+      3, 100));
+  assert(cbss_node_set_accessible_set_position(
+      context, child,
+      CBSS_ACCESSIBLE_HAS_POSITION_IN_SET | CBSS_ACCESSIBLE_HAS_SET_SIZE,
+      101, 100) == CBSS_INVALID_ARGUMENT);
+  assert(cbss_node_set_accessible_set_position(
+      context, child, CBSS_ACCESSIBLE_HAS_SET_SIZE,
+      0, -1) == CBSS_INVALID_ARGUMENT);
 
   CallbackState callback_state = {
       .label = label,
@@ -1412,6 +1425,13 @@ int main(void) {
   require_ok(context, cbss_node_accessibility(
       context, child, &accessibility));
   assert(accessibility.role == CBSS_ROLE_BUTTON);
+  CbssAccessibleSetPosition set_position;
+  require_ok(context, cbss_node_accessible_set_position(
+      context, child, &set_position));
+  assert(set_position.flags ==
+      (CBSS_ACCESSIBLE_HAS_POSITION_IN_SET | CBSS_ACCESSIBLE_HAS_SET_SIZE));
+  assert(set_position.position_in_set == 3);
+  assert(set_position.set_size == 100);
   char accessible_name[32];
   assert(cbss_node_accessible_name(
       context, child, accessible_name, sizeof(accessible_name)) == 8);
