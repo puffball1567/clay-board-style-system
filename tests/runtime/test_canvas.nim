@@ -414,6 +414,7 @@ suite "standard canvas surface":
       uiStyle([
         decl("width", px(100)),
         decl("height", px(60)),
+        decl("box-sizing", keyword("border-box")),
         decl("padding", px(7)),
         decl("border-width", px(2)),
         decl("border-color", rgb(1, 1, 1))

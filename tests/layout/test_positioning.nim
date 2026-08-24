@@ -97,7 +97,8 @@ suite "layout positioning":
       rule(id("root"), [
         decl("width", px(220)),
         decl("height", px(120)),
-        decl("padding", px(10))
+        decl("padding", px(10)),
+        decl("box-sizing", keyword("border-box"))
       ]),
       rule(id("shifted"), [
         decl("position", keyword("relative")),
@@ -145,6 +146,7 @@ suite "layout positioning":
         decl("width", px(160)),
         decl("height", px(100)),
         decl("padding", px(10)),
+        decl("box-sizing", keyword("border-box")),
         decl("gap", px(8))
       ]),
       rule(id("normal"), [
@@ -188,7 +190,8 @@ suite "layout positioning":
       rule(id("root"), [
         decl("width", px(220)),
         decl("height", px(120)),
-        decl("padding", px(10))
+        decl("padding", px(10)),
+        decl("box-sizing", keyword("border-box"))
       ]),
       rule(id("overlay"), [
         decl("position", keyword("absolute")),

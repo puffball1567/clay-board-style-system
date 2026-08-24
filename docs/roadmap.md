@@ -1911,6 +1911,14 @@ meaning rather than a guess made by virtualization. This completes the
 virtualization-specific Version 0.6 semantic stack; platform transport and the
 broader production layout work remain separate tasks in this section.
 
+Executable `box-sizing` is also complete. Quantitative dimensions, min/max
+constraints, and flex-basis now distinguish CSS-default `content-box` from
+`border-box`; padding and visible borders are counted once, while child
+percentage sizing, intrinsic layout, aspect ratios, scroll gutters, clipping,
+and positioned descendants share the derived content geometry. Application
+and component-library resets remain explicit Style injection rather than an
+engine-wide compatibility default.
+
 ### CSS Property Runtime Completion
 
 Status: `Version 0.6 target; package order remains dependency-driven`
@@ -1939,7 +1947,7 @@ machine-checked, while semantic promotion requires code-and-test review.
 
 Candidate work packages:
 
-- **Box and Flex layout fidelity.** Complete executable `box-sizing`,
+- **Box and Flex layout fidelity.** Build on executable `box-sizing` with
   multi-line `flex-wrap` and `flex-flow`, line distribution through
   `align-content`, and the remaining item/container alignment properties.
   Preserve stable intrinsic sizing, min/max constraints, gaps, ordering,

@@ -270,6 +270,7 @@ suite "paint ordering":
       rule(id("root"), [
         decl("width", px(20)),
         decl("height", px(12)),
+        decl("box-sizing", keyword("border-box")),
         decl("border-right-width", px(3)),
         decl("border-right-color", colorValue(rgb(0, 1, 0)))
       ])
@@ -298,6 +299,7 @@ suite "paint ordering":
       rule(id("root"), [
         decl("width", px(20)),
         decl("height", px(12)),
+        decl("box-sizing", keyword("border-box")),
         decl("border-width", px(2)),
         decl("border-color", colorValue(rgb(1, 0, 0))),
         decl("border-right-style", keyword("none"))

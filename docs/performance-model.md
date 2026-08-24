@@ -85,6 +85,18 @@ counts text-engine measurement calls and bounds them linearly by text-node
 count. Intrinsic-heavy wall-clock workloads still need a dedicated benchmark
 before intrinsic sizing is considered optimized.
 
+### Box-sizing runtime verification (2026-08-25)
+
+The executable `box-sizing` path adds constant-time edge and sizing-box
+resolution per laid-out Box. A same-machine release ARC A/B run alternated the
+unchanged `devel` pipeline binary with the implementation binary. At 4,000
+nodes, layout measured 8.62-9.55 ms on `devel` and 9.12-9.73 ms with runtime
+box sizing, remaining inside the 20% regression gate despite normal run-to-run
+variance. The fixed seven-node dirty-subtree probe remained in the microsecond
+range and did not begin walking the unrelated tree. Padding and visible-border
+edges are resolved once per node in the arrangement pass and reused by sizing,
+child constraints, and placement.
+
 ### Borrowed-style hot path verification (2026-07-23)
 
 Parent styles are now borrowed during resolution, and layout, paint, and hit

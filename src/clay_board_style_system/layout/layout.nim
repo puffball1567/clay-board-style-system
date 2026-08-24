@@ -129,6 +129,49 @@ proc paddingOf(style: ComputedStyle; containingInlineSize = 0.0'f32): EdgeSizes 
   result.bottom += gutter.bottom
   result.left += gutter.left
 
+proc borderOf(style: ComputedStyle): EdgeSizes =
+  let widths = style.box.borderWidths
+  result.top =
+    if style.box.borderSideVisible.top: max(0.0'f32, widths.top)
+    else: 0.0'f32
+  result.right =
+    if style.box.borderSideVisible.right: max(0.0'f32, widths.right)
+    else: 0.0'f32
+  result.bottom =
+    if style.box.borderSideVisible.bottom: max(0.0'f32, widths.bottom)
+    else: 0.0'f32
+  result.left =
+    if style.box.borderSideVisible.left: max(0.0'f32, widths.left)
+    else: 0.0'f32
+
+proc combinedEdges(first, second: EdgeSizes): EdgeSizes {.inline.} =
+  EdgeSizes(
+    top: first.top + second.top,
+    right: first.right + second.right,
+    bottom: first.bottom + second.bottom,
+    left: first.left + second.left
+  )
+
+proc horizontal(edges: EdgeSizes): float32 {.inline.} =
+  edges.left + edges.right
+
+proc vertical(edges: EdgeSizes): float32 {.inline.} =
+  edges.top + edges.bottom
+
+proc toBorderBox(
+    value: float32;
+    extra: float32;
+    boxSizing: BoxSizing
+): float32 {.inline.} =
+  case boxSizing
+  of bsContentBox:
+    max(0.0'f32, value) + extra
+  of bsBorderBox:
+    max(extra, value)
+
+proc usesSelectedSizingBox(value: Option[LengthValue]): bool {.inline.} =
+  value.isSome and value.get.kind in {ukPx, ukPercent, ukFill}
+
 proc marginOf(style: ComputedStyle; containingInlineSize = 0.0'f32): EdgeSizes =
   result =
     if style.box.margin.isSome: style.box.margin.get
@@ -262,18 +305,32 @@ proc resolveLength(
       ukEx, ukCh, ukRex, ukRch:
     none(float32)
 
+proc resolveSizingLength(
+    value: Option[LengthValue];
+    reference, intrinsicMin, intrinsicMax, extra: float32;
+    boxSizing: BoxSizing
+): Option[float32] =
+  result = resolveLength(value, reference, intrinsicMin, intrinsicMax)
+  if result.isSome and value.usesSelectedSizingBox:
+    result = some(toBorderBox(result.get, extra, boxSizing))
+
 proc flexMinimumMain(
     style: ComputedStyle;
     direction: FlexDirection;
     constraints: Size;
-    intrinsic: IntrinsicSizes
+    intrinsic: IntrinsicSizes;
+    boxEdges: EdgeSizes
 ): float32 =
   let reference = if direction == fdRow: constraints.w else: constraints.h
   let intrinsicMin = if direction == fdRow: intrinsic.minSize.w else: intrinsic.minSize.h
   let intrinsicMax = if direction == fdRow: intrinsic.maxSize.w else: intrinsic.maxSize.h
   let minimumSpec = if direction == fdRow: style.minWidthSpec() else: style.minHeightSpec()
+  let extra = if direction == fdRow: boxEdges.horizontal else: boxEdges.vertical
   if minimumSpec.isSome and minimumSpec.get.kind != ukAuto:
-    let resolved = resolveLength(minimumSpec, reference, intrinsicMin, intrinsicMax)
+    let resolved = resolveSizingLength(
+      minimumSpec, reference, intrinsicMin, intrinsicMax,
+      extra, style.layout.boxSizing
+    )
     return if resolved.isSome: resolved.get else: 0.0'f32
 
   let overflow = if direction == fdRow: style.layout.overflowX else: style.layout.overflowY
@@ -284,7 +341,10 @@ proc flexMinimumMain(
   # items, capped by a definite preferred size when one exists.
   result = max(0.0'f32, intrinsicMin)
   let preferredSpec = if direction == fdRow: style.widthSpec() else: style.heightSpec()
-  let preferred = resolveLength(preferredSpec, reference, intrinsicMin, intrinsicMax)
+  let preferred = resolveSizingLength(
+    preferredSpec, reference, intrinsicMin, intrinsicMax,
+    extra, style.layout.boxSizing
+  )
   if preferred.isSome:
     result = min(result, preferred.get)
 
@@ -353,13 +413,30 @@ proc clampSize(
     w, h: float32;
     style: ComputedStyle;
     constraints: Size;
-    intrinsic: IntrinsicSizes
+    intrinsic: IntrinsicSizes;
+    boxEdges = EdgeSizes()
 ): Size =
   result = size(w, h)
-  let minWidth = resolveLength(style.minWidthSpec(), constraints.w, intrinsic.minSize.w, intrinsic.maxSize.w)
-  let maxWidth = resolveLength(style.maxWidthSpec(), constraints.w, intrinsic.minSize.w, intrinsic.maxSize.w)
-  let minHeight = resolveLength(style.minHeightSpec(), constraints.h, intrinsic.minSize.h, intrinsic.maxSize.h)
-  let maxHeight = resolveLength(style.maxHeightSpec(), constraints.h, intrinsic.minSize.h, intrinsic.maxSize.h)
+  let minWidth = resolveSizingLength(
+    style.minWidthSpec(), constraints.w,
+    intrinsic.minSize.w, intrinsic.maxSize.w,
+    boxEdges.horizontal, style.layout.boxSizing
+  )
+  let maxWidth = resolveSizingLength(
+    style.maxWidthSpec(), constraints.w,
+    intrinsic.minSize.w, intrinsic.maxSize.w,
+    boxEdges.horizontal, style.layout.boxSizing
+  )
+  let minHeight = resolveSizingLength(
+    style.minHeightSpec(), constraints.h,
+    intrinsic.minSize.h, intrinsic.maxSize.h,
+    boxEdges.vertical, style.layout.boxSizing
+  )
+  let maxHeight = resolveSizingLength(
+    style.maxHeightSpec(), constraints.h,
+    intrinsic.minSize.h, intrinsic.maxSize.h,
+    boxEdges.vertical, style.layout.boxSizing
+  )
   if maxWidth.isSome:
     result.w = min(result.w, maxWidth.get)
   if minWidth.isSome:
@@ -469,6 +546,12 @@ proc measureIntrinsicNode(
     output[id.nodeIndex] = result
     return
 
+  let measuredEdges =
+    if node.kind == nkBox:
+      combinedEdges(paddingOf(style), borderOf(style))
+    else:
+      EdgeSizes()
+
   if node.kind == nkText:
     let measuredText = textLimitedByMaxLines(node.text, style.text)
     let maximum = unwrappedTextSize(measuredText, style.text, textEngine, fontRegistry)
@@ -481,7 +564,6 @@ proc measureIntrinsicNode(
     let imageSize = size(max(0.0'f32, node.imageWidth), max(0.0'f32, node.imageHeight))
     result = IntrinsicSizes(minSize: imageSize, maxSize: imageSize)
   else:
-    let pad = paddingOf(style)
     let orderedChildren = node.childrenInLayoutOrder(styles)
     var childCount = 0
     for child in orderedChildren:
@@ -519,10 +601,10 @@ proc measureIntrinsicNode(
       else:
         result.minSize.h += gaps
         result.maxSize.h += gaps
-    result.minSize.w += pad.left + pad.right
-    result.maxSize.w += pad.left + pad.right
-    result.minSize.h += pad.top + pad.bottom
-    result.maxSize.h += pad.top + pad.bottom
+    result.minSize.w += measuredEdges.horizontal
+    result.maxSize.w += measuredEdges.horizontal
+    result.minSize.h += measuredEdges.vertical
+    result.maxSize.h += measuredEdges.vertical
 
   # Cache raw content measurements. The value returned to the parent below may
   # include this node's explicit size, but `content` and flex-basis content
@@ -533,20 +615,34 @@ proc measureIntrinsicNode(
   let heightSpec = style.heightSpec()
   let width =
     if widthSpec.isSome and widthSpec.get.kind in {ukPx, ukContent, ukMinContent, ukMaxContent}:
-      resolveLength(widthSpec, result.maxSize.w, result.minSize.w, result.maxSize.w)
+      resolveLength(
+        widthSpec, result.maxSize.w, result.minSize.w, result.maxSize.w
+      )
     else:
       none(float32)
   let height =
     if heightSpec.isSome and heightSpec.get.kind in {ukPx, ukContent, ukMinContent, ukMaxContent}:
-      resolveLength(heightSpec, result.maxSize.h, result.minSize.h, result.maxSize.h)
+      resolveLength(
+        heightSpec, result.maxSize.h, result.minSize.h, result.maxSize.h
+      )
     else:
       none(float32)
   if width.isSome:
-    result.minSize.w = width.get
-    result.maxSize.w = width.get
+    let outerWidth =
+      if widthSpec.usesSelectedSizingBox:
+        toBorderBox(width.get, measuredEdges.horizontal, style.layout.boxSizing)
+      else:
+        width.get
+    result.minSize.w = outerWidth
+    result.maxSize.w = outerWidth
   if height.isSome:
-    result.minSize.h = height.get
-    result.maxSize.h = height.get
+    let outerHeight =
+      if heightSpec.usesSelectedSizingBox:
+        toBorderBox(height.get, measuredEdges.vertical, style.layout.boxSizing)
+      else:
+        height.get
+    result.minSize.h = outerHeight
+    result.maxSize.h = outerHeight
 
 proc computeIntrinsicSizes(
     tree: Tree;
@@ -612,11 +708,25 @@ proc layoutNode(
   let node = tree.nodes[id.nodeIndex]
   let style {.cursor.} = styles.styles[id.nodeIndex]
   let intrinsic = intrinsics[id.nodeIndex]
-  let resolvedWidth = resolveLength(
-    style.widthSpec(), constraints.w, intrinsic.minSize.w, intrinsic.maxSize.w
+  let initialPadding =
+    if node.kind == nkBox: paddingOf(style, constraints.w)
+    else: EdgeSizes()
+  let initialBoxEdges =
+    if node.kind == nkBox:
+      combinedEdges(initialPadding, borderOf(style))
+    else:
+      EdgeSizes()
+  let widthSpec = style.widthSpec()
+  let heightSpec = style.heightSpec()
+  let specifiedWidth = resolveSizingLength(
+    widthSpec, constraints.w,
+    intrinsic.minSize.w, intrinsic.maxSize.w,
+    initialBoxEdges.horizontal, style.layout.boxSizing
   )
-  let resolvedHeight = resolveLength(
-    style.heightSpec(), constraints.h, intrinsic.minSize.h, intrinsic.maxSize.h
+  let specifiedHeight = resolveSizingLength(
+    heightSpec, constraints.h,
+    intrinsic.minSize.h, intrinsic.maxSize.h,
+    initialBoxEdges.vertical, style.layout.boxSizing
   )
   let firstBox = output.boxes.len
 
@@ -633,12 +743,12 @@ proc layoutNode(
     let measured = textEngine.measure(TextMeasureInput(
       text: measuredText,
       style: style.text,
-      maxWidth: some(if resolvedWidth.isSome: resolvedWidth.get else: constraints.w),
+      maxWidth: some(if specifiedWidth.isSome: specifiedWidth.get else: constraints.w),
       fonts: fontRegistry
     ))
-    let w = if resolvedWidth.isSome: resolvedWidth.get else: measured.w
-    let h = if resolvedHeight.isSome: resolvedHeight.get else: measured.h
-    let aspect = applyAspect(w, h, style, resolvedWidth.isSome, resolvedHeight.isSome)
+    let w = if specifiedWidth.isSome: specifiedWidth.get else: measured.w
+    let h = if specifiedHeight.isSome: specifiedHeight.get else: measured.h
+    let aspect = applyAspect(w, h, style, specifiedWidth.isSome, specifiedHeight.isSome)
     let clamped = clampSize(aspect.w, aspect.h, style, constraints, intrinsic)
     output.boxes.add LayoutBox(
       node: id,
@@ -655,14 +765,14 @@ proc layoutNode(
     let intrinsicW = max(0.0'f32, node.imageWidth)
     let intrinsicH = max(0.0'f32, node.imageHeight)
     let w =
-      if resolvedWidth.isSome: resolvedWidth.get
+      if specifiedWidth.isSome: specifiedWidth.get
       elif intrinsicW > 0: intrinsicW
       else: 0.0'f32
     let h =
-      if resolvedHeight.isSome: resolvedHeight.get
+      if specifiedHeight.isSome: specifiedHeight.get
       elif intrinsicH > 0: intrinsicH
       else: 0.0'f32
-    let aspect = applyAspect(w, h, style, resolvedWidth.isSome, resolvedHeight.isSome)
+    let aspect = applyAspect(w, h, style, specifiedWidth.isSome, specifiedHeight.isSome)
     let clamped = clampSize(aspect.w, aspect.h, style, constraints, intrinsic)
     output.boxes.add LayoutBox(
       node: id,
@@ -675,10 +785,21 @@ proc layoutNode(
       return size(clamped.w * zoom, clamped.h * zoom)
     return clamped
 
-  let pad = paddingOf(style, constraints.w)
+  let pad = initialPadding
+  let boxEdges = initialBoxEdges
+  let resolvedWidth = specifiedWidth
+  let resolvedHeight = specifiedHeight
   let childConstraints = size(
-    max(0.0'f32, (if resolvedWidth.isSome: resolvedWidth.get else: constraints.w) - pad.left - pad.right),
-    max(0.0'f32, (if resolvedHeight.isSome: resolvedHeight.get else: constraints.h) - pad.top - pad.bottom)
+    max(
+      0.0'f32,
+      (if resolvedWidth.isSome: resolvedWidth.get else: constraints.w) -
+        boxEdges.horizontal
+    ),
+    max(
+      0.0'f32,
+      (if resolvedHeight.isSome: resolvedHeight.get else: constraints.h) -
+        boxEdges.vertical
+    )
   )
   let mainAxisResolved =
     if style.layout.direction == fdRow: resolvedWidth.isSome
@@ -740,19 +861,26 @@ proc layoutNode(
     )
     let basisSpec = childStyle.flexBasisSpec()
     let childIntrinsic = intrinsics[child.nodeIndex]
-    let basis =
+    let childBoxEdges = combinedEdges(
+      output.boxes[firstBox].padding,
+      borderOf(childStyle)
+    )
+    let specifiedBasis =
       if basisSpec.isSome and basisSpec.get.kind == ukPercent and not mainAxisResolved:
         none(float32)
       elif style.layout.direction == fdRow:
-        resolveLength(
+        resolveSizingLength(
           basisSpec, childConstraints.w,
-          childIntrinsic.minSize.w, childIntrinsic.maxSize.w
+          childIntrinsic.minSize.w, childIntrinsic.maxSize.w,
+          childBoxEdges.horizontal, childStyle.layout.boxSizing
         )
       else:
-        resolveLength(
+        resolveSizingLength(
           basisSpec, childConstraints.h,
-          childIntrinsic.minSize.h, childIntrinsic.maxSize.h
+          childIntrinsic.minSize.h, childIntrinsic.maxSize.h,
+          childBoxEdges.vertical, childStyle.layout.boxSizing
         )
+    let basis = specifiedBasis
     if basis.isSome:
       if style.layout.direction == fdRow:
         childSize.w = basis.get
@@ -769,7 +897,7 @@ proc layoutNode(
       node: child,
       size: childSize,
       minMain: childStyle.flexMinimumMain(
-        style.layout.direction, childConstraints, childIntrinsic
+        style.layout.direction, childConstraints, childIntrinsic, childBoxEdges
       ),
       margin: margin,
       firstBox: firstBox,
@@ -785,32 +913,48 @@ proc layoutNode(
 
   let naturalW =
     if style.layout.direction == fdRow:
-      contentMain + pad.left + pad.right
+      contentMain + boxEdges.horizontal
     else:
-      contentCross + pad.left + pad.right
+      contentCross + boxEdges.horizontal
   let naturalH =
     if style.layout.direction == fdRow:
-      contentCross + pad.top + pad.bottom
+      contentCross + boxEdges.vertical
     else:
-      contentMain + pad.top + pad.bottom
+      contentMain + boxEdges.vertical
   let rawW = if resolvedWidth.isSome: resolvedWidth.get else: naturalW
   let rawH = if resolvedHeight.isSome: resolvedHeight.get else: naturalH
-  let aspect = applyAspect(rawW, rawH, style, resolvedWidth.isSome, resolvedHeight.isSome)
-  let clamped = clampSize(aspect.w, aspect.h, style, constraints, intrinsic)
+  var aspect = size(rawW, rawH)
+  if style.layout.aspectRatio.isSome and style.layout.aspectRatio.get > 0:
+    let ratio = style.layout.aspectRatio.get
+    if specifiedWidth.isSome and specifiedHeight.isNone:
+      if widthSpec.usesSelectedSizingBox and style.layout.boxSizing == bsContentBox:
+        let contentWidth = max(0.0'f32, specifiedWidth.get - boxEdges.horizontal)
+        aspect.h = contentWidth / ratio + boxEdges.vertical
+      else:
+        aspect.h = max(boxEdges.vertical, specifiedWidth.get / ratio)
+    elif specifiedHeight.isSome and specifiedWidth.isNone:
+      if heightSpec.usesSelectedSizingBox and style.layout.boxSizing == bsContentBox:
+        let contentHeight = max(0.0'f32, specifiedHeight.get - boxEdges.vertical)
+        aspect.w = contentHeight * ratio + boxEdges.horizontal
+      else:
+        aspect.w = max(boxEdges.horizontal, specifiedHeight.get * ratio)
+  let clamped = clampSize(
+    aspect.w, aspect.h, style, constraints, intrinsic, boxEdges
+  )
 
   let availableMain =
     if style.layout.direction == fdRow:
-      max(0.0'f32, clamped.w - pad.left - pad.right)
+      max(0.0'f32, clamped.w - boxEdges.horizontal)
     else:
-      max(0.0'f32, clamped.h - pad.top - pad.bottom)
+      max(0.0'f32, clamped.h - boxEdges.vertical)
   let availableCross =
     if style.layout.direction == fdRow:
-      max(0.0'f32, clamped.h - pad.top - pad.bottom)
+      max(0.0'f32, clamped.h - boxEdges.vertical)
     else:
-      max(0.0'f32, clamped.w - pad.left - pad.right)
+      max(0.0'f32, clamped.w - boxEdges.horizontal)
   let containingContentSize = size(
-    max(0.0'f32, clamped.w - pad.left - pad.right),
-    max(0.0'f32, clamped.h - pad.top - pad.bottom)
+    max(0.0'f32, clamped.w - boxEdges.horizontal),
+    max(0.0'f32, clamped.h - boxEdges.vertical)
   )
   let mainGap = style.mainGapOf(containingContentSize)
   if children.len > 1 and mainGap != measuredMainGap:
@@ -928,8 +1072,8 @@ proc layoutNode(
         max(0.0'f32, availableCross - outerCross)
 
     if style.layout.direction == fdRow:
-      let targetX = x + pad.left + cursorMain + child.margin.left
-      let targetY = y + pad.top + crossOffset + child.margin.top
+      let targetX = x + boxEdges.left + cursorMain + child.margin.left
+      let targetY = y + boxEdges.top + crossOffset + child.margin.top
       let offset = childStyle.relativeOffset(containingContentSize)
       output.shiftBoxes(child.firstBox, child.boxCount, targetX + offset.x, targetY + offset.y)
       if effectiveAlign == aiStretch:
@@ -941,8 +1085,8 @@ proc layoutNode(
           some(max(0.0'f32, availableCross - child.margin.top - child.margin.bottom))
         )
     else:
-      let targetX = x + pad.left + crossOffset + child.margin.left
-      let targetY = y + pad.top + cursorMain + child.margin.top
+      let targetX = x + boxEdges.left + crossOffset + child.margin.left
+      let targetY = y + boxEdges.top + cursorMain + child.margin.top
       let offset = childStyle.relativeOffset(containingContentSize)
       output.shiftBoxes(child.firstBox, child.boxCount, targetX + offset.x, targetY + offset.y)
       if effectiveAlign == aiStretch:
@@ -960,10 +1104,10 @@ proc layoutNode(
 
   for child in absoluteChildren:
     let childStyle {.cursor.} = styles.styles[child.node.nodeIndex]
-    let contentX = x + pad.left
-    let contentY = y + pad.top
-    let contentW = max(0.0'f32, clamped.w - pad.left - pad.right)
-    let contentH = max(0.0'f32, clamped.h - pad.top - pad.bottom)
+    let contentX = x + boxEdges.left
+    let contentY = y + boxEdges.top
+    let contentW = max(0.0'f32, clamped.w - boxEdges.horizontal)
+    let contentH = max(0.0'f32, clamped.h - boxEdges.vertical)
     let inset = childStyle.resolvedInsets(size(contentW, contentH))
     let outerW = child.size.w + child.margin.left + child.margin.right
     let outerH = child.size.h + child.margin.top + child.margin.bottom

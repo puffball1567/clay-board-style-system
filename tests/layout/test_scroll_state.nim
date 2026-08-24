@@ -20,6 +20,7 @@ proc scrollFixture(): tuple[
     rule(id("viewport"), [
       decl("width", px(100)),
       decl("height", px(40)),
+      decl("box-sizing", keyword("border-box")),
       decl("flex-direction", keyword("column")),
       decl("overflow-x", keyword("hidden")),
       decl("overflow-y", keyword("auto")),

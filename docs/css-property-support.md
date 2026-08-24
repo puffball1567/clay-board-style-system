@@ -50,16 +50,16 @@ preserves typed intent for later runtime work.
 
 | Status | Count |
 | --- | ---: |
-| Runtime | 174 |
-| Computed | 77 |
+| Runtime | 175 |
+| Computed | 76 |
 | Metadata | 176 |
 | Planned | 0 |
 | No plan | 238 |
 | Target properties | 427 |
 | Total MDN entries | 665 |
 
-As of 2026-08-10, strict runtime completion is **174 of 427 target
-properties (40.7%)**. A further 77 properties reach computed style, so
+As of 2026-08-25, strict runtime completion is **175 of 427 target
+properties (41.0%)**. A further 76 properties reach computed style, so
 **251 of 427 (58.8%)** have runtime or computed support. All 427 target names
 are accepted by the default registry, but metadata-only acceptance is not
 counted as completed behavior. The 238 `No plan` entries are excluded from the
@@ -399,7 +399,7 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `box-orient` | Metadata | Stored as legacy box layout metadata. |
 | `box-pack` | Metadata | Stored as legacy box layout metadata. |
 | `box-shadow` | Runtime | Emits box shadow paint commands in the SDL3 renderer. |
-| `box-sizing` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `box-sizing` | Runtime | `content-box` and `border-box` control explicit dimensions, min/max constraints, flex-basis, intrinsic layout, and child content geometry. |
 | `break-after` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
 | `break-before` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
 | `break-inside` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |

@@ -21,6 +21,7 @@ suite "layout alignment":
         decl("width", px(120)),
         decl("height", px(80)),
         decl("padding", px(10)),
+        decl("box-sizing", keyword("border-box")),
         decl("align-items", keyword("center")),
         decl("justify-content", keyword("center"))
       ]),
