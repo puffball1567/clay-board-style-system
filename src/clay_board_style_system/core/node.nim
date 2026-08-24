@@ -60,6 +60,8 @@ type
     valueNow*: Option[float32]
     valueMin*: Option[float32]
     valueMax*: Option[float32]
+    positionInSet*: Option[int]
+    setSize*: Option[int]
     labelledBy*: Option[NodeId]
     describedBy*: Option[NodeId]
     hidden*: bool
@@ -456,6 +458,29 @@ proc setAccessibleRange*(
   tree.semantics[id.nodeIndex].valueNow = valueNow
   tree.semantics[id.nodeIndex].valueMin = valueMin
   tree.semantics[id.nodeIndex].valueMax = valueMax
+
+proc setAccessibleSetPosition*(
+    tree: var Tree;
+    id: NodeId;
+    positionInSet, setSize: Option[int]
+) =
+  ## Describe one semantic item within a logical set without materializing the
+  ## complete set. Positions are one-based, matching platform accessibility
+  ## APIs rather than zero-based application indices.
+  if not tree.isValid(id):
+    return
+  if positionInSet.isSome and positionInSet.get <= 0:
+    raise newException(ValueError, "accessible position in set must be positive")
+  if setSize.isSome and setSize.get < 0:
+    raise newException(ValueError, "accessible set size cannot be negative")
+  if positionInSet.isSome and setSize.isSome and
+      positionInSet.get > setSize.get:
+    raise newException(
+      ValueError,
+      "accessible position in set cannot exceed the set size"
+    )
+  tree.semantics[id.nodeIndex].positionInSet = positionInSet
+  tree.semantics[id.nodeIndex].setSize = setSize
 
 proc setAccessibleLabelledBy*(tree: var Tree; id: NodeId; label: Option[NodeId]) =
   if tree.isValid(id):

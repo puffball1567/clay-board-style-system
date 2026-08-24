@@ -114,6 +114,10 @@ const
   CbssAccessibleHasValueMin* = 1'u32 shl 1
   CbssAccessibleHasValueMax* = 1'u32 shl 2
 
+  CbssAccessibleHasPositionInSet* = 1'u32 shl 0
+  CbssAccessibleHasSetSize* = 1'u32 shl 1
+  CbssAccessibleSetPositionMask* = (1'u32 shl 2) - 1
+
   CbssColorMissingFirst* = 1'u32 shl 0
   CbssColorMissingSecond* = 1'u32 shl 1
   CbssColorMissingThird* = 1'u32 shl 2
@@ -266,6 +270,10 @@ type
     valueNow*, valueMin*, valueMax*: cfloat
     labelledBy*, describedBy*: uint32
     hidden*: uint8
+
+  CbssAccessibleSetPositionC* {.bycopy.} = object
+    flags*: uint32
+    positionInSet*, setSize*: int64
 
   CbssRenderSurfacePlacementC* {.bycopy.} = object
     bounds*, clip*: CbssRectC
@@ -482,6 +490,7 @@ static:
   doAssert sizeof(CbssDispatchSummaryC) == 16
   doAssert sizeof(CbssScrollMetricsC) == 36
   doAssert sizeof(CbssAccessibilityC) == 32
+  doAssert sizeof(CbssAccessibleSetPositionC) == 24
   doAssert sizeof(CbssRenderSurfacePlacementC) == 40
   doAssert sizeof(CbssRenderSurfaceEventC) == 232
   doAssert sizeof(CbssStreamPumpResultC) == 12
@@ -3817,6 +3826,35 @@ proc cbssNodeSetAccessibleRange(
   )
   CbssOk
 
+proc cbssNodeSetAccessibleSetPosition(
+    context: CbssContextHandle;
+    node, flags: uint32;
+    positionInSet, setSize: int64
+): int32 {.exportc: "cbss_node_set_accessible_set_position", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if not context.validNode(node) or
+      (flags and not CbssAccessibleSetPositionMask) != 0:
+    return CbssInvalidArgument
+  if positionInSet > int64(high(int)) or setSize > int64(high(int)):
+    return CbssInvalidArgument
+  let position =
+    if (flags and CbssAccessibleHasPositionInSet) != 0:
+      some(int(positionInSet))
+    else:
+      none(int)
+  let size =
+    if (flags and CbssAccessibleHasSetSize) != 0:
+      some(int(setSize))
+    else:
+      none(int)
+  if (position.isSome and position.get <= 0) or
+      (size.isSome and size.get < 0) or
+      (position.isSome and size.isSome and position.get > size.get):
+    return CbssInvalidArgument
+  context.tree.setAccessibleSetPosition(node.nodeId, position, size)
+  CbssOk
+
 proc cbssNodeSetAccessibleRelations(
     context: CbssContextHandle;
     node, labelledBy, describedBy: uint32
@@ -3885,6 +3923,32 @@ proc cbssNodeAccessibility(
       else:
         CbssNodeNone,
     hidden: uint8(ord(context.tree.isAccessibleHidden(node.nodeId)))
+  )
+  CbssOk
+
+proc cbssNodeAccessibleSetPosition(
+    context: CbssContextHandle;
+    node: uint32;
+    output: ptr CbssAccessibleSetPositionC
+): int32 {.exportc: "cbss_node_accessible_set_position", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if not context.validNode(node) or output.isNil:
+    return CbssInvalidArgument
+  let semantic = context.tree.semanticInfo(node.nodeId)
+  var flags = 0'u32
+  if semantic.positionInSet.isSome:
+    flags = flags or CbssAccessibleHasPositionInSet
+  if semantic.setSize.isSome:
+    flags = flags or CbssAccessibleHasSetSize
+  output[] = CbssAccessibleSetPositionC(
+    flags: flags,
+    positionInSet:
+      if semantic.positionInSet.isSome: int64(semantic.positionInSet.get)
+      else: 0'i64,
+    setSize:
+      if semantic.setSize.isSome: int64(semantic.setSize.get)
+      else: 0'i64
   )
   CbssOk
 

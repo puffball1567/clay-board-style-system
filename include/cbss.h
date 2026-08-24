@@ -436,6 +436,11 @@ enum {
   CBSS_ACCESSIBLE_HAS_VALUE_MAX = 1u << 2
 };
 
+enum {
+  CBSS_ACCESSIBLE_HAS_POSITION_IN_SET = 1u << 0,
+  CBSS_ACCESSIBLE_HAS_SET_SIZE = 1u << 1
+};
+
 typedef enum CbssAccessibleRole {
   CBSS_ROLE_NONE = 0,
   CBSS_ROLE_APPLICATION = 1,
@@ -773,6 +778,12 @@ typedef struct CbssAccessibility {
   uint32_t described_by;
   uint8_t hidden;
 } CbssAccessibility;
+
+typedef struct CbssAccessibleSetPosition {
+  uint32_t flags;
+  int64_t position_in_set;
+  int64_t set_size;
+} CbssAccessibleSetPosition;
 
 typedef enum CbssRenderSurfaceEventKind {
   CBSS_SURFACE_MOUNT = 0,
@@ -1154,6 +1165,9 @@ CBSS_API CbssStatus cbss_node_set_accessible_value(
 CBSS_API CbssStatus cbss_node_set_accessible_range(
     CbssContext *context, uint32_t node, uint32_t flags,
     float value_now, float value_min, float value_max);
+CBSS_API CbssStatus cbss_node_set_accessible_set_position(
+    CbssContext *context, uint32_t node, uint32_t flags,
+    int64_t position_in_set, int64_t set_size);
 CBSS_API CbssStatus cbss_node_set_accessible_relations(
     CbssContext *context, uint32_t node,
     uint32_t labelled_by, uint32_t described_by);
@@ -1161,6 +1175,9 @@ CBSS_API CbssStatus cbss_node_set_accessible_hidden(
     CbssContext *context, uint32_t node, uint8_t hidden);
 CBSS_API CbssStatus cbss_node_accessibility(
     CbssContext *context, uint32_t node, CbssAccessibility *output);
+CBSS_API CbssStatus cbss_node_accessible_set_position(
+    CbssContext *context, uint32_t node,
+    CbssAccessibleSetPosition *output);
 CBSS_API uint32_t cbss_node_accessible_name(
     CbssContext *context, uint32_t node, char *buffer, uint32_t capacity);
 CBSS_API uint32_t cbss_node_accessible_description(

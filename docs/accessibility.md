@@ -18,8 +18,8 @@ does not require a browser URL.
 Accessibility support is split into independent layers:
 
 1. `runtime/accessibility.nim` resolves the retained semantic tree. It exposes
-   typed roles, names, descriptions, values, states, relations, and optional
-   layout bounds.
+   typed roles, names, descriptions, values, states, relations, logical set
+   position/size, and optional layout bounds.
 2. `backends/atspi/adapter.nim` maps that tree to stable AT-SPI object paths,
    roles, state, interfaces, actions, and snapshot changes.
 3. A Linux transport publishes the snapshot through the accessibility D-Bus.
@@ -59,6 +59,26 @@ inactive. Their semantic nodes remain retained with stable IDs, but are marked
 hidden, cannot receive accessibility actions through the UI event path, and do
 not participate in focus traversal. Reactivation restores semantics without
 reconstructing the screen subtree.
+
+## Virtual Collections
+
+Viewport virtualization must not make a bounded materialized window appear to
+be the complete collection. `setAccessibleSetPosition` assigns a one-based
+`positionInSet` and optional logical `setSize` to an item. `VirtualNodePool`
+sets both values automatically from each item geometry and the range plan's
+logical item count, including when a retained stable key moves after data
+reordering.
+
+These values describe an item; they do not infer whether the author intended a
+List, Grid, Tree, or another collection. Components must still assign the
+appropriate accessible role. A position must be positive, a set size cannot be
+negative, and a known position cannot exceed a known size. Invalid combinations
+are rejected without changing the previous semantic value.
+
+The platform-neutral AT-SPI snapshot carries the same fields and emits an
+`ackSetPosition` change when either value changes. The C ABI adds a separate
+`CbssAccessibleSetPosition` structure and setter/getter pair so the fixed-size
+`CbssAccessibility` ABI remains unchanged.
 
 ## Security Boundary
 

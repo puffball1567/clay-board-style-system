@@ -1,6 +1,6 @@
 ## Verifies that stable-key reconciliation follows the bounded materialized
 ## range rather than the total logical item count.
-import std/[monotimes, strformat, times]
+import std/[monotimes, options, strformat, times]
 
 import clay_board_style_system
 
@@ -34,7 +34,8 @@ proc benchmark(itemCount, iterations: int): PoolTiming =
       key: int;
       geometry: VirtualItemGeometry
   ): NodeHandle =
-    root.box()
+    result = root.box()
+    result.setAccessibleRole(arListItem)
 
   discard pool.reconcileVirtualNodes(
     root, host, interaction, firstPlan, firstKeys, mount
@@ -66,6 +67,11 @@ proc benchmark(itemCount, iterations: int): PoolTiming =
 
   doAssert root.tree.activeNodeCount() == pool.len + 1
   doAssert root.tree.nodes.len <= config.maxMaterializedItems + 2
+  doAssert root.accessibilityTree().len == pool.len
+  for entry in pool.bindings:
+    let semantic = root.tree.semanticInfo(entry.node.id)
+    doAssert semantic.positionInSet == some(entry.index + 1)
+    doAssert semantic.setSize == some(itemCount)
 
 when isMainModule:
   const iterations = 20_000
