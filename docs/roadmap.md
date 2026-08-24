@@ -1058,10 +1058,12 @@ The planned standard GPU adapter is bgfx, with explicit resource, swapchain,
 shader, synchronization, resize, device-loss, and presentation ownership.
 SDL3 continues to own windows, native handles, input, event integration, and
 the canonical CPU presentation path. The independent low-level bgfx Nim C99
-binding remains useful outside CBSS and enters an application only when its
-GPU profile is selected. A later wgpu-native adapter may implement the same
-CBSS-owned contract, but it is no longer the standard provider or a release
-prerequisite.
+binding is [bgfxim](https://github.com/puffball1567/bgfxim). It is distributed
+separately, remains useful without CBSS, and enters an application only when
+its GPU profile is selected. The binding is available; the CBSS adapter and
+its real-GPU qualification remain Version 0.7 work. A later wgpu-native adapter
+may implement the same CBSS-owned contract, but it is no longer the standard
+provider or a release prerequisite.
 
 CBSS will not claim exclusive ownership of the machine's GPU. A separate
 backend process may own an independent compute device and return bounded Blob,
@@ -2064,8 +2066,9 @@ backend-shaped feature sets. Its release gates are:
 - a deterministic CPU Motion Scene reference path followed by batched GPU
   execution for shapes, text, images, particles, sprites, chart marks, and
   generative objects without one Box node per visual object;
-- one independently distributed low-level bgfx Nim C99 binding and one
-  compatible selected bgfx runtime configuration per process;
+- the independently distributed [bgfxim](https://github.com/puffball1567/bgfxim)
+  low-level bgfx Nim C99 binding and one compatible selected bgfx runtime
+  configuration per process;
 - explicit owned and borrowed `GpuHost` modes, one Surface/Present owner, and
   documented Instance, Adapter, Device, Queue, swapchain, resize, and
   device-loss lifecycles;

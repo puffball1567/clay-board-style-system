@@ -63,9 +63,12 @@ model.
 
 ## Optional bgfx GPU Capability
 
-bgfx is the planned standard GPU adapter. Its low-level Nim C99 binding is an
-independent package so games and visualization libraries may use it without
-CBSS. CBSS depends on that package only when the bgfx capability is selected.
+bgfx is the planned standard GPU adapter. Its low-level Nim C99 binding,
+[bgfxim](https://github.com/puffball1567/bgfxim), is an independent package so
+games and visualization libraries may use it without CBSS. CBSS depends on
+that package only when the bgfx capability is selected. `bgfxim` is already
+available; the CBSS adapter, ownership integration, and real-GPU release gates
+remain planned work rather than part of the current standard profile.
 
 CBSS supplies bgfx with bounded scene data, textures, render targets, graphics
 or compute work, and composition metadata. SDL3 supplies the native window and

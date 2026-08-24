@@ -769,10 +769,13 @@ increase every artifact, and make backend-specific types part of ordinary UI.
 - optional Little CMS owns ICC transforms, CMYK color management, black
   preservation, rendering intents, and display soft proofing.
 
-The bgfx Nim C99 binding is distributed as an independent package and selected
-by CBSS only for a GPU-enabled build. Ordinary CBSS public APIs expose no bgfx
-handles. D23 remains a valid conditional ownership design if a wgpu adapter is
-implemented, but wgpu-native is no longer the planned standard GPU provider.
+The bgfx Nim C99 binding is distributed independently as
+[bgfxim](https://github.com/puffball1567/bgfxim) and selected by CBSS only for a
+GPU-enabled build. Ordinary CBSS public APIs expose no bgfx handles. Publishing
+the binding does not complete the CBSS adapter: shared ownership, presentation,
+device-loss, and real-GPU integration gates remain mandatory. D23 remains a
+valid conditional ownership design if a wgpu adapter is implemented, but
+wgpu-native is no longer the planned standard GPU provider.
 
 CMYK and ICC source data remain canonical document data. RGB produced for an
 SDL3 or bgfx display is a derived soft-proof cache and cannot become the source

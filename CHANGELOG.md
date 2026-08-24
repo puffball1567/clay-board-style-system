@@ -9,6 +9,12 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Named the independently released
+  [`bgfxim`](https://github.com/puffball1567/bgfxim) package as the low-level
+  Nim C99 binding for the planned optional bgfx GPU adapter. The binding is
+  available separately; CBSS ownership integration and real-GPU qualification
+  remain Version 0.7 work.
+
 - Added a test-only cross-Driver reference application. C++14 and Rust now run
   the same Craft Style, layout, event ordering, invalidation, FormData submit,
   Store transaction, Navigation, Command/Cue cancellation, late-completion
