@@ -9,6 +9,12 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added stable-key focus retention for virtualized items. `VirtualFocusMemory`
+  restores a focusable descendant after its logical item is rematerialized,
+  prefers explicit node `code` over structural paths, preserves focus-visible
+  state, rejects ambiguous code matches, and cancels restoration after any
+  intervening user or application focus operation.
+
 - Added stable-key virtual node materialization on top of the bounded range
   planner. `VirtualNodePool` retains Node IDs and mounted component lifecycle
   for keys that remain visible, mounts and disposes only entering/leaving keys,
