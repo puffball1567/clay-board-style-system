@@ -1987,8 +1987,8 @@ target.
    min/max, Flex, text, and writing-axis tests.
 5. Complete transform-only scrolling and the typed virtualization stack. Range
    planning, stable-key bounded node reuse, component lifecycle reconciliation,
-   focus retention, and their large-data performance gates are implemented;
-   accessibility integration remains.
+   focus retention, logical accessibility range exposure, and their large-data
+   behavior and performance gates are implemented.
 6. Connect the semantic tree to the Linux AT-SPI D-Bus transport and run
    headless adapter plus real-session integration coverage.
 7. Implement Cue triggers, serial and parallel graphs, joins, clocks,
