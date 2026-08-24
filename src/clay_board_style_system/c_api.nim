@@ -15,6 +15,9 @@ import ./paint/[paint, paint_command, path_geometry]
 import ./runtime/[canvas, declarative_keyframes, declarative_transition,
   frame_scheduler, invalidation, motion_lifecycle, render_surface, validation]
 
+when defined(cbssReferenceTestSupport):
+  import ./backends/ppm/raster
+
 var cbssRuntimeInitialized: bool
 cbssRuntimeInitialized = true
 
@@ -5085,6 +5088,26 @@ proc cbssContextPaintCommandCount(context: CbssContextHandle): uint32 {.
   if context.isNil or not context.computed:
     return 0
   uint32(min(context.commands.len, int(high(uint32))))
+
+when defined(cbssReferenceTestSupport):
+  proc cbssTestContextWritePpm(
+      context: CbssContextHandle;
+      path: cstring;
+      width, height: uint32
+  ): int32 {.exportc: "cbss_test_context_write_ppm", cdecl, dynlib.} =
+    const maxReferenceDimension = 4096'u32
+    if context.isNil:
+      return CbssInvalidHandle
+    if path.isNil or not context.computed or width == 0 or height == 0 or
+        width > maxReferenceDimension or height > maxReferenceDimension:
+      return CbssInvalidArgument
+    try:
+      let image = raster.render(context.commands, int(width), int(height))
+      image.writePpm($path)
+      CbssOk
+    except CatchableError as error:
+      context.setError(error.msg)
+      CbssInternalError
 
 proc cbssContextPaintCommand(
     context: CbssContextHandle;

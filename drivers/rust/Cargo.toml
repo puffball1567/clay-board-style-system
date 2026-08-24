@@ -7,6 +7,9 @@ authors = ["Clay Board Style System contributors"]
 description = "High-level Rust Craft Driver for Clay Board Style System"
 publish = false
 
+[features]
+reference-test-support = []
+
 [lib]
 path = "src/lib.rs"
 
