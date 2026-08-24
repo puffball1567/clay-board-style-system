@@ -40,7 +40,8 @@ import clay_board_style_system/runtime/[accessibility, button, checkbox,
     invalidation, label, link, navigation, navigation_focus,
     navigation_transition, navigation_screen_host, platform_links, progress,
     providers, radio, render_surface, select_box, signal, slider, state_runtime,
-    stream_binding, switch, text_input, textarea, ui_root, validation]
+    stream_binding, switch, text_input, textarea, ui_root, validation,
+    virtualization]
 import clay_board_style_system/runtime/widgets/[command_menu, list_box, tabs]
 import clay_board_style_system/text/[cosmic_text_engine, font_registry, text_engine]
 import clay_board_style_system/design_source/model
@@ -125,6 +126,7 @@ export text_input
 export textarea
 export ui_root
 export validation
+export virtualization
 export font_registry
 export cosmic_text_engine
 export text_engine

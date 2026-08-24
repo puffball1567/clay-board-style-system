@@ -9,6 +9,13 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added the first production data-virtualization primitive: a typed virtual
+  range planner with sparse measured-extent correction, asymmetric overscan,
+  bounded materialization, clamped scroll offsets, and anchor correction. It
+  plans 100,000 and 10,000,000 logical rows without retaining or scanning one
+  entry per row. Stable-key node reuse, focus retention, and accessibility
+  range integration remain separate Version 0.6 work.
+
 - Named the independently released
   [`bgfxim`](https://github.com/puffball1567/bgfxim) package as the low-level
   Nim C99 binding for the planned optional bgfx GPU adapter. The binding is

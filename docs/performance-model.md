@@ -315,6 +315,31 @@ This is independent from viewport virtualization. Retaining 100,000 row nodes
 still incurs retained-tree and intrinsic-measurement cost even though scrolling
 those already-laid-out nodes no longer invokes layout.
 
+### Virtual range planning status (2026-08-24)
+
+`planVirtualRange` does not retain one geometry or measurement record per
+logical item. `VirtualExtentIndex` prepares `m` sparse measurements in
+`O(m log m)` time and `O(m)` storage when measurements change. Scroll-time
+planning for `n` logical items and `k` materialized items is
+`O((log n + k) log m)` with `O(k)` result storage. The configured hard cap
+bounds `k`; a visible range larger than that cap fails explicitly instead of
+silently omitting visible UI.
+
+`tests/perf/virtualization_benchmark.nim` plans the same viewport shape over
+100,000 and 10,000,000 logical items with three sparse measurements. The
+2026-08-24 release ARC run measured:
+
+| logical items | mean planning time | materialized items |
+| ---: | ---: | ---: |
+| 100,000 | 2.428 us | 31 |
+| 10,000,000 | 2.599 us | 31 |
+
+The gate rejects logical-count scaling beyond a deliberately broad noise
+margin and asserts the same bounded materialized count. This covers range
+planning only. Stable-key node reuse, component reconciliation, focus
+retention, and accessibility range integration need separate behavior and
+performance gates before viewport virtualization is production-complete.
+
 ### Retained navigation status (2026-08-01)
 
 `NavigationScreenHost` registers prebuilt, disjoint screen roots. A navigation
