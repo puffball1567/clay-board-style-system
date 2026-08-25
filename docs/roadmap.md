@@ -1919,6 +1919,14 @@ and positioned descendants share the derived content geometry. Application
 and component-library resets remain explicit Style injection rather than an
 engine-wide compatibility default.
 
+Multi-line Flex layout is complete for the accepted v0.6 value surface.
+`flex-wrap` and `flex-flow` collect row or column lines, `wrap-reverse` mirrors
+their cross-axis placement, and `align-content` supports start/end/center,
+space-between/around/evenly, and stretch. Grow and shrink are resolved per line
+with min/max freeze and redistribution. Independent main/cross gaps, ordering,
+absolute/display-none exclusion, max-size-constrained auto dimensions, and
+scroll overflow metrics are covered by the same layout result.
+
 ### CSS Property Runtime Completion
 
 Status: `Version 0.6 target; package order remains dependency-driven`
@@ -1947,12 +1955,12 @@ machine-checked, while semantic promotion requires code-and-test review.
 
 Candidate work packages:
 
-- **Box and Flex layout fidelity.** Build on executable `box-sizing` with
-  multi-line `flex-wrap` and `flex-flow`, line distribution through
-  `align-content`, and the remaining item/container alignment properties.
-  Preserve stable intrinsic sizing, min/max constraints, gaps, ordering,
-  percentage resolution, scrolling overflow, and dirty-subtree behavior in
-  both row and column layouts.
+- **Remaining Flex and axis fidelity.** Build on executable `box-sizing` and
+  multi-line Flex with reverse main directions, baseline alignment, complete
+  logical/writing-axis behavior, and re-arrangement of descendants after a
+  flexed item changes size. Preserve stable intrinsic sizing, percentage
+  resolution, scrolling overflow, and dirty-subtree behavior in row and column
+  layouts.
 - **Background geometry and composition.** Connect `background-position`,
   `background-position-x`, `background-position-y`, `background-size`,
   `background-repeat`, `background-clip`, and `background-origin` to the

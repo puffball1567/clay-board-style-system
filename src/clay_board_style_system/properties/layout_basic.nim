@@ -415,6 +415,12 @@ proc parseJustifyContentKeyword(property, value: string; diagnostics: var Diagno
     some(jcEnd)
   of "space-between":
     some(jcSpaceBetween)
+  of "space-around":
+    some(jcSpaceAround)
+  of "space-evenly":
+    some(jcSpaceEvenly)
+  of "stretch":
+    some(jcStretch)
   else:
     diagnostics.addError(property, "unsupported " & property & " keyword")
     none(JustifyContent)

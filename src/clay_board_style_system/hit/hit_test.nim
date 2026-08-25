@@ -198,11 +198,11 @@ proc buildHitRegions*(
     scroll: ScrollState
 ): seq[HitRegion] =
   if tree.root.isSome:
-    let boxIndices = layout.layoutBoxIndices(tree.nodes.len)
-    addHitRegions(
-      tree, layout, boxIndices, styles, scroll, tree.root.get, vec2(0, 0),
-      none(Rect), @[], identityAffine2D(), result
-    )
+    withLayoutBoxIndices(layout, tree.nodes.len, boxIndices):
+      addHitRegions(
+        tree, layout, boxIndices, styles, scroll, tree.root.get, vec2(0, 0),
+        none(Rect), @[], identityAffine2D(), result
+      )
 
 proc buildHitRegionsForSubtree*(
     tree: Tree;
@@ -216,15 +216,15 @@ proc buildHitRegionsForSubtree*(
   ## result is interchangeable with the corresponding span of a full build.
   if root.nodeIndex < 0 or root.nodeIndex >= tree.nodes.len:
     return
-  let boxIndices = layout.layoutBoxIndices(tree.nodes.len)
-  let context = ancestorPresentationContext(
-    tree, layout, boxIndices, styles, scroll, root
-  )
-  if context.visible:
-    addHitRegions(
-      tree, layout, boxIndices, styles, scroll, root, context.translation,
-      context.clip, context.clipShapes, context.transform, result
+  withLayoutBoxIndices(layout, tree.nodes.len, boxIndices):
+    let context = ancestorPresentationContext(
+      tree, layout, boxIndices, styles, scroll, root
     )
+    if context.visible:
+      addHitRegions(
+        tree, layout, boxIndices, styles, scroll, root, context.translation,
+        context.clip, context.clipShapes, context.transform, result
+      )
 
 proc buildHitRegionsForSubtree*(
     tree: Tree;

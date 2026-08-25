@@ -537,25 +537,25 @@ proc buildPaintCommands*(
 ): seq[PaintCommand] =
   var hasTransform = false
   if tree.root.isSome:
-    let boxIndices = layout.layoutBoxIndices(tree.nodes.len)
-    paintNode(
-      tree, styles, layout, boxIndices, tree.root.get, 1.0'f32, result,
-      hasTransform, scroll, vec2(0, 0), surfaceProvider
-    )
-    var overlays: seq[NodeId]
-    collectOverlayRoots(tree, styles, tree.root.get, overlays)
-    for overlay in overlays.overlayRootsInPaintOrder(styles):
-      let context = pushAncestorPaintContext(
-        tree, styles, layout, boxIndices, scroll, overlay, result, hasTransform
-      )
+    withLayoutBoxIndices(layout, tree.nodes.len, boxIndices):
       paintNode(
-        tree, styles, layout, boxIndices, overlay, context.opacity, result,
-        hasTransform, scroll, context.translation, surfaceProvider,
-        overlayPass = true
+        tree, styles, layout, boxIndices, tree.root.get, 1.0'f32, result,
+        hasTransform, scroll, vec2(0, 0), surfaceProvider
       )
-      popAncestorPaintContext(context, result)
-    if hasTransform:
-      result.resolveTransformBounds()
+      var overlays: seq[NodeId]
+      collectOverlayRoots(tree, styles, tree.root.get, overlays)
+      for overlay in overlays.overlayRootsInPaintOrder(styles):
+        let context = pushAncestorPaintContext(
+          tree, styles, layout, boxIndices, scroll, overlay, result, hasTransform
+        )
+        paintNode(
+          tree, styles, layout, boxIndices, overlay, context.opacity, result,
+          hasTransform, scroll, context.translation, surfaceProvider,
+          overlayPass = true
+        )
+        popAncestorPaintContext(context, result)
+      if hasTransform:
+        result.resolveTransformBounds()
 
 proc buildPaintCommands*(tree: Tree; styles: ResolvedTree; layout: LayoutResult): seq[PaintCommand] =
   buildPaintCommands(tree, styles, layout, initScrollState())
@@ -574,44 +574,44 @@ proc buildPaintCommandsForSubtree*(
   let overlayPass =
     tree.nodes[root.nodeIndex].parent.isSome and
       styles.styles[root.nodeIndex].layout.zIndex > 0
-  let boxIndices = layout.layoutBoxIndices(tree.nodes.len)
-  let context = pushAncestorPaintContext(
-    tree, styles, layout, boxIndices, scroll, root, result, hasTransform
-  )
-  paintNode(
-    tree,
-    styles,
-    layout,
-    boxIndices,
-    root,
-    context.opacity,
-    result,
-    hasTransform,
-    scroll,
-    context.translation,
-    surfaceProvider,
-    overlayPass = overlayPass
-  )
-  popAncestorPaintContext(context, result)
-
-  # The normal pass deliberately skips positive z-index descendants. A
-  # retained subtree repaint must replay those overlays just like a full-tree
-  # paint or focused controls lose popups, carets, and scrollbar children.
-  var overlays: seq[NodeId]
-  for child in tree.nodes[root.nodeIndex].children:
-    collectOverlayRoots(tree, styles, child, overlays)
-  for overlay in overlays.overlayRootsInPaintOrder(styles):
-    let overlayContext = pushAncestorPaintContext(
-      tree, styles, layout, boxIndices, scroll, overlay, result, hasTransform
+  withLayoutBoxIndices(layout, tree.nodes.len, boxIndices):
+    let context = pushAncestorPaintContext(
+      tree, styles, layout, boxIndices, scroll, root, result, hasTransform
     )
     paintNode(
-      tree, styles, layout, boxIndices, overlay, overlayContext.opacity,
-      result, hasTransform, scroll, overlayContext.translation, surfaceProvider,
-      overlayPass = true
+      tree,
+      styles,
+      layout,
+      boxIndices,
+      root,
+      context.opacity,
+      result,
+      hasTransform,
+      scroll,
+      context.translation,
+      surfaceProvider,
+      overlayPass = overlayPass
     )
-    popAncestorPaintContext(overlayContext, result)
-  if hasTransform:
-    result.resolveTransformBounds()
+    popAncestorPaintContext(context, result)
+
+    # The normal pass deliberately skips positive z-index descendants. A
+    # retained subtree repaint must replay those overlays just like a full-tree
+    # paint or focused controls lose popups, carets, and scrollbar children.
+    var overlays: seq[NodeId]
+    for child in tree.nodes[root.nodeIndex].children:
+      collectOverlayRoots(tree, styles, child, overlays)
+    for overlay in overlays.overlayRootsInPaintOrder(styles):
+      let overlayContext = pushAncestorPaintContext(
+        tree, styles, layout, boxIndices, scroll, overlay, result, hasTransform
+      )
+      paintNode(
+        tree, styles, layout, boxIndices, overlay, overlayContext.opacity,
+        result, hasTransform, scroll, overlayContext.translation, surfaceProvider,
+        overlayPass = true
+      )
+      popAncestorPaintContext(overlayContext, result)
+    if hasTransform:
+      result.resolveTransformBounds()
 
 proc buildPaintCommandsForSubtree*(
     tree: Tree;

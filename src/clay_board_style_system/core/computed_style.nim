@@ -25,7 +25,10 @@ type
     jcStart,
     jcCenter,
     jcEnd,
-    jcSpaceBetween
+    jcSpaceBetween,
+    jcSpaceAround,
+    jcSpaceEvenly,
+    jcStretch
 
   SelfAlignment* = enum
     saStart,

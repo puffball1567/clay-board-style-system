@@ -97,6 +97,26 @@ range and did not begin walking the unrelated tree. Padding and visible-border
 edges are resolved once per node in the arrangement pass and reused by sizing,
 child constraints, and placement.
 
+### Multi-line Flex verification (2026-08-25)
+
+Flex line collection and per-line distribution remain linear in the number of
+in-flow children. The common `nowrap` path creates one line and preserves the
+same child traversal; wrapped containers retain only compact line ranges and
+aggregate sizes rather than cloning child data. Alternating same-machine
+release ARC runs at 4,000 nodes measured 9.446 ms layout on the `devel`
+baseline and 9.371 ms with the line model. Dedicated tests cover line-local grow/shrink
+redistribution, min/max freezing, both axes, reverse wrapping, gap geometry,
+overflow metrics, and max-size-constrained auto dimensions.
+
+The same verification exposed an older ownership bug in the presentation hot
+path: requesting the retained `NodeId -> LayoutBox` index returned an owning
+`seq[int]` copy. Paint, hit, and node-presentation stages now borrow that index;
+the owning API remains available for callers that explicitly need a copy. A
+fixed seven-node dirty subtree measured 6.360 / 6.114 / 6.122 us for paint and
+4.939 / 4.975 / 4.853 us for hit at 500 / 4,000 / 10,000 total nodes. This is
+the structural `O(dirty)` behavior required by the model, not merely a larger
+constant hidden beneath the four-times regression gate.
+
 ### Borrowed-style hot path verification (2026-07-23)
 
 Parent styles are now borrowed during resolution, and layout, paint, and hit
@@ -309,14 +329,14 @@ the static layer. `LayoutResult` retains its `NodeId -> LayoutBox` index, so
 paint and hit updates do not recreate an O(tree) lookup table.
 
 `tests/perf/dirty_subtree_benchmark.nim` holds the dirty subtree at seven nodes
-while growing unrelated retained content. The 2026-08-01 Version 0.2 release
-ARC run measured:
+while growing unrelated retained content. The 2026-08-25 release ARC run after
+removing retained-index copies measured:
 
 | total nodes | subtree paint | subtree hit | paint commands | hit regions |
 | ---: | ---: | ---: | ---: | ---: |
-| 500 | 4.964 us | 3.482 us | 10 | 5 |
-| 4,000 | 6.817 us | 5.502 us | 10 | 5 |
-| 10,000 | 10.331 us | 8.883 us | 10 | 5 |
+| 500 | 6.360 us | 4.939 us | 10 | 5 |
+| 4,000 | 6.114 us | 4.975 us | 10 | 5 |
+| 10,000 | 6.122 us | 4.853 us | 10 | 5 |
 
 The benchmark fails if the 10k fixed-dirty cost exceeds four times the
 500-node cost. The remaining region-span move is proportional to the retained
