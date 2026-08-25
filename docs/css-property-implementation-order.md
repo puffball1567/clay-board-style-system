@@ -60,7 +60,7 @@ remain implementation work even though the default registry accepts them.
 | 18 | `gap` | P0 | Initial practical UI surface |
 | 19 | `row-gap` | P0 | Initial practical UI surface |
 | 20 | `column-gap` | P0 | Initial practical UI surface |
-| 21 | `flex-direction` | P0 | Initial practical UI surface |
+| 21 | `flex-direction` | P0 | Runtime supports row/column and both reverse main directions |
 | 22 | `flex-grow` | P0 | Initial practical UI surface |
 | 23 | `flex-shrink` | P0 | Initial practical UI surface |
 | 24 | `flex-basis` | P0 | Initial practical UI surface |

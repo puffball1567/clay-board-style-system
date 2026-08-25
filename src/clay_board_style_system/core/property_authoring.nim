@@ -119,7 +119,9 @@ proc display*(value: DisplayKind; sourceOrder = 0): Declaration =
 proc flexDirection*(value: FlexDirection; sourceOrder = 0): Declaration =
   let authored = case value
     of fdRow: "row"
+    of fdRowReverse: "row-reverse"
     of fdColumn: "column"
+    of fdColumnReverse: "column-reverse"
   decl("flex-direction", keyword(authored), sourceOrder)
 
 proc flexWrap*(value: FlexWrap; sourceOrder = 0): Declaration =

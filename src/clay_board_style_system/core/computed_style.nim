@@ -8,7 +8,9 @@ type
 
   FlexDirection* = enum
     fdRow,
-    fdColumn
+    fdColumn,
+    fdRowReverse,
+    fdColumnReverse
 
   FlexWrap* = enum
     fwNoWrap,

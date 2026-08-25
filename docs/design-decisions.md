@@ -131,9 +131,10 @@ flex bases, and signed percentage insets also resolve during arrangement.
 Flex-line collection, line-local min/max freeze and redistribution,
 `wrap`/`wrap-reverse`, `align-content`, and the layout box index are now
 implemented. Shared main/cross helpers remove the highest-risk duplicated
-arithmetic. A complete `AxisView`, descendant re-arrangement after flex size
-changes, baseline alignment, reverse main directions, and both-side absolute
-inset sizing remain open, so D7 is still partially complete.
+arithmetic. Reverse main directions are now executable without mutating logical
+tree, focus, or accessibility order. A complete `AxisView`, descendant
+re-arrangement after flex size changes, baseline alignment, and both-side
+absolute inset sizing remain open, so D7 is still partially complete.
 
 ## D8 — Hit testing follows paint order and clipping (Adopted)
 

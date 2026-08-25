@@ -500,6 +500,12 @@ or dead fields, not bugs:
   only accepts `svNumber` (`sizing.nim:117-121`) — the CSS `16 / 9` syntax is
   unsupported.
 
+> Resolution note (2026-08-25): `row-reverse` and `column-reverse` are now
+> executable values for `flex-direction` and `flex-flow`. They reverse only
+> main-axis coordinates and preserve logical focus and accessibility order.
+> Multi-line Flex, content distribution, flexible sizing, and executable
+> `box-sizing` have also landed; baseline alignment remains open.
+
 **Fix**: mechanical, once G1's parity gate is in place — each is either
 implemented or made to error.
 

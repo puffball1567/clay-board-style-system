@@ -9,6 +9,13 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Completed the physical main-axis direction surface for Flex layout.
+  `row-reverse` and `column-reverse` now work through `flex-direction`,
+  `flex-flow`, and typed authoring, including wrapping, gaps, margins,
+  justification, intrinsic sizing, and composition with `wrap-reverse`.
+  Reversal changes visual coordinates only; order-modified paint/hit order,
+  source-based focus traversal, and accessibility semantics are not reversed.
+
 - Connected multi-line Flex layout to the runtime. `flex-wrap` and `flex-flow`
   now form independent row or column lines, `wrap-reverse` mirrors the cross
   axis, `align-content` distributes lines, and row/column gaps participate in
