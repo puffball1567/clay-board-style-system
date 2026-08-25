@@ -179,7 +179,7 @@ proc fontStyleCode(style: Option[FontStyle]): uint32 =
     2'u32
 
 proc wrapCode(style: ComputedTextStyle): uint32 =
-  if style.whiteSpace.isSome and style.whiteSpace.get == wsNoWrap:
+  if style.whiteSpace.isSome and style.whiteSpace.get in {wsNoWrap, wsPre}:
     return 1
   if style.textWrap.isSome and style.textWrap.get == twNoWrap:
     return 1

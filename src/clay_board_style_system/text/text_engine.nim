@@ -1,4 +1,4 @@
-import std/[math, options, strutils]
+import std/[math, options, unicode]
 import ../core/[computed_style, geometry, property]
 import ./display_text
 import ./font_registry
@@ -171,28 +171,155 @@ proc carets*(engine: TextEngine; input: TextMeasureInput): seq[TextCaretSample] 
   for sample in result.mitems:
     sample.byteIndex = mapping.sourceByteIndex(sample.byteIndex)
 
-proc debugMeasureText*(input: TextMeasureInput): Size =
-  let lineHeight =
-    if input.style.lineHeight.isSome: input.style.lineHeight.get
-    else: 8.0'f32
-  let letterSpacing =
-    if input.style.letterSpacing.isSome: input.style.letterSpacing.get
-    else: 0.0'f32
-  var lines = input.text.splitLines()
-  if lines.len == 0:
-    lines = @[""]
-  var maxWidth = 0.0'f32
-  for line in lines:
-    let extraSpacing =
-      if line.len > 1: (line.len - 1).float32 * letterSpacing
-      else: 0.0'f32
-    maxWidth = max(maxWidth, line.len.float32 * 8.0'f32 + extraSpacing)
-  size(maxWidth, max(1, lines.len).float32 * lineHeight)
-
 proc lineHeightOf(style: ComputedTextStyle): float32 =
   if style.lineHeight.isSome: style.lineHeight.get
-  elif style.fontSize.isSome: style.fontSize.get * 1.2'f32
-  else: 16.0'f32 * 1.2'f32
+  else: 8.0'f32
+
+type
+  DebugWrapKind = enum
+    dwNone,
+    dwWords,
+    dwAnywhere
+
+  DebugTextLayout = object
+    samples: seq[TextCaretSample]
+    measured: Size
+
+proc debugWrapKind(style: ComputedTextStyle): DebugWrapKind =
+  if style.whiteSpace.isSome and style.whiteSpace.get in {wsNoWrap, wsPre}:
+    return dwNone
+  if style.textWrap.isSome and style.textWrap.get == twNoWrap:
+    return dwNone
+  if style.whiteSpace.isSome and style.whiteSpace.get == wsBreakSpaces:
+    return dwAnywhere
+  if style.overflowWrap.isSome and
+      style.overflowWrap.get in {owAnywhere, owBreakWord}:
+    return dwAnywhere
+  if style.wordBreak.isSome and
+      style.wordBreak.get in {wbBreakAll, wbBreakWord}:
+    return dwAnywhere
+  dwWords
+
+proc debugRuneAdvance(rune: Rune; style: ComputedTextStyle): float32 =
+  result = 8.0'f32
+  if rune.int32 in [9'i32, 32'i32]:
+    result += style.wordSpacing.get(0.0'f32)
+  result = max(0.0'f32, result)
+
+proc isDebugWhitespace(rune: Rune): bool =
+  rune.int32 in [9'i32, 13'i32, 32'i32]
+
+proc debugWordWidth(
+    text: string;
+    start: int;
+    style: ComputedTextStyle
+): float32 =
+  var index = start
+  var glyphs = 0
+  while index < text.len:
+    let rune = text.runeAt(index)
+    if rune.int32 == 10 or rune.isDebugWhitespace:
+      break
+    result += rune.debugRuneAdvance(style)
+    inc glyphs
+    index = text.nextRuneEnd(index)
+  if glyphs > 1:
+    result += (glyphs - 1).float32 * style.letterSpacing.get(0.0'f32)
+  result = max(0.0'f32, result)
+
+proc debugTextLayout(
+    input: TextMeasureInput;
+    collectSamples = true
+): DebugTextLayout =
+  let lineHeight = input.style.lineHeightOf()
+  let wrapKind = input.style.debugWrapKind()
+  let availableWidth = input.maxWidth.get(0.0'f32)
+  let canWrap = wrapKind != dwNone and input.maxWidth.isSome and
+    availableWidth > 0.0'f32
+  var index = 0
+  var x = 0.0'f32
+  var y = 0.0'f32
+  var line = 0
+  var maximumWidth = 0.0'f32
+  var startsWord = true
+  var lineGlyphs = 0
+
+  template visualLineWidth(): float32 =
+    max(0.0'f32, x -
+      (if lineGlyphs > 0: input.style.letterSpacing.get(0.0'f32)
+       else: 0.0'f32))
+
+  while index < input.text.len:
+    let rune = input.text.runeAt(index)
+    let next = input.text.nextRuneEnd(index)
+    if rune.int32 == 10:
+      x = visualLineWidth()
+      if collectSamples:
+        result.samples.add TextCaretSample(
+          byteIndex: index,
+          position: vec2(x, y),
+          height: lineHeight
+        )
+      maximumWidth = max(maximumWidth, x)
+      inc line
+      x = 0.0'f32
+      y = line.float32 * lineHeight
+      startsWord = true
+      lineGlyphs = 0
+      index = next
+      continue
+
+    let whitespace = rune.isDebugWhitespace
+    let advance = rune.debugRuneAdvance(input.style) +
+      input.style.letterSpacing.get(0.0'f32)
+    let prospectiveWidth = max(
+      0.0'f32,
+      x + advance - input.style.letterSpacing.get(0.0'f32)
+    )
+    var shouldWrap = false
+    if canWrap and x > 0.0'f32:
+      case wrapKind
+      of dwNone:
+        discard
+      of dwAnywhere:
+        shouldWrap = prospectiveWidth > availableWidth
+      of dwWords:
+        if not whitespace and startsWord:
+          shouldWrap = x + debugWordWidth(
+            input.text, index, input.style
+          ) > availableWidth
+        elif whitespace:
+          shouldWrap = prospectiveWidth > availableWidth
+    if shouldWrap:
+      maximumWidth = max(maximumWidth, visualLineWidth())
+      inc line
+      x = 0.0'f32
+      y = line.float32 * lineHeight
+      lineGlyphs = 0
+
+    if collectSamples:
+      result.samples.add TextCaretSample(
+        byteIndex: index,
+        position: vec2(x, y),
+        height: lineHeight
+      )
+    x += advance
+    inc lineGlyphs
+    startsWord = whitespace
+    index = next
+
+  x = visualLineWidth()
+  if collectSamples:
+    result.samples.add TextCaretSample(
+      byteIndex: input.text.len,
+      position: vec2(x, y),
+      height: lineHeight
+    )
+  maximumWidth = max(maximumWidth, x)
+  result.measured = size(maximumWidth, max(1, line + 1).float32 * lineHeight)
+
+proc debugMeasureText*(input: TextMeasureInput): Size =
+  debugTextLayout(input, collectSamples = false).measured
 
 proc caretVisualMetrics*(style: ComputedTextStyle; lineHeight: float32): tuple[offset, height: float32] =
   ## Align a caret to the font em-box within its line box.
@@ -212,51 +339,65 @@ proc nextRuneEnd(text: string; caret: int): int =
     result = text.len
 
 proc debugCaretPosition*(input: TextCaretInput): TextCaretResult =
-  let lineHeight = input.style.lineHeightOf()
   let stop = min(max(input.byteIndex, 0), input.text.len)
-  var line = 0
-  var column = 0
-  var index = 0
-  while index < stop:
-    if input.text[index] == '\n':
-      inc line
-      column = 0
-      inc index
-    else:
-      inc column
-      index = input.text.nextRuneEnd(index)
-  TextCaretResult(position: vec2(column.float32 * 8.0'f32, line.float32 * lineHeight), height: lineHeight, byteIndex: stop)
-
-proc byteIndexAtDebugPoint(text: string; point: Vec2; lineHeight: float32): int =
-  let targetLine = max(0, int(point.y / max(1.0'f32, lineHeight)))
-  let targetColumn = max(0, int((point.x + 4.0'f32) / 8.0'f32))
-  var line = 0
-  var column = 0
-  var index = 0
-  while index < text.len:
-    if line == targetLine and column >= targetColumn:
-      return index
-    if text[index] == '\n':
-      if line == targetLine:
-        return index
-      inc line
-      column = 0
-      inc index
-    else:
-      inc column
-      index = text.nextRuneEnd(index)
-  text.len
-
-proc debugHitText*(input: TextHitInput): TextCaretResult =
-  let lineHeight = input.style.lineHeightOf()
-  let byteIndex = input.text.byteIndexAtDebugPoint(input.point, lineHeight)
-  debugCaretPosition(TextCaretInput(
+  let layout = debugTextLayout(TextMeasureInput(
     text: input.text,
     style: input.style,
     maxWidth: input.maxWidth,
-    fonts: input.fonts,
-    byteIndex: byteIndex
+    fonts: input.fonts
   ))
+  var sample = layout.samples[0]
+  for candidate in layout.samples:
+    if candidate.byteIndex > stop:
+      break
+    sample = candidate
+  TextCaretResult(
+    position: sample.position,
+    height: sample.height,
+    byteIndex: sample.byteIndex
+  )
+
+proc debugHitText*(input: TextHitInput): TextCaretResult =
+  let layout = debugTextLayout(TextMeasureInput(
+    text: input.text,
+    style: input.style,
+    maxWidth: input.maxWidth,
+    fonts: input.fonts
+  ))
+  let lineHeight = input.style.lineHeightOf()
+  let lastLine = max(0, int(layout.measured.h / max(1.0'f32, lineHeight)) - 1)
+  let targetLine = min(
+    lastLine,
+    max(0, int(input.point.y / max(1.0'f32, lineHeight)))
+  )
+  var first = 0
+  var last = layout.samples.high
+  for index, sample in layout.samples:
+    let line = int(sample.position.y / max(1.0'f32, lineHeight))
+    if line == targetLine:
+      first = index
+      break
+  for index in countdown(layout.samples.high, first):
+    let line = int(
+      layout.samples[index].position.y / max(1.0'f32, lineHeight)
+    )
+    if line == targetLine:
+      last = index
+      break
+  var chosen = layout.samples[first]
+  for index in first .. last:
+    chosen = layout.samples[index]
+    if index == last:
+      break
+    let midpoint = (layout.samples[index].position.x +
+      layout.samples[index + 1].position.x) * 0.5'f32
+    if input.point.x < midpoint:
+      break
+  TextCaretResult(
+    position: chosen.position,
+    height: chosen.height,
+    byteIndex: chosen.byteIndex
+  )
 
 proc debugFontUnitMetrics(input: TextFontMetricsInput): FontUnitMetrics =
   fallbackFontUnitMetrics(input.style.fontSize.get(16.0'f32))
@@ -266,32 +407,12 @@ proc debugBaselineMetrics(input: TextFontMetricsInput): TextBaselineMetrics =
 
 proc debugTextEngine*(): TextEngine =
   TextEngine(
-    measureText: debugMeasureText,
+    measureText: proc(input: TextMeasureInput): Size =
+      debugTextLayout(input, collectSamples = false).measured,
     caretPosition: debugCaretPosition,
     hitTestText: debugHitText,
     fontUnitMetrics: debugFontUnitMetrics,
     baselineMetrics: debugBaselineMetrics,
     layoutCarets: proc(input: TextMeasureInput): seq[TextCaretSample] =
-      let lineHeight = input.style.lineHeightOf()
-      var index = 0
-      var line = 0
-      var column = 0
-      while true:
-        result.add TextCaretSample(
-          byteIndex: index,
-          position: vec2(column.float32 * 8.0'f32, line.float32 * lineHeight),
-          height: lineHeight
-        )
-        if index >= input.text.len:
-          break
-        if input.text[index] == '\n':
-          inc line
-          column = 0
-          inc index
-          continue
-        inc column
-        let next = input.text.nextRuneEnd(index)
-        if next <= index:
-          break
-        index = next
+      debugTextLayout(input).samples
   )

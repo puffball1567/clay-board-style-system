@@ -1983,11 +1983,15 @@ Candidate work packages:
 - **Everyday text behavior.** Build on executable `text-transform`, whose
   locale-neutral Unicode case mapping now shares source/display byte mapping
   across measurement, caret geometry, hit testing, selection, input, and paint.
-  Finish visible `text-overflow` and ellipsis, `text-indent`, supported
-  `text-wrap` forms, word breaking, overflow wrapping, hyphenation, and a future
-  explicit locale contract for language-specific casing. Letter and word
-  spacing remain consistent across measurement, shaping, caret geometry,
-  selection, input, textarea scrolling, and both text backends.
+  UTF-8-safe normal word wrapping, `overflow-wrap`, legacy `word-wrap`,
+  `word-break: break-all`, no-wrap, and preformatted soft-wrap suppression now
+  share measurement, caret, hit, layout, and Cosmic Text behavior. Finish
+  visible `text-overflow` and ellipsis, `text-indent`, advanced `text-wrap`
+  balance/pretty/stable behavior, locale-aware `word-break: keep-all`, browser-
+  useful whitespace collapsing, hyphenation, and a future explicit locale
+  contract for language-specific casing. Letter and word spacing remain
+  consistent across measurement, shaping, caret geometry, selection, input,
+  textarea scrolling, and both text backends.
 - **Writing direction and logical geometry.** Replace the current
   horizontal-LTR physical aliases with explicit `direction`, `unicode-bidi`,
   and `writing-mode` behavior before claiming general logical-property

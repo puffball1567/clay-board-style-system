@@ -9,6 +9,14 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Text measurement, caret geometry, hit testing, and layout now share one
+  UTF-8-safe wrapping result. Normal wrapping preserves words, while
+  `overflow-wrap: anywhere`, legacy `word-wrap`, and `word-break: break-all`
+  can wrap long runs at rune boundaries. `white-space: nowrap`/`pre` and
+  `text-wrap: nowrap` disable soft wrapping without suppressing authored line
+  breaks. Cosmic Text and the deterministic reference engine use the same
+  wrapping contract, and measurement does not allocate unused caret samples.
+
 - `text-transform` now executes through the shared text pipeline. `uppercase`,
   `lowercase`, and `capitalize` use Unicode simple case mapping for layout and
   paint, while source/display byte-boundary mapping keeps caret placement, hit
