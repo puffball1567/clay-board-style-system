@@ -117,7 +117,7 @@ inventory below; they are not additional properties.
 | `column-gap` | Runtime | Supports px and percentage spacing against the container content width. |
 | `display` | Runtime | Initial CBSS runtime surface. |
 | `flex-basis` | Runtime | Supports px, percentage, auto, and intrinsic sizing values. |
-| `flex-direction` | Runtime | Initial CBSS runtime surface. |
+| `flex-direction` | Runtime | Supports `row`, `row-reverse`, `column`, and `column-reverse` without changing logical focus or accessibility order. |
 | `flex-grow` | Runtime | Initial CBSS runtime surface. |
 | `flex-shrink` | Runtime | Initial CBSS runtime surface. |
 | `font-family` | Runtime | Ordered family fallback is resolved across the cosmic-text bridge; registered-only rendering is available with `useSystemFonts = false`. |
@@ -474,8 +474,8 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `filter` | Metadata | Stored as visual effect metadata; renderer application is a later runtime layer. |
 | `flex` | Runtime | Supports common single-value shorthand forms: number, sizing basis, `none`, `auto`, and `initial`. |
 | `flex-basis` | Runtime | Supports px, percentage, auto, and intrinsic sizing values. |
-| `flex-direction` | Runtime | Initial CBSS runtime surface. |
-| `flex-flow` | Runtime | Applies direction and wrapping together, including row/column and wrap/wrap-reverse combinations. |
+| `flex-direction` | Runtime | Supports `row`, `row-reverse`, `column`, and `column-reverse` without changing logical focus or accessibility order. |
+| `flex-flow` | Runtime | Applies all four main-axis directions and `nowrap`/`wrap`/`wrap-reverse` together. |
 | `flex-grow` | Runtime | Initial CBSS runtime surface. |
 | `flex-shrink` | Runtime | Initial CBSS runtime surface. |
 | `flex-wrap` | Runtime | Forms independent Flex lines for `wrap`, preserves one line for `nowrap`, and mirrors the cross axis for `wrap-reverse`. |

@@ -457,6 +457,30 @@ suite "style context merge":
     check style.layout.flexShrink == 1
     check style.layout.flexBasis == some(120.0'f32)
 
+  test "reverse flex directions resolve directly and through flex-flow":
+    var diagnostics: Diagnostics
+    let direct = resolveStyles(
+      styleContext([decl("flex-direction", keyword("row-reverse"))]),
+      defaultProperties(),
+      ResolveEnv(),
+      diagnostics
+    )
+
+    check not diagnostics.hasErrors
+    check direct.layout.direction == fdRowReverse
+
+    diagnostics = Diagnostics()
+    let shorthand = resolveStyles(
+      styleContext([decl("flex-flow", keyword("column-reverse wrap"))]),
+      defaultProperties(),
+      ResolveEnv(),
+      diagnostics
+    )
+
+    check not diagnostics.hasErrors
+    check shorthand.layout.direction == fdColumnReverse
+    check shorthand.layout.flexWrap == fwWrap
+
   test "animation and transition properties resolve to computed animation style":
     let context = styleContext([
       decl("animation", keyword("fade 0.2s ease")),

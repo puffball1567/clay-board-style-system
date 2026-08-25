@@ -181,26 +181,32 @@ proc horizontal(edges: EdgeSizes): float32 {.inline.} =
 proc vertical(edges: EdgeSizes): float32 {.inline.} =
   edges.top + edges.bottom
 
+proc isRow(direction: FlexDirection): bool {.inline.} =
+  direction in {fdRow, fdRowReverse}
+
+proc isMainReverse(direction: FlexDirection): bool {.inline.} =
+  direction in {fdRowReverse, fdColumnReverse}
+
 proc mainSize(value: Size; direction: FlexDirection): float32 {.inline.} =
-  if direction == fdRow: value.w else: value.h
+  if direction.isRow: value.w else: value.h
 
 proc crossSize(value: Size; direction: FlexDirection): float32 {.inline.} =
-  if direction == fdRow: value.h else: value.w
+  if direction.isRow: value.h else: value.w
 
 proc setMainSize(value: var Size; direction: FlexDirection; next: float32) {.inline.} =
-  if direction == fdRow:
+  if direction.isRow:
     value.w = next
   else:
     value.h = next
 
 proc mainMargin(value: EdgeSizes; direction: FlexDirection): float32 {.inline.} =
-  if direction == fdRow:
+  if direction.isRow:
     value.left + value.right
   else:
     value.top + value.bottom
 
 proc crossMargin(value: EdgeSizes; direction: FlexDirection): float32 {.inline.} =
-  if direction == fdRow:
+  if direction.isRow:
     value.top + value.bottom
   else:
     value.left + value.right
@@ -271,7 +277,7 @@ proc setMainSize(
     direction: FlexDirection;
     size: float32
 ) =
-  if direction == fdRow:
+  if direction.isRow:
     output.stretchOwnBox(firstBox, boxCount, node, some(size), none(float32))
   else:
     output.stretchOwnBox(firstBox, boxCount, node, none(float32), some(size))
@@ -324,7 +330,7 @@ proc gapSpec(style: ComputedStyle; axisGap: Option[LengthValue]): Option[LengthV
   some(LengthValue(kind: ukPx, value: style.layout.gap))
 
 proc mainGapSpec(style: ComputedStyle): Option[LengthValue] =
-  if style.layout.direction == fdRow:
+  if style.layout.direction.isRow:
     if not style.layout.sizing.isNil and style.layout.sizing.columnGap.isSome:
       return style.layout.sizing.columnGap
     return style.gapSpec(fixedLength(style.layout.columnGap))
@@ -333,7 +339,7 @@ proc mainGapSpec(style: ComputedStyle): Option[LengthValue] =
   style.gapSpec(fixedLength(style.layout.rowGap))
 
 proc crossGapSpec(style: ComputedStyle): Option[LengthValue] =
-  if style.layout.direction == fdRow:
+  if style.layout.direction.isRow:
     if not style.layout.sizing.isNil and style.layout.sizing.rowGap.isSome:
       return style.layout.sizing.rowGap
     return style.gapSpec(fixedLength(style.layout.rowGap))
@@ -383,11 +389,11 @@ proc flexMinimumMain(
     intrinsic: IntrinsicSizes;
     boxEdges: EdgeSizes
 ): float32 =
-  let reference = if direction == fdRow: constraints.w else: constraints.h
-  let intrinsicMin = if direction == fdRow: intrinsic.minSize.w else: intrinsic.minSize.h
-  let intrinsicMax = if direction == fdRow: intrinsic.maxSize.w else: intrinsic.maxSize.h
-  let minimumSpec = if direction == fdRow: style.minWidthSpec() else: style.minHeightSpec()
-  let extra = if direction == fdRow: boxEdges.horizontal else: boxEdges.vertical
+  let reference = if direction.isRow: constraints.w else: constraints.h
+  let intrinsicMin = if direction.isRow: intrinsic.minSize.w else: intrinsic.minSize.h
+  let intrinsicMax = if direction.isRow: intrinsic.maxSize.w else: intrinsic.maxSize.h
+  let minimumSpec = if direction.isRow: style.minWidthSpec() else: style.minHeightSpec()
+  let extra = if direction.isRow: boxEdges.horizontal else: boxEdges.vertical
   if minimumSpec.isSome and minimumSpec.get.kind != ukAuto:
     let resolved = resolveSizingLength(
       minimumSpec, reference, intrinsicMin, intrinsicMax,
@@ -395,14 +401,14 @@ proc flexMinimumMain(
     )
     return if resolved.isSome: resolved.get else: 0.0'f32
 
-  let overflow = if direction == fdRow: style.layout.overflowX else: style.layout.overflowY
+  let overflow = if direction.isRow: style.layout.overflowX else: style.layout.overflowY
   if overflow in {omAuto, omScroll}:
     return 0.0'f32
 
   # CSS automatic minimum size is content based for non-scrollable flex
   # items, capped by a definite preferred size when one exists.
   result = max(0.0'f32, intrinsicMin)
-  let preferredSpec = if direction == fdRow: style.widthSpec() else: style.heightSpec()
+  let preferredSpec = if direction.isRow: style.widthSpec() else: style.heightSpec()
   let preferred = resolveSizingLength(
     preferredSpec, reference, intrinsicMin, intrinsicMax,
     extra, style.layout.boxSizing
@@ -421,10 +427,10 @@ proc flexMaximumMain(
   let intrinsicMin = intrinsic.minSize.mainSize(direction)
   let intrinsicMax = intrinsic.maxSize.mainSize(direction)
   let maximumSpec =
-    if direction == fdRow: style.maxWidthSpec()
+    if direction.isRow: style.maxWidthSpec()
     else: style.maxHeightSpec()
   let extra =
-    if direction == fdRow: boxEdges.horizontal
+    if direction.isRow: boxEdges.horizontal
     else: boxEdges.vertical
   let maximum = resolveSizingLength(
     maximumSpec,
@@ -438,14 +444,14 @@ proc flexMaximumMain(
 
 proc mainGapOf(style: ComputedStyle; contentSize: Size): float32 =
   let reference =
-    if style.layout.direction == fdRow: contentSize.w
+    if style.layout.direction.isRow: contentSize.w
     else: contentSize.h
   let resolved = resolveLength(style.mainGapSpec(), reference, 0, 0)
   if resolved.isSome: resolved.get else: 0.0'f32
 
 proc crossGapOf(style: ComputedStyle; contentSize: Size): float32 =
   let reference =
-    if style.layout.direction == fdRow: contentSize.h
+    if style.layout.direction.isRow: contentSize.h
     else: contentSize.w
   let resolved = resolveLength(style.crossGapSpec(), reference, 0, 0)
   if resolved.isSome: resolved.get else: 0.0'f32
@@ -860,7 +866,7 @@ proc measureIntrinsicNode(
         childIntrinsic.maxSize.w + margin.left + margin.right,
         childIntrinsic.maxSize.h + margin.top + margin.bottom
       )
-      if style.layout.direction == fdRow:
+      if style.layout.direction.isRow:
         result.minSize.w += childMin.w
         result.maxSize.w += childMax.w
         result.minSize.h = max(result.minSize.h, childMin.h)
@@ -873,7 +879,7 @@ proc measureIntrinsicNode(
       inc childCount
     if childCount > 1:
       let gaps = style.mainGapOf(size(0, 0)) * (childCount - 1).float32
-      if style.layout.direction == fdRow:
+      if style.layout.direction.isRow:
         result.minSize.w += gaps
         result.maxSize.w += gaps
       else:
@@ -1080,22 +1086,22 @@ proc layoutNode(
     )
   )
   let mainAxisResolved =
-    if style.layout.direction == fdRow: resolvedWidth.isSome
+    if style.layout.direction.isRow: resolvedWidth.isSome
     else: resolvedHeight.isSome
   let crossAxisResolved =
-    if style.layout.direction == fdRow: resolvedHeight.isSome
+    if style.layout.direction.isRow: resolvedHeight.isSome
     else: resolvedWidth.isSome
   var wrapMainIsDefinite = mainAxisResolved
   var tentativeAvailableMain = childConstraints.mainSize(style.layout.direction)
   if style.layout.flexWrap != fwNoWrap and not wrapMainIsDefinite:
     let maximumSpec =
-      if style.layout.direction == fdRow: style.maxWidthSpec()
+      if style.layout.direction.isRow: style.maxWidthSpec()
       else: style.maxHeightSpec()
     let intrinsicMin = intrinsic.minSize.mainSize(style.layout.direction)
     let intrinsicMax = intrinsic.maxSize.mainSize(style.layout.direction)
     let reference = constraints.mainSize(style.layout.direction)
     let extra =
-      if style.layout.direction == fdRow: boxEdges.horizontal
+      if style.layout.direction.isRow: boxEdges.horizontal
       else: boxEdges.vertical
     let maximum = resolveSizingLength(
       maximumSpec,
@@ -1178,7 +1184,7 @@ proc layoutNode(
     let specifiedBasis =
       if basisSpec.isSome and basisSpec.get.kind == ukPercent and not mainAxisResolved:
         none(float32)
-      elif style.layout.direction == fdRow:
+      elif style.layout.direction.isRow:
         resolveSizingLength(
           basisSpec, childConstraints.w,
           childIntrinsic.minSize.w, childIntrinsic.maxSize.w,
@@ -1226,12 +1232,12 @@ proc layoutNode(
     contentCross += line.crossSize
 
   let naturalW =
-    if style.layout.direction == fdRow:
+    if style.layout.direction.isRow:
       contentMain + boxEdges.horizontal
     else:
       contentCross + boxEdges.horizontal
   let naturalH =
-    if style.layout.direction == fdRow:
+    if style.layout.direction.isRow:
       contentCross + boxEdges.vertical
     else:
       contentMain + boxEdges.vertical
@@ -1257,12 +1263,12 @@ proc layoutNode(
   )
 
   let availableMain =
-    if style.layout.direction == fdRow:
+    if style.layout.direction.isRow:
       max(0.0'f32, clamped.w - boxEdges.horizontal)
     else:
       max(0.0'f32, clamped.h - boxEdges.vertical)
   let availableCross =
-    if style.layout.direction == fdRow:
+    if style.layout.direction.isRow:
       max(0.0'f32, clamped.h - boxEdges.vertical)
     else:
       max(0.0'f32, clamped.w - boxEdges.horizontal)
@@ -1325,7 +1331,13 @@ proc layoutNode(
     for childIndex in line.firstChild ..< line.pastChild:
       let child = children[childIndex]
       let childStyle {.cursor.} = styles.styles[child.node.nodeIndex]
+      let childOuterMain = child.outerMain(style.layout.direction)
       let childOuterCross = child.outerCross(style.layout.direction)
+      let physicalMain =
+        if style.layout.direction.isMainReverse:
+          availableMain - cursorMain - childOuterMain
+        else:
+          cursorMain
       let effectiveAlign =
         if childStyle.layout.alignSelf.isSome:
           childStyle.layout.alignSelf.get
@@ -1340,8 +1352,8 @@ proc layoutNode(
         of aiEnd:
           max(0.0'f32, line.crossSize - childOuterCross)
 
-      if style.layout.direction == fdRow:
-        let targetX = x + boxEdges.left + cursorMain + child.margin.left
+      if style.layout.direction.isRow:
+        let targetX = x + boxEdges.left + physicalMain + child.margin.left
         let targetY = y + boxEdges.top + physicalCross +
           crossOffset + child.margin.top
         let offset = childStyle.relativeOffset(containingContentSize)
@@ -1354,12 +1366,13 @@ proc layoutNode(
             child.boxCount,
             child.node,
             none(float32),
-            some(max(0.0'f32, line.crossSize - child.margin.crossMargin(fdRow)))
+            some(max(0.0'f32, line.crossSize -
+              child.margin.crossMargin(style.layout.direction)))
           )
       else:
         let targetX = x + boxEdges.left + physicalCross +
           crossOffset + child.margin.left
-        let targetY = y + boxEdges.top + cursorMain + child.margin.top
+        let targetY = y + boxEdges.top + physicalMain + child.margin.top
         let offset = childStyle.relativeOffset(containingContentSize)
         output.shiftBoxes(
           child.firstBox, child.boxCount, targetX + offset.x, targetY + offset.y
@@ -1369,11 +1382,12 @@ proc layoutNode(
             child.firstBox,
             child.boxCount,
             child.node,
-            some(max(0.0'f32, line.crossSize - child.margin.crossMargin(fdColumn))),
+            some(max(0.0'f32, line.crossSize -
+              child.margin.crossMargin(style.layout.direction))),
             none(float32)
           )
 
-      cursorMain += child.outerMain(style.layout.direction)
+      cursorMain += childOuterMain
       if childIndex + 1 < line.pastChild:
         cursorMain += mainGap + mainDistribution.extraGap
 
@@ -1416,7 +1430,7 @@ proc layoutNode(
   if style.layout.overflowX in {omAuto, omScroll} or
       style.layout.overflowY in {omAuto, omScroll}:
     let contentSize =
-      if style.layout.direction == fdRow:
+      if style.layout.direction.isRow:
         size(contentMain, contentCross)
       else:
         size(contentCross, contentMain)

@@ -1629,6 +1629,13 @@ lines. A single line uses the full available cross size and ignores
 layout quirks. Overflow metrics use the same resolved line geometry as paint
 and hit testing, so wrapped scroll content does not need a second estimate.
 
+`row-reverse` and `column-reverse` independently swap main-start and main-end.
+Line membership is still collected in order-modified logical order, while each
+line is placed from the opposite physical edge. This is a coordinate transform,
+not a mutation of the retained tree or a second reversal of paint and hit
+order. It therefore composes with `wrap-reverse` without changing keyboard or
+assistive-technology reading order.
+
 The goal is not DOM or browser compatibility. CBSS should reproduce what Flexbox
 is trying to achieve for application UI: predictable distribution, alignment,
 sizing, and wrapping behavior. It can simplify browser-specific details when a
@@ -1637,7 +1644,7 @@ native GUI model has a cleaner answer.
 Common Flexbox mental models should transfer:
 
 - Main axis and cross axis
-- Row and column direction
+- Row, row-reverse, column, and column-reverse direction
 - Gap
 - Flex grow, shrink, and basis
 - Min/max constraints

@@ -1927,6 +1927,12 @@ with min/max freeze and redistribution. Independent main/cross gaps, ordering,
 absolute/display-none exclusion, max-size-constrained auto dimensions, and
 scroll overflow metrics are covered by the same layout result.
 
+The remaining physical main-axis values are also executable. `row-reverse` and
+`column-reverse` place each order-modified line from main-end while retaining
+the same node, paint/hit, focus, and accessibility order. They compose with
+wrapping, cross-axis reversal, gaps, margins, justification, intrinsic sizing,
+and typed property authoring.
+
 ### CSS Property Runtime Completion
 
 Status: `Version 0.6 target; package order remains dependency-driven`
@@ -1956,11 +1962,10 @@ machine-checked, while semantic promotion requires code-and-test review.
 Candidate work packages:
 
 - **Remaining Flex and axis fidelity.** Build on executable `box-sizing` and
-  multi-line Flex with reverse main directions, baseline alignment, complete
-  logical/writing-axis behavior, and re-arrangement of descendants after a
-  flexed item changes size. Preserve stable intrinsic sizing, percentage
-  resolution, scrolling overflow, and dirty-subtree behavior in row and column
-  layouts.
+  multi-line Flex with baseline alignment, complete logical/writing-axis
+  behavior, and re-arrangement of descendants after a flexed item changes
+  size. Preserve stable intrinsic sizing, percentage resolution, scrolling
+  overflow, and dirty-subtree behavior across all four main-axis directions.
 - **Background geometry and composition.** Connect `background-position`,
   `background-position-x`, `background-position-y`, `background-size`,
   `background-repeat`, `background-clip`, and `background-origin` to the

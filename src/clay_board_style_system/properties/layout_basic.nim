@@ -110,17 +110,25 @@ proc applyFlexDirection(
   case declaration.operation.value.get.keyword
   of "row":
     style.layout.direction = fdRow
+  of "row-reverse":
+    style.layout.direction = fdRowReverse
   of "column":
     style.layout.direction = fdColumn
+  of "column-reverse":
+    style.layout.direction = fdColumnReverse
   else:
-      diagnostics.addError(declaration.property, "unsupported flex-direction keyword")
+    diagnostics.addError(declaration.property, "unsupported flex-direction keyword")
 
 proc parseFlexDirectionKeyword(property, value: string; diagnostics: var Diagnostics): Option[FlexDirection] =
   case value
   of "row":
     some(fdRow)
+  of "row-reverse":
+    some(fdRowReverse)
   of "column":
     some(fdColumn)
+  of "column-reverse":
+    some(fdColumnReverse)
   else:
     diagnostics.addError(property, "unsupported flex-direction keyword")
     none(FlexDirection)
@@ -179,7 +187,7 @@ proc applyFlexFlow(
   var directionSet = false
   var wrapSet = false
   for part in parts:
-    if part in ["row", "column"]:
+    if part in ["row", "row-reverse", "column", "column-reverse"]:
       if directionSet:
         diagnostics.addError(declaration.property, "flex-flow direction is duplicated")
         return
