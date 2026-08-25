@@ -409,6 +409,8 @@ proc parseAlignItemsKeyword(property, value: string; diagnostics: var Diagnostic
     some(aiEnd)
   of "stretch":
     some(aiStretch)
+  of "baseline":
+    some(aiBaseline)
   else:
     diagnostics.addError(property, "unsupported " & property & " keyword")
     none(AlignItems)

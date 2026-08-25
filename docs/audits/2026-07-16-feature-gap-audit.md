@@ -504,7 +504,10 @@ or dead fields, not bugs:
 > executable values for `flex-direction` and `flex-flow`. They reverse only
 > main-axis coordinates and preserve logical focus and accessibility order.
 > Multi-line Flex, content distribution, flexible sizing, and executable
-> `box-sizing` have also landed; baseline alignment remains open.
+> `box-sizing` have also landed. Horizontal first-baseline alignment now uses
+> text-engine ascent/descent, supports nested rows and wrapped lines, and
+> preserves logical order under `row-reverse`; vertical-writing baseline sets
+> remain open.
 
 **Fix**: mechanical, once G1's parity gate is in place — each is either
 implemented or made to error.
@@ -572,13 +575,12 @@ Beyond G7/G12:
   `wbBreakAll`, `wbBreakWord` all map to `Wrap::Glyph`. `hyphens` parses fully
   and reaches no FFI field — no hyphenation exists. `hanging-punctuation`
   (burasagari) is a parsed `Option[string]` with no consumer.
-- **No baseline crosses the FFI.** `CbssCosmicTextMeasureResult`
-  (`lib.rs:41-45`) is `{width, height, ok}`; the ascent is discarded at
-  `lib.rs:340-343` despite `run.line_y` being right there. So 12px and 24px text
-  on one row cannot share a baseline, `vertical-align` is inert
-  (`computed_style.nim:562`), and `align-items: baseline` has nothing to align
-  to. **Widening the result struct by one field is the enabler** — small, and it
-  unblocks G14's baseline item.
+- **Resolved (2026-08-25): baseline metrics cross the FFI.** Cosmic Text now
+  exposes ascent/descent through a separate additive bridge function rather
+  than widening the existing versioned font-unit result. Horizontal Flex rows
+  consume those metrics for `align-items: baseline` and `align-self: baseline`,
+  including mixed font sizes, images, wrapped lines, and nested row containers.
+  `vertical-align` and vertical-writing baseline sets remain separate work.
 - **The default (non-cosmic) engine does not wrap.** `debugMeasureText`
   (`text/text_engine.nim:79-95`) ignores `input.maxWidth` entirely and measures
   `line.len * 8.0` — where `line.len` is **bytes**, so every CJK character

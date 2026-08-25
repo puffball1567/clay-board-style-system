@@ -1636,6 +1636,29 @@ not a mutation of the retained tree or a second reversal of paint and hit
 order. It therefore composes with `wrap-reverse` without changing keyboard or
 assistive-technology reading order.
 
+### Flex Baseline Contract
+
+Horizontal row and row-reverse containers support `align-items: baseline` and
+`align-self: baseline`. Text leaves obtain ascent and descent from the active
+text engine; the first-line baseline includes half of any line-height leading.
+Images and boxes without an intrinsic text baseline synthesize one at their
+border-box bottom. A nested row container propagates the baseline of its first
+logical Flex line so component boundaries do not break alignment.
+
+Each wrapped line independently records the greatest distance above its
+baseline and below it. Their sum can enlarge the line beyond the tallest
+individual item, which preserves descenders when text is aligned with an image
+or another bottom-baseline box. Reverse direction changes only main-axis
+coordinates, so it does not change baseline selection, paint/hit order, focus,
+or accessibility order.
+
+Column-axis baseline placement currently falls back to cross-start. General
+vertical baseline sets depend on the future `writing-mode` and text-direction
+contract; CBSS does not guess at those metrics. Cosmic Text provides baseline
+metrics through a separate additive bridge function, leaving the versioned
+font-unit metrics result unchanged. The debug engine uses a deterministic
+em-box fallback so headless tests exercise the same layout path.
+
 The goal is not DOM or browser compatibility. CBSS should reproduce what Flexbox
 is trying to achieve for application UI: predictable distribution, alignment,
 sizing, and wrapping behavior. It can simplify browser-specific details when a

@@ -141,6 +141,13 @@ pub struct CbssCosmicTextFontMetricsResult {
 }
 
 #[repr(C)]
+pub struct CbssCosmicTextBaselineMetricsResult {
+    pub ascent: c_float,
+    pub descent: c_float,
+    pub ok: u8,
+}
+
+#[repr(C)]
 pub struct CbssCosmicTextBitmapResult {
     pub width: u32,
     pub height: u32,
@@ -577,6 +584,70 @@ pub unsafe extern "C" fn cbss_cosmic_text_font_unit_metrics(
     })
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn cbss_cosmic_text_baseline_metrics(
+    engine: *mut CbssCosmicTextEngine,
+    input: *const CbssCosmicTextMeasureInput,
+    output: *mut CbssCosmicTextBaselineMetricsResult,
+) -> u8 {
+    ffi_guard!(0, {
+        if engine.is_null() || input.is_null() || output.is_null() {
+            return 0;
+        }
+
+        let input = &*input;
+        let font_size = if input.font_size > 0.0 {
+            input.font_size
+        } else {
+            16.0
+        };
+        let families = parse_families(&cstr_or_empty(input.family_csv));
+        let variations = cstr_or_empty(input.font_variations);
+        let mut weight = input.font_weight;
+        let mut stretch = input.font_stretch;
+        let mut style = style_from_u32(input.font_style);
+        apply_variations(&variations, &mut weight, &mut stretch, &mut style);
+
+        let font_system = &mut (*engine).font_system;
+        let family = family_from_name(&families[0]);
+        let face_id = font_system.db().query(&fontdb::Query {
+            families: std::slice::from_ref(&family),
+            weight: Weight(weight.clamp(1.0, 1000.0) as u16),
+            stretch: stretch_from_percent(stretch),
+            style,
+        });
+        let metrics = face_id
+            .and_then(|id| {
+                font_system.db().with_face_data(id, |data, index| {
+                    ttf_parser::Face::parse(data, index).ok().map(|mut face| {
+                        apply_ttf_variations(&mut face, &variations);
+                        let scale = font_size / face.units_per_em() as f32;
+                        (
+                            face.ascender() as f32 * scale,
+                            -(face.descender() as f32) * scale,
+                        )
+                    })
+                })
+            })
+            .flatten();
+        let (ascent, descent) = metrics
+            .filter(|(ascent, descent)| {
+                ascent.is_finite() && descent.is_finite() && *ascent >= 0.0 && *descent >= 0.0
+            })
+            .unwrap_or((font_size * 0.8, font_size * 0.2));
+
+        ptr::write(
+            output,
+            CbssCosmicTextBaselineMetricsResult {
+                ascent,
+                descent,
+                ok: 1,
+            },
+        );
+        1
+    })
+}
+
 fn prepare_buffer<'a>(
     font_system: &'a mut FontSystem,
     input: &CbssCosmicTextMeasureInput,
@@ -634,6 +705,25 @@ fn prepare_buffer<'a>(
 mod tests {
     use super::*;
 
+    fn baseline_test_input(font_size: f32) -> CbssCosmicTextMeasureInput {
+        CbssCosmicTextMeasureInput {
+            text: ptr::null(),
+            family_csv: ptr::null(),
+            font_features: ptr::null(),
+            font_variations: ptr::null(),
+            font_size,
+            line_height: font_size * 1.2,
+            max_width: 0.0,
+            has_max_width: 0,
+            font_weight: 400.0,
+            font_style: 0,
+            font_stretch: 100.0,
+            letter_spacing: 0.0,
+            word_spacing: 0.0,
+            wrap: 0,
+        }
+    }
+
     #[test]
     fn overlapping_glyph_pixels_are_composited_instead_of_erased() {
         let mut opaque = [255, 255, 255, 255];
@@ -664,6 +754,53 @@ mod tests {
         assert!(!engine.is_null());
         unsafe {
             assert_eq!((*engine).font_system.db().len(), 0);
+            cbss_cosmic_text_engine_free(engine);
+        }
+    }
+
+    #[test]
+    fn baseline_metrics_reject_null_ffi_arguments() {
+        let engine = cbss_cosmic_text_engine_new(0);
+        let input = baseline_test_input(20.0);
+        let mut output = CbssCosmicTextBaselineMetricsResult {
+            ascent: 0.0,
+            descent: 0.0,
+            ok: 0,
+        };
+        unsafe {
+            assert_eq!(
+                cbss_cosmic_text_baseline_metrics(engine, ptr::null(), &mut output),
+                0
+            );
+            assert_eq!(
+                cbss_cosmic_text_baseline_metrics(engine, &input, ptr::null_mut()),
+                0
+            );
+            assert_eq!(
+                cbss_cosmic_text_baseline_metrics(ptr::null_mut(), &input, &mut output),
+                0
+            );
+            cbss_cosmic_text_engine_free(engine);
+        }
+    }
+
+    #[test]
+    fn baseline_metrics_use_a_deterministic_fallback_without_fonts() {
+        let engine = cbss_cosmic_text_engine_new(0);
+        let input = baseline_test_input(20.0);
+        let mut output = CbssCosmicTextBaselineMetricsResult {
+            ascent: 0.0,
+            descent: 0.0,
+            ok: 0,
+        };
+        unsafe {
+            assert_eq!(
+                cbss_cosmic_text_baseline_metrics(engine, &input, &mut output),
+                1
+            );
+            assert_eq!(output.ok, 1);
+            assert_eq!(output.ascent, 16.0);
+            assert_eq!(output.descent, 4.0);
             cbss_cosmic_text_engine_free(engine);
         }
     }

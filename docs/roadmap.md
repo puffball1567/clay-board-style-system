@@ -1933,6 +1933,13 @@ the same node, paint/hit, focus, and accessibility order. They compose with
 wrapping, cross-axis reversal, gaps, margins, justification, intrinsic sizing,
 and typed property authoring.
 
+Horizontal first-baseline alignment is executable for row and row-reverse
+containers. Text ascent/descent and line-height leading, synthesized image and
+box baselines, nested row propagation, per-line wrapping, margins, and
+`align-self` overrides share the normal layout result used by paint and hit
+testing. Column baseline currently falls back to cross-start; vertical baseline
+sets remain coupled to the future writing-mode contract.
+
 ### CSS Property Runtime Completion
 
 Status: `Version 0.6 target; package order remains dependency-driven`
@@ -1961,8 +1968,8 @@ machine-checked, while semantic promotion requires code-and-test review.
 
 Candidate work packages:
 
-- **Remaining Flex and axis fidelity.** Build on executable `box-sizing` and
-  multi-line Flex with baseline alignment, complete logical/writing-axis
+- **Remaining Flex and axis fidelity.** Build on executable `box-sizing`,
+  multi-line Flex, and horizontal first-baseline alignment; complete logical/writing-axis
   behavior, and re-arrangement of descendants after a flexed item changes
   size. Preserve stable intrinsic sizing, percentage resolution, scrolling
   overflow, and dirty-subtree behavior across all four main-axis directions.

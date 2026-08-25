@@ -50,16 +50,16 @@ preserves typed intent for later runtime work.
 
 | Status | Count |
 | --- | ---: |
-| Runtime | 178 |
-| Computed | 73 |
+| Runtime | 179 |
+| Computed | 72 |
 | Metadata | 176 |
 | Planned | 0 |
 | No plan | 238 |
 | Target properties | 427 |
 | Total MDN entries | 665 |
 
-As of 2026-08-25, strict runtime completion is **178 of 427 target
-properties (41.7%)**. A further 73 properties reach computed style, so
+As of 2026-08-25, strict runtime completion is **179 of 427 target
+properties (41.9%)**. A further 72 properties reach computed style, so
 **251 of 427 (58.8%)** have runtime or computed support. All 427 target names
 are accepted by the default registry, but metadata-only acceptance is not
 counted as completed behavior. The 238 `No plan` entries are excluded from the
@@ -85,7 +85,7 @@ inventory below; they are not additional properties.
 
 | Property | Status | Note |
 | --- | --- | --- |
-| `align-items` | Runtime | Initial CBSS runtime surface. |
+| `align-items` | Runtime | Supports start, center, end, stretch, and first-baseline alignment in horizontal Flex rows. |
 | `background-color` | Runtime | Initial CBSS runtime surface. |
 | `border` | Runtime | Initial CBSS runtime surface. |
 | `border-bottom` | Runtime | Initial CBSS runtime surface. |
@@ -285,8 +285,8 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `-webkit-user-select` | No plan | Vendor-specific browser property. |
 | `accent-color` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `align-content` | Runtime | Distributes multiple Flex lines with start, center, end, space-between, space-around, space-evenly, and stretch behavior. |
-| `align-items` | Runtime | Initial CBSS runtime surface. |
-| `align-self` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `align-items` | Runtime | Supports start, center, end, stretch, and first-baseline alignment in horizontal Flex rows. |
+| `align-self` | Runtime | Overrides the parent cross-axis alignment, including first-baseline alignment in horizontal Flex rows. |
 | `align-tracks` | Metadata | Stored as computed layout metadata. |
 | `alignment-baseline` | Metadata | Stored as computed baseline metadata. |
 | `all` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |

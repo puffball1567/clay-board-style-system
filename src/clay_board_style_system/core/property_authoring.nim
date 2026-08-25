@@ -137,6 +137,7 @@ proc alignItems*(value: AlignItems; sourceOrder = 0): Declaration =
     of aiCenter: "center"
     of aiEnd: "end"
     of aiStretch: "stretch"
+    of aiBaseline: "baseline"
   decl("align-items", keyword(authored), sourceOrder)
 
 proc alignSelf*(value: AlignItems; sourceOrder = 0): Declaration =
@@ -145,6 +146,7 @@ proc alignSelf*(value: AlignItems; sourceOrder = 0): Declaration =
     of aiCenter: "center"
     of aiEnd: "end"
     of aiStretch: "stretch"
+    of aiBaseline: "baseline"
   decl("align-self", keyword(authored), sourceOrder)
 
 proc contentAlignmentKeyword(value: JustifyContent): string =

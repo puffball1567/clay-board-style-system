@@ -24,6 +24,7 @@ type
   ChildPlacement = object
     node: NodeId
     size: Size
+    firstBaseline: float32
     minMain: float32
     maxMain: float32
     margin: EdgeSizes
@@ -35,6 +36,7 @@ type
     pastChild: int
     mainSize: float32
     crossSize: float32
+    firstBaseline: float32
 
   OrderedChild = object
     node: NodeId
@@ -43,6 +45,10 @@ type
   IntrinsicSizes = object
     minSize: Size
     maxSize: Size
+
+  LayoutMetrics = object
+    size: Size
+    firstBaseline: float32
 
 proc layoutBoxIndices*(layout: LayoutResult; nodeCount: int): seq[int] =
   ## Layout owns this index. Paint and hit stages borrow its shared sequence
@@ -216,6 +222,15 @@ proc outerMain(child: ChildPlacement; direction: FlexDirection): float32 {.inlin
 
 proc outerCross(child: ChildPlacement; direction: FlexDirection): float32 {.inline.} =
   child.size.crossSize(direction) + child.margin.crossMargin(direction)
+
+proc effectiveAlignment(
+    alignSelf: Option[AlignItems];
+    alignItems: AlignItems
+): AlignItems {.inline.} =
+  if alignSelf.isSome:
+    alignSelf.get
+  else:
+    alignItems
 
 proc toBorderBox(
     value: float32;
@@ -464,6 +479,7 @@ proc refreshLineMetrics(
 ) =
   line.mainSize = 0
   line.crossSize = 0
+  line.firstBaseline = -1
   for index in line.firstChild ..< line.pastChild:
     if index > line.firstChild:
       line.mainSize += gap
@@ -481,7 +497,7 @@ proc collectFlexLines(
     return
 
   let canWrap = wrapping != fwNoWrap and mainIsDefinite
-  var line = FlexLine(firstChild: 0, pastChild: 0)
+  var line = FlexLine(firstChild: 0, pastChild: 0, firstBaseline: -1)
   for index, child in children:
     let itemMain = child.outerMain(direction)
     let nextMain =
@@ -494,7 +510,8 @@ proc collectFlexLines(
         firstChild: index,
         pastChild: index + 1,
         mainSize: itemMain,
-        crossSize: child.outerCross(direction)
+        crossSize: child.outerCross(direction),
+        firstBaseline: -1
       )
     else:
       if line.pastChild > line.firstChild:
@@ -503,6 +520,34 @@ proc collectFlexLines(
       line.crossSize = max(line.crossSize, child.outerCross(direction))
       line.pastChild = index + 1
   result.add line
+
+proc resolveLineBaselines(
+    lines: var seq[FlexLine];
+    children: openArray[ChildPlacement];
+    styles: ResolvedTree;
+    parentAlign: AlignItems;
+    direction: FlexDirection;
+    hasBaselineAlignment: bool
+) =
+  if not direction.isRow or not hasBaselineAlignment:
+    return
+  for line in lines.mitems:
+    var baseline = -1.0'f32
+    var belowBaseline = 0.0'f32
+    for index in line.firstChild ..< line.pastChild:
+      let child = children[index]
+      let childStyle {.cursor.} = styles.styles[child.node.nodeIndex]
+      if effectiveAlignment(childStyle.layout.alignSelf, parentAlign) != aiBaseline:
+        continue
+      let childBaseline = max(0.0'f32, child.firstBaseline)
+      baseline = max(baseline, child.margin.top + childBaseline)
+      belowBaseline = max(
+        belowBaseline,
+        child.margin.bottom + max(0.0'f32, child.size.h - childBaseline)
+      )
+    line.firstBaseline = baseline
+    if baseline >= 0:
+      line.crossSize = max(line.crossSize, baseline + belowBaseline)
 
 proc resolveFlexibleLine(
     line: var FlexLine;
@@ -988,7 +1033,7 @@ proc layoutNode(
     fontRegistry: FontRegistry;
     intrinsics: seq[IntrinsicSizes];
     output: var LayoutResult
-): Size =
+): LayoutMetrics =
   let node = tree.nodes[id.nodeIndex]
   let style {.cursor.} = styles.styles[id.nodeIndex]
   let intrinsic = intrinsics[id.nodeIndex]
@@ -1020,7 +1065,7 @@ proc layoutNode(
       rect: rect(x, y, 0, 0),
       zIndex: style.layout.zIndex
     )
-    return size(0, 0)
+    return LayoutMetrics(size: size(0, 0), firstBaseline: 0)
 
   if node.kind == nkText:
     let measuredText = textLimitedByMaxLines(node.text, style.text)
@@ -1040,10 +1085,17 @@ proc layoutNode(
       zIndex: style.layout.zIndex
     )
     let zoom = parsedZoom(style)
+    let baseline = textEngine.firstLineBaseline(TextFontMetricsInput(
+      style: style.text,
+      fonts: fontRegistry
+    ))
     if zoom != 1.0'f32:
       output.scaleBoxes(firstBox, output.boxes.len - firstBox, x, y, zoom)
-      return size(clamped.w * zoom, clamped.h * zoom)
-    return clamped
+      return LayoutMetrics(
+        size: size(clamped.w * zoom, clamped.h * zoom),
+        firstBaseline: baseline * zoom
+      )
+    return LayoutMetrics(size: clamped, firstBaseline: baseline)
 
   if node.kind == nkImage:
     let intrinsicW = max(0.0'f32, node.imageWidth)
@@ -1066,8 +1118,11 @@ proc layoutNode(
     let zoom = parsedZoom(style)
     if zoom != 1.0'f32:
       output.scaleBoxes(firstBox, output.boxes.len - firstBox, x, y, zoom)
-      return size(clamped.w * zoom, clamped.h * zoom)
-    return clamped
+      return LayoutMetrics(
+        size: size(clamped.w * zoom, clamped.h * zoom),
+        firstBaseline: clamped.h * zoom
+      )
+    return LayoutMetrics(size: clamped, firstBaseline: clamped.h)
 
   let pad = initialPadding
   let boxEdges = initialBoxEdges
@@ -1127,6 +1182,7 @@ proc layoutNode(
 
   var children: seq[ChildPlacement]
   var absoluteChildren: seq[ChildPlacement]
+  var hasBaselineAlignment = false
   let orderedChildren = node.childrenInLayoutOrder(styles)
   for child in orderedChildren:
     let childStyle {.cursor.} = styles.styles[child.nodeIndex]
@@ -1134,7 +1190,7 @@ proc layoutNode(
       continue
     if childStyle.isAbsolute:
       let firstBox = output.boxes.len
-      let childSize = layoutNode(
+      let childMetrics = layoutNode(
         tree,
         styles,
         child,
@@ -1148,7 +1204,8 @@ proc layoutNode(
       )
       absoluteChildren.add ChildPlacement(
         node: child,
-        size: childSize,
+        size: childMetrics.size,
+        firstBaseline: childMetrics.firstBaseline,
         minMain: 0,
         margin: marginOf(childStyle, childConstraints.w),
         firstBox: firstBox,
@@ -1156,8 +1213,13 @@ proc layoutNode(
       )
       continue
 
+    if style.layout.direction.isRow and effectiveAlignment(
+        childStyle.layout.alignSelf, style.layout.alignItems
+    ) == aiBaseline:
+      hasBaselineAlignment = true
+
     let firstBox = output.boxes.len
-    var childSize = layoutNode(
+    let childMetrics = layoutNode(
       tree,
       styles,
       child,
@@ -1169,6 +1231,7 @@ proc layoutNode(
       intrinsics,
       output
     )
+    var childSize = childMetrics.size
     let basisSpec = childStyle.flexBasisSpec()
     let childIntrinsic = intrinsics[child.nodeIndex]
     let childBoxEdges = combinedEdges(
@@ -1208,6 +1271,7 @@ proc layoutNode(
     children.add ChildPlacement(
       node: child,
       size: childSize,
+      firstBaseline: childMetrics.firstBaseline,
       minMain: childMinMain,
       maxMain: childMaxMain,
       margin: margin,
@@ -1222,6 +1286,10 @@ proc layoutNode(
     wrapMainIsDefinite,
     tentativeAvailableMain,
     measuredMainGap
+  )
+  lines.resolveLineBaselines(
+    children, styles, style.layout.alignItems, style.layout.direction,
+    hasBaselineAlignment
   )
   var contentMain = 0.0'f32
   var contentCross = 0.0'f32
@@ -1290,6 +1358,10 @@ proc layoutNode(
     line.resolveFlexibleLine(
       children, styles, style.layout.direction, availableMain, mainGap, output
     )
+  lines.resolveLineBaselines(
+    children, styles, style.layout.alignItems, style.layout.direction,
+    hasBaselineAlignment
+  )
 
   contentMain = 0
   contentCross = 0
@@ -1312,6 +1384,7 @@ proc layoutNode(
     style.layout.alignContent, freeCross, lines.len
   )
   var cursorCross = lineDistribution.offset
+  var containerFirstBaseline = clamped.h
 
   for lineIndex in 0 ..< lines.len:
     let line = lines[lineIndex]
@@ -1320,6 +1393,8 @@ proc layoutNode(
         availableCross - cursorCross - line.crossSize
       else:
         cursorCross
+    if lineIndex == 0 and style.layout.direction.isRow and line.firstBaseline >= 0:
+      containerFirstBaseline = boxEdges.top + physicalCross + line.firstBaseline
     let freeMain = max(0.0'f32, availableMain - line.mainSize)
     let mainDistribution = distribution(
       style.layout.justifyContent,
@@ -1338,11 +1413,9 @@ proc layoutNode(
           availableMain - cursorMain - childOuterMain
         else:
           cursorMain
-      let effectiveAlign =
-        if childStyle.layout.alignSelf.isSome:
-          childStyle.layout.alignSelf.get
-        else:
-          style.layout.alignItems
+      let effectiveAlign = effectiveAlignment(
+        childStyle.layout.alignSelf, style.layout.alignItems
+      )
       let crossOffset =
         case effectiveAlign
         of aiStart, aiStretch:
@@ -1351,12 +1424,22 @@ proc layoutNode(
           max(0.0'f32, (line.crossSize - childOuterCross) / 2.0'f32)
         of aiEnd:
           max(0.0'f32, line.crossSize - childOuterCross)
+        of aiBaseline:
+          if style.layout.direction.isRow and line.firstBaseline >= 0:
+            max(0.0'f32,
+              line.firstBaseline - child.margin.top - child.firstBaseline)
+          else:
+            0.0'f32
 
       if style.layout.direction.isRow:
         let targetX = x + boxEdges.left + physicalMain + child.margin.left
         let targetY = y + boxEdges.top + physicalCross +
           crossOffset + child.margin.top
         let offset = childStyle.relativeOffset(containingContentSize)
+        if lineIndex == 0 and childIndex == line.firstChild and
+            line.firstBaseline < 0:
+          containerFirstBaseline = boxEdges.top + physicalCross +
+            crossOffset + child.margin.top + child.firstBaseline
         output.shiftBoxes(
           child.firstBox, child.boxCount, targetX + offset.x, targetY + offset.y
         )
@@ -1444,8 +1527,11 @@ proc layoutNode(
     )
   if zoom != 1.0'f32:
     output.scaleBoxes(firstBox, output.boxes.len - firstBox, x, y, zoom)
-    return size(clamped.w * zoom, clamped.h * zoom)
-  clamped
+    return LayoutMetrics(
+      size: size(clamped.w * zoom, clamped.h * zoom),
+      firstBaseline: containerFirstBaseline * zoom
+    )
+  LayoutMetrics(size: clamped, firstBaseline: containerFirstBaseline)
 
 proc computeLayout*(
     tree: Tree;

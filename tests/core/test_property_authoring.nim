@@ -279,6 +279,13 @@ suite "typed property authoring":
     check flexDirection(fdRowReverse).authoredKeyword == "row-reverse"
     check flexDirection(fdColumnReverse).authoredKeyword == "column-reverse"
 
+  test "typed baseline alignment preserves its CSS keyword":
+    check ord(aiStart) == 0
+    check ord(aiStretch) == 3
+    check ord(aiBaseline) == 4
+    check alignItems(aiBaseline).authoredKeyword == "baseline"
+    check alignSelf(aiBaseline).authoredKeyword == "baseline"
+
   test "extended closed value helpers preserve exact property vocabulary":
     let declarations = [
       fontKerning(fkNormal),
