@@ -50,16 +50,16 @@ preserves typed intent for later runtime work.
 
 | Status | Count |
 | --- | ---: |
-| Runtime | 179 |
-| Computed | 72 |
+| Runtime | 180 |
+| Computed | 71 |
 | Metadata | 176 |
 | Planned | 0 |
 | No plan | 238 |
 | Target properties | 427 |
 | Total MDN entries | 665 |
 
-As of 2026-08-25, strict runtime completion is **179 of 427 target
-properties (41.9%)**. A further 72 properties reach computed style, so
+As of 2026-08-26, strict runtime completion is **180 of 427 target
+properties (42.2%)**. A further 71 properties reach computed style, so
 **251 of 427 (58.8%)** have runtime or computed support. All 427 target names
 are accepted by the default registry, but metadata-only acceptance is not
 counted as completed behavior. The 238 `No plan` entries are excluded from the
@@ -781,7 +781,7 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `text-shadow` | Runtime | Emits shadow text before foreground text; blur is still approximate. |
 | `text-size-adjust` | Metadata | Stored as computed text length metadata. |
 | `text-spacing-trim` | Metadata | Stored as computed text metadata. |
-| `text-transform` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `text-transform` | Runtime | `none`, `uppercase`, `lowercase`, and `capitalize` share Unicode-aware measurement, caret/hit mapping, and paint output without mutating source values. Locale-specific casing remains outside the current contract. |
 | `text-underline-offset` | Runtime | Emits text decoration paint commands; advanced browser skip behavior remains partial. |
 | `text-underline-position` | Metadata | Stored as computed text metadata. |
 | `text-wrap` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |

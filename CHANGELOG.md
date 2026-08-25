@@ -9,6 +9,12 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- `text-transform` now executes through the shared text pipeline. `uppercase`,
+  `lowercase`, and `capitalize` use Unicode simple case mapping for layout and
+  paint, while source/display byte-boundary mapping keeps caret placement, hit
+  testing, selection, and editable control values coherent when UTF-8 widths
+  differ. Source Node text and submitted values remain unchanged.
+
 - Flex items whose final main or cross size changes now re-arrange their
   retained descendants against that final size. Grow, shrink, `flex-basis`,
   and stretch therefore update percentage sizing, nested alignment, text

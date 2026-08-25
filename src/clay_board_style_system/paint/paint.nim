@@ -6,6 +6,7 @@ import ../layout/presentation
 import ../layout/scroll_state
 import ../layout/scrollbar_geometry
 import ../layout/transform_geometry
+import ../text/display_text
 import ./paint_command
 
 type
@@ -164,13 +165,13 @@ proc parsedMaxLines(style: ComputedTextStyle): Option[int] =
 proc textLimitedByMaxLines(text: string; style: ComputedTextStyle): string =
   let maxLines = style.parsedMaxLines()
   if maxLines.isNone:
-    return text
+    return displayTextTransform(text, style).text
   if maxLines.get == 0:
     return ""
   let lines = text.splitLines()
   if lines.len <= maxLines.get:
-    return text
-  lines[0 ..< maxLines.get].join("\n")
+    return displayTextTransform(text, style).text
+  displayTextTransform(lines[0 ..< maxLines.get].join("\n"), style).text
 
 proc decorationThickness(style: ComputedTextStyle): float32 =
   if style.textDecorationThickness.isSome:
