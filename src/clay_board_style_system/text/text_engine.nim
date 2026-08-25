@@ -1,4 +1,4 @@
-import std/[options, strutils]
+import std/[math, options, strutils]
 import ../core/[computed_style, geometry, property]
 import ./font_registry
 
@@ -6,6 +6,10 @@ type
   TextFontMetricsInput* = object
     style*: ComputedTextStyle
     fonts*: FontRegistry
+
+  TextBaselineMetrics* = object
+    ascent*: float32
+    descent*: float32
 
   TextMeasureInput* = object
     text*: string
@@ -42,6 +46,7 @@ type
   TextHitProc* = proc(input: TextHitInput): TextCaretResult {.closure.}
   TextCaretLayoutProc* = proc(input: TextMeasureInput): seq[TextCaretSample] {.closure.}
   TextFontMetricsProc* = proc(input: TextFontMetricsInput): FontUnitMetrics {.closure.}
+  TextBaselineMetricsProc* = proc(input: TextFontMetricsInput): TextBaselineMetrics {.closure.}
 
   TextEngine* = object
     measureText*: TextMeasureProc
@@ -49,6 +54,7 @@ type
     hitTestText*: TextHitProc
     layoutCarets*: TextCaretLayoutProc
     fontUnitMetrics*: TextFontMetricsProc
+    baselineMetrics*: TextBaselineMetricsProc
 
 proc measure*(engine: TextEngine; input: TextMeasureInput): Size =
   engine.measureText(input)
@@ -83,6 +89,46 @@ proc fontMetricsResolver*(
 ): FontUnitMetricsResolver =
   proc(style: ComputedTextStyle): FontUnitMetrics =
     engine.fontMetrics(TextFontMetricsInput(style: style, fonts: fonts))
+
+proc effectiveFontSize(style: ComputedTextStyle): float32 =
+  let fontSize = style.fontSize.get(16.0'f32)
+  if style.fontSizeAdjust.isSome:
+    fontSize * max(0.1'f32, style.fontSizeAdjust.get)
+  else:
+    fontSize
+
+proc fallbackTextBaselineMetrics*(style: ComputedTextStyle): TextBaselineMetrics =
+  let fontSize = max(0.0'f32, style.effectiveFontSize())
+  TextBaselineMetrics(
+    ascent: fontSize * 0.8'f32,
+    descent: fontSize * 0.2'f32
+  )
+
+proc textBaselineMetrics*(
+    engine: TextEngine;
+    input: TextFontMetricsInput
+): TextBaselineMetrics =
+  let fallback = fallbackTextBaselineMetrics(input.style)
+  if engine.baselineMetrics.isNil:
+    return fallback
+  result = engine.baselineMetrics(input)
+  if result.ascent.classify in {fcNan, fcInf, fcNegInf} or result.ascent < 0:
+    result.ascent = fallback.ascent
+  if result.descent.classify in {fcNan, fcInf, fcNegInf} or result.descent < 0:
+    result.descent = fallback.descent
+  if result.ascent + result.descent <= 0:
+    result = fallback
+
+proc firstLineBaseline*(
+    engine: TextEngine;
+    input: TextFontMetricsInput
+): float32 =
+  let metrics = engine.textBaselineMetrics(input)
+  let lineHeight =
+    if input.style.lineHeight.isSome: input.style.lineHeight.get
+    else: input.style.effectiveFontSize() * 1.2'f32
+  let halfLeading = (lineHeight - metrics.ascent - metrics.descent) * 0.5'f32
+  halfLeading + metrics.ascent
 
 proc nextRuneEnd(text: string; caret: int): int
 
@@ -197,12 +243,16 @@ proc debugHitText*(input: TextHitInput): TextCaretResult =
 proc debugFontUnitMetrics(input: TextFontMetricsInput): FontUnitMetrics =
   fallbackFontUnitMetrics(input.style.fontSize.get(16.0'f32))
 
+proc debugBaselineMetrics(input: TextFontMetricsInput): TextBaselineMetrics =
+  fallbackTextBaselineMetrics(input.style)
+
 proc debugTextEngine*(): TextEngine =
   TextEngine(
     measureText: debugMeasureText,
     caretPosition: debugCaretPosition,
     hitTestText: debugHitText,
     fontUnitMetrics: debugFontUnitMetrics,
+    baselineMetrics: debugBaselineMetrics,
     layoutCarets: proc(input: TextMeasureInput): seq[TextCaretSample] =
       let lineHeight = input.style.lineHeightOf()
       var index = 0

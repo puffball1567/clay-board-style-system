@@ -5,6 +5,25 @@ import clay_board_style_system/generated/default_properties
 import clay_board_style_system/text/cosmic_text_engine
 
 suite "cosmic text engine":
+  test "reports usable ascent and descent through the bridge":
+    var fonts = initFontRegistry()
+    var cosmic = initCosmicTextEngine(fonts)
+    defer:
+      cosmic.close()
+
+    let metrics = cosmic.textEngine().textBaselineMetrics(TextFontMetricsInput(
+      style: ComputedTextStyle(
+        fontSize: some(20.0'f32),
+        lineHeight: some(28.0'f32),
+        fontFamilies: @["sans-serif"]
+      ),
+      fonts: fonts
+    ))
+
+    check metrics.ascent > 0
+    check metrics.descent >= 0
+    check metrics.ascent + metrics.descent > 0
+
   test "reports font-relative metrics through the versioned bridge":
     var fonts = initFontRegistry()
     var cosmic = initCosmicTextEngine(fonts)

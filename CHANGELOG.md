@@ -9,6 +9,15 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added executable first-baseline alignment for horizontal Flex rows.
+  `align-items: baseline` and `align-self: baseline` now align mixed font
+  sizes, images, and nested row components using line ascent/descent metrics.
+  Baselines are aggregated independently per wrapped line and compose with
+  `row-reverse`; column-axis baseline currently falls back to cross-start
+  until vertical writing-mode baseline sets are implemented. Cosmic Text
+  exposes font baseline metrics through a new additive C ABI function without
+  changing the existing font-unit metrics result.
+
 - Completed the physical main-axis direction surface for Flex layout.
   `row-reverse` and `column-reverse` now work through `flex-direction`,
   `flex-flow`, and typed authoring, including wrapping, gaps, margins,

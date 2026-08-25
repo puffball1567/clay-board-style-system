@@ -21,7 +21,8 @@ type
     aiStart,
     aiCenter,
     aiEnd,
-    aiStretch
+    aiStretch,
+    aiBaseline
 
   JustifyContent* = enum
     jcStart,
