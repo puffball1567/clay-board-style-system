@@ -1969,10 +1969,11 @@ machine-checked, while semantic promotion requires code-and-test review.
 Candidate work packages:
 
 - **Remaining Flex and axis fidelity.** Build on executable `box-sizing`,
-  multi-line Flex, and horizontal first-baseline alignment; complete logical/writing-axis
-  behavior, and re-arrangement of descendants after a flexed item changes
-  size. Preserve stable intrinsic sizing, percentage resolution, scrolling
-  overflow, and dirty-subtree behavior across all four main-axis directions.
+  multi-line Flex, horizontal first-baseline alignment, and selective
+  descendant re-arrangement after grow, shrink, basis, or stretch changes;
+  complete logical/writing-axis behavior. Preserve stable intrinsic sizing,
+  percentage resolution, scrolling overflow, and dirty-subtree behavior across
+  all four main-axis directions.
 - **Background geometry and composition.** Connect `background-position`,
   `background-position-x`, `background-position-y`, `background-size`,
   `background-repeat`, `background-clip`, and `background-origin` to the
