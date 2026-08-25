@@ -9,6 +9,13 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Flex items whose final main or cross size changes now re-arrange their
+  retained descendants against that final size. Grow, shrink, `flex-basis`,
+  and stretch therefore update percentage sizing, nested alignment, text
+  measurement, absolute descendants, and overflow metrics instead of changing
+  only the item's outer box. Re-arrangement is limited to changed item
+  subtrees and reuses its temporary storage.
+
 - Added executable first-baseline alignment for horizontal Flex rows.
   `align-items: baseline` and `align-self: baseline` now align mixed font
   sizes, images, and nested row components using line ascent/descent metrics.

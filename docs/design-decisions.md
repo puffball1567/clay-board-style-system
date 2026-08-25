@@ -134,9 +134,12 @@ implemented. Shared main/cross helpers remove the highest-risk duplicated
 arithmetic. Reverse main directions are now executable without mutating logical
 tree, focus, or accessibility order. Horizontal first-baseline alignment now
 aggregates ascent/descent per line and propagates through nested row
-containers. A complete `AxisView`, descendant re-arrangement after flex size
-changes, vertical-writing baseline sets, and both-side absolute inset sizing
-remain open, so D7 is still partially complete.
+containers. Flex items whose grow, shrink, basis, or stretch result changes
+their final size now re-arrange only that retained subtree with definite final
+constraints; percentage descendants, nested alignment, text measurement,
+absolute positioning, and overflow geometry therefore agree with the final
+item box. A complete `AxisView`, vertical-writing baseline sets, and both-side
+absolute inset sizing remain open, so D7 is still partially complete.
 
 ## D8 — Hit testing follows paint order and clipping (Adopted)
 
