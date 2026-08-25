@@ -1980,11 +1980,14 @@ Candidate work packages:
   shared SDL3 and headless paint contract. Then connect attachment and blend
   behavior without introducing an idle redraw loop or backend-specific style
   semantics. Linear-gradient support remains the reference image path.
-- **Everyday text behavior.** Finish visible `text-overflow` and ellipsis,
-  `text-transform`, `text-indent`, supported `text-wrap` forms, word breaking,
-  overflow wrapping, and hyphenation behavior. Letter and word spacing remain
-  consistent across measurement, shaping, caret geometry, selection, input,
-  textarea scrolling, and both text backends.
+- **Everyday text behavior.** Build on executable `text-transform`, whose
+  locale-neutral Unicode case mapping now shares source/display byte mapping
+  across measurement, caret geometry, hit testing, selection, input, and paint.
+  Finish visible `text-overflow` and ellipsis, `text-indent`, supported
+  `text-wrap` forms, word breaking, overflow wrapping, hyphenation, and a future
+  explicit locale contract for language-specific casing. Letter and word
+  spacing remain consistent across measurement, shaping, caret geometry,
+  selection, input, textarea scrolling, and both text backends.
 - **Writing direction and logical geometry.** Replace the current
   horizontal-LTR physical aliases with explicit `direction`, `unicode-bidi`,
   and `writing-mode` behavior before claiming general logical-property

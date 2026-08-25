@@ -1,5 +1,6 @@
 import std/[math, options, strutils]
 import ../core/[computed_style, geometry, property]
+import ./display_text
 import ./font_registry
 
 type
@@ -57,13 +58,25 @@ type
     baselineMetrics*: TextBaselineMetricsProc
 
 proc measure*(engine: TextEngine; input: TextMeasureInput): Size =
-  engine.measureText(input)
+  let mapping = displayTextTransform(input.text, input.style)
+  var displayInput = input
+  displayInput.text = mapping.text
+  engine.measureText(displayInput)
 
 proc caret*(engine: TextEngine; input: TextCaretInput): TextCaretResult =
-  engine.caretPosition(input)
+  let mapping = displayTextTransform(input.text, input.style)
+  var displayInput = input
+  displayInput.text = mapping.text
+  displayInput.byteIndex = mapping.displayByteIndex(input.byteIndex)
+  result = engine.caretPosition(displayInput)
+  result.byteIndex = mapping.sourceByteIndex(result.byteIndex)
 
 proc hit*(engine: TextEngine; input: TextHitInput): TextCaretResult =
-  engine.hitTestText(input)
+  let mapping = displayTextTransform(input.text, input.style)
+  var displayInput = input
+  displayInput.text = mapping.text
+  result = engine.hitTestText(displayInput)
+  result.byteIndex = mapping.sourceByteIndex(result.byteIndex)
 
 const fontUnitMetricsVersion* = fontUnitMetricsContractVersion
 
@@ -151,7 +164,12 @@ proc carets*(engine: TextEngine; input: TextMeasureInput): seq[TextCaretSample] 
         break
       index = next
     return
-  engine.layoutCarets(input)
+  let mapping = displayTextTransform(input.text, input.style)
+  var displayInput = input
+  displayInput.text = mapping.text
+  result = engine.layoutCarets(displayInput)
+  for sample in result.mitems:
+    sample.byteIndex = mapping.sourceByteIndex(sample.byteIndex)
 
 proc debugMeasureText*(input: TextMeasureInput): Size =
   let lineHeight =
