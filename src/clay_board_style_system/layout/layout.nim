@@ -25,9 +25,16 @@ type
     node: NodeId
     size: Size
     minMain: float32
+    maxMain: float32
     margin: EdgeSizes
     firstBox: int
     boxCount: int
+
+  FlexLine = object
+    firstChild: int
+    pastChild: int
+    mainSize: float32
+    crossSize: float32
 
   OrderedChild = object
     node: NodeId
@@ -48,6 +55,22 @@ proc layoutBoxIndices*(layout: LayoutResult; nodeCount: int): seq[int] =
   for index, item in layout.boxes:
     if item.node.nodeIndex >= 0 and item.node.nodeIndex < result.len:
       result[item.node.nodeIndex] = index
+
+template withLayoutBoxIndices*(
+    layout: LayoutResult;
+    nodeCount: int;
+    indices: untyped;
+    body: untyped
+): untyped =
+  ## Borrows the retained index on the hot path. `layoutBoxIndices` remains the
+  ## owning compatibility API for callers that need to keep or mutate a copy.
+  block:
+    if layout.boxIndices.len == nodeCount:
+      let indices {.cursor.} = layout.boxIndices
+      body
+    else:
+      let indices = layout.layoutBoxIndices(nodeCount)
+      body
 
 proc rebuildBoxIndices(layout: var LayoutResult; nodeCount: int) =
   layout.boxIndices.setLen(nodeCount)
@@ -157,6 +180,36 @@ proc horizontal(edges: EdgeSizes): float32 {.inline.} =
 
 proc vertical(edges: EdgeSizes): float32 {.inline.} =
   edges.top + edges.bottom
+
+proc mainSize(value: Size; direction: FlexDirection): float32 {.inline.} =
+  if direction == fdRow: value.w else: value.h
+
+proc crossSize(value: Size; direction: FlexDirection): float32 {.inline.} =
+  if direction == fdRow: value.h else: value.w
+
+proc setMainSize(value: var Size; direction: FlexDirection; next: float32) {.inline.} =
+  if direction == fdRow:
+    value.w = next
+  else:
+    value.h = next
+
+proc mainMargin(value: EdgeSizes; direction: FlexDirection): float32 {.inline.} =
+  if direction == fdRow:
+    value.left + value.right
+  else:
+    value.top + value.bottom
+
+proc crossMargin(value: EdgeSizes; direction: FlexDirection): float32 {.inline.} =
+  if direction == fdRow:
+    value.top + value.bottom
+  else:
+    value.left + value.right
+
+proc outerMain(child: ChildPlacement; direction: FlexDirection): float32 {.inline.} =
+  child.size.mainSize(direction) + child.margin.mainMargin(direction)
+
+proc outerCross(child: ChildPlacement; direction: FlexDirection): float32 {.inline.} =
+  child.size.crossSize(direction) + child.margin.crossMargin(direction)
 
 proc toBorderBox(
     value: float32;
@@ -279,6 +332,15 @@ proc mainGapSpec(style: ComputedStyle): Option[LengthValue] =
     return style.layout.sizing.rowGap
   style.gapSpec(fixedLength(style.layout.rowGap))
 
+proc crossGapSpec(style: ComputedStyle): Option[LengthValue] =
+  if style.layout.direction == fdRow:
+    if not style.layout.sizing.isNil and style.layout.sizing.rowGap.isSome:
+      return style.layout.sizing.rowGap
+    return style.gapSpec(fixedLength(style.layout.rowGap))
+  if not style.layout.sizing.isNil and style.layout.sizing.columnGap.isSome:
+    return style.layout.sizing.columnGap
+  style.gapSpec(fixedLength(style.layout.columnGap))
+
 proc resolveLength(
     value: Option[LengthValue];
     reference, intrinsicMin, intrinsicMax: float32
@@ -348,12 +410,228 @@ proc flexMinimumMain(
   if preferred.isSome:
     result = min(result, preferred.get)
 
+proc flexMaximumMain(
+    style: ComputedStyle;
+    direction: FlexDirection;
+    constraints: Size;
+    intrinsic: IntrinsicSizes;
+    boxEdges: EdgeSizes
+): float32 =
+  let reference = constraints.mainSize(direction)
+  let intrinsicMin = intrinsic.minSize.mainSize(direction)
+  let intrinsicMax = intrinsic.maxSize.mainSize(direction)
+  let maximumSpec =
+    if direction == fdRow: style.maxWidthSpec()
+    else: style.maxHeightSpec()
+  let extra =
+    if direction == fdRow: boxEdges.horizontal
+    else: boxEdges.vertical
+  let maximum = resolveSizingLength(
+    maximumSpec,
+    reference,
+    intrinsicMin,
+    intrinsicMax,
+    extra,
+    style.layout.boxSizing
+  )
+  if maximum.isSome: maximum.get else: high(float32)
+
 proc mainGapOf(style: ComputedStyle; contentSize: Size): float32 =
   let reference =
     if style.layout.direction == fdRow: contentSize.w
     else: contentSize.h
   let resolved = resolveLength(style.mainGapSpec(), reference, 0, 0)
   if resolved.isSome: resolved.get else: 0.0'f32
+
+proc crossGapOf(style: ComputedStyle; contentSize: Size): float32 =
+  let reference =
+    if style.layout.direction == fdRow: contentSize.h
+    else: contentSize.w
+  let resolved = resolveLength(style.crossGapSpec(), reference, 0, 0)
+  if resolved.isSome: resolved.get else: 0.0'f32
+
+proc refreshLineMetrics(
+    line: var FlexLine;
+    children: openArray[ChildPlacement];
+    direction: FlexDirection;
+    gap: float32
+) =
+  line.mainSize = 0
+  line.crossSize = 0
+  for index in line.firstChild ..< line.pastChild:
+    if index > line.firstChild:
+      line.mainSize += gap
+    line.mainSize += children[index].outerMain(direction)
+    line.crossSize = max(line.crossSize, children[index].outerCross(direction))
+
+proc collectFlexLines(
+    children: openArray[ChildPlacement];
+    direction: FlexDirection;
+    wrapping: FlexWrap;
+    mainIsDefinite: bool;
+    availableMain, gap: float32
+): seq[FlexLine] =
+  if children.len == 0:
+    return
+
+  let canWrap = wrapping != fwNoWrap and mainIsDefinite
+  var line = FlexLine(firstChild: 0, pastChild: 0)
+  for index, child in children:
+    let itemMain = child.outerMain(direction)
+    let nextMain =
+      if line.pastChild == line.firstChild: itemMain
+      else: line.mainSize + gap + itemMain
+    if canWrap and line.pastChild > line.firstChild and
+        nextMain > availableMain + 0.001'f32:
+      result.add line
+      line = FlexLine(
+        firstChild: index,
+        pastChild: index + 1,
+        mainSize: itemMain,
+        crossSize: child.outerCross(direction)
+      )
+    else:
+      if line.pastChild > line.firstChild:
+        line.mainSize += gap
+      line.mainSize += itemMain
+      line.crossSize = max(line.crossSize, child.outerCross(direction))
+      line.pastChild = index + 1
+  result.add line
+
+proc resolveFlexibleLine(
+    line: var FlexLine;
+    children: var seq[ChildPlacement];
+    styles: ResolvedTree;
+    direction: FlexDirection;
+    availableMain, gap: float32;
+    output: var LayoutResult
+) =
+  let childCount = line.pastChild - line.firstChild
+  if childCount <= 0:
+    return
+
+  let freeMain = max(0.0'f32, availableMain - line.mainSize)
+  let deficitMain = max(0.0'f32, line.mainSize - availableMain)
+  if freeMain > 0:
+    var frozen = newSeq[bool](childCount)
+    var remainingFree = freeMain
+    for _ in 0 .. childCount:
+      if remainingFree <= 0.001'f32:
+        break
+      var totalGrow = 0.0'f32
+      for localIndex in 0 ..< childCount:
+        if frozen[localIndex]:
+          continue
+        let index = line.firstChild + localIndex
+        let grow = styles.styles[children[index].node.nodeIndex].layout.flexGrow
+        let current = children[index].size.mainSize(direction)
+        if grow <= 0 or current >= children[index].maxMain - 0.001'f32:
+          frozen[localIndex] = true
+          continue
+        totalGrow += grow
+      if totalGrow <= 0:
+        break
+
+      var addedThisPass = 0.0'f32
+      for localIndex in 0 ..< childCount:
+        if frozen[localIndex]:
+          continue
+        let index = line.firstChild + localIndex
+        let grow = styles.styles[children[index].node.nodeIndex].layout.flexGrow
+        let current = children[index].size.mainSize(direction)
+        let requested = remainingFree * (grow / totalGrow)
+        let capacity = max(0.0'f32, children[index].maxMain - current)
+        let added = min(requested, capacity)
+        let next = current + added
+        children[index].size.setMainSize(direction, next)
+        output.setMainSize(
+          children[index].firstBox,
+          children[index].boxCount,
+          children[index].node,
+          direction,
+          next
+        )
+        addedThisPass += added
+        if capacity <= requested + 0.001'f32:
+          frozen[localIndex] = true
+      if addedThisPass <= 0.001'f32:
+        break
+      remainingFree = max(0.0'f32, remainingFree - addedThisPass)
+  elif deficitMain > 0:
+    var frozen = newSeq[bool](childCount)
+    var remainingDeficit = deficitMain
+    for _ in 0 .. childCount:
+      if remainingDeficit <= 0.001'f32:
+        break
+      var totalShrink = 0.0'f32
+      for localIndex in 0 ..< childCount:
+        if frozen[localIndex]:
+          continue
+        let index = line.firstChild + localIndex
+        let childStyle {.cursor.} = styles.styles[children[index].node.nodeIndex]
+        let current = children[index].size.mainSize(direction)
+        if current <= children[index].minMain + 0.001'f32 or
+            childStyle.layout.flexShrink <= 0:
+          frozen[localIndex] = true
+          continue
+        totalShrink += childStyle.layout.flexShrink * current
+      if totalShrink <= 0:
+        break
+
+      var removedThisPass = 0.0'f32
+      for localIndex in 0 ..< childCount:
+        if frozen[localIndex]:
+          continue
+        let index = line.firstChild + localIndex
+        let childStyle {.cursor.} = styles.styles[children[index].node.nodeIndex]
+        let current = children[index].size.mainSize(direction)
+        let requested = remainingDeficit *
+          ((childStyle.layout.flexShrink * current) / totalShrink)
+        let capacity = max(0.0'f32, current - children[index].minMain)
+        let removed = min(requested, capacity)
+        let next = current - removed
+        children[index].size.setMainSize(direction, next)
+        output.setMainSize(
+          children[index].firstBox,
+          children[index].boxCount,
+          children[index].node,
+          direction,
+          next
+        )
+        removedThisPass += removed
+        if capacity <= requested + 0.001'f32:
+          frozen[localIndex] = true
+      if removedThisPass <= 0.001'f32:
+        break
+      remainingDeficit = max(0.0'f32, remainingDeficit - removedThisPass)
+
+  line.refreshLineMetrics(children, direction, gap)
+
+proc distribution(
+    alignment: JustifyContent;
+    freeSpace: float32;
+    itemCount: int
+): tuple[offset, extraGap: float32] =
+  case alignment
+  of jcStart:
+    discard
+  of jcCenter:
+    result.offset = freeSpace / 2.0'f32
+  of jcEnd:
+    result.offset = freeSpace
+  of jcSpaceBetween:
+    if itemCount > 1:
+      result.extraGap = freeSpace / (itemCount - 1).float32
+  of jcSpaceAround:
+    if itemCount > 0:
+      result.extraGap = freeSpace / itemCount.float32
+      result.offset = result.extraGap / 2.0'f32
+  of jcSpaceEvenly:
+    if itemCount > 0:
+      result.extraGap = freeSpace / (itemCount + 1).float32
+      result.offset = result.extraGap
+  of jcStretch:
+    discard
 
 proc insetTopSpec(style: ComputedStyle): Option[LengthValue] =
   if not style.layout.sizing.isNil and style.layout.sizing.insetTop.isSome:
@@ -804,15 +1082,45 @@ proc layoutNode(
   let mainAxisResolved =
     if style.layout.direction == fdRow: resolvedWidth.isSome
     else: resolvedHeight.isSome
+  let crossAxisResolved =
+    if style.layout.direction == fdRow: resolvedHeight.isSome
+    else: resolvedWidth.isSome
+  var wrapMainIsDefinite = mainAxisResolved
+  var tentativeAvailableMain = childConstraints.mainSize(style.layout.direction)
+  if style.layout.flexWrap != fwNoWrap and not wrapMainIsDefinite:
+    let maximumSpec =
+      if style.layout.direction == fdRow: style.maxWidthSpec()
+      else: style.maxHeightSpec()
+    let intrinsicMin = intrinsic.minSize.mainSize(style.layout.direction)
+    let intrinsicMax = intrinsic.maxSize.mainSize(style.layout.direction)
+    let reference = constraints.mainSize(style.layout.direction)
+    let extra =
+      if style.layout.direction == fdRow: boxEdges.horizontal
+      else: boxEdges.vertical
+    let maximum = resolveSizingLength(
+      maximumSpec,
+      reference,
+      intrinsicMin,
+      intrinsicMax,
+      extra,
+      style.layout.boxSizing
+    )
+    if maximum.isSome:
+      tentativeAvailableMain = max(0.0'f32, maximum.get - extra)
+      wrapMainIsDefinite = true
+  var tentativeContentSize = childConstraints
+  tentativeContentSize.setMainSize(
+    style.layout.direction, tentativeAvailableMain
+  )
   let measuredMainGap =
-    if mainAxisResolved: style.mainGapOf(childConstraints)
+    if wrapMainIsDefinite: style.mainGapOf(tentativeContentSize)
     else: style.mainGapOf(size(0, 0))
+  let measuredCrossGap =
+    if crossAxisResolved: style.crossGapOf(childConstraints)
+    else: style.crossGapOf(size(0, 0))
 
   var children: seq[ChildPlacement]
   var absoluteChildren: seq[ChildPlacement]
-  var contentMain = 0.0'f32
-  var contentCross = 0.0'f32
-  var first = true
   let orderedChildren = node.childrenInLayoutOrder(styles)
   for child in orderedChildren:
     let childStyle {.cursor.} = styles.styles[child.nodeIndex]
@@ -842,10 +1150,6 @@ proc layoutNode(
       )
       continue
 
-    if not first:
-      contentMain += measuredMainGap
-    first = false
-
     let firstBox = output.boxes.len
     var childSize = layoutNode(
       tree,
@@ -862,8 +1166,14 @@ proc layoutNode(
     let basisSpec = childStyle.flexBasisSpec()
     let childIntrinsic = intrinsics[child.nodeIndex]
     let childBoxEdges = combinedEdges(
-      output.boxes[firstBox].padding,
+      paddingOf(childStyle, childConstraints.w),
       borderOf(childStyle)
+    )
+    let childMinMain = childStyle.flexMinimumMain(
+      style.layout.direction, childConstraints, childIntrinsic, childBoxEdges
+    )
+    let childMaxMain = childStyle.flexMaximumMain(
+      style.layout.direction, childConstraints, childIntrinsic, childBoxEdges
     )
     let specifiedBasis =
       if basisSpec.isSome and basisSpec.get.kind == ukPercent and not mainAxisResolved:
@@ -882,34 +1192,38 @@ proc layoutNode(
         )
     let basis = specifiedBasis
     if basis.isSome:
-      if style.layout.direction == fdRow:
-        childSize.w = basis.get
-      else:
-        childSize.h = basis.get
+      let basisSize = max(childMinMain, min(basis.get, childMaxMain))
+      childSize.setMainSize(style.layout.direction, basisSize)
       output.setMainSize(
         firstBox, output.boxes.len - firstBox,
-        child, style.layout.direction, basis.get
+        child, style.layout.direction, basisSize
       )
     let margin = marginOf(childStyle, childConstraints.w)
-    let outerW = childSize.w + margin.left + margin.right
-    let outerH = childSize.h + margin.top + margin.bottom
     children.add ChildPlacement(
       node: child,
       size: childSize,
-      minMain: childStyle.flexMinimumMain(
-        style.layout.direction, childConstraints, childIntrinsic, childBoxEdges
-      ),
+      minMain: childMinMain,
+      maxMain: childMaxMain,
       margin: margin,
       firstBox: firstBox,
       boxCount: output.boxes.len - firstBox
     )
 
-    if style.layout.direction == fdRow:
-      contentMain += outerW
-      contentCross = max(contentCross, outerH)
-    else:
-      contentMain += outerH
-      contentCross = max(contentCross, outerW)
+  var lines = collectFlexLines(
+    children,
+    style.layout.direction,
+    style.layout.flexWrap,
+    wrapMainIsDefinite,
+    tentativeAvailableMain,
+    measuredMainGap
+  )
+  var contentMain = 0.0'f32
+  var contentCross = 0.0'f32
+  for index, line in lines:
+    contentMain = max(contentMain, line.mainSize)
+    if index > 0:
+      contentCross += measuredCrossGap
+    contentCross += line.crossSize
 
   let naturalW =
     if style.layout.direction == fdRow:
@@ -957,150 +1271,115 @@ proc layoutNode(
     max(0.0'f32, clamped.h - boxEdges.vertical)
   )
   let mainGap = style.mainGapOf(containingContentSize)
-  if children.len > 1 and mainGap != measuredMainGap:
-    contentMain += (mainGap - measuredMainGap) * (children.len - 1).float32
-  let freeMain = max(0.0'f32, availableMain - contentMain)
-  let deficitMain = max(0.0'f32, contentMain - availableMain)
-  if freeMain > 0 and children.len > 0:
-    var totalGrow = 0.0'f32
-    for child in children:
-      totalGrow += styles.styles[child.node.nodeIndex].layout.flexGrow
-    if totalGrow > 0:
-      for child in children.mitems:
-        let grow = styles.styles[child.node.nodeIndex].layout.flexGrow
-        if grow > 0:
-          let delta = freeMain * (grow / totalGrow)
-          if style.layout.direction == fdRow:
-            child.size.w += delta
-            output.setMainSize(child.firstBox, child.boxCount, child.node, style.layout.direction, child.size.w)
-          else:
-            child.size.h += delta
-            output.setMainSize(child.firstBox, child.boxCount, child.node, style.layout.direction, child.size.h)
-      contentMain += freeMain
-  elif deficitMain > 0 and children.len > 0:
-    var frozen = newSeq[bool](children.len)
-    var remainingDeficit = deficitMain
-    var totalRemoved = 0.0'f32
-    for _ in 0 .. children.len:
-      if remainingDeficit <= 0.001'f32:
-        break
-      var totalShrink = 0.0'f32
-      for index, child in children:
-        if frozen[index]:
-          continue
-        let childStyle {.cursor.} = styles.styles[child.node.nodeIndex]
-        let current = if style.layout.direction == fdRow: child.size.w else: child.size.h
-        if current <= child.minMain + 0.001'f32 or childStyle.layout.flexShrink <= 0:
-          frozen[index] = true
-          continue
-        totalShrink += childStyle.layout.flexShrink * current
-      if totalShrink <= 0:
-        break
+  let crossGap = style.crossGapOf(containingContentSize)
+  lines = collectFlexLines(
+    children,
+    style.layout.direction,
+    style.layout.flexWrap,
+    wrapMainIsDefinite,
+    availableMain,
+    mainGap
+  )
+  for line in lines.mitems:
+    line.resolveFlexibleLine(
+      children, styles, style.layout.direction, availableMain, mainGap, output
+    )
 
-      var removedThisPass = 0.0'f32
-      for index in 0 ..< children.len:
-        if frozen[index]:
-          continue
-        let childStyle {.cursor.} = styles.styles[children[index].node.nodeIndex]
-        let current =
-          if style.layout.direction == fdRow: children[index].size.w
-          else: children[index].size.h
-        let requested = remainingDeficit *
-          ((childStyle.layout.flexShrink * current) / totalShrink)
-        let capacity = max(0.0'f32, current - children[index].minMain)
-        let removed = min(requested, capacity)
-        let next = current - removed
-        if style.layout.direction == fdRow:
-          children[index].size.w = next
+  contentMain = 0
+  contentCross = 0
+  for index, line in lines:
+    contentMain = max(contentMain, line.mainSize)
+    if index > 0:
+      contentCross += crossGap
+    contentCross += line.crossSize
+
+  if lines.len == 1:
+    lines[0].crossSize = availableCross
+  let freeCross =
+    if lines.len > 1: max(0.0'f32, availableCross - contentCross)
+    else: 0.0'f32
+  if style.layout.alignContent == jcStretch and lines.len > 1:
+    let extraCross = freeCross / lines.len.float32
+    for line in lines.mitems:
+      line.crossSize += extraCross
+  let lineDistribution = distribution(
+    style.layout.alignContent, freeCross, lines.len
+  )
+  var cursorCross = lineDistribution.offset
+
+  for lineIndex in 0 ..< lines.len:
+    let line = lines[lineIndex]
+    let physicalCross =
+      if style.layout.flexWrap == fwWrapReverse:
+        availableCross - cursorCross - line.crossSize
+      else:
+        cursorCross
+    let freeMain = max(0.0'f32, availableMain - line.mainSize)
+    let mainDistribution = distribution(
+      style.layout.justifyContent,
+      freeMain,
+      line.pastChild - line.firstChild
+    )
+    var cursorMain = mainDistribution.offset
+
+    for childIndex in line.firstChild ..< line.pastChild:
+      let child = children[childIndex]
+      let childStyle {.cursor.} = styles.styles[child.node.nodeIndex]
+      let childOuterCross = child.outerCross(style.layout.direction)
+      let effectiveAlign =
+        if childStyle.layout.alignSelf.isSome:
+          childStyle.layout.alignSelf.get
         else:
-          children[index].size.h = next
-        output.setMainSize(
-          children[index].firstBox,
-          children[index].boxCount,
-          children[index].node,
-          style.layout.direction,
-          next
-        )
-        removedThisPass += removed
-        if capacity <= requested + 0.001'f32:
-          frozen[index] = true
-      if removedThisPass <= 0.001'f32:
-        break
-      totalRemoved += removedThisPass
-      remainingDeficit = max(0.0'f32, remainingDeficit - removedThisPass)
-    contentMain -= totalRemoved
+          style.layout.alignItems
+      let crossOffset =
+        case effectiveAlign
+        of aiStart, aiStretch:
+          0.0'f32
+        of aiCenter:
+          max(0.0'f32, (line.crossSize - childOuterCross) / 2.0'f32)
+        of aiEnd:
+          max(0.0'f32, line.crossSize - childOuterCross)
 
-  let freeMainAfterFlex = max(0.0'f32, availableMain - contentMain)
-  var cursorMain =
-    case style.layout.justifyContent
-    of jcStart, jcSpaceBetween:
-      0.0'f32
-    of jcCenter:
-      freeMainAfterFlex / 2.0'f32
-    of jcEnd:
-      freeMainAfterFlex
-  let extraGap =
-    if style.layout.justifyContent == jcSpaceBetween and children.len > 1:
-      freeMainAfterFlex / (children.len - 1).float32
-    else:
-      0.0'f32
-
-  for index, child in children:
-    let childStyle {.cursor.} = styles.styles[child.node.nodeIndex]
-    let outerMain =
       if style.layout.direction == fdRow:
-        child.size.w + child.margin.left + child.margin.right
-      else:
-        child.size.h + child.margin.top + child.margin.bottom
-    let outerCross =
-      if style.layout.direction == fdRow:
-        child.size.h + child.margin.top + child.margin.bottom
-      else:
-        child.size.w + child.margin.left + child.margin.right
-    let effectiveAlign =
-      if childStyle.layout.alignSelf.isSome:
-        childStyle.layout.alignSelf.get
-      else:
-        style.layout.alignItems
-    let crossOffset =
-      case effectiveAlign
-      of aiStart, aiStretch:
-        0.0'f32
-      of aiCenter:
-        max(0.0'f32, (availableCross - outerCross) / 2.0'f32)
-      of aiEnd:
-        max(0.0'f32, availableCross - outerCross)
-
-    if style.layout.direction == fdRow:
-      let targetX = x + boxEdges.left + cursorMain + child.margin.left
-      let targetY = y + boxEdges.top + crossOffset + child.margin.top
-      let offset = childStyle.relativeOffset(containingContentSize)
-      output.shiftBoxes(child.firstBox, child.boxCount, targetX + offset.x, targetY + offset.y)
-      if effectiveAlign == aiStretch:
-        output.stretchOwnBox(
-          child.firstBox,
-          child.boxCount,
-          child.node,
-          none(float32),
-          some(max(0.0'f32, availableCross - child.margin.top - child.margin.bottom))
+        let targetX = x + boxEdges.left + cursorMain + child.margin.left
+        let targetY = y + boxEdges.top + physicalCross +
+          crossOffset + child.margin.top
+        let offset = childStyle.relativeOffset(containingContentSize)
+        output.shiftBoxes(
+          child.firstBox, child.boxCount, targetX + offset.x, targetY + offset.y
         )
-    else:
-      let targetX = x + boxEdges.left + crossOffset + child.margin.left
-      let targetY = y + boxEdges.top + cursorMain + child.margin.top
-      let offset = childStyle.relativeOffset(containingContentSize)
-      output.shiftBoxes(child.firstBox, child.boxCount, targetX + offset.x, targetY + offset.y)
-      if effectiveAlign == aiStretch:
-        output.stretchOwnBox(
-          child.firstBox,
-          child.boxCount,
-          child.node,
-          some(max(0.0'f32, availableCross - child.margin.left - child.margin.right)),
-          none(float32)
+        if effectiveAlign == aiStretch:
+          output.stretchOwnBox(
+            child.firstBox,
+            child.boxCount,
+            child.node,
+            none(float32),
+            some(max(0.0'f32, line.crossSize - child.margin.crossMargin(fdRow)))
+          )
+      else:
+        let targetX = x + boxEdges.left + physicalCross +
+          crossOffset + child.margin.left
+        let targetY = y + boxEdges.top + cursorMain + child.margin.top
+        let offset = childStyle.relativeOffset(containingContentSize)
+        output.shiftBoxes(
+          child.firstBox, child.boxCount, targetX + offset.x, targetY + offset.y
         )
+        if effectiveAlign == aiStretch:
+          output.stretchOwnBox(
+            child.firstBox,
+            child.boxCount,
+            child.node,
+            some(max(0.0'f32, line.crossSize - child.margin.crossMargin(fdColumn))),
+            none(float32)
+          )
 
-    cursorMain += outerMain
-    if index < children.high:
-      cursorMain += mainGap + extraGap
+      cursorMain += child.outerMain(style.layout.direction)
+      if childIndex + 1 < line.pastChild:
+        cursorMain += mainGap + mainDistribution.extraGap
+
+    cursorCross += line.crossSize
+    if lineIndex < lines.high:
+      cursorCross += crossGap + lineDistribution.extraGap
 
   for child in absoluteChildren:
     let childStyle {.cursor.} = styles.styles[child.node.nodeIndex]

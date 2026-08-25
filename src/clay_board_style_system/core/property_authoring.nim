@@ -151,6 +151,9 @@ proc contentAlignmentKeyword(value: JustifyContent): string =
   of jcCenter: "center"
   of jcEnd: "end"
   of jcSpaceBetween: "space-between"
+  of jcSpaceAround: "space-around"
+  of jcSpaceEvenly: "space-evenly"
+  of jcStretch: "stretch"
 
 proc alignContent*(value: JustifyContent; sourceOrder = 0): Declaration =
   decl("align-content", keyword(value.contentAlignmentKeyword), sourceOrder)

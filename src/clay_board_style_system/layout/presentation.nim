@@ -149,39 +149,39 @@ proc presentationForNode*(
 ): Option[NodePresentation] =
   if not tree.isValid(id):
     return none(NodePresentation)
-  let boxIndices = layout.layoutBoxIndices(tree.nodes.len)
-  let boxIndex = boxIndices.boxIndexFor(id)
-  if boxIndex < 0:
-    return none(NodePresentation)
-  let context = ancestorPresentationContext(
-    tree, layout, boxIndices, styles, scroll, id
-  )
-  if not context.visible:
-    return none(NodePresentation)
-  let style {.cursor.} = styles.styles[id.nodeIndex]
-  if not style.visual.visible or style.layout.display == dkNone or
-      style.hidesPresentedContents:
-    return none(NodePresentation)
-  let item = layout.boxes[boxIndex]
-  let sourceBounds = item.rect.translated(context.translation)
-  let transform = context.transform * resolvedTransform(
-    style, sourceBounds, item.padding
-  )
-  let bounds = transform.transformedBounds(sourceBounds)
-  let clip =
-    if context.clip.isSome: bounds.intersection(context.clip.get)
-    else: bounds
-  let opacity = context.opacity * style.visual.opacity
-  some(NodePresentation(
-    node: id,
-    bounds: bounds,
-    clip: clip,
-    opacity: opacity,
-    visible: not clip.isEmpty and opacity > 0,
-    sourceBounds: sourceBounds,
-    transform: transform,
-    padding: item.padding
-  ))
+  withLayoutBoxIndices(layout, tree.nodes.len, boxIndices):
+    let boxIndex = boxIndices.boxIndexFor(id)
+    if boxIndex < 0:
+      return none(NodePresentation)
+    let context = ancestorPresentationContext(
+      tree, layout, boxIndices, styles, scroll, id
+    )
+    if not context.visible:
+      return none(NodePresentation)
+    let style {.cursor.} = styles.styles[id.nodeIndex]
+    if not style.visual.visible or style.layout.display == dkNone or
+        style.hidesPresentedContents:
+      return none(NodePresentation)
+    let item = layout.boxes[boxIndex]
+    let sourceBounds = item.rect.translated(context.translation)
+    let transform = context.transform * resolvedTransform(
+      style, sourceBounds, item.padding
+    )
+    let bounds = transform.transformedBounds(sourceBounds)
+    let clip =
+      if context.clip.isSome: bounds.intersection(context.clip.get)
+      else: bounds
+    let opacity = context.opacity * style.visual.opacity
+    result = some(NodePresentation(
+      node: id,
+      bounds: bounds,
+      clip: clip,
+      opacity: opacity,
+      visible: not clip.isEmpty and opacity > 0,
+      sourceBounds: sourceBounds,
+      transform: transform,
+      padding: item.padding
+    ))
 
 proc presentationForNode*(
     tree: Tree;

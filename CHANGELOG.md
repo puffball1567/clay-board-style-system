@@ -9,6 +9,13 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Connected multi-line Flex layout to the runtime. `flex-wrap` and `flex-flow`
+  now form independent row or column lines, `wrap-reverse` mirrors the cross
+  axis, `align-content` distributes lines, and row/column gaps participate in
+  both layout and overflow geometry. Grow and shrink redistribution freeze at
+  item min/max constraints on each line; `space-around`, `space-evenly`, and
+  `stretch` content distribution are available through typed authoring.
+
 - Connected `box-sizing` to the layout runtime. `content-box` remains the CSS
   default, while `border-box` now keeps quantitative width, height, min/max,
   and flex-basis values as outer dimensions. Padding, visible borders, percentage
@@ -142,6 +149,12 @@ release. Before 1.0, minor releases may contain public API changes.
 - Exposed a replaceable C ABI default-action slot so foreign widgets preserve
   public bubbling and prevent-default ordering instead of folding intrinsic
   behavior into application handlers.
+
+### Changed
+
+- Paint, hit testing, and node presentation now borrow the retained layout-box
+  index instead of copying one entry per retained node on every update. A fixed
+  seven-node dirty subtree remains constant-time through 10,000 unrelated nodes.
 
 ### Security
 

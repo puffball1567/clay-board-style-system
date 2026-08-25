@@ -50,16 +50,16 @@ preserves typed intent for later runtime work.
 
 | Status | Count |
 | --- | ---: |
-| Runtime | 175 |
-| Computed | 76 |
+| Runtime | 178 |
+| Computed | 73 |
 | Metadata | 176 |
 | Planned | 0 |
 | No plan | 238 |
 | Target properties | 427 |
 | Total MDN entries | 665 |
 
-As of 2026-08-25, strict runtime completion is **175 of 427 target
-properties (41.0%)**. A further 76 properties reach computed style, so
+As of 2026-08-25, strict runtime completion is **178 of 427 target
+properties (41.7%)**. A further 73 properties reach computed style, so
 **251 of 427 (58.8%)** have runtime or computed support. All 427 target names
 are accepted by the default registry, but metadata-only acceptance is not
 counted as completed behavior. The 238 `No plan` entries are excluded from the
@@ -284,7 +284,7 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `-webkit-user-modify` | No plan | Vendor-specific browser property. |
 | `-webkit-user-select` | No plan | Vendor-specific browser property. |
 | `accent-color` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
-| `align-content` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `align-content` | Runtime | Distributes multiple Flex lines with start, center, end, space-between, space-around, space-evenly, and stretch behavior. |
 | `align-items` | Runtime | Initial CBSS runtime surface. |
 | `align-self` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `align-tracks` | Metadata | Stored as computed layout metadata. |
@@ -475,10 +475,10 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `flex` | Runtime | Supports common single-value shorthand forms: number, sizing basis, `none`, `auto`, and `initial`. |
 | `flex-basis` | Runtime | Supports px, percentage, auto, and intrinsic sizing values. |
 | `flex-direction` | Runtime | Initial CBSS runtime surface. |
-| `flex-flow` | Computed | Supports direction/wrap keyword metadata such as `column wrap`; runtime wrapping is still partial. |
+| `flex-flow` | Runtime | Applies direction and wrapping together, including row/column and wrap/wrap-reverse combinations. |
 | `flex-grow` | Runtime | Initial CBSS runtime surface. |
 | `flex-shrink` | Runtime | Initial CBSS runtime surface. |
-| `flex-wrap` | Computed | Supports `nowrap`, `wrap`, and `wrap-reverse` metadata; runtime wrapping is still partial. |
+| `flex-wrap` | Runtime | Forms independent Flex lines for `wrap`, preserves one line for `nowrap`, and mirrors the cross axis for `wrap-reverse`. |
 | `float` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
 | `flood-color` | Metadata | Stores color values as computed vector metadata. |
 | `flood-opacity` | Metadata | Stores number values as computed vector metadata. |

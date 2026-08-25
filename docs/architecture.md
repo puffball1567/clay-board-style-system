@@ -1612,6 +1612,23 @@ component libraries that prefer fixed outer dimensions can inject one explicit
 `element(nkBox)` rule, as the bundled demos do. This keeps the engine default
 familiar to CSS while making the application policy visible and replaceable.
 
+### Multi-Line Flex Contract
+
+Flex containers collect in-flow children into explicit lines before flexible
+length resolution. A definite main size, including an effective maximum size,
+sets the wrapping boundary. Each line independently freezes and redistributes
+grow or shrink space against item min/max constraints, then applies
+`justify-content`. Cross-axis placement applies `row-gap` or `column-gap` once
+between lines and distributes remaining space through `align-content`.
+
+`wrap-reverse` mirrors completed line positions across the cross axis; it does
+not reorder nodes, paint commands, hit regions, focus traversal, or
+accessibility semantics. Absolute and `display:none` children do not create
+lines. A single line uses the full available cross size and ignores
+`align-content`, matching the useful Flexbox behavior without importing DOM
+layout quirks. Overflow metrics use the same resolved line geometry as paint
+and hit testing, so wrapped scroll content does not need a second estimate.
+
 The goal is not DOM or browser compatibility. CBSS should reproduce what Flexbox
 is trying to achieve for application UI: predictable distribution, alignment,
 sizing, and wrapping behavior. It can simplify browser-specific details when a
