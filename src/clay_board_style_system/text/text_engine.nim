@@ -145,6 +145,87 @@ proc firstLineBaseline*(
 
 proc nextRuneEnd(text: string; caret: int): int
 
+proc suppressesSoftWrap(style: ComputedTextStyle): bool =
+  (style.whiteSpace.isSome and style.whiteSpace.get in {wsNoWrap, wsPre}) or
+    (style.textWrap.isSome and style.textWrap.get == twNoWrap)
+
+proc measuredLineWidth(
+    engine: TextEngine;
+    text: string;
+    input: TextMeasureInput
+): float32 =
+  engine.measure(TextMeasureInput(
+    text: text,
+    style: input.style,
+    maxWidth: none(float32),
+    fonts: input.fonts
+  )).w
+
+proc ellipsizeLine(
+    engine: TextEngine;
+    line: string;
+    input: TextMeasureInput;
+    maximumWidth: float32
+): string =
+  if line.len == 0 or engine.measuredLineWidth(line, input) <= maximumWidth:
+    return line
+
+  const marker = "…"
+  if maximumWidth <= 0.0'f32 or
+      engine.measuredLineWidth(marker, input) > maximumWidth:
+    return ""
+
+  var boundaries = @[0]
+  var index = 0
+  while index < line.len:
+    index = line.nextRuneEnd(index)
+    boundaries.add index
+
+  var low = 0
+  var high = boundaries.high
+  while low < high:
+    let middle = (low + high + 1) div 2
+    let stop = boundaries[middle]
+    let prefix = if stop > 0: line[0 ..< stop] else: ""
+    if engine.measuredLineWidth(prefix & marker, input) <= maximumWidth:
+      low = middle
+    else:
+      high = middle - 1
+
+  let stop = boundaries[low]
+  (if stop > 0: line[0 ..< stop] else: "") & marker
+
+proc textWithOverflow*(engine: TextEngine; input: TextMeasureInput): string =
+  ## Resolve the source string used by every paint backend. Ellipsis is a
+  ## single-line overflow behavior; explicit newlines remain independent lines.
+  if input.style.textOverflow.isNone or
+      input.style.textOverflow.get != toEllipsis or
+      not input.style.suppressesSoftWrap() or
+      input.maxWidth.isNone:
+    return input.text
+
+  let maximumWidth = input.maxWidth.get
+  case maximumWidth.classify
+  of fcNan, fcNegInf:
+    return ""
+  of fcInf:
+    return input.text
+  else:
+    discard
+  var lineStart = 0
+  while lineStart <= input.text.len:
+    var lineEnd = lineStart
+    while lineEnd < input.text.len and input.text[lineEnd] != '\n':
+      inc lineEnd
+    let line =
+      if lineEnd > lineStart: input.text[lineStart ..< lineEnd]
+      else: ""
+    result.add engine.ellipsizeLine(line, input, maximumWidth)
+    if lineEnd >= input.text.len:
+      break
+    result.add '\n'
+    lineStart = lineEnd + 1
+
 proc carets*(engine: TextEngine; input: TextMeasureInput): seq[TextCaretSample] =
   if engine.layoutCarets.isNil:
     var index = 0

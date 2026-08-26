@@ -389,7 +389,11 @@ proc paintNode(
     let textColor =
       if style.text.color.isSome: style.text.color.get
       else: rgb(0, 0, 0)
-    let text = textLimitedByMaxLines(node.text, style.text)
+    let paintText = layout.paintTextFor(item)
+    let sourceText =
+      if paintText.isSome: paintText.get
+      else: node.text
+    let text = textLimitedByMaxLines(sourceText, style.text)
     let textRect = Rect(
       x: nodeRect.x + node.renderOffset.x,
       y: nodeRect.y + node.renderOffset.y,
