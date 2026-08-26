@@ -39,6 +39,7 @@ type
     letterSpacing: cfloat
     wordSpacing: cfloat
     wrap: uint32
+    textIndent: cfloat
 
   CosmicTextMeasureResult {.bycopy.} = object
     width: cfloat
@@ -347,7 +348,8 @@ proc measureCosmicText*(engine: CosmicTextEngine; input: TextMeasureInput): Size
     fontStretch: cfloat(if input.style.fontStretch.isSome: input.style.fontStretch.get else: 100.0'f32),
     letterSpacing: cfloat(if input.style.letterSpacing.isSome: input.style.letterSpacing.get else: 0.0'f32),
     wordSpacing: cfloat(if input.style.wordSpacing.isSome: input.style.wordSpacing.get else: 0.0'f32),
-    wrap: input.style.wrapCode
+    wrap: input.style.wrapCode,
+    textIndent: cfloat(input.style.textIndent.get(0.0'f32))
   )
   var output: CosmicTextMeasureResult
   if cbss_cosmic_text_measure(engine.handle, addr request, addr output) == 0 or output.ok == 0:
@@ -383,7 +385,8 @@ proc toCosmicRequest(input: TextMeasureInput): CosmicTextMeasureInput =
     fontStretch: cfloat(if input.style.fontStretch.isSome: input.style.fontStretch.get else: 100.0'f32),
     letterSpacing: cfloat(if input.style.letterSpacing.isSome: input.style.letterSpacing.get else: 0.0'f32),
     wordSpacing: cfloat(if input.style.wordSpacing.isSome: input.style.wordSpacing.get else: 0.0'f32),
-    wrap: input.style.wrapCode
+    wrap: input.style.wrapCode,
+    textIndent: cfloat(input.style.textIndent.get(0.0'f32))
   )
 
 proc measureCosmicFontUnits*(
@@ -473,6 +476,7 @@ proc cosmicTextRasterKey*(input: TextMeasureInput): string =
   parts.addKeyPart(if input.style.letterSpacing.isSome: input.style.letterSpacing.get else: 0.0'f32)
   parts.addKeyPart(if input.style.wordSpacing.isSome: input.style.wordSpacing.get else: 0.0'f32)
   parts.addKeyPart(input.style.wrapCode)
+  parts.addKeyPart(input.style.textIndent.get(0.0'f32))
   parts.join("|")
 
 const maxCosmicBitmapBytes = 64 * 1024 * 1024

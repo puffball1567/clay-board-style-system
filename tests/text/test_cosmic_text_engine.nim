@@ -395,3 +395,186 @@ suite "cosmic text engine":
     check visible.len < input.text.len
     check visible.endsWith("…")
     check measured.w <= input.maxWidth.get
+
+  test "text indent shifts only the first explicit line through cosmic-text":
+    var fonts = initFontRegistry()
+    var cosmic = initCosmicTextEngine(fonts)
+    defer:
+      cosmic.close()
+
+    let engine = cosmic.textEngine()
+    let style = ComputedTextStyle(
+      fontSize: some(18.0'f32),
+      lineHeight: some(24.0'f32),
+      fontFamilies: @["sans-serif"],
+      textIndent: some(20.0'f32),
+      whiteSpace: some(wsPreWrap)
+    )
+    let input = TextMeasureInput(
+      text: "first\nsecond",
+      style: style,
+      maxWidth: none(float32),
+      fonts: fonts
+    )
+    let samples = engine.carets(input)
+    let first = engine.caret(TextCaretInput(
+      text: input.text,
+      style: style,
+      maxWidth: input.maxWidth,
+      fonts: fonts,
+      byteIndex: 0
+    ))
+    let second = engine.caret(TextCaretInput(
+      text: input.text,
+      style: style,
+      maxWidth: input.maxWidth,
+      fonts: fonts,
+      byteIndex: 6
+    ))
+    let beforeIndent = engine.hit(TextHitInput(
+      text: input.text,
+      style: style,
+      maxWidth: input.maxWidth,
+      fonts: fonts,
+      point: vec2(0, 0)
+    ))
+
+    check samples.len > 2
+    check abs(first.position.x - 20.0'f32) < 0.01
+    check first.position.y == 0.0'f32
+    check abs(second.position.x) < 0.01
+    check abs(second.position.y - 24.0'f32) < 0.01
+    check beforeIndent.byteIndex == 0
+    check abs(beforeIndent.position.x - 20.0'f32) < 0.01
+
+  test "wrapped text indent reduces only the first visual line":
+    var fonts = initFontRegistry()
+    var cosmic = initCosmicTextEngine(fonts)
+    defer:
+      cosmic.close()
+
+    let engine = cosmic.textEngine()
+    let style = ComputedTextStyle(
+      fontSize: some(18.0'f32),
+      lineHeight: some(24.0'f32),
+      fontFamilies: @["sans-serif"],
+      textIndent: some(24.0'f32),
+      overflowWrap: some(owAnywhere)
+    )
+    let input = TextMeasureInput(
+      text: "abcdefghijklmno",
+      style: style,
+      maxWidth: some(80.0'f32),
+      fonts: fonts
+    )
+    let measured = engine.measure(input)
+    let samples = engine.carets(input)
+    var firstWrapped = none(TextCaretSample)
+    for sample in samples:
+      if sample.position.y >= 23.9'f32:
+        firstWrapped = some(sample)
+        break
+
+    check measured.w <= 80.1'f32
+    check measured.h >= 48.0'f32
+    check abs(samples[0].position.x - 24.0'f32) < 0.01
+    check firstWrapped.isSome
+    check abs(firstWrapped.get.position.x) < 0.01
+
+  test "text indent is part of shaping and bitmap cache identity":
+    var fonts = initFontRegistry()
+    var cosmic = initCosmicTextEngine(fonts)
+    defer:
+      cosmic.close()
+
+    let engine = cosmic.textEngine()
+    let baseStyle = ComputedTextStyle(
+      fontSize: some(20.0'f32),
+      lineHeight: some(26.0'f32),
+      fontFamilies: @["sans-serif"]
+    )
+    var indentedStyle = baseStyle
+    indentedStyle.textIndent = some(18.0'f32)
+    let normalInput = TextMeasureInput(
+      text: "Cache",
+      style: baseStyle,
+      maxWidth: none(float32),
+      fonts: fonts
+    )
+    let indentedInput = TextMeasureInput(
+      text: "Cache",
+      style: indentedStyle,
+      maxWidth: none(float32),
+      fonts: fonts
+    )
+    let normal = engine.measure(normalInput)
+    let indented = engine.measure(indentedInput)
+    let normalBitmap = cosmic.renderCosmicTextBitmap(normalInput)
+    let indentedBitmap = cosmic.renderCosmicTextBitmap(indentedInput)
+
+    check abs((indented.w - normal.w) - 18.0'f32) < 0.1
+    check normalBitmap.isSome
+    check indentedBitmap.isSome
+    check indentedBitmap.get.offsetX - normalBitmap.get.offsetX >= 17
+
+  test "negative text indent keeps caret and bitmap left overflow":
+    var fonts = initFontRegistry()
+    var cosmic = initCosmicTextEngine(fonts)
+    defer:
+      cosmic.close()
+
+    let engine = cosmic.textEngine()
+    let style = ComputedTextStyle(
+      fontSize: some(20.0'f32),
+      lineHeight: some(26.0'f32),
+      fontFamilies: @["sans-serif"],
+      textIndent: some(-12.0'f32)
+    )
+    let input = TextMeasureInput(
+      text: "Hanging",
+      style: style,
+      maxWidth: none(float32),
+      fonts: fonts
+    )
+    let caret = engine.caret(TextCaretInput(
+      text: input.text,
+      style: style,
+      maxWidth: input.maxWidth,
+      fonts: fonts,
+      byteIndex: 0
+    ))
+    let bitmap = cosmic.renderCosmicTextBitmap(input)
+
+    check abs(caret.position.x + 12.0'f32) < 0.01
+    check bitmap.isSome
+    check bitmap.get.offsetX < 0
+
+  test "indented empty lines preserve caret origin and line height":
+    var fonts = initFontRegistry()
+    var cosmic = initCosmicTextEngine(fonts)
+    defer:
+      cosmic.close()
+
+    let engine = cosmic.textEngine()
+    let style = ComputedTextStyle(
+      fontSize: some(18.0'f32),
+      lineHeight: some(24.0'f32),
+      fontFamilies: @["sans-serif"],
+      textIndent: some(20.0'f32),
+      whiteSpace: some(wsPreWrap)
+    )
+    let input = TextMeasureInput(
+      text: "\n",
+      style: style,
+      maxWidth: none(float32),
+      fonts: fonts
+    )
+    let measured = engine.measure(input)
+    let samples = engine.carets(input)
+
+    check measured == size(0, 48)
+    check samples.len == 2
+    check samples[0].byteIndex == 0
+    check samples[0].position == vec2(20, 0)
+    check samples[1].byteIndex == 1
+    check samples[1].position == vec2(0, 24)

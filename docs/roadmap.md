@@ -1988,12 +1988,16 @@ Candidate work packages:
   `word-break: break-all`, no-wrap, and preformatted soft-wrap suppression now
   share measurement, caret, hit, layout, and Cosmic Text behavior. Finish
   soft-wrapped multi-line overflow behavior on top of executable single-line
-  `text-overflow: ellipsis`, then add `text-indent`, advanced `text-wrap`
+  `text-overflow: ellipsis`. Executable positive and negative `text-indent`
+  now shares first-line shaping, wrapping, caret/hit geometry, ellipsis, and
+  paint behavior across the reference and Cosmic Text engines. Next add
+  percentage indentation and advanced `text-wrap`
   balance/pretty/stable behavior, locale-aware `word-break: keep-all`, browser-
   useful whitespace collapsing, hyphenation, and a future explicit locale
-  contract for language-specific casing. Letter and word spacing remain
-  consistent across measurement, shaping, caret geometry, selection, input,
-  textarea scrolling, and both text backends.
+  contract for language-specific casing. Letter spacing is connected across
+  both text backends; word spacing remains computed until Cosmic Text shaping,
+  caret geometry, selection, input, and textarea scrolling consume it
+  consistently.
 - **Writing direction and logical geometry.** Replace the current
   horizontal-LTR physical aliases with explicit `direction`, `unicode-bidi`,
   and `writing-mode` behavior before claiming general logical-property

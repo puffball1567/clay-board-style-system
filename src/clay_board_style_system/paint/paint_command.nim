@@ -161,7 +161,20 @@ proc visualBounds(command: PaintCommand): Option[Rect] =
     let width =
       if command.textMaxWidth.isSome: command.textMaxWidth.get
       else: max(fontSize, command.text.runeLen.float32 * fontSize * 0.7'f32)
-    some(rect(command.position.x, command.position.y, width, lineHeight * lineCount.float32))
+    let authoredIndent = command.textStyle.textIndent.get(0.0'f32)
+    let indent =
+      if authoredIndent.classify in {fcNan, fcInf, fcNegInf}: 0.0'f32
+      else: authoredIndent
+    let leftOffset = min(0.0'f32, indent)
+    let rightOffset =
+      if command.textMaxWidth.isSome: 0.0'f32
+      else: max(0.0'f32, indent)
+    some(rect(
+      command.position.x + leftOffset,
+      command.position.y,
+      width - leftOffset + rightOffset,
+      lineHeight * lineCount.float32
+    ))
   of pcDrawImage:
     some(command.imageRect)
   of pcPushLayer:

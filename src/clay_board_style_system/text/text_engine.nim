@@ -213,6 +213,7 @@ proc textWithOverflow*(engine: TextEngine; input: TextMeasureInput): string =
   else:
     discard
   var lineStart = 0
+  var lineIndex = 0
   while lineStart <= input.text.len:
     var lineEnd = lineStart
     while lineEnd < input.text.len and input.text[lineEnd] != '\n':
@@ -220,11 +221,15 @@ proc textWithOverflow*(engine: TextEngine; input: TextMeasureInput): string =
     let line =
       if lineEnd > lineStart: input.text[lineStart ..< lineEnd]
       else: ""
-    result.add engine.ellipsizeLine(line, input, maximumWidth)
+    var lineInput = input
+    if lineIndex > 0:
+      lineInput.style.textIndent = some(0.0'f32)
+    result.add engine.ellipsizeLine(line, lineInput, maximumWidth)
     if lineEnd >= input.text.len:
       break
     result.add '\n'
     lineStart = lineEnd + 1
+    inc lineIndex
 
 proc carets*(engine: TextEngine; input: TextMeasureInput): seq[TextCaretSample] =
   if engine.layoutCarets.isNil:
@@ -317,8 +322,12 @@ proc debugTextLayout(
   let availableWidth = input.maxWidth.get(0.0'f32)
   let canWrap = wrapKind != dwNone and input.maxWidth.isSome and
     availableWidth > 0.0'f32
+  let authoredIndent = input.style.textIndent.get(0.0'f32)
+  let firstLineIndent =
+    if authoredIndent.classify in {fcNan, fcInf, fcNegInf}: 0.0'f32
+    else: authoredIndent
   var index = 0
-  var x = 0.0'f32
+  var x = firstLineIndent
   var y = 0.0'f32
   var line = 0
   var maximumWidth = 0.0'f32
@@ -326,19 +335,23 @@ proc debugTextLayout(
   var lineGlyphs = 0
 
   template visualLineWidth(): float32 =
-    max(0.0'f32, x -
-      (if lineGlyphs > 0: input.style.letterSpacing.get(0.0'f32)
-       else: 0.0'f32))
+    (if lineGlyphs > 0:
+      max(0.0'f32, x - input.style.letterSpacing.get(0.0'f32))
+     else:
+      0.0'f32)
 
   while index < input.text.len:
     let rune = input.text.runeAt(index)
     let next = input.text.nextRuneEnd(index)
     if rune.int32 == 10:
+      let caretX =
+        if line == 0 and lineGlyphs == 0: firstLineIndent
+        else: visualLineWidth()
       x = visualLineWidth()
       if collectSamples:
         result.samples.add TextCaretSample(
           byteIndex: index,
-          position: vec2(x, y),
+          position: vec2(caretX, y),
           height: lineHeight
         )
       maximumWidth = max(maximumWidth, x)
@@ -358,7 +371,7 @@ proc debugTextLayout(
       x + advance - input.style.letterSpacing.get(0.0'f32)
     )
     var shouldWrap = false
-    if canWrap and x > 0.0'f32:
+    if canWrap and lineGlyphs > 0:
       case wrapKind
       of dwNone:
         discard
@@ -389,11 +402,14 @@ proc debugTextLayout(
     startsWord = whitespace
     index = next
 
+  let caretX =
+    if line == 0 and lineGlyphs == 0: firstLineIndent
+    else: visualLineWidth()
   x = visualLineWidth()
   if collectSamples:
     result.samples.add TextCaretSample(
       byteIndex: input.text.len,
-      position: vec2(x, y),
+      position: vec2(caretX, y),
       height: lineHeight
     )
   maximumWidth = max(maximumWidth, x)
