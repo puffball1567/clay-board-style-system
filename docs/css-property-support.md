@@ -50,16 +50,16 @@ preserves typed intent for later runtime work.
 
 | Status | Count |
 | --- | ---: |
-| Runtime | 189 |
-| Computed | 62 |
+| Runtime | 190 |
+| Computed | 61 |
 | Metadata | 176 |
 | Planned | 0 |
 | No plan | 238 |
 | Target properties | 427 |
 | Total MDN entries | 665 |
 
-As of 2026-08-26, strict runtime completion is **189 of 427 target
-properties (44.3%)**. A further 62 properties reach computed style, so
+As of 2026-08-26, strict runtime completion is **190 of 427 target
+properties (44.5%)**. A further 61 properties reach computed style, so
 **251 of 427 (58.8%)** have runtime or computed support. All 427 target names
 are accepted by the default registry, but metadata-only acceptance is not
 counted as completed behavior. The 238 `No plan` entries are excluded from the
@@ -773,7 +773,7 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `text-emphasis-color` | Metadata | Stores color values as computed text metadata. |
 | `text-emphasis-position` | Metadata | Stored as computed text metadata. |
 | `text-emphasis-style` | Metadata | Stored as computed text metadata. |
-| `text-indent` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `text-indent` | Runtime | Positive and negative lengths shape only the first visual line; wrapping, explicit line breaks, measurement, caret geometry, hit testing, ellipsis, bitmap caching, SDL3 debug paint, and transform bounds share the result. Percentage values remain future work. |
 | `text-justify` | Metadata | Stored as computed text metadata. |
 | `text-orientation` | Metadata | Stored as computed text metadata. |
 | `text-overflow` | Runtime | `clip` preserves the source paint run; `ellipsis` measures and truncates no-wrap text per explicit line at UTF-8 rune boundaries. Soft-wrapped multi-line ellipsis remains future work. |

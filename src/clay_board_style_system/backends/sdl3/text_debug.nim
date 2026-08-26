@@ -1,4 +1,4 @@
-import std/[options, strutils]
+import std/[math, options, strutils]
 
 import ../../core/[color, geometry]
 import ../../paint/paint_command
@@ -25,6 +25,10 @@ proc drawDebugText*(renderer: pointer; command: PaintCommand) =
   var lines = command.text.splitLines()
   if lines.len == 0:
     lines = @[""]
+  let authoredIndent = command.textStyle.textIndent.get(0.0'f32)
+  let textIndent =
+    if authoredIndent.classify in {fcNan, fcInf, fcNegInf}: 0.0'f32
+    else: authoredIndent
   if command.textStyle.textShadow.isSome:
     let shadow = command.textStyle.textShadow.get
     let color =
@@ -32,17 +36,19 @@ proc drawDebugText*(renderer: pointer; command: PaintCommand) =
       else: rgba(0, 0, 0, 0.45)
     renderer.setTextColor(color)
     for index, line in lines:
+      let lineIndent = if index == 0: textIndent else: 0.0'f32
       discard SDL3.renderDebugText(
         renderer,
-        cfloat(command.position.x + shadow.offsetX),
+        cfloat(command.position.x + shadow.offsetX + lineIndent),
         cfloat(command.position.y + shadow.offsetY + index.float32 * lineAdvance),
         line.cstring
       )
   renderer.setTextColor(command.textColor)
   for index, line in lines:
+    let lineIndent = if index == 0: textIndent else: 0.0'f32
     discard SDL3.renderDebugText(
       renderer,
-      cfloat(command.position.x),
+      cfloat(command.position.x + lineIndent),
       cfloat(command.position.y + index.float32 * lineAdvance),
       line.cstring
     )

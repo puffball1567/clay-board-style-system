@@ -9,6 +9,14 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- `text-indent` now executes as first-line text geometry instead of stopping at
+  computed style. Positive and negative lengths participate in shaping,
+  wrapping, measurement, caret placement, hit testing, UTF-8-safe ellipsis,
+  Cosmic Text bitmap caching and raster offsets, SDL3 debug rendering, and
+  transform-layer bounds. Authored newlines and wrapped continuation lines
+  return to the normal inline start; percentage indentation remains future
+  work.
+
 - The CSS runtime support audit now recognizes five previously conservative
   entries as executable behavior: `aspect-ratio`, `order`, `letter-spacing`,
   `font-size-adjust`, and textarea `resize`. Each promotion is backed by an
