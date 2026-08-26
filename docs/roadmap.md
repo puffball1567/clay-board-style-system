@@ -1986,7 +1986,8 @@ Candidate work packages:
   UTF-8-safe normal word wrapping, `overflow-wrap`, legacy `word-wrap`,
   `word-break: break-all`, no-wrap, and preformatted soft-wrap suppression now
   share measurement, caret, hit, layout, and Cosmic Text behavior. Finish
-  visible `text-overflow` and ellipsis, `text-indent`, advanced `text-wrap`
+  soft-wrapped multi-line overflow behavior on top of executable single-line
+  `text-overflow: ellipsis`, then add `text-indent`, advanced `text-wrap`
   balance/pretty/stable behavior, locale-aware `word-break: keep-all`, browser-
   useful whitespace collapsing, hyphenation, and a future explicit locale
   contract for language-specific casing. Letter and word spacing remain

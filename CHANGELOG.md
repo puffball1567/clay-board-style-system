@@ -9,6 +9,13 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- `text-overflow: ellipsis` now executes for no-wrap text through the shared
+  layout and paint contract. The active text engine measures each explicit
+  line, truncates only at UTF-8 rune boundaries, and stores the resulting
+  paint string without mutating Node text. SDL3, headless, C ABI, and future
+  GPU renderers therefore consume the same overflow result; Cosmic Text and
+  deterministic reference-engine behavior are covered separately.
+
 - Text measurement, caret geometry, hit testing, and layout now share one
   UTF-8-safe wrapping result. Normal wrapping preserves words, while
   `overflow-wrap: anywhere`, legacy `word-wrap`, and `word-break: break-all`

@@ -363,3 +363,35 @@ suite "cosmic text engine":
 
     check caret.position.x == 0.0'f32
     check caret.position.y == 32.0'f32
+
+  test "ellipsis fits the measured Cosmic Text width":
+    var fonts = initFontRegistry()
+    var cosmic = initCosmicTextEngine(fonts)
+    defer:
+      cosmic.close()
+
+    let engine = cosmic.textEngine()
+    let style = ComputedTextStyle(
+      fontSize: some(18.0'f32),
+      lineHeight: some(24.0'f32),
+      fontFamilies: @["sans-serif"],
+      whiteSpace: some(wsNoWrap),
+      textOverflow: some(toEllipsis)
+    )
+    let input = TextMeasureInput(
+      text: "Clay Board Style System",
+      style: style,
+      maxWidth: some(96.0'f32),
+      fonts: fonts
+    )
+    let visible = engine.textWithOverflow(input)
+    let measured = engine.measure(TextMeasureInput(
+      text: visible,
+      style: style,
+      maxWidth: none(float32),
+      fonts: fonts
+    ))
+
+    check visible.len < input.text.len
+    check visible.endsWith("…")
+    check measured.w <= input.maxWidth.get

@@ -10,6 +10,7 @@ type
     rect*: Rect
     padding*: EdgeSizes
     zIndex*: int
+    paintTextIndex: int32
 
   LayoutOverflowMetrics* = object
     node*: NodeId
@@ -20,6 +21,7 @@ type
     boxes*: seq[LayoutBox]
     overflowMetrics*: seq[LayoutOverflowMetrics]
     boxIndices: seq[int]
+    paintTexts: seq[string]
 
   ChildPlacement = object
     node: NodeId
@@ -64,6 +66,25 @@ proc layoutBoxIndices*(layout: LayoutResult; nodeCount: int): seq[int] =
   for index, item in layout.boxes:
     if item.node.nodeIndex >= 0 and item.node.nodeIndex < result.len:
       result[item.node.nodeIndex] = index
+
+proc paintTextFor*(layout: LayoutResult; item: LayoutBox): Option[string] =
+  let index = int(item.paintTextIndex)
+  if index <= 0 or index > layout.paintTexts.len:
+    return none(string)
+  some(layout.paintTexts[index - 1])
+
+proc compactPaintTexts(layout: var LayoutResult) =
+  if layout.paintTexts.len == 0:
+    return
+  var compacted = newSeqOfCap[string](layout.paintTexts.len)
+  for item in layout.boxes.mitems:
+    let paintText = layout.paintTextFor(item)
+    if paintText.isSome:
+      compacted.add paintText.get
+      item.paintTextIndex = int32(compacted.len)
+    else:
+      item.paintTextIndex = 0
+  layout.paintTexts = compacted
 
 template withLayoutBoxIndices*(
     layout: LayoutResult;
@@ -1133,10 +1154,23 @@ proc layoutNode(
     let h = if specifiedHeight.isSome: specifiedHeight.get else: measured.h
     let aspect = applyAspect(w, h, style, specifiedWidth.isSome, specifiedHeight.isSome)
     let clamped = clampSize(aspect.w, aspect.h, style, constraints, intrinsic)
+    let overflowText = textEngine.textWithOverflow(TextMeasureInput(
+      text: measuredText,
+      style: style.text,
+      maxWidth: some(clamped.w),
+      fonts: fontRegistry
+    ))
+    let paintTextIndex =
+      if overflowText != measuredText:
+        output.paintTexts.add overflowText
+        int32(output.paintTexts.len)
+      else:
+        0'i32
     output.boxes.add LayoutBox(
       node: id,
       rect: rect(x, y, clamped.w, clamped.h),
-      zIndex: style.layout.zIndex
+      zIndex: style.layout.zIndex,
+      paintTextIndex: paintTextIndex
     )
     let zoom = parsedZoom(style)
     let baseline = textEngine.firstLineBaseline(TextFontMetricsInput(
@@ -1417,6 +1451,7 @@ proc layoutNode(
         else: none(float32)
       reflowBuffer.boxes.setLen(0)
       reflowBuffer.overflowMetrics.setLen(0)
+      reflowBuffer.paintTexts.setLen(0)
       let childMetrics = layoutNode(
         tree, styles, children[childIndex].node, 0, 0,
         containingContentSize, textEngine, fontRegistry, intrinsics,
@@ -1432,7 +1467,14 @@ proc layoutNode(
           "flex item relayout changed the retained subtree shape"
         )
       for localIndex, box in reflowBuffer.boxes:
-        output.boxes[children[childIndex].firstBox + localIndex] = box
+        var reflowed = box
+        let paintText = reflowBuffer.paintTextFor(box)
+        if paintText.isSome:
+          output.paintTexts.add paintText.get
+          reflowed.paintTextIndex = int32(output.paintTexts.len)
+        else:
+          reflowed.paintTextIndex = 0
+        output.boxes[children[childIndex].firstBox + localIndex] = reflowed
       for localIndex, metrics in reflowBuffer.overflowMetrics:
         output.overflowMetrics[
           children[childIndex].firstOverflowMetric + localIndex
@@ -1682,6 +1724,7 @@ proc computeLayout*(
       tree, styles, tree.root.get, 0, 0, constraints,
       textEngine, fontRegistry, intrinsics, result
     )
+  result.compactPaintTexts()
   result.rebuildBoxIndices(tree.nodes.len)
 
 proc relayoutSubtree*(
@@ -1745,12 +1788,31 @@ proc relayoutSubtree*(
       pending.add child
 
   var nextBoxes = newSeqOfCap[LayoutBox](layout.boxes.len - 1 + subtree.boxes.len)
+  var nextPaintTexts = newSeqOfCap[string](
+    layout.paintTexts.len + subtree.paintTexts.len
+  )
   for box in layout.boxes:
     if box.node.nodeIndex < 0 or box.node.nodeIndex >= replaced.len or
         not replaced[box.node.nodeIndex]:
-      nextBoxes.add box
-  nextBoxes.add subtree.boxes
+      var retained = box
+      let paintText = layout.paintTextFor(box)
+      if paintText.isSome:
+        nextPaintTexts.add paintText.get
+        retained.paintTextIndex = int32(nextPaintTexts.len)
+      else:
+        retained.paintTextIndex = 0
+      nextBoxes.add retained
+  for box in subtree.boxes:
+    var replacement = box
+    let paintText = subtree.paintTextFor(box)
+    if paintText.isSome:
+      nextPaintTexts.add paintText.get
+      replacement.paintTextIndex = int32(nextPaintTexts.len)
+    else:
+      replacement.paintTextIndex = 0
+    nextBoxes.add replacement
   layout.boxes = nextBoxes
+  layout.paintTexts = nextPaintTexts
 
   var nextOverflowMetrics = newSeqOfCap[LayoutOverflowMetrics](
     layout.overflowMetrics.len + subtree.overflowMetrics.len
