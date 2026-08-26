@@ -578,3 +578,134 @@ suite "cosmic text engine":
     check samples[0].position == vec2(20, 0)
     check samples[1].byteIndex == 1
     check samples[1].position == vec2(0, 24)
+
+  test "text alignment drives Cosmic caret and hit geometry":
+    var fonts = initFontRegistry()
+    var cosmic = initCosmicTextEngine(fonts)
+    defer:
+      cosmic.close()
+
+    let engine = cosmic.textEngine()
+    let baseStyle = ComputedTextStyle(
+      fontSize: some(18.0'f32),
+      lineHeight: some(24.0'f32),
+      fontFamilies: @["sans-serif"]
+    )
+    let intrinsic = engine.measure(TextMeasureInput(
+      text: "Align",
+      style: baseStyle,
+      maxWidth: none(float32),
+      fonts: fonts
+    )).w
+    var centeredStyle = baseStyle
+    centeredStyle.textAlign = some(taCenter)
+    let centeredInput = TextMeasureInput(
+      text: "Align",
+      style: centeredStyle,
+      maxWidth: some(160.0'f32),
+      fonts: fonts
+    )
+    let first = engine.caret(TextCaretInput(
+      text: centeredInput.text,
+      style: centeredStyle,
+      maxWidth: centeredInput.maxWidth,
+      fonts: fonts,
+      byteIndex: 0
+    ))
+    let hit = engine.hit(TextHitInput(
+      text: centeredInput.text,
+      style: centeredStyle,
+      maxWidth: centeredInput.maxWidth,
+      fonts: fonts,
+      point: vec2(first.position.x, 0)
+    ))
+
+    check abs(first.position.x - (160.0'f32 - intrinsic) * 0.5'f32) < 0.2
+    check hit.byteIndex == 0
+    check abs(hit.position.x - first.position.x) < 0.01
+
+  test "right alignment and text indent share the first-line content area":
+    var fonts = initFontRegistry()
+    var cosmic = initCosmicTextEngine(fonts)
+    defer:
+      cosmic.close()
+
+    let engine = cosmic.textEngine()
+    let baseStyle = ComputedTextStyle(
+      fontSize: some(18.0'f32),
+      lineHeight: some(24.0'f32),
+      fontFamilies: @["sans-serif"]
+    )
+    let intrinsic = engine.measure(TextMeasureInput(
+      text: "Right",
+      style: baseStyle,
+      maxWidth: none(float32),
+      fonts: fonts
+    )).w
+    var style = baseStyle
+    style.textAlign = some(taRight)
+    style.textIndent = some(20.0'f32)
+    let caret = engine.caret(TextCaretInput(
+      text: "Right",
+      style: style,
+      maxWidth: some(180.0'f32),
+      fonts: fonts,
+      byteIndex: 0
+    ))
+
+    check abs(caret.position.x - (180.0'f32 - intrinsic)) < 0.2
+
+  test "text alignment participates in shaping and bitmap cache identity":
+    var fonts = initFontRegistry()
+    var cosmic = initCosmicTextEngine(fonts)
+    defer:
+      cosmic.close()
+
+    let baseStyle = ComputedTextStyle(
+      fontSize: some(20.0'f32),
+      lineHeight: some(26.0'f32),
+      fontFamilies: @["sans-serif"]
+    )
+    var rightStyle = baseStyle
+    rightStyle.textAlign = some(taRight)
+    let baseInput = TextMeasureInput(
+      text: "Cache",
+      style: baseStyle,
+      maxWidth: some(160.0'f32),
+      fonts: fonts
+    )
+    let rightInput = TextMeasureInput(
+      text: "Cache",
+      style: rightStyle,
+      maxWidth: some(160.0'f32),
+      fonts: fonts
+    )
+    let baseBitmap = cosmic.renderCosmicTextBitmap(baseInput)
+    let rightBitmap = cosmic.renderCosmicTextBitmap(rightInput)
+
+    check baseInput.cosmicTextRasterKey != rightInput.cosmicTextRasterKey
+    check baseBitmap.isSome
+    check rightBitmap.isSome
+    check rightBitmap.get.offsetX > baseBitmap.get.offsetX
+
+  test "alignment without a width keeps Cosmic intrinsic coordinates":
+    var fonts = initFontRegistry()
+    var cosmic = initCosmicTextEngine(fonts)
+    defer:
+      cosmic.close()
+
+    var style = ComputedTextStyle(
+      fontSize: some(18.0'f32),
+      lineHeight: some(24.0'f32),
+      fontFamilies: @["sans-serif"],
+      textAlign: some(taCenter)
+    )
+    let caret = cosmic.textEngine().caret(TextCaretInput(
+      text: "Intrinsic",
+      style: style,
+      maxWidth: none(float32),
+      fonts: fonts,
+      byteIndex: 0
+    ))
+
+    check abs(caret.position.x) < 0.01

@@ -9,6 +9,15 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- `text-align` now controls executable per-line text geometry instead of only
+  resolving into computed style. `start`/`left`, `center`, and `end`/`right`
+  share placement across Cosmic Text rasterization, the deterministic text
+  engine, caret layout, hit testing, SDL3 debug text, shaping caches, explicit
+  lines, soft-wrapped lines, and first-line `text-indent`. Alignment requires a
+  finite line width; unconstrained intrinsic measurement remains unshifted.
+  Logical `start`/`end` currently follow the documented horizontal-LTR contract,
+  while `text-align-last` remains computed-only pending per-visual-line control.
+
 - `text-indent` now executes as first-line text geometry instead of stopping at
   computed style. Positive and negative lengths participate in shaping,
   wrapping, measurement, caret placement, hit testing, UTF-8-safe ellipsis,

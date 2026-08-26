@@ -1990,8 +1990,14 @@ Candidate work packages:
   soft-wrapped multi-line overflow behavior on top of executable single-line
   `text-overflow: ellipsis`. Executable positive and negative `text-indent`
   now shares first-line shaping, wrapping, caret/hit geometry, ellipsis, and
-  paint behavior across the reference and Cosmic Text engines. Next add
-  percentage indentation and advanced `text-wrap`
+  paint behavior across the reference and Cosmic Text engines. Executable
+  `text-align` now aligns each explicit and soft-wrapped line across shaping,
+  bitmap paint, caret geometry, hit testing, SDL3 debug rendering, and shaping
+  caches; it composes with first-line indentation. Until writing direction is
+  implemented, `start` and `end` intentionally use horizontal-LTR semantics.
+  Keep `text-align-last` computed-only until the shared text contract exposes
+  final visual lines and lines preceding forced breaks. Next add percentage
+  indentation and advanced `text-wrap`
   balance/pretty/stable behavior, locale-aware `word-break: keep-all`, browser-
   useful whitespace collapsing, hyphenation, and a future explicit locale
   contract for language-specific casing. Letter spacing is connected across

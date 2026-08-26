@@ -152,7 +152,7 @@ inventory below; they are not additional properties.
 | `position` | Runtime | `static`, `relative`, and `absolute` are implemented; `fixed` and `sticky` produce diagnostics. Positioned-ancestor chaining is still pending. |
 | `right` | Runtime | Supports signed px and percentage offsets against the containing content width. |
 | `row-gap` | Runtime | Supports px and percentage spacing against the container content height. |
-| `text-align` | Runtime | Initial CBSS runtime surface. |
+| `text-align` | Runtime | `start`/`left`, `center`, and `end`/`right` align each explicit or soft-wrapped line across shaping, rasterization, caret geometry, hit testing, and SDL3 debug text. Alignment composes with first-line indentation and requires a finite line width; logical start/end currently use horizontal LTR semantics. |
 | `top` | Runtime | Supports signed px and percentage offsets against the containing content height. |
 | `white-space` | Runtime | `normal`, `nowrap`, `pre`, `pre-wrap`, `pre-line`, and `break-spaces` control soft wrapping; complete browser whitespace collapsing remains pending. |
 | `width` | Runtime | Supports px, percentage, auto, and intrinsic sizing values. |
@@ -753,8 +753,8 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `stroke-width` | Metadata | Stores number and px length values as computed vector metadata. |
 | `tab-size` | Metadata | Stored in computed text style; accepts number and px values. |
 | `table-layout` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
-| `text-align` | Runtime | Initial CBSS runtime surface. |
-| `text-align-last` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `text-align` | Runtime | `start`/`left`, `center`, and `end`/`right` align each explicit or soft-wrapped line across shaping, rasterization, caret geometry, hit testing, and SDL3 debug text. Alignment composes with first-line indentation and requires a finite line width; logical start/end currently use horizontal LTR semantics. |
+| `text-align-last` | Computed | Accepted and resolved into computed style, but not applied at runtime until the shared text contract can distinguish final visual lines and lines preceding forced breaks. |
 | `text-anchor` | Metadata | Stored as computed text metadata. |
 | `text-autospace` | Metadata | Stored as computed text metadata. |
 | `text-box` | Metadata | Stored as computed text metadata. |

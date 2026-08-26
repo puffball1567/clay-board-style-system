@@ -40,6 +40,7 @@ type
     wordSpacing: cfloat
     wrap: uint32
     textIndent: cfloat
+    textAlign: uint32
 
   CosmicTextMeasureResult {.bycopy.} = object
     width: cfloat
@@ -189,6 +190,14 @@ proc wrapCode(style: ComputedTextStyle): uint32 =
   if style.wordBreak.isSome and style.wordBreak.get in {wbBreakAll, wbBreakWord}:
     return 2
   0
+
+proc textAlignCode(style: ComputedTextStyle): uint32 =
+  if style.textAlign.isNone:
+    return 0
+  case style.textAlign.get
+  of taStart, taLeft: 1'u32
+  of taCenter: 2'u32
+  of taRight, taEnd: 3'u32
 
 proc addFeature(features: var seq[string]; tag: string; enabled = true) =
   features.add(tag & " " & (if enabled: "1" else: "0"))
@@ -349,7 +358,8 @@ proc measureCosmicText*(engine: CosmicTextEngine; input: TextMeasureInput): Size
     letterSpacing: cfloat(if input.style.letterSpacing.isSome: input.style.letterSpacing.get else: 0.0'f32),
     wordSpacing: cfloat(if input.style.wordSpacing.isSome: input.style.wordSpacing.get else: 0.0'f32),
     wrap: input.style.wrapCode,
-    textIndent: cfloat(input.style.textIndent.get(0.0'f32))
+    textIndent: cfloat(input.style.textIndent.get(0.0'f32)),
+    textAlign: input.style.textAlignCode
   )
   var output: CosmicTextMeasureResult
   if cbss_cosmic_text_measure(engine.handle, addr request, addr output) == 0 or output.ok == 0:
@@ -386,7 +396,8 @@ proc toCosmicRequest(input: TextMeasureInput): CosmicTextMeasureInput =
     letterSpacing: cfloat(if input.style.letterSpacing.isSome: input.style.letterSpacing.get else: 0.0'f32),
     wordSpacing: cfloat(if input.style.wordSpacing.isSome: input.style.wordSpacing.get else: 0.0'f32),
     wrap: input.style.wrapCode,
-    textIndent: cfloat(input.style.textIndent.get(0.0'f32))
+    textIndent: cfloat(input.style.textIndent.get(0.0'f32)),
+    textAlign: input.style.textAlignCode
   )
 
 proc measureCosmicFontUnits*(
@@ -477,6 +488,7 @@ proc cosmicTextRasterKey*(input: TextMeasureInput): string =
   parts.addKeyPart(if input.style.wordSpacing.isSome: input.style.wordSpacing.get else: 0.0'f32)
   parts.addKeyPart(input.style.wrapCode)
   parts.addKeyPart(input.style.textIndent.get(0.0'f32))
+  parts.addKeyPart(input.style.textAlignCode)
   parts.join("|")
 
 const maxCosmicBitmapBytes = 64 * 1024 * 1024

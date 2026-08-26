@@ -1,6 +1,6 @@
 use cosmic_text::{
-    fontdb, Attrs, Buffer, Cursor, Family, FeatureTag, FontFeatures, FontSystem, Metrics, Shaping,
-    Stretch, Style, SwashCache, Weight, Wrap,
+    fontdb, Align, Attrs, Buffer, Cursor, Family, FeatureTag, FontFeatures, FontSystem, Metrics,
+    Shaping, Stretch, Style, SwashCache, Weight, Wrap,
 };
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_float, c_uchar};
@@ -44,6 +44,7 @@ struct ShapeKey {
     word_spacing: u32,
     wrap: u32,
     text_indent: u32,
+    text_align: u32,
 }
 
 struct PreparedSegment {
@@ -83,6 +84,7 @@ fn shape_key(input: &CbssCosmicTextMeasureInput) -> ShapeKey {
         word_spacing: input.word_spacing.to_bits(),
         wrap: input.wrap,
         text_indent: input.text_indent.to_bits(),
+        text_align: input.text_align,
     }
 }
 
@@ -136,6 +138,7 @@ pub struct CbssCosmicTextMeasureInput {
     pub word_spacing: c_float,
     pub wrap: u32,
     pub text_indent: c_float,
+    pub text_align: u32,
 }
 
 #[repr(C)]
@@ -274,9 +277,10 @@ fn set_text_with_fallbacks(
     text: &str,
     family_names: &[String],
     attrs: &Attrs<'_>,
+    align: Option<Align>,
 ) {
     if family_names.len() <= 1 || text.is_empty() {
-        buffer.set_text(text, attrs, Shaping::Advanced, None);
+        buffer.set_text(text, attrs, Shaping::Advanced, align);
         return;
     }
 
@@ -306,7 +310,18 @@ fn set_text_with_fallbacks(
                 .family(family_from_name(&family_names[*family_index])),
         )
     });
-    buffer.set_rich_text(spans, attrs, Shaping::Advanced, None);
+    buffer.set_rich_text(spans, attrs, Shaping::Advanced, align);
+}
+
+fn align_from_u32(value: u32, has_width: bool) -> Option<Align> {
+    if !has_width {
+        return None;
+    }
+    match value {
+        2 => Some(Align::Center),
+        3 => Some(Align::Right),
+        _ => Some(Align::Left),
+    }
 }
 
 fn style_from_u32(value: u32) -> Style {
@@ -714,7 +729,8 @@ fn prepare_buffer(
             .stretch(stretch_from_percent(stretch))
             .letter_spacing(letter_spacing_em)
             .font_features(parse_font_features(&features));
-        set_text_with_fallbacks(&mut buffer, font_system, text, &families, &attrs);
+        let align = align_from_u32(input.text_align, max_width.is_some());
+        set_text_with_fallbacks(&mut buffer, font_system, text, &families, &attrs, align);
     }
     buffer.shape_until_scroll(font_system, false);
     buffer
@@ -833,6 +849,7 @@ mod tests {
             word_spacing: 0.0,
             wrap: 0,
             text_indent: 0.0,
+            text_align: 0,
         }
     }
 

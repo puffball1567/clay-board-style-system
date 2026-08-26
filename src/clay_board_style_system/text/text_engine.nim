@@ -271,6 +271,12 @@ type
     samples: seq[TextCaretSample]
     measured: Size
 
+  DebugTextLine = object
+    sampleStart: int
+    sampleEnd: int
+    origin: float32
+    contentWidth: float32
+
 proc debugWrapKind(style: ComputedTextStyle): DebugWrapKind =
   if style.whiteSpace.isSome and style.whiteSpace.get in {wsNoWrap, wsPre}:
     return dwNone
@@ -313,6 +319,30 @@ proc debugWordWidth(
     result += (glyphs - 1).float32 * style.letterSpacing.get(0.0'f32)
   result = max(0.0'f32, result)
 
+proc applyDebugTextAlignment(
+    samples: var seq[TextCaretSample];
+    lines: openArray[DebugTextLine];
+    style: ComputedTextStyle;
+    maxWidth: Option[float32]
+) =
+  if samples.len == 0 or maxWidth.isNone or style.textAlign.isNone:
+    return
+  let width = maxWidth.get
+  if width.classify in {fcNan, fcInf, fcNegInf} or width <= 0.0'f32:
+    return
+  let alignment = style.textAlign.get
+  if alignment in {taStart, taLeft}:
+    return
+  for line in lines:
+    let remaining = width - line.origin - line.contentWidth
+    let offset =
+      case alignment
+      of taCenter: remaining * 0.5'f32
+      of taRight, taEnd: remaining
+      of taStart, taLeft: 0.0'f32
+    for index in line.sampleStart ..< line.sampleEnd:
+      samples[index].position.x += offset
+
 proc debugTextLayout(
     input: TextMeasureInput;
     collectSamples = true
@@ -333,6 +363,9 @@ proc debugTextLayout(
   var maximumWidth = 0.0'f32
   var startsWord = true
   var lineGlyphs = 0
+  var lineSampleStart = 0
+  var lineOrigin = firstLineIndent
+  var lines: seq[DebugTextLine]
 
   template visualLineWidth(): float32 =
     (if lineGlyphs > 0:
@@ -354,9 +387,17 @@ proc debugTextLayout(
           position: vec2(caretX, y),
           height: lineHeight
         )
+        lines.add DebugTextLine(
+          sampleStart: lineSampleStart,
+          sampleEnd: result.samples.len,
+          origin: lineOrigin,
+          contentWidth: max(0.0'f32, x - lineOrigin)
+        )
+        lineSampleStart = result.samples.len
       maximumWidth = max(maximumWidth, x)
       inc line
       x = 0.0'f32
+      lineOrigin = 0.0'f32
       y = line.float32 * lineHeight
       startsWord = true
       lineGlyphs = 0
@@ -386,8 +427,17 @@ proc debugTextLayout(
           shouldWrap = prospectiveWidth > availableWidth
     if shouldWrap:
       maximumWidth = max(maximumWidth, visualLineWidth())
+      if collectSamples:
+        lines.add DebugTextLine(
+          sampleStart: lineSampleStart,
+          sampleEnd: result.samples.len,
+          origin: lineOrigin,
+          contentWidth: max(0.0'f32, visualLineWidth() - lineOrigin)
+        )
+        lineSampleStart = result.samples.len
       inc line
       x = 0.0'f32
+      lineOrigin = 0.0'f32
       y = line.float32 * lineHeight
       lineGlyphs = 0
 
@@ -412,6 +462,13 @@ proc debugTextLayout(
       position: vec2(caretX, y),
       height: lineHeight
     )
+    lines.add DebugTextLine(
+      sampleStart: lineSampleStart,
+      sampleEnd: result.samples.len,
+      origin: lineOrigin,
+      contentWidth: max(0.0'f32, x - lineOrigin)
+    )
+    result.samples.applyDebugTextAlignment(lines, input.style, input.maxWidth)
   maximumWidth = max(maximumWidth, x)
   result.measured = size(maximumWidth, max(1, line + 1).float32 * lineHeight)
 
