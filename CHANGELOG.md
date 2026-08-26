@@ -9,6 +9,13 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- The CSS runtime support audit now recognizes five previously conservative
+  entries as executable behavior: `aspect-ratio`, `order`, `letter-spacing`,
+  `font-size-adjust`, and textarea `resize`. Each promotion is backed by an
+  existing layout, text-engine, or widget consumer and focused behavior tests;
+  properties that are only partially connected, including `word-spacing` in
+  the Cosmic Text path, remain `Computed`.
+
 - `text-overflow: ellipsis` now executes for no-wrap text through the shared
   layout and paint contract. The active text engine measures each explicit
   line, truncates only at UTF-8 rune boundaries, and stores the resulting

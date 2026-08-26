@@ -50,16 +50,16 @@ preserves typed intent for later runtime work.
 
 | Status | Count |
 | --- | ---: |
-| Runtime | 184 |
-| Computed | 67 |
+| Runtime | 189 |
+| Computed | 62 |
 | Metadata | 176 |
 | Planned | 0 |
 | No plan | 238 |
 | Target properties | 427 |
 | Total MDN entries | 665 |
 
-As of 2026-08-26, strict runtime completion is **184 of 427 target
-properties (43.1%)**. A further 67 properties reach computed style, so
+As of 2026-08-26, strict runtime completion is **189 of 427 target
+properties (44.3%)**. A further 62 properties reach computed style, so
 **251 of 427 (58.8%)** have runtime or computed support. All 427 target names
 are accepted by the default registry, but metadata-only acceptance is not
 counted as completed behavior. The 238 `No plan` entries are excluded from the
@@ -308,7 +308,7 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `animation-timing-function` | Runtime | Supports cycled named timing functions, step start/end, and valid cubic Bezier curves for named paint keyframes. |
 | `animation-trigger` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
 | `appearance` | Metadata | Stored as computed visual metadata. |
-| `aspect-ratio` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `aspect-ratio` | Runtime | Derives a missing axis during intrinsic and explicit sizing, then composes with min/max constraints and `content-box` or `border-box` geometry. |
 | `backdrop-filter` | Metadata | Stored as visual effect metadata; renderer application is a later runtime layer. |
 | `backface-visibility` | Metadata | Stored as computed transform metadata. |
 | `background` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
@@ -490,7 +490,7 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `font-optical-sizing` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `font-palette` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `font-size` | Runtime | Initial CBSS runtime surface. |
-| `font-size-adjust` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `font-size-adjust` | Runtime | Adjusts effective font size in both the deterministic reference engine and Cosmic Text measurement, baseline, caret, hit, and raster paths. |
 | `font-smooth` | Metadata | Stored as computed text metadata. |
 | `font-stretch` | Computed | Stored for native text engines and cosmic-text font matching. |
 | `font-style` | Runtime | Initial CBSS runtime surface. |
@@ -560,7 +560,7 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `justify-self` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `justify-tracks` | Metadata | Stored as computed layout metadata. |
 | `left` | Runtime | Supports signed px and percentage offsets against the containing content width. |
-| `letter-spacing` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `letter-spacing` | Runtime | Participates in reference and Cosmic Text measurement, wrapping, caret geometry, hit testing, ellipsis, and raster cache identity. |
 | `lighting-color` | Metadata | Stores color values as computed vector metadata. |
 | `line-break` | No plan |  |
 | `line-clamp` | No plan |  |
@@ -627,7 +627,7 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `offset-position` | No plan |  |
 | `offset-rotate` | No plan |  |
 | `opacity` | Runtime | Initial CBSS runtime surface. |
-| `order` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `order` | Runtime | Reorders Flex placement before normal or reverse main-axis flow without mutating node, paint, focus, or accessibility order. |
 | `orphans` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
 | `outline` | Runtime | Emits outline stroke paint commands outside the border box. |
 | `outline-color` | Runtime | Emits outline stroke paint commands outside the border box. |
@@ -683,7 +683,7 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `r` | Metadata | Stores number and px length values as computed vector geometry metadata. |
 | `reading-flow` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `reading-order` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
-| `resize` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `resize` | Runtime | Controls the reference TextArea resize handle for horizontal, vertical, both-axis, and disabled behavior with min/max constraints and resize events. Generic arbitrary-element resize is not implied. |
 | `right` | Runtime | Supports signed px and percentage offsets against the containing content width. |
 | `rotate` | Runtime | Resolves into the shared 2D affine paint, hit-test, clip, and surface-input contract and supports declarative transitions/keyframes. |
 | `row-gap` | Runtime | Supports px and percentage spacing against the container content height. |
