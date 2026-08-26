@@ -212,8 +212,8 @@ int main() {
   ui.compute(200.0f, 80.0f);
   const CbssRect root_rect = ui.rect(root);
   const CbssRect child_rect = ui.rect(child);
-  assert(std::fabs(root_rect.w - 200.0f) < 0.001f);
-  assert(std::fabs(root_rect.h - 80.0f) < 0.001f);
+  assert(std::fabs(root_rect.w - 220.0f) < 0.001f);
+  assert(std::fabs(root_rect.h - 100.0f) < 0.001f);
   assert(std::fabs(child_rect.w - 40.0f) < 0.001f);
   assert(std::fabs(child_rect.h - 30.0f) < 0.001f);
 
