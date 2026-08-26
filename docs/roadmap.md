@@ -1975,12 +1975,17 @@ Candidate work packages:
   complete logical/writing-axis behavior. Preserve stable intrinsic sizing,
   percentage resolution, scrolling overflow, and dirty-subtree behavior across
   all four main-axis directions.
-- **Background geometry and composition.** Connect `background-position`,
-  `background-position-x`, `background-position-y`, `background-size`,
-  `background-repeat`, `background-clip`, and `background-origin` to the
-  shared SDL3 and headless paint contract. Then connect attachment and blend
-  behavior without introducing an idle redraw loop or backend-specific style
-  semantics. Linear-gradient support remains the reference image path.
+- **Background geometry and composition.** The first executable slice now
+  connects `background-position`, `background-position-x`,
+  `background-position-y`, `background-size`, `background-repeat`,
+  `background-clip`, and `background-origin` to one shared geometry contract
+  consumed by SDL3 and the deterministic headless rasterizer. It covers one
+  linear-gradient layer, contextual lengths and percentages, the three box
+  areas, and repeat/no-repeat/repeat-x/repeat-y without emitting one paint
+  command per tile. Two-value and multi-layer syntax, raster-image intrinsic
+  sizing, `space`/`round`, attachment, and blend behavior remain later slices.
+  Those additions must preserve bounded work, idle scheduling, and identical
+  authored semantics across CPU and optional `bgfxim` GPU backends.
 - **Everyday text behavior.** Build on executable `text-transform`, whose
   locale-neutral Unicode case mapping now shares source/display byte mapping
   across measurement, caret geometry, hit testing, selection, input, and paint.

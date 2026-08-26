@@ -7,6 +7,7 @@ import ../layout/scroll_state
 import ../layout/scrollbar_geometry
 import ../layout/transform_geometry
 import ../text/display_text
+import ./background_geometry
 import ./paint_command
 
 type
@@ -360,10 +361,28 @@ proc paintNode(
       style.box.borderRadius,
       owner = some(id)
     )
-  if node.kind == nkBox and style.box.backgroundColor.isSome:
-    output.add fillRect(nodeRect, style.box.backgroundColor.get.withOpacity(opacity), style.box.borderRadius, some(id))
-  if node.kind == nkBox and style.box.backgroundGradient.isSome:
-    output.add fillLinearGradient(nodeRect, style.box.backgroundGradient.get.withOpacity(opacity), style.box.borderRadius, some(id))
+  if node.kind == nkBox and (
+      style.box.backgroundColor.isSome or style.box.backgroundGradient.isSome
+  ):
+    let background = backgroundPaintGeometry(nodeRect, style.box, item.padding)
+    if style.box.backgroundColor.isSome and not background.clipRect.isEmpty:
+      output.add fillRect(
+        background.clipRect,
+        style.box.backgroundColor.get.withOpacity(opacity),
+        background.clipRadius,
+        some(id)
+      )
+    if style.box.backgroundGradient.isSome and
+        not background.paintRect.isEmpty:
+      output.add fillLinearGradient(
+        background.tileRect,
+        style.box.backgroundGradient.get.withOpacity(opacity),
+        radius = background.clipRadius,
+        owner = some(id),
+        paintRect = some(background.paintRect),
+        clipRect = some(background.clipRect),
+        repeat = background.repeat
+      )
   if node.kind == nkBox and style.box.borderVisible and style.hasAnyBorder:
     if style.uniformBorder and style.box.borderColors.top.isSome:
       output.add strokeRect(nodeRect, style.box.borderColors.top.get.withOpacity(opacity), style.box.borderWidths.top, style.box.borderRadius, some(id))

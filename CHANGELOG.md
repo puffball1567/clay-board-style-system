@@ -9,6 +9,16 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Background geometry now reaches the shared paint runtime for the
+  linear-gradient image path. `background-position`, axis-specific position,
+  `background-size`, `background-repeat`, `background-clip`, and
+  `background-origin` resolve against border, padding, and content boxes in
+  both SDL3 and the deterministic PPM backend. Repetition remains one bounded
+  paint command and uses tiled SDL rendering, with a visible-pixel-bounded
+  allocation-failure fallback for subpixel tiles. The supported value subset
+  and remaining multi-layer, two-value, and `space`/`round` work are recorded
+  in the property matrix.
+
 - `text-align` now controls executable per-line text geometry instead of only
   resolving into computed style. `start`/`left`, `center`, and `end`/`right`
   share placement across Cosmic Text rasterization, the deterministic text

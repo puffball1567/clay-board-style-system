@@ -447,16 +447,45 @@ proc colorAt(sampler: PpmLinearGradientSampler; point: Vec2): Color =
     (projection - sampler.minProjection) / sampler.span
   )
 
+proc repeatedCoordinate(value, start, extent: float32): float32 =
+  start + (value - start) - floor((value - start) / extent) * extent
+
+proc gradientSourcePoint(
+    point: Vec2;
+    tileRect, paintRect: Rect;
+    repeat: BackgroundRepeat
+): Option[Vec2] =
+  if not paintRect.contains(point) or tileRect.w <= 0 or tileRect.h <= 0:
+    return none(Vec2)
+  result = some(point)
+  case repeat
+  of bgRepeat:
+    result.get.x = repeatedCoordinate(point.x, tileRect.x, tileRect.w)
+    result.get.y = repeatedCoordinate(point.y, tileRect.y, tileRect.h)
+  of bgRepeatX:
+    if point.y < tileRect.y or point.y >= tileRect.y + tileRect.h:
+      return none(Vec2)
+    result.get.x = repeatedCoordinate(point.x, tileRect.x, tileRect.w)
+  of bgRepeatY:
+    if point.x < tileRect.x or point.x >= tileRect.x + tileRect.w:
+      return none(Vec2)
+    result.get.y = repeatedCoordinate(point.y, tileRect.y, tileRect.h)
+  of bgNoRepeat:
+    if not tileRect.contains(point):
+      return none(Vec2)
+
 proc fillLinearGradient(
     image: var RasterImage;
     sourceRect: Rect;
+    paintRect: Rect;
     gradient: LinearGradient;
+    repeat: BackgroundRepeat;
     transform: Affine2D;
     clip: PpmClip
 ) =
-  if gradient.stops.len == 0:
+  if gradient.stops.len == 0 or sourceRect.isEmpty or paintRect.isEmpty:
     return
-  let shape = transformedRect(sourceRect, transform)
+  let shape = transformedRect(paintRect, transform)
   if shape.inverseTransform.isNone:
     return
   let bounds = intBounds(
@@ -469,8 +498,9 @@ proc fillLinearGradient(
       if not clip.contains(destination):
         continue
       let source = shape.inverseTransform.get.transformPoint(destination)
-      if sourceRect.contains(source):
-        image.putPixel(x, y, sampler.colorAt(source))
+      let sample = gradientSourcePoint(source, sourceRect, paintRect, repeat)
+      if sample.isSome:
+        image.putPixel(x, y, sampler.colorAt(sample.get))
 
 proc render*(commands: openArray[PaintCommand]; width, height: int; background = rgb(1, 1, 1)): RasterImage =
   var targets = @[initRasterImage(width, height, background)]
@@ -528,7 +558,8 @@ proc render*(commands: openArray[PaintCommand]; width, height: int; background =
       )
     of pcFillLinearGradient:
       targets[^1].fillLinearGradient(
-        command.gradientRect, command.gradient, transformStack[^1], clipStack[^1]
+        command.gradientRect, command.gradientPaintRect, command.gradient,
+        command.gradientRepeat, transformStack[^1], clipStack[^1]
       )
     of pcStrokeRect:
       let corners = [
