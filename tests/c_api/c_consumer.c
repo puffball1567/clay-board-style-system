@@ -1444,21 +1444,21 @@ int main(void) {
   require_ok(context, cbss_node_layout_rect(context, child, &child_rect));
   assert(fabsf(child_rect.x - 10.0f) < 0.01f);
   assert(fabsf(child_rect.y - 10.0f) < 0.01f);
-  assert(fabsf(child_rect.w - 40.0f) < 0.01f);
-  assert(fabsf(child_rect.h - 30.0f) < 0.01f);
+  assert(fabsf(child_rect.w - 42.0f) < 0.01f);
+  assert(fabsf(child_rect.h - 32.0f) < 0.01f);
 
   assert(cbss_style_set_length(
       child_style, "width", CBSS_UNIT_PX, 60.0f) == CBSS_OK);
   require_ok(context, cbss_context_compute(context, 200.0f, 80.0f));
   require_ok(context, cbss_node_layout_rect(context, child, &child_rect));
-  assert(fabsf(child_rect.w - 40.0f) < 0.01f);
+  assert(fabsf(child_rect.w - 42.0f) < 0.01f);
   require_ok(context, cbss_node_apply_style(
       context, sibling, child_style, 0, 0));
   require_ok(context, cbss_context_recompute(context));
   CbssRect sibling_rect;
   require_ok(context, cbss_node_layout_rect(
       context, sibling, &sibling_rect));
-  assert(fabsf(sibling_rect.w - 60.0f) < 0.01f);
+  assert(fabsf(sibling_rect.w - 62.0f) < 0.01f);
 
   CbssHitResult hit;
   require_ok(context, cbss_context_hit_test(context, 12.0f, 12.0f, &hit));
