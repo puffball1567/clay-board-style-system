@@ -1960,9 +1960,10 @@ in layout, paint, text, hit testing, input, accessibility, or another visible
 runtime subsystem, together with focused behavior and boundary tests.
 
 Before publishing a new completion percentage, audit every current `Computed`
-entry against the implementation. Existing consumers for `aspect-ratio`,
-`letter-spacing`, `word-spacing`, `order`, `align-self`, and textarea `resize`
-show that the support matrix can conservatively lag the code. The matrix,
+entry against the implementation. The 2026-08-26 audit promoted executable
+`aspect-ratio`, `letter-spacing`, `font-size-adjust`, `order`, and textarea
+`resize` behavior, while retaining `word-spacing` as `Computed` because the
+Cosmic Text path does not yet apply its authored spacing. The matrix,
 implementation order, default registry, and generated summary remain
 machine-checked, while semantic promotion requires code-and-test review.
 
