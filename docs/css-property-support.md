@@ -50,16 +50,16 @@ preserves typed intent for later runtime work.
 
 | Status | Count |
 | --- | ---: |
-| Runtime | 180 |
-| Computed | 71 |
+| Runtime | 183 |
+| Computed | 68 |
 | Metadata | 176 |
 | Planned | 0 |
 | No plan | 238 |
 | Target properties | 427 |
 | Total MDN entries | 665 |
 
-As of 2026-08-26, strict runtime completion is **180 of 427 target
-properties (42.2%)**. A further 71 properties reach computed style, so
+As of 2026-08-26, strict runtime completion is **183 of 427 target
+properties (42.9%)**. A further 68 properties reach computed style, so
 **251 of 427 (58.8%)** have runtime or computed support. All 427 target names
 are accepted by the default registry, but metadata-only acceptance is not
 counted as completed behavior. The 238 `No plan` entries are excluded from the
@@ -154,7 +154,7 @@ inventory below; they are not additional properties.
 | `row-gap` | Runtime | Supports px and percentage spacing against the container content height. |
 | `text-align` | Runtime | Initial CBSS runtime surface. |
 | `top` | Runtime | Supports signed px and percentage offsets against the containing content height. |
-| `white-space` | Runtime | Initial CBSS runtime surface. |
+| `white-space` | Runtime | `normal`, `nowrap`, `pre`, `pre-wrap`, `pre-line`, and `break-spaces` control soft wrapping; complete browser whitespace collapsing remains pending. |
 | `width` | Runtime | Supports px, percentage, auto, and intrinsic sizing values. |
 | `z-index` | Runtime | Initial CBSS runtime surface. |
 
@@ -640,7 +640,7 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `overflow-clip-box` | Metadata | Stored as computed overflow metadata. |
 | `overflow-clip-margin` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `overflow-inline` | Runtime | `hidden` and `clip` participate in paint clipping. |
-| `overflow-wrap` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `overflow-wrap` | Runtime | `anywhere` and legacy `break-word` enable UTF-8 rune-boundary wrapping for otherwise unbreakable runs. |
 | `overflow-x` | Runtime | Resolves and clips the horizontal axis independently; `auto` and `scroll` enable horizontal offset updates. |
 | `overflow-y` | Runtime | Resolves and clips the vertical axis independently; `auto` and `scroll` enable vertical offset updates. |
 | `overlay` | Metadata | Stored as computed visual metadata. |
@@ -784,7 +784,7 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `text-transform` | Runtime | `none`, `uppercase`, `lowercase`, and `capitalize` share Unicode-aware measurement, caret/hit mapping, and paint output without mutating source values. Locale-specific casing remains outside the current contract. |
 | `text-underline-offset` | Runtime | Emits text decoration paint commands; advanced browser skip behavior remains partial. |
 | `text-underline-position` | Metadata | Stored as computed text metadata. |
-| `text-wrap` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `text-wrap` | Computed | `wrap` and `nowrap` execute at runtime; `balance`, `pretty`, and `stable` currently retain ordinary wrapping behavior. |
 | `text-wrap-mode` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `text-wrap-style` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `timeline-scope` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
@@ -823,14 +823,14 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `view-transition-name` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
 | `view-transition-scope` | Metadata | Stored as computed transition metadata. |
 | `visibility` | Runtime | `hidden` suppresses paint and hit behavior. |
-| `white-space` | Runtime | Initial CBSS runtime surface. |
+| `white-space` | Runtime | Controls soft wrapping, including explicit no-wrap and preformatted behavior; full browser whitespace collapsing remains pending. |
 | `white-space-collapse` | Metadata | Stored as computed text metadata. |
 | `widows` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
 | `width` | Runtime | Supports px, percentage, auto, and intrinsic sizing values. |
 | `will-change` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
-| `word-break` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `word-break` | Runtime | `break-all` and legacy `break-word` execute at UTF-8 rune boundaries; `keep-all` retains the text backend's normal word behavior pending locale-aware line breaking. |
 | `word-spacing` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
-| `word-wrap` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `word-wrap` | Runtime | Legacy alias of `overflow-wrap`; `anywhere` and `break-word` execute through the shared wrapping contract. |
 | `writing-mode` | Metadata | Stored in computed text style; logical property remapping still uses the initial horizontal LTR mode. |
 | `x` | Metadata | Stores number and px length values as computed vector geometry metadata. |
 | `y` | Metadata | Stores number and px length values as computed vector geometry metadata. |

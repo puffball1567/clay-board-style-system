@@ -247,6 +247,37 @@ suite "cosmic text engine":
     check bitmap.isSome
     check bitmap.get.height >= 30
 
+  test "preformatted text preserves width instead of soft wrapping":
+    var fonts = initFontRegistry()
+    var cosmic = initCosmicTextEngine(fonts)
+    defer:
+      cosmic.close()
+
+    let engine = cosmic.textEngine()
+    let baseStyle = ComputedTextStyle(
+      fontSize: some(16.0'f32),
+      lineHeight: some(22.0'f32),
+      fontFamilies: @["sans-serif"]
+    )
+    var preStyle = baseStyle
+    preStyle.whiteSpace = some(wsPre)
+    let wrapped = engine.measure(TextMeasureInput(
+      text: "alpha beta gamma delta",
+      style: baseStyle,
+      maxWidth: some(40.0'f32),
+      fonts: fonts
+    ))
+    let preserved = engine.measure(TextMeasureInput(
+      text: "alpha beta gamma delta",
+      style: preStyle,
+      maxWidth: some(40.0'f32),
+      fonts: fonts
+    ))
+
+    check wrapped.h > 22.0'f32
+    check preserved.h <= 22.0'f32
+    check preserved.w > 40.0'f32
+
   test "font size adjust affects cosmic-text measurement":
     var fonts = initFontRegistry()
     var cosmic = initCosmicTextEngine(fonts)
