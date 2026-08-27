@@ -293,6 +293,7 @@ proc radio*(
     parent = some(marker),
     groups = ["radio-indicator"]
   )
+  root.tree.setGeneratedPart(indicator.id, gpkAccent)
   indicator.applyStateStyle({esChecked}, uiStyle([
     decl("display", keyword("flex"))
   ]), priority = 100)

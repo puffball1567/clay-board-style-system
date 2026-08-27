@@ -116,30 +116,46 @@ proc applyInputColor(
     if value.kind == svKeyword and value.keyword == "auto":
       if declaration.property == "caret-color":
         style.visual.caretColor = none(Color)
+        style.visual.caretColorSpecified = true
       else:
         style.visual.accentColor = none(Color)
+        style.visual.accentColorSpecified = true
       return
     if value.kind != svColor:
       diagnostics.addError(declaration.property, declaration.property & " requires a color value or auto")
       return
     if declaration.property == "caret-color":
       style.visual.caretColor = value.resolveStyleColor(style, env)
+      style.visual.caretColorSpecified = true
     else:
       style.visual.accentColor = value.resolveStyleColor(style, env)
-  of mmInitial, mmUnset:
+      style.visual.accentColorSpecified = true
+  of mmInitial:
     if declaration.property == "caret-color":
       style.visual.caretColor = none(Color)
+      style.visual.caretColorSpecified = true
     else:
       style.visual.accentColor = none(Color)
-  of mmInherit:
-    if env.parent.isSome:
+      style.visual.accentColorSpecified = true
+  of mmUnset, mmInherit:
+    if env.parent.isNone:
+      if declaration.operation.mode == mmInherit:
+        diagnostics.addError(declaration.property, "cannot inherit " &
+            declaration.property & " without parent")
+        return
       if declaration.property == "caret-color":
-        style.visual.caretColor = env.parent.get.visual.caretColor
+        style.visual.caretColor = none(Color)
+        style.visual.caretColorSpecified = true
       else:
-        style.visual.accentColor = env.parent.get.visual.accentColor
+        style.visual.accentColor = none(Color)
+        style.visual.accentColorSpecified = true
+      return
+    if declaration.property == "caret-color":
+      style.visual.caretColor = env.parent.get.visual.caretColor
+      style.visual.caretColorSpecified = true
     else:
-      diagnostics.addError(declaration.property, "cannot inherit " &
-          declaration.property & " without parent")
+      style.visual.accentColor = env.parent.get.visual.accentColor
+      style.visual.accentColorSpecified = true
   of mmRelative:
     diagnostics.addError(declaration.property, declaration.property & " does not support relative merge")
 

@@ -9,9 +9,16 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- `accent-color` now inherits through the computed-style tree and colors the
+  generated active parts of Checkbox, Radio, Switch, and Slider controls.
+  Explicit `auto` preserves each component's fallback Style, and typed
+  generated-part metadata prevents the color from leaking into ordinary
+  application boxes or text.
+
 - `caret-color` now reaches generated TextInput and TextArea insertion carets.
   Generated parts are identified by a typed node marker rather than public IDs
-  or Style group names, and `auto` preserves the component fallback color.
+  or Style group names, `auto` preserves the component fallback color, and the
+  computed value now follows inherited-property semantics.
 
 - Background geometry now reaches the shared paint runtime for the
   linear-gradient image path. `background-position`, axis-specific position,

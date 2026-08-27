@@ -362,7 +362,8 @@ proc paintNode(
       owner = some(id)
     )
   if node.kind == nkBox and (
-      style.box.backgroundColor.isSome or style.box.backgroundGradient.isSome
+      style.box.backgroundColor.isSome or style.box.backgroundGradient.isSome or
+      (node.generatedPart == gpkAccent and style.visual.accentColor.isSome)
   ):
     let background = backgroundPaintGeometry(nodeRect, style.box, item.padding)
     var backgroundColor = style.box.backgroundColor
@@ -370,6 +371,8 @@ proc paintNode(
       let ownerStyle {.cursor.} = styles.styles[node.parent.get.nodeIndex]
       if ownerStyle.visual.caretColor.isSome:
         backgroundColor = ownerStyle.visual.caretColor
+    elif node.generatedPart == gpkAccent and style.visual.accentColor.isSome:
+      backgroundColor = style.visual.accentColor
     if backgroundColor.isSome and not background.clipRect.isEmpty:
       output.add fillRect(
         background.clipRect,
@@ -411,7 +414,9 @@ proc paintNode(
     output.add strokeRect(outlineRect, style.box.outlineColor.get.withOpacity(opacity), style.box.outlineWidth, style.box.borderRadius, some(id))
   if node.kind == nkText:
     let textColor =
-      if style.text.color.isSome: style.text.color.get
+      if node.generatedPart == gpkAccent and style.visual.accentColor.isSome:
+        style.visual.accentColor.get
+      elif style.text.color.isSome: style.text.color.get
       else: rgb(0, 0, 0)
     let paintText = layout.paintTextFor(item)
     let sourceText =
