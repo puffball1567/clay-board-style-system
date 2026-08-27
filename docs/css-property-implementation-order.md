@@ -32,7 +32,7 @@ module whenever practical.
 | Metadata | Preserved for later subsystems or design/tooling interchange | 176 |
 | Remaining planned | Not accepted by the current default registry yet | 0 |
 
-As of 2026-08-26, strict runtime completion is **190/427 (44.5%)**.
+As of 2026-08-27, strict runtime completion is **197/427 (46.1%)**.
 Runtime plus computed support is **251/427 (58.8%)**. Metadata-only properties
 remain implementation work even though the default registry accepts them.
 
