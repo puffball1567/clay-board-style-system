@@ -1447,6 +1447,8 @@ proc translated(command: PaintCommand; offset: Vec2): PaintCommand =
     result.rect = result.rect.translated(offset)
   of pcFillLinearGradient:
     result.gradientRect = result.gradientRect.translated(offset)
+    result.gradientPaintRect = result.gradientPaintRect.translated(offset)
+    result.gradientClipRect = result.gradientClipRect.translated(offset)
   of pcStrokeRect:
     result.strokeRect = result.strokeRect.translated(offset)
   of pcStrokePath:
@@ -2134,6 +2136,192 @@ proc fillLinearGradient(target: var Sdl3Renderer; rect: Rect; gradient: LinearGr
       var pixel = SDL_FRect(x: cfloat(x.float32), y: cfloat(y.float32), w: cfloat(1.0'f32), h: cfloat(1.0'f32))
       target.renderer.setColor(lookup.gradientColorAt(t))
       discard SDL3.renderFillRect(target.renderer, addr pixel)
+
+proc firstRepeatedTile(anchor, extent, visibleStart: float32): float32 =
+  anchor + floor((visibleStart - anchor) / extent) * extent
+
+proc repeatedGradientCoordinate(value, start, extent: float32): float32 =
+  start + (value - start) - floor((value - start) / extent) * extent
+
+proc fillLinearGradientPatternPixels(
+    target: Sdl3Renderer;
+    tileRect, paintRect: Rect;
+    gradient: LinearGradient;
+    repeat: BackgroundRepeat
+) =
+  ## Allocation-failure fallback. Its work is bounded by visible pixels rather
+  ## than by the number of tiles, including subpixel background sizes.
+  let radians = (gradient.angle - 90.0'f32) * PI / 180.0'f32
+  let dx = cos(radians)
+  let dy = sin(radians)
+  let corners = [
+    vec2(tileRect.x, tileRect.y),
+    vec2(tileRect.x + tileRect.w, tileRect.y),
+    vec2(tileRect.x, tileRect.y + tileRect.h),
+    vec2(tileRect.x + tileRect.w, tileRect.y + tileRect.h)
+  ]
+  var minProjection = corners[0].x * dx + corners[0].y * dy
+  var maxProjection = minProjection
+  for corner in corners:
+    let projection = corner.x * dx + corner.y * dy
+    minProjection = min(minProjection, projection)
+    maxProjection = max(maxProjection, projection)
+  let span = max(0.001'f32, maxProjection - minProjection)
+  let lookup = gradient.prepareGradientSampler.buildGradientLookup(
+    (span * target.pixelScale()).gradientLookupSampleCount
+  )
+  let repeatX = repeat in {bgRepeat, bgRepeatX}
+  let repeatY = repeat in {bgRepeat, bgRepeatY}
+  let clipBounds = target.effectiveClipBounds()
+  let yStart = max(
+    int(floor(paintRect.y)),
+    if clipBounds.isSome: int(clipBounds.get.y) else: low(int)
+  )
+  let yEnd = min(
+    int(ceil(paintRect.y + paintRect.h)) - 1,
+    if clipBounds.isSome:
+      int(clipBounds.get.y + clipBounds.get.h) - 1
+    else:
+      high(int)
+  )
+  if yEnd < yStart:
+    return
+  for y in yStart .. yEnd:
+    let centerY = y.float32 + 0.5'f32
+    var left = paintRect.x
+    var right = paintRect.x + paintRect.w
+    if not target.clippedHorizontalSpan(centerY, left, right):
+      continue
+    let xStart = int(floor(left))
+    let xEnd = int(ceil(right)) - 1
+    for x in xStart .. xEnd:
+      let centerX = x.float32 + 0.5'f32
+      if centerX < left or centerX >= right:
+        continue
+      if not repeatX and
+          (centerX < tileRect.x or centerX >= tileRect.x + tileRect.w):
+        continue
+      if not repeatY and
+          (centerY < tileRect.y or centerY >= tileRect.y + tileRect.h):
+        continue
+      let sourceX =
+        if repeatX:
+          repeatedGradientCoordinate(centerX, tileRect.x, tileRect.w)
+        else:
+          centerX
+      let sourceY =
+        if repeatY:
+          repeatedGradientCoordinate(centerY, tileRect.y, tileRect.h)
+        else:
+          centerY
+      let projection = sourceX * dx + sourceY * dy
+      var pixel = SDL_FRect(
+        x: cfloat(x.float32), y: cfloat(y.float32),
+        w: cfloat(1.0'f32), h: cfloat(1.0'f32)
+      )
+      target.renderer.setColor(lookup.gradientColorAt(
+        (projection - minProjection) / span
+      ))
+      discard SDL3.renderFillRect(target.renderer, addr pixel)
+
+proc fillLinearGradientPattern(
+    target: var Sdl3Renderer;
+    tileRect, paintRect, clipRect: Rect;
+    gradient: LinearGradient;
+    repeat: BackgroundRepeat;
+    radius: float32
+) =
+  if tileRect.isEmpty or paintRect.isEmpty or gradient.stops.len == 0:
+    return
+  let repeatX = repeat in {bgRepeat, bgRepeatX}
+  let repeatY = repeat in {bgRepeat, bgRepeatY}
+  let firstX =
+    if repeatX:
+      firstRepeatedTile(tileRect.x, tileRect.w, paintRect.x)
+    else:
+      tileRect.x
+  let firstY =
+    if repeatY:
+      firstRepeatedTile(tileRect.y, tileRect.h, paintRect.y)
+    else:
+      tileRect.y
+
+  let clipDepth = target.clipStack.len
+  target.clipStack.add Sdl3ClipRegion(
+    rect: clipRect,
+    radius: radius,
+    bounds: clipRect.toSdlClip
+  )
+  target.renderer.setClip(target.effectiveClipBounds())
+
+  if gradient.stops.len == 1:
+    target.fillRoundedRect(paintRect, 0, gradient.stops[0].color)
+    target.clipStack.setLen(clipDepth)
+    target.renderer.setClip(target.effectiveClipBounds())
+    return
+
+  if repeat != bgNoRepeat:
+    let scale = target.pixelScale()
+    let key = tileRect.gradientTextureCacheKey(gradient, 0, scale)
+    let cached = target.findGradientTextureCache(key)
+    let textureEntry =
+      if cached.isSome:
+        cached
+      else:
+        target.createGradientTexture(key, tileRect, gradient, 0, scale)
+    if textureEntry.isSome:
+      var source = SDL_FRect(
+        x: 0,
+        y: 0,
+        w: cfloat(textureEntry.get.width),
+        h: cfloat(textureEntry.get.height)
+      )
+      var destination = SDL_FRect(
+        x: cfloat(firstX),
+        y: cfloat(firstY),
+        w: cfloat(paintRect.x + paintRect.w - firstX),
+        h: cfloat(paintRect.y + paintRect.h - firstY)
+      )
+      if target.hasRoundedClip():
+        let yStart = int(floor(paintRect.y))
+        let yEnd = int(ceil(paintRect.y + paintRect.h)) - 1
+        for row in yStart .. yEnd:
+          let centerY = row.float32 + 0.5'f32
+          var left = paintRect.x
+          var right = paintRect.x + paintRect.w
+          if not target.clippedHorizontalSpan(centerY, left, right):
+            continue
+          target.renderer.setClip(some(rect(
+            left, row.float32, max(0.0'f32, right - left), 1
+          ).toSdlClip))
+          discard SDL3.renderTextureTiled(
+            target.renderer,
+            textureEntry.get.texture,
+            addr source,
+            cfloat(1.0'f32 / max(0.001'f32, scale)),
+            addr destination
+          )
+      else:
+        discard SDL3.renderTextureTiled(
+          target.renderer,
+          textureEntry.get.texture,
+          addr source,
+          cfloat(1.0'f32 / max(0.001'f32, scale)),
+          addr destination
+        )
+      target.clipStack.setLen(clipDepth)
+      target.renderer.setClip(target.effectiveClipBounds())
+      return
+
+  if repeat == bgNoRepeat:
+    target.fillLinearGradient(tileRect, gradient, 0)
+  else:
+    target.fillLinearGradientPatternPixels(
+      tileRect, paintRect, gradient, repeat
+    )
+
+  target.clipStack.setLen(clipDepth)
+  target.renderer.setClip(target.effectiveClipBounds())
 
 proc strokeRoundedRect(target: Sdl3Renderer; rect: Rect; radius, width: float32; color: Color) =
   if rect.w <= 0 or rect.h <= 0:
@@ -2973,7 +3161,11 @@ proc render*(target: var Sdl3Renderer; commands: openArray[PaintCommand]; clearC
       target.fillRoundedRect(command.rect, command.radius, command.color)
     of pcFillLinearGradient:
       transformLayers.markTransformContent()
-      target.fillLinearGradient(command.gradientRect, command.gradient, command.gradientRadius)
+      target.fillLinearGradientPattern(
+        command.gradientRect, command.gradientPaintRect,
+        command.gradientClipRect,
+        command.gradient, command.gradientRepeat, command.gradientRadius
+      )
     of pcStrokeRect:
       transformLayers.markTransformContent()
       target.strokeRoundedRect(command.strokeRect, command.strokeRadius, command.strokeWidth, command.strokeColor)
@@ -3171,7 +3363,11 @@ proc render*(
       target.fillRoundedRect(command.rect, command.radius, command.color)
     of pcFillLinearGradient:
       transformLayers.markTransformContent()
-      target.fillLinearGradient(command.gradientRect, command.gradient, command.gradientRadius)
+      target.fillLinearGradientPattern(
+        command.gradientRect, command.gradientPaintRect,
+        command.gradientClipRect,
+        command.gradient, command.gradientRepeat, command.gradientRadius
+      )
     of pcStrokeRect:
       transformLayers.markTransformContent()
       target.strokeRoundedRect(command.strokeRect, command.strokeRadius, command.strokeWidth, command.strokeColor)
@@ -3249,7 +3445,11 @@ proc renderPreparedCommand(
   of pcFillLinearGradient:
     if drawCommand:
       transformLayers.markTransformContent()
-      target.fillLinearGradient(command.gradientRect, command.gradient, command.gradientRadius)
+      target.fillLinearGradientPattern(
+        command.gradientRect, command.gradientPaintRect,
+        command.gradientClipRect,
+        command.gradient, command.gradientRepeat, command.gradientRadius
+      )
   of pcStrokeRect:
     if drawCommand:
       transformLayers.markTransformContent()

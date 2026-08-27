@@ -50,16 +50,16 @@ preserves typed intent for later runtime work.
 
 | Status | Count |
 | --- | ---: |
-| Runtime | 190 |
-| Computed | 61 |
+| Runtime | 197 |
+| Computed | 54 |
 | Metadata | 176 |
 | Planned | 0 |
 | No plan | 238 |
 | Target properties | 427 |
 | Total MDN entries | 665 |
 
-As of 2026-08-26, strict runtime completion is **190 of 427 target
-properties (44.5%)**. A further 61 properties reach computed style, so
+As of 2026-08-27, strict runtime completion is **197 of 427 target
+properties (46.1%)**. A further 54 properties reach computed style, so
 **251 of 427 (58.8%)** have runtime or computed support. All 427 target names
 are accepted by the default registry, but metadata-only acceptance is not
 counted as completed behavior. The 238 `No plan` entries are excluded from the
@@ -314,15 +314,15 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `background` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `background-attachment` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `background-blend-mode` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
-| `background-clip` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `background-clip` | Runtime | Clips background color and the linear-gradient image path to the border, padding, or content box with the current uniform-radius approximation. |
 | `background-color` | Runtime | Initial CBSS runtime surface. |
 | `background-image` | Runtime | Linear gradients are emitted into paint commands; other image forms are still partial. |
-| `background-origin` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
-| `background-position` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
-| `background-position-x` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
-| `background-position-y` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
-| `background-repeat` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
-| `background-size` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `background-origin` | Runtime | Selects the border, padding, or content positioning area for the linear-gradient image path. |
+| `background-position` | Runtime | Positions one linear-gradient layer with one length, percentage, or edge/center keyword; two-value and multi-layer syntax remain future work. |
+| `background-position-x` | Runtime | Positions the linear-gradient tile on the horizontal axis using a length, percentage, or horizontal keyword. |
+| `background-position-y` | Runtime | Positions the linear-gradient tile on the vertical axis using a length, percentage, or vertical keyword. |
+| `background-repeat` | Runtime | Executes `repeat`, `no-repeat`, `repeat-x`, and `repeat-y` through one bounded paint command; `space`, `round`, and multi-layer syntax remain future work. |
+| `background-size` | Runtime | Executes `auto`, `cover`, `contain`, or one explicit non-negative length/percentage for the linear-gradient path; two-value and intrinsic raster-image sizing remain future work. |
 | `baseline-shift` | Metadata | Stored as computed baseline metadata. |
 | `baseline-source` | Metadata | Stored as computed baseline metadata. |
 | `block-size` | Runtime | Logical height alias with percentage, auto, and intrinsic sizing in horizontal LTR mode. |
