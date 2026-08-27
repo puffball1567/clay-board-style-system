@@ -602,10 +602,27 @@ proc applyPlaceContent(
   let value = keywordValue(declaration, diagnostics)
   if value.isNone:
     return
-  let parsed = parseJustifyContentKeyword(declaration.property, value.get, diagnostics)
-  if parsed.isSome:
-    style.layout.alignContent = parsed.get
-    style.layout.justifyContent = parsed.get
+  let parts = value.get.splitWhitespace()
+  if parts.len notin 1 .. 2:
+    diagnostics.addError(
+      declaration.property,
+      "place-content expects one or two alignment keywords"
+    )
+    return
+  let align = parseJustifyContentKeyword(
+    declaration.property, parts[0], diagnostics
+  )
+  if align.isNone:
+    return
+  let justify =
+    if parts.len == 2:
+      parseJustifyContentKeyword(declaration.property, parts[1], diagnostics)
+    else:
+      align
+  if justify.isNone:
+    return
+  style.layout.alignContent = align.get
+  style.layout.justifyContent = justify.get
 
 proc applyPlaceItems(
     style: var ComputedStyle;

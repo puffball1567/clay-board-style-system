@@ -9,6 +9,11 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- `place-content` now executes as a Flex layout shorthand. One keyword applies
+  to both content axes, while two keywords independently set cross-axis
+  `align-content` and main-axis `justify-content`; invalid compound values are
+  rejected without partially changing either axis.
+
 - `image-rendering` now selects SDL3 texture sampling at draw time: `auto` and
   `smooth` use linear filtering, `crisp-edges` uses nearest-neighbor filtering,
   and `pixelated` uses SDL's pixel-art scaling. Rounded-image cache entries are
