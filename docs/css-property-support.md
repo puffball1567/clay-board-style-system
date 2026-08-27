@@ -50,16 +50,16 @@ preserves typed intent for later runtime work.
 
 | Status | Count |
 | --- | ---: |
-| Runtime | 199 |
-| Computed | 52 |
+| Runtime | 200 |
+| Computed | 51 |
 | Metadata | 176 |
 | Planned | 0 |
 | No plan | 238 |
 | Target properties | 427 |
 | Total MDN entries | 665 |
 
-As of 2026-08-27, strict runtime completion is **199 of 427 target
-properties (46.6%)**. A further 52 properties reach computed style, so
+As of 2026-08-27, strict runtime completion is **200 of 427 target
+properties (46.8%)**. A further 51 properties reach computed style, so
 **251 of 427 (58.8%)** have runtime or computed support. All 427 target names
 are accepted by the default registry, but metadata-only acceptance is not
 counted as completed behavior. The 238 `No plan` entries are excluded from the
@@ -536,7 +536,7 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `hyphenate-limit-chars` | Metadata | Stored as computed text metadata. |
 | `hyphens` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `image-orientation` | Metadata | Stored as computed image metadata. |
-| `image-rendering` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `image-rendering` | Runtime | Selects SDL3 linear, nearest-neighbor, or pixel-art texture scaling for image paint, including sampling-aware rounded-image cache entries. |
 | `image-resolution` | Metadata | Stored as computed image metadata. |
 | `ime-mode` | No plan | MDN marks this property obsolete; CBSS should not implement obsolete or effectively deprecated CSS. |
 | `initial-letter` | Metadata | Stored as computed text metadata. |

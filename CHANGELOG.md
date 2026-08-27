@@ -9,6 +9,11 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- `image-rendering` now selects SDL3 texture sampling at draw time: `auto` and
+  `smooth` use linear filtering, `crisp-edges` uses nearest-neighbor filtering,
+  and `pixelated` uses SDL's pixel-art scaling. Rounded-image cache entries are
+  partitioned by sampling mode so differently styled uses cannot alias.
+
 - `accent-color` now inherits through the computed-style tree and colors the
   generated active parts of Checkbox, Radio, Switch, and Slider controls.
   Explicit `auto` preserves each component's fallback Style, and typed
