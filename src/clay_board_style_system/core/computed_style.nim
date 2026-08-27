@@ -643,10 +643,12 @@ type
     cursor*: Option[CursorKind]
     userSelect*: Option[UserSelect]
     caretColor*: Option[Color]
+    caretColorSpecified*: bool
     caret*: Option[string]
     caretAnimation*: Option[string]
     caretShape*: Option[string]
     accentColor*: Option[Color]
+    accentColorSpecified*: bool
     resize*: ResizeKind
     filter*: Option[string]
     backdropFilter*: Option[string]

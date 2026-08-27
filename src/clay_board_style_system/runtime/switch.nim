@@ -305,6 +305,7 @@ proc switch*(
     parent = some(result.trackNode),
     groups = ["switch-track-active"]
   )
+  root.tree.setGeneratedPart(result.activeTrackNode.id, gpkAccent)
   result.thumbNode = root.box(
     defaultThumbStyle() + thumbStyle,
     parent = some(result.trackNode),

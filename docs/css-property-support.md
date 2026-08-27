@@ -50,16 +50,16 @@ preserves typed intent for later runtime work.
 
 | Status | Count |
 | --- | ---: |
-| Runtime | 198 |
-| Computed | 53 |
+| Runtime | 199 |
+| Computed | 52 |
 | Metadata | 176 |
 | Planned | 0 |
 | No plan | 238 |
 | Target properties | 427 |
 | Total MDN entries | 665 |
 
-As of 2026-08-27, strict runtime completion is **198 of 427 target
-properties (46.4%)**. A further 53 properties reach computed style, so
+As of 2026-08-27, strict runtime completion is **199 of 427 target
+properties (46.6%)**. A further 52 properties reach computed style, so
 **251 of 427 (58.8%)** have runtime or computed support. All 427 target names
 are accepted by the default registry, but metadata-only acceptance is not
 counted as completed behavior. The 238 `No plan` entries are excluded from the
@@ -283,7 +283,7 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `-webkit-touch-callout` | No plan | Vendor-specific browser property. |
 | `-webkit-user-modify` | No plan | Vendor-specific browser property. |
 | `-webkit-user-select` | No plan | Vendor-specific browser property. |
-| `accent-color` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `accent-color` | Runtime | Inherits through computed style and colors generated active parts for Checkbox, Radio, Switch, and Slider; `auto` retains component fallback Style. |
 | `align-content` | Runtime | Distributes multiple Flex lines with start, center, end, space-between, space-around, space-evenly, and stretch behavior. |
 | `align-items` | Runtime | Supports start, center, end, stretch, and first-baseline alignment in horizontal Flex rows. |
 | `align-self` | Runtime | Overrides the parent cross-axis alignment, including first-baseline alignment in horizontal Flex rows. |

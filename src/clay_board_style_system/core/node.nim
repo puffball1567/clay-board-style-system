@@ -17,7 +17,8 @@ type
 
   GeneratedPartKind* = enum
     gpkNone,
-    gpkCaret
+    gpkCaret,
+    gpkAccent
 
   AccessibleRole* = enum
     arNone,

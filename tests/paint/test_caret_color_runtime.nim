@@ -106,3 +106,42 @@ suite "caret color runtime":
 
     check removed == @[node]
     check not tree.isValid(stale)
+
+  test "caret color inherits through the control owner":
+    var tree = initTree()
+    let ancestor = tree.addBox(id = "ancestor")
+    let owner = tree.addBox(parent = some(ancestor), id = "owner")
+    let caret = tree.addBox(parent = some(owner), id = "caret")
+    tree.setGeneratedPart(caret, gpkCaret)
+
+    let inherited = rgb(0.18, 0.72, 0.91)
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(
+      tree,
+      [styleSheet([
+        rule(id("ancestor"), [
+          decl("width", px(80)),
+          decl("height", px(30)),
+          decl("caret-color", colorValue(inherited))
+        ]),
+        rule(id("owner"), [
+          decl("width", px(80)),
+          decl("height", px(30))
+        ]),
+        rule(id("caret"), [
+          decl("width", px(2)),
+          decl("height", px(16)),
+          decl("background-color", colorValue(rgb(0.1, 0.2, 0.3)))
+        ])
+      ])],
+      defaultProperties(),
+      diagnostics
+    )
+    check not diagnostics.hasErrors
+    check styles.styles[owner.nodeIndex].visual.caretColor == some(inherited)
+
+    let layout = computeLayout(tree, styles, size(80, 30))
+    let command = buildPaintCommands(tree, styles, layout).caretFill(caret)
+
+    check command.isSome
+    check command.get.color == inherited
