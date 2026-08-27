@@ -2877,7 +2877,8 @@ proc roundedTextureCacheKey(
     source: string;
     src, dst: SDL_FRect;
     clips: openArray[Sdl3ClipRegion];
-    scale: float32
+    scale: float32;
+    scaleMode: SDL_ScaleMode
 ): string =
   result = source &
     "|src:" & roundedCacheFloat(src.x.float32) & "," &
@@ -2886,7 +2887,8 @@ proc roundedTextureCacheKey(
       roundedCacheFloat(src.h.float32) &
     "|dst:" & roundedCacheFloat(dst.w.float32) & "," &
       roundedCacheFloat(dst.h.float32) &
-    "|scale:" & roundedCacheFloat(scale)
+    "|scale:" & roundedCacheFloat(scale) &
+    "|sampling:" & $ord(scaleMode)
   for clip in clips:
     result.add "|clip:"
     result.add roundedCacheFloat(clip.rect.x - dst.x.float32)
@@ -2990,7 +2992,8 @@ proc createRoundedImageTexture(
     key: string;
     sourceTexture: pointer;
     src, dst: SDL_FRect;
-    clips: openArray[Sdl3ClipRegion]
+    clips: openArray[Sdl3ClipRegion];
+    scaleMode: SDL_ScaleMode
 ): Option[Sdl3RoundedTextureCacheEntry] =
   let width = max(1, int(ceil(dst.w.float32)))
   let height = max(1, int(ceil(dst.h.float32)))
@@ -3005,7 +3008,7 @@ proc createRoundedImageTexture(
     return none(Sdl3RoundedTextureCacheEntry)
 
   discard SDL3.setTextureBlendMode(texture, sdlBlendModeBlend)
-  discard SDL3.setTextureScaleMode(texture, SDL_SCALEMODE_LINEAR)
+  discard SDL3.setTextureScaleMode(texture, scaleMode)
 
   let previousTarget = SDL3.getRenderTarget(target.renderer)
   discard SDL3.setRenderTarget(target.renderer, texture)
@@ -3041,6 +3044,15 @@ proc createRoundedImageTexture(
   target.evictRoundedTextureCacheIfNeeded()
   some(entry)
 
+proc sdlImageScaleMode*(rendering: ImageRendering): SDL_ScaleMode =
+  case rendering
+  of irAuto, irSmooth:
+    SDL_SCALEMODE_LINEAR
+  of irCrispEdges:
+    SDL_SCALEMODE_NEAREST
+  of irPixelated:
+    SDL_SCALEMODE_PIXELART
+
 proc drawImageTexture(
     target: var Sdl3Renderer;
     command: PaintCommand;
@@ -3055,6 +3067,8 @@ proc drawImageTexture(
   target.queueImageEvent(command.imageNode, command.imageSource, sieLoad)
   target.queueImageEvent(command.imageNode, command.imageSource, sieLoadEnd)
   let texture = entry.get.texture
+  let scaleMode = sdlImageScaleMode(command.imageStyle.imageRendering)
+  discard SDL3.setTextureScaleMode(texture, scaleMode)
   let alpha = max(0.0'f32, min(1.0'f32, command.imageOpacity))
   discard SDL3.setTextureAlphaModFloat(texture, cfloat(alpha))
   var rects = command.imageFitRects(entry.get.width, entry.get.height)
@@ -3062,15 +3076,21 @@ proc drawImageTexture(
     return
 
   if roundedImageClips.hasRoundedClip():
-    let key = roundedTextureCacheKey(command.imageSource, rects.src, rects.dst, roundedImageClips, target.pixelScale())
+    let key = roundedTextureCacheKey(
+      command.imageSource, rects.src, rects.dst, roundedImageClips,
+      target.pixelScale(), scaleMode
+    )
     let cached = target.findRoundedTextureCache(key)
     let rounded =
       if cached.isSome:
         cached
       else:
-        target.createRoundedImageTexture(key, texture, rects.src, rects.dst, roundedImageClips)
+        target.createRoundedImageTexture(
+          key, texture, rects.src, rects.dst, roundedImageClips, scaleMode
+        )
     if rounded.isSome:
       let roundedEntry = rounded.get
+      discard SDL3.setTextureScaleMode(roundedEntry.texture, scaleMode)
       discard SDL3.setTextureAlphaModFloat(roundedEntry.texture, cfloat(alpha))
       var dst = rects.dst
       discard SDL3.renderTexture(target.renderer, roundedEntry.texture, nil, addr dst)
