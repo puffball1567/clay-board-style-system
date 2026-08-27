@@ -15,6 +15,10 @@ type
     nkText,
     nkImage
 
+  GeneratedPartKind* = enum
+    gpkNone,
+    gpkCaret
+
   AccessibleRole* = enum
     arNone,
     arApplication,
@@ -74,6 +78,7 @@ type
     alive*: bool
     generation*: uint16
     kind*: NodeKind
+    generatedPart*: GeneratedPartKind
     parent*: Option[NodeId]
     children*: seq[NodeId]
     id*: string
@@ -333,6 +338,15 @@ proc addAttribute*(tree: var Tree; id: NodeId; name, value: string) =
   if not tree.isValid(id):
     return
   tree.nodes[id.nodeIndex].attributes.add Attribute(name: name, value: value)
+
+proc setGeneratedPart*(
+    tree: var Tree;
+    id: NodeId;
+    part: GeneratedPartKind
+) =
+  if not tree.isValid(id):
+    return
+  tree.nodes[id.nodeIndex].generatedPart = part
 
 proc setAttribute*(tree: var Tree; id: NodeId; name, value: string) =
   if not tree.isValid(id):

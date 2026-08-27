@@ -50,16 +50,16 @@ preserves typed intent for later runtime work.
 
 | Status | Count |
 | --- | ---: |
-| Runtime | 197 |
-| Computed | 54 |
+| Runtime | 198 |
+| Computed | 53 |
 | Metadata | 176 |
 | Planned | 0 |
 | No plan | 238 |
 | Target properties | 427 |
 | Total MDN entries | 665 |
 
-As of 2026-08-27, strict runtime completion is **197 of 427 target
-properties (46.1%)**. A further 54 properties reach computed style, so
+As of 2026-08-27, strict runtime completion is **198 of 427 target
+properties (46.4%)**. A further 53 properties reach computed style, so
 **251 of 427 (58.8%)** have runtime or computed support. All 427 target names
 are accepted by the default registry, but metadata-only acceptance is not
 counted as completed behavior. The 238 `No plan` entries are excluded from the
@@ -406,7 +406,7 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `caption-side` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
 | `caret` | Metadata | Stored as computed visual metadata. |
 | `caret-animation` | Metadata | Stored as computed visual metadata. |
-| `caret-color` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `caret-color` | Runtime | Colors generated TextInput and TextArea insertion carets through the owner's computed style; `auto` retains the component fallback. |
 | `caret-shape` | Metadata | Stored as computed visual metadata. |
 | `clear` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
 | `clip` | No plan | MDN marks this property obsolete; CBSS should not implement obsolete or effectively deprecated CSS. |

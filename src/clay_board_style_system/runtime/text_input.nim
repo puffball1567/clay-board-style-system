@@ -1194,6 +1194,7 @@ proc textInput*(
     decl("pointer-events", keyword("none"))
   ]))
   result.caretNode = root.box(parent = some(result.container), groups = ["text-input-caret"])
+  root.tree.setGeneratedPart(result.caretNode.id, gpkCaret)
   result.caretNode.applyStyle(uiStyle([
     decl("display", keyword("none")),
     decl("position", keyword("absolute")),
