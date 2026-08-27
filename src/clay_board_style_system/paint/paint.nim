@@ -365,10 +365,15 @@ proc paintNode(
       style.box.backgroundColor.isSome or style.box.backgroundGradient.isSome
   ):
     let background = backgroundPaintGeometry(nodeRect, style.box, item.padding)
-    if style.box.backgroundColor.isSome and not background.clipRect.isEmpty:
+    var backgroundColor = style.box.backgroundColor
+    if node.generatedPart == gpkCaret and node.parent.isSome:
+      let ownerStyle {.cursor.} = styles.styles[node.parent.get.nodeIndex]
+      if ownerStyle.visual.caretColor.isSome:
+        backgroundColor = ownerStyle.visual.caretColor
+    if backgroundColor.isSome and not background.clipRect.isEmpty:
       output.add fillRect(
         background.clipRect,
-        style.box.backgroundColor.get.withOpacity(opacity),
+        backgroundColor.get.withOpacity(opacity),
         background.clipRadius,
         some(id)
       )

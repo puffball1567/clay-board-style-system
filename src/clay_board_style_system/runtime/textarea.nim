@@ -1707,6 +1707,7 @@ proc textArea*(
   result.textNode = root.text(result.container, result.state.displayText(), textStyle, groups = ["textarea-value"])
   result.syncTextNodeStyle()
   result.caretNode = root.box(parent = some(result.container), groups = ["textarea-caret"])
+  root.tree.setGeneratedPart(result.caretNode.id, gpkCaret)
   result.caretNode.applyStyle(uiStyle([
     decl("display", keyword("none")),
     decl("position", keyword("absolute")),

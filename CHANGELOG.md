@@ -9,6 +9,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- `caret-color` now reaches generated TextInput and TextArea insertion carets.
+  Generated parts are identified by a typed node marker rather than public IDs
+  or Style group names, and `auto` preserves the component fallback color.
+
 - Background geometry now reaches the shared paint runtime for the
   linear-gradient image path. `background-position`, axis-specific position,
   `background-size`, `background-repeat`, `background-clip`, and
