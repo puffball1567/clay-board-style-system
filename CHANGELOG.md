@@ -7,6 +7,21 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+### Added
+
+- Added retained RGBA8 RasterSurface support for drawing engines, progressive
+  decoders, and generated imagery. Bounds-checked stride-aware updates are
+  copied into bounded pending storage and published atomically as merged dirty
+  regions. Raster surfaces compose through normal Canvas/Box clipping,
+  opacity, transforms, and stacking; the SDL3 backend performs partial texture
+  uploads for consecutive revisions with a safe full-upload fallback, while
+  the deterministic backend provides reference output. The append-only C ABI
+  `0x0001001A` exposes ownership, update, publication, dirty-region, and Canvas
+  drawing contracts.
+
+- Added the standard `crosshair` cursor value for drawing and precision-input
+  surfaces, including authoring, computed-style, and SDL3 cursor mapping.
+
 ## [0.6.0] - 2026-08-28
 
 ### Added

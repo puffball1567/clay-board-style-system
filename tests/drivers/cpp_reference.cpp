@@ -585,7 +585,7 @@ int main() {
     "id":"org.example.cpp-reference",
     "packVersion":"1.0.0",
     "compatibility":{
-      "minimumAbi":65561,
+      "minimumAbi":65562,
       "minimumDriverContract":65536,
       "capabilities":[
         {"id":16,"minimumVersion":1},

@@ -179,6 +179,7 @@ type
     ckDefault,
     ckPointer,
     ckText,
+    ckCrosshair,
     ckMove,
     ckNotAllowed
 

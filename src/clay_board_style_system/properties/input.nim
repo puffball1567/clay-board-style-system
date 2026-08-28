@@ -53,6 +53,8 @@ proc applyCursor(
       style.visual.cursor = some(ckPointer)
     of "text":
       style.visual.cursor = some(ckText)
+    of "crosshair":
+      style.visual.cursor = some(ckCrosshair)
     of "move":
       style.visual.cursor = some(ckMove)
     of "not-allowed":

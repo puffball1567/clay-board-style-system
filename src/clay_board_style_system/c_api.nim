@@ -2,7 +2,7 @@ import std/[algorithm, atomics, locks, math, options, sets, strutils, tables]
 
 import ./core/[color, color_conversion, color_mix, color_mix_parser,
   color_parser, color_value, declaration, diagnostics, geometry, node, rule,
-  selector, style_resolver, style_value]
+  raster_surface, selector, style_resolver, style_value]
 import ./data/[blob, form_data, stream_bridge, stream_mailbox]
 import ./core/computed_style as computed_style_types
 import ./craft/[pack, style, style_slots]
@@ -302,6 +302,9 @@ type
     completed*, total*: uint64
     messageBytes*: uint32
 
+  CbssRasterRegionC* {.bycopy.} = object
+    x*, y*, width*, height*: uint32
+
   CbssCraftDiagnosticC* {.bycopy.} = object
     domain*, code*, pathBytes*, messageBytes*: uint32
 
@@ -316,6 +319,7 @@ type
   CbssEventViewHandle* = ptr CbssEventViewObj
   CbssBlobStreamHandle* = ptr CbssBlobStreamObj
   CbssStreamProducerHandle* = ptr CbssStreamProducerObj
+  CbssRasterSurfaceHandle* = ptr CbssRasterSurfaceObj
   CbssEventCallback* = proc(
     context: CbssContextHandle;
     event: ptr CbssEventC;
@@ -472,6 +476,9 @@ type
     producer: StreamProducer[CbssStreamBlobPayload]
     references: Atomic[uint32]
 
+  CbssRasterSurfaceObj = object
+    surface: RasterSurface
+
 static:
   doAssert sizeof(CbssRectC) == 16
   doAssert sizeof(CbssColorC) == 16
@@ -496,6 +503,7 @@ static:
   doAssert sizeof(CbssStreamPumpResultC) == 12
   doAssert sizeof(CbssStreamEventC) == 48
   doAssert sizeof(CbssCraftDiagnosticC) == 16
+  doAssert sizeof(CbssRasterRegionC) == 16
 
 proc retainBlobHandle(blob: CbssBlobHandle): int32 {.raises: [].}
 proc releaseBlobHandle(blob: CbssBlobHandle) {.raises: [].}
@@ -842,6 +850,7 @@ proc commandKindToC(command: PaintCommand): uint32 =
   of pcPopTransform: 10
   of pcPushLayer: 11
   of pcPopLayer: 12
+  of pcDrawRasterSurface: 13
 
 proc commandRect(command: PaintCommand): Rect =
   case command.kind
@@ -872,6 +881,8 @@ proc commandRect(command: PaintCommand): Rect =
     )
   of pcDrawImage:
     command.imageRect
+  of pcDrawRasterSurface:
+    command.rasterRect
 
 proc commandColor(command: PaintCommand): Color =
   case command.kind
@@ -1606,6 +1617,149 @@ proc cbssThreadAttach() {.
 proc cbssThreadDetach() {.
     exportc: "cbss_thread_detach", cdecl, dynlib, raises: [].} =
   tearDownForeignThreadGc()
+
+proc cbssRasterSurfaceCreate(
+    width, height: uint32;
+    initialRgba: pointer;
+    output: ptr CbssRasterSurfaceHandle
+): int32 {.exportc: "cbss_raster_surface_create", cdecl, dynlib.} =
+  ensureNimRuntime()
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  if width == 0 or height == 0 or
+      uint64(width) > uint64(high(int)) or
+      uint64(height) > uint64(high(int)):
+    return CbssInvalidArgument
+  var fill = [0'u8, 0'u8, 0'u8, 0'u8]
+  if not initialRgba.isNil:
+    let channels = cast[ptr UncheckedArray[uint8]](initialRgba)
+    for index in 0 ..< RasterBytesPerPixel:
+      fill[index] = channels[index]
+  try:
+    let handle = create(CbssRasterSurfaceObj)
+    try:
+      handle.surface = newRasterSurface(int(width), int(height), fill)
+      output[] = handle
+      CbssOk
+    except CatchableError:
+      `=destroy`(handle[])
+      dealloc(handle)
+      raise
+  except ValueError:
+    CbssInvalidArgument
+  except CatchableError:
+    CbssInternalError
+
+proc cbssRasterSurfaceDestroy(surface: CbssRasterSurfaceHandle) {.
+    exportc: "cbss_raster_surface_destroy", cdecl, dynlib.} =
+  if surface.isNil:
+    return
+  `=destroy`(surface[])
+  dealloc(surface)
+
+proc cbssRasterSurfaceWidth(surface: CbssRasterSurfaceHandle): uint32 {.
+    exportc: "cbss_raster_surface_width", cdecl, dynlib, raises: [].} =
+  if surface.isNil or surface.surface.isNil:
+    0'u32
+  else:
+    uint32(surface.surface.width)
+
+proc cbssRasterSurfaceHeight(surface: CbssRasterSurfaceHandle): uint32 {.
+    exportc: "cbss_raster_surface_height", cdecl, dynlib, raises: [].} =
+  if surface.isNil or surface.surface.isNil:
+    0'u32
+  else:
+    uint32(surface.surface.height)
+
+proc cbssRasterSurfaceRevision(surface: CbssRasterSurfaceHandle): uint64 {.
+    exportc: "cbss_raster_surface_revision", cdecl, dynlib, raises: [].} =
+  if surface.isNil or surface.surface.isNil:
+    0'u64
+  else:
+    surface.surface.revision
+
+proc cbssRasterSurfaceUpdateRegion(
+    surface: CbssRasterSurfaceHandle;
+    region: CbssRasterRegionC;
+    bytes: pointer;
+    byteLength: uint64;
+    sourceStride: uint32
+): int32 {.exportc: "cbss_raster_surface_update_region", cdecl, dynlib.} =
+  if surface.isNil or surface.surface.isNil:
+    return CbssInvalidHandle
+  if bytes.isNil or byteLength == 0 or byteLength > uint64(high(int)) or
+      uint64(sourceStride) > uint64(high(int)) or
+      uint64(region.x) > uint64(high(int)) or
+      uint64(region.y) > uint64(high(int)) or
+      uint64(region.width) > uint64(high(int)) or
+      uint64(region.height) > uint64(high(int)):
+    return CbssInvalidArgument
+  try:
+    let values = cast[ptr UncheckedArray[uint8]](bytes)
+    surface.surface.updateRegion(
+      rasterRegion(
+        int(region.x), int(region.y), int(region.width), int(region.height)
+      ),
+      values.toOpenArray(0, int(byteLength) - 1),
+      int(sourceStride)
+    )
+    CbssOk
+  except ValueError:
+    CbssInvalidArgument
+  except CatchableError:
+    CbssInternalError
+
+proc cbssRasterSurfacePublish(
+    surface: CbssRasterSurfaceHandle;
+    outputRevision: ptr uint64
+): int32 {.exportc: "cbss_raster_surface_publish", cdecl, dynlib.} =
+  if surface.isNil or surface.surface.isNil:
+    return CbssInvalidHandle
+  try:
+    discard surface.surface.publish()
+    if not outputRevision.isNil:
+      outputRevision[] = surface.surface.revision
+    CbssOk
+  except ValueError:
+    CbssOutOfRange
+  except CatchableError:
+    CbssInternalError
+
+proc cbssRasterSurfaceDirtyRegionCount(
+    surface: CbssRasterSurfaceHandle
+): uint32 {.
+    exportc: "cbss_raster_surface_dirty_region_count", cdecl, dynlib,
+    raises: [].} =
+  if surface.isNil or surface.surface.isNil:
+    0'u32
+  else:
+    uint32(surface.surface.dirtyRegionCount)
+
+proc cbssRasterSurfaceDirtyRegionAt(
+    surface: CbssRasterSurfaceHandle;
+    index: uint32;
+    output: ptr CbssRasterRegionC
+): int32 {.
+    exportc: "cbss_raster_surface_dirty_region_at", cdecl, dynlib.} =
+  if surface.isNil or surface.surface.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = default(CbssRasterRegionC)
+  if index >= uint32(surface.surface.dirtyRegionCount):
+    return CbssOutOfRange
+  try:
+    let region = surface.surface.dirtyRegionAt(int(index))
+    output[] = CbssRasterRegionC(
+      x: uint32(region.x),
+      y: uint32(region.y),
+      width: uint32(region.width),
+      height: uint32(region.height)
+    )
+    CbssOk
+  except CatchableError:
+    CbssInternalError
 
 proc cbssBlobCreate(
     bytes: pointer;
@@ -3635,6 +3789,26 @@ proc cbssRenderSurfaceCanvasDrawImage(
       return CbssInvalidArgument
     checked.binding.canvas.drawImage(sourceValue, bounds.toRect, opacity)
 
+proc cbssRenderSurfaceCanvasDrawRasterSurface(
+    context: CbssContextHandle;
+    surfaceValue: uint64;
+    rasterSurface: CbssRasterSurfaceHandle;
+    bounds: CbssRectC;
+    opacity: cfloat
+): int32 {.
+    exportc: "cbss_render_surface_canvas_draw_raster_surface", cdecl, dynlib.} =
+  let checked = context.checkedSurfaceCanvas(surfaceValue)
+  if checked.status != CbssOk:
+    return checked.status
+  if rasterSurface.isNil or rasterSurface.surface.isNil:
+    return CbssInvalidHandle
+  if not bounds.validRect or not opacity.finite or opacity < 0 or opacity > 1:
+    return CbssInvalidArgument
+  guardedCanvasMutation(context):
+    checked.binding.canvas.drawRasterSurface(
+      rasterSurface.surface, bounds.toRect, opacity
+    )
+
 proc cbssRenderSurfaceCanvasCommit(
     context: CbssContextHandle;
     surfaceValue: uint64;
@@ -5217,6 +5391,8 @@ proc cbssContextPaintCommand(
     output.value3 = command.pathMiterLimit
   of pcDrawImage:
     output.value0 = command.imageOpacity
+  of pcDrawRasterSurface:
+    output.value0 = command.rasterOpacity
   of pcPushLayer:
     output.value0 = command.layerOpacity
     output.value1 = cfloat(ord(command.layerCompositeMode))

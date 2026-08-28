@@ -1,6 +1,7 @@
 import std/[json, math, options, os, strutils]
 
-import ../core/[computed_style, diagnostics, geometry, node, style_resolver]
+import ../core/[computed_style, diagnostics, geometry, node, raster_surface,
+  style_resolver]
 import ../generated/default_properties
 import ../hit/hit_test
 import ../input/events
@@ -1024,6 +1025,12 @@ proc paintSnapshot*(driver: CbssTestDriver): string =
       lines.add "draw-text " & $command.node.nodeIndex & " " & command.text & " @" & $command.position.x & "," & $command.position.y
     of pcDrawImage:
       lines.add "draw-image " & $command.imageNode.nodeIndex & " " & command.imageSource & " " & rectSnapshot(command.imageRect)
+    of pcDrawRasterSurface:
+      lines.add "draw-raster " & $command.rasterSurface.id & " " &
+        $command.rasterSurface.width & "x" & $command.rasterSurface.height &
+        " rev=" & $command.rasterSurface.revision & " " &
+        rectSnapshot(command.rasterRect) & " opacity=" &
+        $command.rasterOpacity
   lines.join("\n")
 
 proc paintSnapshot*(driver: CbssTestDriver; query: CbssQuery): string =
@@ -1036,6 +1043,8 @@ proc paintSnapshot*(driver: CbssTestDriver; query: CbssQuery): string =
         command.node == target
       of pcDrawImage:
         command.imageNode == target
+      of pcDrawRasterSurface:
+        command.owner == some(target)
       else:
         false
     if matches:
@@ -1044,6 +1053,12 @@ proc paintSnapshot*(driver: CbssTestDriver; query: CbssQuery): string =
         lines.add "draw-text " & $command.node.nodeIndex & " " & command.text & " @" & $command.position.x & "," & $command.position.y
       of pcDrawImage:
         lines.add "draw-image " & $command.imageNode.nodeIndex & " " & command.imageSource & " " & rectSnapshot(command.imageRect)
+      of pcDrawRasterSurface:
+        lines.add "draw-raster " & $command.rasterSurface.id & " " &
+        $command.rasterSurface.width & "x" & $command.rasterSurface.height &
+          " rev=" & $command.rasterSurface.revision & " " &
+          rectSnapshot(command.rasterRect) & " opacity=" &
+          $command.rasterOpacity
       else:
         discard
   lines.join("\n")
@@ -1159,6 +1174,16 @@ proc structuredSnapshotJson*(driver: CbssTestDriver): JsonNode =
       entry["node"] = %command.imageNode.nodeIndex
       entry["source"] = %command.imageSource
       entry["rect"] = rectJson(command.imageRect)
+    of pcDrawRasterSurface:
+      entry["node"] = %(
+        if command.owner.isSome: command.owner.get.nodeIndex else: -1
+      )
+      entry["surface"] = %command.rasterSurface.id
+      entry["revision"] = %command.rasterSurface.revision
+      entry["width"] = %command.rasterSurface.width
+      entry["height"] = %command.rasterSurface.height
+      entry["rect"] = rectJson(command.rasterRect)
+      entry["opacity"] = %command.rasterOpacity
     paint.add entry
   result["paint"] = paint
 

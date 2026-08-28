@@ -371,6 +371,17 @@ suite "style context merge":
     check style.visual.cursor == some(ckPointer)
     check style.visual.userSelect == some(usNone)
 
+  test "crosshair cursor resolves for drawing surfaces":
+    let context = styleContext([
+      decl("cursor", keyword("crosshair"))
+    ])
+
+    var diagnostics: Diagnostics
+    let style = resolveStyles(context, defaultProperties(), ResolveEnv(), diagnostics)
+
+    check not diagnostics.hasErrors
+    check style.visual.cursor == some(ckCrosshair)
+
   test "p1 alignment and input extension properties resolve to computed style":
     let context = styleContext([
       decl("order", number(3)),

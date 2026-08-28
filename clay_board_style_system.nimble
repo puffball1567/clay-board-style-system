@@ -98,25 +98,27 @@ task testMotionAsan, "Run retained runtime tests under AddressSanitizer":
     else:
       ""
   for memoryModel in ["arc", "orc"]:
-    for testName in [
-      "declarative_transition",
-      "declarative_keyframes",
-      "command",
-      "cue",
-      "cue_canvas",
-      "cue_command",
-      "cue_motion",
-      "cue_trigger",
-      "frontend_trace",
-      "validation",
-      "validation_controls",
-      "form",
-      "text_input"
+    for test in [
+      ("declarative_transition", "tests/runtime/test_declarative_transition.nim"),
+      ("declarative_keyframes", "tests/runtime/test_declarative_keyframes.nim"),
+      ("command", "tests/runtime/test_command.nim"),
+      ("cue", "tests/runtime/test_cue.nim"),
+      ("cue_canvas", "tests/runtime/test_cue_canvas.nim"),
+      ("cue_command", "tests/runtime/test_cue_command.nim"),
+      ("cue_motion", "tests/runtime/test_cue_motion.nim"),
+      ("cue_trigger", "tests/runtime/test_cue_trigger.nim"),
+      ("frontend_trace", "tests/runtime/test_frontend_trace.nim"),
+      ("validation", "tests/runtime/test_validation.nim"),
+      ("validation_controls", "tests/runtime/test_validation_controls.nim"),
+      ("form", "tests/runtime/test_form.nim"),
+      ("text_input", "tests/runtime/test_text_input.nim"),
+      ("raster_surface", "tests/core/test_raster_surface.nim")
     ]:
+      let testName = test[0]
       let suffix = testName & "_" & memoryModel & "_asan"
       let nimcache = sanitizerRoot & "/clay_board_style_system_" & suffix & "_nimcache"
       let artifact = nimcache & "/clay_board_style_system_" & suffix
-      let source = "tests/runtime/test_" & testName & ".nim"
+      let source = test[1]
       exec "nim c --forceBuild:on --cc:clang --mm:" & memoryModel & " -d:release -d:cbssFrontendTrace -d:useMalloc --debugger:native --path:src --passC:-fsanitize=address --passC:-fno-omit-frame-pointer --passL:-fsanitize=address" & addressLayoutFlags & " --nimcache:\"" & nimcache & "\" --out:\"" & artifact & "\" " & source
       when defined(windows):
         exec "\"" & artifact & ".exe\""
@@ -133,6 +135,7 @@ task testUbsan, "Run numeric, layout, transform, and motion tests under Undefine
       ("color_conversion", "tests/core/test_color_conversion.nim"),
       ("flex", "tests/layout/test_flex.nim"),
       ("transform_geometry", "tests/layout/test_transform_geometry.nim"),
+      ("raster_surface", "tests/core/test_raster_surface.nim"),
       ("declarative_transition", "tests/runtime/test_declarative_transition.nim"),
       ("declarative_keyframes", "tests/runtime/test_declarative_keyframes.nim"),
       ("validation", "tests/runtime/test_validation.nim")
@@ -168,7 +171,8 @@ task testLsan, "Run retained lifecycle tests under LeakSanitizer on Linux":
         ("validation", "tests/runtime/test_validation.nim"),
         ("validation_controls", "tests/runtime/test_validation_controls.nim"),
         ("form", "tests/runtime/test_form.nim"),
-        ("text_input", "tests/runtime/test_text_input.nim")
+        ("text_input", "tests/runtime/test_text_input.nim"),
+        ("raster_surface", "tests/core/test_raster_surface.nim")
       ]:
         let testName = test[0]
         let testPath = test[1]
@@ -225,6 +229,9 @@ task checkExamples, "Type-check every example in each supported link configurati
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_v03_canvas -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/v03_canvas_demo.nim"
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_v03_canvas_system -d:cbssSdl3LinkMode=system examples/v03_canvas_demo.nim"
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_v03_canvas_custom -d:cbssSdl3LinkMode=custom -d:cbssRuntimeRoot=vendor/sdl3 examples/v03_canvas_demo.nim"
+  exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_raster_surface -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/raster_surface_demo.nim"
+  exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_raster_surface_system -d:cbssSdl3LinkMode=system examples/raster_surface_demo.nim"
+  exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_raster_surface_custom -d:cbssSdl3LinkMode=custom -d:cbssRuntimeRoot=vendor/sdl3 examples/raster_surface_demo.nim"
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_loading_indicator -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/loading_indicator_demo.nim"
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_loading_indicator_system -d:cbssSdl3LinkMode=system examples/loading_indicator_demo.nim"
   exec "nim check --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_check_loading_indicator_custom -d:cbssSdl3LinkMode=custom -d:cbssRuntimeRoot=vendor/sdl3 examples/loading_indicator_demo.nim"
@@ -265,6 +272,7 @@ task checkExamplesOrc, "Type-check public examples under ORC":
   exec "nim check --mm:orc --path:src --nimcache:/tmp/clay_board_style_system_orc_check_sdl3 -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/sdl3_demo.nim"
   exec "nim check --mm:orc --path:src --nimcache:/tmp/clay_board_style_system_orc_check_navigation -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/navigation_demo.nim"
   exec "nim check --mm:orc --path:src --nimcache:/tmp/clay_board_style_system_orc_check_v03_canvas -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/v03_canvas_demo.nim"
+  exec "nim check --mm:orc --path:src --nimcache:/tmp/clay_board_style_system_orc_check_raster_surface -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/raster_surface_demo.nim"
   exec "nim check --mm:orc --path:src --nimcache:/tmp/clay_board_style_system_orc_check_loading_indicator -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/loading_indicator_demo.nim"
   exec "nim check --mm:orc --path:src --nimcache:/tmp/clay_board_style_system_orc_check_door_button_canvas -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/door_button_canvas_demo.nim"
   exec "nim check --mm:orc --path:src --nimcache:/tmp/clay_board_style_system_orc_check_declarative_motion -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/declarative_motion_demo.nim"
@@ -380,6 +388,13 @@ task testEventLifecycleValgrind, "Run ARC event lifecycle checks under Valgrind"
   exec "nim c --mm:arc -d:release -d:useMalloc --path:src --nimcache:/tmp/clay_board_style_system_event_lifecycle_nimcache --out:/tmp/clay_board_style_system_event_lifecycle tests/memory/event_lifecycle.nim"
   exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 /tmp/clay_board_style_system_event_lifecycle"
 
+task testRasterSurfaceValgrind, "Run ARC and ORC RasterSurface ownership checks under Valgrind":
+  for memoryModel in ["arc", "orc"]:
+    let artifact = "/tmp/clay_board_style_system_raster_surface_" & memoryModel & "_valgrind"
+    let nimcache = artifact & "_nimcache"
+    exec "nim c --mm:" & memoryModel & " -d:release -d:useMalloc --path:src --nimcache:\"" & nimcache & "\" --out:\"" & artifact & "\" tests/core/test_raster_surface.nim"
+    exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 \"" & artifact & "\""
+
 task testValidationValgrind, "Run ARC and ORC validation and password-input checks under Valgrind":
   for memoryModel in ["arc", "orc"]:
     for test in [
@@ -462,6 +477,11 @@ task v03CanvasDemo, "Run the Version 0.3 Canvas and color demo":
   exec "cargo build --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml"
   exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
   exec "env LD_LIBRARY_PATH=native/cosmic_text_bridge/target/release:native/image_bridge/target/release nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_v03_canvas_demo_nimcache --out:/tmp/clay_board_style_system_v03_canvas_demo examples/v03_canvas_demo.nim"
+
+task rasterSurfaceDemo, "Run the retained partial-update RasterSurface demo":
+  exec "cargo build --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml"
+  exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
+  exec "env LD_LIBRARY_PATH=native/cosmic_text_bridge/target/release:native/image_bridge/target/release nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_raster_surface_demo_nimcache --out:/tmp/clay_board_style_system_raster_surface_demo examples/raster_surface_demo.nim"
 
 task loadingIndicatorDemo, "Run the Canvas loading indicator demo":
   exec "cargo build --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml"

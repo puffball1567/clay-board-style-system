@@ -30,7 +30,7 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x00010019` supports:
+ABI version `0x0001001A` supports:
 
 - machine-readable Craft Driver contract metadata and runtime capability
   negotiation through stable numeric identifiers before tree construction;
@@ -39,6 +39,9 @@ ABI version `0x00010019` supports:
   at the call boundary and no Nim-managed string escapes the ABI;
 - public Craft Style Slot exposure, bounded atomic Craft Style replacement,
   active Style queries, and structured parse/replacement diagnostics;
+- retained RGBA8/sRGB/straight-alpha RasterSurface handles with bounded
+  copy-in updates, explicit atomic publication, merged dirty-region queries,
+  Canvas composition, and append-only paint-command inspection;
 - bounded atomic Craft Pack manifest loading, compatibility negotiation,
   active Pack queries, and structured Pack diagnostics;
 - Opaque context and style handles.
@@ -209,6 +212,34 @@ two update paths:
 
 `cbss_context_recompute` reuses the last successful viewport size. A resize
 uses `cbss_context_compute` with the new dimensions.
+
+## RasterSurface
+
+`cbss_raster_surface_create` allocates a retained RGBA8 surface. Passing a
+four-byte `initial_rgba` fills every pixel; passing null creates a transparent
+surface. Allocation and pending-update storage are independently bounded by
+`CBSS_MAX_RASTER_SURFACE_BYTES`.
+
+`cbss_raster_surface_update_region` copies the addressed rows immediately into
+CBSS-owned pending storage. A zero `source_stride` means `region.width * 4`;
+otherwise the stride is expressed in bytes and may include host-side row
+padding. Failed updates do not modify committed pixels or existing pending
+updates.
+
+`cbss_raster_surface_publish` applies every pending region as one monotonically
+increasing revision. The resulting merged dirty rectangles remain available
+until the next successful publication. A publication with no pending updates
+is a successful no-op and preserves the current revision.
+
+Draw the handle into a registered RenderSurface with
+`cbss_render_surface_canvas_draw_raster_surface`, then publish the Canvas
+display list normally. The Canvas retains the underlying RasterSurface, so the
+opaque handle may be destroyed after a successful draw call. After later pixel
+publications, pass the returned revision to `cbss_render_surface_update` to
+schedule presentation without rebuilding the Canvas display list or layout.
+RasterSurface mutation and publication are UI-owned; worker threads should
+prepare immutable byte blocks and hand them to the UI thread through the
+existing stream or host queue boundary.
 
 ## Declarative Motion
 

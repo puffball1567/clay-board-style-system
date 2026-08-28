@@ -2129,9 +2129,10 @@ After the parallel Version 0.5 and Version 0.6 foundation work, the provisional
 sequence is:
 
 - **Version 0.7:** one visual-expression milestone combining complete color
-  authoring, the canonical high-quality CPU vector Canvas, optional bgfx GPU
-  Canvas and compute, optional Little CMS color management, portable shader
-  Style stages, shared GPU ownership, and the retained Motion Scene contract;
+  authoring, a retained partial-update `RasterSurface`, the canonical
+  high-quality CPU vector Canvas, optional bgfx GPU Canvas and compute,
+  optional Little CMS color management, portable shader Style stages, shared
+  GPU ownership, and the retained Motion Scene contract;
 - **Version 0.8:** sprite animation, Tiled-output tile maps, richer game input,
   camera/video surfaces, audio, and media/game Cue adapters; and
 - **Version 0.9:** complete touch and expressive-input behavior, ecosystem
@@ -2154,6 +2155,17 @@ backend-shaped feature sets. Its release gates are:
   behavior, and deterministic headless references;
 - complete CBSS-owned CPU vector rasterization with fill rules, stroke
   outlines, subpixel coverage, clipping, masks, and retained dirty tiles;
+- a retained `RasterSurface` that creates an explicitly sized RGBA8 image,
+  accepts bounds-checked rectangular updates with an explicit source stride,
+  merges dirty regions per published revision, and composites the current
+  revision inside an ordinary Canvas or Box-owned content region;
+- one raster-surface composition contract across SDL3 and the deterministic
+  headless backend, including clipping, opacity, transforms, stacking, DPI,
+  resize, visibility, input coordinates, color-space and alpha declarations,
+  deterministic teardown, and cache invalidation without relayout;
+- backend uploads that update only changed raster regions when supported,
+  bounded full-upload fallback otherwise, and tests proving that a small
+  update does not rebuild unrelated UI or copy an unbounded historical queue;
 - an optional bgfx GPU Canvas backend for textures, buffers, render targets,
   graphics pipelines, compute pipelines, offscreen rendering, and composition
   inside a normal Canvas-owned layout region;
@@ -2186,6 +2198,15 @@ backend-shaped feature sets. Its release gates are:
   one presentation owner; and
 - device-loss, cancellation, teardown order, version mismatch, GPU-memory
   budget, idle-frame, and CPU fallback verification.
+
+The Version 0.7 drawing baseline is intentionally usable before the complete
+Version 0.9 gesture layer. Mouse input and the existing pen metadata, pressure,
+tilt, rotation, eraser, proximity, pointer capture, and Canvas-local coordinate
+contracts are sufficient for a desktop drawing application. Version 0.9 adds
+the production touch-tablet experience: stable multi-contact gestures,
+gesture arbitration, palm rejection, kinetic touch navigation, and native
+touch-selection behavior. A drawing application must not require Version 0.9
+unless it depends on those higher-level touch capabilities.
 
 The complete Custom Style, shared-device, persistent-resource, interaction,
 and complex visual-scene design remains in

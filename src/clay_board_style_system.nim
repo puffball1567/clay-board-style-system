@@ -13,6 +13,7 @@ import clay_board_style_system/core/[
   geometry,
   gradient_sampling,
   node,
+  raster_surface,
   property,
   property_authoring,
   registry,
@@ -67,6 +68,7 @@ export diagnostics
 export geometry
 export gradient_sampling
 export node
+export raster_surface
 export property
 export property_authoring
 export registry

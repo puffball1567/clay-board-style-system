@@ -170,7 +170,8 @@ The release ARC benchmark on the development machine measured:
 | flatten 1,000 bounded Canvas layers | 0.382 ms average | <= 4 ms |
 | flatten a retained path with 1,000 cubic curves | 0.436 ms average | <= 12 ms |
 
-`tests/perf/render_surface_benchmark.nim` enforces all five gates. The Canvas
+`tests/perf/render_surface_benchmark.nim` enforces these retained-rendering
+gates. The Canvas
 measurements cover display-list translation, transform-scope balancing, and
 transform visual-bounds resolution into canonical paint commands. The layer
 measurement covers bounded scope conversion and balancing; it does not include
@@ -182,6 +183,25 @@ Memory instrumentation may compile the same workload with
 disables wall-clock gates that are not meaningful under Valgrind.
 The release ARC memory-check build completed this workload under Valgrind with
 zero bytes retained at exit and zero reported memory errors.
+
+### Version 0.7 RasterSurface baseline (2026-08-28)
+
+RasterSurface publication is proportional to dirty bytes and bounded dirty
+metadata, not total surface area. The release ARC benchmark publishes 20,000
+independent one-pixel updates on both a 64 x 64 surface and a 4,096 x 4,096
+surface:
+
+| surface | 20,000 update + publish operations |
+| ---: | ---: |
+| 64 x 64 | 1.164 ms total |
+| 4,096 x 4,096 | 1.165 ms total |
+
+`tests/perf/render_surface_benchmark.nim` rejects a large-surface result that
+scales materially with total pixels. The benchmark covers owned patch copy,
+dirty-region publication, and committed-pixel update; SDL3 upload behavior is
+separately fixed by an integration test that requires one partial upload for a
+consecutive revision and a safe full upload after skipped revisions. Absolute
+times are machine-local; the structural near-equality is the release property.
 
 ### Version 0.5 validation gate
 

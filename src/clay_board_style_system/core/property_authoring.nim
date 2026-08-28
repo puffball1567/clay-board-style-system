@@ -220,6 +220,7 @@ proc cursor*(value: CursorKind; sourceOrder = 0): Declaration =
     of ckDefault: "default"
     of ckPointer: "pointer"
     of ckText: "text"
+    of ckCrosshair: "crosshair"
     of ckMove: "move"
     of ckNotAllowed: "not-allowed"
   decl("cursor", keyword(authored), sourceOrder)

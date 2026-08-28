@@ -13,6 +13,7 @@ const
   layerIterations = 30
   curveSegmentCount = 1_000
   curveIterations = 30
+  rasterUpdateIterations = 20_000
 
 proc elapsedMilliseconds(started: float): float =
   (cpuTime() - started) * 1000.0
@@ -127,8 +128,32 @@ when not defined(cbssMemoryCheck):
   doAssert curveAverageMs <= 12.0,
     &"1k-curve path flatten exceeded budget: {curveAverageMs:.3f} ms"
 
+proc rasterUpdateMilliseconds(surface: RasterSurface): float =
+  let pixel = @[32'u8, 96, 192, 255]
+  let started = cpuTime()
+  for index in 0 ..< rasterUpdateIterations:
+    surface.updateRegion(rasterRegion(
+      index mod surface.width, (index div surface.width) mod surface.height,
+      1, 1
+    ), pixel)
+    doAssert surface.publish()
+  elapsedMilliseconds(started)
+
+let smallRaster = newRasterSurface(64, 64)
+let largeRaster = newRasterSurface(4_096, 4_096)
+let smallRasterMs = smallRaster.rasterUpdateMilliseconds()
+let largeRasterMs = largeRaster.rasterUpdateMilliseconds()
+doAssert smallRaster.revision == uint64(rasterUpdateIterations + 1)
+doAssert largeRaster.revision == uint64(rasterUpdateIterations + 1)
+when not defined(cbssMemoryCheck):
+  doAssert smallRasterMs <= 100.0,
+    &"small RasterSurface dirty updates exceeded budget: {smallRasterMs:.3f} ms"
+  doAssert largeRasterMs <= smallRasterMs * 4.0 + 10.0,
+    &"RasterSurface dirty update scaled with total pixels: small={smallRasterMs:.3f} ms large={largeRasterMs:.3f} ms"
+
 echo &"render-surface idle probes ({surfaceCount} registered): {idleMs:.3f} ms / {idleProbeCount}"
 echo &"Canvas flatten ({canvasCommandCount} commands): {canvasAverageMs:.3f} ms average"
 echo &"Canvas transform flatten ({transformScopeCount} scopes): {transformAverageMs:.3f} ms average"
 echo &"Canvas layer flatten ({layerScopeCount} scopes): {layerAverageMs:.3f} ms average"
 echo &"Path flatten ({curveSegmentCount} cubic curves): {curveAverageMs:.3f} ms average"
+echo &"RasterSurface 1px publish ({rasterUpdateIterations} updates): small={smallRasterMs:.3f} ms large={largeRasterMs:.3f} ms"

@@ -95,6 +95,7 @@ probes include:
 | Full cold hit build, 4,000 nodes | 1.358 ms |
 | Flatten 10,000 retained Canvas commands | 2.198 ms average |
 | 1,000,000 idle predicates with 10,000 surfaces | 5.690 ms total |
+| Publish 20,000 one-pixel updates on a 4,096 x 4,096 RasterSurface | 1.165 ms total |
 
 Cold passes are used for initial construction and resize. Interactive updates
 are required to remain proportional to dirty work rather than total tree size.
@@ -138,6 +139,7 @@ pre-rendered animation:
 ```sh
 nimble componentDemo
 nimble v03CanvasDemo
+nimble rasterSurfaceDemo
 nimble loadingIndicatorDemo
 nimble declarativeMotionDemo
 nimble orchestrationDemo
@@ -153,6 +155,10 @@ nimble luxuryHotelDemo
 stages. `cueGeometryMotionDemo` proves the same public Style and Cue APIs with
 only geometry: a gravity-shaped bounce, synchronized shadow, staggered tiles,
 and a composed final poster.
+
+`rasterSurfaceDemo` is an event-driven mouse and pen drawing surface. It copies
+and uploads only the changed RGBA8 rectangle, uses pressure when the backend
+provides it, and returns to an idle event wait when input stops.
 
 `validationDemo` demonstrates retained reactive validation across text,
 password, checkbox, cross-field, blur, input, and submit flows. Password inputs
@@ -254,6 +260,9 @@ CBSS does not ship native runtime binaries inside its Nimble package.
   conversion, and selectable gradient interpolation spaces.
 - Retained `Canvas2D` paths, transforms, clips, layers, text, images, gradients,
   local input, frame requests, and a deterministic headless renderer.
+- Retained RGBA8 `RasterSurface` drawing with bounded stride-aware copy-in,
+  atomic dirty-region publication, SDL3 partial texture uploads, Canvas/Box
+  composition, and deterministic headless output.
 - Typed navigation with `Link`, retained screen roots, history, focus
   restoration, external URLs, and application deep links.
 - Mouse, touch, pen, keyboard, focus, form, clipboard, IME, drag, scroll, and
@@ -263,8 +272,8 @@ CBSS does not ship native runtime binaries inside its Nimble package.
 - An idle-aware reversible Switch transition and deterministic animation clock
   with reduced-motion support.
 - A versioned C ABI for tree, style, layout, paint, input, events, focus,
-  scrolling, accessibility, Canvas, diagnostics, and bounded worker-to-UI Blob
-  streams.
+  scrolling, accessibility, Canvas, RasterSurface, diagnostics, and bounded
+  worker-to-UI Blob streams.
 - Headless unit and E2E tooling, screenshot snapshots, optional real-window
   Wayland scenarios, portable CI, and native memory checks.
 
