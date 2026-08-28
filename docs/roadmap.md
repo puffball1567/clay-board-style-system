@@ -1436,7 +1436,7 @@ Planned work:
 
 ## Versions 0.5 And 0.6 - Parallel Foundation Tracks
 
-Status: `Version 0.5 released on 2026-08-18; Version 0.6 planned`
+Status: `Version 0.5 released on 2026-08-18; Version 0.6 released on 2026-08-28`
 
 Version 0.5 and Version 0.6 are separate release scopes developed in the same
 foundation wave. Version 0.5 owns the first-party frontend runtime and general
@@ -1455,7 +1455,7 @@ release gate, while shared integration scenarios run continuously against
 
 ### Ownership Contract And Release Verification
 
-Status: `Version 0.6 target`
+Status: `Released in Version 0.6`
 
 CBSS will guarantee its own ARC ownership and native-resource lifecycle when an
 application uses the documented safe public API and follows its explicit
@@ -1719,7 +1719,7 @@ and a release benchmark for typed and precompiled-regex rule paths.
 
 ### High-Level Authoring And Cross-Language Craft Drivers
 
-Status: `Version 0.6 target`
+Status: `Released in Version 0.6`
 
 The C ABI is a stable engine protocol, not the intended application-authoring
 experience. Version 0.6 adds a canonical high-level contract above it so a host
@@ -1847,7 +1847,7 @@ directly. The complete naming and distribution boundary is in
 
 ### Production Layout, Scrolling, Virtualization, And Accessibility
 
-Status: `Version 0.6 in progress; typed virtualization and Linux AT-SPI stacks implemented`
+Status: `Released in Version 0.6`
 
 The existing percentage, automatic, intrinsic, min/max, Flex, retained-scroll,
 semantic-tree, focus, and AT-SPI adapter foundations are not restarted. Version
@@ -1954,7 +1954,8 @@ sets remain coupled to the future writing-mode contract.
 
 ### CSS Property Runtime Completion
 
-Status: `Version 0.6 target; package order remains dependency-driven`
+Status: `The accepted Version 0.6 subset is released; remaining matrix work`
+`continues in dependency order`
 
 The canonical property target remains in
 [css-property-support.md](css-property-support.md), and every targeted property
@@ -2069,7 +2070,7 @@ target.
 
 ## Craft Ecosystem And Portable Style Distribution
 
-Status: `Driver, Style, and Pack foundations are Version 0.6 targets;`
+Status: `Driver, Style, and Pack foundations released in Version 0.6;`
 `CLI and ecosystem expansion follow`
 
 `Craft` is the public umbrella term for reusable components, styles, design

@@ -7,6 +7,8 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-28
+
 ### Added
 
 - Added an opt-in Linux AT-SPI transport behind `-d:cbssLinuxAtspi`. It
