@@ -1847,7 +1847,7 @@ directly. The complete naming and distribution boundary is in
 
 ### Production Layout, Scrolling, Virtualization, And Accessibility
 
-Status: `Version 0.6 in progress; typed virtualization stack implemented`
+Status: `Version 0.6 in progress; typed virtualization and Linux AT-SPI stacks implemented`
 
 The existing percentage, automatic, intrinsic, min/max, Flex, retained-scroll,
 semantic-tree, focus, and AT-SPI adapter foundations are not restarted. Version
@@ -1908,8 +1908,20 @@ semantic tree plus AT-SPI snapshot/diff preserve them. Invalid values fail
 without mutating prior semantics. No placeholder semantic nodes are allocated
 for offscreen items, and collection/item roles remain explicit component-owned
 meaning rather than a guess made by virtualization. This completes the
-virtualization-specific Version 0.6 semantic stack; platform transport and the
-broader production layout work remain separate tasks in this section.
+virtualization-specific Version 0.6 semantic stack; broader production layout
+work remains a separate task in this section.
+
+The opt-in Linux AT-SPI D-Bus transport is now implemented behind
+`-d:cbssLinuxAtspi`. It registers stable snapshot objects and the Application,
+Accessible, Action, and Component interfaces, embeds the application root in
+the AT-SPI registry, and dispatches focus and activation through existing UI
+mechanisms. Invalid snapshots are rejected before publication, all external
+paths and actions are checked against the current snapshot, and teardown is
+idempotent. An external `gdbus` client verifies the live protocol under ARC and
+ORC in an isolated session, with the same lifecycle covered by Valgrind. Text,
+EditableText, and Value remain deliberately unadvertised until their full
+operation surfaces exist; real assistive-technology validation remains distinct
+from protocol integration.
 
 Executable `box-sizing` is also complete. Quantitative dimensions, min/max
 constraints, and flex-basis now distinguish CSS-default `content-box` from

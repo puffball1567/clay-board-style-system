@@ -118,6 +118,31 @@ jobs:
       - name: Test Rust Craft Driver under ORC
         run: nimble testRustDriverOrc -y
 
+  linux-atspi:
+    name: Linux AT-SPI D-Bus integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nim
+        uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
+        with:
+          nim-version: '2.2.10'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install AT-SPI test runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y at-spi2-core dbus-daemon libglib2.0-bin valgrind
+
+      - name: Test real D-Bus protocol under ARC and ORC
+        run: dbus-run-session -- nimble testLinuxAtspi -y
+
+      - name: Check transport lifecycle with Valgrind
+        run: dbus-run-session -- nimble testLinuxAtspiValgrind -y
+
   portable:
     name: Portable core (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}

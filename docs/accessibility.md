@@ -22,9 +22,10 @@ Accessibility support is split into independent layers:
    position/size, and optional layout bounds.
 2. `backends/atspi/adapter.nim` maps that tree to stable AT-SPI object paths,
    roles, state, interfaces, actions, and snapshot changes.
-3. A Linux transport publishes the snapshot through the accessibility D-Bus.
-   This transport is not implemented yet. UIA and NSAccessibility transports
-   will be separate modules over the same semantic tree.
+3. `backends/atspi/linux_dbus.nim` publishes the snapshot through the Linux
+   accessibility D-Bus when compiled with `-d:cbssLinuxAtspi`. UIA and
+   NSAccessibility transports remain separate future modules over the same
+   semantic tree.
 
 The AT-SPI adapter uses the specification root path
 `/org/a11y/atspi/accessible/root`. Node paths are generated only from internal
@@ -92,3 +93,34 @@ Platform transports must:
 
 The platform-neutral adapter follows these rules and has no D-Bus, filesystem,
 process, or network access of its own.
+
+## Linux AT-SPI Transport
+
+The Linux transport dynamically loads GLib, GObject, and GIO only in builds
+compiled with `-d:cbssLinuxAtspi`. Ordinary builds and non-Linux builds do not
+import or link this module. The host creates one transport for its `UiRoot`,
+publishes snapshots through the neutral adapter, dispatches its GLib context
+from the UI thread, and closes it before disposing the root:
+
+```nim
+let linuxAtspi = initLinuxAtspiTransport(ui)
+if linuxAtspi.connected():
+  let accessibility = initAtspiAdapter(linuxAtspi.atspiTransport())
+  discard accessibility.refresh(ui, layout, "Application name")
+
+# Integrate this with the host event loop and after accessibility mutations.
+discard linuxAtspi.poll()
+
+linuxAtspi.close()
+```
+
+Publishing rejects malformed, duplicate, or disconnected object paths without
+replacing the last valid snapshot. D-Bus callbacks validate every path,
+interface, method, property, and action against that snapshot. Callbacks run on
+the same explicitly polled GLib context as the UI thread; they do not mutate the
+retained tree from a background D-Bus thread.
+
+Linux CI starts an isolated accessibility bus and uses an external `gdbus`
+client to inspect Application, Accessible, Action, and Component behavior under
+ARC and ORC. The same lifecycle runs under Valgrind. This protocol integration
+does not replace manual validation with Orca and other assistive technologies.

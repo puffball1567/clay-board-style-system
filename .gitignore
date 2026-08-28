@@ -24,6 +24,7 @@ src/schema/
 
 tests/**/test_*
 !tests/**/*.nim
+!tests/**/*.sh
 examples/*_demo
 !examples/*.nim
 
