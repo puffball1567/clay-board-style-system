@@ -146,6 +146,59 @@ suite "cosmic text engine":
 
     check spaced.w > normal.w
 
+  test "word-spacing drives cosmic measurement caret hit and wrapping":
+    var fonts = initFontRegistry()
+    var cosmic = initCosmicTextEngine(fonts)
+    defer:
+      cosmic.close()
+
+    let engine = cosmic.textEngine()
+    let baseStyle = ComputedTextStyle(
+      fontSize: some(18.0'f32),
+      lineHeight: some(24.0'f32),
+      fontFamilies: @["sans-serif"]
+    )
+    var spacedStyle = baseStyle
+    spacedStyle.wordSpacing = some(12.0'f32)
+    let text = "alpha beta"
+    let normal = engine.measure(TextMeasureInput(
+      text: text,
+      style: baseStyle,
+      maxWidth: none(float32),
+      fonts: fonts
+    ))
+    let spaced = engine.measure(TextMeasureInput(
+      text: text,
+      style: spacedStyle,
+      maxWidth: none(float32),
+      fonts: fonts
+    ))
+    let caret = engine.caret(TextCaretInput(
+      text: text,
+      style: spacedStyle,
+      maxWidth: none(float32),
+      fonts: fonts,
+      byteIndex: 6
+    ))
+    let hit = engine.hit(TextHitInput(
+      text: text,
+      style: spacedStyle,
+      maxWidth: none(float32),
+      fonts: fonts,
+      point: caret.position
+    ))
+    let wrapped = engine.measure(TextMeasureInput(
+      text: text,
+      style: spacedStyle,
+      maxWidth: some(normal.w + 1.0'f32),
+      fonts: fonts
+    ))
+
+    check spaced.w > normal.w + 8.0'f32
+    check caret.position.x > 0.0'f32
+    check hit.byteIndex in 5 .. 6
+    check wrapped.h >= 48.0'f32
+
   test "renders text bitmap through cosmic-text bridge":
     var fonts = initFontRegistry()
     var cosmic = initCosmicTextEngine(fonts)

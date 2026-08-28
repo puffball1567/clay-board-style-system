@@ -294,7 +294,7 @@ proc debugWrapKind(style: ComputedTextStyle): DebugWrapKind =
 
 proc debugRuneAdvance(rune: Rune; style: ComputedTextStyle): float32 =
   result = 8.0'f32
-  if rune.int32 in [9'i32, 32'i32]:
+  if rune.int32 in [9'i32, 32'i32, 160'i32]:
     result += style.wordSpacing.get(0.0'f32)
   result = max(0.0'f32, result)
 

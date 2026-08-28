@@ -745,6 +745,9 @@ proc textStyleFrom(style: UiStyle): ComputedTextStyle =
     of "letter-spacing":
       if value.kind == svLength and value.length.kind == ukPx:
         result.letterSpacing = some(value.length.value)
+    of "word-spacing":
+      if value.kind == svLength and value.length.kind == ukPx:
+        result.wordSpacing = some(value.length.value)
     of "font-family":
       if value.kind == svKeyword:
         result.fontFamilies = value.keyword.split(",")

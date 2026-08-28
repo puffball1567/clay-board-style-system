@@ -166,6 +166,13 @@ suite "text wrapping runtime":
     check debugTextEngine().measure("a b", style, none(float32)) ==
       size(30, 10)
 
+  test "word spacing also applies to non-breaking spaces":
+    var style = textStyle()
+    style.wordSpacing = some(4.0'f32)
+
+    check debugTextEngine().measure("a\u00a0b", style, none(float32)) ==
+      size(28, 10)
+
   test "display transformations retain rune based wrapping":
     var style = textStyle(overflowWrap = some(owAnywhere))
     style.textTransform = some(ttUppercase)

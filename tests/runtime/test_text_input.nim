@@ -75,6 +75,15 @@ suite "text input component":
     fail()
     rect(0, 0, 0, 0)
 
+  test "text style preserves authored word spacing":
+    let ui = initUiRoot()
+    let input = ui.textInput(
+      TextInputParams(value: "alpha beta"),
+      textStyle = uiStyle([decl("word-spacing", px(6))])
+    )
+
+    check input.state.textStyle.wordSpacing == some(6.0'f32)
+
   test "password input masks rendered runes without changing its value":
     let ui = initUiRoot()
     let input = ui.textInput(TextInputParams(

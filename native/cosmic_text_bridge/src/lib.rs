@@ -277,15 +277,20 @@ fn set_text_with_fallbacks(
     text: &str,
     family_names: &[String],
     attrs: &Attrs<'_>,
+    letter_spacing_em: f32,
+    word_spacing_em: f32,
     align: Option<Align>,
 ) {
-    if family_names.len() <= 1 || text.is_empty() {
+    if (family_names.len() <= 1 && word_spacing_em == 0.0) || text.is_empty() {
         buffer.set_text(text, attrs, Shaping::Advanced, align);
         return;
     }
 
-    let mut ranges = Vec::<(usize, usize, usize)>::new();
+    let mut ranges = Vec::<(usize, usize, usize, bool)>::new();
     for (start, segment) in text.split_word_bound_indices() {
+        let word_separator = segment
+            .chars()
+            .all(|ch| matches!(ch, '\t' | ' ' | '\u{00a0}'));
         let family_index = family_names
             .iter()
             .position(|family| {
@@ -294,22 +299,29 @@ fn set_text_with_fallbacks(
             .unwrap_or(0);
         let finish = start + segment.len();
         if let Some(last) = ranges.last_mut() {
-            if last.1 == start && last.2 == family_index {
+            if last.1 == start && last.2 == family_index && last.3 == word_separator {
                 last.1 = finish;
                 continue;
             }
         }
-        ranges.push((start, finish, family_index));
+        ranges.push((start, finish, family_index, word_separator));
     }
 
-    let spans = ranges.iter().map(|(start, finish, family_index)| {
-        (
-            &text[*start..*finish],
-            attrs
+    let spans = ranges
+        .iter()
+        .map(|(start, finish, family_index, word_separator)| {
+            let segment = &text[*start..*finish];
+            let spacing = if *word_separator {
+                letter_spacing_em + word_spacing_em
+            } else {
+                letter_spacing_em
+            };
+            let span_attrs = attrs
                 .clone()
-                .family(family_from_name(&family_names[*family_index])),
-        )
-    });
+                .family(family_from_name(&family_names[*family_index]))
+                .letter_spacing(spacing);
+            (segment, span_attrs)
+        });
     buffer.set_rich_text(spans, attrs, Shaping::Advanced, align);
 }
 
@@ -718,6 +730,11 @@ fn prepare_buffer(
         } else {
             0.0
         };
+        let word_spacing_em = if input.word_spacing.is_finite() && input.word_spacing != 0.0 {
+            input.word_spacing / font_size
+        } else {
+            0.0
+        };
         let mut weight = input.font_weight;
         let mut stretch = input.font_stretch;
         let mut style = style_from_u32(input.font_style);
@@ -730,7 +747,16 @@ fn prepare_buffer(
             .letter_spacing(letter_spacing_em)
             .font_features(parse_font_features(&features));
         let align = align_from_u32(input.text_align, max_width.is_some());
-        set_text_with_fallbacks(&mut buffer, font_system, text, &families, &attrs, align);
+        set_text_with_fallbacks(
+            &mut buffer,
+            font_system,
+            text,
+            &families,
+            &attrs,
+            letter_spacing_em,
+            word_spacing_em,
+            align,
+        );
     }
     buffer.shape_until_scroll(font_system, false);
     buffer
