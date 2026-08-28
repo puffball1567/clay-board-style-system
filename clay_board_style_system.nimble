@@ -76,6 +76,19 @@ task testOrc, "Run the test suite under ORC":
   exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
   exec "nim c -r --mm:orc --nimcache:/tmp/clay_board_style_system_orc_test_runner_nimcache --out:/tmp/clay_board_style_system_orc_test_runner tools/run_tests.nim --memory:orc"
 
+task testLinuxAtspi, "Run the Linux AT-SPI D-Bus integration under ARC and ORC":
+  when defined(linux):
+    exec "env CBSS_MEMORY_MODEL=arc bash tests/integration/test_linux_atspi_session.sh"
+    exec "env CBSS_MEMORY_MODEL=orc bash tests/integration/test_linux_atspi_session.sh"
+  else:
+    echo "The AT-SPI D-Bus transport is Linux-only."
+
+task testLinuxAtspiValgrind, "Run the Linux AT-SPI lifecycle under Valgrind":
+  when defined(linux):
+    exec "env CBSS_MEMORY_MODEL=arc CBSS_ATSPI_VALGRIND=1 bash tests/integration/test_linux_atspi_session.sh"
+  else:
+    echo "The AT-SPI D-Bus transport is Linux-only."
+
 task testMotionAsan, "Run retained runtime tests under AddressSanitizer":
   let sanitizerRoot = thisDir() & "/nimcache"
   let addressLayoutFlags =

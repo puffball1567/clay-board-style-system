@@ -9,6 +9,12 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added an opt-in Linux AT-SPI transport behind `-d:cbssLinuxAtspi`. It
+  publishes the retained semantic tree over the accessibility D-Bus with
+  stable object paths, official roles and states, component geometry, focus,
+  and UI-owned actions. Real-session `gdbus` integration now covers ARC and
+  ORC, invalid snapshot rejection, deterministic teardown, and Valgrind.
+
 - `word-spacing` now executes consistently in the deterministic and Cosmic
   Text engines. It affects shaping, measurement, wrapping, rasterization,
   caret and hit geometry, and retained TextInput/TextArea styles; ordinary and

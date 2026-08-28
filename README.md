@@ -262,9 +262,10 @@ Version 0.5.0 is a developer preview. Public APIs may change before 1.0.
 
 - Linux x86_64 with SDL3 is the only Tier 1 runtime target.
 - Windows and macOS native runtime validation is incomplete.
-- The semantic accessibility model and platform-neutral AT-SPI adapter exist;
-  Linux AT-SPI D-Bus, Windows UIA, and macOS NSAccessibility transports remain
-  incomplete.
+- The semantic accessibility model and an opt-in Linux AT-SPI D-Bus transport
+  exist. It is enabled with `-d:cbssLinuxAtspi` and is protocol-tested against
+  a real accessibility bus; Windows UIA, macOS NSAccessibility, and broad
+  assistive-technology validation remain incomplete.
 - Remaining property-specific percentage and intrinsic-sizing combinations,
   inline rich text, additional declarative motion values, filters, 3D
   transforms, CPU effects, and GPU Canvas are roadmap work. Paint transitions
