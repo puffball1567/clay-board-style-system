@@ -20,8 +20,10 @@ module and non-window examples, builds the shared and static C ABI libraries,
 and tests the Rust text and image bridges on Linux, Windows, and macOS. A
 separate Linux lane runs the discovered suite and public examples under ORC so
 applications can select either Nim memory model. It deliberately excludes
-SDL3-window, Wayland, bundled-runtime, and platform accessibility tests. This
-catches source, ABI-build, memory-model, and native bridge portability
+SDL3-window, Wayland, bundled-runtime, and platform accessibility tests. A
+dedicated Linux lane starts an isolated AT-SPI bus and checks the real D-Bus
+protocol under ARC, ORC, and Valgrind. Together, these lanes catch source,
+ABI-build, memory-model, native bridge, and Linux accessibility transport
 regressions without presenting compilation as real-device GUI validation.
 
 ## SDL3 Policy
@@ -73,12 +75,12 @@ machine validation. A useful validation report should include:
 Platform PRs should keep OS-specific path, link, and packaging changes isolated
 from the renderer implementation whenever possible.
 
-Accessibility platform support follows the same boundary. CBSS currently has a
-platform-neutral semantic tree and an AT-SPI model adapter, but the Linux
-accessibility D-Bus transport is not yet implemented. UIA and NSAccessibility
+Accessibility platform support follows the same boundary. CBSS has a
+platform-neutral semantic tree and an opt-in Linux AT-SPI D-Bus transport,
+including real-session protocol integration tests. UIA and NSAccessibility
 must be added as independent adapters rather than conditionals inside controls.
-No platform may be marked accessibility-supported from compilation alone; it
-requires real assistive-technology validation.
+Protocol integration does not by itself establish complete assistive-technology
+support; Orca and other real-client validation remains a release requirement.
 
 Use [platform-validation-checklist.md](platform-validation-checklist.md) when
 reporting a new platform validation result.

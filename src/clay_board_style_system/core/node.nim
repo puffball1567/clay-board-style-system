@@ -15,6 +15,11 @@ type
     nkText,
     nkImage
 
+  GeneratedPartKind* = enum
+    gpkNone,
+    gpkCaret,
+    gpkAccent
+
   AccessibleRole* = enum
     arNone,
     arApplication,
@@ -60,6 +65,8 @@ type
     valueNow*: Option[float32]
     valueMin*: Option[float32]
     valueMax*: Option[float32]
+    positionInSet*: Option[int]
+    setSize*: Option[int]
     labelledBy*: Option[NodeId]
     describedBy*: Option[NodeId]
     hidden*: bool
@@ -72,6 +79,7 @@ type
     alive*: bool
     generation*: uint16
     kind*: NodeKind
+    generatedPart*: GeneratedPartKind
     parent*: Option[NodeId]
     children*: seq[NodeId]
     id*: string
@@ -245,6 +253,41 @@ proc disposeSubtree*(tree: var Tree; root: NodeId): seq[NodeId] =
         tree.root = tree.nodeIdAt(index)
         break
 
+proc reorderChildren*(
+    tree: var Tree;
+    parent: NodeId;
+    ordered: openArray[NodeId]
+): bool {.discardable.} =
+  ## Reorder every direct child of `parent` without changing node identity.
+  ## The complete child set is required so callers cannot accidentally detach
+  ## nodes or move a node across parents while changing paint/focus order.
+  if not tree.isValid(parent):
+    raise newException(ValueError, "child-order parent is not active")
+  let current = tree.nodes[parent.nodeIndex].children
+  if ordered.len != current.len:
+    raise newException(ValueError, "child order must contain every direct child exactly once")
+
+  var expected = initHashSet[NodeId]()
+  for child in current:
+    if not tree.isValid(child) or tree.nodes[child.nodeIndex].parent != some(parent):
+      raise newException(ValueError, "parent contains an invalid direct child")
+    if child in expected:
+      raise newException(ValueError, "parent contains a duplicate direct child")
+    expected.incl child
+
+  var supplied = initHashSet[NodeId]()
+  var changed = false
+  for index, child in ordered:
+    if child notin expected or child in supplied:
+      raise newException(ValueError, "child order must contain every direct child exactly once")
+    supplied.incl child
+    if current[index] != child:
+      changed = true
+
+  if changed:
+    tree.nodes[parent.nodeIndex].children = @ordered
+  changed
+
 proc addBox*(tree: var Tree; parent = none(NodeId); id = ""; code = ""; groups: openArray[string] = []): NodeId =
   result = tree.addNode(nkBox, parent)
   tree.nodes[result.nodeIndex].id = id
@@ -296,6 +339,15 @@ proc addAttribute*(tree: var Tree; id: NodeId; name, value: string) =
   if not tree.isValid(id):
     return
   tree.nodes[id.nodeIndex].attributes.add Attribute(name: name, value: value)
+
+proc setGeneratedPart*(
+    tree: var Tree;
+    id: NodeId;
+    part: GeneratedPartKind
+) =
+  if not tree.isValid(id):
+    return
+  tree.nodes[id.nodeIndex].generatedPart = part
 
 proc setAttribute*(tree: var Tree; id: NodeId; name, value: string) =
   if not tree.isValid(id):
@@ -421,6 +473,29 @@ proc setAccessibleRange*(
   tree.semantics[id.nodeIndex].valueNow = valueNow
   tree.semantics[id.nodeIndex].valueMin = valueMin
   tree.semantics[id.nodeIndex].valueMax = valueMax
+
+proc setAccessibleSetPosition*(
+    tree: var Tree;
+    id: NodeId;
+    positionInSet, setSize: Option[int]
+) =
+  ## Describe one semantic item within a logical set without materializing the
+  ## complete set. Positions are one-based, matching platform accessibility
+  ## APIs rather than zero-based application indices.
+  if not tree.isValid(id):
+    return
+  if positionInSet.isSome and positionInSet.get <= 0:
+    raise newException(ValueError, "accessible position in set must be positive")
+  if setSize.isSome and setSize.get < 0:
+    raise newException(ValueError, "accessible set size cannot be negative")
+  if positionInSet.isSome and setSize.isSome and
+      positionInSet.get > setSize.get:
+    raise newException(
+      ValueError,
+      "accessible position in set cannot exceed the set size"
+    )
+  tree.semantics[id.nodeIndex].positionInSet = positionInSet
+  tree.semantics[id.nodeIndex].setSize = setSize
 
 proc setAccessibleLabelledBy*(tree: var Tree; id: NodeId; label: Option[NodeId]) =
   if tree.isValid(id):

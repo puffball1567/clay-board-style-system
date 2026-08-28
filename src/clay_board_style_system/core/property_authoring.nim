@@ -119,7 +119,9 @@ proc display*(value: DisplayKind; sourceOrder = 0): Declaration =
 proc flexDirection*(value: FlexDirection; sourceOrder = 0): Declaration =
   let authored = case value
     of fdRow: "row"
+    of fdRowReverse: "row-reverse"
     of fdColumn: "column"
+    of fdColumnReverse: "column-reverse"
   decl("flex-direction", keyword(authored), sourceOrder)
 
 proc flexWrap*(value: FlexWrap; sourceOrder = 0): Declaration =
@@ -135,6 +137,7 @@ proc alignItems*(value: AlignItems; sourceOrder = 0): Declaration =
     of aiCenter: "center"
     of aiEnd: "end"
     of aiStretch: "stretch"
+    of aiBaseline: "baseline"
   decl("align-items", keyword(authored), sourceOrder)
 
 proc alignSelf*(value: AlignItems; sourceOrder = 0): Declaration =
@@ -143,6 +146,7 @@ proc alignSelf*(value: AlignItems; sourceOrder = 0): Declaration =
     of aiCenter: "center"
     of aiEnd: "end"
     of aiStretch: "stretch"
+    of aiBaseline: "baseline"
   decl("align-self", keyword(authored), sourceOrder)
 
 proc contentAlignmentKeyword(value: JustifyContent): string =
@@ -151,6 +155,9 @@ proc contentAlignmentKeyword(value: JustifyContent): string =
   of jcCenter: "center"
   of jcEnd: "end"
   of jcSpaceBetween: "space-between"
+  of jcSpaceAround: "space-around"
+  of jcSpaceEvenly: "space-evenly"
+  of jcStretch: "stretch"
 
 proc alignContent*(value: JustifyContent; sourceOrder = 0): Declaration =
   decl("align-content", keyword(value.contentAlignmentKeyword), sourceOrder)

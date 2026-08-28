@@ -102,7 +102,7 @@ The exact workloads, machine-local interpretation, budgets, and regression
 gates are documented in [Performance Model](docs/performance-model.md) and can
 be run with `nimble bench`.
 
-The discovered ARC suite currently covers 116 independently compiled test
+The discovered ARC suite currently covers 142 independently compiled test
 files. The same suite and public examples also run under ORC as a compatibility
 gate, so applications may select either `--mm:arc` or `--mm:orc`. ARC remains
 the stricter ownership baseline. Separate Valgrind gates exercise the complete
@@ -171,6 +171,10 @@ CBSS Image fitting and clipping, layered Style content, serif/sans typography,
 reservation details, and concierge panels. Asset provenance is recorded in
 `examples/assets/README.md`.
 
+[Kawaii companion screenshot](sample/ClayBoardStyleSystem_kawaii_demo.png) |
+[Luxury hotel screenshot](sample/ClayBoardStyleSystem_luxury_hotel_demo.png) |
+[Cue motion graphics recording](sample/ClayBoardStyleSystem_cue_motion_graphics_demo.mp4)
+
 [![Declarative transition and keyframe demo](sample/ClayBoardStyleSystem_declarative_motion_demo_preview.gif)](sample/ClayBoardStyleSystem_declarative_motion_demo.mp4)
 
 Select the preview to open the full MP4 recording.
@@ -200,8 +204,23 @@ cbss_configure system
 The selection is written to the application's ignored `.cbss/` directory.
 CBSS does not ship native runtime binaries inside its Nimble package.
 
-## What Version 0.5.0 Contains
+## What Version 0.6.0 Contains
 
+- Language-neutral Craft Style and Craft Pack contracts with atomic loading,
+  replacement, bounded validation, public Style Slots, and versioned C ABI
+  capability negotiation.
+- Maintained C++14 and Rust Craft Drivers for retained components, Style,
+  events, State and Store updates, validation, Commands, Cues, navigation,
+  FormData, and deterministic lifecycle ownership.
+- Bounded data virtualization for lists with sparse measured extents, stable-key
+  node reuse, focus restoration, logical accessibility ranges, and performance
+  gates covering up to 10,000,000 logical items without retaining every row.
+- Multi-line and reverse Flex layout, baseline alignment, `box-sizing`,
+  `place-content`, final-size descendant relayout, and executable text wrapping,
+  transform, overflow, indent, alignment, spacing, and background geometry.
+- An opt-in Linux AT-SPI D-Bus transport with stable semantic objects, official
+  roles and states, geometry, focus, actions, ARC/ORC integration coverage, and
+  Valgrind-checked lifecycle handling.
 - An opt-in frontend runtime with retained typed State, transactional Stores,
   selectors, component-owned watchers and effects, typed asynchronous Commands,
   and dirty-domain invalidation without virtual-DOM replay.
@@ -254,13 +273,14 @@ Accepting a value as metadata does not mean that layout or paint consumes it.
 
 ## Current Boundaries
 
-Version 0.5.0 is a developer preview. Public APIs may change before 1.0.
+Version 0.6.0 is a developer preview. Public APIs may change before 1.0.
 
 - Linux x86_64 with SDL3 is the only Tier 1 runtime target.
 - Windows and macOS native runtime validation is incomplete.
-- The semantic accessibility model and platform-neutral AT-SPI adapter exist;
-  Linux AT-SPI D-Bus, Windows UIA, and macOS NSAccessibility transports remain
-  incomplete.
+- The semantic accessibility model and an opt-in Linux AT-SPI D-Bus transport
+  exist. It is enabled with `-d:cbssLinuxAtspi` and is protocol-tested against
+  a real accessibility bus; Windows UIA, macOS NSAccessibility, and broad
+  assistive-technology validation remain incomplete.
 - Remaining property-specific percentage and intrinsic-sizing combinations,
   inline rich text, additional declarative motion values, filters, 3D
   transforms, CPU effects, and GPU Canvas are roadmap work. Paint transitions
@@ -346,11 +366,24 @@ Applications can wrap `include/cbss.h` from C, C++, Rust, Zig, Swift, or another
 language with C interoperability. See [C ABI Guide](docs/c-api.md) for
 construction, ownership, callbacks, versioning, and static/shared linking.
 
+C++14 applications can use the higher-level reference Craft Driver in
+[`drivers/cpp`](drivers/cpp/README.md). It provides RAII ownership, typed Style
+values, capability negotiation, and scoped nested UI construction while using
+the same C ABI engine underneath.
+
+Rust applications can use the maintained [`cbss-craft`](drivers/rust/README.md)
+Driver. Its raw FFI stays private; `Drop`, context-bound Nodes, typed Style
+values, and borrowed child Scopes provide the same engine contract through
+Rust-native ownership and error handling.
+
 ## Documentation
 
 | Topic | Document |
 | --- | --- |
 | Product direction | [Roadmap](docs/roadmap.md) |
+| Craft components, styles, packs, and drivers | [Craft Ecosystem](docs/craft.md) |
+| Portable Craft Style JSON contract | [Craft Style Exchange Format](docs/craft-style-format.md) |
+| Portable Craft Pack manifest contract | [Craft Pack Manifest Format](docs/craft-pack-format.md) |
 | Architecture and boundaries | [Architecture](docs/architecture.md) |
 | API stability and deprecation | [API Stability](docs/api-stability.md) |
 | Performance budgets | [Performance Model](docs/performance-model.md) |
@@ -360,6 +393,7 @@ construction, ownership, callbacks, versioning, and static/shared linking.
 | Events and typed signals | [Events](docs/events.md) |
 | Blob, FormData, and Streams | [UI Data Interchange](docs/data-interchange.md) |
 | Canvas and custom drawing | [Render Surfaces](docs/render-surfaces.md) |
+| SDL3, CPU vector, bgfx, and color management | [Native Rendering Stack](docs/native-rendering-stack.md) |
 | Optional platform primitive candidates | [Platform Primitives](docs/platform-primitives.md) |
 | Navigation and Link | [Navigation](docs/navigation.md) |
 | Color model | [Color](docs/color.md) |

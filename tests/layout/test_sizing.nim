@@ -52,7 +52,8 @@ suite "percentage auto and intrinsic sizing":
       rule(target(root), [
         decl("width", px(200)),
         decl("height", px(60)),
-        decl("padding", px(10))
+        decl("padding", px(10)),
+        decl("box-sizing", keyword("border-box"))
       ]),
       rule(target(child), [decl("width", percent(100)), decl("height", px(20))])
     ])

@@ -1,0 +1,41 @@
+{
+  "format": "cbss-craft-pack",
+  "version": 1,
+  "id": "org.example.dashboard",
+  "packVersion": "1.2.0",
+  "compatibility": {
+    "minimumAbi": 65561,
+    "minimumDriverContract": 65536,
+    "capabilities": [
+      {"id": 1, "minimumVersion": 1},
+      {"id": 16, "minimumVersion": 1},
+      {"id": 17, "minimumVersion": 1}
+    ]
+  },
+  "components": [
+    {"name": "dashboard-card", "slots": ["root", "title", "body"]}
+  ],
+  "styles": [
+    {
+      "name": "dashboard-light",
+      "path": "styles/dashboard-light.json",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    }
+  ],
+  "assets": [
+    {
+      "id": "dashboard-logo",
+      "kind": "image",
+      "path": "assets/dashboard-logo.png",
+      "mimeType": "image/png",
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+    }
+  ],
+  "profiles": [
+    {
+      "name": "gpu-effects",
+      "capabilities": [{"id": 12, "minimumVersion": 1}]
+    }
+  ],
+  "platforms": ["linux-x86_64", "macos-arm64", "windows-x86_64"]
+}

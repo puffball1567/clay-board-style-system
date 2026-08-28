@@ -110,6 +110,45 @@ suite "accessibility semantics":
     check semantic.name == "Explicit name"
     check semantic.description == "Explicit description"
 
+  test "logical set positions are one-based and preserve unknown fields":
+    let ui = initUiRoot()
+    let item = ui.box()
+    item.setAccessibleRole(arListItem)
+
+    item.setAccessibleSetPosition(some(501), some(100_000))
+    let semantic = ui.accessibilityTree().accessibleNodeFor(item.nodeId).get
+    check semantic.positionInSet == some(501)
+    check semantic.setSize == some(100_000)
+
+    item.setAccessibleSetPosition(none(int), some(100_000))
+    let sizeOnly = ui.accessibilityTree().accessibleNodeFor(item.nodeId).get
+    check sizeOnly.positionInSet.isNone
+    check sizeOnly.setSize == some(100_000)
+
+    item.setAccessibleSetPosition(none(int), none(int))
+    let cleared = ui.accessibilityTree().accessibleNodeFor(item.nodeId).get
+    check cleared.positionInSet.isNone
+    check cleared.setSize.isNone
+
+  test "invalid logical set positions fail without changing prior semantics":
+    let ui = initUiRoot()
+    let item = ui.box()
+    item.setAccessibleRole(arListItem)
+    item.setAccessibleSetPosition(some(2), some(5))
+
+    expect ValueError:
+      item.setAccessibleSetPosition(some(0), some(5))
+    expect ValueError:
+      item.setAccessibleSetPosition(some(-1), some(5))
+    expect ValueError:
+      item.setAccessibleSetPosition(some(6), some(5))
+    expect ValueError:
+      item.setAccessibleSetPosition(none(int), some(-1))
+
+    let semantic = ui.accessibilityTree().accessibleNodeFor(item.nodeId).get
+    check semantic.positionInSet == some(2)
+    check semantic.setSize == some(5)
+
   test "semantic parent skips presentational nodes":
     let ui = initUiRoot()
     let dialog = ui.dialog("Confirm", "Proceed?", open = true)

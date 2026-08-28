@@ -16,6 +16,8 @@ type
     valueNow*: Option[float32]
     valueMin*: Option[float32]
     valueMax*: Option[float32]
+    positionInSet*: Option[int]
+    setSize*: Option[int]
     states*: set[ElementState]
     focusable*: bool
     hidden*: bool
@@ -83,6 +85,8 @@ proc accessibilityTree*(tree: Tree): seq[AccessibleNode] =
       valueNow: info.valueNow,
       valueMin: info.valueMin,
       valueMax: info.valueMax,
+      positionInSet: info.positionInSet,
+      setSize: info.setSize,
       states: source.states,
       focusable: tree.isFocusable(id),
       hidden: tree.isAccessibleHidden(id),

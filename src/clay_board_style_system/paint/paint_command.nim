@@ -54,8 +54,11 @@ type
       radius*: float32
     of pcFillLinearGradient:
       gradientRect*: Rect
+      gradientPaintRect*: Rect
+      gradientClipRect*: Rect
       gradient*: LinearGradient
       gradientRadius*: float32
+      gradientRepeat*: BackgroundRepeat
     of pcStrokeRect:
       strokeRect*: Rect
       strokeColor*: Color
@@ -145,7 +148,7 @@ proc visualBounds(command: PaintCommand): Option[Rect] =
   of pcFillRect:
     some(command.rect)
   of pcFillLinearGradient:
-    some(command.gradientRect)
+    some(command.gradientPaintRect)
   of pcStrokeRect:
     some(command.strokeRect.expanded(max(0.0'f32, command.strokeWidth) * 0.5'f32))
   of pcStrokePath:
@@ -161,7 +164,20 @@ proc visualBounds(command: PaintCommand): Option[Rect] =
     let width =
       if command.textMaxWidth.isSome: command.textMaxWidth.get
       else: max(fontSize, command.text.runeLen.float32 * fontSize * 0.7'f32)
-    some(rect(command.position.x, command.position.y, width, lineHeight * lineCount.float32))
+    let authoredIndent = command.textStyle.textIndent.get(0.0'f32)
+    let indent =
+      if authoredIndent.classify in {fcNan, fcInf, fcNegInf}: 0.0'f32
+      else: authoredIndent
+    let leftOffset = min(0.0'f32, indent)
+    let rightOffset =
+      if command.textMaxWidth.isSome: 0.0'f32
+      else: max(0.0'f32, indent)
+    some(rect(
+      command.position.x + leftOffset,
+      command.position.y,
+      width - leftOffset + rightOffset,
+      lineHeight * lineCount.float32
+    ))
   of pcDrawImage:
     some(command.imageRect)
   of pcPushLayer:
@@ -193,8 +209,26 @@ proc resolveTransformBounds*(commands: var seq[PaintCommand]) =
         if bounds.isSome:
           stack[^1].bounds.includeBounds(bounds.get)
 
-proc fillLinearGradient*(rect: Rect; gradient: LinearGradient; radius: float32 = 0; owner = none(NodeId)): PaintCommand =
-  PaintCommand(kind: pcFillLinearGradient, owner: owner, gradientRect: rect, gradient: gradient, gradientRadius: radius)
+proc fillLinearGradient*(
+    rect: Rect;
+    gradient: LinearGradient;
+    radius: float32 = 0;
+    owner = none(NodeId);
+    paintRect = none(Rect);
+    clipRect = none(Rect);
+    repeat = bgNoRepeat
+): PaintCommand =
+  let resolvedPaintRect = paintRect.get(rect)
+  PaintCommand(
+    kind: pcFillLinearGradient,
+    owner: owner,
+    gradientRect: rect,
+    gradientPaintRect: resolvedPaintRect,
+    gradientClipRect: clipRect.get(resolvedPaintRect),
+    gradient: gradient,
+    gradientRadius: radius,
+    gradientRepeat: repeat
+  )
 
 proc pushClip*(rect: Rect; radius: float32 = 0): PaintCommand =
   PaintCommand(kind: pcPushClip, clipRect: rect, clipRadius: radius)

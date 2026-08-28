@@ -159,6 +159,7 @@ proc slider*(
     decl("top", px(0)),
     decl("pointer-events", keyword("none"))
   ]), parent = some(result.trackNode), groups = ["slider-fill"])
+  root.tree.setGeneratedPart(result.fillNode.id, gpkAccent)
   result.thumbNode = root.text(result.trackNode, "", thumbStyle, groups = ["slider-thumb"])
   result.valueNode = root.text(result.container, "", valueStyle, groups = ["slider-value"])
   result.syncVisibleState()

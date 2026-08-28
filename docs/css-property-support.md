@@ -50,16 +50,16 @@ preserves typed intent for later runtime work.
 
 | Status | Count |
 | --- | ---: |
-| Runtime | 174 |
-| Computed | 77 |
+| Runtime | 202 |
+| Computed | 49 |
 | Metadata | 176 |
 | Planned | 0 |
 | No plan | 238 |
 | Target properties | 427 |
 | Total MDN entries | 665 |
 
-As of 2026-08-10, strict runtime completion is **174 of 427 target
-properties (40.7%)**. A further 77 properties reach computed style, so
+As of 2026-08-28, strict runtime completion is **202 of 427 target
+properties (47.3%)**. A further 49 properties reach computed style, so
 **251 of 427 (58.8%)** have runtime or computed support. All 427 target names
 are accepted by the default registry, but metadata-only acceptance is not
 counted as completed behavior. The 238 `No plan` entries are excluded from the
@@ -85,7 +85,7 @@ inventory below; they are not additional properties.
 
 | Property | Status | Note |
 | --- | --- | --- |
-| `align-items` | Runtime | Initial CBSS runtime surface. |
+| `align-items` | Runtime | Supports start, center, end, stretch, and first-baseline alignment in horizontal Flex rows. |
 | `background-color` | Runtime | Initial CBSS runtime surface. |
 | `border` | Runtime | Initial CBSS runtime surface. |
 | `border-bottom` | Runtime | Initial CBSS runtime surface. |
@@ -117,7 +117,7 @@ inventory below; they are not additional properties.
 | `column-gap` | Runtime | Supports px and percentage spacing against the container content width. |
 | `display` | Runtime | Initial CBSS runtime surface. |
 | `flex-basis` | Runtime | Supports px, percentage, auto, and intrinsic sizing values. |
-| `flex-direction` | Runtime | Initial CBSS runtime surface. |
+| `flex-direction` | Runtime | Supports `row`, `row-reverse`, `column`, and `column-reverse` without changing logical focus or accessibility order. |
 | `flex-grow` | Runtime | Initial CBSS runtime surface. |
 | `flex-shrink` | Runtime | Initial CBSS runtime surface. |
 | `font-family` | Runtime | Ordered family fallback is resolved across the cosmic-text bridge; registered-only rendering is available with `useSystemFonts = false`. |
@@ -152,9 +152,9 @@ inventory below; they are not additional properties.
 | `position` | Runtime | `static`, `relative`, and `absolute` are implemented; `fixed` and `sticky` produce diagnostics. Positioned-ancestor chaining is still pending. |
 | `right` | Runtime | Supports signed px and percentage offsets against the containing content width. |
 | `row-gap` | Runtime | Supports px and percentage spacing against the container content height. |
-| `text-align` | Runtime | Initial CBSS runtime surface. |
+| `text-align` | Runtime | `start`/`left`, `center`, and `end`/`right` align each explicit or soft-wrapped line across shaping, rasterization, caret geometry, hit testing, and SDL3 debug text. Alignment composes with first-line indentation and requires a finite line width; logical start/end currently use horizontal LTR semantics. |
 | `top` | Runtime | Supports signed px and percentage offsets against the containing content height. |
-| `white-space` | Runtime | Initial CBSS runtime surface. |
+| `white-space` | Runtime | `normal`, `nowrap`, `pre`, `pre-wrap`, `pre-line`, and `break-spaces` control soft wrapping; complete browser whitespace collapsing remains pending. |
 | `width` | Runtime | Supports px, percentage, auto, and intrinsic sizing values. |
 | `z-index` | Runtime | Initial CBSS runtime surface. |
 
@@ -283,10 +283,10 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `-webkit-touch-callout` | No plan | Vendor-specific browser property. |
 | `-webkit-user-modify` | No plan | Vendor-specific browser property. |
 | `-webkit-user-select` | No plan | Vendor-specific browser property. |
-| `accent-color` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
-| `align-content` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
-| `align-items` | Runtime | Initial CBSS runtime surface. |
-| `align-self` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `accent-color` | Runtime | Inherits through computed style and colors generated active parts for Checkbox, Radio, Switch, and Slider; `auto` retains component fallback Style. |
+| `align-content` | Runtime | Distributes multiple Flex lines with start, center, end, space-between, space-around, space-evenly, and stretch behavior. |
+| `align-items` | Runtime | Supports start, center, end, stretch, and first-baseline alignment in horizontal Flex rows. |
+| `align-self` | Runtime | Overrides the parent cross-axis alignment, including first-baseline alignment in horizontal Flex rows. |
 | `align-tracks` | Metadata | Stored as computed layout metadata. |
 | `alignment-baseline` | Metadata | Stored as computed baseline metadata. |
 | `all` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
@@ -308,21 +308,21 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `animation-timing-function` | Runtime | Supports cycled named timing functions, step start/end, and valid cubic Bezier curves for named paint keyframes. |
 | `animation-trigger` | Metadata | Stored as animation metadata; runtime subsystem is not complete yet. |
 | `appearance` | Metadata | Stored as computed visual metadata. |
-| `aspect-ratio` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `aspect-ratio` | Runtime | Derives a missing axis during intrinsic and explicit sizing, then composes with min/max constraints and `content-box` or `border-box` geometry. |
 | `backdrop-filter` | Metadata | Stored as visual effect metadata; renderer application is a later runtime layer. |
 | `backface-visibility` | Metadata | Stored as computed transform metadata. |
 | `background` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `background-attachment` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `background-blend-mode` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
-| `background-clip` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `background-clip` | Runtime | Clips background color and the linear-gradient image path to the border, padding, or content box with the current uniform-radius approximation. |
 | `background-color` | Runtime | Initial CBSS runtime surface. |
 | `background-image` | Runtime | Linear gradients are emitted into paint commands; other image forms are still partial. |
-| `background-origin` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
-| `background-position` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
-| `background-position-x` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
-| `background-position-y` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
-| `background-repeat` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
-| `background-size` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `background-origin` | Runtime | Selects the border, padding, or content positioning area for the linear-gradient image path. |
+| `background-position` | Runtime | Positions one linear-gradient layer with one length, percentage, or edge/center keyword; two-value and multi-layer syntax remain future work. |
+| `background-position-x` | Runtime | Positions the linear-gradient tile on the horizontal axis using a length, percentage, or horizontal keyword. |
+| `background-position-y` | Runtime | Positions the linear-gradient tile on the vertical axis using a length, percentage, or vertical keyword. |
+| `background-repeat` | Runtime | Executes `repeat`, `no-repeat`, `repeat-x`, and `repeat-y` through one bounded paint command; `space`, `round`, and multi-layer syntax remain future work. |
+| `background-size` | Runtime | Executes `auto`, `cover`, `contain`, or one explicit non-negative length/percentage for the linear-gradient path; two-value and intrinsic raster-image sizing remain future work. |
 | `baseline-shift` | Metadata | Stored as computed baseline metadata. |
 | `baseline-source` | Metadata | Stored as computed baseline metadata. |
 | `block-size` | Runtime | Logical height alias with percentage, auto, and intrinsic sizing in horizontal LTR mode. |
@@ -399,14 +399,14 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `box-orient` | Metadata | Stored as legacy box layout metadata. |
 | `box-pack` | Metadata | Stored as legacy box layout metadata. |
 | `box-shadow` | Runtime | Emits box shadow paint commands in the SDL3 renderer. |
-| `box-sizing` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `box-sizing` | Runtime | `content-box` and `border-box` control explicit dimensions, min/max constraints, flex-basis, intrinsic layout, and child content geometry. |
 | `break-after` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
 | `break-before` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
 | `break-inside` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
 | `caption-side` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
 | `caret` | Metadata | Stored as computed visual metadata. |
 | `caret-animation` | Metadata | Stored as computed visual metadata. |
-| `caret-color` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `caret-color` | Runtime | Colors generated TextInput and TextArea insertion carets through the owner's computed style; `auto` retains the component fallback. |
 | `caret-shape` | Metadata | Stored as computed visual metadata. |
 | `clear` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
 | `clip` | No plan | MDN marks this property obsolete; CBSS should not implement obsolete or effectively deprecated CSS. |
@@ -474,11 +474,11 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `filter` | Metadata | Stored as visual effect metadata; renderer application is a later runtime layer. |
 | `flex` | Runtime | Supports common single-value shorthand forms: number, sizing basis, `none`, `auto`, and `initial`. |
 | `flex-basis` | Runtime | Supports px, percentage, auto, and intrinsic sizing values. |
-| `flex-direction` | Runtime | Initial CBSS runtime surface. |
-| `flex-flow` | Computed | Supports direction/wrap keyword metadata such as `column wrap`; runtime wrapping is still partial. |
+| `flex-direction` | Runtime | Supports `row`, `row-reverse`, `column`, and `column-reverse` without changing logical focus or accessibility order. |
+| `flex-flow` | Runtime | Applies all four main-axis directions and `nowrap`/`wrap`/`wrap-reverse` together. |
 | `flex-grow` | Runtime | Initial CBSS runtime surface. |
 | `flex-shrink` | Runtime | Initial CBSS runtime surface. |
-| `flex-wrap` | Computed | Supports `nowrap`, `wrap`, and `wrap-reverse` metadata; runtime wrapping is still partial. |
+| `flex-wrap` | Runtime | Forms independent Flex lines for `wrap`, preserves one line for `nowrap`, and mirrors the cross axis for `wrap-reverse`. |
 | `float` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
 | `flood-color` | Metadata | Stores color values as computed vector metadata. |
 | `flood-opacity` | Metadata | Stores number values as computed vector metadata. |
@@ -490,7 +490,7 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `font-optical-sizing` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `font-palette` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `font-size` | Runtime | Initial CBSS runtime surface. |
-| `font-size-adjust` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `font-size-adjust` | Runtime | Adjusts effective font size in both the deterministic reference engine and Cosmic Text measurement, baseline, caret, hit, and raster paths. |
 | `font-smooth` | Metadata | Stored as computed text metadata. |
 | `font-stretch` | Computed | Stored for native text engines and cosmic-text font matching. |
 | `font-style` | Runtime | Initial CBSS runtime surface. |
@@ -536,7 +536,7 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `hyphenate-limit-chars` | Metadata | Stored as computed text metadata. |
 | `hyphens` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `image-orientation` | Metadata | Stored as computed image metadata. |
-| `image-rendering` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `image-rendering` | Runtime | Selects SDL3 linear, nearest-neighbor, or pixel-art texture scaling for image paint, including sampling-aware rounded-image cache entries. |
 | `image-resolution` | Metadata | Stored as computed image metadata. |
 | `ime-mode` | No plan | MDN marks this property obsolete; CBSS should not implement obsolete or effectively deprecated CSS. |
 | `initial-letter` | Metadata | Stored as computed text metadata. |
@@ -560,7 +560,7 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `justify-self` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `justify-tracks` | Metadata | Stored as computed layout metadata. |
 | `left` | Runtime | Supports signed px and percentage offsets against the containing content width. |
-| `letter-spacing` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `letter-spacing` | Runtime | Participates in reference and Cosmic Text measurement, wrapping, caret geometry, hit testing, ellipsis, and raster cache identity. |
 | `lighting-color` | Metadata | Stores color values as computed vector metadata. |
 | `line-break` | No plan |  |
 | `line-clamp` | No plan |  |
@@ -627,7 +627,7 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `offset-position` | No plan |  |
 | `offset-rotate` | No plan |  |
 | `opacity` | Runtime | Initial CBSS runtime surface. |
-| `order` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `order` | Runtime | Reorders Flex placement before normal or reverse main-axis flow without mutating node, paint, focus, or accessibility order. |
 | `orphans` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
 | `outline` | Runtime | Emits outline stroke paint commands outside the border box. |
 | `outline-color` | Runtime | Emits outline stroke paint commands outside the border box. |
@@ -640,7 +640,7 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `overflow-clip-box` | Metadata | Stored as computed overflow metadata. |
 | `overflow-clip-margin` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `overflow-inline` | Runtime | `hidden` and `clip` participate in paint clipping. |
-| `overflow-wrap` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `overflow-wrap` | Runtime | `anywhere` and legacy `break-word` enable UTF-8 rune-boundary wrapping for otherwise unbreakable runs. |
 | `overflow-x` | Runtime | Resolves and clips the horizontal axis independently; `auto` and `scroll` enable horizontal offset updates. |
 | `overflow-y` | Runtime | Resolves and clips the vertical axis independently; `auto` and `scroll` enable vertical offset updates. |
 | `overlay` | Metadata | Stored as computed visual metadata. |
@@ -667,7 +667,7 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `paint-order` | Metadata | Stored as computed vector metadata. |
 | `perspective` | Metadata | Stores length values and `none` as computed transform metadata. |
 | `perspective-origin` | Computed | Accepts single-value length/percent/keyword input mirrored to x/y. |
-| `place-content` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `place-content` | Runtime | Executes one- and two-keyword Flex alignment shorthands through `align-content` and `justify-content`, with atomic rejection of invalid compound values. |
 | `place-items` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `place-self` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `pointer-events` | Runtime | `none` removes nodes from hit testing; `auto` keeps normal hit behavior. |
@@ -683,7 +683,7 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `r` | Metadata | Stores number and px length values as computed vector geometry metadata. |
 | `reading-flow` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `reading-order` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
-| `resize` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `resize` | Runtime | Controls the reference TextArea resize handle for horizontal, vertical, both-axis, and disabled behavior with min/max constraints and resize events. Generic arbitrary-element resize is not implied. |
 | `right` | Runtime | Supports signed px and percentage offsets against the containing content width. |
 | `rotate` | Runtime | Resolves into the shared 2D affine paint, hit-test, clip, and surface-input contract and supports declarative transitions/keyframes. |
 | `row-gap` | Runtime | Supports px and percentage spacing against the container content height. |
@@ -753,8 +753,8 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `stroke-width` | Metadata | Stores number and px length values as computed vector metadata. |
 | `tab-size` | Metadata | Stored in computed text style; accepts number and px values. |
 | `table-layout` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
-| `text-align` | Runtime | Initial CBSS runtime surface. |
-| `text-align-last` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `text-align` | Runtime | `start`/`left`, `center`, and `end`/`right` align each explicit or soft-wrapped line across shaping, rasterization, caret geometry, hit testing, and SDL3 debug text. Alignment composes with first-line indentation and requires a finite line width; logical start/end currently use horizontal LTR semantics. |
+| `text-align-last` | Computed | Accepted and resolved into computed style, but not applied at runtime until the shared text contract can distinguish final visual lines and lines preceding forced breaks. |
 | `text-anchor` | Metadata | Stored as computed text metadata. |
 | `text-autospace` | Metadata | Stored as computed text metadata. |
 | `text-box` | Metadata | Stored as computed text metadata. |
@@ -773,18 +773,18 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `text-emphasis-color` | Metadata | Stores color values as computed text metadata. |
 | `text-emphasis-position` | Metadata | Stored as computed text metadata. |
 | `text-emphasis-style` | Metadata | Stored as computed text metadata. |
-| `text-indent` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `text-indent` | Runtime | Positive and negative lengths shape only the first visual line; wrapping, explicit line breaks, measurement, caret geometry, hit testing, ellipsis, bitmap caching, SDL3 debug paint, and transform bounds share the result. Percentage values remain future work. |
 | `text-justify` | Metadata | Stored as computed text metadata. |
 | `text-orientation` | Metadata | Stored as computed text metadata. |
-| `text-overflow` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `text-overflow` | Runtime | `clip` preserves the source paint run; `ellipsis` measures and truncates no-wrap text per explicit line at UTF-8 rune boundaries. Soft-wrapped multi-line ellipsis remains future work. |
 | `text-rendering` | Metadata | Stored as computed text metadata. |
 | `text-shadow` | Runtime | Emits shadow text before foreground text; blur is still approximate. |
 | `text-size-adjust` | Metadata | Stored as computed text length metadata. |
 | `text-spacing-trim` | Metadata | Stored as computed text metadata. |
-| `text-transform` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `text-transform` | Runtime | `none`, `uppercase`, `lowercase`, and `capitalize` share Unicode-aware measurement, caret/hit mapping, and paint output without mutating source values. Locale-specific casing remains outside the current contract. |
 | `text-underline-offset` | Runtime | Emits text decoration paint commands; advanced browser skip behavior remains partial. |
 | `text-underline-position` | Metadata | Stored as computed text metadata. |
-| `text-wrap` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `text-wrap` | Computed | `wrap` and `nowrap` execute at runtime; `balance`, `pretty`, and `stable` currently retain ordinary wrapping behavior. |
 | `text-wrap-mode` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `text-wrap-style` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `timeline-scope` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
@@ -823,14 +823,14 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `view-transition-name` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
 | `view-transition-scope` | Metadata | Stored as computed transition metadata. |
 | `visibility` | Runtime | `hidden` suppresses paint and hit behavior. |
-| `white-space` | Runtime | Initial CBSS runtime surface. |
+| `white-space` | Runtime | Controls soft wrapping, including explicit no-wrap and preformatted behavior; full browser whitespace collapsing remains pending. |
 | `white-space-collapse` | Metadata | Stored as computed text metadata. |
 | `widows` | No plan | Browser, document, generated-content, table, print, or web-specific behavior. |
 | `width` | Runtime | Supports px, percentage, auto, and intrinsic sizing values. |
 | `will-change` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
-| `word-break` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
-| `word-spacing` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
-| `word-wrap` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `word-break` | Runtime | `break-all` and legacy `break-word` execute at UTF-8 rune boundaries; `keep-all` retains the text backend's normal word behavior pending locale-aware line breaking. |
+| `word-spacing` | Runtime | Adds advance to ordinary and non-breaking word separators across deterministic and Cosmic Text shaping, measurement, wrapping, rasterization, caret/hit geometry, and retained text controls. |
+| `word-wrap` | Runtime | Legacy alias of `overflow-wrap`; `anywhere` and `break-word` execute through the shared wrapping contract. |
 | `writing-mode` | Metadata | Stored in computed text style; logical property remapping still uses the initial horizontal LTR mode. |
 | `x` | Metadata | Stores number and px length values as computed vector geometry metadata. |
 | `y` | Metadata | Stores number and px length values as computed vector geometry metadata. |

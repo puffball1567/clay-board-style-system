@@ -18,13 +18,14 @@ does not require a browser URL.
 Accessibility support is split into independent layers:
 
 1. `runtime/accessibility.nim` resolves the retained semantic tree. It exposes
-   typed roles, names, descriptions, values, states, relations, and optional
-   layout bounds.
+   typed roles, names, descriptions, values, states, relations, logical set
+   position/size, and optional layout bounds.
 2. `backends/atspi/adapter.nim` maps that tree to stable AT-SPI object paths,
    roles, state, interfaces, actions, and snapshot changes.
-3. A Linux transport publishes the snapshot through the accessibility D-Bus.
-   This transport is not implemented yet. UIA and NSAccessibility transports
-   will be separate modules over the same semantic tree.
+3. `backends/atspi/linux_dbus.nim` publishes the snapshot through the Linux
+   accessibility D-Bus when compiled with `-d:cbssLinuxAtspi`. UIA and
+   NSAccessibility transports remain separate future modules over the same
+   semantic tree.
 
 The AT-SPI adapter uses the specification root path
 `/org/a11y/atspi/accessible/root`. Node paths are generated only from internal
@@ -60,6 +61,26 @@ hidden, cannot receive accessibility actions through the UI event path, and do
 not participate in focus traversal. Reactivation restores semantics without
 reconstructing the screen subtree.
 
+## Virtual Collections
+
+Viewport virtualization must not make a bounded materialized window appear to
+be the complete collection. `setAccessibleSetPosition` assigns a one-based
+`positionInSet` and optional logical `setSize` to an item. `VirtualNodePool`
+sets both values automatically from each item geometry and the range plan's
+logical item count, including when a retained stable key moves after data
+reordering.
+
+These values describe an item; they do not infer whether the author intended a
+List, Grid, Tree, or another collection. Components must still assign the
+appropriate accessible role. A position must be positive, a set size cannot be
+negative, and a known position cannot exceed a known size. Invalid combinations
+are rejected without changing the previous semantic value.
+
+The platform-neutral AT-SPI snapshot carries the same fields and emits an
+`ackSetPosition` change when either value changes. The C ABI adds a separate
+`CbssAccessibleSetPosition` structure and setter/getter pair so the fixed-size
+`CbssAccessibility` ABI remains unchanged.
+
 ## Security Boundary
 
 Platform transports must:
@@ -72,3 +93,34 @@ Platform transports must:
 
 The platform-neutral adapter follows these rules and has no D-Bus, filesystem,
 process, or network access of its own.
+
+## Linux AT-SPI Transport
+
+The Linux transport dynamically loads GLib, GObject, and GIO only in builds
+compiled with `-d:cbssLinuxAtspi`. Ordinary builds and non-Linux builds do not
+import or link this module. The host creates one transport for its `UiRoot`,
+publishes snapshots through the neutral adapter, dispatches its GLib context
+from the UI thread, and closes it before disposing the root:
+
+```nim
+let linuxAtspi = initLinuxAtspiTransport(ui)
+if linuxAtspi.connected():
+  let accessibility = initAtspiAdapter(linuxAtspi.atspiTransport())
+  discard accessibility.refresh(ui, layout, "Application name")
+
+# Integrate this with the host event loop and after accessibility mutations.
+discard linuxAtspi.poll()
+
+linuxAtspi.close()
+```
+
+Publishing rejects malformed, duplicate, or disconnected object paths without
+replacing the last valid snapshot. D-Bus callbacks validate every path,
+interface, method, property, and action against that snapshot. Callbacks run on
+the same explicitly polled GLib context as the UI thread; they do not mutate the
+retained tree from a background D-Bus thread.
+
+Linux CI starts an isolated accessibility bus and uses an external `gdbus`
+client to inspect Application, Accessible, Action, and Component behavior under
+ARC and ORC. The same lifecycle runs under Valgrind. This protocol integration
+does not replace manual validation with Orca and other assistive technologies.

@@ -110,17 +110,25 @@ proc applyFlexDirection(
   case declaration.operation.value.get.keyword
   of "row":
     style.layout.direction = fdRow
+  of "row-reverse":
+    style.layout.direction = fdRowReverse
   of "column":
     style.layout.direction = fdColumn
+  of "column-reverse":
+    style.layout.direction = fdColumnReverse
   else:
-      diagnostics.addError(declaration.property, "unsupported flex-direction keyword")
+    diagnostics.addError(declaration.property, "unsupported flex-direction keyword")
 
 proc parseFlexDirectionKeyword(property, value: string; diagnostics: var Diagnostics): Option[FlexDirection] =
   case value
   of "row":
     some(fdRow)
+  of "row-reverse":
+    some(fdRowReverse)
   of "column":
     some(fdColumn)
+  of "column-reverse":
+    some(fdColumnReverse)
   else:
     diagnostics.addError(property, "unsupported flex-direction keyword")
     none(FlexDirection)
@@ -179,7 +187,7 @@ proc applyFlexFlow(
   var directionSet = false
   var wrapSet = false
   for part in parts:
-    if part in ["row", "column"]:
+    if part in ["row", "row-reverse", "column", "column-reverse"]:
       if directionSet:
         diagnostics.addError(declaration.property, "flex-flow direction is duplicated")
         return
@@ -401,6 +409,8 @@ proc parseAlignItemsKeyword(property, value: string; diagnostics: var Diagnostic
     some(aiEnd)
   of "stretch":
     some(aiStretch)
+  of "baseline":
+    some(aiBaseline)
   else:
     diagnostics.addError(property, "unsupported " & property & " keyword")
     none(AlignItems)
@@ -415,6 +425,12 @@ proc parseJustifyContentKeyword(property, value: string; diagnostics: var Diagno
     some(jcEnd)
   of "space-between":
     some(jcSpaceBetween)
+  of "space-around":
+    some(jcSpaceAround)
+  of "space-evenly":
+    some(jcSpaceEvenly)
+  of "stretch":
+    some(jcStretch)
   else:
     diagnostics.addError(property, "unsupported " & property & " keyword")
     none(JustifyContent)
@@ -586,10 +602,27 @@ proc applyPlaceContent(
   let value = keywordValue(declaration, diagnostics)
   if value.isNone:
     return
-  let parsed = parseJustifyContentKeyword(declaration.property, value.get, diagnostics)
-  if parsed.isSome:
-    style.layout.alignContent = parsed.get
-    style.layout.justifyContent = parsed.get
+  let parts = value.get.splitWhitespace()
+  if parts.len notin 1 .. 2:
+    diagnostics.addError(
+      declaration.property,
+      "place-content expects one or two alignment keywords"
+    )
+    return
+  let align = parseJustifyContentKeyword(
+    declaration.property, parts[0], diagnostics
+  )
+  if align.isNone:
+    return
+  let justify =
+    if parts.len == 2:
+      parseJustifyContentKeyword(declaration.property, parts[1], diagnostics)
+    else:
+      align
+  if justify.isNone:
+    return
+  style.layout.alignContent = align.get
+  style.layout.justifyContent = justify.get
 
 proc applyPlaceItems(
     style: var ComputedStyle;

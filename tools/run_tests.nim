@@ -1,6 +1,7 @@
 import std/[algorithm, os, osproc, sequtils, strutils]
 
 const excludedTests = [
+  "tests/integration/atspi_linux_fixture.nim",
   "tests/integration/test_sdl3_large_paste.nim",
   "tests/integration/test_sdl3_wayland_smoke.nim",
   "tests/perf/color_conversion_benchmark.nim",
@@ -12,7 +13,9 @@ const excludedTests = [
 ]
 
 const portableExcludedTests = [
+  "tests/backends/test_atspi_linux_dbus.nim",
   "tests/backends/test_sdl3_image_loader.nim",
+  "tests/backends/test_sdl3_image_rendering.nim",
   "tests/backends/test_sdl3_pen_input.nim",
   "tests/backends/test_sdl3_stream_wake.nim",
   "tests/backends/test_sdl3_text_event_guard.nim",

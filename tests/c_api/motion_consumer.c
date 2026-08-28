@@ -5,8 +5,8 @@
 #include <stdint.h>
 #include <string.h>
 
-_Static_assert(CBSS_ABI_VERSION == 0x00010014u,
-               "unexpected CBSS ABI version");
+_Static_assert(CBSS_ABI_VERSION == 0x00010019u,
+    "unexpected CBSS ABI version");
 _Static_assert(sizeof(CbssEvent) == 152, "CbssEvent ABI changed");
 _Static_assert(sizeof(CbssMotionState) == 40,
                "CbssMotionState ABI changed");
@@ -189,7 +189,54 @@ static CbssKeyframes *move_keyframes(void) {
   return keyframes;
 }
 
+static void test_subtree_motion_cancellation(void) {
+  CbssContext *context = cbss_context_create();
+  assert(context != NULL);
+  const uint32_t root = cbss_context_add_box(
+    context, CBSS_NODE_NONE, "lifecycle-root"
+  );
+  const uint32_t animated = cbss_context_add_box(
+    context, root, "lifecycle-animated"
+  );
+  assert(root != CBSS_NODE_NONE && animated != CBSS_NODE_NONE);
+
+  MotionEvents events = {0};
+  subscribe_motion(context, animated, &events);
+  CbssKeyframes *keyframes = pulse_keyframes();
+  assert(cbss_context_register_keyframes(context, keyframes) == CBSS_OK);
+  cbss_keyframes_destroy(keyframes);
+
+  CbssStyle *style = box_style(1.0f);
+  assert(cbss_style_set_keyword(
+    style, "animation-name", "pulse"
+  ) == CBSS_OK);
+  assert(cbss_style_set_number(
+    style, "animation-duration", 10.0f
+  ) == CBSS_OK);
+  assert(cbss_node_apply_style(context, animated, style, 0, 0) == CBSS_OK);
+  cbss_style_destroy(style);
+
+  assert(cbss_context_compute_at(context, 320, 180, 1.0) == CBSS_OK);
+  CbssMotionState state;
+  assert(cbss_context_motion_state(context, &state) == CBSS_OK);
+  assert(state.active_animations == 1);
+  const int cancels_before_removal = events.animation_cancels;
+
+  uint32_t removed = 0;
+  assert(cbss_context_remove_subtree(
+    context, animated, &removed
+  ) == CBSS_OK);
+  assert(removed == 1);
+  assert(events.animation_cancels == cancels_before_removal + 1);
+  assert(cbss_context_motion_state(context, &state) == CBSS_OK);
+  assert(state.active_animations == 0);
+  assert(cbss_context_needs_compute(context));
+
+  cbss_context_destroy(context);
+}
+
 int main(void) {
+  test_subtree_motion_cancellation();
   assert(cbss_abi_version() == CBSS_ABI_VERSION);
   CbssContext *context = cbss_context_create();
   assert(context != NULL);

@@ -138,11 +138,16 @@ proc applyBackgroundSize(
       else:
         diagnostics.addError(declaration.property, "unsupported background-size keyword")
     of svLength:
-      let resolved = resolveAbsoluteLength(value, env, declaration.property,
-          diagnostics)
-      if resolved.isSome:
+      let resolved = normalizeLength(
+        value, env, declaration.property, {ukPercent}, diagnostics
+      )
+      if resolved.isSome and resolved.get.value >= 0:
         style.box.backgroundSize = some(BackgroundSize(kind: bgSizeLength,
-            width: resolved, height: none(float32)))
+            width: some(resolved.get.value), height: none(float32),
+            widthValue: resolved, heightValue: none(LengthValue)))
+      elif resolved.isSome:
+        diagnostics.addError(declaration.property,
+          "background-size cannot be negative")
     else:
       diagnostics.addError(declaration.property, "background-size requires a keyword or length value")
   of mmInitial, mmUnset:
@@ -165,38 +170,51 @@ proc applyBackgroundPositionAxis(
     diagnostics.addError(declaration.property, declaration.property & " requires a value")
     return
   let value = declaration.operation.value.get
-  var resolved: Option[float32]
+  var resolved: Option[LengthValue]
   case value.kind
   of svNumber:
-    resolved = some(value.number)
+    if value.number != 0:
+      diagnostics.addError(declaration.property,
+        "unitless background-position only accepts zero")
+      return
+    resolved = some(LengthValue(kind: ukPx, value: 0))
   of svLength:
-    if value.length.kind == ukPercent:
-      resolved = some(value.length.value)
-    else:
-      resolved = resolveAbsoluteLength(value, env, declaration.property,
-          diagnostics)
-      if resolved.isNone:
-        return
+    resolved = normalizeLength(
+      value, env, declaration.property, {ukPercent}, diagnostics
+    )
+    if resolved.isNone:
+      return
   of svKeyword:
     case value.keyword
     of "left", "top":
-      resolved = some(0.0'f32)
+      resolved = some(LengthValue(kind: ukPercent, value: 0))
     of "center":
-      resolved = some(50.0'f32)
+      resolved = some(LengthValue(kind: ukPercent, value: 50))
     of "right", "bottom":
-      resolved = some(100.0'f32)
+      resolved = some(LengthValue(kind: ukPercent, value: 100))
     else:
       diagnostics.addError(declaration.property, "unsupported background-position keyword")
       return
   else:
     diagnostics.addError(declaration.property, declaration.property & " requires a number, length, or keyword")
     return
+  let position = resolved.get
+  template setX(length: LengthValue) =
+    style.box.backgroundPositionValue.x = length
+    style.box.backgroundPosition.x = length.value
+  template setY(length: LengthValue) =
+    style.box.backgroundPositionValue.y = length
+    style.box.backgroundPosition.y = length.value
   if declaration.property == "background-position-y":
-    style.box.backgroundPosition.y = resolved.get
+    setY(position)
+  elif declaration.property == "background-position-x":
+    setX(position)
+  elif value.kind == svKeyword and value.keyword in ["top", "bottom"]:
+    setX(LengthValue(kind: ukPercent, value: 50))
+    setY(position)
   else:
-    style.box.backgroundPosition.x = resolved.get
-    if declaration.property == "background-position":
-      style.box.backgroundPosition.y = resolved.get
+    setX(position)
+    setY(LengthValue(kind: ukPercent, value: 50))
 
 proc applyBackgroundPosition(
     style: var ComputedStyle;
@@ -209,9 +227,15 @@ proc applyBackgroundPosition(
     style.applyBackgroundPositionAxis(declaration, env, diagnostics)
   of mmInitial, mmUnset:
     style.box.backgroundPosition = ObjectPosition(x: 0, y: 0)
+    style.box.backgroundPositionValue = BackgroundPosition(
+      x: LengthValue(kind: ukPercent, value: 0),
+      y: LengthValue(kind: ukPercent, value: 0)
+    )
   of mmInherit:
     if env.parent.isSome:
       style.box.backgroundPosition = env.parent.get.box.backgroundPosition
+      style.box.backgroundPositionValue =
+        env.parent.get.box.backgroundPositionValue
     else:
       diagnostics.addError(declaration.property, "cannot inherit " &
           declaration.property & " without parent")

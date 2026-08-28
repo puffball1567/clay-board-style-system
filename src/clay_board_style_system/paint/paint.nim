@@ -6,6 +6,8 @@ import ../layout/presentation
 import ../layout/scroll_state
 import ../layout/scrollbar_geometry
 import ../layout/transform_geometry
+import ../text/display_text
+import ./background_geometry
 import ./paint_command
 
 type
@@ -164,13 +166,13 @@ proc parsedMaxLines(style: ComputedTextStyle): Option[int] =
 proc textLimitedByMaxLines(text: string; style: ComputedTextStyle): string =
   let maxLines = style.parsedMaxLines()
   if maxLines.isNone:
-    return text
+    return displayTextTransform(text, style).text
   if maxLines.get == 0:
     return ""
   let lines = text.splitLines()
   if lines.len <= maxLines.get:
-    return text
-  lines[0 ..< maxLines.get].join("\n")
+    return displayTextTransform(text, style).text
+  displayTextTransform(lines[0 ..< maxLines.get].join("\n"), style).text
 
 proc decorationThickness(style: ComputedTextStyle): float32 =
   if style.textDecorationThickness.isSome:
@@ -359,10 +361,36 @@ proc paintNode(
       style.box.borderRadius,
       owner = some(id)
     )
-  if node.kind == nkBox and style.box.backgroundColor.isSome:
-    output.add fillRect(nodeRect, style.box.backgroundColor.get.withOpacity(opacity), style.box.borderRadius, some(id))
-  if node.kind == nkBox and style.box.backgroundGradient.isSome:
-    output.add fillLinearGradient(nodeRect, style.box.backgroundGradient.get.withOpacity(opacity), style.box.borderRadius, some(id))
+  if node.kind == nkBox and (
+      style.box.backgroundColor.isSome or style.box.backgroundGradient.isSome or
+      (node.generatedPart == gpkAccent and style.visual.accentColor.isSome)
+  ):
+    let background = backgroundPaintGeometry(nodeRect, style.box, item.padding)
+    var backgroundColor = style.box.backgroundColor
+    if node.generatedPart == gpkCaret and node.parent.isSome:
+      let ownerStyle {.cursor.} = styles.styles[node.parent.get.nodeIndex]
+      if ownerStyle.visual.caretColor.isSome:
+        backgroundColor = ownerStyle.visual.caretColor
+    elif node.generatedPart == gpkAccent and style.visual.accentColor.isSome:
+      backgroundColor = style.visual.accentColor
+    if backgroundColor.isSome and not background.clipRect.isEmpty:
+      output.add fillRect(
+        background.clipRect,
+        backgroundColor.get.withOpacity(opacity),
+        background.clipRadius,
+        some(id)
+      )
+    if style.box.backgroundGradient.isSome and
+        not background.paintRect.isEmpty:
+      output.add fillLinearGradient(
+        background.tileRect,
+        style.box.backgroundGradient.get.withOpacity(opacity),
+        radius = background.clipRadius,
+        owner = some(id),
+        paintRect = some(background.paintRect),
+        clipRect = some(background.clipRect),
+        repeat = background.repeat
+      )
   if node.kind == nkBox and style.box.borderVisible and style.hasAnyBorder:
     if style.uniformBorder and style.box.borderColors.top.isSome:
       output.add strokeRect(nodeRect, style.box.borderColors.top.get.withOpacity(opacity), style.box.borderWidths.top, style.box.borderRadius, some(id))
@@ -386,9 +414,15 @@ proc paintNode(
     output.add strokeRect(outlineRect, style.box.outlineColor.get.withOpacity(opacity), style.box.outlineWidth, style.box.borderRadius, some(id))
   if node.kind == nkText:
     let textColor =
-      if style.text.color.isSome: style.text.color.get
+      if node.generatedPart == gpkAccent and style.visual.accentColor.isSome:
+        style.visual.accentColor.get
+      elif style.text.color.isSome: style.text.color.get
       else: rgb(0, 0, 0)
-    let text = textLimitedByMaxLines(node.text, style.text)
+    let paintText = layout.paintTextFor(item)
+    let sourceText =
+      if paintText.isSome: paintText.get
+      else: node.text
+    let text = textLimitedByMaxLines(sourceText, style.text)
     let textRect = Rect(
       x: nodeRect.x + node.renderOffset.x,
       y: nodeRect.y + node.renderOffset.y,
@@ -537,25 +571,25 @@ proc buildPaintCommands*(
 ): seq[PaintCommand] =
   var hasTransform = false
   if tree.root.isSome:
-    let boxIndices = layout.layoutBoxIndices(tree.nodes.len)
-    paintNode(
-      tree, styles, layout, boxIndices, tree.root.get, 1.0'f32, result,
-      hasTransform, scroll, vec2(0, 0), surfaceProvider
-    )
-    var overlays: seq[NodeId]
-    collectOverlayRoots(tree, styles, tree.root.get, overlays)
-    for overlay in overlays.overlayRootsInPaintOrder(styles):
-      let context = pushAncestorPaintContext(
-        tree, styles, layout, boxIndices, scroll, overlay, result, hasTransform
-      )
+    withLayoutBoxIndices(layout, tree.nodes.len, boxIndices):
       paintNode(
-        tree, styles, layout, boxIndices, overlay, context.opacity, result,
-        hasTransform, scroll, context.translation, surfaceProvider,
-        overlayPass = true
+        tree, styles, layout, boxIndices, tree.root.get, 1.0'f32, result,
+        hasTransform, scroll, vec2(0, 0), surfaceProvider
       )
-      popAncestorPaintContext(context, result)
-    if hasTransform:
-      result.resolveTransformBounds()
+      var overlays: seq[NodeId]
+      collectOverlayRoots(tree, styles, tree.root.get, overlays)
+      for overlay in overlays.overlayRootsInPaintOrder(styles):
+        let context = pushAncestorPaintContext(
+          tree, styles, layout, boxIndices, scroll, overlay, result, hasTransform
+        )
+        paintNode(
+          tree, styles, layout, boxIndices, overlay, context.opacity, result,
+          hasTransform, scroll, context.translation, surfaceProvider,
+          overlayPass = true
+        )
+        popAncestorPaintContext(context, result)
+      if hasTransform:
+        result.resolveTransformBounds()
 
 proc buildPaintCommands*(tree: Tree; styles: ResolvedTree; layout: LayoutResult): seq[PaintCommand] =
   buildPaintCommands(tree, styles, layout, initScrollState())
@@ -574,44 +608,44 @@ proc buildPaintCommandsForSubtree*(
   let overlayPass =
     tree.nodes[root.nodeIndex].parent.isSome and
       styles.styles[root.nodeIndex].layout.zIndex > 0
-  let boxIndices = layout.layoutBoxIndices(tree.nodes.len)
-  let context = pushAncestorPaintContext(
-    tree, styles, layout, boxIndices, scroll, root, result, hasTransform
-  )
-  paintNode(
-    tree,
-    styles,
-    layout,
-    boxIndices,
-    root,
-    context.opacity,
-    result,
-    hasTransform,
-    scroll,
-    context.translation,
-    surfaceProvider,
-    overlayPass = overlayPass
-  )
-  popAncestorPaintContext(context, result)
-
-  # The normal pass deliberately skips positive z-index descendants. A
-  # retained subtree repaint must replay those overlays just like a full-tree
-  # paint or focused controls lose popups, carets, and scrollbar children.
-  var overlays: seq[NodeId]
-  for child in tree.nodes[root.nodeIndex].children:
-    collectOverlayRoots(tree, styles, child, overlays)
-  for overlay in overlays.overlayRootsInPaintOrder(styles):
-    let overlayContext = pushAncestorPaintContext(
-      tree, styles, layout, boxIndices, scroll, overlay, result, hasTransform
+  withLayoutBoxIndices(layout, tree.nodes.len, boxIndices):
+    let context = pushAncestorPaintContext(
+      tree, styles, layout, boxIndices, scroll, root, result, hasTransform
     )
     paintNode(
-      tree, styles, layout, boxIndices, overlay, overlayContext.opacity,
-      result, hasTransform, scroll, overlayContext.translation, surfaceProvider,
-      overlayPass = true
+      tree,
+      styles,
+      layout,
+      boxIndices,
+      root,
+      context.opacity,
+      result,
+      hasTransform,
+      scroll,
+      context.translation,
+      surfaceProvider,
+      overlayPass = overlayPass
     )
-    popAncestorPaintContext(overlayContext, result)
-  if hasTransform:
-    result.resolveTransformBounds()
+    popAncestorPaintContext(context, result)
+
+    # The normal pass deliberately skips positive z-index descendants. A
+    # retained subtree repaint must replay those overlays just like a full-tree
+    # paint or focused controls lose popups, carets, and scrollbar children.
+    var overlays: seq[NodeId]
+    for child in tree.nodes[root.nodeIndex].children:
+      collectOverlayRoots(tree, styles, child, overlays)
+    for overlay in overlays.overlayRootsInPaintOrder(styles):
+      let overlayContext = pushAncestorPaintContext(
+        tree, styles, layout, boxIndices, scroll, overlay, result, hasTransform
+      )
+      paintNode(
+        tree, styles, layout, boxIndices, overlay, overlayContext.opacity,
+        result, hasTransform, scroll, overlayContext.translation, surfaceProvider,
+        overlayPass = true
+      )
+      popAncestorPaintContext(overlayContext, result)
+    if hasTransform:
+      result.resolveTransformBounds()
 
 proc buildPaintCommandsForSubtree*(
     tree: Tree;

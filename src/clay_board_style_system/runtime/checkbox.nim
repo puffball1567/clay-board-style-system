@@ -251,6 +251,7 @@ proc checkbox*(
     ]),
     groups = ["checkbox-indicator"]
   )
+  root.tree.setGeneratedPart(result.indicatorNode.id, gpkAccent)
   result.indicatorNode.applyStateStyle({esChecked}, uiStyle([
     decl("display", keyword("flex"))
   ]), priority = 100)

@@ -1,8 +1,10 @@
 # CBSS C ABI
 
-The C ABI is CBSS's language-neutral runtime boundary. Nim remains the primary
-authoring API, while C++, Rust, Zig, Swift, and other native languages can
-build wrappers over the same engine without depending on Nim object layouts.
+The C ABI is CBSS's language-neutral engine protocol. It is not the intended
+application-authoring API. Nim remains the canonical authoring reference;
+Version 0.6 Craft Drivers give C++, Rust, and later host languages a high-level
+surface over the same engine without depending on Nim object layouts or making
+ordinary users manage opaque handles, callback userdata, and status codes.
 
 ## Build
 
@@ -28,8 +30,17 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x00010014` supports:
+ABI version `0x00010019` supports:
 
+- machine-readable Craft Driver contract metadata and runtime capability
+  negotiation through stable numeric identifiers before tree construction;
+- bounded compiled validation patterns and canonical string-format checks for
+  high-level foreign-language Validation APIs. Pattern/value bytes are copied
+  at the call boundary and no Nim-managed string escapes the ABI;
+- public Craft Style Slot exposure, bounded atomic Craft Style replacement,
+  active Style queries, and structured parse/replacement diagnostics;
+- bounded atomic Craft Pack manifest loading, compatibility negotiation,
+  active Pack queries, and structured Pack diagnostics;
 - Opaque context and style handles.
 - Atomically reference-counted immutable Blob handles with advisory MIME
   metadata, bounded reads into host buffers, and a 64 MiB eager-construction
@@ -47,6 +58,8 @@ ABI version `0x00010014` supports:
   progress, terminal states, cancellation, and deterministic late-offer
   rejection. Stream payloads cross the ABI only as retained Blob handles.
 - Generation-checked node handles plus box, text, and image node creation.
+- Atomic retained-subtree removal with synchronous cleanup of interaction,
+  event, Style, motion, scroll, Craft Slot, and Render Surface state.
 - Groups, attributes, pseudo-state flags, validation invalid-state exposure,
   and accessibility semantics, including an append-only protected-password
   text role.
@@ -98,6 +111,8 @@ ABI version `0x00010014` supports:
   tangential pressure, x/y tilt, rotation, distance, and slider values cross
   both ordinary event callbacks and RenderSurface input callbacks.
 - Hover, active, focus, focus-visible, pointer-capture, and focus-scope state.
+- Inherited inert-state mutation/query and subtree-scoped first-focusable
+  lookup for retained screen hosts.
 - Tab and Shift+Tab focus traversal.
 - Retained scrolling and scrollbar interaction without layout recomputation.
 - Versioned RenderSurface registration, Box attachment, placement, local input,
@@ -121,6 +136,65 @@ interpolation-space enum, so a foreign renderer can reproduce CBSS sampling.
 `currentColor`, and color-mix handles as gradient stops. It resolves them only
 when the style context is computed and copies every handle value during the
 setter call.
+
+## Craft Driver Negotiation
+
+`schema/craft_driver_contract.json` is the source of truth for the engine ABI,
+Driver contract version, stable capability identifiers, and capability
+versions. `tools/generate_driver_contract.nim` generates the corresponding Nim
+table and C declarations; `nimble checkDriverContract` rejects stale generated
+surfaces.
+
+A Driver must perform negotiation before it creates a `CbssContext` or mounts
+any Craft:
+
+1. Compare `cbss_abi_version()` with the ABI range supported by the Driver.
+2. Compare `cbss_driver_contract_version()` with the Driver contract range.
+3. Check every required numeric capability id and minimum version with
+   `cbss_has_capability()`.
+4. Use `cbss_capability_at()` and `cbss_capability_name()` for diagnostics and
+   tooling, not as substitutes for stable numeric identity.
+
+Failure aborts construction before application callbacks, resources, or a
+partial tree are installed. Capability identifiers are append-only. A
+capability version increases only when optional behavior is added under the
+same semantic family; incompatible semantics require a new capability id.
+
+The maintained C++14 reference Driver is in `drivers/cpp`. Its header-only
+surface performs this negotiation automatically, owns contexts and Styles with
+RAII, translates status codes into typed exceptions, and provides scoped nested
+Box/Text/Image construction without explicit parent node identifiers. Raw handles
+remain available only as an advanced interoperability escape hatch. Run
+`nimble testCppDriver` to exercise the same reference tree against both shared
+and static C ABI builds.
+
+The maintained Rust reference Driver is in `drivers/rust`. It keeps the raw FFI
+module private, owns `Ui` and `Style` through `Drop`, and uses borrowed child
+Scopes instead of a mutable parent stack. Generated ABI and capability
+constants come from the same contract JSON as Nim and C. Run
+`nimble testRustDriver` for ARC shared/static integration and
+`nimble testRustDriverOrc` for the equivalent ORC boundary.
+
+## Craft Style And Pack Loading
+
+`cbss_node_expose_craft_style_slot` publishes an explicit component/Slot pair
+for a mounted node. `cbss_context_replace_craft_style_json` accepts copied
+bytes with an explicit length, compiles the candidate, validates all targets,
+and replaces the active Style with the same name only on success. Component-
+owned Style remains higher precedence than externally loaded Craft Style.
+
+`cbss_context_replace_craft_pack_json` validates and registers a Version 1
+manifest under the same atomic rule. It does not open declared asset paths or
+verify asset bytes. File access and digest verification belong to a separate
+host-authorized resolver described in
+[Craft Pack Manifest Format](craft-pack-format.md).
+
+Both inputs have public byte limits. A failure can be inspected through
+`cbss_context_craft_diagnostic_count`, `cbss_context_craft_diagnostic_at`, and
+the path/message copy functions. `CbssCraftDiagnosticDomain` and the three
+domain-specific diagnostic-code enums are the stable programmatic contract;
+text is explanatory. Active Style and Pack names are returned through
+caller-owned buffers. No Nim string or sequence crosses the ABI.
 
 ## Host Event Loop
 
@@ -232,7 +306,12 @@ its final `cbss_stream_producer_release`.
 
 Event handlers are installed with `cbss_node_set_event_handler`. Reinstalling
 the same node/event pair replaces the callback; passing a null callback removes
-it. Independent observers use `cbss_node_subscribe_event`, retain the returned
+it. Intrinsic widget behavior uses `cbss_node_set_default_action`; it runs after
+public bubbling and is skipped when a cancelable event is marked
+prevent-default. Reinstalling the same node/event pair replaces the default
+action, and a null callback removes it. Its callback receives
+`CBSS_EVENT_PHASE_DEFAULT_ACTION` in `CbssEvent.flags`. Independent observers use
+`cbss_node_subscribe_event`, retain the returned
 `CbssEventSubscription`, and remove it with
 `cbss_context_unsubscribe_event`. The callback returns a bitwise combination of
 `CBSS_EVENT_OUTCOME_*`:
@@ -240,8 +319,8 @@ it. Independent observers use `cbss_node_subscribe_event`, retain the returned
 target, and `PREVENT_DEFAULT` suppresses a cancelable intrinsic action when the
 hosted component defines one. Returning `1` remains the handled-only form.
 Callbacks may update nodes and styles, but must not destroy or reset the
-context currently dispatching. The callback and `user_data` remain owned by the
-host.
+context currently dispatching or remove a subtree containing the current
+dispatch path. The callback and `user_data` remain owned by the host.
 
 Use `cbss_node_set_event_view_handler` or
 `cbss_node_subscribe_event_view` when a callback needs a managed payload. The
@@ -358,7 +437,11 @@ ownership and synchronization contracts.
 - A worker not created by Nim brackets CBSS calls with `cbss_thread_attach` and
   `cbss_thread_detach`. ARC treats the pair as a no-op; ORC uses it to establish
   and release the foreign thread's runtime state.
-- Node IDs are values owned by their context. `CBSS_NODE_NONE` is never valid.
+- Node IDs are generation-checked values owned by their context.
+  `CBSS_NODE_NONE` is never valid. `cbss_context_remove_subtree` synchronously
+  releases all CBSS-owned state for the node and its descendants; every removed
+  ID becomes invalid before the call returns and cannot alias a later node that
+  reuses the same arena slot.
 - Strings passed into CBSS are copied before the call returns.
 - Strings returned by CBSS are copied into caller-owned buffers. Query with a
   null buffer or zero capacity to obtain the required byte count.

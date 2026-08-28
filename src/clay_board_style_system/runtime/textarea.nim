@@ -745,6 +745,9 @@ proc textStyleFrom(style: UiStyle): ComputedTextStyle =
     of "letter-spacing":
       if value.kind == svLength and value.length.kind == ukPx:
         result.letterSpacing = some(value.length.value)
+    of "word-spacing":
+      if value.kind == svLength and value.length.kind == ukPx:
+        result.wordSpacing = some(value.length.value)
     of "font-family":
       if value.kind == svKeyword:
         result.fontFamilies = value.keyword.split(",")
@@ -1707,6 +1710,7 @@ proc textArea*(
   result.textNode = root.text(result.container, result.state.displayText(), textStyle, groups = ["textarea-value"])
   result.syncTextNodeStyle()
   result.caretNode = root.box(parent = some(result.container), groups = ["textarea-caret"])
+  root.tree.setGeneratedPart(result.caretNode.id, gpkCaret)
   result.caretNode.applyStyle(uiStyle([
     decl("display", keyword("none")),
     decl("position", keyword("absolute")),

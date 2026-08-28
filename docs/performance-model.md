@@ -85,6 +85,38 @@ counts text-engine measurement calls and bounds them linearly by text-node
 count. Intrinsic-heavy wall-clock workloads still need a dedicated benchmark
 before intrinsic sizing is considered optimized.
 
+### Box-sizing runtime verification (2026-08-25)
+
+The executable `box-sizing` path adds constant-time edge and sizing-box
+resolution per laid-out Box. A same-machine release ARC A/B run alternated the
+unchanged `devel` pipeline binary with the implementation binary. At 4,000
+nodes, layout measured 8.62-9.55 ms on `devel` and 9.12-9.73 ms with runtime
+box sizing, remaining inside the 20% regression gate despite normal run-to-run
+variance. The fixed seven-node dirty-subtree probe remained in the microsecond
+range and did not begin walking the unrelated tree. Padding and visible-border
+edges are resolved once per node in the arrangement pass and reused by sizing,
+child constraints, and placement.
+
+### Multi-line Flex verification (2026-08-25)
+
+Flex line collection and per-line distribution remain linear in the number of
+in-flow children. The common `nowrap` path creates one line and preserves the
+same child traversal; wrapped containers retain only compact line ranges and
+aggregate sizes rather than cloning child data. Alternating same-machine
+release ARC runs at 4,000 nodes measured 9.446 ms layout on the `devel`
+baseline and 9.371 ms with the line model. Dedicated tests cover line-local grow/shrink
+redistribution, min/max freezing, both axes, reverse wrapping, gap geometry,
+overflow metrics, and max-size-constrained auto dimensions.
+
+The same verification exposed an older ownership bug in the presentation hot
+path: requesting the retained `NodeId -> LayoutBox` index returned an owning
+`seq[int]` copy. Paint, hit, and node-presentation stages now borrow that index;
+the owning API remains available for callers that explicitly need a copy. A
+fixed seven-node dirty subtree measured 6.360 / 6.114 / 6.122 us for paint and
+4.939 / 4.975 / 4.853 us for hit at 500 / 4,000 / 10,000 total nodes. This is
+the structural `O(dirty)` behavior required by the model, not merely a larger
+constant hidden beneath the four-times regression gate.
+
 ### Borrowed-style hot path verification (2026-07-23)
 
 Parent styles are now borrowed during resolution, and layout, paint, and hit
@@ -297,14 +329,14 @@ the static layer. `LayoutResult` retains its `NodeId -> LayoutBox` index, so
 paint and hit updates do not recreate an O(tree) lookup table.
 
 `tests/perf/dirty_subtree_benchmark.nim` holds the dirty subtree at seven nodes
-while growing unrelated retained content. The 2026-08-01 Version 0.2 release
-ARC run measured:
+while growing unrelated retained content. The 2026-08-25 release ARC run after
+removing retained-index copies measured:
 
 | total nodes | subtree paint | subtree hit | paint commands | hit regions |
 | ---: | ---: | ---: | ---: | ---: |
-| 500 | 4.964 us | 3.482 us | 10 | 5 |
-| 4,000 | 6.817 us | 5.502 us | 10 | 5 |
-| 10,000 | 10.331 us | 8.883 us | 10 | 5 |
+| 500 | 6.360 us | 4.939 us | 10 | 5 |
+| 4,000 | 6.114 us | 4.975 us | 10 | 5 |
+| 10,000 | 6.122 us | 4.853 us | 10 | 5 |
 
 The benchmark fails if the 10k fixed-dirty cost exceeds four times the
 500-node cost. The remaining region-span move is proportional to the retained
@@ -314,6 +346,62 @@ per-node spans is still required for a strict zero-copy `O(dirty)` guarantee.
 This is independent from viewport virtualization. Retaining 100,000 row nodes
 still incurs retained-tree and intrinsic-measurement cost even though scrolling
 those already-laid-out nodes no longer invokes layout.
+
+### Virtual range planning status (2026-08-24)
+
+`planVirtualRange` does not retain one geometry or measurement record per
+logical item. `VirtualExtentIndex` prepares `m` sparse measurements in
+`O(m log m)` time and `O(m)` storage when measurements change. Scroll-time
+planning for `n` logical items and `k` materialized items is
+`O((log n + k) log m)` with `O(k)` result storage. The configured hard cap
+bounds `k`; a visible range larger than that cap fails explicitly instead of
+silently omitting visible UI.
+
+`tests/perf/virtualization_benchmark.nim` plans the same viewport shape over
+100,000 and 10,000,000 logical items with three sparse measurements. The
+2026-08-24 release ARC run measured:
+
+| logical items | mean planning time | materialized items |
+| ---: | ---: | ---: |
+| 100,000 | 2.428 us | 31 |
+| 10,000,000 | 2.599 us | 31 |
+
+The gate rejects logical-count scaling beyond a deliberately broad noise
+margin and asserts the same bounded materialized count. This covers range
+planning itself.
+
+`VirtualNodePool` now performs stable-key node/component reconciliation over
+that bounded result. Lookup, validation, ordering, mount/disposal, and retained
+refresh work are proportional to materialized entries, not logical item count.
+The pool never stores one entry per logical row. A fully disjoint range may
+transiently hold the old and new bounded ranges so factory failure can roll back
+without losing the previous pool; stale roots are then retired through the
+normal `UiRoot.disposeSubtree` lifecycle.
+
+`tests/perf/virtual_node_pool_benchmark.nim` alternates adjacent ranges for
+20,000 reconciliations. The 2026-08-24 release ARC run measured:
+
+| logical items | mean reconcile time | materialized items | node arena slots |
+| ---: | ---: | ---: | ---: |
+| 100,000 | 14.109 us | 30 | 36 |
+| 10,000,000 | 15.345 us | 30 | 36 |
+
+The gate rejects logical-count scaling and requires identical bounded node
+capacity.
+
+Optional `VirtualFocusMemory` stores at most one pending stable key. Capture
+walks only from the focused descendant to its materialized item root. Restore
+resolves either that bounded child path or scans one materialized item subtree
+for a unique explicit node code. It never scans logical rows or retains a Node
+ID after disposal. Focus retention therefore preserves the same bounded-memory
+model.
+
+Accessibility range integration adds two optional integers to each retained
+semantic record and writes them only for the bounded materialized entries
+during reconciliation. It does not create semantic placeholders for logical
+rows. The virtual-node benchmark now verifies the logical set size on the
+bounded pool in addition to identical node capacity for 100,000 and 10,000,000
+items; runtime and AT-SPI tests verify position updates and snapshot diffs.
 
 ### Retained navigation status (2026-08-01)
 

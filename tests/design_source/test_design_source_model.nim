@@ -5,6 +5,19 @@ import clay_board_style_system/design_source/model
 import clay_board_style_system/generated/default_properties
 
 suite "design source model":
+  test "maps service-neutral baseline alignment into CBSS vocabulary":
+    var row = designFrame("frame:row", "Row", id = "row")
+    row.style.layoutDirection = dldRow
+    row.style.alignItems = daBaseline
+    let built = designPage("page:main", "Main", [row]).buildCbss()
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(
+      built.tree, [built.sheet], defaultProperties(), diagnostics
+    )
+
+    check not diagnostics.hasErrors
+    check styles.styles[0].layout.alignItems == aiBaseline
+
   test "builds a CBSS tree and stylesheet from service-neutral design nodes":
     var card = designFrame("frame:card", "Card", id = "card", groups = ["surface"])
     card.style.width = some(320.0'f32)

@@ -20,6 +20,10 @@ type
     key: string
     value: FontUnitMetrics
 
+  TextBaselineMetricsCacheEntry = object
+    key: string
+    value: TextBaselineMetrics
+
   CosmicTextMeasureInput {.bycopy.} = object
     text: cstring
     familyCsv: cstring
@@ -35,6 +39,8 @@ type
     letterSpacing: cfloat
     wordSpacing: cfloat
     wrap: uint32
+    textIndent: cfloat
+    textAlign: uint32
 
   CosmicTextMeasureResult {.bycopy.} = object
     width: cfloat
@@ -44,6 +50,11 @@ type
   CosmicTextFontMetricsResult {.bycopy.} = object
     xHeight: cfloat
     zeroAdvance: cfloat
+    ok: uint8
+
+  CosmicTextBaselineMetricsResult {.bycopy.} = object
+    ascent: cfloat
+    descent: cfloat
     ok: uint8
 
   CosmicTextBitmapResult {.bycopy.} = object
@@ -102,6 +113,11 @@ proc cbss_cosmic_text_font_unit_metrics(
     handle: pointer;
     input: ptr CosmicTextMeasureInput;
     output: ptr CosmicTextFontMetricsResult
+): uint8 {.cdecl, importc, dynlib: cosmicTextBridgeLib.}
+proc cbss_cosmic_text_baseline_metrics(
+    handle: pointer;
+    input: ptr CosmicTextMeasureInput;
+    output: ptr CosmicTextBaselineMetricsResult
 ): uint8 {.cdecl, importc, dynlib: cosmicTextBridgeLib.}
 proc cbss_cosmic_text_render_bitmap(
     handle: pointer;
@@ -165,7 +181,7 @@ proc fontStyleCode(style: Option[FontStyle]): uint32 =
     2'u32
 
 proc wrapCode(style: ComputedTextStyle): uint32 =
-  if style.whiteSpace.isSome and style.whiteSpace.get == wsNoWrap:
+  if style.whiteSpace.isSome and style.whiteSpace.get in {wsNoWrap, wsPre}:
     return 1
   if style.textWrap.isSome and style.textWrap.get == twNoWrap:
     return 1
@@ -174,6 +190,14 @@ proc wrapCode(style: ComputedTextStyle): uint32 =
   if style.wordBreak.isSome and style.wordBreak.get in {wbBreakAll, wbBreakWord}:
     return 2
   0
+
+proc textAlignCode(style: ComputedTextStyle): uint32 =
+  if style.textAlign.isNone:
+    return 0
+  case style.textAlign.get
+  of taStart, taLeft: 1'u32
+  of taCenter: 2'u32
+  of taRight, taEnd: 3'u32
 
 proc addFeature(features: var seq[string]; tag: string; enabled = true) =
   features.add(tag & " " & (if enabled: "1" else: "0"))
@@ -333,7 +357,9 @@ proc measureCosmicText*(engine: CosmicTextEngine; input: TextMeasureInput): Size
     fontStretch: cfloat(if input.style.fontStretch.isSome: input.style.fontStretch.get else: 100.0'f32),
     letterSpacing: cfloat(if input.style.letterSpacing.isSome: input.style.letterSpacing.get else: 0.0'f32),
     wordSpacing: cfloat(if input.style.wordSpacing.isSome: input.style.wordSpacing.get else: 0.0'f32),
-    wrap: input.style.wrapCode
+    wrap: input.style.wrapCode,
+    textIndent: cfloat(input.style.textIndent.get(0.0'f32)),
+    textAlign: input.style.textAlignCode
   )
   var output: CosmicTextMeasureResult
   if cbss_cosmic_text_measure(engine.handle, addr request, addr output) == 0 or output.ok == 0:
@@ -369,7 +395,9 @@ proc toCosmicRequest(input: TextMeasureInput): CosmicTextMeasureInput =
     fontStretch: cfloat(if input.style.fontStretch.isSome: input.style.fontStretch.get else: 100.0'f32),
     letterSpacing: cfloat(if input.style.letterSpacing.isSome: input.style.letterSpacing.get else: 0.0'f32),
     wordSpacing: cfloat(if input.style.wordSpacing.isSome: input.style.wordSpacing.get else: 0.0'f32),
-    wrap: input.style.wrapCode
+    wrap: input.style.wrapCode,
+    textIndent: cfloat(input.style.textIndent.get(0.0'f32)),
+    textAlign: input.style.textAlignCode
   )
 
 proc measureCosmicFontUnits*(
@@ -395,6 +423,29 @@ proc measureCosmicFontUnits*(
     version: fontUnitMetricsVersion,
     xHeight: output.xHeight.float32,
     zeroAdvance: output.zeroAdvance.float32
+  )
+
+proc measureCosmicBaselineMetrics*(
+    engine: CosmicTextEngine;
+    input: TextFontMetricsInput
+): TextBaselineMetrics =
+  result = fallbackTextBaselineMetrics(input.style)
+  if engine.handle.isNil:
+    return
+  var request = TextMeasureInput(
+    text: "0",
+    style: input.style,
+    maxWidth: none(float32),
+    fonts: input.fonts
+  ).toCosmicRequest()
+  var output: CosmicTextBaselineMetricsResult
+  if cbss_cosmic_text_baseline_metrics(
+      engine.handle, addr request, addr output
+  ) == 0 or output.ok == 0:
+    return
+  result = TextBaselineMetrics(
+    ascent: output.ascent.float32,
+    descent: output.descent.float32
   )
 
 proc addKeyPart(parts: var seq[string]; value: string) =
@@ -436,6 +487,8 @@ proc cosmicTextRasterKey*(input: TextMeasureInput): string =
   parts.addKeyPart(if input.style.letterSpacing.isSome: input.style.letterSpacing.get else: 0.0'f32)
   parts.addKeyPart(if input.style.wordSpacing.isSome: input.style.wordSpacing.get else: 0.0'f32)
   parts.addKeyPart(input.style.wrapCode)
+  parts.addKeyPart(input.style.textIndent.get(0.0'f32))
+  parts.addKeyPart(input.style.textAlignCode)
   parts.join("|")
 
 const maxCosmicBitmapBytes = 64 * 1024 * 1024
@@ -551,6 +604,7 @@ proc textEngine*(engine: CosmicTextEngine): TextEngine =
   var measureCache: seq[TextMeasureCacheEntry] = @[]
   var caretCache: seq[TextCaretCacheEntry] = @[]
   var fontMetricsCache: seq[TextFontMetricsCacheEntry] = @[]
+  var baselineMetricsCache: seq[TextBaselineMetricsCacheEntry] = @[]
 
   proc trimMeasureCache() =
     const limit = 512
@@ -566,6 +620,11 @@ proc textEngine*(engine: CosmicTextEngine): TextEngine =
     const limit = 128
     while fontMetricsCache.len > limit:
       fontMetricsCache.delete(0)
+
+  proc trimBaselineMetricsCache() =
+    const limit = 128
+    while baselineMetricsCache.len > limit:
+      baselineMetricsCache.delete(0)
 
   proc cachedMeasure(input: TextMeasureInput): Size =
     let key = input.cosmicTextRasterKey()
@@ -631,6 +690,21 @@ proc textEngine*(engine: CosmicTextEngine): TextEngine =
     fontMetricsCache.add TextFontMetricsCacheEntry(key: key, value: result)
     trimFontMetricsCache()
 
+  proc cachedBaselineMetrics(input: TextFontMetricsInput): TextBaselineMetrics =
+    let measureInput = TextMeasureInput(
+      text: "0",
+      style: input.style,
+      maxWidth: none(float32),
+      fonts: input.fonts
+    )
+    let key = measureInput.cosmicTextRasterKey()
+    for entry in baselineMetricsCache:
+      if entry.key == key:
+        return entry.value
+    result = measureCosmicBaselineMetrics(CosmicTextEngine(handle: handle), input)
+    baselineMetricsCache.add TextBaselineMetricsCacheEntry(key: key, value: result)
+    trimBaselineMetricsCache()
+
   TextEngine(
     measureText: proc(input: TextMeasureInput): Size =
       cachedMeasure(input),
@@ -640,6 +714,8 @@ proc textEngine*(engine: CosmicTextEngine): TextEngine =
       cachedHit(input),
     fontUnitMetrics: proc(input: TextFontMetricsInput): FontUnitMetrics =
       cachedFontMetrics(input),
+    baselineMetrics: proc(input: TextFontMetricsInput): TextBaselineMetrics =
+      cachedBaselineMetrics(input),
     layoutCarets: proc(input: TextMeasureInput): seq[TextCaretSample] =
       cachedCaretLayout(input)
   )

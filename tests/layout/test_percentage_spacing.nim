@@ -23,7 +23,8 @@ suite "percentage box spacing":
       rule(target(root), [
         decl("width", px(200)),
         decl("height", px(100)),
-        decl("padding", percent(10))
+        decl("padding", percent(10)),
+        decl("box-sizing", keyword("border-box"))
       ]),
       rule(target(child), [
         decl("width", percent(100)),
@@ -54,7 +55,8 @@ suite "percentage box spacing":
       rule(target(root), [
         decl("width", px(200)),
         decl("height", px(100)),
-        decl("padding", px(10))
+        decl("padding", px(10)),
+        decl("box-sizing", keyword("border-box"))
       ]),
       rule(target(child), [
         decl("width", px(40)),
@@ -81,7 +83,8 @@ suite "percentage box spacing":
         decl("width", px(200)),
         decl("height", px(100)),
         decl("padding", percent(10)),
-        decl("padding-inline", px(5))
+        decl("padding-inline", px(5)),
+        decl("box-sizing", keyword("border-box"))
       ]),
       rule(target(child), [
         decl("width", px(40)),
@@ -148,6 +151,7 @@ suite "percentage box spacing":
         decl("width", px(200)),
         decl("height", px(100)),
         decl("padding", percent(10)),
+        decl("box-sizing", keyword("border-box")),
         decl("overflow", keyword("hidden"))
       ])
     ])

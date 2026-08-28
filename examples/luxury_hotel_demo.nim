@@ -135,6 +135,9 @@ proc addTimelineItem(
   discard marker
 
 proc buildLuxuryHotelDemo*(ui: UiRoot): HotelLayoutNodes =
+  ui.addStyle(styleSheet([
+    rule(element(nkBox), [boxSizing(bsBorderBox)])
+  ]))
   result.root = ui.box(uiStyle([
     width(viewportWidth), height(viewportHeight), padding(24), gap(16),
     flexDirection(fdColumn), alignItems(aiCenter),

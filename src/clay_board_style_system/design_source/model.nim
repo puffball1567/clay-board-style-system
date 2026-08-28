@@ -21,7 +21,8 @@ type
     daCenter,
     daEnd,
     daStretch,
-    daSpaceBetween
+    daSpaceBetween,
+    daBaseline
 
   DesignEdges* = object
     top*, right*, bottom*, left*: float32
@@ -248,6 +249,8 @@ proc alignKeyword(value: DesignAlign; property: string): Option[string] =
     if property == "justify-content": some("start") else: some("stretch")
   of daSpaceBetween:
     if property == "justify-content": some("space-between") else: some("start")
+  of daBaseline:
+    if property == "align-items": some("baseline") else: some("start")
 
 proc addLengthDecl(result: var seq[Declaration]; property: string; value: Option[float32]) =
   if value.isSome:

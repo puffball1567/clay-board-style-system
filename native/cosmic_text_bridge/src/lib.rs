@@ -1,6 +1,6 @@
 use cosmic_text::{
-    fontdb, Attrs, Buffer, Cursor, Family, FeatureTag, FontFeatures, FontSystem, Metrics, Shaping,
-    Stretch, Style, SwashCache, Weight, Wrap,
+    fontdb, Align, Attrs, Buffer, Cursor, Family, FeatureTag, FontFeatures, FontSystem, Metrics,
+    Shaping, Stretch, Style, SwashCache, Weight, Wrap,
 };
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_float, c_uchar};
@@ -43,12 +43,27 @@ struct ShapeKey {
     letter_spacing: u32,
     word_spacing: u32,
     wrap: u32,
+    text_indent: u32,
+    text_align: u32,
+}
+
+struct PreparedSegment {
+    buffer: Buffer,
+    text: String,
+    source_start: usize,
+    x_offset: f32,
+    y_offset: f32,
+}
+
+struct PreparedLayout {
+    source_text: String,
+    segments: Vec<PreparedSegment>,
+    line_height: f32,
 }
 
 struct ShapeCacheEntry {
     key: ShapeKey,
-    buffer: Buffer,
-    text: String,
+    layout: PreparedLayout,
     last_used: u64,
 }
 
@@ -68,6 +83,8 @@ fn shape_key(input: &CbssCosmicTextMeasureInput) -> ShapeKey {
         letter_spacing: input.letter_spacing.to_bits(),
         word_spacing: input.word_spacing.to_bits(),
         wrap: input.wrap,
+        text_indent: input.text_indent.to_bits(),
+        text_align: input.text_align,
     }
 }
 
@@ -76,18 +93,16 @@ fn shaped_cache_entry<'a>(
     shape_cache: &'a mut Vec<ShapeCacheEntry>,
     shape_cache_clock: &mut u64,
     input: &CbssCosmicTextMeasureInput,
-) -> (&'a mut Buffer, &'a str) {
+) -> &'a mut PreparedLayout {
     *shape_cache_clock += 1;
     let clock = *shape_cache_clock;
     let key = shape_key(input);
     if let Some(index) = shape_cache.iter().position(|entry| entry.key == key) {
         let entry = &mut shape_cache[index];
         entry.last_used = clock;
-        let ShapeCacheEntry { buffer, text, .. } = entry;
-        return (buffer, text.as_str());
+        return &mut entry.layout;
     }
-    let (mut buffer, text) = prepare_buffer(font_system, input);
-    buffer.shape_until_scroll(font_system, false);
+    let layout = prepare_layout(font_system, input);
     if shape_cache.len() >= SHAPE_CACHE_LIMIT {
         let mut victim = 0usize;
         for index in 1..shape_cache.len() {
@@ -99,13 +114,11 @@ fn shaped_cache_entry<'a>(
     }
     shape_cache.push(ShapeCacheEntry {
         key,
-        buffer,
-        text,
+        layout,
         last_used: clock,
     });
     let entry = shape_cache.last_mut().expect("entry just pushed");
-    let ShapeCacheEntry { buffer, text, .. } = entry;
-    (buffer, text.as_str())
+    &mut entry.layout
 }
 
 #[repr(C)]
@@ -124,6 +137,8 @@ pub struct CbssCosmicTextMeasureInput {
     pub letter_spacing: c_float,
     pub word_spacing: c_float,
     pub wrap: u32,
+    pub text_indent: c_float,
+    pub text_align: u32,
 }
 
 #[repr(C)]
@@ -137,6 +152,13 @@ pub struct CbssCosmicTextMeasureResult {
 pub struct CbssCosmicTextFontMetricsResult {
     pub x_height: c_float,
     pub zero_advance: c_float,
+    pub ok: u8,
+}
+
+#[repr(C)]
+pub struct CbssCosmicTextBaselineMetricsResult {
+    pub ascent: c_float,
+    pub descent: c_float,
     pub ok: u8,
 }
 
@@ -255,14 +277,20 @@ fn set_text_with_fallbacks(
     text: &str,
     family_names: &[String],
     attrs: &Attrs<'_>,
+    letter_spacing_em: f32,
+    word_spacing_em: f32,
+    align: Option<Align>,
 ) {
-    if family_names.len() <= 1 || text.is_empty() {
-        buffer.set_text(text, attrs, Shaping::Advanced, None);
+    if (family_names.len() <= 1 && word_spacing_em == 0.0) || text.is_empty() {
+        buffer.set_text(text, attrs, Shaping::Advanced, align);
         return;
     }
 
-    let mut ranges = Vec::<(usize, usize, usize)>::new();
+    let mut ranges = Vec::<(usize, usize, usize, bool)>::new();
     for (start, segment) in text.split_word_bound_indices() {
+        let word_separator = segment
+            .chars()
+            .all(|ch| matches!(ch, '\t' | ' ' | '\u{00a0}'));
         let family_index = family_names
             .iter()
             .position(|family| {
@@ -271,23 +299,41 @@ fn set_text_with_fallbacks(
             .unwrap_or(0);
         let finish = start + segment.len();
         if let Some(last) = ranges.last_mut() {
-            if last.1 == start && last.2 == family_index {
+            if last.1 == start && last.2 == family_index && last.3 == word_separator {
                 last.1 = finish;
                 continue;
             }
         }
-        ranges.push((start, finish, family_index));
+        ranges.push((start, finish, family_index, word_separator));
     }
 
-    let spans = ranges.iter().map(|(start, finish, family_index)| {
-        (
-            &text[*start..*finish],
-            attrs
+    let spans = ranges
+        .iter()
+        .map(|(start, finish, family_index, word_separator)| {
+            let segment = &text[*start..*finish];
+            let spacing = if *word_separator {
+                letter_spacing_em + word_spacing_em
+            } else {
+                letter_spacing_em
+            };
+            let span_attrs = attrs
                 .clone()
-                .family(family_from_name(&family_names[*family_index])),
-        )
-    });
-    buffer.set_rich_text(spans, attrs, Shaping::Advanced, None);
+                .family(family_from_name(&family_names[*family_index]))
+                .letter_spacing(spacing);
+            (segment, span_attrs)
+        });
+    buffer.set_rich_text(spans, attrs, Shaping::Advanced, align);
+}
+
+fn align_from_u32(value: u32, has_width: bool) -> Option<Align> {
+    if !has_width {
+        return None;
+    }
+    match value {
+        2 => Some(Align::Center),
+        3 => Some(Align::Right),
+        _ => Some(Align::Left),
+    }
 }
 
 fn style_from_u32(value: u32) -> Style {
@@ -469,23 +515,28 @@ pub unsafe extern "C" fn cbss_cosmic_text_measure(
         }
 
         let input = &*input;
-        let line_height = line_height_from_input(input);
         let CbssCosmicTextEngine {
             font_system,
             shape_cache,
             shape_cache_clock,
             ..
         } = &mut *engine;
-        let (buffer, text) = shaped_cache_entry(font_system, shape_cache, shape_cache_clock, input);
+        let layout = shaped_cache_entry(font_system, shape_cache, shape_cache_clock, input);
 
         let mut width = 0.0f32;
         let mut height = 0.0f32;
-        for run in buffer.layout_runs() {
-            width = width.max(run.line_w);
-            height = height.max(run.line_top + run.line_height);
-        }
-        if text.is_empty() {
-            height = line_height;
+        for segment in &layout.segments {
+            let mut has_run = false;
+            for run in segment.buffer.layout_runs() {
+                has_run = true;
+                if !run.glyphs.is_empty() {
+                    width = width.max((segment.x_offset + run.line_w).max(0.0));
+                }
+                height = height.max(segment.y_offset + run.line_top + run.line_height);
+            }
+            if !has_run {
+                height = height.max(segment.y_offset + layout.line_height);
+            }
         }
 
         ptr::write(
@@ -554,10 +605,11 @@ pub unsafe extern "C" fn cbss_cosmic_text_font_unit_metrics(
             .filter(|value| value.is_finite() && *value > 0.0)
             .unwrap_or(font_size * 0.5);
 
-        let (buffer, _) = shaped_cache_entry(font_system, shape_cache, shape_cache_clock, input);
-        let zero_advance = buffer
-            .layout_runs()
-            .map(|run| run.line_w)
+        let layout = shaped_cache_entry(font_system, shape_cache, shape_cache_clock, input);
+        let zero_advance = layout
+            .segments
+            .iter()
+            .flat_map(|segment| segment.buffer.layout_runs().map(|run| run.line_w))
             .fold(0.0f32, f32::max);
         let zero_advance = if zero_advance.is_finite() && zero_advance > 0.0 {
             zero_advance
@@ -577,11 +629,77 @@ pub unsafe extern "C" fn cbss_cosmic_text_font_unit_metrics(
     })
 }
 
-fn prepare_buffer<'a>(
-    font_system: &'a mut FontSystem,
+#[no_mangle]
+pub unsafe extern "C" fn cbss_cosmic_text_baseline_metrics(
+    engine: *mut CbssCosmicTextEngine,
+    input: *const CbssCosmicTextMeasureInput,
+    output: *mut CbssCosmicTextBaselineMetricsResult,
+) -> u8 {
+    ffi_guard!(0, {
+        if engine.is_null() || input.is_null() || output.is_null() {
+            return 0;
+        }
+
+        let input = &*input;
+        let font_size = if input.font_size > 0.0 {
+            input.font_size
+        } else {
+            16.0
+        };
+        let families = parse_families(&cstr_or_empty(input.family_csv));
+        let variations = cstr_or_empty(input.font_variations);
+        let mut weight = input.font_weight;
+        let mut stretch = input.font_stretch;
+        let mut style = style_from_u32(input.font_style);
+        apply_variations(&variations, &mut weight, &mut stretch, &mut style);
+
+        let font_system = &mut (*engine).font_system;
+        let family = family_from_name(&families[0]);
+        let face_id = font_system.db().query(&fontdb::Query {
+            families: std::slice::from_ref(&family),
+            weight: Weight(weight.clamp(1.0, 1000.0) as u16),
+            stretch: stretch_from_percent(stretch),
+            style,
+        });
+        let metrics = face_id
+            .and_then(|id| {
+                font_system.db().with_face_data(id, |data, index| {
+                    ttf_parser::Face::parse(data, index).ok().map(|mut face| {
+                        apply_ttf_variations(&mut face, &variations);
+                        let scale = font_size / face.units_per_em() as f32;
+                        (
+                            face.ascender() as f32 * scale,
+                            -(face.descender() as f32) * scale,
+                        )
+                    })
+                })
+            })
+            .flatten();
+        let (ascent, descent) = metrics
+            .filter(|(ascent, descent)| {
+                ascent.is_finite() && descent.is_finite() && *ascent >= 0.0 && *descent >= 0.0
+            })
+            .unwrap_or((font_size * 0.8, font_size * 0.2));
+
+        ptr::write(
+            output,
+            CbssCosmicTextBaselineMetricsResult {
+                ascent,
+                descent,
+                ok: 1,
+            },
+        );
+        1
+    })
+}
+
+fn prepare_buffer(
+    font_system: &mut FontSystem,
     input: &CbssCosmicTextMeasureInput,
-) -> (Buffer, String) {
-    let text = cstr_or_empty(input.text);
+    text: &str,
+    max_width: Option<f32>,
+    wrap: u32,
+) -> Buffer {
     let families = parse_families(&cstr_or_empty(input.family_csv));
     let features = cstr_or_empty(input.font_features);
     let variations = cstr_or_empty(input.font_variations);
@@ -598,19 +716,22 @@ fn prepare_buffer<'a>(
     let metrics = Metrics::new(font_size, line_height);
     let mut buffer = Buffer::new(font_system, metrics);
     {
-        let max_width = if input.has_max_width != 0 {
-            Some(input.max_width.max(0.0))
-        } else {
-            Some(1_000_000.0)
-        };
-        buffer.set_size(max_width, Some(1_000_000.0));
-        buffer.set_wrap(match input.wrap {
+        buffer.set_size(
+            Some(max_width.unwrap_or(1_000_000.0).max(0.0)),
+            Some(1_000_000.0),
+        );
+        buffer.set_wrap(match wrap {
             1 => Wrap::None,
             2 => Wrap::Glyph,
             _ => Wrap::Word,
         });
         let letter_spacing_em = if input.letter_spacing != 0.0 {
             input.letter_spacing / font_size
+        } else {
+            0.0
+        };
+        let word_spacing_em = if input.word_spacing.is_finite() && input.word_spacing != 0.0 {
+            input.word_spacing / font_size
         } else {
             0.0
         };
@@ -625,14 +746,138 @@ fn prepare_buffer<'a>(
             .stretch(stretch_from_percent(stretch))
             .letter_spacing(letter_spacing_em)
             .font_features(parse_font_features(&features));
-        set_text_with_fallbacks(&mut buffer, font_system, &text, &families, &attrs);
+        let align = align_from_u32(input.text_align, max_width.is_some());
+        set_text_with_fallbacks(
+            &mut buffer,
+            font_system,
+            text,
+            &families,
+            &attrs,
+            letter_spacing_em,
+            word_spacing_em,
+            align,
+        );
     }
-    (buffer, text)
+    buffer.shape_until_scroll(font_system, false);
+    buffer
+}
+
+fn first_visual_line_end(
+    font_system: &mut FontSystem,
+    input: &CbssCosmicTextMeasureInput,
+    paragraph: &str,
+    available_width: Option<f32>,
+) -> usize {
+    if paragraph.is_empty() || input.wrap == 1 || available_width.is_none() {
+        return paragraph.len();
+    }
+    let probe = prepare_buffer(font_system, input, paragraph, available_width, input.wrap);
+    let mut runs = probe.layout_runs();
+    let _first = runs.next();
+    let Some(second) = runs.next() else {
+        return paragraph.len();
+    };
+    second
+        .glyphs
+        .first()
+        .map(|glyph| glyph.start.min(paragraph.len()))
+        .unwrap_or(paragraph.len())
+}
+
+fn prepare_layout(
+    font_system: &mut FontSystem,
+    input: &CbssCosmicTextMeasureInput,
+) -> PreparedLayout {
+    let source_text = cstr_or_empty(input.text);
+    let line_height = line_height_from_input(input);
+    let maximum_width = if input.has_max_width != 0 {
+        Some(input.max_width.max(0.0))
+    } else {
+        None
+    };
+    let indent = if input.text_indent.is_finite() {
+        input.text_indent
+    } else {
+        0.0
+    };
+
+    if indent == 0.0 {
+        return PreparedLayout {
+            segments: vec![PreparedSegment {
+                buffer: prepare_buffer(font_system, input, &source_text, maximum_width, input.wrap),
+                text: source_text.clone(),
+                source_start: 0,
+                x_offset: 0.0,
+                y_offset: 0.0,
+            }],
+            source_text,
+            line_height,
+        };
+    }
+
+    let explicit_end = source_text.find('\n').unwrap_or(source_text.len());
+    let first_available = maximum_width.map(|width| (width - indent).max(0.0));
+    let first_end = first_visual_line_end(
+        font_system,
+        input,
+        &source_text[..explicit_end],
+        first_available,
+    );
+    let mut remainder_start = first_end;
+    if first_end == explicit_end && source_text.as_bytes().get(first_end) == Some(&b'\n') {
+        remainder_start += 1;
+    }
+
+    let first_text = source_text[..first_end].to_string();
+    let mut segments = vec![PreparedSegment {
+        buffer: prepare_buffer(font_system, input, &first_text, first_available, 1),
+        text: first_text,
+        source_start: 0,
+        x_offset: indent,
+        y_offset: 0.0,
+    }];
+    if remainder_start < source_text.len() || source_text.ends_with('\n') {
+        let remainder = source_text[remainder_start..].to_string();
+        segments.push(PreparedSegment {
+            buffer: prepare_buffer(font_system, input, &remainder, maximum_width, input.wrap),
+            text: remainder,
+            source_start: remainder_start,
+            x_offset: 0.0,
+            y_offset: line_height,
+        });
+    }
+
+    PreparedLayout {
+        source_text,
+        segments,
+        line_height,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn baseline_test_input(font_size: f32) -> CbssCosmicTextMeasureInput {
+        CbssCosmicTextMeasureInput {
+            text: ptr::null(),
+            family_csv: ptr::null(),
+            font_features: ptr::null(),
+            font_variations: ptr::null(),
+            font_size,
+            line_height: font_size * 1.2,
+            max_width: 0.0,
+            has_max_width: 0,
+            font_weight: 400.0,
+            font_style: 0,
+            font_stretch: 100.0,
+            letter_spacing: 0.0,
+            word_spacing: 0.0,
+            wrap: 0,
+            text_indent: 0.0,
+            text_align: 0,
+        }
+    }
 
     #[test]
     fn overlapping_glyph_pixels_are_composited_instead_of_erased() {
@@ -664,6 +909,53 @@ mod tests {
         assert!(!engine.is_null());
         unsafe {
             assert_eq!((*engine).font_system.db().len(), 0);
+            cbss_cosmic_text_engine_free(engine);
+        }
+    }
+
+    #[test]
+    fn baseline_metrics_reject_null_ffi_arguments() {
+        let engine = cbss_cosmic_text_engine_new(0);
+        let input = baseline_test_input(20.0);
+        let mut output = CbssCosmicTextBaselineMetricsResult {
+            ascent: 0.0,
+            descent: 0.0,
+            ok: 0,
+        };
+        unsafe {
+            assert_eq!(
+                cbss_cosmic_text_baseline_metrics(engine, ptr::null(), &mut output),
+                0
+            );
+            assert_eq!(
+                cbss_cosmic_text_baseline_metrics(engine, &input, ptr::null_mut()),
+                0
+            );
+            assert_eq!(
+                cbss_cosmic_text_baseline_metrics(ptr::null_mut(), &input, &mut output),
+                0
+            );
+            cbss_cosmic_text_engine_free(engine);
+        }
+    }
+
+    #[test]
+    fn baseline_metrics_use_a_deterministic_fallback_without_fonts() {
+        let engine = cbss_cosmic_text_engine_new(0);
+        let input = baseline_test_input(20.0);
+        let mut output = CbssCosmicTextBaselineMetricsResult {
+            ascent: 0.0,
+            descent: 0.0,
+            ok: 0,
+        };
+        unsafe {
+            assert_eq!(
+                cbss_cosmic_text_baseline_metrics(engine, &input, &mut output),
+                1
+            );
+            assert_eq!(output.ok, 1);
+            assert_eq!(output.ascent, 16.0);
+            assert_eq!(output.descent, 4.0);
             cbss_cosmic_text_engine_free(engine);
         }
     }
@@ -807,6 +1099,55 @@ fn collect_caret_samples(
     samples
 }
 
+fn collect_layout_caret_samples(layout: &PreparedLayout) -> Vec<CbssCosmicTextCaretSample> {
+    let mut samples = Vec::new();
+    for segment in &layout.segments {
+        for mut sample in collect_caret_samples(&segment.buffer, &segment.text, layout.line_height)
+        {
+            sample.x += segment.x_offset;
+            sample.y += segment.y_offset;
+            sample.byte_index =
+                (segment.source_start + sample.byte_index).min(layout.source_text.len());
+            samples.push(sample);
+        }
+    }
+    samples.sort_by(|a, b| {
+        a.byte_index
+            .cmp(&b.byte_index)
+            .then_with(|| a.y.total_cmp(&b.y))
+            .then_with(|| a.x.total_cmp(&b.x))
+    });
+    samples.dedup_by(|a, b| {
+        a.byte_index == b.byte_index && (a.y - b.y).abs() < 0.01 && (a.x - b.x).abs() < 0.01
+    });
+    samples
+}
+
+fn segment_for_source_index(layout: &PreparedLayout, byte_index: usize) -> usize {
+    let clamped = byte_index.min(layout.source_text.len());
+    let mut selected = 0;
+    for (index, segment) in layout.segments.iter().enumerate() {
+        if segment.source_start <= clamped {
+            selected = index;
+        } else {
+            break;
+        }
+    }
+    selected
+}
+
+fn segment_for_y(layout: &PreparedLayout, y: f32) -> usize {
+    let mut selected = 0;
+    for (index, segment) in layout.segments.iter().enumerate() {
+        if segment.y_offset <= y {
+            selected = index;
+        } else {
+            break;
+        }
+    }
+    selected
+}
+
 fn caret_sample_position(
     samples: &[CbssCosmicTextCaretSample],
     byte_index: usize,
@@ -855,23 +1196,29 @@ pub unsafe extern "C" fn cbss_cosmic_text_caret_position(
             shape_cache_clock,
             ..
         } = &mut *engine;
-        let (buffer, text) = shaped_cache_entry(font_system, shape_cache, shape_cache_clock, input);
-        let cursor = flat_to_cursor(text, query.byte_index);
+        let layout = shaped_cache_entry(font_system, shape_cache, shape_cache_clock, input);
+        let source_index = query.byte_index.min(layout.source_text.len());
+        let segment_index = segment_for_source_index(layout, source_index);
+        let segment = &layout.segments[segment_index];
+        let local_index = source_index
+            .saturating_sub(segment.source_start)
+            .min(segment.text.len());
+        let cursor = flat_to_cursor(&segment.text, local_index);
         // `cursor_position` fails for cursors layout has no run/glyph for (for
         // example the empty line a trailing newline owns). Fall back to the
         // caret-layout samples so caret queries agree with hit testing.
-        let position = buffer.cursor_position(&cursor).or_else(|| {
-            let samples = collect_caret_samples(buffer, text, line_height);
-            caret_sample_position(&samples, query.byte_index.min(text.len()))
+        let position = segment.buffer.cursor_position(&cursor).or_else(|| {
+            let samples = collect_caret_samples(&segment.buffer, &segment.text, line_height);
+            caret_sample_position(&samples, local_index)
         });
         let (x, y) = position.unwrap_or((0.0, 0.0));
         ptr::write(
             output,
             CbssCosmicTextCaretResult {
-                x,
-                y,
+                x: x + segment.x_offset,
+                y: y + segment.y_offset,
                 height: line_height,
-                byte_index: query.byte_index.min(text.len()),
+                byte_index: source_index,
                 ok: 1,
             },
         );
@@ -890,15 +1237,14 @@ pub unsafe extern "C" fn cbss_cosmic_text_caret_layout(
             return 0;
         }
         let input = &*input;
-        let line_height = line_height_from_input(input);
         let CbssCosmicTextEngine {
             font_system,
             shape_cache,
             shape_cache_clock,
             ..
         } = &mut *engine;
-        let (buffer, text) = shaped_cache_entry(font_system, shape_cache, shape_cache_clock, input);
-        let samples = collect_caret_samples(buffer, text, line_height);
+        let layout = shaped_cache_entry(font_system, shape_cache, shape_cache_clock, input);
+        let samples = collect_layout_caret_samples(layout);
 
         let len = samples.len();
         let mut boxed = samples.into_boxed_slice();
@@ -946,23 +1292,30 @@ pub unsafe extern "C" fn cbss_cosmic_text_hit_test(
             shape_cache_clock,
             ..
         } = &mut *engine;
-        let (buffer, text) = shaped_cache_entry(font_system, shape_cache, shape_cache_clock, input);
-        let cursor = buffer
-            .hit(query.x, query.y)
-            .unwrap_or_else(|| flat_to_cursor(text, text.len()));
-        let byte_index = cursor_to_flat(text, cursor);
-        let (x, y) = buffer
+        let layout = shaped_cache_entry(font_system, shape_cache, shape_cache_clock, input);
+        let segment_index = segment_for_y(layout, query.y);
+        let segment = &layout.segments[segment_index];
+        let local_x = query.x - segment.x_offset;
+        let local_y = query.y - segment.y_offset;
+        let cursor = segment
+            .buffer
+            .hit(local_x, local_y)
+            .unwrap_or_else(|| flat_to_cursor(&segment.text, segment.text.len()));
+        let local_byte_index = cursor_to_flat(&segment.text, cursor);
+        let byte_index = (segment.source_start + local_byte_index).min(layout.source_text.len());
+        let (x, y) = segment
+            .buffer
             .cursor_position(&cursor)
             .or_else(|| {
-                let samples = collect_caret_samples(buffer, text, line_height);
-                caret_sample_position(&samples, byte_index)
+                let samples = collect_caret_samples(&segment.buffer, &segment.text, line_height);
+                caret_sample_position(&samples, local_byte_index)
             })
-            .unwrap_or((query.x.max(0.0), 0.0));
+            .unwrap_or((local_x.max(0.0), 0.0));
         ptr::write(
             output,
             CbssCosmicTextCaretResult {
-                x,
-                y,
+                x: x + segment.x_offset,
+                y: y + segment.y_offset,
                 height: line_height,
                 byte_index,
                 ok: 1,
@@ -1018,8 +1371,8 @@ unsafe fn render_bitmap_impl(
         shape_cache,
         shape_cache_clock,
     } = &mut *engine;
-    let (buffer, text) = shaped_cache_entry(font_system, shape_cache, shape_cache_clock, input);
-    if text.is_empty() {
+    let layout = shaped_cache_entry(font_system, shape_cache, shape_cache_clock, input);
+    if layout.source_text.is_empty() {
         ptr::write(
             output,
             CbssCosmicTextBitmapResult {
@@ -1036,20 +1389,30 @@ unsafe fn render_bitmap_impl(
     }
 
     let mut spans = Vec::<DrawSpan>::new();
-    buffer.draw(
-        font_system,
-        swash_cache,
-        cosmic_text::Color::rgba(255, 255, 255, 255),
-        |x, y, w, h, color| {
-            let intersects_region = region.map_or(true, |(top, height)| {
-                let bottom = top + height.max(0.0);
-                (y as f32) + (h as f32) > top && (y as f32) < bottom
-            });
-            if w > 0 && h > 0 && intersects_region {
-                spans.push(DrawSpan { x, y, w, h, color });
-            }
-        },
-    );
+    for segment in &mut layout.segments {
+        segment.buffer.draw(
+            font_system,
+            swash_cache,
+            cosmic_text::Color::rgba(255, 255, 255, 255),
+            |x, y, w, h, color| {
+                let shifted_x = x.saturating_add(segment.x_offset.round() as i32);
+                let shifted_y = y.saturating_add(segment.y_offset.round() as i32);
+                let intersects_region = region.map_or(true, |(top, height)| {
+                    let bottom = top + height.max(0.0);
+                    (shifted_y as f32) + (h as f32) > top && (shifted_y as f32) < bottom
+                });
+                if w > 0 && h > 0 && intersects_region {
+                    spans.push(DrawSpan {
+                        x: shifted_x,
+                        y: shifted_y,
+                        w,
+                        h,
+                        color,
+                    });
+                }
+            },
+        );
+    }
 
     if spans.is_empty() {
         ptr::write(

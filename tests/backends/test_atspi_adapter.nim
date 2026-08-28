@@ -215,6 +215,26 @@ suite "AT-SPI platform-neutral adapter":
       after.nodes[^1].objectPath
     )
 
+  test "snapshot and diff preserve logical set position metadata":
+    let ui = initUiRoot()
+    let item = ui.box(fixedStyle(120, 32))
+    item.setAccessibleRole(arListItem)
+    item.setAccessibleName("Row 501")
+    item.setAccessibleSetPosition(some(501), some(100_000))
+    let path = objectPathFor(item.nodeId)
+
+    let before = ui.buildAtspiSnapshot(ui.layoutFor(), "Virtual list")
+    let beforeNode = before.nodeAt(path).get
+    check beforeNode.positionInSet == some(501)
+    check beforeNode.setSize == some(100_000)
+
+    item.setAccessibleSetPosition(some(502), some(100_001))
+    let after = ui.buildAtspiSnapshot(ui.layoutFor(), "Virtual list")
+    let afterNode = after.nodeAt(path).get
+    check afterNode.positionInSet == some(502)
+    check afterNode.setSize == some(100_001)
+    check diffAtspiSnapshots(before, after).hasChange(ackSetPosition, path)
+
   test "transport commits snapshots atomically and retains the last successful state":
     let ui = initUiRoot()
     let app = ui.box(fixedStyle(300, 100))

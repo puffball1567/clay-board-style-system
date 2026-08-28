@@ -39,6 +39,9 @@ jobs:
       - name: Check generated event surfaces
         run: nimble checkGeneratedEvents -y
 
+      - name: Check Craft Driver contract surfaces
+        run: nimble checkDriverContract -y
+
       - name: Check explicit first-party event outcomes
         run: nimble checkExplicitEventOutcomes -y
 
@@ -55,6 +58,12 @@ jobs:
 
       - name: Test shared and static C ABI
         run: nimble testCAbi -y
+
+      - name: Test shared and static Rust Craft Driver
+        run: nimble testRustDriver -y
+
+      - name: Compare C++ and Rust reference applications
+        run: nimble testDriverConformance -y
 
       - name: Verify source-only package with external bundled runtime
         run: |
@@ -105,6 +114,34 @@ jobs:
 
       - name: Check cross-thread C ABI streams under ORC
         run: nimble testCAbiOrc -y
+
+      - name: Test Rust Craft Driver under ORC
+        run: nimble testRustDriverOrc -y
+
+  linux-atspi:
+    name: Linux AT-SPI D-Bus integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nim
+        uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
+        with:
+          nim-version: '2.2.10'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install AT-SPI test runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y at-spi2-core dbus-daemon libglib2.0-bin valgrind
+
+      - name: Test real D-Bus protocol under ARC and ORC
+        run: dbus-run-session -- nimble testLinuxAtspi -y
+
+      - name: Check transport lifecycle with Valgrind
+        run: dbus-run-session -- nimble testLinuxAtspiValgrind -y
 
   portable:
     name: Portable core (${{ matrix.platform }})
@@ -166,14 +203,24 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           cc -std=c11 -Wall -Wextra -Werror -Iinclude -fsyntax-only tests/c_api/header_consumer.c
-          c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -fsyntax-only tests/c_api/header_consumer.cpp
+          c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include -fsyntax-only tests/c_api/header_consumer.cpp
+          c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include -fsyntax-only tests/drivers/cpp_reference.cpp
+          c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include -fsyntax-only tests/drivers/cpp_reference_application.cpp
 
       - name: Check C and C++ public headers (MSVC-compatible)
         if: runner.os == 'Windows'
         shell: cmd
         run: |
           clang-cl /nologo /W4 /WX /c /TC /Iinclude tests\c_api\header_consumer.c /Fo"${{ runner.temp }}\cbss_header_c.obj"
-          clang-cl /nologo /W4 /WX /c /TP /std:c++14 /Iinclude tests\c_api\header_consumer.cpp /Fo"${{ runner.temp }}\cbss_header_cpp.obj"
+          clang-cl /nologo /W4 /WX /EHsc /c /TP /std:c++14 /Iinclude /Idrivers\cpp\include tests\c_api\header_consumer.cpp /Fo"${{ runner.temp }}\cbss_header_cpp.obj"
+          clang-cl /nologo /W4 /WX /EHsc /c /TP /std:c++14 /Iinclude /Idrivers\cpp\include tests\drivers\cpp_reference.cpp /Fo"${{ runner.temp }}\cbss_cpp_driver.obj"
+          clang-cl /nologo /W4 /WX /EHsc /c /TP /std:c++14 /Iinclude /Idrivers\cpp\include tests\drivers\cpp_reference_application.cpp /Fo"${{ runner.temp }}\cbss_cpp_reference_application.obj"
+
+      - name: Check portable Rust Craft Driver
+        run: cargo check --locked --all-targets --manifest-path drivers/rust/Cargo.toml
+
+      - name: Check Rust reference application
+        run: cargo check --locked --manifest-path tests/drivers/rust_reference_application/Cargo.toml
 
       - name: Test native Rust bridges
         run: |
@@ -390,6 +437,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check Rust Craft Driver formatting and lints
+        run: |
+          cargo fmt --manifest-path drivers/rust/Cargo.toml -- --check
+          cargo clippy --locked --all-targets --manifest-path drivers/rust/Cargo.toml -- -D warnings
 
       - name: Test locked Rust bridge
         run: cargo test --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml

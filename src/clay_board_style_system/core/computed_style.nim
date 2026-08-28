@@ -8,7 +8,9 @@ type
 
   FlexDirection* = enum
     fdRow,
-    fdColumn
+    fdColumn,
+    fdRowReverse,
+    fdColumnReverse
 
   FlexWrap* = enum
     fwNoWrap,
@@ -19,13 +21,17 @@ type
     aiStart,
     aiCenter,
     aiEnd,
-    aiStretch
+    aiStretch,
+    aiBaseline
 
   JustifyContent* = enum
     jcStart,
     jcCenter,
     jcEnd,
-    jcSpaceBetween
+    jcSpaceBetween,
+    jcSpaceAround,
+    jcSpaceEvenly,
+    jcStretch
 
   SelfAlignment* = enum
     saStart,
@@ -197,6 +203,10 @@ type
   BackgroundSize* = object
     kind*: BackgroundSizeKind
     width*, height*: Option[float32]
+    widthValue*, heightValue*: Option[LengthValue]
+
+  BackgroundPosition* = object
+    x*, y*: LengthValue
 
   LinearGradient* = object
     angle*: float32
@@ -490,6 +500,7 @@ type
     backgroundGradient*: Option[LinearGradient]
     backgroundSize*: Option[BackgroundSize]
     backgroundPosition*: ObjectPosition
+    backgroundPositionValue*: BackgroundPosition
     backgroundRepeat*: BackgroundRepeat
     backgroundClip*: BackgroundBox
     backgroundOrigin*: BackgroundBox
@@ -632,10 +643,12 @@ type
     cursor*: Option[CursorKind]
     userSelect*: Option[UserSelect]
     caretColor*: Option[Color]
+    caretColorSpecified*: bool
     caret*: Option[string]
     caretAnimation*: Option[string]
     caretShape*: Option[string]
     accentColor*: Option[Color]
+    accentColorSpecified*: bool
     resize*: ResizeKind
     filter*: Option[string]
     backdropFilter*: Option[string]
@@ -853,6 +866,10 @@ proc initialComputedStyle*(): ComputedStyle =
   result.layout.overflowX = omVisible
   result.layout.overflowY = omVisible
   result.box.backgroundPosition = ObjectPosition(x: 0, y: 0)
+  result.box.backgroundPositionValue = BackgroundPosition(
+    x: LengthValue(kind: ukPercent, value: 0),
+    y: LengthValue(kind: ukPercent, value: 0)
+  )
   result.box.backgroundRepeat = bgRepeat
   result.box.backgroundClip = bgBorderBox
   result.box.backgroundOrigin = bgPaddingBox

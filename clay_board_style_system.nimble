@@ -1,10 +1,10 @@
-version       = "0.5.0"
+version       = "0.6.0"
 author        = "Clay Board Style System contributors"
 description   = "A CSS-inspired primitive engine for native GUI toolkits"
 license       = "Apache-2.0"
 srcDir        = "src"
 bin           = @["cbss_configure"]
-installDirs   = @["include", "native", "licenses", "docs"]
+installDirs   = @["include", "drivers", "native", "licenses", "docs", "schema"]
 installExt    = @["nim"]
 skipDirs      = @["target"]
 
@@ -18,6 +18,8 @@ before install:
   cpDir(packageRoot & "/licenses", stagedRoot & "/licenses")
   cpDir(packageRoot & "/docs", stagedRoot & "/docs")
   cpDir(packageRoot & "/include", stagedRoot & "/include")
+  cpDir(packageRoot & "/drivers", stagedRoot & "/drivers")
+  cpDir(packageRoot & "/schema", stagedRoot & "/schema")
 
   let bridgeSource = packageRoot & "/native/cosmic_text_bridge"
   let bridgeTarget = stagedRoot & "/native/cosmic_text_bridge"
@@ -37,11 +39,15 @@ before install:
 task test, "Run the test suite":
   exec "nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_property_support_nimcache --out:/tmp/clay_board_style_system_property_support tools/check_property_support.nim"
   exec "nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_event_generator_nimcache --out:/tmp/clay_board_style_system_event_generator tools/generate_events.nim --check"
+  exec "nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_driver_contract_generator_nimcache --out:/tmp/clay_board_style_system_driver_contract_generator tools/generate_driver_contract.nim --check"
   exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
   exec "nim c -r --mm:arc --nimcache:/tmp/clay_board_style_system_test_runner_nimcache --out:/tmp/clay_board_style_system_test_runner tools/run_tests.nim"
 
 task checkGeneratedEvents, "Verify generated Nim and C event surfaces":
   exec "nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_event_generator_nimcache --out:/tmp/clay_board_style_system_event_generator tools/generate_events.nim --check"
+
+task checkDriverContract, "Verify generated Craft Driver contract surfaces":
+  exec "nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_driver_contract_generator_nimcache --out:/tmp/clay_board_style_system_driver_contract_generator tools/generate_driver_contract.nim --check"
 
 task checkPropertySupport, "Verify CSS property support counts and registry coverage":
   exec "nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_property_support_nimcache --out:/tmp/clay_board_style_system_property_support tools/check_property_support.nim"
@@ -69,6 +75,19 @@ task checkExplicitEventOutcomes, "Reject implicit boolean outcomes in first-part
 task testOrc, "Run the test suite under ORC":
   exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
   exec "nim c -r --mm:orc --nimcache:/tmp/clay_board_style_system_orc_test_runner_nimcache --out:/tmp/clay_board_style_system_orc_test_runner tools/run_tests.nim --memory:orc"
+
+task testLinuxAtspi, "Run the Linux AT-SPI D-Bus integration under ARC and ORC":
+  when defined(linux):
+    exec "env CBSS_MEMORY_MODEL=arc bash tests/integration/test_linux_atspi_session.sh"
+    exec "env CBSS_MEMORY_MODEL=orc bash tests/integration/test_linux_atspi_session.sh"
+  else:
+    echo "The AT-SPI D-Bus transport is Linux-only."
+
+task testLinuxAtspiValgrind, "Run the Linux AT-SPI lifecycle under Valgrind":
+  when defined(linux):
+    exec "env CBSS_MEMORY_MODEL=arc CBSS_ATSPI_VALGRIND=1 bash tests/integration/test_linux_atspi_session.sh"
+  else:
+    echo "The AT-SPI D-Bus transport is Linux-only."
 
 task testMotionAsan, "Run retained runtime tests under AddressSanitizer":
   let sanitizerRoot = thisDir() & "/nimcache"
@@ -266,9 +285,11 @@ task buildCAbiStatic, "Build the static CBSS C ABI library":
 task testCAbi, "Build and exercise the shared and static C ABI from C":
   exec "nim c --threads:on --app:lib --mm:arc -d:release --path:src --nimcache:/tmp/clay_board_style_system_c_api_shared_nimcache --out:/tmp/libcbss.so src/cbss_c_api.nim"
   exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude -fsyntax-only tests/c_api/header_consumer.c"
-  exec "c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -fsyntax-only tests/c_api/header_consumer.cpp"
+  exec "c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include -fsyntax-only tests/c_api/header_consumer.cpp"
   exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/c_consumer.c -L/tmp -Wl,-rpath,/tmp -lcbss -lm -o /tmp/clay_board_style_system_c_consumer_shared"
   exec "/tmp/clay_board_style_system_c_consumer_shared"
+  exec "c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include tests/drivers/cpp_reference.cpp -L/tmp -Wl,-rpath,/tmp -lcbss -lm -o /tmp/clay_board_style_system_cpp_driver_shared"
+  exec "/tmp/clay_board_style_system_cpp_driver_shared"
   exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/motion_consumer.c -L/tmp -Wl,-rpath,/tmp -lcbss -lm -o /tmp/clay_board_style_system_c_motion_consumer_shared"
   exec "/tmp/clay_board_style_system_c_motion_consumer_shared"
   exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/stream_consumer.c -L/tmp -Wl,-rpath,/tmp -lcbss -lm -lpthread -ldl -o /tmp/clay_board_style_system_c_stream_consumer_shared"
@@ -276,18 +297,56 @@ task testCAbi, "Build and exercise the shared and static C ABI from C":
   exec "nim c --threads:on --app:staticlib --mm:arc -d:release --path:src --nimcache:/tmp/clay_board_style_system_c_api_static_nimcache --out:/tmp/libcbss.a src/cbss_c_api.nim"
   exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/c_consumer.c /tmp/libcbss.a -lm -lpthread -ldl -o /tmp/clay_board_style_system_c_consumer_static"
   exec "/tmp/clay_board_style_system_c_consumer_static"
+  exec "c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include tests/drivers/cpp_reference.cpp /tmp/libcbss.a -lm -lpthread -ldl -o /tmp/clay_board_style_system_cpp_driver_static"
+  exec "/tmp/clay_board_style_system_cpp_driver_static"
   exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/motion_consumer.c /tmp/libcbss.a -lm -lpthread -ldl -o /tmp/clay_board_style_system_c_motion_consumer_static"
   exec "/tmp/clay_board_style_system_c_motion_consumer_static"
   exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/stream_consumer.c /tmp/libcbss.a -lm -lpthread -ldl -o /tmp/clay_board_style_system_c_stream_consumer_static"
   exec "/tmp/clay_board_style_system_c_stream_consumer_static"
 
+task testCppDriver, "Build and exercise the C++ Craft Driver":
+  exec "nim c --threads:on --app:lib --mm:arc -d:release --path:src --nimcache:/tmp/clay_board_style_system_cpp_driver_shared_nimcache --out:/tmp/libcbss.so src/cbss_c_api.nim"
+  exec "c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include tests/drivers/cpp_reference.cpp -L/tmp -Wl,-rpath,/tmp -lcbss -lm -o /tmp/clay_board_style_system_cpp_driver_shared"
+  exec "/tmp/clay_board_style_system_cpp_driver_shared"
+  exec "nim c --threads:on --app:staticlib --mm:arc -d:release --path:src --nimcache:/tmp/clay_board_style_system_cpp_driver_static_nimcache --out:/tmp/libcbss.a src/cbss_c_api.nim"
+  exec "c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include tests/drivers/cpp_reference.cpp /tmp/libcbss.a -lm -lpthread -ldl -o /tmp/clay_board_style_system_cpp_driver_static"
+  exec "/tmp/clay_board_style_system_cpp_driver_static"
+
+task testRustDriver, "Build and exercise the Rust Craft Driver":
+  exec "nim c --threads:on --app:lib --mm:arc -d:release --path:src --nimcache:/tmp/clay_board_style_system_rust_driver_shared_nimcache --out:/tmp/libcbss.so src/cbss_c_api.nim"
+  exec "env CBSS_LIB_DIR=/tmp LD_LIBRARY_PATH=/tmp CARGO_TARGET_DIR=/tmp/clay_board_style_system_rust_driver_shared_target cargo test --locked --release --manifest-path drivers/rust/Cargo.toml"
+  exec "nim c --threads:on --app:staticlib --mm:arc -d:release --path:src --nimcache:/tmp/clay_board_style_system_rust_driver_static_nimcache --out:/tmp/libcbss.a src/cbss_c_api.nim"
+  exec "env CBSS_LIB_DIR=/tmp CBSS_STATIC=1 CARGO_TARGET_DIR=/tmp/clay_board_style_system_rust_driver_static_target cargo test --locked --release --manifest-path drivers/rust/Cargo.toml"
+
+task testDriverConformance, "Compare the C++ and Rust reference applications":
+  exec "nim c --threads:on --app:lib --mm:arc -d:release -d:cbssReferenceTestSupport --path:src --nimcache:/tmp/clay_board_style_system_driver_conformance_nimcache --out:/tmp/libcbss.so src/cbss_c_api.nim"
+  exec "c++ -std=c++14 -Wall -Wextra -Werror -pedantic -Iinclude -Idrivers/cpp/include tests/drivers/cpp_reference_application.cpp -L/tmp -Wl,-rpath,/tmp -lcbss -lm -o /tmp/cbss_cpp_reference_application"
+  exec "/tmp/cbss_cpp_reference_application /tmp/cbss_cpp_reference_application.trace /tmp/cbss_cpp_reference_application.ppm"
+  exec "env CBSS_LIB_DIR=/tmp LD_LIBRARY_PATH=/tmp CARGO_TARGET_DIR=/tmp/cbss_rust_reference_application_target cargo run --locked --quiet --release --manifest-path tests/drivers/rust_reference_application/Cargo.toml -- /tmp/cbss_rust_reference_application.trace /tmp/cbss_rust_reference_application.ppm"
+  exec "cmp tests/fixtures/drivers/reference_application.expected /tmp/cbss_cpp_reference_application.trace"
+  exec "cmp /tmp/cbss_cpp_reference_application.trace /tmp/cbss_rust_reference_application.trace"
+  exec "cmp tests/fixtures/drivers/reference_application.ppm /tmp/cbss_cpp_reference_application.ppm"
+  exec "cmp /tmp/cbss_cpp_reference_application.ppm /tmp/cbss_rust_reference_application.ppm"
+
+task testRustDriverOrc, "Exercise the Rust Craft Driver under ORC":
+  exec "mkdir -p /tmp/clay_board_style_system_rust_driver_orc_shared"
+  exec "nim c --threads:on --app:lib --mm:orc -d:release --path:src --nimcache:/tmp/clay_board_style_system_rust_driver_orc_shared_nimcache --out:/tmp/clay_board_style_system_rust_driver_orc_shared/libcbss.so src/cbss_c_api.nim"
+  exec "env CBSS_LIB_DIR=/tmp/clay_board_style_system_rust_driver_orc_shared LD_LIBRARY_PATH=/tmp/clay_board_style_system_rust_driver_orc_shared CARGO_TARGET_DIR=/tmp/clay_board_style_system_rust_driver_orc_shared_target cargo test --locked --release --manifest-path drivers/rust/Cargo.toml"
+  exec "mkdir -p /tmp/clay_board_style_system_rust_driver_orc_static"
+  exec "nim c --threads:on --app:staticlib --mm:orc -d:release --path:src --nimcache:/tmp/clay_board_style_system_rust_driver_orc_static_nimcache --out:/tmp/clay_board_style_system_rust_driver_orc_static/libcbss.a src/cbss_c_api.nim"
+  exec "env CBSS_LIB_DIR=/tmp/clay_board_style_system_rust_driver_orc_static CBSS_STATIC=1 CARGO_TARGET_DIR=/tmp/clay_board_style_system_rust_driver_orc_static_target cargo test --locked --release --manifest-path drivers/rust/Cargo.toml"
+
 task testCAbiOrc, "Exercise cross-thread C ABI streams under ORC":
   exec "nim c --threads:on --app:lib --mm:orc -d:release --path:src --nimcache:/tmp/clay_board_style_system_c_api_orc_shared_nimcache --out:/tmp/libcbss_orc.so src/cbss_c_api.nim"
+  exec "c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include tests/drivers/cpp_reference.cpp -L/tmp -Wl,-rpath,/tmp -l:libcbss_orc.so -lm -o /tmp/clay_board_style_system_cpp_driver_orc_shared"
+  exec "/tmp/clay_board_style_system_cpp_driver_orc_shared"
   exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/motion_consumer.c -L/tmp -Wl,-rpath,/tmp -l:libcbss_orc.so -lm -o /tmp/clay_board_style_system_c_motion_consumer_orc_shared"
   exec "/tmp/clay_board_style_system_c_motion_consumer_orc_shared"
   exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/stream_consumer.c -L/tmp -Wl,-rpath,/tmp -l:libcbss_orc.so -lm -lpthread -ldl -o /tmp/clay_board_style_system_c_stream_consumer_orc_shared"
   exec "/tmp/clay_board_style_system_c_stream_consumer_orc_shared"
   exec "nim c --threads:on --app:staticlib --mm:orc -d:release --path:src --nimcache:/tmp/clay_board_style_system_c_api_orc_static_nimcache --out:/tmp/libcbss_orc.a src/cbss_c_api.nim"
+  exec "c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include tests/drivers/cpp_reference.cpp /tmp/libcbss_orc.a -lm -lpthread -ldl -o /tmp/clay_board_style_system_cpp_driver_orc_static"
+  exec "/tmp/clay_board_style_system_cpp_driver_orc_static"
   exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/motion_consumer.c /tmp/libcbss_orc.a -lm -lpthread -ldl -o /tmp/clay_board_style_system_c_motion_consumer_orc_static"
   exec "/tmp/clay_board_style_system_c_motion_consumer_orc_static"
   exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/stream_consumer.c /tmp/libcbss_orc.a -lm -lpthread -ldl -o /tmp/clay_board_style_system_c_stream_consumer_orc_static"
@@ -295,6 +354,8 @@ task testCAbiOrc, "Exercise cross-thread C ABI streams under ORC":
 
 task testCAbiValgrind, "Run shared and static C ABI consumers under Valgrind":
   exec "nim c --threads:on --app:lib --mm:arc -d:release -d:useMalloc --path:src --nimcache:/tmp/clay_board_style_system_c_api_valgrind_shared_nimcache --out:/tmp/libcbss.so src/cbss_c_api.nim"
+  exec "c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include tests/drivers/cpp_reference.cpp -L/tmp -Wl,-rpath,/tmp -lcbss -lm -o /tmp/clay_board_style_system_cpp_driver_shared"
+  exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 /tmp/clay_board_style_system_cpp_driver_shared"
   exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/c_consumer.c -L/tmp -Wl,-rpath,/tmp -lcbss -lm -o /tmp/clay_board_style_system_c_consumer_shared"
   exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 /tmp/clay_board_style_system_c_consumer_shared"
   exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/motion_consumer.c -L/tmp -Wl,-rpath,/tmp -lcbss -lm -o /tmp/clay_board_style_system_c_motion_consumer_shared"
@@ -302,6 +363,8 @@ task testCAbiValgrind, "Run shared and static C ABI consumers under Valgrind":
   exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/stream_consumer.c -L/tmp -Wl,-rpath,/tmp -lcbss -lm -lpthread -ldl -o /tmp/clay_board_style_system_c_stream_consumer_shared"
   exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 /tmp/clay_board_style_system_c_stream_consumer_shared"
   exec "nim c --threads:on --app:staticlib --mm:arc -d:release -d:useMalloc --path:src --nimcache:/tmp/clay_board_style_system_c_api_valgrind_static_nimcache --out:/tmp/libcbss.a src/cbss_c_api.nim"
+  exec "c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include tests/drivers/cpp_reference.cpp /tmp/libcbss.a -lm -lpthread -ldl -o /tmp/clay_board_style_system_cpp_driver_static"
+  exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 /tmp/clay_board_style_system_cpp_driver_static"
   exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/c_consumer.c /tmp/libcbss.a -lm -lpthread -ldl -o /tmp/clay_board_style_system_c_consumer_static"
   exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 /tmp/clay_board_style_system_c_consumer_static"
   exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/motion_consumer.c /tmp/libcbss.a -lm -lpthread -ldl -o /tmp/clay_board_style_system_c_motion_consumer_static"
@@ -368,6 +431,8 @@ task bench, "Run compiled pipeline benchmarks (not part of the product build)":
   exec "nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_navigation_bench_nimcache --out:/tmp/clay_board_style_system_navigation_screen_host_benchmark tests/perf/navigation_screen_host_benchmark.nim"
   exec "nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_render_surface_bench_nimcache --out:/tmp/clay_board_style_system_render_surface_benchmark tests/perf/render_surface_benchmark.nim"
   exec "nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_validation_bench_nimcache --out:/tmp/clay_board_style_system_validation_benchmark tests/perf/validation_benchmark.nim"
+  exec "nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_virtualization_bench_nimcache --out:/tmp/clay_board_style_system_virtualization_benchmark tests/perf/virtualization_benchmark.nim"
+  exec "nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_virtual_node_pool_bench_nimcache --out:/tmp/clay_board_style_system_virtual_node_pool_benchmark tests/perf/virtual_node_pool_benchmark.nim"
 
 task demo, "Run the paint command demo":
   exec "nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_nimcache --out:/tmp/clay_board_style_system_paint_demo examples/paint_demo.nim"

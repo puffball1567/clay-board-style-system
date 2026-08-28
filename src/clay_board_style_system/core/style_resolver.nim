@@ -32,11 +32,15 @@ type
 
   MatchedDeclaration = object
     declaration: Declaration
+    cascadeLayer: int
     priority: int
     specificity: int
     sourceOrder: int
 
 proc compareMatched(a, b: MatchedDeclaration): int =
+  result = cmp(a.cascadeLayer, b.cascadeLayer)
+  if result != 0:
+    return
   result = cmp(a.priority, b.priority)
   if result != 0:
     return
@@ -90,6 +94,7 @@ proc addMatchingDeclarations(
       for declarationIndex, declaration in rule.declarations:
         matched.add MatchedDeclaration(
           declaration: declaration,
+          cascadeLayer: rule.cascadeLayer,
           priority: rule.priority,
           specificity: rule.selector.specificity,
           sourceOrder:
@@ -393,6 +398,12 @@ proc resolveNode(
       style.text.writingMode = parent.get.text.writingMode
     if style.text.tabSize.isNone:
       style.text.tabSize = parent.get.text.tabSize
+    if not style.visual.caretColorSpecified:
+      style.visual.caretColor = parent.get.visual.caretColor
+      style.visual.caretColorSpecified = parent.get.visual.caretColorSpecified
+    if not style.visual.accentColorSpecified:
+      style.visual.accentColor = parent.get.visual.accentColor
+      style.visual.accentColorSpecified = parent.get.visual.accentColorSpecified
     if style.image.objectFit.isNone:
       style.image.objectFit = parent.get.image.objectFit
     if style.image.objectPosition.isNone:

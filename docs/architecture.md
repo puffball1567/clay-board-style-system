@@ -246,8 +246,9 @@ Production-oriented runtime updates should be dirty-driven:
   for narrower updates.
 
 CBSS also owns UI semantics, while application behavior remains outside it.
-Nodes expose typed accessible roles, names, descriptions, values, state, and
-relations through a platform-neutral semantic tree. Standard controls own
+Nodes expose typed accessible roles, names, descriptions, values, state,
+relations, and logical set position/size through a platform-neutral semantic
+tree. Standard controls own
 intrinsic behavior such as keyboard activation, selection, disabled handling,
 and disclosure expansion. A user callback owns what happens after activation,
 such as saving, printing, or calling a backend. AT-SPI, UIA, and
@@ -311,6 +312,49 @@ Three separate mechanisms must not be grouped under the word "virtualization":
   layers, blocks on backend events while idle, and wakes only for dirty work or
   the next timer deadline. This avoids unnecessary frames but does not by itself
   reduce the number of retained rows in a 100,000-row grid.
+
+The viewport/data path starts with `VirtualExtentIndex` and
+`planVirtualRange`. The reusable index prepares sparse measured corrections
+when measurements change; scroll-time planning accepts a viewport, overscan,
+and a hard materialization limit without sorting those measurements again. The
+result contains geometry only for the bounded materialized range plus leading
+and trailing spacer extents. It does not allocate or scan one record per
+logical item.
+
+`VirtualNodePool[Key]` consumes that plan for one dedicated item host. The pool
+retains generation-checked Node IDs and mounted component lifecycle for keys
+that stay materialized, mounts and disposes only entering or leaving keys, and
+reorders the complete direct-child set when reverse scrolling or application
+data order changes. Duplicate keys, shared hosts, foreign nodes, inconsistent
+plans, and factories that create more than one direct root are explicit errors.
+Partial factory failure removes every node added during the failed reconcile.
+The pool remains bounded by the plan's materialization limit; at most another
+bounded range can exist transiently while a disjoint replacement is prepared
+before stale roots are torn down.
+
+Leading and trailing spacers live outside the dedicated item host. Retained
+refresh callbacks use normal node/component mutation and invalidation rather
+than replaying component render procedures.
+
+`VirtualFocusMemory[Key]` optionally attaches focus retention to that pool. When
+a focused item leaves the materialized range, it records only one stable item
+key, the focus-visible state, and a locator relative to the item root. An
+explicit node `code` is the preferred locator and survives internal child
+reordering; a child-index path is the fallback when no code is authored. A
+missing or duplicate explicit code fails closed instead of redirecting focus to
+another control. The interaction focus serial arms the record after disposal.
+Any later focus operation changes that serial and cancels restoration, so an
+item returning to the viewport cannot steal focus chosen by the user or the
+application.
+
+Logical collection semantics attach to the same stable item roots rather than
+materialization slots. `VirtualNodePool` writes one-based `positionInSet` and
+the plan's logical `setSize` after successful mount/refresh. Retained keys
+therefore update their positions when application data is reordered, while a
+100,000-item collection still exposes only the bounded accessible nodes that
+are currently materialized. The pool does not guess List, Grid, Tree, or item
+roles; component authors retain ownership of that meaning. The neutral tree,
+AT-SPI snapshot/diff, and append-only C ABI carry the same range contract.
 
 The runtime may still offer declarative construction helpers. Those helpers
 should compile down to stable tree and style objects, and later updates should
@@ -1547,6 +1591,74 @@ invalidation.
 
 CBSS layout should feel familiar to developers who use modern CSS Flexbox.
 
+### Box Sizing Contract
+
+`LayoutBox.rect` always represents the outer border box. The authored
+quantitative `width`, `height`, min/max constraints, and `flex-basis` values
+are interpreted according to `box-sizing` before layout stores that rectangle:
+
+- `content-box` is the default and adds resolved padding plus visible border
+  widths around the authored sizing box.
+- `border-box` treats the authored value as the outer size and clamps it to at
+  least the combined padding and visible border widths.
+- child percentages, alignment, absolute positioning, overflow, and clipping
+  use the content box derived from the same outer rectangle.
+- automatic and intrinsic dimensions produce the same natural outer size in
+  either mode because `box-sizing` does not change non-quantitative sizing
+  keywords such as `auto`, `min-content`, and `max-content`.
+
+CBSS does not silently apply a universal `border-box` reset. Applications and
+component libraries that prefer fixed outer dimensions can inject one explicit
+`element(nkBox)` rule, as the bundled demos do. This keeps the engine default
+familiar to CSS while making the application policy visible and replaceable.
+
+### Multi-Line Flex Contract
+
+Flex containers collect in-flow children into explicit lines before flexible
+length resolution. A definite main size, including an effective maximum size,
+sets the wrapping boundary. Each line independently freezes and redistributes
+grow or shrink space against item min/max constraints, then applies
+`justify-content`. Cross-axis placement applies `row-gap` or `column-gap` once
+between lines and distributes remaining space through `align-content`.
+
+`wrap-reverse` mirrors completed line positions across the cross axis; it does
+not reorder nodes, paint commands, hit regions, focus traversal, or
+accessibility semantics. Absolute and `display:none` children do not create
+lines. A single line uses the full available cross size and ignores
+`align-content`, matching the useful Flexbox behavior without importing DOM
+layout quirks. Overflow metrics use the same resolved line geometry as paint
+and hit testing, so wrapped scroll content does not need a second estimate.
+
+`row-reverse` and `column-reverse` independently swap main-start and main-end.
+Line membership is still collected in order-modified logical order, while each
+line is placed from the opposite physical edge. This is a coordinate transform,
+not a mutation of the retained tree or a second reversal of paint and hit
+order. It therefore composes with `wrap-reverse` without changing keyboard or
+assistive-technology reading order.
+
+### Flex Baseline Contract
+
+Horizontal row and row-reverse containers support `align-items: baseline` and
+`align-self: baseline`. Text leaves obtain ascent and descent from the active
+text engine; the first-line baseline includes half of any line-height leading.
+Images and boxes without an intrinsic text baseline synthesize one at their
+border-box bottom. A nested row container propagates the baseline of its first
+logical Flex line so component boundaries do not break alignment.
+
+Each wrapped line independently records the greatest distance above its
+baseline and below it. Their sum can enlarge the line beyond the tallest
+individual item, which preserves descenders when text is aligned with an image
+or another bottom-baseline box. Reverse direction changes only main-axis
+coordinates, so it does not change baseline selection, paint/hit order, focus,
+or accessibility order.
+
+Column-axis baseline placement currently falls back to cross-start. General
+vertical baseline sets depend on the future `writing-mode` and text-direction
+contract; CBSS does not guess at those metrics. Cosmic Text provides baseline
+metrics through a separate additive bridge function, leaving the versioned
+font-unit metrics result unchanged. The debug engine uses a deterministic
+em-box fallback so headless tests exercise the same layout path.
+
 The goal is not DOM or browser compatibility. CBSS should reproduce what Flexbox
 is trying to achieve for application UI: predictable distribution, alignment,
 sizing, and wrapping behavior. It can simplify browser-specific details when a
@@ -1555,7 +1667,7 @@ native GUI model has a cleaner answer.
 Common Flexbox mental models should transfer:
 
 - Main axis and cross axis
-- Row and column direction
+- Row, row-reverse, column, and column-reverse direction
 - Gap
 - Flex grow, shrink, and basis
 - Min/max constraints

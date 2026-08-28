@@ -25,7 +25,44 @@
 extern "C" {
 #endif
 
-#define CBSS_ABI_VERSION 0x00010014u
+/* CBSS_GENERATED_DRIVER_CONTRACT_BEGIN */
+#define CBSS_ABI_VERSION 0x00010019u
+#define CBSS_DRIVER_CONTRACT_VERSION 0x00010000u
+
+typedef enum CbssCapabilityId {
+  CBSS_CAPABILITY_RETAINED_TREE = 1u,
+  CBSS_CAPABILITY_TYPED_STYLE = 2u,
+  CBSS_CAPABILITY_FLEX_LAYOUT = 3u,
+  CBSS_CAPABILITY_PAINT_COMMANDS = 4u,
+  CBSS_CAPABILITY_HIT_TEST = 5u,
+  CBSS_CAPABILITY_STANDARD_EVENTS = 6u,
+  CBSS_CAPABILITY_FOCUS = 7u,
+  CBSS_CAPABILITY_ACCESSIBILITY_SEMANTICS = 8u,
+  CBSS_CAPABILITY_RETAINED_SCROLL = 9u,
+  CBSS_CAPABILITY_DECLARATIVE_MOTION = 10u,
+  CBSS_CAPABILITY_RETAINED_CANVAS = 11u,
+  CBSS_CAPABILITY_RENDER_SURFACE = 12u,
+  CBSS_CAPABILITY_BLOB = 13u,
+  CBSS_CAPABILITY_FORM_DATA = 14u,
+  CBSS_CAPABILITY_STREAM = 15u,
+  CBSS_CAPABILITY_CRAFT_STYLE = 16u,
+  CBSS_CAPABILITY_CRAFT_PACK = 17u,
+  CBSS_CAPABILITY_SUBTREE_LIFECYCLE = 18u,
+  CBSS_CAPABILITY_VALIDATION_PATTERN = 19u
+} CbssCapabilityId;
+
+enum {
+  CBSS_CAPABILITY_AVAILABLE = 1u << 0
+};
+
+typedef struct CbssCapabilityInfo {
+  uint32_t id;
+  uint32_t version;
+  uint32_t since_abi;
+  uint32_t flags;
+  uint32_t name_bytes;
+} CbssCapabilityInfo;
+/* CBSS_GENERATED_DRIVER_CONTRACT_END */
 #define CBSS_NODE_NONE UINT32_MAX
 #define CBSS_MAX_EAGER_BLOB_BYTES (64ull * 1024ull * 1024ull)
 #define CBSS_MAX_FORM_DATA_ENTRIES 65536u
@@ -33,11 +70,16 @@ extern "C" {
 #define CBSS_MAX_FORM_DATA_TEXT_BYTES (16u * 1024u * 1024u)
 #define CBSS_MAX_STREAM_ERROR_BYTES 65536u
 #define CBSS_MAX_KEYFRAME_STEPS 16384u
+#define CBSS_MAX_CRAFT_STYLE_SOURCE_BYTES (8u * 1024u * 1024u)
+#define CBSS_MAX_CRAFT_PACK_SOURCE_BYTES (4u * 1024u * 1024u)
+#define CBSS_MAX_VALIDATION_PATTERN_BYTES 65536u
+#define CBSS_MAX_VALIDATION_VALUE_BYTES (16u * 1024u * 1024u)
 
 typedef struct CbssContext CbssContext;
 typedef struct CbssStyle CbssStyle;
 typedef struct CbssKeyframes CbssKeyframes;
 typedef struct CbssColorValue CbssColorValue;
+typedef struct CbssValidationPattern CbssValidationPattern;
 typedef struct CbssBlob CbssBlob;
 typedef struct CbssFormDataBuilder CbssFormDataBuilder;
 typedef struct CbssFormData CbssFormData;
@@ -56,6 +98,65 @@ enum {
   CBSS_INTERNAL_ERROR = 5,
   CBSS_NOT_AVAILABLE = 6
 };
+
+typedef enum CbssCraftDiagnosticDomain {
+  CBSS_CRAFT_DIAGNOSTIC_STYLE_PARSE = 0,
+  CBSS_CRAFT_DIAGNOSTIC_STYLE_REPLACEMENT = 1,
+  CBSS_CRAFT_DIAGNOSTIC_PACK = 2
+} CbssCraftDiagnosticDomain;
+
+typedef enum CbssValidationStringFormat {
+  CBSS_VALIDATION_FORMAT_EMAIL = 0,
+  CBSS_VALIDATION_FORMAT_URL = 1,
+  CBSS_VALIDATION_FORMAT_UUID = 2,
+  CBSS_VALIDATION_FORMAT_IP_ADDRESS = 3,
+  CBSS_VALIDATION_FORMAT_DATE = 4,
+  CBSS_VALIDATION_FORMAT_TIME = 5,
+  CBSS_VALIDATION_FORMAT_DATE_TIME = 6
+} CbssValidationStringFormat;
+
+typedef enum CbssCraftStyleParseDiagnosticCode {
+  CBSS_CRAFT_STYLE_PARSE_INVALID_JSON = 0,
+  CBSS_CRAFT_STYLE_PARSE_INVALID_DOCUMENT = 1,
+  CBSS_CRAFT_STYLE_PARSE_UNSUPPORTED_VERSION = 2,
+  CBSS_CRAFT_STYLE_PARSE_MISSING_FIELD = 3,
+  CBSS_CRAFT_STYLE_PARSE_UNKNOWN_FIELD = 4,
+  CBSS_CRAFT_STYLE_PARSE_INVALID_TYPE = 5,
+  CBSS_CRAFT_STYLE_PARSE_INVALID_VALUE = 6,
+  CBSS_CRAFT_STYLE_PARSE_UNKNOWN_PROPERTY = 7,
+  CBSS_CRAFT_STYLE_PARSE_DUPLICATE_FIELD = 8,
+  CBSS_CRAFT_STYLE_PARSE_LIMIT_EXCEEDED = 9
+} CbssCraftStyleParseDiagnosticCode;
+
+typedef enum CbssCraftStyleReplacementDiagnosticCode {
+  CBSS_CRAFT_STYLE_REPLACEMENT_UNSUPPORTED_RULE_TARGET = 0,
+  CBSS_CRAFT_STYLE_REPLACEMENT_UNDECLARED_STYLE_SLOT = 1,
+  CBSS_CRAFT_STYLE_REPLACEMENT_INVALID_STYLE_SLOT = 2,
+  CBSS_CRAFT_STYLE_REPLACEMENT_INVALID_CRAFT_STYLE = 3
+} CbssCraftStyleReplacementDiagnosticCode;
+
+typedef enum CbssCraftPackDiagnosticCode {
+  CBSS_CRAFT_PACK_INVALID_JSON = 0,
+  CBSS_CRAFT_PACK_INVALID_DOCUMENT = 1,
+  CBSS_CRAFT_PACK_UNSUPPORTED_VERSION = 2,
+  CBSS_CRAFT_PACK_MISSING_FIELD = 3,
+  CBSS_CRAFT_PACK_UNKNOWN_FIELD = 4,
+  CBSS_CRAFT_PACK_INVALID_TYPE = 5,
+  CBSS_CRAFT_PACK_INVALID_VALUE = 6,
+  CBSS_CRAFT_PACK_DUPLICATE_FIELD = 7,
+  CBSS_CRAFT_PACK_DUPLICATE_VALUE = 8,
+  CBSS_CRAFT_PACK_LIMIT_EXCEEDED = 9,
+  CBSS_CRAFT_PACK_INCOMPATIBLE_ABI = 10,
+  CBSS_CRAFT_PACK_INCOMPATIBLE_DRIVER_CONTRACT = 11,
+  CBSS_CRAFT_PACK_MISSING_CAPABILITY = 12
+} CbssCraftPackDiagnosticCode;
+
+typedef struct CbssCraftDiagnostic {
+  uint32_t domain;
+  uint32_t code;
+  uint32_t path_bytes;
+  uint32_t message_bytes;
+} CbssCraftDiagnostic;
 
 typedef enum CbssFormDataValueKind {
   CBSS_FORM_DATA_TEXT = 0,
@@ -285,7 +386,8 @@ enum {
   CBSS_EVENT_CANCELABLE = 1u << 8,
   CBSS_EVENT_PHASE_TARGET = 1u << 9,
   CBSS_EVENT_PHASE_BUBBLE = 1u << 10,
-  CBSS_EVENT_HAS_MOTION = 1u << 11
+  CBSS_EVENT_HAS_MOTION = 1u << 11,
+  CBSS_EVENT_PHASE_DEFAULT_ACTION = 1u << 12
 };
 
 typedef enum CbssDirtyDomain {
@@ -332,6 +434,11 @@ enum {
   CBSS_ACCESSIBLE_HAS_VALUE_NOW = 1u << 0,
   CBSS_ACCESSIBLE_HAS_VALUE_MIN = 1u << 1,
   CBSS_ACCESSIBLE_HAS_VALUE_MAX = 1u << 2
+};
+
+enum {
+  CBSS_ACCESSIBLE_HAS_POSITION_IN_SET = 1u << 0,
+  CBSS_ACCESSIBLE_HAS_SET_SIZE = 1u << 1
 };
 
 typedef enum CbssAccessibleRole {
@@ -672,6 +779,12 @@ typedef struct CbssAccessibility {
   uint8_t hidden;
 } CbssAccessibility;
 
+typedef struct CbssAccessibleSetPosition {
+  uint32_t flags;
+  int64_t position_in_set;
+  int64_t set_size;
+} CbssAccessibleSetPosition;
+
 typedef enum CbssRenderSurfaceEventKind {
   CBSS_SURFACE_MOUNT = 0,
   CBSS_SURFACE_UPDATE = 1,
@@ -772,6 +885,18 @@ typedef CbssStatus (*CbssBlobProviderReadCallback)(
 typedef void (*CbssBlobProviderReleaseCallback)(void *user_data);
 
 CBSS_API uint32_t cbss_abi_version(void);
+/*
+ * Craft Drivers should negotiate this contract before constructing a tree.
+ * Capability names are stable diagnostics; numeric ids are the comparison key.
+ */
+CBSS_API uint32_t cbss_driver_contract_version(void);
+CBSS_API uint32_t cbss_capability_count(void);
+CBSS_API CbssStatus cbss_capability_at(
+    uint32_t index, CbssCapabilityInfo *output);
+CBSS_API uint8_t cbss_has_capability(
+    uint32_t capability, uint32_t minimum_version);
+CBSS_API uint32_t cbss_capability_name(
+    uint32_t capability, char *buffer, uint32_t capacity);
 /*
  * Foreign worker threads must attach before calling CBSS and detach before
  * exiting. Language wrappers should hide this pair in their worker adapter.
@@ -889,6 +1014,41 @@ CBSS_API void cbss_context_destroy(CbssContext *context);
 CBSS_API CbssStatus cbss_context_reset(CbssContext *context);
 CBSS_API uint32_t cbss_context_last_error(
     CbssContext *context, char *buffer, uint32_t capacity);
+/*
+ * Craft Style and Craft Pack sources are borrowed for the call duration and
+ * copied into CBSS-owned values on success. Failed replacements leave the
+ * previous retained Style or Pack active. Diagnostics remain owned by the
+ * context until the next Craft operation or reset.
+ */
+CBSS_API uint32_t cbss_context_craft_diagnostic_count(
+    CbssContext *context);
+CBSS_API CbssStatus cbss_context_craft_diagnostic_at(
+    CbssContext *context, uint32_t index, CbssCraftDiagnostic *output);
+CBSS_API uint32_t cbss_context_craft_diagnostic_path(
+    CbssContext *context, uint32_t index, char *buffer, uint32_t capacity);
+CBSS_API uint32_t cbss_context_craft_diagnostic_message(
+    CbssContext *context, uint32_t index, char *buffer, uint32_t capacity);
+CBSS_API CbssStatus cbss_node_expose_craft_style_slot(
+    CbssContext *context, uint32_t owner, uint32_t target,
+    const char *component, const char *slot);
+CBSS_API CbssStatus cbss_context_replace_craft_style_json(
+    CbssContext *context, const uint8_t *bytes, uint32_t length);
+CBSS_API CbssStatus cbss_context_remove_craft_style(
+    CbssContext *context, const char *name, uint8_t *output_removed);
+CBSS_API uint32_t cbss_context_active_craft_style_count(
+    CbssContext *context);
+CBSS_API uint32_t cbss_context_active_craft_style_name(
+    CbssContext *context, uint32_t index, char *buffer, uint32_t capacity);
+CBSS_API CbssStatus cbss_context_replace_craft_pack_json(
+    CbssContext *context, const uint8_t *bytes, uint32_t length);
+CBSS_API CbssStatus cbss_context_remove_craft_pack(
+    CbssContext *context, const char *id, uint8_t *output_removed);
+CBSS_API uint32_t cbss_context_active_craft_pack_count(
+    CbssContext *context);
+CBSS_API uint32_t cbss_context_active_craft_pack_id(
+    CbssContext *context, uint32_t index, char *buffer, uint32_t capacity);
+CBSS_API uint32_t cbss_context_active_craft_pack_version(
+    CbssContext *context, uint32_t index, char *buffer, uint32_t capacity);
 CBSS_API uint32_t cbss_context_node_count(CbssContext *context);
 CBSS_API uint32_t cbss_node_kind(
     CbssContext *context, uint32_t node);
@@ -904,6 +1064,14 @@ CBSS_API uint32_t cbss_node_text(
     CbssContext *context, uint32_t node, char *buffer, uint32_t capacity);
 CBSS_API uint32_t cbss_node_image_source(
     CbssContext *context, uint32_t node, char *buffer, uint32_t capacity);
+/*
+ * Atomically removes node and all descendants from the retained tree. Event,
+ * interaction, Style, motion, scroll, Craft Style Slot, and Render Surface
+ * state owned by the removed subtree is released before the Node IDs become
+ * invalid. output_removed_count is required and receives zero on rejection.
+ */
+CBSS_API CbssStatus cbss_context_remove_subtree(
+    CbssContext *context, uint32_t node, uint32_t *output_removed_count);
 
 CBSS_API uint32_t cbss_context_add_box(
     CbssContext *context, uint32_t parent, const char *identifier);
@@ -997,6 +1165,9 @@ CBSS_API CbssStatus cbss_node_set_accessible_value(
 CBSS_API CbssStatus cbss_node_set_accessible_range(
     CbssContext *context, uint32_t node, uint32_t flags,
     float value_now, float value_min, float value_max);
+CBSS_API CbssStatus cbss_node_set_accessible_set_position(
+    CbssContext *context, uint32_t node, uint32_t flags,
+    int64_t position_in_set, int64_t set_size);
 CBSS_API CbssStatus cbss_node_set_accessible_relations(
     CbssContext *context, uint32_t node,
     uint32_t labelled_by, uint32_t described_by);
@@ -1004,6 +1175,9 @@ CBSS_API CbssStatus cbss_node_set_accessible_hidden(
     CbssContext *context, uint32_t node, uint8_t hidden);
 CBSS_API CbssStatus cbss_node_accessibility(
     CbssContext *context, uint32_t node, CbssAccessibility *output);
+CBSS_API CbssStatus cbss_node_accessible_set_position(
+    CbssContext *context, uint32_t node,
+    CbssAccessibleSetPosition *output);
 CBSS_API uint32_t cbss_node_accessible_name(
     CbssContext *context, uint32_t node, char *buffer, uint32_t capacity);
 CBSS_API uint32_t cbss_node_accessible_description(
@@ -1013,7 +1187,13 @@ CBSS_API uint32_t cbss_node_accessible_value(
 CBSS_API CbssStatus cbss_node_set_focusable(
     CbssContext *context, uint32_t node, uint8_t focusable,
     int32_t tab_index);
+CBSS_API CbssStatus cbss_node_set_inert(
+    CbssContext *context, uint32_t node, uint8_t inert);
+CBSS_API uint8_t cbss_node_inert(CbssContext *context, uint32_t node);
 CBSS_API CbssStatus cbss_node_set_event_handler(
+    CbssContext *context, uint32_t node, uint32_t kind,
+    CbssEventCallback callback, void *user_data);
+CBSS_API CbssStatus cbss_node_set_default_action(
     CbssContext *context, uint32_t node, uint32_t kind,
     CbssEventCallback callback, void *user_data);
 CBSS_API CbssStatus cbss_node_subscribe_event(
@@ -1048,6 +1228,25 @@ CBSS_API CbssStatus cbss_color_mix_create(
 CBSS_API CbssStatus cbss_color_value_resolve(
     const CbssColorValue *value, CbssColor current, CbssColor *output);
 CBSS_API void cbss_color_value_destroy(CbssColorValue *value);
+
+/* Compiled validation patterns use the canonical CBSS regex engine. */
+CBSS_API CbssStatus cbss_validation_pattern_compile(
+    const void *source,
+    uint32_t length,
+    CbssValidationPattern **output,
+    char *error_buffer,
+    uint32_t error_capacity);
+CBSS_API CbssStatus cbss_validation_pattern_matches(
+    const CbssValidationPattern *pattern,
+    const void *value,
+    uint32_t length,
+    uint8_t *output);
+CBSS_API void cbss_validation_pattern_destroy(CbssValidationPattern *pattern);
+CBSS_API CbssStatus cbss_validation_string_format(
+    CbssValidationStringFormat format,
+    const void *value,
+    uint32_t length,
+    uint8_t *output);
 
 CBSS_API CbssStyle *cbss_style_create(void);
 CBSS_API void cbss_style_destroy(CbssStyle *style);
@@ -1168,6 +1367,8 @@ CBSS_API CbssStatus cbss_context_emit_submit(
     CbssContext *context, uint32_t node, const CbssFormData *form_data,
     CbssDispatchSummary *output);
 CBSS_API uint32_t cbss_context_focused_node(CbssContext *context);
+CBSS_API uint32_t cbss_context_first_focusable(
+    CbssContext *context, uint32_t root);
 CBSS_API CbssStatus cbss_context_set_focus(
     CbssContext *context, uint32_t node, uint8_t focus_visible);
 CBSS_API CbssStatus cbss_context_move_focus(

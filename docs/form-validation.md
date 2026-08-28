@@ -120,6 +120,28 @@ The callback runs only after local validation succeeds. Backend code must still
 validate the submitted data authoritatively because frontend validation is a
 usability and early-rejection boundary, not a security boundary.
 
+The Version 0.6 C++14 and Rust reference Drivers expose the same retained
+control-reporting path through `ValidationControl[T]` and `ValidationForm`.
+Attachments use additive `input` and `blur` observers, update only the changed
+control, preserve application handlers, synchronize invalid Style/message
+state, skip disabled controls, and focus the first invalid registered control.
+Form registration also connects declared peer identities with weak dependency
+edges, so a changed source rechecks only `sameAs`/`differentFrom` dependants;
+cycle guards prevent recursive re-entry and the edges do not retain controls.
+Both Drivers now also expose owned Blob values, immutable ordered FormData
+builders, payload-aware event handlers/subscriptions, and validation-first
+submit. `registerTextField`/`register_text_field` cover ordinary text controls;
+`registerField`/`register_field` accept an explicit typed collector for numbers,
+checkable values, Blob-backed files, and application-defined values. Collection
+reads retained validation values in registration order, skips disabled fields,
+and rejects inactive fields instead of silently dropping data. Applications may
+call `collectData`/`collect_data` independently or use
+`submitCollected`/`submit_collected` to validate, snapshot, and emit once.
+The existing `submit(snapshot)` API remains available when the application
+already owns a snapshot. A submitted snapshot can outlive the callback, and an
+intentionally empty snapshot remains distinct from a synthetic payload-free
+submit. Multipart encoding and transport remain outside CBSS.
+
 ## Built-In Rules
 
 The first field-focused release contains 40 synchronous operations:

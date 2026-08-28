@@ -1,17 +1,22 @@
-import std/[algorithm, atomics, locks, math, options, strutils, tables]
+import std/[algorithm, atomics, locks, math, options, sets, strutils, tables]
 
 import ./core/[color, color_conversion, color_mix, color_mix_parser,
   color_parser, color_value, declaration, diagnostics, geometry, node, rule,
   selector, style_resolver, style_value]
 import ./data/[blob, form_data, stream_bridge, stream_mailbox]
 import ./core/computed_style as computed_style_types
+import ./craft/[pack, style, style_slots]
+import ./generated/craft_driver_contract
 import ./generated/default_properties
 import ./hit/hit_test
 import ./input/events
 import ./layout/[layout, presentation, scroll_state]
 import ./paint/[paint, paint_command, path_geometry]
 import ./runtime/[canvas, declarative_keyframes, declarative_transition,
-  frame_scheduler, invalidation, motion_lifecycle, render_surface]
+  frame_scheduler, invalidation, motion_lifecycle, render_surface, validation]
+
+when defined(cbssReferenceTestSupport):
+  import ./backends/ppm/raster
 
 var cbssRuntimeInitialized: bool
 cbssRuntimeInitialized = true
@@ -26,7 +31,6 @@ proc ensureNimRuntime() {.inline.} =
     NimMain()
 
 const
-  CbssAbiVersion* = 0x0001_0014'u32
   CbssMaxEagerBlobBytes* = 64'u64 * 1024'u64 * 1024'u64
   CbssMaxBlobMimeBytes* = 1024
   CbssMaxFormDataEntries* = 65_536
@@ -79,6 +83,7 @@ const
   CbssEventCancelable* = 1'u32 shl 8
   CbssEventPhaseTarget* = 1'u32 shl 9
   CbssEventPhaseBubble* = 1'u32 shl 10
+  CbssEventPhaseDefaultAction* = 1'u32 shl 12
 
   CbssEventOutcomeHandled* = 1'u8 shl 0
   CbssEventOutcomeStopPropagation* = 1'u8 shl 1
@@ -109,6 +114,10 @@ const
   CbssAccessibleHasValueMin* = 1'u32 shl 1
   CbssAccessibleHasValueMax* = 1'u32 shl 2
 
+  CbssAccessibleHasPositionInSet* = 1'u32 shl 0
+  CbssAccessibleHasSetSize* = 1'u32 shl 1
+  CbssAccessibleSetPositionMask* = (1'u32 shl 2) - 1
+
   CbssColorMissingFirst* = 1'u32 shl 0
   CbssColorMissingSecond* = 1'u32 shl 1
   CbssColorMissingThird* = 1'u32 shl 2
@@ -136,6 +145,22 @@ const
 
   CbssEventHasMotion* = 1'u32 shl 11
   CbssMaxKeyframeSteps* = 16_384'u32
+  CbssMaxCraftStyleSourceBytes* = uint32(maxCraftStyleSourceBytes)
+  CbssMaxCraftPackSourceBytes* = uint32(maxCraftPackSourceBytes)
+  CbssMaxValidationPatternBytes* = 65_536'u32
+  CbssMaxValidationValueBytes* = 16'u32 * 1024'u32 * 1024'u32
+
+  CbssCraftDiagnosticStyleParse* = 0'u32
+  CbssCraftDiagnosticStyleReplacement* = 1'u32
+  CbssCraftDiagnosticPack* = 2'u32
+
+  CbssValidationFormatEmail* = 0'u32
+  CbssValidationFormatUrl* = 1'u32
+  CbssValidationFormatUuid* = 2'u32
+  CbssValidationFormatIpAddress* = 3'u32
+  CbssValidationFormatDate* = 4'u32
+  CbssValidationFormatTime* = 5'u32
+  CbssValidationFormatDateTime* = 6'u32
 
 type
   CbssRectC* {.bycopy.} = object
@@ -246,6 +271,10 @@ type
     labelledBy*, describedBy*: uint32
     hidden*: uint8
 
+  CbssAccessibleSetPositionC* {.bycopy.} = object
+    flags*: uint32
+    positionInSet*, setSize*: int64
+
   CbssRenderSurfacePlacementC* {.bycopy.} = object
     bounds*, clip*: CbssRectC
     pixelScale*, opacity*: cfloat
@@ -273,10 +302,14 @@ type
     completed*, total*: uint64
     messageBytes*: uint32
 
+  CbssCraftDiagnosticC* {.bycopy.} = object
+    domain*, code*, pathBytes*, messageBytes*: uint32
+
   CbssContextHandle* = ptr CbssContextObj
   CbssStyleHandle* = ptr CbssStyleObj
   CbssKeyframesHandle* = ptr CbssKeyframesObj
   CbssColorValueHandle* = ptr CbssColorValueObj
+  CbssValidationPatternHandle* = ptr CbssValidationPatternObj
   CbssBlobHandle* = ptr CbssBlobObj
   CbssFormDataBuilderHandle* = ptr CbssFormDataBuilderObj
   CbssFormDataHandle* = ptr CbssFormDataObj
@@ -330,10 +363,19 @@ type
     sourceOrder: int
     declarations: seq[Declaration]
 
+  CbssCraftDiagnosticRecord = object
+    domain: uint32
+    code: uint32
+    path: string
+    message: string
+
   CbssContextObj = object
     tree: Tree
     sheets: seq[StyleSheet]
     appliedStyles: seq[CbssAppliedStyle]
+    craftPacks: CraftPackRegistry
+    craftStyles: CraftStyleSlotRuntime
+    craftDiagnostics: seq[CbssCraftDiagnosticRecord]
     resolved: ResolvedTree
     layout: LayoutResult
     commands: seq[PaintCommand]
@@ -378,6 +420,9 @@ type
       value: ColorValue
     of ccvMix:
       mix: ColorMixValue
+
+  CbssValidationPatternObj = object
+    pattern: ValidationPattern
 
   CbssBlobObj = object
     bytes: pointer
@@ -445,10 +490,12 @@ static:
   doAssert sizeof(CbssDispatchSummaryC) == 16
   doAssert sizeof(CbssScrollMetricsC) == 36
   doAssert sizeof(CbssAccessibilityC) == 32
+  doAssert sizeof(CbssAccessibleSetPositionC) == 24
   doAssert sizeof(CbssRenderSurfacePlacementC) == 40
   doAssert sizeof(CbssRenderSurfaceEventC) == 232
   doAssert sizeof(CbssStreamPumpResultC) == 12
   doAssert sizeof(CbssStreamEventC) == 48
+  doAssert sizeof(CbssCraftDiagnosticC) == 16
 
 proc retainBlobHandle(blob: CbssBlobHandle): int32 {.raises: [].}
 proc releaseBlobHandle(blob: CbssBlobHandle) {.raises: [].}
@@ -745,6 +792,8 @@ proc selectorFor(node: NodeId; stateMask: uint32): SelectorCondition =
 
 proc rebuildStyleSheets(context: CbssContextHandle) =
   context.sheets.setLen(0)
+  for sheet in context.craftStyles.craftStyleSheets():
+    context.sheets.add sheet
   for applied in context.appliedStyles:
     context.sheets.add styleSheet([
       rule(
@@ -1153,6 +1202,8 @@ proc eventFlags(dispatch: DispatchResult; includeLocal: bool): uint32 =
     result = result or CbssEventPhaseTarget
   of epBubble:
     result = result or CbssEventPhaseBubble
+  of epDefaultAction:
+    result = result or CbssEventPhaseDefaultAction
   else:
     discard
 
@@ -1386,9 +1437,167 @@ proc setContextFocus(
     dispatchCount: dispatched.count
   )
 
+proc collectSubtreeNodes(
+    context: CbssContextHandle;
+    root: NodeId
+): tuple[ids: seq[NodeId], members: HashSet[NodeId]] =
+  var pending = @[root]
+  while pending.len > 0:
+    let id = pending.pop()
+    if not context.tree.isValid(id) or id in result.members:
+      continue
+    result.members.incl id
+    result.ids.add id
+    for child in context.tree.nodes[id.nodeIndex].children:
+      pending.add child
+
+proc clearRemovedInteractionTargets(
+    context: CbssContextHandle;
+    removed: HashSet[NodeId]
+) =
+  if context.interaction.focusedTarget.isSome and
+      context.interaction.focusedTarget.get in removed:
+    discard context.setContextFocus(none(NodeId), focusVisible = false)
+
+  template clearTarget(field: untyped) =
+    if field.isSome and field.get in removed:
+      field = none(NodeId)
+
+  if context.interaction.pressedTarget.isSome and
+      context.interaction.pressedTarget.get in removed:
+    context.interaction.pressedTarget = none(NodeId)
+    context.interaction.pointerDownPosition = none(Vec2)
+  clearTarget(context.interaction.hoveredTarget)
+  clearTarget(context.interaction.pointerCaptureTarget)
+  clearTarget(context.interaction.lastClickTarget)
+  clearTarget(context.interaction.dragTarget)
+  clearTarget(context.interaction.dragOverTarget)
+  clearTarget(context.interaction.scrollTarget)
+  clearTarget(context.interaction.scrollbarPointerTarget)
+  if context.interaction.lastClickTarget.isNone:
+    context.interaction.clickCount = 0
+  if context.interaction.scrollbarPointerTarget.isNone:
+    context.interaction.scrollbarDragging = false
+
+proc removeSubtreeEventState(
+    context: CbssContextHandle;
+    removed: HashSet[NodeId]
+) =
+  discard context.events.removeEventHandlers(removed)
+  var staleSubscriptions: seq[uint64]
+  for id, subscription in context.eventSubscriptions.pairs:
+    if subscription.node in removed:
+      staleSubscriptions.add id
+  for id in staleSubscriptions:
+    context.eventSubscriptions.del(id)
+
+proc removeSubtreeStyleState(
+    context: CbssContextHandle;
+    removed: HashSet[NodeId]
+) =
+  var retained = newSeqOfCap[CbssAppliedStyle](context.appliedStyles.len)
+  var changed = false
+  for applied in context.appliedStyles:
+    if applied.node in removed:
+      changed = true
+    else:
+      retained.add applied
+  if changed:
+    context.appliedStyles = retained
+    for sourceOrder in 0 ..< context.appliedStyles.len:
+      context.appliedStyles[sourceOrder].sourceOrder = sourceOrder
+
+  let removedSlots = context.craftStyles.removePublicStyleSlots(
+    context.tree, removed
+  )
+  if changed or removedSlots.len > 0:
+    context.rebuildStyleSheets()
+
+proc removeSubtreeSurfaceState(
+    context: CbssContextHandle;
+    removedIds: openArray[NodeId]
+) =
+  var surfaces: seq[RenderSurfaceId]
+  for id in removedIds:
+    let surface = context.tree.nodes[id.nodeIndex].renderSurfaceId
+    if surface.isSome:
+      surfaces.add RenderSurfaceId(surface.get)
+  for surface in surfaces:
+    discard context.surfaces.unregisterSurface(surface)
+    context.surfaceBindings.del(surface)
+
+proc removeContextSubtree(
+    context: CbssContextHandle;
+    root: NodeId
+): int =
+  let subtree = context.collectSubtreeNodes(root)
+  if subtree.ids.len == 0:
+    return 0
+
+  context.clearRemovedInteractionTargets(subtree.members)
+  discard context.transitions.cancelTransitions(subtree.ids)
+  discard context.keyframes.cancelAnimations(subtree.ids)
+  context.dispatchPendingMotionLifecycle()
+  context.removeSubtreeEventState(subtree.members)
+  context.removeSubtreeStyleState(subtree.members)
+  context.scroll.clearNodes(subtree.ids)
+  context.removeSubtreeSurfaceState(subtree.ids)
+  result = context.tree.disposeSubtree(root).len
+  context.resolved.styles.setLen(0)
+  context.layout = LayoutResult(boxes: @[], overflowMetrics: @[])
+  context.commands.setLen(0)
+  context.hits.setLen(0)
+  context.invalidate()
+
 proc cbssAbiVersion(): uint32 {.
     exportc: "cbss_abi_version", cdecl, dynlib, raises: [].} =
   CbssAbiVersion
+
+proc cbssDriverContractVersion(): uint32 {.
+    exportc: "cbss_driver_contract_version", cdecl, dynlib, raises: [].} =
+  CbssDriverContractVersion
+
+proc cbssCapabilityCount(): uint32 {.
+    exportc: "cbss_capability_count", cdecl, dynlib, raises: [].} =
+  uint32(CbssCapabilities.len)
+
+proc cbssCapabilityAt(
+    index: uint32;
+    output: ptr CbssCapabilityInfoC
+): int32 {.exportc: "cbss_capability_at", cdecl, dynlib, raises: [].} =
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = default(CbssCapabilityInfoC)
+  if index >= uint32(CbssCapabilities.len):
+    return CbssOutOfRange
+  let capability = CbssCapabilities[int(index)]
+  output[] = CbssCapabilityInfoC(
+    id: capability.id,
+    version: capability.version,
+    sinceAbi: capability.sinceAbi,
+    flags: CbssCapabilityAvailable,
+    nameBytes: uint32(capability.name.len)
+  )
+  CbssOk
+
+proc cbssHasCapability(capability, minimumVersion: uint32): uint8 {.
+    exportc: "cbss_has_capability", cdecl, dynlib, raises: [].} =
+  for item in CbssCapabilities:
+    if item.id == capability:
+      return uint8(item.version >= minimumVersion)
+  0'u8
+
+proc cbssCapabilityName(
+    capability: uint32;
+    buffer: cstring;
+    capacity: uint32
+): uint32 {.exportc: "cbss_capability_name", cdecl, dynlib, raises: [].} =
+  for item in CbssCapabilities:
+    if item.id == capability:
+      return copyString(item.name, buffer, capacity)
+  if not buffer.isNil and capacity > 0:
+    cast[ptr UncheckedArray[char]](buffer)[0] = '\0'
+  0'u32
 
 proc cbssThreadAttach() {.
     exportc: "cbss_thread_attach", cdecl, dynlib, raises: [].} =
@@ -2322,6 +2531,9 @@ proc cbssContextCreate(): CbssContextHandle {.
       tree: initTree(),
       sheets: @[],
       appliedStyles: @[],
+      craftPacks: initCraftPackRegistry(),
+      craftStyles: initCraftStyleSlotRuntime(),
+      craftDiagnostics: @[],
       resolved: ResolvedTree(styles: @[]),
       layout: LayoutResult(boxes: @[], overflowMetrics: @[]),
       commands: @[],
@@ -2388,6 +2600,9 @@ proc cbssContextReset(context: CbssContextHandle): int32 {.
     context.tree = initTree()
     context.sheets.setLen(0)
     context.appliedStyles.setLen(0)
+    context.craftPacks = initCraftPackRegistry()
+    context.craftStyles = initCraftStyleSlotRuntime()
+    context.craftDiagnostics.setLen(0)
     context.resolved.styles.setLen(0)
     context.layout = LayoutResult(boxes: @[], overflowMetrics: @[])
     context.commands.setLen(0)
@@ -2423,6 +2638,345 @@ proc cbssContextLastError(
   if context.isNil:
     return copyString("invalid CBSS context", buffer, capacity)
   copyString(context.lastError, buffer, capacity)
+
+proc craftStyleParseCode(code: CraftStyleDiagnosticCode): uint32 =
+  case code
+  of csdcInvalidJson: 0
+  of csdcInvalidDocument: 1
+  of csdcUnsupportedVersion: 2
+  of csdcMissingField: 3
+  of csdcUnknownField: 4
+  of csdcInvalidType: 5
+  of csdcInvalidValue: 6
+  of csdcUnknownProperty: 7
+  of csdcDuplicateField: 8
+  of csdcLimitExceeded: 9
+
+proc craftStyleReplacementCode(
+    code: CraftStyleReplacementDiagnosticCode
+): uint32 =
+  case code
+  of csrUnsupportedRuleTarget: 0
+  of csrUndeclaredStyleSlot: 1
+  of csrInvalidStyleSlot: 2
+  of csrInvalidCraftStyle: 3
+
+proc craftPackCode(code: CraftPackDiagnosticCode): uint32 =
+  case code
+  of cpdcInvalidJson: 0
+  of cpdcInvalidDocument: 1
+  of cpdcUnsupportedVersion: 2
+  of cpdcMissingField: 3
+  of cpdcUnknownField: 4
+  of cpdcInvalidType: 5
+  of cpdcInvalidValue: 6
+  of cpdcDuplicateField: 7
+  of cpdcDuplicateValue: 8
+  of cpdcLimitExceeded: 9
+  of cpdcIncompatibleAbi: 10
+  of cpdcIncompatibleDriverContract: 11
+  of cpdcMissingCapability: 12
+
+proc clearCraftDiagnostics(context: CbssContextHandle) =
+  context.craftDiagnostics.setLen(0)
+
+proc addCraftDiagnostic(
+    context: CbssContextHandle;
+    domain, code: uint32;
+    path, message: string
+) =
+  context.craftDiagnostics.add CbssCraftDiagnosticRecord(
+    domain: domain,
+    code: code,
+    path: path,
+    message: message
+  )
+
+proc recordCraftStyleDiagnostics(
+    context: CbssContextHandle;
+    loaded: CraftStyleLoadResult
+) =
+  context.clearCraftDiagnostics()
+  for diagnostic in loaded.parseDiagnostics:
+    context.addCraftDiagnostic(
+      CbssCraftDiagnosticStyleParse,
+      craftStyleParseCode(diagnostic.code),
+      diagnostic.path,
+      diagnostic.message
+    )
+  for diagnostic in loaded.replacementDiagnostics:
+    context.addCraftDiagnostic(
+      CbssCraftDiagnosticStyleReplacement,
+      craftStyleReplacementCode(diagnostic.code),
+      diagnostic.path,
+      diagnostic.message
+    )
+
+proc recordCraftPackDiagnostics(
+    context: CbssContextHandle;
+    loaded: CraftPackLoadResult
+) =
+  context.clearCraftDiagnostics()
+  for diagnostic in loaded.diagnostics:
+    context.addCraftDiagnostic(
+      CbssCraftDiagnosticPack,
+      craftPackCode(diagnostic.code),
+      diagnostic.path,
+      diagnostic.message
+    )
+
+proc setFirstCraftError(context: CbssContextHandle; fallback: string) =
+  if context.craftDiagnostics.len > 0:
+    context.setError(context.craftDiagnostics[0].message)
+  else:
+    context.setError(fallback)
+
+proc sourceFromBytes(
+    bytes: pointer;
+    length, maximum: uint32;
+    output: var string
+): int32 =
+  if bytes.isNil or length == 0:
+    return CbssInvalidArgument
+  if length > maximum or uint64(length) > uint64(high(int)):
+    return CbssOutOfRange
+  output = newString(int(length))
+  copyMem(addr output[0], bytes, int(length))
+  CbssOk
+
+proc cbssContextCraftDiagnosticCount(
+    context: CbssContextHandle
+): uint32 {.exportc: "cbss_context_craft_diagnostic_count", cdecl, dynlib.} =
+  if context.isNil:
+    return 0
+  uint32(min(context.craftDiagnostics.len, int(high(uint32))))
+
+proc cbssContextCraftDiagnosticAt(
+    context: CbssContextHandle;
+    index: uint32;
+    output: ptr CbssCraftDiagnosticC
+): int32 {.exportc: "cbss_context_craft_diagnostic_at", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  if index >= uint32(context.craftDiagnostics.len):
+    return CbssOutOfRange
+  let diagnostic = context.craftDiagnostics[int(index)]
+  output[] = CbssCraftDiagnosticC(
+    domain: diagnostic.domain,
+    code: diagnostic.code,
+    pathBytes: uint32(min(diagnostic.path.len, int(high(uint32)))),
+    messageBytes: uint32(min(diagnostic.message.len, int(high(uint32))))
+  )
+  CbssOk
+
+proc cbssContextCraftDiagnosticPath(
+    context: CbssContextHandle;
+    index: uint32;
+    buffer: cstring;
+    capacity: uint32
+): uint32 {.exportc: "cbss_context_craft_diagnostic_path", cdecl, dynlib.} =
+  if context.isNil or index >= uint32(context.craftDiagnostics.len):
+    return 0
+  copyString(context.craftDiagnostics[int(index)].path, buffer, capacity)
+
+proc cbssContextCraftDiagnosticMessage(
+    context: CbssContextHandle;
+    index: uint32;
+    buffer: cstring;
+    capacity: uint32
+): uint32 {.exportc: "cbss_context_craft_diagnostic_message", cdecl, dynlib.} =
+  if context.isNil or index >= uint32(context.craftDiagnostics.len):
+    return 0
+  copyString(context.craftDiagnostics[int(index)].message, buffer, capacity)
+
+proc cbssNodeExposeCraftStyleSlot(
+    context: CbssContextHandle;
+    owner, target: uint32;
+    component, slot: cstring
+): int32 {.exportc: "cbss_node_expose_craft_style_slot", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if not context.validNode(owner) or not context.validNode(target) or
+      component.isNil or slot.isNil:
+    return CbssInvalidArgument
+  let componentLength = boundedCStringLength(component, maxCraftPackStringBytes)
+  let slotLength = boundedCStringLength(slot, maxCraftPackStringBytes)
+  if componentLength <= 0 or componentLength > maxCraftPackStringBytes or
+      slotLength <= 0 or slotLength > maxCraftPackStringBytes:
+    return CbssInvalidArgument
+  try:
+    let componentName = fromCString(component)
+    let slotName = fromCString(slot)
+    let added = context.craftStyles.exposePublicStyleSlot(
+      context.tree,
+      owner.nodeId,
+      target.nodeId,
+      componentName,
+      slotName
+    )
+    if added:
+      context.rebuildStyleSheets()
+      if context.craftStyles.targetsPublicStyleSlot(componentName, slotName):
+        context.invalidate()
+    context.lastError = ""
+    CbssOk
+  except ValueError as error:
+    context.setError(error.msg)
+    CbssInvalidArgument
+  except CatchableError as error:
+    context.setError(error.msg)
+    CbssInternalError
+
+proc cbssContextReplaceCraftStyleJson(
+    context: CbssContextHandle;
+    bytes: pointer;
+    length: uint32
+): int32 {.exportc: "cbss_context_replace_craft_style_json", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  var source: string
+  let sourceStatus = sourceFromBytes(
+    bytes,
+    length,
+    CbssMaxCraftStyleSourceBytes,
+    source
+  )
+  if sourceStatus != CbssOk:
+    return sourceStatus
+  try:
+    let loaded = context.craftStyles.replaceCraftStyle(context.tree, source)
+    context.recordCraftStyleDiagnostics(loaded)
+    if not loaded.applied:
+      context.setFirstCraftError("Craft Style replacement failed")
+      return CbssStyleError
+    context.rebuildStyleSheets()
+    context.invalidate()
+    context.lastError = ""
+    CbssOk
+  except CatchableError as error:
+    context.setError(error.msg)
+    CbssInternalError
+
+proc cbssContextRemoveCraftStyle(
+    context: CbssContextHandle;
+    name: cstring;
+    outputRemoved: ptr uint8
+): int32 {.exportc: "cbss_context_remove_craft_style", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if name.isNil or outputRemoved.isNil:
+    return CbssInvalidArgument
+  let nameLength = boundedCStringLength(name, maxCraftPackStringBytes)
+  if nameLength <= 0 or nameLength > maxCraftPackStringBytes:
+    return CbssInvalidArgument
+  let removed = context.craftStyles.removeCraftStyle(fromCString(name))
+  outputRemoved[] = uint8(if removed.removed: 1 else: 0)
+  if removed.removed:
+    context.rebuildStyleSheets()
+    context.invalidate()
+  context.clearCraftDiagnostics()
+  context.lastError = ""
+  CbssOk
+
+proc cbssContextActiveCraftStyleCount(
+    context: CbssContextHandle
+): uint32 {.exportc: "cbss_context_active_craft_style_count", cdecl, dynlib.} =
+  if context.isNil:
+    return 0
+  uint32(min(context.craftStyles.activeCraftStyleNames().len, int(high(uint32))))
+
+proc cbssContextActiveCraftStyleName(
+    context: CbssContextHandle;
+    index: uint32;
+    buffer: cstring;
+    capacity: uint32
+): uint32 {.exportc: "cbss_context_active_craft_style_name", cdecl, dynlib.} =
+  if context.isNil:
+    return 0
+  let names = context.craftStyles.activeCraftStyleNames()
+  if index >= uint32(names.len):
+    return 0
+  copyString(names[int(index)], buffer, capacity)
+
+proc cbssContextReplaceCraftPackJson(
+    context: CbssContextHandle;
+    bytes: pointer;
+    length: uint32
+): int32 {.exportc: "cbss_context_replace_craft_pack_json", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  var source: string
+  let sourceStatus = sourceFromBytes(
+    bytes,
+    length,
+    CbssMaxCraftPackSourceBytes,
+    source
+  )
+  if sourceStatus != CbssOk:
+    return sourceStatus
+  try:
+    let loaded = context.craftPacks.replaceCraftPack(source)
+    context.recordCraftPackDiagnostics(loaded)
+    if not loaded.loaded:
+      context.setFirstCraftError("Craft Pack loading failed")
+      return CbssStyleError
+    context.lastError = ""
+    CbssOk
+  except CatchableError as error:
+    context.setError(error.msg)
+    CbssInternalError
+
+proc cbssContextRemoveCraftPack(
+    context: CbssContextHandle;
+    id: cstring;
+    outputRemoved: ptr uint8
+): int32 {.exportc: "cbss_context_remove_craft_pack", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if id.isNil or outputRemoved.isNil:
+    return CbssInvalidArgument
+  let idLength = boundedCStringLength(id, maxCraftPackStringBytes)
+  if idLength <= 0 or idLength > maxCraftPackStringBytes:
+    return CbssInvalidArgument
+  outputRemoved[] = uint8(if context.craftPacks.removeCraftPack(fromCString(id)): 1 else: 0)
+  context.clearCraftDiagnostics()
+  context.lastError = ""
+  CbssOk
+
+proc cbssContextActiveCraftPackCount(
+    context: CbssContextHandle
+): uint32 {.exportc: "cbss_context_active_craft_pack_count", cdecl, dynlib.} =
+  if context.isNil:
+    return 0
+  uint32(min(context.craftPacks.craftPackCount(), int(high(uint32))))
+
+proc cbssContextActiveCraftPackId(
+    context: CbssContextHandle;
+    index: uint32;
+    buffer: cstring;
+    capacity: uint32
+): uint32 {.exportc: "cbss_context_active_craft_pack_id", cdecl, dynlib.} =
+  if context.isNil:
+    return 0
+  let pack = context.craftPacks.craftPackAt(int(index))
+  if pack.isNone:
+    return 0
+  copyString(pack.get.id, buffer, capacity)
+
+proc cbssContextActiveCraftPackVersion(
+    context: CbssContextHandle;
+    index: uint32;
+    buffer: cstring;
+    capacity: uint32
+): uint32 {.exportc: "cbss_context_active_craft_pack_version", cdecl, dynlib.} =
+  if context.isNil:
+    return 0
+  let pack = context.craftPacks.craftPackAt(int(index))
+  if pack.isNone:
+    return 0
+  copyString(pack.get.version, buffer, capacity)
 
 proc cbssContextNodeCount(context: CbssContextHandle): uint32 {.
     exportc: "cbss_context_node_count", cdecl, dynlib.} =
@@ -2506,6 +3060,27 @@ proc cbssNodeImageSource(
   if value.kind != nkImage:
     return 0
   copyString(value.imageSource, buffer, capacity)
+
+proc cbssContextRemoveSubtree(
+    context: CbssContextHandle;
+    root: uint32;
+    outputRemovedCount: ptr uint32
+): int32 {.exportc: "cbss_context_remove_subtree", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if outputRemovedCount.isNil:
+    return CbssInvalidArgument
+  outputRemovedCount[] = 0
+  if not context.validNode(root):
+    return CbssInvalidArgument
+  try:
+    let removedCount = context.removeContextSubtree(root.nodeId)
+    outputRemovedCount[] = uint32(min(removedCount, int(high(uint32))))
+    context.lastError = ""
+    CbssOk
+  except CatchableError as error:
+    context.setError(error.msg)
+    CbssInternalError
 
 proc cbssContextAddBox(
     context: CbssContextHandle;
@@ -3114,7 +3689,10 @@ proc cbssNodeSetText(
   if context.tree.nodes[node.nodeId.nodeIndex].kind != nkText:
     context.setError("node is not a text node")
     return CbssInvalidArgument
-  context.tree.nodes[node.nodeId.nodeIndex].text = fromCString(text)
+  let nextText = fromCString(text)
+  if context.tree.nodes[node.nodeId.nodeIndex].text == nextText:
+    return CbssOk
+  context.tree.nodes[node.nodeId.nodeIndex].text = nextText
   context.invalidate()
   CbssOk
 
@@ -3132,7 +3710,12 @@ proc cbssNodeSetImage(
   if context.tree.nodes[index].kind != nkImage:
     context.setError("node is not an image node")
     return CbssInvalidArgument
-  context.tree.nodes[index].imageSource = fromCString(source)
+  let nextSource = fromCString(source)
+  if context.tree.nodes[index].imageSource == nextSource and
+      context.tree.nodes[index].imageWidth == width and
+      context.tree.nodes[index].imageHeight == height:
+    return CbssOk
+  context.tree.nodes[index].imageSource = nextSource
   context.tree.nodes[index].imageWidth = width
   context.tree.nodes[index].imageHeight = height
   context.invalidate()
@@ -3164,7 +3747,12 @@ proc cbssNodeSetAttribute(
     return CbssInvalidHandle
   if not context.validNode(node) or name.isNil or value.isNil:
     return CbssInvalidArgument
-  context.tree.setAttribute(node.nodeId, fromCString(name), fromCString(value))
+  let attributeName = fromCString(name)
+  let attributeValue = fromCString(value)
+  for attribute in context.tree.nodes[node.nodeId.nodeIndex].attributes:
+    if attribute.name == attributeName and attribute.value == attributeValue:
+      return CbssOk
+  context.tree.setAttribute(node.nodeId, attributeName, attributeValue)
   context.invalidate()
   CbssOk
 
@@ -3177,7 +3765,12 @@ proc cbssNodeSetState(
     return CbssInvalidHandle
   if not context.validNode(node) or state > uint32(ord(high(ElementState))):
     return CbssInvalidArgument
-  context.tree.setState(node.nodeId, ElementState(state), enabled != 0)
+  let elementState = ElementState(state)
+  let nextEnabled = enabled != 0
+  if (elementState in context.tree.nodes[node.nodeId.nodeIndex].states) ==
+      nextEnabled:
+    return CbssOk
+  context.tree.setState(node.nodeId, elementState, nextEnabled)
   context.invalidate()
   CbssOk
 
@@ -3231,6 +3824,35 @@ proc cbssNodeSetAccessibleRange(
     else:
       none(float32)
   )
+  CbssOk
+
+proc cbssNodeSetAccessibleSetPosition(
+    context: CbssContextHandle;
+    node, flags: uint32;
+    positionInSet, setSize: int64
+): int32 {.exportc: "cbss_node_set_accessible_set_position", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if not context.validNode(node) or
+      (flags and not CbssAccessibleSetPositionMask) != 0:
+    return CbssInvalidArgument
+  if positionInSet > int64(high(int)) or setSize > int64(high(int)):
+    return CbssInvalidArgument
+  let position =
+    if (flags and CbssAccessibleHasPositionInSet) != 0:
+      some(int(positionInSet))
+    else:
+      none(int)
+  let size =
+    if (flags and CbssAccessibleHasSetSize) != 0:
+      some(int(setSize))
+    else:
+      none(int)
+  if (position.isSome and position.get <= 0) or
+      (size.isSome and size.get < 0) or
+      (position.isSome and size.isSome and position.get > size.get):
+    return CbssInvalidArgument
+  context.tree.setAccessibleSetPosition(node.nodeId, position, size)
   CbssOk
 
 proc cbssNodeSetAccessibleRelations(
@@ -3304,6 +3926,32 @@ proc cbssNodeAccessibility(
   )
   CbssOk
 
+proc cbssNodeAccessibleSetPosition(
+    context: CbssContextHandle;
+    node: uint32;
+    output: ptr CbssAccessibleSetPositionC
+): int32 {.exportc: "cbss_node_accessible_set_position", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if not context.validNode(node) or output.isNil:
+    return CbssInvalidArgument
+  let semantic = context.tree.semanticInfo(node.nodeId)
+  var flags = 0'u32
+  if semantic.positionInSet.isSome:
+    flags = flags or CbssAccessibleHasPositionInSet
+  if semantic.setSize.isSome:
+    flags = flags or CbssAccessibleHasSetSize
+  output[] = CbssAccessibleSetPositionC(
+    flags: flags,
+    positionInSet:
+      if semantic.positionInSet.isSome: int64(semantic.positionInSet.get)
+      else: 0'i64,
+    setSize:
+      if semantic.setSize.isSome: int64(semantic.setSize.get)
+      else: 0'i64
+  )
+  CbssOk
+
 proc cbssNodeAccessibleName(
     context: CbssContextHandle;
     node: uint32;
@@ -3359,6 +4007,37 @@ proc cbssNodeSetFocusable(
     context.invalidate()
   CbssOk
 
+proc cbssNodeSetInert(
+    context: CbssContextHandle;
+    node: uint32;
+    inert: uint8
+): int32 {.exportc: "cbss_node_set_inert", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if not context.validNode(node):
+    return CbssInvalidArgument
+  let index = node.nodeId.nodeIndex
+  let nextInert = inert != 0
+  if context.tree.nodes[index].inert == nextInert:
+    return CbssOk
+  context.tree.setInert(node.nodeId, nextInert)
+  if nextInert and context.interaction.focusedTarget.isSome and
+      context.tree.isDescendantOrSelf(
+        context.interaction.focusedTarget.get,
+        node.nodeId
+      ):
+    discard context.setContextFocus(none(NodeId), focusVisible = false)
+  context.invalidate()
+  CbssOk
+
+proc cbssNodeInert(
+    context: CbssContextHandle;
+    node: uint32
+): uint8 {.exportc: "cbss_node_inert", cdecl, dynlib.} =
+  if context.isNil or not context.validNode(node):
+    return 0
+  uint8(ord(context.tree.isInert(node.nodeId)))
+
 proc cbssNodeSetEventHandler(
     context: CbssContextHandle;
     node, kind: uint32;
@@ -3375,6 +4054,28 @@ proc cbssNodeSetEventHandler(
     discard context.events.clearEventHandler(node.nodeId, eventKind)
   else:
     context.events.setEventHandler(
+      node.nodeId,
+      eventKind,
+      cEventHandler(context, callback, userData)
+    )
+  CbssOk
+
+proc cbssNodeSetDefaultAction(
+    context: CbssContextHandle;
+    node, kind: uint32;
+    callback: CbssEventCallback;
+    userData: pointer
+): int32 {.exportc: "cbss_node_set_default_action", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if not context.validNode(node) or
+      kind > uint32(ord(high(InputEventKind))):
+    return CbssInvalidArgument
+  let eventKind = InputEventKind(kind)
+  if callback.isNil:
+    discard context.events.clearInternalEventHandler(node.nodeId, eventKind)
+  else:
+    context.events.setInternalEventHandler(
       node.nodeId,
       eventKind,
       cEventHandler(context, callback, userData)
@@ -3747,6 +4448,85 @@ proc cbssColorValueDestroy(value: CbssColorValueHandle) {.
     return
   `=destroy`(value[])
   dealloc(value)
+
+proc cbssValidationPatternCompile(
+    source: pointer;
+    length: uint32;
+    output: ptr CbssValidationPatternHandle;
+    errorBuffer: cstring;
+    errorCapacity: uint32
+): int32 {.exportc: "cbss_validation_pattern_compile", cdecl, dynlib.} =
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  if source.isNil or length == 0 or
+      length > CbssMaxValidationPatternBytes:
+    return CbssInvalidArgument
+  ensureNimRuntime()
+  try:
+    let handle = create(CbssValidationPatternObj)
+    try:
+      handle[].pattern = compileRegex(copiedString(source, length))
+      output[] = handle
+      CbssOk
+    except CatchableError as error:
+      `=destroy`(handle[])
+      dealloc(handle)
+      discard copyString(error.msg, errorBuffer, errorCapacity)
+      CbssInvalidArgument
+  except CatchableError:
+    CbssInternalError
+
+proc cbssValidationPatternMatches(
+    pattern: CbssValidationPatternHandle;
+    value: pointer;
+    length: uint32;
+    output: ptr uint8
+): int32 {.exportc: "cbss_validation_pattern_matches", cdecl, dynlib.} =
+  if pattern.isNil or output.isNil or
+      (value.isNil and length != 0) or length > CbssMaxValidationValueBytes:
+    return CbssInvalidArgument
+  output[] = 0
+  ensureNimRuntime()
+  try:
+    let text = if length == 0: "" else: copiedString(value, length)
+    output[] = uint8(pattern.pattern.matches(text))
+    CbssOk
+  except CatchableError:
+    CbssInternalError
+
+proc cbssValidationPatternDestroy(pattern: CbssValidationPatternHandle) {.
+    exportc: "cbss_validation_pattern_destroy", cdecl, dynlib.} =
+  if pattern.isNil:
+    return
+  `=destroy`(pattern[])
+  dealloc(pattern)
+
+proc cbssValidationStringFormat(
+    kind: uint32;
+    value: pointer;
+    length: uint32;
+    output: ptr uint8
+): int32 {.exportc: "cbss_validation_string_format", cdecl, dynlib.} =
+  if output.isNil or kind > CbssValidationFormatDateTime or
+      (value.isNil and length != 0) or length > CbssMaxValidationValueBytes:
+    return CbssInvalidArgument
+  output[] = 0
+  ensureNimRuntime()
+  try:
+    let text = if length == 0: "" else: copiedString(value, length)
+    let ruleKind = case kind
+      of CbssValidationFormatEmail: ValidationRuleKind.email
+      of CbssValidationFormatUrl: ValidationRuleKind.url
+      of CbssValidationFormatUuid: ValidationRuleKind.uuid
+      of CbssValidationFormatIpAddress: ValidationRuleKind.ipAddress
+      of CbssValidationFormatDate: ValidationRuleKind.date
+      of CbssValidationFormatTime: ValidationRuleKind.time
+      else: ValidationRuleKind.dateTime
+    output[] = uint8(validateStringFormat(ruleKind, text))
+    CbssOk
+  except CatchableError:
+    CbssInternalError
 
 proc cbssStyleSetLength(
     style: CbssStyleHandle;
@@ -4373,6 +5153,26 @@ proc cbssContextPaintCommandCount(context: CbssContextHandle): uint32 {.
     return 0
   uint32(min(context.commands.len, int(high(uint32))))
 
+when defined(cbssReferenceTestSupport):
+  proc cbssTestContextWritePpm(
+      context: CbssContextHandle;
+      path: cstring;
+      width, height: uint32
+  ): int32 {.exportc: "cbss_test_context_write_ppm", cdecl, dynlib.} =
+    const maxReferenceDimension = 4096'u32
+    if context.isNil:
+      return CbssInvalidHandle
+    if path.isNil or not context.computed or width == 0 or height == 0 or
+        width > maxReferenceDimension or height > maxReferenceDimension:
+      return CbssInvalidArgument
+    try:
+      let image = raster.render(context.commands, int(width), int(height))
+      image.writePpm($path)
+      CbssOk
+    except CatchableError as error:
+      context.setError(error.msg)
+      CbssInternalError
+
 proc cbssContextPaintCommand(
     context: CbssContextHandle;
     index: uint32;
@@ -4805,6 +5605,17 @@ proc cbssContextFocusedNode(context: CbssContextHandle): uint32 {.
   if context.isNil or context.interaction.focusedTarget.isNone:
     return CbssNodeNone
   context.interaction.focusedTarget.get.nodeRawValue()
+
+proc cbssContextFirstFocusable(
+    context: CbssContextHandle;
+    root: uint32
+): uint32 {.exportc: "cbss_context_first_focusable", cdecl, dynlib.} =
+  if context.isNil or not context.validNode(root):
+    return CbssNodeNone
+  for target in context.focusTargets():
+    if context.tree.isDescendantOrSelf(target, root.nodeId):
+      return target.nodeRawValue()
+  CbssNodeNone
 
 proc cbssContextSetFocus(
     context: CbssContextHandle;

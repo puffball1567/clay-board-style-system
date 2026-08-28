@@ -378,6 +378,9 @@ proc textStyleFrom(style: UiStyle): ComputedTextStyle =
     of "letter-spacing":
       if value.kind == svLength and value.length.kind == ukPx:
         result.letterSpacing = some(value.length.value)
+    of "word-spacing":
+      if value.kind == svLength and value.length.kind == ukPx:
+        result.wordSpacing = some(value.length.value)
     of "font-family":
       if value.kind == svKeyword:
         result.fontFamilies = value.keyword.split(",")
@@ -1194,6 +1197,7 @@ proc textInput*(
     decl("pointer-events", keyword("none"))
   ]))
   result.caretNode = root.box(parent = some(result.container), groups = ["text-input-caret"])
+  root.tree.setGeneratedPart(result.caretNode.id, gpkCaret)
   result.caretNode.applyStyle(uiStyle([
     decl("display", keyword("none")),
     decl("position", keyword("absolute")),

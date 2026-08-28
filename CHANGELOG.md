@@ -7,6 +7,278 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-28
+
+### Added
+
+- Added an opt-in Linux AT-SPI transport behind `-d:cbssLinuxAtspi`. It
+  publishes the retained semantic tree over the accessibility D-Bus with
+  stable object paths, official roles and states, component geometry, focus,
+  and UI-owned actions. Real-session `gdbus` integration now covers ARC and
+  ORC, invalid snapshot rejection, deterministic teardown, and Valgrind.
+
+- `word-spacing` now executes consistently in the deterministic and Cosmic
+  Text engines. It affects shaping, measurement, wrapping, rasterization,
+  caret and hit geometry, and retained TextInput/TextArea styles; ordinary and
+  non-breaking spaces receive the authored extra advance without changing
+  source text.
+
+- `place-content` now executes as a Flex layout shorthand. One keyword applies
+  to both content axes, while two keywords independently set cross-axis
+  `align-content` and main-axis `justify-content`; invalid compound values are
+  rejected without partially changing either axis.
+
+- `image-rendering` now selects SDL3 texture sampling at draw time: `auto` and
+  `smooth` use linear filtering, `crisp-edges` uses nearest-neighbor filtering,
+  and `pixelated` uses SDL's pixel-art scaling. Rounded-image cache entries are
+  partitioned by sampling mode so differently styled uses cannot alias.
+
+- `accent-color` now inherits through the computed-style tree and colors the
+  generated active parts of Checkbox, Radio, Switch, and Slider controls.
+  Explicit `auto` preserves each component's fallback Style, and typed
+  generated-part metadata prevents the color from leaking into ordinary
+  application boxes or text.
+
+- `caret-color` now reaches generated TextInput and TextArea insertion carets.
+  Generated parts are identified by a typed node marker rather than public IDs
+  or Style group names, `auto` preserves the component fallback color, and the
+  computed value now follows inherited-property semantics.
+
+- Background geometry now reaches the shared paint runtime for the
+  linear-gradient image path. `background-position`, axis-specific position,
+  `background-size`, `background-repeat`, `background-clip`, and
+  `background-origin` resolve against border, padding, and content boxes in
+  both SDL3 and the deterministic PPM backend. Repetition remains one bounded
+  paint command and uses tiled SDL rendering, with a visible-pixel-bounded
+  allocation-failure fallback for subpixel tiles. The supported value subset
+  and remaining multi-layer, two-value, and `space`/`round` work are recorded
+  in the property matrix.
+
+- `text-align` now controls executable per-line text geometry instead of only
+  resolving into computed style. `start`/`left`, `center`, and `end`/`right`
+  share placement across Cosmic Text rasterization, the deterministic text
+  engine, caret layout, hit testing, SDL3 debug text, shaping caches, explicit
+  lines, soft-wrapped lines, and first-line `text-indent`. Alignment requires a
+  finite line width; unconstrained intrinsic measurement remains unshifted.
+  Logical `start`/`end` currently follow the documented horizontal-LTR contract,
+  while `text-align-last` remains computed-only pending per-visual-line control.
+
+- `text-indent` now executes as first-line text geometry instead of stopping at
+  computed style. Positive and negative lengths participate in shaping,
+  wrapping, measurement, caret placement, hit testing, UTF-8-safe ellipsis,
+  Cosmic Text bitmap caching and raster offsets, SDL3 debug rendering, and
+  transform-layer bounds. Authored newlines and wrapped continuation lines
+  return to the normal inline start; percentage indentation remains future
+  work.
+
+- The CSS runtime support audit now recognizes five previously conservative
+  entries as executable behavior: `aspect-ratio`, `order`, `letter-spacing`,
+  `font-size-adjust`, and textarea `resize`. Each promotion is backed by an
+  existing layout, text-engine, or widget consumer and focused behavior tests.
+  The follow-up `word-spacing` implementation closes the Cosmic Text gap that
+  the initial audit identified.
+
+- `text-overflow: ellipsis` now executes for no-wrap text through the shared
+  layout and paint contract. The active text engine measures each explicit
+  line, truncates only at UTF-8 rune boundaries, and stores the resulting
+  paint string without mutating Node text. SDL3, headless, C ABI, and future
+  GPU renderers therefore consume the same overflow result; Cosmic Text and
+  deterministic reference-engine behavior are covered separately.
+
+- Text measurement, caret geometry, hit testing, and layout now share one
+  UTF-8-safe wrapping result. Normal wrapping preserves words, while
+  `overflow-wrap: anywhere`, legacy `word-wrap`, and `word-break: break-all`
+  can wrap long runs at rune boundaries. `white-space: nowrap`/`pre` and
+  `text-wrap: nowrap` disable soft wrapping without suppressing authored line
+  breaks. Cosmic Text and the deterministic reference engine use the same
+  wrapping contract, and measurement does not allocate unused caret samples.
+
+- `text-transform` now executes through the shared text pipeline. `uppercase`,
+  `lowercase`, and `capitalize` use Unicode simple case mapping for layout and
+  paint, while source/display byte-boundary mapping keeps caret placement, hit
+  testing, selection, and editable control values coherent when UTF-8 widths
+  differ. Source Node text and submitted values remain unchanged.
+
+- Flex items whose final main or cross size changes now re-arrange their
+  retained descendants against that final size. Grow, shrink, `flex-basis`,
+  and stretch therefore update percentage sizing, nested alignment, text
+  measurement, absolute descendants, and overflow metrics instead of changing
+  only the item's outer box. Re-arrangement is limited to changed item
+  subtrees and reuses its temporary storage.
+
+- Added executable first-baseline alignment for horizontal Flex rows.
+  `align-items: baseline` and `align-self: baseline` now align mixed font
+  sizes, images, and nested row components using line ascent/descent metrics.
+  Baselines are aggregated independently per wrapped line and compose with
+  `row-reverse`; column-axis baseline currently falls back to cross-start
+  until vertical writing-mode baseline sets are implemented. Cosmic Text
+  exposes font baseline metrics through a new additive C ABI function without
+  changing the existing font-unit metrics result.
+
+- Completed the physical main-axis direction surface for Flex layout.
+  `row-reverse` and `column-reverse` now work through `flex-direction`,
+  `flex-flow`, and typed authoring, including wrapping, gaps, margins,
+  justification, intrinsic sizing, and composition with `wrap-reverse`.
+  Reversal changes visual coordinates only; order-modified paint/hit order,
+  source-based focus traversal, and accessibility semantics are not reversed.
+
+- Connected multi-line Flex layout to the runtime. `flex-wrap` and `flex-flow`
+  now form independent row or column lines, `wrap-reverse` mirrors the cross
+  axis, `align-content` distributes lines, and row/column gaps participate in
+  both layout and overflow geometry. Grow and shrink redistribution freeze at
+  item min/max constraints on each line; `space-around`, `space-evenly`, and
+  `stretch` content distribution are available through typed authoring.
+
+- Connected `box-sizing` to the layout runtime. `content-box` remains the CSS
+  default, while `border-box` now keeps quantitative width, height, min/max,
+  and flex-basis values as outer dimensions. Padding, visible borders, percentage
+  child sizing, intrinsic sizing, aspect ratios, scrolling gutters, clipping,
+  and absolute positioning share the resulting content-box geometry.
+
+- Added logical accessibility range semantics for virtualized collections.
+  Materialized item roots expose one-based `positionInSet` and total `setSize`
+  values through the neutral accessibility tree, AT-SPI snapshots and diffs,
+  and append-only C ABI accessors without retaining one node per logical item.
+
+- Added stable-key focus retention for virtualized items. `VirtualFocusMemory`
+  restores a focusable descendant after its logical item is rematerialized,
+  prefers explicit node `code` over structural paths, preserves focus-visible
+  state, rejects ambiguous code matches, and cancels restoration after any
+  intervening user or application focus operation.
+
+- Added stable-key virtual node materialization on top of the bounded range
+  planner. `VirtualNodePool` retains Node IDs and mounted component lifecycle
+  for keys that remain visible, mounts and disposes only entering/leaving keys,
+  restores child order during reverse scrolling or data reordering, rejects
+  shared hosts and duplicate keys, and rolls back partial mount failures.
+  A release benchmark keeps 30 materialized nodes and a 36-slot node arena for
+  both 100,000 and 10,000,000 logical items.
+
+- Added the first production data-virtualization primitive: a typed virtual
+  range planner with sparse measured-extent correction, asymmetric overscan,
+  bounded materialization, clamped scroll offsets, and anchor correction. It
+  plans 100,000 and 10,000,000 logical rows without retaining or scanning one
+  entry per row. Stable-key node reuse, focus retention, and accessibility
+  range integration are layered over that bounded plan.
+
+- Named the independently released
+  [`bgfxim`](https://github.com/puffball1567/bgfxim) package as the low-level
+  Nim C99 binding for the planned optional bgfx GPU adapter. The binding is
+  available separately; CBSS ownership integration and real-GPU qualification
+  remain Version 0.7 work.
+
+- Added a test-only cross-Driver reference application. C++14 and Rust now run
+  the same Craft Style, layout, event ordering, invalidation, FormData submit,
+  Store transaction, Navigation, Command/Cue cancellation, late-completion
+  containment, diagnostic, and teardown scenario and must produce the same
+  versioned trace and checked-in expected result. The same applications now
+  also produce byte-identical deterministic PPM reference images covering
+  layout, border, shadow, rounded background, and `oklab` linear-gradient
+  paint. The reference raster entry point is compiled only for this test and
+  is absent from normal C ABI artifacts.
+
+- Added RAII/owned Blob and immutable FormData APIs to the C++14 and Rust Craft
+  Drivers. Ordered repeated text and Blob values, bounded reads, payload-aware
+  handlers/subscriptions, callback-lifetime-safe snapshots, and
+  validation-first submit now share the canonical C ABI semantics. Driver
+  Validation Forms can register serializable controls, collect their current
+  values in field order, skip disabled fields, and emit the collected snapshot
+  without rebuilding or walking the UI tree. FormData remains transport-neutral
+  and does not pull multipart or network behavior into CBSS.
+
+- Added typed validation cores to the C++14 and Rust Craft Drivers with the
+  same 40 synchronous operations, first-failure ordering, optional/required
+  precedence, current peer references, custom rules, and retained reporting
+  policies as the canonical Nim API.
+- Added retained `ValidationControl<T>` attachment and heterogeneous
+  `ValidationForm` coordination to both reference Drivers. Additive input/blur
+  observation now synchronizes invalid state and messages, skips disabled
+  controls, preserves application handlers, and focuses the first invalid
+  registered control without replaying the form tree. Weak peer-dependency
+  edges revalidate only declared cross-field dependants.
+- Extended C ABI `0x00010019` with bounded compiled validation-pattern and
+  canonical string-format checks. Foreign Drivers share Nim's linear-time
+  regex and email/URL/UUID/IP/date/time semantics instead of depending on
+  host-specific regex or parser behavior.
+- Added typed asynchronous Commands to the C++14 and Rust Craft Drivers with
+  latest-only, ordered, and concurrent policies, bounded worker-to-UI
+  completion queues, stable tickets, cancellation, settlement observers,
+  wake coalescing, backpressure, and deterministic late-result rejection.
+- Added typed Cue graphs to the C++14 and Rust Craft Drivers with iterative
+  serial progression, delayed parallel branches, all/any/race joins,
+  restart/ignore/queue/parallel start policies, independent monotonic clocks,
+  cancellation and late-result containment, and component-owned teardown.
+- Added typed screen-transition hooks to the C++14 and Rust Craft Drivers.
+  Retained outgoing and incoming roots, deterministic phase/progress context,
+  monotonic next-frame deadlines, immediate legacy sync, navigation reentry,
+  cancellation, and teardown now match the canonical Nim screen host without
+  requiring a continuous frame loop.
+
+- Added the bounded Craft Pack Version 1 manifest and JSON Schema for declaring
+  distributable Craft Components, public Style Slots, Craft Styles, assets,
+  feature profiles, platforms, and ABI/capability compatibility requirements.
+- Added atomic Craft Pack and Craft Style replacement through Nim, C, C++, and
+  Rust APIs, with stable typed diagnostics, copied input boundaries, explicit
+  source limits, and active-resource queries.
+- Added Craft Driver capabilities for Craft Style and Craft Pack loading. Both
+  ARC and ORC now exercise the new APIs through shared and static C ABI builds.
+- Added C ABI subtree lifecycle capability and atomic subtree removal. Removal
+  invalidates generation-checked Node IDs after synchronously releasing owned
+  focus, pointer, event, Style, motion, scroll, Craft Slot, and Render Surface
+  state.
+- Added high-level C++ and Rust subtree removal with generation-safe stale
+  handles, deterministic Driver callback release, and subscription tokens that
+  reflect lifecycle-driven detachment.
+- Added atomic high-level `CraftComponent` construction to the C++14 and Rust
+  reference Drivers, including automatic root Style Slots, scoped public child
+  Slots, failed-construction rollback, and explicit subtree unmount.
+- Added retained Text, Image, group, attribute, and node-state mutation APIs to
+  both reference Drivers. Cross-language fixtures verify that updates preserve
+  Node identity and event handlers instead of rebuilding the component tree.
+- Added typed retained `Store<State, Action>` and selected subscriptions to the
+  C++14 and Rust reference Drivers. Both surfaces provide queued reentrant
+  dispatch, nested transactions, silent updates with explicit selector refresh,
+  custom selector equality, deterministic subscription disposal, and recovery
+  after listener or transaction failures without replaying the UI tree or
+  copying the complete Store state on each commit.
+- Added component-owned selected watches and weak `UiHandle` retained-mutation
+  handles to both reference Drivers. Watches can apply the current selected
+  value immediately, update existing Text/Image/group/attribute/state targets
+  without rebuilding a component, and detach on explicit close, component drop,
+  or successful unmount.
+- Added typed navigation to the C++14 and Rust reference Drivers with
+  application-defined destinations, stable entry identities, stack revisions,
+  push/replace/back/forward history, forward-branch truncation, dirty-domain
+  metadata, pluggable drivers, deterministic listener snapshots, failure
+  recovery, and lifecycle-bound RAII/`Drop` subscriptions.
+- Added retained `NavigationScreenHost` and semantic typed `Link` authoring to
+  both reference Drivers. History entries preserve focus independently,
+  inactive screens remain mounted but inert and `display: none`, and Link
+  activation consistently supports click, Enter, disabled state, public click
+  handlers, prevent-default, and accessible link semantics.
+- Extended C ABI `0x00010018` with inherited inert-state mutation/query and a
+  subtree-scoped first-focusable query so foreign Drivers do not approximate
+  hidden-screen interaction or duplicate focus-order rules.
+- Exposed a replaceable C ABI default-action slot so foreign widgets preserve
+  public bubbling and prevent-default ordering instead of folding intrinsic
+  behavior into application handlers.
+
+### Changed
+
+- Paint, hit testing, and node presentation now borrow the retained layout-box
+  index instead of copying one entry per retained node on every update. A fixed
+  seven-node dirty subtree remains constant-time through 10,000 unrelated nodes.
+
+### Security
+
+- Reject duplicate JSON keys, unsafe or non-normalized asset paths, duplicate
+  identities and paths, malformed digest metadata, unknown fields, excessive
+  nesting, oversized collections, and incompatible runtime requirements before
+  mutating an active Craft Pack.
+- Keep asset I/O outside manifest registration. Pack loading does not access the
+  filesystem or network, follow symlinks, load native code, or claim digest
+  verification without a host-authorized resolver.
+
 ## [0.5.0] - 2026-08-18
 
 ### Added

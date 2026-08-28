@@ -127,9 +127,19 @@ measurement pass followed by arrangement. `%`, `auto`, `content`,
 `min-content`, `max-content`, and `fit-content` reach layout without being
 collapsed to pixels during style resolution. The intrinsic pass is skipped
 when no node requests intrinsic sizing. Percentage gaps, percentage/intrinsic
-flex bases, and signed percentage insets also resolve during arrangement. Full flex-line collection,
-freeze/redistribute, axis abstraction, wrap/align-content, and the box index
-remain open, so D7 is only partially complete.
+flex bases, and signed percentage insets also resolve during arrangement.
+Flex-line collection, line-local min/max freeze and redistribution,
+`wrap`/`wrap-reverse`, `align-content`, and the layout box index are now
+implemented. Shared main/cross helpers remove the highest-risk duplicated
+arithmetic. Reverse main directions are now executable without mutating logical
+tree, focus, or accessibility order. Horizontal first-baseline alignment now
+aggregates ascent/descent per line and propagates through nested row
+containers. Flex items whose grow, shrink, basis, or stretch result changes
+their final size now re-arrange only that retained subtree with definite final
+constraints; percentage descendants, nested alignment, text measurement,
+absolute positioning, and overflow geometry therefore agree with the final
+item box. A complete `AxisView`, vertical-writing baseline sets, and both-side
+absolute inset sizing remain open, so D7 is still partially complete.
 
 ## D8 — Hit testing follows paint order and clipping (Adopted)
 
@@ -451,7 +461,7 @@ late-bound external themes later require a registry, it must be a typed
 strings and not an implicit ancestor cascade. This preserves external-tool
 interchange without introducing a second variable system alongside Nim.
 
-## D20 — The C ABI is the language-neutral runtime boundary (Adopted)
+## D20 — The C ABI is the language-neutral engine boundary (Amended by D28)
 
 **Context.** CBSS aims to be a native UI foundation for ecosystems beyond Nim.
 Exporting Nim object layouts would couple every consumer to ARC details,
@@ -465,9 +475,10 @@ inputs. Nim-managed strings, sequences, references, closures, exceptions, and
 object layouts never cross this boundary.
 
 Shared and static libraries are both supported and exercised by a real C
-consumer in CI. Nim remains the ergonomic first-party API; other language
-bindings are thin adapters over the C ABI rather than separate engine
-implementations.
+consumer in CI. Nim remains the canonical first-party implementation. Other
+language bindings use the C ABI rather than separate engine implementations,
+while D28 requires their application-facing Craft Drivers to provide a
+high-level authoring API instead of exposing the raw ABI directly.
 
 The C ABI is an operational UI boundary, not a read-only export format. It
 owns interaction state, event derivation and bubbling, focus traversal,
@@ -475,7 +486,7 @@ pointer capture, retained scrolling, and recomputation signals. Foreign
 callbacks use C function pointers plus host-owned `user_data`; Nim closures
 remain internal.
 
-## D21 — The extension ecosystem uses Nim packages (Adopted)
+## D21 — Extensions use host packages over one CBSS runtime (Amended by D28)
 
 **Context.** CBSS needs the low-friction composition that made Web libraries
 successful: an application imports an independently maintained library and
@@ -485,22 +496,25 @@ equal authoring targets, but it would also create a second package model,
 duplicate lifecycle and tooling work, and weaken the goal of making Nim the
 natural language for native GUI development.
 
-**Decision.** Public CBSS components, design systems, charts, widgets, themes,
-and render-surface extensions are distributed as ordinary Nim modules and
-Nimble packages. Their consumer-facing entry point is Nim and participates in
-Nim's type system, ARC ownership, documentation, compiler checks, and LSP
-tooling. Application code imports the extension package, not a foreign binary
-or a language-specific CBSS SDK.
+**Decision.** Nim modules and Nimble packages remain the canonical extension
+path and the implementation reference for CBSS Components, design systems,
+charts, widgets, themes, and render surfaces. Version 0.6 Craft Drivers also
+allow host-language applications and libraries to compose and distribute
+high-level CBSS work through their normal package managers while sharing the
+same CBSS runtime, capability metadata, Craft Style assets, and conformance
+suite.
 
-A Nim package may privately call an existing C, C++, or Rust library through a
-stable C ABI. The adapter owns all linking, conversion, panic/exception
-containment, thread rules, and cleanup, and exposes a normal Nim component or
-`RenderSurface` API. CBSS will not define a generic foreign plugin descriptor,
-dynamic Rust/C++ extension loader, or parallel non-Nim plugin registry.
+A host package may privately call an existing native library and owns its
+linking, conversion, panic/exception containment, thread rules, and cleanup.
+It exposes normal host-language components over the Craft Driver rather than a
+second layout, paint, Style, or event implementation. Nimble, Cargo, and other
+package managers remain responsible for source and binary delivery; CBSS does
+not become a dynamic loader for arbitrary foreign plugins.
 
-D20 remains unchanged: CBSS's versioned C ABI is the boundary through which an
-application written in another language may consume the CBSS runtime. It is
-not the authoring and distribution model for the CBSS extension ecosystem.
+Portable Craft Packs may share Style, assets, declared component slots, and
+capability metadata across Drivers. Executable callbacks and host-native
+component implementation remain in an appropriate host package. D20 supplies
+the common engine boundary, and D28 supplies the high-level authoring contract.
 
 ## D22 — Events are an open runtime contract, not a widget-private protocol (Adopted)
 
@@ -542,7 +556,11 @@ operation invoked by a public handler. Independent libraries can therefore
 compose behavior without replacing CBSS internals or requiring parents to wire
 their children's event bundles.
 
-## D23 — One wgpu provider and explicit shared-device ownership (Adopted)
+## D23 — One wgpu provider and explicit shared-device ownership (Conditional)
+
+**Status.** D29 supersedes wgpu-native as the planned standard GPU provider.
+This decision remains applicable only if a future optional wgpu adapter is
+selected; it is not a release requirement for the bgfx capability.
 
 **Context.** A WGSL Custom Style renderer and an independent in-process Nim
 compute or visualization package may need the same physical GPU, Device, Queue,
@@ -713,3 +731,66 @@ operations, optionally using Joubako; there is no `customAsync` validation rule.
 CBSS owns frontend validity mechanics and accessibility semantics, while the
 backend remains the authoritative security boundary. The complete contract is
 [Form Validation Design](form-validation.md).
+
+## D28 — The C ABI is an engine protocol; Craft Drivers own authoring (Adopted)
+
+**Context.** A stable C ABI makes CBSS callable from many languages, but direct
+C calls expose opaque handles, status translation, callback userdata, manual
+lifetime, and explicit tree wiring. That is an interoperability boundary, not
+the Web-like application-authoring experience CBSS intends to provide. Hand-
+written wrappers without a shared semantic contract would also drift in Style
+precedence, events, ownership, and update behavior.
+
+**Decision.** The versioned C ABI remains the language-neutral engine protocol.
+Applications use a high-level Craft Driver appropriate to their host language.
+Drivers expose the same component, nested construction, Style, Craft Style,
+event, state, lifecycle, validation, navigation, Command, and Cue concepts with
+language-native ownership and syntax. They hide raw ABI plumbing from ordinary
+application code and may not implement a parallel layout, paint, or event
+model.
+
+The shared Driver contract is defined by versioned API/capability metadata and
+executable conformance fixtures. Equivalent semantics, diagnostics, event
+order, bounded invalidation, callback lifetime, cancellation, and teardown are
+required; textual API identity and cross-platform pixel identity are not.
+Version 0.6 supplies Rust and C++ reference Drivers in addition to the canonical
+Nim facade. Craft Style remains the portable presentation asset shared by all
+conforming Drivers. Dynamic loading of arbitrary foreign component binaries is
+not required.
+
+## D29 — Native capability uses a four-layer stack (Adopted)
+
+**Context.** A useful GUI foundation needs more than portable windows and
+styled controls. Professional drawing, media, visualization, and game-facing
+applications can be blocked by missing high-quality vectors, optional GPU
+compute, color-managed CMYK preview, or a deterministic CPU fallback. Putting
+all of those responsibilities into one renderer would reduce portability,
+increase every artifact, and make backend-specific types part of ordinary UI.
+
+**Decision.** The native capability stack has four explicit owners:
+
+- SDL3 owns cross-platform windows, input, native handles, event integration,
+  and baseline CPU presentation;
+- CBSS owns UI, layout, text integration, Paint IR, retained Canvas,
+  high-quality CPU vector rasterization, events, state, invalidation, and
+  scheduling;
+- optional bgfx owns cross-platform GPU graphics and compute for games,
+  visualization, image processing, and motion content; and
+- optional Little CMS owns ICC transforms, CMYK color management, black
+  preservation, rendering intents, and display soft proofing.
+
+The bgfx Nim C99 binding is distributed independently as
+[bgfxim](https://github.com/puffball1567/bgfxim) and selected by CBSS only for a
+GPU-enabled build. Ordinary CBSS public APIs expose no bgfx handles. Publishing
+the binding does not complete the CBSS adapter: shared ownership, presentation,
+device-loss, and real-GPU integration gates remain mandatory. D23 remains a
+valid conditional ownership design if a wgpu adapter is implemented, but
+wgpu-native is no longer the planned standard GPU provider.
+
+CMYK and ICC source data remain canonical document data. RGB produced for an
+SDL3 or bgfx display is a derived soft-proof cache and cannot become the source
+for print/export. The standard profile includes neither bgfx nor Little CMS;
+operating-system artifacts include only target-relevant GPU backends, and
+codecs remain separate capabilities. The complete boundaries, profiles, and
+release gates are defined in
+[Native Rendering And Color Capability Stack](native-rendering-stack.md).

@@ -362,7 +362,7 @@ only integration surface.
 The Version 0.4 release boundary includes the implemented unit-resolution
 contexts, conditional component flow, open event contract, Blob/FormData/stream
 data boundary, typed closed-value authoring, and declarative transitions and
-keyframes documented in this section. Optional Pixie effects, GPU Canvas,
+keyframes documented in this section. Advanced CPU raster effects, GPU Canvas,
 Motion Scene, media capabilities, complete 3D transforms, and additional
 property-specific motion values remain later roadmap work and are not Version
 0.4 release gates.
@@ -937,31 +937,28 @@ Validation should include:
 - platform coverage that records the browser engine, compositor, output color
   space, ICC profile availability, and renderer backend used by each run.
 
-Rendering backends receive resolved paint colors. SDL3, Pixie, a future GPU
-Canvas, or another backend may implement the final raster operation, but none
-may assign a different meaning to a public CBSS color value.
+Rendering backends receive resolved paint colors. The canonical CBSS CPU
+rasterizer, SDL3 presentation, the optional bgfx GPU Canvas, or another future
+adapter may implement final output, but none may assign a different meaning to
+a public CBSS color value.
 
-### Optional CPU Raster And Effects Backend
+### Canonical CPU Raster And Effects Backend
 
-Status: `Planned evaluation`
+Status: `Planned completion`
 
-Pixie is a candidate optional implementation backend for CPU-side raster and
-image-processing work. Its useful scope includes paths, anti-aliased masks,
-gradients, shadows, blur, blend modes, SVG rasterization, image transforms, and
-other operations that would otherwise require a substantial independent
-raster implementation.
+CBSS owns the CPU-side vector raster and baked-effects baseline. Its scope
+includes paths, coverage anti-aliasing, masks, gradients, shadows, blur, blend
+modes, image transforms, and other operations needed by ordinary UI and
+Canvas. SDL3 presents the retained output; repeated SDL line primitives are
+not the quality contract.
 
-Pixie is not the CBSS color specification, layout engine, public paint model,
-or canonical type system. In particular:
-
-- CBSS parses and resolves supported CSS Color 4 values before backend use.
-- A Pixie adapter converts resolved CBSS paint data into Pixie operations.
-- Backend-specific color, image, path, and allocation types do not enter the
-  public Nim component contract or the C ABI.
-- A Pixie-free build path remains supported for applications that do not need
-  these effects.
-- Cached Pixie output is uploaded or composed through the active SDL3 path;
-  static output is not rasterized again every frame.
+- CBSS parses and resolves supported CSS Color values before raster use.
+- Backend-internal color, image, path, tile, and allocation types do not enter
+  the public Nim component contract or the C ABI.
+- Static geometry, raster tiles, and uploaded textures are cached and rebuilt
+  only when relevant source, Style, size, scale, or color context changes.
+- Optional GPU acceleration consumes the same Path2D and Paint IR instead of
+  introducing another authored vector model.
 
 Effect execution policy must be selectable without changing the authored
 visual value. Provisional policy concepts are:
@@ -986,10 +983,10 @@ Deployment profiles should make capability and footprint intentional:
 - a full visual profile with CPU effects and later GPU capabilities.
 
 Microcontroller, RTOS, and bare-metal support is not an initial requirement.
-The embedded target begins with SDL3-capable Linux systems. Before Pixie can
-become a recommended dependency, release builds on amd64 and arm64 must measure
-binary size, startup time, idle and active RSS, first-generation cost, cached
-frame cost, and temporary-buffer peaks at embedded-relevant resolutions.
+The embedded target begins with SDL3-capable Linux systems. Release builds on
+amd64 and arm64 measure binary size, startup time, idle and active RSS,
+first-generation cost, cached frame cost, and temporary-buffer peaks at
+embedded-relevant resolutions.
 
 #### C ABI Boundary
 
@@ -999,10 +996,10 @@ new versioned constructors or opaque CBSS-owned color-value handles, with
 corresponding style setters. Existing RGBA callers remain source- and
 binary-compatible.
 
-Pixie handles and Nim-managed Pixie objects never cross `include/cbss.h`.
-Backend selection, effect policy, and capability queries are represented by
-CBSS-owned enums, options, opaque handles, and status codes. Static or shared
-CBSS artifacts may contain the selected implementation internally, but foreign
+Rasterizer handles and tile objects never cross `include/cbss.h`. Backend
+selection, effect policy, and capability queries are represented by CBSS-owned
+enums, options, opaque handles, and status codes. Static or shared CBSS
+artifacts may contain the selected implementation internally, but foreign
 callers depend only on the versioned CBSS ABI.
 
 ### Keywords And Closed Value Sets
@@ -1049,21 +1046,24 @@ processing, and other custom drawing workloads; it is not a second renderer
 for normal CBSS buttons, text, or style properties. Normal UI retains one
 canonical visual contract.
 
-The related ordinary-UI WGSL goal keeps that canonical contract: CBSS performs
-CPU-owned Style resolution, layout, text shaping, and normal paint first, then
-lets a typed GPU Style effect paint under, over, mask, or filter a bounded
-retained element/layer texture. It does not require a GPU-specific Button or a
-second interpretation of Flex, text, events, or accessibility. Static CPU
-content remains baked while an animated WGSL overlay runs, so shader-only
-frames do not repeat layout, shaping, or unrelated paint work.
+The related ordinary-UI shader goal keeps that canonical contract: CBSS
+performs CPU-owned Style resolution, layout, text shaping, and normal paint
+first, then lets a typed GPU Style effect paint under, over, mask, or filter a
+bounded retained element/layer texture. It does not require a GPU-specific
+Button or a second interpretation of Flex, text, events, or accessibility.
+Static CPU content remains baked while an animated shader overlay runs, so
+shader-only frames do not repeat layout, shaping, or unrelated paint work.
 
-The initial implementation target is the SDL3 GPU API, with explicit resource,
-swapchain, shader, synchronization, resize, and device-loss ownership rules.
-`wgpu-native` is also a planned optional CBSS GPU Canvas backend for workloads
-that benefit from a WebGPU/WGSL contract, such as custom visualizations,
-camera-frame effects, tile maps, and game scenes. It remains behind the same
-Canvas contract and must not create a second renderer-specific interpretation
-of ordinary CBSS UI properties.
+The planned standard GPU adapter is bgfx, with explicit resource, swapchain,
+shader, synchronization, resize, device-loss, and presentation ownership.
+SDL3 continues to own windows, native handles, input, event integration, and
+the canonical CPU presentation path. The independent low-level bgfx Nim C99
+binding is [bgfxim](https://github.com/puffball1567/bgfxim). It is distributed
+separately, remains useful without CBSS, and enters an application only when
+its GPU profile is selected. The binding is available; the CBSS adapter and
+its real-GPU qualification remain Version 0.7 work. A later wgpu-native adapter
+may implement the same CBSS-owned contract, but it is no longer the standard
+provider or a release prerequisite.
 
 CBSS will not claim exclusive ownership of the machine's GPU. A separate
 backend process may own an independent compute device and return bounded Blob,
@@ -1074,28 +1074,33 @@ device-loss, and shutdown rules. Different GPU APIs use bounded CPU staging by
 default; platform-specific external-memory sharing is optional and never an
 implicit requirement.
 
-The wgpu profile additionally requires one canonical low-level Nim binding and
-one exact `wgpu-native` runtime version per process. A versioned `GpuHost`
-supports either a CBSS-owned Device/Queue or a compatible application-owned
-Device/Queue borrowed by CBSS; ownership is never inferred. CBSS remains the
-single Surface/Present owner for its window in both modes. Independent Nim GPU
-packages retain cross-frame pipelines, buffers, textures, and shaders through
-budgeted owner-specific resource namespaces and submit work through the shared
-frame scheduler rather than creating another swapchain or hidden queue policy.
-Release qualification includes a same-process real-GPU fixture combining CBSS
-Motion/WGSL rendering and an independent compute package on one Device, Queue,
-and Swapchain, including device loss, cancellation, teardown order, version
-mismatch, and GPU-memory limits.
+The GPU profile requires one selected provider and one presentation owner per
+window. A versioned `GpuHost` supports either CBSS-owned resources or a
+compatible application-owned host borrowed under explicit lifetime rules;
+ownership is never inferred. Independent Nim GPU packages retain cross-frame
+resources through budgeted owner-specific namespaces and submit work through
+the shared frame scheduler rather than creating another swapchain or hidden
+queue policy. Release qualification includes a same-process real-GPU fixture
+combining CBSS Motion rendering and an independent compute package, including
+device loss, cancellation, teardown order, version mismatch, and GPU-memory
+limits.
 
 The complete staged plan, including GPU Canvas composition, visualization APIs,
 application compute coexistence, game UI, external engine integration, and
 WGSL-backed Custom Styles, is maintained in
 [render-surface-roadmap.md](render-surface-roadmap.md). The Custom Style target
-ends at declaratively attaching packaged WGSL paint to a CPU-defined CBSS
+ends at declaratively attaching packaged shader paint to a CPU-defined CBSS
 element and composing it through the existing Style, layout, clip, state, and
 invalidation model. Shader-derived event geometry is a separate exploratory
 track, not a default cost or a Version 0.4 release gate; ordinary elements and
 Custom Styles retain their logical Box/transform hit path.
+
+The GPU plan is paired with optional Little CMS color management. CMYK and ICC
+source data remain canonical; monitor RGB is a derived soft-proof cache and is
+not reused as print source data. OS-specific release artifacts include only
+their selected bgfx renderers, while Little CMS and image codecs remain
+compile-time capabilities. See
+[Native Rendering And Color Capability Stack](native-rendering-stack.md).
 
 ## Motion, Transform, And Native Visual Surfaces
 
@@ -1231,11 +1236,10 @@ Dependency order is deliberate:
 2. Add a deterministic CPU Motion Scene reference path. It must support
    batched object storage, stable IDs, snapshot replacement, cancellation, and
    headless tests without requiring a GPU.
-3. Add an SDL3 GPU execution path using instancing, storage buffers, render
+3. Add the optional bgfx execution path using instancing, buffers, render
    passes, compute passes, and offscreen Canvas composition where appropriate.
-4. Add `wgpu-native` as an optional backend behind the same Motion Scene and
-   GPU Canvas contract for applications that require WebGPU/WGSL-oriented
-   shaders and compute.
+4. Keep additional GPU providers behind the same Motion Scene and GPU Canvas
+   contract rather than making them release prerequisites.
 5. Add higher-level generative-design and motion-graphics libraries as normal
    Nim packages rather than hard-coding an After Effects, chart, or game
    product into CBSS core.
@@ -1256,13 +1260,13 @@ apply immediately so transition work does not close the path:
 - Continuous frames are requested only while motion or rendering work is
   active; a static Motion Scene returns to event-driven idle behavior.
 
-Motion, GPU, Pixie, media, and shader packages remain opt-in imports. They are
-not re-exported by the standard umbrella module and are not linked or deployed
-for applications that do not select them. A CPU/SDL 2D profile remains a
-supported build target for 64-bit Raspberry Pi-class Linux systems. GPU
-capability is detected explicitly and has a deterministic CPU fallback or a
-clear diagnostic; installing CBSS source does not imply shipping every native
-backend in the application artifact.
+GPU, Little CMS color management, media, codec, and shader packages remain
+opt-in imports. They are not re-exported by the standard umbrella module and
+are not linked or deployed for applications that do not select them. A
+CPU/SDL 2D profile remains a supported build target for 64-bit Raspberry
+Pi-class Linux systems. GPU capability is detected explicitly and has a
+deterministic CPU fallback or a clear diagnostic; installing CBSS source does
+not imply shipping every native backend in the application artifact.
 
 Compile-time capability profiles enforce this boundary rather than relying
 only on linker dead-code elimination. A selected profile controls Nim imports,
@@ -1275,12 +1279,14 @@ generated module imports and re-exports only the selected capabilities.
 The supported profile families are:
 
 - `standard`: ordinary UI, text, SDL 2D, CPU Canvas, events, accessibility
-  semantics, transitions, and the default controls;
+  semantics, transitions, the canonical CPU vector renderer, and the default
+  controls;
 - `motion-cpu`: `standard` plus the deterministic CPU Motion Scene;
-- `motion-sdl-gpu`: Motion Scene and GPU Canvas through the SDL3 GPU backend;
-- `motion-wgpu`: the optional `wgpu-native` implementation of the same public
-  Motion Scene and GPU Canvas contract;
-- separate opt-ins for Pixie effects and media codecs; and
+- `gpu-bgfx`: Motion Scene and GPU Canvas through bgfx, including only the
+  target's selected renderer backends;
+- `color-managed`: `standard` plus Little CMS and ICC/CMYK soft proofing;
+- separate opt-ins for media and image codecs, with PNG as the first standard
+  lossless image capability and WebP remaining optional; and
 - `full`: a convenience development/distribution profile that selects every
   capability supported on the target without changing their public contracts.
 
@@ -1290,8 +1296,8 @@ representative `standard` and `full` builds. A feature may not silently enter
 Runtime memory budgets remain separate because textures, decoded frames, font
 caches, and scene buffers can dominate executable size on small systems.
 
-This track extends the browser CSS-plus-Canvas/WebGPU authoring model instead
-of reproducing JavaScript's main-thread limitations. Its product value depends
+This track extends the browser CSS-plus-Canvas/GPU authoring model instead of
+reproducing JavaScript's main-thread limitations. Its product value depends
 on hiding scheduling, batching, synchronization, and backend details behind a
 Web-like import-and-mount experience for Nim authors.
 
@@ -1300,7 +1306,7 @@ presentation owner rather than the gameplay engine. Fixed-step Nim simulation,
 ECS, physics, AI, persistence, and networking publish bounded immutable scene
 snapshots; a data-oriented Visual Scene batches tiles, sprites, particles,
 chart-like marks, and other repeated objects without creating one CBSS Node per
-item. CBSS composes that CPU/WGSL-rendered scene with its HUD, controls, dialogs,
+item. CBSS composes that CPU/GPU-rendered scene with its HUD, controls, dialogs,
 accessibility UI, and one final presentation owner. The detailed 2D target,
 thread/snapshot boundary, interaction model, batching rules, and separate 3D
 integration boundary are specified in
@@ -1430,12 +1436,13 @@ Planned work:
 
 ## Versions 0.5 And 0.6 - Parallel Foundation Tracks
 
-Status: `Version 0.5 released on 2026-08-18; Version 0.6 planned`
+Status: `Version 0.5 released on 2026-08-18; Version 0.6 released on 2026-08-28`
 
 Version 0.5 and Version 0.6 are separate release scopes developed in the same
 foundation wave. Version 0.5 owns the first-party frontend runtime and general
-Cue orchestration. Version 0.6 owns the layout, scrolling, virtualization,
-accessibility-transport, ownership, and performance work required for
+Cue orchestration. Version 0.6 owns high-level authoring convergence,
+cross-language Craft Drivers, layout, scrolling, virtualization,
+accessibility transport, ownership, and the performance work required for
 data-dense production applications. Work may proceed concurrently where the
 contracts are independent, and Version 0.6 provides integrated production
 validation of the Version 0.5 authoring APIs.
@@ -1448,7 +1455,7 @@ release gate, while shared integration scenarios run continuously against
 
 ### Ownership Contract And Release Verification
 
-Status: `Version 0.6 target`
+Status: `Released in Version 0.6`
 
 CBSS will guarantee its own ARC ownership and native-resource lifecycle when an
 application uses the documented safe public API and follows its explicit
@@ -1710,9 +1717,137 @@ families, invalid Style and AT-SPI state, form-level validation-first submit,
 first-invalid focus, explicit cross-field dependency updates, ARC/ORC tests,
 and a release benchmark for typed and precompiled-regex rule paths.
 
+### High-Level Authoring And Cross-Language Craft Drivers
+
+Status: `Released in Version 0.6`
+
+The C ABI is a stable engine protocol, not the intended application-authoring
+experience. Version 0.6 adds a canonical high-level contract above it so a host
+language can use CBSS without exposing Nim memory management, raw opaque
+handles, explicit parent wiring, discarded construction results, dirty-domain
+plumbing, or callback trampolines in ordinary application code.
+
+The shared contract covers:
+
+- scoped application and `UiRoot` lifetime, nested Box/Text/Image/Canvas and
+  reference-control construction, component mount/unmount, and deterministic
+  resource disposal;
+- typed Style values, Craft Style loading, public Style Slots, Craft Pack
+  capability checks, atomic replacement, and diagnostics;
+- standard event properties, removable observers, focus, navigation, retained
+  State/Store updates, validation, Commands, and Cue entry points;
+- language-neutral status, error, callback-lifetime, cancellation,
+  thread-confinement, string, Blob, FormData, and ownership rules; and
+- bounded invalidation so a high-level Driver cannot regress retained updates
+  into whole-tree replay.
+
+Drivers use the idioms of their host language rather than transliterating Nim
+syntax. Rust may use ownership guards and `Drop`; C++ may use RAII and scoped
+builders. Those surfaces must still produce the same component nesting, Style
+precedence, event order, lifecycle, diagnostics, and dirty-domain effects.
+
+The contract is described by versioned machine-readable API and capability
+metadata. Generated low-level bindings and shared conformance fixtures prevent
+each Driver from becoming a handwritten reinterpretation of CBSS. ABI version
+negotiation and capability queries must fail before partial construction when
+a Craft requires unsupported behavior.
+
+Version 0.6 requires the canonical Nim facade plus maintained Rust and C++
+reference Drivers. Their integration suites construct and interact with the
+same reference applications, load the same Craft Style fixtures, compare
+resolved semantics and event traces, and exercise normal, error, cancellation,
+and teardown paths under the available memory tools. Adding another
+C-interoperable host must not require changes to layout, paint, event, or Style
+semantics in the CBSS core.
+
+Current implementation status: the machine-readable capability contract and
+runtime negotiation API are complete. The C++14 and Rust reference Drivers
+cover deterministic ownership, typed Style values, scoped Box/Text/Image
+construction, layout queries, structured failures, replacement event handlers,
+owned additive subscriptions, callback-boundary failure containment, synthetic
+event fixtures, ARC/ORC linking, and lifecycle checks. Event kinds are generated
+from the canonical registry rather than duplicated by a Driver. The Version 1
+Craft Style JSON exchange format now has a strict bounded parser, typed
+`StyleSheet` compilation, stable diagnostics, canonical normalization, a
+machine-readable schema, and shared positive/negative fixtures. Public Style
+Slots and atomic retained replacement are implemented for Nim components:
+component-owned invariants retain precedence, failed candidates leave the old
+Style active, mounted identity and interaction state survive replacement, and
+only matching Slot subtrees are invalidated. ABI `0x00010018` now exposes the
+same Slot, Craft Style, Craft Pack, active-item, and structured-diagnostic
+contracts. The C++14 and Rust Drivers load and replace both formats through
+high-level APIs, and their reference suites verify Slot scoping,
+component-owned precedence, atomic failure, diagnostics, and Pack lifecycle.
+The same ABI now provides atomic subtree removal with generation-safe Node ID
+invalidation and deterministic cleanup of interaction, events, Style, motion,
+scroll, Craft Slots, and Render Surfaces. The C++ and Rust Drivers expose that
+lifecycle directly, release their callback holders only after native teardown,
+and make detached subscription tokens immediately observable. Both reference
+Drivers now provide atomic `CraftComponent` construction, automatic component
+root Style Slots, component-scoped child Slot declarations, explicit unmount,
+and retained Text/Image/group/attribute/state mutation. Their shared behavior
+fixtures verify stable Node identity and handlers across updates, rollback on
+C++ exceptions and Rust `Err`/panic, and complete unmount. Both Drivers now
+provide typed retained Stores with reducer dispatch, nested committed
+transactions, selected equality, deterministic subscriptions, queued
+reentrancy, and failure recovery. Component-owned selected watches and weak
+retained-mutation handles now connect changed projections to existing nodes and
+detach at component teardown. Typed navigation is now implemented in both
+reference Drivers: application-defined destinations, stable stack-entry
+identities, push/replace/back/forward history, branch truncation, revisions,
+dirty-domain metadata, pluggable navigation drivers, deterministic listeners,
+failure recovery, and RAII/`Drop` teardown match the canonical Nim contract.
+Retained screen hosting and semantic typed Link activation now also match the
+canonical contract in both Drivers: disjoint screen roots remain mounted,
+inactive roots are inert and `display: none`, stable history entries restore
+their own focus, and click/Enter activation preserves user-handler ordering,
+disabled behavior, prevent-default, and accessible link semantics. ABI
+`0x00010018` adds inherited inert-state and subtree-first-focusable primitives
+so Drivers do not duplicate engine focus ordering. ABI `0x00010019` and both
+reference Drivers now provide the typed Validation core: all 40 synchronous
+rules, retained reporting policy, live peer references, custom checks, and one
+canonical bounded regex/string-format implementation. Both Drivers now also
+provide typed Commands with matching policy, worker-to-UI delivery,
+cancellation, backpressure, ticket observation, and disposal semantics. Both
+Drivers now also expose typed Cue graphs with iterative serial progression,
+delayed parallel branches, all/any/race joins, restart/ignore/queue/parallel
+start policies, monotonic logical clocks, pause/resume and rate control,
+cancellation, late-completion rejection, and component-owned teardown.
+Screen-transition hooks now also match across Nim, C++14, and Rust: the legacy
+sync remains immediate, the time-aware path keeps old and new retained roots
+visible with input restricted to the incoming screen, and the host exposes a
+monotonic next-frame deadline for event-wait integration. Start, advance,
+completion, cancellation, navigation reentry, and screen-disposal ordering are
+covered by Driver fixtures. Retained
+`ValidationControl[T]` attachment and heterogeneous `ValidationForm`
+check/report coordination are now implemented in both reference Drivers.
+High-level Blob ownership, immutable ordered FormData construction,
+payload-bearing handlers/subscriptions, and validation-first submit delivery
+are now implemented in both reference Drivers. Typed field registration,
+automatic retained-value collection, disabled-field exclusion, and collected
+submit delivery now also match in C++14 and Rust. The first integrated
+cross-Driver reference application now compares a versioned C++14/Rust trace
+covering Craft Style layout, event order and invalidation, FormData submit,
+Store transactions, Navigation, Command and Cue cancellation, late-completion
+containment, diagnostics, and subtree teardown against one checked-in
+expectation. The same C++14 and Rust applications now render their shared Craft
+Style through one test-only deterministic PPM backend. Both outputs must match
+each other and a checked-in baseline byte for byte; the fixture covers layout,
+rounded background, border, shadow, and `oklab` linear-gradient paint without
+introducing platform-font variance. The PPM entry point is excluded from normal
+C ABI artifacts. Cross-Driver trace and reference-image conformance are now
+complete for the Version 0.6 Driver contract.
+
+This scope does not require one source syntax across languages, runtime loading
+of arbitrary foreign binaries, or pixel identity across different font and
+platform backends. It does require equivalent supported behavior and an
+authoring layer that is materially higher-level than calling C functions
+directly. The complete naming and distribution boundary is in
+[Craft Ecosystem](craft.md).
+
 ### Production Layout, Scrolling, Virtualization, And Accessibility
 
-Status: `Version 0.6 target`
+Status: `Released in Version 0.6`
 
 The existing percentage, automatic, intrinsic, min/max, Flex, retained-scroll,
 semantic-tree, focus, and AT-SPI adapter foundations are not restarted. Version
@@ -1744,9 +1879,83 @@ virtualized materialization, keyboard and pointer interaction, scrolling,
 focus, semantic range exposure, Store updates, asynchronous Commands, and Cue
 feedback without retaining one node per logical row.
 
+The first virtualization unit is implemented. `VirtualExtentIndex` prepares
+sparse measured corrections once, and `planVirtualRange` computes visible and
+overscan ranges from a logical item count without re-sorting them during
+scroll. It supports scroll anchoring, enforces a hard materialization cap, and
+emits only bounded item geometry plus leading/trailing spacer extents. Its
+storage and planning work do not grow linearly with the logical row count.
+`VirtualNodePool` now reconciles that bounded geometry by application-provided
+stable keys. Retained keys preserve Node ID and component lifecycle; only
+entering/leaving keys mount or unmount, reverse scrolling and reordered data
+restore direct-child order, and partial factory failures roll back newly added
+roots. Dedicated-host validation prevents the pool from disposing unrelated
+UI, while release benchmarks prove retained node capacity and reconcile cost do
+not scale with logical row count.
+
+Stable-key focus retention is now available through `VirtualFocusMemory`. It
+captures a focused descendant before its item root is disposed, restores it
+when the same logical key is rematerialized, preserves focus-visible state, and
+uses the global interaction focus serial to avoid stealing focus after another
+operation. Explicit node codes survive internal component reordering; the
+automatic relative path keeps the feature usable without requiring IDs or test
+codes on every control.
+
+Accessibility range exposure is now connected to the same bounded pool.
+Materialized item roots receive one-based positions and the full logical set
+size, retained keys update those values after data reordering, and the neutral
+semantic tree plus AT-SPI snapshot/diff preserve them. Invalid values fail
+without mutating prior semantics. No placeholder semantic nodes are allocated
+for offscreen items, and collection/item roles remain explicit component-owned
+meaning rather than a guess made by virtualization. This completes the
+virtualization-specific Version 0.6 semantic stack; broader production layout
+work remains a separate task in this section.
+
+The opt-in Linux AT-SPI D-Bus transport is now implemented behind
+`-d:cbssLinuxAtspi`. It registers stable snapshot objects and the Application,
+Accessible, Action, and Component interfaces, embeds the application root in
+the AT-SPI registry, and dispatches focus and activation through existing UI
+mechanisms. Invalid snapshots are rejected before publication, all external
+paths and actions are checked against the current snapshot, and teardown is
+idempotent. An external `gdbus` client verifies the live protocol under ARC and
+ORC in an isolated session, with the same lifecycle covered by Valgrind. Text,
+EditableText, and Value remain deliberately unadvertised until their full
+operation surfaces exist; real assistive-technology validation remains distinct
+from protocol integration.
+
+Executable `box-sizing` is also complete. Quantitative dimensions, min/max
+constraints, and flex-basis now distinguish CSS-default `content-box` from
+`border-box`; padding and visible borders are counted once, while child
+percentage sizing, intrinsic layout, aspect ratios, scroll gutters, clipping,
+and positioned descendants share the derived content geometry. Application
+and component-library resets remain explicit Style injection rather than an
+engine-wide compatibility default.
+
+Multi-line Flex layout is complete for the accepted v0.6 value surface.
+`flex-wrap` and `flex-flow` collect row or column lines, `wrap-reverse` mirrors
+their cross-axis placement, and `align-content` supports start/end/center,
+space-between/around/evenly, and stretch. Grow and shrink are resolved per line
+with min/max freeze and redistribution. Independent main/cross gaps, ordering,
+absolute/display-none exclusion, max-size-constrained auto dimensions, and
+scroll overflow metrics are covered by the same layout result.
+
+The remaining physical main-axis values are also executable. `row-reverse` and
+`column-reverse` place each order-modified line from main-end while retaining
+the same node, paint/hit, focus, and accessibility order. They compose with
+wrapping, cross-axis reversal, gaps, margins, justification, intrinsic sizing,
+and typed property authoring.
+
+Horizontal first-baseline alignment is executable for row and row-reverse
+containers. Text ascent/descent and line-height leading, synthesized image and
+box baselines, nested row propagation, per-line wrapping, margins, and
+`align-self` overrides share the normal layout result used by paint and hit
+testing. Column baseline currently falls back to cross-start; vertical baseline
+sets remain coupled to the future writing-mode contract.
+
 ### CSS Property Runtime Completion
 
-Status: `Version 0.6 target; package order remains dependency-driven`
+Status: `The accepted Version 0.6 subset is released; remaining matrix work`
+`continues in dependency order`
 
 The canonical property target remains in
 [css-property-support.md](css-property-support.md), and every targeted property
@@ -1764,31 +1973,55 @@ in layout, paint, text, hit testing, input, accessibility, or another visible
 runtime subsystem, together with focused behavior and boundary tests.
 
 Before publishing a new completion percentage, audit every current `Computed`
-entry against the implementation. Existing consumers for `aspect-ratio`,
-`letter-spacing`, `word-spacing`, `order`, `align-self`, and textarea `resize`
-show that the support matrix can conservatively lag the code. The matrix,
+entry against the implementation. The 2026-08-26 audit promoted executable
+`aspect-ratio`, `letter-spacing`, `font-size-adjust`, `order`, and textarea
+`resize` behavior. Its identified Cosmic Text gap for `word-spacing` is now
+closed across shaping, wrapping, rasterization, caret/hit geometry, and
+retained text controls. The matrix,
 implementation order, default registry, and generated summary remain
 machine-checked, while semantic promotion requires code-and-test review.
 
 Candidate work packages:
 
-- **Box and Flex layout fidelity.** Complete executable `box-sizing`,
-  multi-line `flex-wrap` and `flex-flow`, line distribution through
-  `align-content`, and the remaining item/container alignment properties.
-  Preserve stable intrinsic sizing, min/max constraints, gaps, ordering,
-  percentage resolution, scrolling overflow, and dirty-subtree behavior in
-  both row and column layouts.
-- **Background geometry and composition.** Connect `background-position`,
-  `background-position-x`, `background-position-y`, `background-size`,
-  `background-repeat`, `background-clip`, and `background-origin` to the
-  shared SDL3 and headless paint contract. Then connect attachment and blend
-  behavior without introducing an idle redraw loop or backend-specific style
-  semantics. Linear-gradient support remains the reference image path.
-- **Everyday text behavior.** Finish visible `text-overflow` and ellipsis,
-  `text-transform`, `text-indent`, supported `text-wrap` forms, word breaking,
-  overflow wrapping, and hyphenation behavior. Letter and word spacing remain
-  consistent across measurement, shaping, caret geometry, selection, input,
-  textarea scrolling, and both text backends.
+- **Remaining Flex and axis fidelity.** Build on executable `box-sizing`,
+  multi-line Flex, horizontal first-baseline alignment, and selective
+  descendant re-arrangement after grow, shrink, basis, or stretch changes;
+  complete logical/writing-axis behavior. Preserve stable intrinsic sizing,
+  percentage resolution, scrolling overflow, and dirty-subtree behavior across
+  all four main-axis directions.
+- **Background geometry and composition.** The first executable slice now
+  connects `background-position`, `background-position-x`,
+  `background-position-y`, `background-size`, `background-repeat`,
+  `background-clip`, and `background-origin` to one shared geometry contract
+  consumed by SDL3 and the deterministic headless rasterizer. It covers one
+  linear-gradient layer, contextual lengths and percentages, the three box
+  areas, and repeat/no-repeat/repeat-x/repeat-y without emitting one paint
+  command per tile. Two-value and multi-layer syntax, raster-image intrinsic
+  sizing, `space`/`round`, attachment, and blend behavior remain later slices.
+  Those additions must preserve bounded work, idle scheduling, and identical
+  authored semantics across CPU and optional `bgfxim` GPU backends.
+- **Everyday text behavior.** Build on executable `text-transform`, whose
+  locale-neutral Unicode case mapping now shares source/display byte mapping
+  across measurement, caret geometry, hit testing, selection, input, and paint.
+  UTF-8-safe normal word wrapping, `overflow-wrap`, legacy `word-wrap`,
+  `word-break: break-all`, no-wrap, and preformatted soft-wrap suppression now
+  share measurement, caret, hit, layout, and Cosmic Text behavior. Finish
+  soft-wrapped multi-line overflow behavior on top of executable single-line
+  `text-overflow: ellipsis`. Executable positive and negative `text-indent`
+  now shares first-line shaping, wrapping, caret/hit geometry, ellipsis, and
+  paint behavior across the reference and Cosmic Text engines. Executable
+  `text-align` now aligns each explicit and soft-wrapped line across shaping,
+  bitmap paint, caret geometry, hit testing, SDL3 debug rendering, and shaping
+  caches; it composes with first-line indentation. Until writing direction is
+  implemented, `start` and `end` intentionally use horizontal-LTR semantics.
+  Keep `text-align-last` computed-only until the shared text contract exposes
+  final visual lines and lines preceding forced breaks. Next add percentage
+  indentation and advanced `text-wrap`
+  balance/pretty/stable behavior, locale-aware `word-break: keep-all`, browser-
+  useful whitespace collapsing, hyphenation, and a future explicit locale
+  contract for language-specific casing. Letter and word spacing are connected
+  across both text backends, retained text controls, caret/hit geometry,
+  selection, wrapping, and rasterization.
 - **Writing direction and logical geometry.** Replace the current
   horizontal-LTR physical aliases with explicit `direction`, `unicode-bidi`,
   and `writing-mode` behavior before claiming general logical-property
@@ -1797,8 +2030,9 @@ Candidate work packages:
 - **Visual effects and advanced text.** Connect `filter`, `backdrop-filter`,
   masks, blend/isolation behavior, and the remaining decoration and typography
   properties only through shared paint/text contracts with deterministic
-  headless references. Optional Pixie or GPU implementations must not change
-  authored semantics or make the standard profile depend on them.
+  headless references. The canonical CPU implementation and optional GPU
+  acceleration must not assign different authored semantics or make the
+  standard profile depend on a GPU.
 
 Every selected work package includes negative and unsupported-value
 diagnostics, cross-backend reference tests where pixels are affected, and
@@ -1809,22 +2043,85 @@ target.
 
 ### Parallel Version 0.5 And 0.6 Delivery Order
 
-1. Freeze release baselines for layout, scrolling, focus, accessibility,
-   ownership, idle scheduling, and dirty-work complexity.
-2. Implement `State[T]`, owned `watch`, `batch`, selected Store transactions,
+1. Freeze release baselines for authoring, Driver semantics, layout, scrolling,
+   focus, accessibility, ownership, idle scheduling, and dirty-work complexity.
+2. Freeze the high-level API/capability schema and implement the Rust and C++
+   reference Craft Drivers over the versioned C ABI.
+3. Implement `State[T]`, owned `watch`, `batch`, selected Store transactions,
    Effects, and Commands over the existing runtime primitives.
-3. Complete the production layout consumers and their intrinsic, percentage,
+4. Complete the production layout consumers and their intrinsic, percentage,
    min/max, Flex, text, and writing-axis tests.
-4. Complete transform-only scrolling and add the typed virtualization contract
-   with large-data performance tests.
-5. Connect the semantic tree to the Linux AT-SPI D-Bus transport and run
+5. Complete transform-only scrolling and the typed virtualization stack. Range
+   planning, stable-key bounded node reuse, component lifecycle reconciliation,
+   focus retention, logical accessibility range exposure, and their large-data
+   behavior and performance gates are implemented.
+6. Connect the semantic tree to the Linux AT-SPI D-Bus transport and run
    headless adapter plus real-session integration coverage.
-6. Implement Cue triggers, serial and parallel graphs, joins, clocks,
+7. Implement Cue triggers, serial and parallel graphs, joins, clocks,
    cancellation, and integration with Store, Signal, Command, transition,
    keyframes, Canvas, and component lifecycle.
-7. Run the integrated large-data application scenario under ARC and ORC,
-   sanitizers, Valgrind, Wayland E2E, accessibility inspection, and release
-   performance budgets before the Version 0.6 release branch is created.
+8. Rewrite first-party application demos through the canonical nested
+   component API so `parent = some(...)` and `discard` remain low-level escape
+   hatches rather than the advertised application workflow.
+9. Run the integrated large-data application scenario and Driver conformance
+   applications under ARC and ORC, sanitizers, Valgrind, Wayland E2E,
+   accessibility inspection, and release performance budgets before the
+   Version 0.6 release branch is created.
+
+## Craft Ecosystem And Portable Style Distribution
+
+Status: `Driver, Style, and Pack foundations released in Version 0.6;`
+`CLI and ecosystem expansion follow`
+
+`Craft` is the public umbrella term for reusable components, styles, design
+systems, and UI libraries built on Clay Board Style System. CBSS is the board
+and shared foundation; independent engineers distribute the work crafted on
+that foundation.
+
+The ecosystem vocabulary is:
+
+- **Craft Component:** a retained reusable component with explicit public
+  style slots and component-owned behavior;
+- **Craft Style:** an external, portable presentation definition that can be
+  replaced without replacing application behavior;
+- **Craft Pack:** a versioned distribution of components, styles, assets, and
+  compatibility metadata; and
+- **Craft Driver:** a host-language adapter that loads and applies Craft data
+  while preserving one CBSS semantic contract.
+
+The delivery sequence is:
+
+1. In Version 0.6, freeze the vocabulary, public style-slot contract,
+   precedence rules, and versioned capability identifiers.
+2. In Version 0.6, add atomic Craft Style replacement that preserves mounted
+   nodes, state, events, focus, and accessibility identity while invalidating
+   only affected dirty domains.
+3. In Version 0.6, define a deterministic language-neutral Craft Style
+   representation with parser diagnostics, validation, and compiled-cache
+   behavior. It remains CSS-inspired rather than CSS-compatible and cannot
+   embed arbitrary business callbacks.
+4. In Version 0.6, define the Craft Pack manifest foundation for components,
+   Style assets, fonts, images, optional visual capabilities, integrity
+   metadata, and CBSS compatibility.
+5. In Version 0.6, expose Craft Style loading through the versioned C ABI and
+   high-level Craft Drivers without creating separate layout, paint, or event
+   semantics for each host language.
+6. After the core contract is proven, update CLI templates and documentation
+   from generic plugin terminology to the Craft model, then prove that
+   independently authored packs can be installed, replaced, tested, and
+   removed without vendoring another CBSS runtime.
+7. Starting in Version 0.6, add cross-driver fixtures showing that one Craft
+   Style produces equivalent resolved values, dirty-domain behavior,
+   diagnostics, and reference images from multiple supported host languages.
+
+The canonical Craft Component implementation and examples remain normal Nim
+packages. Other supported hosts distribute components as normal packages for
+their language and author them through a conforming Craft Driver. Craft Style
+is the portable language-neutral presentation layer shared by those packages.
+This distinction avoids inventing a dynamic foreign-plugin ABI while still
+allowing one visual definition and one runtime contract to be reused across
+languages. The complete terminology and boundary design is in
+[Craft Ecosystem](craft.md).
 
 ## Version 0.7+ - Visual And Native Capability Sequence
 
@@ -1832,9 +2129,9 @@ After the parallel Version 0.5 and Version 0.6 foundation work, the provisional
 sequence is:
 
 - **Version 0.7:** one visual-expression milestone combining complete color
-  authoring, advanced CPU Canvas, optional Pixie effects, SDL3 GPU Canvas,
-  optional `wgpu-native`, WGSL Custom Style, shared GPU ownership, and the
-  retained Motion Scene contract;
+  authoring, the canonical high-quality CPU vector Canvas, optional bgfx GPU
+  Canvas and compute, optional Little CMS color management, portable shader
+  Style stages, shared GPU ownership, and the retained Motion Scene contract;
 - **Version 0.8:** sprite animation, Tiled-output tile maps, richer game input,
   camera/video surfaces, audio, and media/game Cue adapters; and
 - **Version 0.9:** complete touch and expressive-input behavior, ecosystem
@@ -1852,23 +2149,26 @@ component libraries receive one coherent visual release rather than separate
 backend-shaped feature sets. Its release gates are:
 
 - complete CSS-inspired color authoring and defined interpolation behavior for
-  gradients, transitions, Canvas, Pixie, and GPU materials;
+  gradients, transitions, Canvas, ICC-managed source colors, and GPU materials;
 - advanced CPU Canvas paths, text, images, cached layers, masks, filters, blend
   behavior, and deterministic headless references;
-- optional Pixie raster/effects integration that consumes resolved CBSS paint
-  data without making Pixie a dependency of the standard profile;
-- an SDL3 GPU Canvas backend for textures, buffers, render targets, graphics
-  pipelines, compute pipelines, offscreen rendering, and composition inside a
-  normal Canvas-owned layout region;
-- an optional `wgpu-native` backend behind the same public GPU Canvas and
-  Motion Scene contracts rather than a second UI or layout implementation;
-- WGSL-backed Custom Style stages for bounded `underlay`, `overlay`, `mask`,
-  and `filter` painting over CPU-resolved Box geometry and retained content;
+- complete CBSS-owned CPU vector rasterization with fill rules, stroke
+  outlines, subpixel coverage, clipping, masks, and retained dirty tiles;
+- an optional bgfx GPU Canvas backend for textures, buffers, render targets,
+  graphics pipelines, compute pipelines, offscreen rendering, and composition
+  inside a normal Canvas-owned layout region;
+- backend-neutral Custom Style stages for bounded `underlay`, `overlay`,
+  `mask`, and `filter` painting over CPU-resolved Box geometry and retained
+  content, with provider-specific shader languages kept behind the adapter;
+- optional Little CMS integration that preserves CMYK and ICC source data,
+  provides display soft proofing and separation inspection, and never treats
+  monitor RGB as print source data;
 - a deterministic CPU Motion Scene reference path followed by batched GPU
   execution for shapes, text, images, particles, sprites, chart marks, and
   generative objects without one Box node per visual object;
-- one canonical low-level Nim binding and one compatible `wgpu-native` runtime
-  version per process;
+- the independently distributed [bgfxim](https://github.com/puffball1567/bgfxim)
+  low-level bgfx Nim C99 binding and one compatible selected bgfx runtime
+  configuration per process;
 - explicit owned and borrowed `GpuHost` modes, one Surface/Present owner, and
   documented Instance, Adapter, Device, Queue, swapchain, resize, and
   device-loss lifecycles;
@@ -1882,8 +2182,8 @@ backend-shaped feature sets. Its release gates are:
 - compile-time profiles that keep GPU source, native libraries, shaders, and
   assets out of the standard CPU/SDL 2D build when unused;
 - deterministic mock and CPU-reference tests plus a real Linux GPU integration
-  fixture combining CBSS Motion/WGSL rendering and independent compute work on
-  one Device, Queue, and Swapchain; and
+  fixture combining CBSS Motion rendering and independent compute work under
+  one presentation owner; and
 - device-loss, cancellation, teardown order, version mismatch, GPU-memory
   budget, idle-frame, and CPU fallback verification.
 

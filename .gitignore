@@ -16,12 +16,15 @@ target/
 
 # Nimble's pre-install staging area under srcDir.
 src/docs/
+src/drivers/
 src/include/
 src/licenses/
 src/native/
+src/schema/
 
 tests/**/test_*
 !tests/**/*.nim
+!tests/**/*.sh
 examples/*_demo
 !examples/*.nim
 

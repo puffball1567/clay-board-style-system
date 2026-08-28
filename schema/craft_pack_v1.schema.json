@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://clay-board-style-system.dev/schema/craft_pack_v1.schema.json",
+  "title": "Clay Board Style System Craft Pack v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "version",
+    "id",
+    "packVersion",
+    "compatibility",
+    "components",
+    "styles",
+    "assets"
+  ],
+  "properties": {
+    "format": {"const": "cbss-craft-pack"},
+    "version": {"const": 1},
+    "id": {"$ref": "#/$defs/boundedString"},
+    "packVersion": {"$ref": "#/$defs/boundedString"},
+    "compatibility": {"$ref": "#/$defs/compatibility"},
+    "components": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {"$ref": "#/$defs/component"}
+    },
+    "styles": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {"$ref": "#/$defs/styleAsset"}
+    },
+    "assets": {
+      "type": "array",
+      "maxItems": 65536,
+      "items": {"$ref": "#/$defs/asset"}
+    },
+    "profiles": {
+      "type": "array",
+      "maxItems": 1024,
+      "items": {"$ref": "#/$defs/profile"}
+    },
+    "platforms": {
+      "type": "array",
+      "maxItems": 1024,
+      "items": {"$ref": "#/$defs/boundedString"}
+    }
+  },
+  "$defs": {
+    "boundedString": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536,
+      "x-cbss-maxUtf8Bytes": 65536
+    },
+    "positiveUint32": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "minimumVersion"],
+      "properties": {
+        "id": {"$ref": "#/$defs/positiveUint32"},
+        "minimumVersion": {"$ref": "#/$defs/positiveUint32"}
+      }
+    },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimumAbi", "minimumDriverContract", "capabilities"],
+      "properties": {
+        "minimumAbi": {"$ref": "#/$defs/positiveUint32"},
+        "maximumAbi": {"$ref": "#/$defs/positiveUint32"},
+        "minimumDriverContract": {"$ref": "#/$defs/positiveUint32"},
+        "maximumDriverContract": {"$ref": "#/$defs/positiveUint32"},
+        "capabilities": {
+          "type": "array",
+          "maxItems": 1024,
+          "items": {"$ref": "#/$defs/capability"}
+        }
+      }
+    },
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "slots"],
+      "properties": {
+        "name": {"$ref": "#/$defs/boundedString"},
+        "slots": {
+          "type": "array",
+          "maxItems": 1024,
+          "items": {"$ref": "#/$defs/boundedString"}
+        }
+      }
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536,
+      "x-cbss-maxUtf8Bytes": 65536,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*//)(?!.*[\\\\:])(?!.*[\\u0000-\\u001F\\u007F]).+$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "styleAsset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "path", "sha256"],
+      "properties": {
+        "name": {"$ref": "#/$defs/boundedString"},
+        "path": {"$ref": "#/$defs/relativePath"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "path", "sha256"],
+      "properties": {
+        "id": {"$ref": "#/$defs/boundedString"},
+        "kind": {"enum": ["font", "image", "shader", "binary"]},
+        "path": {"$ref": "#/$defs/relativePath"},
+        "mimeType": {"$ref": "#/$defs/boundedString"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "required": {"type": "boolean", "default": true}
+      }
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "capabilities"],
+      "properties": {
+        "name": {"$ref": "#/$defs/boundedString"},
+        "capabilities": {
+          "type": "array",
+          "maxItems": 1024,
+          "items": {"$ref": "#/$defs/capability"}
+        }
+      }
+    }
+  }
+}

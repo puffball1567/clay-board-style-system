@@ -67,6 +67,8 @@ type
     valueNow*: Option[float32]
     valueMin*: Option[float32]
     valueMax*: Option[float32]
+    positionInSet*: Option[int]
+    setSize*: Option[int]
     states*: set[AtspiState]
     interfaces*: set[AtspiInterface]
     actions*: seq[string]
@@ -86,7 +88,8 @@ type
     ackValue,
     ackState,
     ackBounds,
-    ackChildren
+    ackChildren,
+    ackSetPosition
 
   AtspiChange* = object
     kind*: AtspiChangeKind
@@ -209,6 +212,8 @@ proc buildAtspiSnapshot*(
       valueNow: semantic.valueNow,
       valueMin: semantic.valueMin,
       valueMax: semantic.valueMax,
+      positionInSet: semantic.positionInSet,
+      setSize: semantic.setSize,
       states: statesFor(semantic),
       interfaces: interfacesFor(semantic, actions),
       actions: actions,
@@ -256,6 +261,8 @@ proc diffAtspiSnapshots*(previous, current: AtspiSnapshot): seq[AtspiChange] =
       result.add AtspiChange(kind: ackBounds, objectPath: path)
     if old.childPaths != node.childPaths:
       result.add AtspiChange(kind: ackChildren, objectPath: path)
+    if old.positionInSet != node.positionInSet or old.setSize != node.setSize:
+      result.add AtspiChange(kind: ackSetPosition, objectPath: path)
 
   for path in previousByPath.keys:
     if not currentByPath.hasKey(path):

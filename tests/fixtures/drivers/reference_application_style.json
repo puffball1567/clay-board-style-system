@@ -1,0 +1,49 @@
+{
+  "format": "cbss-craft-style",
+  "version": 1,
+  "name": "reference-application-theme",
+  "rules": [
+    {
+      "selector": {"component": "reference-card", "slot": "root"},
+      "declarations": [
+        {"property": "width", "value": {"type": "length", "unit": "px", "value": 240}},
+        {"property": "height", "value": {"type": "length", "unit": "px", "value": 80}},
+        {"property": "padding", "value": {"type": "length", "unit": "px", "value": 8}},
+        {"property": "background-color", "value": {"type": "color", "value": "#336699"}},
+        {
+          "property": "background-image",
+          "value": {
+            "type": "linear-gradient",
+            "angle": 90,
+            "space": "oklab",
+            "stops": [
+              {"color": "#336699", "offset": 0},
+              {"color": "#7dd3fc", "offset": 1}
+            ]
+          }
+        },
+        {
+          "property": "border",
+          "value": {
+            "type": "border",
+            "width": {"type": "length", "unit": "px", "value": 2},
+            "style": "solid",
+            "color": "#172554"
+          }
+        },
+        {"property": "border-radius", "value": {"type": "length", "unit": "px", "value": 10}},
+        {
+          "property": "box-shadow",
+          "value": {
+            "type": "shadow",
+            "offset-x": {"type": "length", "unit": "px", "value": 4},
+            "offset-y": {"type": "length", "unit": "px", "value": 6},
+            "blur": {"type": "length", "unit": "px", "value": 4},
+            "spread": {"type": "length", "unit": "px", "value": 1},
+            "color": "rgb(15 23 42 / 35%)"
+          }
+        }
+      ]
+    }
+  ]
+}

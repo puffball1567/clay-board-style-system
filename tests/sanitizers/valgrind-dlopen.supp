@@ -1,0 +1,9 @@
+{
+  glibc-dlopen-find-object-cache
+  Memcheck:Leak
+  match-leak-kinds: definite
+  fun:malloc
+  ...
+  fun:_dl_find_object_update
+  ...
+}
