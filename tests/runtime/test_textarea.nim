@@ -66,6 +66,15 @@ suite "textarea element":
         dispatch.target = some(area.container.nodeId)
         dispatch.local = some(vec2(point.x - areaRect.x, point.y - areaRect.y))
 
+  test "text style preserves authored word spacing":
+    let ui = initUiRoot()
+    let area = ui.textArea(
+      TextAreaParams(value: "alpha beta"),
+      textStyle = uiStyle([decl("word-spacing", px(6))])
+    )
+
+    check area.state.textStyle.wordSpacing == some(6.0'f32)
+
   test "textarea accepts multiline text and enter inserts a newline":
     let ui = initUiRoot()
     let area = ui.textArea(TextAreaParams(value: "hello"))

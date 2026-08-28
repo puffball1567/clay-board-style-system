@@ -1962,8 +1962,9 @@ runtime subsystem, together with focused behavior and boundary tests.
 Before publishing a new completion percentage, audit every current `Computed`
 entry against the implementation. The 2026-08-26 audit promoted executable
 `aspect-ratio`, `letter-spacing`, `font-size-adjust`, `order`, and textarea
-`resize` behavior, while retaining `word-spacing` as `Computed` because the
-Cosmic Text path does not yet apply its authored spacing. The matrix,
+`resize` behavior. Its identified Cosmic Text gap for `word-spacing` is now
+closed across shaping, wrapping, rasterization, caret/hit geometry, and
+retained text controls. The matrix,
 implementation order, default registry, and generated summary remain
 machine-checked, while semantic promotion requires code-and-test review.
 
@@ -2005,10 +2006,9 @@ Candidate work packages:
   indentation and advanced `text-wrap`
   balance/pretty/stable behavior, locale-aware `word-break: keep-all`, browser-
   useful whitespace collapsing, hyphenation, and a future explicit locale
-  contract for language-specific casing. Letter spacing is connected across
-  both text backends; word spacing remains computed until Cosmic Text shaping,
-  caret geometry, selection, input, and textarea scrolling consume it
-  consistently.
+  contract for language-specific casing. Letter and word spacing are connected
+  across both text backends, retained text controls, caret/hit geometry,
+  selection, wrapping, and rasterization.
 - **Writing direction and logical geometry.** Replace the current
   horizontal-LTR physical aliases with explicit `direction`, `unicode-bidi`,
   and `writing-mode` behavior before claiming general logical-property

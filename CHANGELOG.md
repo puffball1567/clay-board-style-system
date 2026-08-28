@@ -9,6 +9,12 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- `word-spacing` now executes consistently in the deterministic and Cosmic
+  Text engines. It affects shaping, measurement, wrapping, rasterization,
+  caret and hit geometry, and retained TextInput/TextArea styles; ordinary and
+  non-breaking spaces receive the authored extra advance without changing
+  source text.
+
 - `place-content` now executes as a Flex layout shorthand. One keyword applies
   to both content axes, while two keywords independently set cross-axis
   `align-content` and main-axis `justify-content`; invalid compound values are
@@ -60,9 +66,9 @@ release. Before 1.0, minor releases may contain public API changes.
 - The CSS runtime support audit now recognizes five previously conservative
   entries as executable behavior: `aspect-ratio`, `order`, `letter-spacing`,
   `font-size-adjust`, and textarea `resize`. Each promotion is backed by an
-  existing layout, text-engine, or widget consumer and focused behavior tests;
-  properties that are only partially connected, including `word-spacing` in
-  the Cosmic Text path, remain `Computed`.
+  existing layout, text-engine, or widget consumer and focused behavior tests.
+  The follow-up `word-spacing` implementation closes the Cosmic Text gap that
+  the initial audit identified.
 
 - `text-overflow: ellipsis` now executes for no-wrap text through the shared
   layout and paint contract. The active text engine measures each explicit

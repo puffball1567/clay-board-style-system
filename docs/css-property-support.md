@@ -50,16 +50,16 @@ preserves typed intent for later runtime work.
 
 | Status | Count |
 | --- | ---: |
-| Runtime | 201 |
-| Computed | 50 |
+| Runtime | 202 |
+| Computed | 49 |
 | Metadata | 176 |
 | Planned | 0 |
 | No plan | 238 |
 | Target properties | 427 |
 | Total MDN entries | 665 |
 
-As of 2026-08-27, strict runtime completion is **201 of 427 target
-properties (47.1%)**. A further 50 properties reach computed style, so
+As of 2026-08-28, strict runtime completion is **202 of 427 target
+properties (47.3%)**. A further 49 properties reach computed style, so
 **251 of 427 (58.8%)** have runtime or computed support. All 427 target names
 are accepted by the default registry, but metadata-only acceptance is not
 counted as completed behavior. The 238 `No plan` entries are excluded from the
@@ -829,7 +829,7 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 | `width` | Runtime | Supports px, percentage, auto, and intrinsic sizing values. |
 | `will-change` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
 | `word-break` | Runtime | `break-all` and legacy `break-word` execute at UTF-8 rune boundaries; `keep-all` retains the text backend's normal word behavior pending locale-aware line breaking. |
-| `word-spacing` | Computed | Accepted and resolved into computed style; full runtime behavior may still be partial. |
+| `word-spacing` | Runtime | Adds advance to ordinary and non-breaking word separators across deterministic and Cosmic Text shaping, measurement, wrapping, rasterization, caret/hit geometry, and retained text controls. |
 | `word-wrap` | Runtime | Legacy alias of `overflow-wrap`; `anywhere` and `break-word` execute through the shared wrapping contract. |
 | `writing-mode` | Metadata | Stored in computed text style; logical property remapping still uses the initial horizontal LTR mode. |
 | `x` | Metadata | Stores number and px length values as computed vector geometry metadata. |
