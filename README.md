@@ -102,7 +102,7 @@ The exact workloads, machine-local interpretation, budgets, and regression
 gates are documented in [Performance Model](docs/performance-model.md) and can
 be run with `nimble bench`.
 
-The discovered ARC suite currently covers 116 independently compiled test
+The discovered ARC suite currently covers 142 independently compiled test
 files. The same suite and public examples also run under ORC as a compatibility
 gate, so applications may select either `--mm:arc` or `--mm:orc`. ARC remains
 the stricter ownership baseline. Separate Valgrind gates exercise the complete
@@ -204,8 +204,23 @@ cbss_configure system
 The selection is written to the application's ignored `.cbss/` directory.
 CBSS does not ship native runtime binaries inside its Nimble package.
 
-## What Version 0.5.0 Contains
+## What Version 0.6.0 Contains
 
+- Language-neutral Craft Style and Craft Pack contracts with atomic loading,
+  replacement, bounded validation, public Style Slots, and versioned C ABI
+  capability negotiation.
+- Maintained C++14 and Rust Craft Drivers for retained components, Style,
+  events, State and Store updates, validation, Commands, Cues, navigation,
+  FormData, and deterministic lifecycle ownership.
+- Bounded data virtualization for lists with sparse measured extents, stable-key
+  node reuse, focus restoration, logical accessibility ranges, and performance
+  gates covering up to 10,000,000 logical items without retaining every row.
+- Multi-line and reverse Flex layout, baseline alignment, `box-sizing`,
+  `place-content`, final-size descendant relayout, and executable text wrapping,
+  transform, overflow, indent, alignment, spacing, and background geometry.
+- An opt-in Linux AT-SPI D-Bus transport with stable semantic objects, official
+  roles and states, geometry, focus, actions, ARC/ORC integration coverage, and
+  Valgrind-checked lifecycle handling.
 - An opt-in frontend runtime with retained typed State, transactional Stores,
   selectors, component-owned watchers and effects, typed asynchronous Commands,
   and dirty-domain invalidation without virtual-DOM replay.
@@ -258,7 +273,7 @@ Accepting a value as metadata does not mean that layout or paint consumes it.
 
 ## Current Boundaries
 
-Version 0.5.0 is a developer preview. Public APIs may change before 1.0.
+Version 0.6.0 is a developer preview. Public APIs may change before 1.0.
 
 - Linux x86_64 with SDL3 is the only Tier 1 runtime target.
 - Windows and macOS native runtime validation is incomplete.
