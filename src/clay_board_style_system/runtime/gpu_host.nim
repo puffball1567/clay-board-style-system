@@ -1,7 +1,7 @@
 import std/[algorithm, hashes, tables]
 
 const
-  gpuHostApiVersion* = 4'u32
+  gpuHostApiVersion* = 5'u32
   maxGpuNamespaceNameBytes* = 128
   maxGpuResourceLabelBytes* = 128
 
@@ -90,6 +90,11 @@ type
     gvctHalf,
     gvctFloat
 
+  GpuShaderStage* = enum
+    gssVertex,
+    gssFragment,
+    gssCompute
+
   GpuVertexAttribute* = object
     semantic*: GpuVertexSemantic
     components*: uint8
@@ -119,6 +124,10 @@ type
     width*, height*: uint32
     format*: GpuTextureFormat
     usage*: set[GpuTextureUsage]
+    label*: string
+
+  GpuShaderDescriptor* = object
+    stage*: GpuShaderStage
     label*: string
 
   GpuHostConfig* = object
@@ -213,6 +222,13 @@ type
     resource: var GpuBackendResourceId
   ): GpuBackendStatus {.nimcall, raises: [].}
 
+  GpuBackendCreateShaderProc* = proc(
+    context: GpuBackendContext;
+    descriptor: GpuShaderDescriptor;
+    bytecode: seq[byte];
+    resource: var GpuBackendResourceId
+  ): GpuBackendStatus {.nimcall, raises: [].}
+
   GpuBackendDestroyResourceProc* = proc(
     context: GpuBackendContext;
     resource: GpuBackendResourceId;
@@ -233,6 +249,7 @@ type
     createBuffer*: GpuBackendCreateBufferProc
     updateBuffer*: GpuBackendUpdateBufferProc
     createRenderTarget*: GpuBackendCreateRenderTargetProc
+    createShader*: GpuBackendCreateShaderProc
     destroyResource*: GpuBackendDestroyResourceProc
     closeOwned*: GpuBackendCloseProc
     detachBorrowed*: GpuBackendCloseProc
@@ -244,6 +261,7 @@ type
     backendResource: GpuBackendResourceId
     bufferDescriptor: GpuBufferDescriptor
     renderTargetDescriptor: GpuRenderTargetDescriptor
+    shaderDescriptor: GpuShaderDescriptor
 
   GpuNamespaceEntry = object
     name: string
@@ -585,7 +603,8 @@ proc insertGpuResource(
     bytes: uint64;
     backendResource = GpuBackendResourceId(0);
     bufferDescriptor = GpuBufferDescriptor();
-    renderTargetDescriptor = GpuRenderTargetDescriptor()
+    renderTargetDescriptor = GpuRenderTargetDescriptor();
+    shaderDescriptor = GpuShaderDescriptor()
 ): GpuResourceHandle =
   var entry = host.namespaces[namespace]
   entry.ensureResourceCapacity(bytes)
@@ -597,7 +616,8 @@ proc insertGpuResource(
     generation: host.generationValue,
     backendResource: backendResource,
     bufferDescriptor: bufferDescriptor,
-    renderTargetDescriptor: renderTargetDescriptor
+    renderTargetDescriptor: renderTargetDescriptor,
+    shaderDescriptor: shaderDescriptor
   )
   entry.usage.persistentBytes += bytes
   inc entry.usage.resourceCount
@@ -871,6 +891,55 @@ proc createGpuRenderTarget*(
     bytes,
     backendResource,
     renderTargetDescriptor = descriptor
+  )
+
+proc createGpuShader*(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    descriptor: GpuShaderDescriptor;
+    bytecode: seq[byte]
+): GpuResourceHandle =
+  host.requireHost()
+  if host.stateValue != ghsReady:
+    raise newException(GpuHostError, "GPU host is not ready")
+  if host.activeFrame:
+    raise newException(
+      GpuHostError,
+      "GPU shader creation is not allowed during an active frame"
+    )
+  if namespace notin host.namespaces:
+    raise newException(GpuHostError, "unknown GPU namespace")
+  if bytecode.len == 0:
+    raise newException(GpuHostError, "GPU shader bytecode cannot be empty")
+  if uint64(bytecode.len) > uint64(high(uint32)):
+    raise newException(GpuHostError, "GPU shader bytecode is too large")
+  if descriptor.label.len > maxGpuResourceLabelBytes:
+    raise newException(GpuHostError, "GPU resource label is too long")
+  if descriptor.stage == gssCompute and not host.infoValue.computeSupported:
+    raise newException(GpuHostError, "GPU compute shaders are not supported")
+  let bytes = uint64(bytecode.len)
+  host.namespaces[namespace].ensureResourceCapacity(bytes)
+  if host.backend.createShader.isNil or host.backend.destroyResource.isNil:
+    raise newException(GpuHostError, "GPU backend does not support shaders")
+
+  var backendResource: GpuBackendResourceId
+  let status = host.backend.createShader(
+    host.backend.context,
+    descriptor,
+    bytecode,
+    backendResource
+  )
+  if status == gbsDeviceLost:
+    host.enterDeviceLost()
+  raiseForStatus(status)
+  if backendResource.backendResourceIdValue == 0:
+    raise newException(GpuHostError, "GPU backend returned an invalid resource")
+  host.insertGpuResource(
+    namespace,
+    grkShader,
+    bytes,
+    backendResource,
+    shaderDescriptor = descriptor
   )
 
 proc isGpuResourceLive*(host: GpuHost; handle: GpuResourceHandle): bool

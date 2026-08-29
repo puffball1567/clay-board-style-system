@@ -12,6 +12,7 @@ type MockGpuContext = ref object of GpuBackendContext
   createBufferStatus: GpuBackendStatus
   updateBufferStatus: GpuBackendStatus
   createRenderTargetStatus: GpuBackendStatus
+  createShaderStatus: GpuBackendStatus
   ownedOpens: int
   borrowedAttaches: int
   begins: int
@@ -24,6 +25,7 @@ type MockGpuContext = ref object of GpuBackendContext
   bufferCreates: int
   bufferUpdates: int
   renderTargetCreates: int
+  shaderCreates: int
   resourceDestroys: int
   nextBackendResource: uint64
   lastTexture: GpuTextureDescriptor
@@ -33,6 +35,8 @@ type MockGpuContext = ref object of GpuBackendContext
   lastBufferUpdateOffset: uint64
   lastBufferUpdateBytes: int
   lastRenderTarget: GpuRenderTargetDescriptor
+  lastShader: GpuShaderDescriptor
+  lastShaderBytecodeBytes: int
   destroyedResources: seq[uint64]
   width, height: uint32
 
@@ -171,6 +175,21 @@ proc createRenderTarget(
     inc state.nextBackendResource
   state.createRenderTargetStatus
 
+proc createShader(
+    context: GpuBackendContext;
+    descriptor: GpuShaderDescriptor;
+    bytecode: seq[byte];
+    resource: var GpuBackendResourceId
+): GpuBackendStatus {.raises: [].} =
+  let state = context.mock
+  inc state.shaderCreates
+  state.lastShader = descriptor
+  state.lastShaderBytecodeBytes = bytecode.len
+  if state.createShaderStatus == gbsOk:
+    resource = GpuBackendResourceId(state.nextBackendResource)
+    inc state.nextBackendResource
+  state.createShaderStatus
+
 proc destroyResource(
     context: GpuBackendContext;
     resource: GpuBackendResourceId;
@@ -196,6 +215,7 @@ proc backend(state: MockGpuContext): GpuBackendVTable =
     createBuffer: createBuffer,
     updateBuffer: updateBuffer,
     createRenderTarget: createRenderTarget,
+    createShader: createShader,
     destroyResource: destroyResource,
     closeOwned: closeOwned,
     detachBorrowed: detachBorrowed
@@ -212,6 +232,7 @@ proc newContext(): MockGpuContext =
     createBufferStatus: gbsOk,
     updateBufferStatus: gbsOk,
     createRenderTargetStatus: gbsOk,
+    createShaderStatus: gbsOk,
     nextBackendResource: 1
   )
 
@@ -298,6 +319,12 @@ proc renderTargetDescriptor(
     usage: usage,
     label: label
   )
+
+proc shaderDescriptor(
+    stage = gssVertex;
+    label = "shader"
+): GpuShaderDescriptor =
+  GpuShaderDescriptor(stage: stage, label: label)
 
 suite "GPU host lifecycle":
   test "owned host opens once and closes the owned backend idempotently":
@@ -947,6 +974,137 @@ suite "GPU render target mapping":
       host.endGpuFrame(token)
       let target = host.createGpuRenderTarget(namespace, renderTargetDescriptor())
       check host.isGpuResourceLive(target)
+      host.close()
+      check context.resourceDestroys == 1
+
+suite "GPU shader mapping":
+  test "compiled shader bytecode is accounted and destroyed":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("shader", standardBudget())
+    let descriptor = shaderDescriptor(gssFragment, "panel-fragment")
+    let bytecode = @[0x43'u8, 0x42'u8, 0x53'u8, 0x53'u8]
+    let shader = host.createGpuShader(namespace, descriptor, bytecode)
+
+    check shader.kind == grkShader
+    check host.isGpuResourceLive(shader)
+    check context.shaderCreates == 1
+    check context.lastShader == descriptor
+    check context.lastShaderBytecodeBytes == bytecode.len
+    check host.gpuNamespaceUsage(namespace).persistentBytes == 4
+    check host.gpuNamespaceUsage(namespace).resourceCount == 1
+
+    check host.releaseGpuResource(shader)
+    check context.resourceDestroys == 1
+    check context.destroyedResources == @[1'u64]
+    check host.gpuNamespaceUsage(namespace) == GpuResourceUsage()
+    host.close()
+
+  test "shader validation happens before backend allocation":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("invalid-shaders", standardBudget())
+
+    expect GpuHostError:
+      discard host.createGpuShader(namespace, shaderDescriptor(), @[])
+    expect GpuHostError:
+      discard host.createGpuShader(
+        namespace,
+        shaderDescriptor(label = repeat('x', maxGpuResourceLabelBytes + 1)),
+        @[1'u8]
+      )
+    check context.shaderCreates == 0
+    check host.gpuNamespaceUsage(namespace) == GpuResourceUsage()
+    host.close()
+
+    let noComputeContext = newContext()
+    var noComputeBackend = noComputeContext.backend
+    noComputeBackend.openOwned = proc(
+        context: GpuBackendContext;
+        config: GpuHostConfig;
+        info: var GpuBackendInfo
+    ): GpuBackendStatus {.nimcall, raises: [].} =
+      discard context
+      discard config
+      info = GpuBackendInfo(rendererName: "no-compute", computeSupported: false)
+      gbsOk
+    let noComputeHost = openGpuHost(noComputeBackend, ghoOwned)
+    let noComputeNamespace = noComputeHost.createGpuNamespace(
+      "no-compute-shader",
+      standardBudget()
+    )
+    expect GpuHostError:
+      discard noComputeHost.createGpuShader(
+        noComputeNamespace,
+        shaderDescriptor(gssCompute),
+        @[1'u8]
+      )
+    check noComputeContext.shaderCreates == 0
+    noComputeHost.close()
+
+  test "shader budget callback and backend failures preserve accounting":
+    block budgetFailure:
+      let context = newContext()
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace(
+        "shader-budget",
+        GpuResourceBudget(persistentBytes: 3, maxResources: 1)
+      )
+      expect GpuHostError:
+        discard host.createGpuShader(
+          namespace,
+          shaderDescriptor(),
+          @[1'u8, 2'u8, 3'u8, 4'u8]
+        )
+      check context.shaderCreates == 0
+      host.close()
+
+    block missingCallback:
+      let context = newContext()
+      var value = context.backend
+      value.createShader = nil
+      let host = openGpuHost(value, ghoOwned)
+      let namespace = host.createGpuNamespace("missing-shader", standardBudget())
+      expect GpuHostError:
+        discard host.createGpuShader(namespace, shaderDescriptor(), @[1'u8])
+      check context.shaderCreates == 0
+      host.close()
+
+    block backendFailure:
+      let context = newContext()
+      context.createShaderStatus = gbsFailed
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace("failed-shader", standardBudget())
+      expect GpuHostError:
+        discard host.createGpuShader(namespace, shaderDescriptor(), @[1'u8])
+      check context.shaderCreates == 1
+      check context.resourceDestroys == 0
+      check host.gpuNamespaceUsage(namespace) == GpuResourceUsage()
+      host.close()
+
+  test "shader device loss and frame boundaries invalidate safely":
+    block deviceLoss:
+      let context = newContext()
+      context.createShaderStatus = gbsDeviceLost
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace("shader-loss", standardBudget())
+      expect GpuHostError:
+        discard host.createGpuShader(namespace, shaderDescriptor(), @[1'u8])
+      check host.state == ghsDeviceLost
+      check context.resourceDestroys == 0
+      host.close()
+
+    block activeFrame:
+      let context = newContext()
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace("shader-frame", standardBudget())
+      let token = host.beginGpuFrame()
+      expect GpuHostError:
+        discard host.createGpuShader(namespace, shaderDescriptor(), @[1'u8])
+      check context.shaderCreates == 0
+      host.endGpuFrame(token)
+      let shader = host.createGpuShader(namespace, shaderDescriptor(), @[1'u8])
+      check host.isGpuResourceLive(shader)
       host.close()
       check context.resourceDestroys == 1
 

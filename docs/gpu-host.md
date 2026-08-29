@@ -42,13 +42,13 @@ reset only when the next valid frame starts; persistent accounting survives
 frames and is cleared on device loss or namespace teardown.
 
 The current implementation establishes safe identity, lifecycle, and
-accounting. `createGpuTexture`, `createGpuBuffer`, and `createGpuRenderTarget`
-map backend-neutral descriptors to real backend objects, record them under
-generation-checked handles, and destroy them on explicit release, namespace
-teardown, or host teardown. Device loss drops the stale generation without
-issuing unsafe destruction calls to the lost device. Later Version 0.7 work
-applies the same contract to shaders and pipelines and adds dependency-ordered
-submission without exposing a second Present path.
+accounting. `createGpuTexture`, `createGpuBuffer`, `createGpuRenderTarget`, and
+`createGpuShader` map backend-neutral descriptors to real backend objects,
+record them under generation-checked handles, and destroy them on explicit
+release, namespace teardown, or host teardown. Device loss drops the stale
+generation without issuing unsafe destruction calls to the lost device. Later
+Version 0.7 work applies dependency-safe ownership to pipelines and adds
+ordered submission without exposing a second Present path.
 
 ```nim
 let resources = host.createGpuNamespace(
@@ -138,6 +138,26 @@ attachments, direct readback, and resizing in place. Those capabilities need
 explicit dependency and synchronization rules; resizing currently means
 creating a replacement target between frames and releasing the old target.
 
+Shaders are retained precompiled resources:
+
+```nim
+let fragmentShader = host.createGpuShader(
+  resources,
+  GpuShaderDescriptor(
+    stage: gssFragment,
+    label: "chart-fragment"
+  ),
+  selectedBgfxShaderBytecode
+)
+```
+
+The bytecode must already target the renderer selected by the active adapter.
+CBSS copies it during creation, accounts its retained binary size, and does not
+compile or execute source-language strings at runtime. Compute shaders are
+rejected when the active backend does not advertise compute support. Shader
+creation and destruction occur between frames; later pipeline resources retain
+typed shader dependencies so a live program cannot outlast its stages.
+
 ## Optional bgfx Adapter
 
 The bgfx adapter is compiled only with `-d:cbssGpuBgfx` and imports the separate
@@ -169,16 +189,16 @@ that window. The SDL high-level renderer and bgfx must not independently
 present to the same window.
 
 The current adapter covers initialization or borrowed attachment, capability
-reporting, frame completion, resize, mapped Texture, Buffer, and RenderTarget
-creation, and deterministic teardown under both ARC and ORC. Its maintained
-NOOP integration also executes real bgfx static and dynamic buffers, aligned
-partial updates, textures, blit, readback, framebuffer, uniform, encoder, view,
-frame, and destruction calls inside a CBSS-owned host. The portable adapter
+reporting, frame completion, resize, mapped Texture, Buffer, RenderTarget, and
+Shader creation, and deterministic teardown under both ARC and ORC. Its
+maintained NOOP integration also executes real bgfx static and dynamic buffers,
+aligned partial updates, textures, blit, readback, framebuffer, uniform,
+encoder, view, frame, and destruction calls inside a CBSS-owned host. The portable adapter
 contract verifies mapped formats, vertex layouts, index width, initial data,
-labels, updates, offscreen target flags, and destruction, then separately
-executes shader/program creation,
-graphics submission, compute dispatch, and ordered destruction through
-deterministic C fixtures.
+labels, updates, offscreen target flags, shader bytecode copies, and
+destruction, then separately executes direct program creation, graphics
+submission, compute dispatch, and ordered destruction through deterministic C
+fixtures.
 The Linux `bgfx_host_demo` additionally opens an SDL3 native window, initializes
 the OpenGL renderer, uploads a changing dynamic vertex buffer, submits indexed
 graphics, presents through `GpuHost`, and follows window resize. Run it with
@@ -197,6 +217,6 @@ verification, and device restoration are still required before the GPU profile
 is release-complete.
 
 The NOOP fixture validates that those native calls coexist with host ownership
-and budget accounting. Texture, Buffer, and the first owned RenderTarget are now
-mapped through `GpuResourceHandle`; the fixture's remaining direct uniform,
-shader, pipeline, view, and submission calls are not the final public APIs.
+and budget accounting. Texture, Buffer, the first owned RenderTarget, and Shader
+are now mapped through `GpuResourceHandle`; the fixture's remaining direct
+uniform, pipeline, view, and submission calls are not the final public APIs.

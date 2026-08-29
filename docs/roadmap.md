@@ -2201,11 +2201,12 @@ backend-shaped feature sets. Its release gates are:
 
 The first part of this scope is implemented: `GpuHost` now provides versioned
 owned/borrowed attachment, ordered frame tokens, resize and device-loss state,
-and generation-checked resource namespaces with bounded accounting. The
+generation-checked resource namespaces with bounded accounting, and mapped
+Texture, Buffer, owned RenderTarget, and precompiled Shader resources. The
 optional `cbssGpuBgfx` adapter consumes `bgfxim` for the bgfx lifecycle while
-remaining absent from standard builds. Actual GPU resource execution,
-offscreen Canvas composition, external targets, shader packaging, restoration,
-and real-GPU qualification remain open Version 0.7 work.
+remaining absent from standard builds. Pipeline resources, ordered submission,
+offscreen Canvas composition, external targets, portable shader packaging,
+restoration, and real-GPU qualification remain open Version 0.7 work.
 
 The Version 0.7 drawing baseline is intentionally usable before the complete
 Version 0.9 gesture layer. Mouse input and the existing pen metadata, pressure,

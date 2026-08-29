@@ -22,6 +22,12 @@ proc programDestroyCount(): uint32 {.
   importc: "cbss_bgfx_stub_program_destroy_count", cdecl.}
 proc shaderDestroyCount(): uint32 {.
   importc: "cbss_bgfx_stub_shader_destroy_count", cdecl.}
+proc shaderCreateCount(): uint32 {.
+  importc: "cbss_bgfx_stub_shader_create_count", cdecl.}
+proc shaderNameCount(): uint32 {.
+  importc: "cbss_bgfx_stub_shader_name_count", cdecl.}
+proc shaderDataBytes(): uint32 {.
+  importc: "cbss_bgfx_stub_shader_data_bytes", cdecl.}
 proc textureCreateCount(): uint32 {.
   importc: "cbss_bgfx_stub_texture_create_count", cdecl.}
 proc textureDestroyCount(): uint32 {.
@@ -95,7 +101,7 @@ suite "optional bgfxim adapter":
 
     let resourceNamespace = host.createGpuNamespace(
       "adapter-textures",
-      GpuResourceBudget(persistentBytes: 1024, maxResources: 4)
+      GpuResourceBudget(persistentBytes: 1024, maxResources: 5)
     )
     let pixels = newSeq[byte](4 * 2 * 4)
     let texture = host.createGpuTexture(
@@ -186,6 +192,16 @@ suite "optional bgfxim adapter":
     check frameBufferFormat() == uint32(BGFX_TEXTURE_FORMAT_RGBA8)
     check frameBufferFlags() == BGFX_TEXTURE_RT
 
+    let mappedShader = host.createGpuShader(
+      resourceNamespace,
+      GpuShaderDescriptor(stage: gssFragment, label: "adapter-fragment"),
+      @[0x43'u8, 0x42'u8, 0x53'u8, 0x53'u8]
+    )
+    check host.isGpuResourceLive(mappedShader)
+    check shaderCreateCount() == 1
+    check shaderNameCount() == 1
+    check shaderDataBytes() == 4
+
     let token = host.beginGpuFrame()
 
     var shaderByte = 0x42'u8
@@ -221,8 +237,10 @@ suite "optional bgfxim adapter":
     BGFX.destroyShader(computeShader)
     BGFX.destroyShader(fragmentShader)
     BGFX.destroyShader(vertexShader)
+
+    check host.releaseGpuResource(mappedShader)
     check programDestroyCount() == 2
-    check shaderDestroyCount() == 3
+    check shaderDestroyCount() == 4
 
     host.resizeGpuHost(800, 600)
     check resetCount() == 1
