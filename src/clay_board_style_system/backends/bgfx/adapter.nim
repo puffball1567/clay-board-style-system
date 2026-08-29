@@ -156,6 +156,83 @@ proc restore(
   discard info
   gbsUnsupported
 
+proc bgfxTextureFormat(value: GpuTextureFormat): bgfx_texture_format_t =
+  case value
+  of gtfR8: BGFX_TEXTURE_FORMAT_R8
+  of gtfRgba8: BGFX_TEXTURE_FORMAT_RGBA8
+  of gtfBgra8: BGFX_TEXTURE_FORMAT_BGRA8
+
+proc bgfxTextureFlags(usage: set[GpuTextureUsage]): uint64 =
+  result = BGFX_TEXTURE_NONE
+  if gtuRenderTarget in usage:
+    result = result or BGFX_TEXTURE_RT
+  if gtuStorage in usage:
+    result = result or BGFX_TEXTURE_COMPUTE_WRITE
+  if gtuBlitDestination in usage:
+    result = result or BGFX_TEXTURE_BLIT_DST
+  if gtuReadback in usage:
+    result = result or BGFX_TEXTURE_READ_BACK
+
+proc createTexture(
+    rawContext: GpuBackendContext;
+    descriptor: GpuTextureDescriptor;
+    initialData: seq[byte];
+    resource: var GpuBackendResourceId
+): GpuBackendStatus {.raises: [].} =
+  let value = rawContext.context
+  if not value.attached:
+    return gbsFailed
+  if descriptor.width > uint32(high(uint16)) or
+      descriptor.height > uint32(high(uint16)) or
+      uint64(initialData.len) > uint64(high(uint32)):
+    return gbsInvalidConfiguration
+  if gtuReadback in descriptor.usage and
+      (gtuRenderTarget in descriptor.usage or
+       gtuStorage in descriptor.usage):
+    return gbsInvalidConfiguration
+
+  var memory: ptr bgfx_memory_t
+  if initialData.len > 0:
+    memory = BGFX.copy(unsafeAddr initialData[0], uint32(initialData.len))
+    if memory.isNil:
+      return gbsFailed
+
+  let handle = BGFX.createTexture2D(
+    uint16(descriptor.width),
+    uint16(descriptor.height),
+    false,
+    1,
+    descriptor.format.bgfxTextureFormat(),
+    descriptor.usage.bgfxTextureFlags(),
+    memory,
+    0
+  )
+  if not BGFX_HANDLE_IS_VALID(handle):
+    return gbsFailed
+  if descriptor.label.len > 0:
+    BGFX.setTextureName(
+      handle,
+      descriptor.label.cstring,
+      int32(descriptor.label.len)
+    )
+  resource = GpuBackendResourceId(uint64(handle.idx) + 1'u64)
+  gbsOk
+
+proc destroyResource(
+    rawContext: GpuBackendContext;
+    resource: GpuBackendResourceId;
+    kind: GpuResourceKind
+) {.raises: [].} =
+  let value = rawContext.context
+  let rawId = resource.backendResourceIdValue()
+  if not value.attached or rawId == 0 or rawId > uint64(high(uint16)) + 1:
+    return
+  case kind
+  of grkTexture:
+    BGFX.destroyTexture(bgfx_texture_handle_t(idx: uint16(rawId - 1)))
+  else:
+    discard
+
 proc closeOwned(rawContext: GpuBackendContext) {.raises: [].} =
   let value = rawContext.context
   if value.attached and value.owned:
@@ -179,6 +256,8 @@ proc newBgfxBackend*(
     endFrame: endFrame,
     resize: resize,
     restore: restore,
+    createTexture: createTexture,
+    destroyResource: destroyResource,
     closeOwned: closeOwned,
     detachBorrowed: detachBorrowed
   )

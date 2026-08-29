@@ -42,9 +42,45 @@ reset only when the next valid frame starts; persistent accounting survives
 frames and is cleared on device loss or namespace teardown.
 
 The current implementation establishes safe identity, lifecycle, and
-accounting. Later Version 0.7 work maps those handles to backend textures,
-buffers, render targets, shaders, and pipelines and adds dependency-ordered
-submission without exposing a second Present path.
+accounting. `createGpuTexture` is the first mapped resource API: it validates a
+backend-neutral descriptor and initial byte count before allocation, records
+the returned backend object under a generation-checked handle, and destroys it
+on explicit release, namespace teardown, or host teardown. Device loss drops
+the stale generation without issuing unsafe destruction calls to the lost
+device. Later Version 0.7 work applies the same contract to buffers, render
+targets, shaders, and pipelines and adds dependency-ordered submission without
+exposing a second Present path.
+
+```nim
+let resources = host.createGpuNamespace(
+  "chart",
+  GpuResourceBudget(
+    persistentBytes: 16 * 1024 * 1024,
+    maxResources: 64
+  )
+)
+
+let pixels = newSeq[byte](256 * 256 * 4)
+let texture = host.createGpuTexture(
+  resources,
+  GpuTextureDescriptor(
+    width: 256,
+    height: 256,
+    format: gtfRgba8,
+    usage: {gtuSampled, gtuBlitDestination},
+    label: "chart-surface"
+  ),
+  pixels
+)
+
+defer:
+  discard host.releaseGpuResource(texture)
+```
+
+Initial bytes are copied by the backend during `createGpuTexture`; callers do
+not have to retain that sequence. Retained resource creation, release, and
+namespace teardown are rejected while a frame is active so destruction cannot
+race submitted work.
 
 ## Optional bgfx Adapter
 
@@ -77,12 +113,14 @@ that window. The SDL high-level renderer and bgfx must not independently
 present to the same window.
 
 The current adapter covers initialization or borrowed attachment, capability
-reporting, frame completion, resize, and deterministic teardown under both ARC
-and ORC. Its maintained NOOP integration also executes real bgfx buffer,
-texture, partial-update, blit, readback, framebuffer, uniform, encoder, view,
-frame, and destruction calls inside a CBSS-owned host. The portable adapter
-contract separately executes shader/program creation, graphics submission,
-compute dispatch, and ordered destruction through deterministic C fixtures.
+reporting, frame completion, resize, mapped Texture creation, and deterministic
+teardown under both ARC and ORC. Its maintained NOOP integration also executes
+real bgfx buffer, texture, partial-update, blit, readback, framebuffer, uniform,
+encoder, view, frame, and destruction calls inside a CBSS-owned host. The
+portable adapter contract verifies mapped Texture format, usage flags, initial
+data, label, and destruction, then separately executes shader/program creation,
+graphics submission, compute dispatch, and ordered destruction through
+deterministic C fixtures.
 The Linux `bgfx_host_demo` additionally opens an SDL3 native window, initializes
 the OpenGL renderer, uploads a changing dynamic vertex buffer, submits indexed
 graphics, presents through `GpuHost`, and follows window resize. Run it with
@@ -101,6 +139,6 @@ verification, and device restoration are still required before the GPU profile
 is release-complete.
 
 The NOOP fixture validates that those native calls coexist with host ownership
-and budget accounting. It does not yet map a `GpuResourceHandle` directly to a
-backend object; applications must not treat the fixture's direct bgfx calls as
-the final public resource API.
+and budget accounting. Texture is now mapped through `GpuResourceHandle`; the
+fixture's remaining direct buffer, framebuffer, uniform, shader, and pipeline
+calls are not the final public resource APIs.

@@ -14,8 +14,18 @@ static uint32_t cbss_submit_count;
 static uint32_t cbss_dispatch_count;
 static uint32_t cbss_program_destroy_count;
 static uint32_t cbss_shader_destroy_count;
+static uint32_t cbss_texture_create_count;
+static uint32_t cbss_texture_destroy_count;
+static uint32_t cbss_texture_name_count;
+static uint32_t cbss_texture_data_bytes;
+static uint16_t cbss_texture_width;
+static uint16_t cbss_texture_height;
+static uint64_t cbss_texture_flags;
+static bgfx_texture_format_t cbss_texture_format;
 static uint32_t cbss_width;
 static uint32_t cbss_height;
+static bgfx_memory_t cbss_texture_memory;
+static uint8_t cbss_texture_memory_data[4096];
 
 void bgfx_init_ctor(bgfx_init_t* init)
 {
@@ -85,6 +95,57 @@ void bgfx_reset(uint32_t width, uint32_t height, uint32_t flags,
     ++cbss_reset_count;
     cbss_width = width;
     cbss_height = height;
+}
+
+const bgfx_memory_t* bgfx_copy(const void* data, uint32_t size)
+{
+    if (NULL == data || 0 == size || size > sizeof(cbss_texture_memory_data))
+    {
+        return NULL;
+    }
+    memcpy(cbss_texture_memory_data, data, size);
+    cbss_texture_memory.data = cbss_texture_memory_data;
+    cbss_texture_memory.size = size;
+    return &cbss_texture_memory;
+}
+
+bgfx_texture_handle_t bgfx_create_texture_2d(
+    uint16_t width, uint16_t height, bool has_mips, uint16_t num_layers,
+    bgfx_texture_format_t format, uint64_t flags, const bgfx_memory_t* memory,
+    uint64_t external)
+{
+    (void)has_mips;
+    (void)external;
+    bgfx_texture_handle_t handle = { UINT16_MAX };
+    if (!cbss_initialized || 0 == width || 0 == height || 1 != num_layers)
+    {
+        return handle;
+    }
+    ++cbss_texture_create_count;
+    cbss_texture_width = width;
+    cbss_texture_height = height;
+    cbss_texture_format = format;
+    cbss_texture_flags = flags;
+    cbss_texture_data_bytes = NULL == memory ? 0 : memory->size;
+    handle.idx = (uint16_t)(30 + cbss_texture_create_count);
+    return handle;
+}
+
+void bgfx_set_texture_name(bgfx_texture_handle_t handle, const char* name,
+                           int32_t len)
+{
+    if (UINT16_MAX != handle.idx && NULL != name && len > 0)
+    {
+        ++cbss_texture_name_count;
+    }
+}
+
+void bgfx_destroy_texture(bgfx_texture_handle_t handle)
+{
+    if (UINT16_MAX != handle.idx)
+    {
+        ++cbss_texture_destroy_count;
+    }
 }
 
 bgfx_shader_handle_t bgfx_create_shader(const bgfx_memory_t* memory)
@@ -174,6 +235,14 @@ void cbss_bgfx_stub_reset_counters(void)
     cbss_dispatch_count = 0;
     cbss_program_destroy_count = 0;
     cbss_shader_destroy_count = 0;
+    cbss_texture_create_count = 0;
+    cbss_texture_destroy_count = 0;
+    cbss_texture_name_count = 0;
+    cbss_texture_data_bytes = 0;
+    cbss_texture_width = 0;
+    cbss_texture_height = 0;
+    cbss_texture_flags = 0;
+    cbss_texture_format = BGFX_TEXTURE_FORMAT_COUNT;
 }
 
 uint32_t cbss_bgfx_stub_shutdown_count(void) { return cbss_shutdown_count; }
@@ -190,4 +259,27 @@ uint32_t cbss_bgfx_stub_program_destroy_count(void)
 uint32_t cbss_bgfx_stub_shader_destroy_count(void)
 {
     return cbss_shader_destroy_count;
+}
+uint32_t cbss_bgfx_stub_texture_create_count(void)
+{
+    return cbss_texture_create_count;
+}
+uint32_t cbss_bgfx_stub_texture_destroy_count(void)
+{
+    return cbss_texture_destroy_count;
+}
+uint32_t cbss_bgfx_stub_texture_name_count(void)
+{
+    return cbss_texture_name_count;
+}
+uint32_t cbss_bgfx_stub_texture_data_bytes(void)
+{
+    return cbss_texture_data_bytes;
+}
+uint16_t cbss_bgfx_stub_texture_width(void) { return cbss_texture_width; }
+uint16_t cbss_bgfx_stub_texture_height(void) { return cbss_texture_height; }
+uint64_t cbss_bgfx_stub_texture_flags(void) { return cbss_texture_flags; }
+uint32_t cbss_bgfx_stub_texture_format(void)
+{
+    return (uint32_t)cbss_texture_format;
 }

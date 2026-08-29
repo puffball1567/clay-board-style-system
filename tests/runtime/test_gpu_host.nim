@@ -8,6 +8,7 @@ type MockGpuContext = ref object of GpuBackendContext
   endStatus: GpuBackendStatus
   resizeStatus: GpuBackendStatus
   restoreStatus: GpuBackendStatus
+  createTextureStatus: GpuBackendStatus
   ownedOpens: int
   borrowedAttaches: int
   begins: int
@@ -16,6 +17,12 @@ type MockGpuContext = ref object of GpuBackendContext
   restores: int
   ownedCloses: int
   borrowedDetaches: int
+  textureCreates: int
+  resourceDestroys: int
+  nextBackendResource: uint64
+  lastTexture: GpuTextureDescriptor
+  lastTextureDataBytes: int
+  destroyedResources: seq[uint64]
   width, height: uint32
 
 proc mock(context: GpuBackendContext): MockGpuContext {.inline.} =
@@ -95,6 +102,31 @@ proc closeOwned(context: GpuBackendContext) {.raises: [].} =
 proc detachBorrowed(context: GpuBackendContext) {.raises: [].} =
   inc context.mock.borrowedDetaches
 
+proc createTexture(
+    context: GpuBackendContext;
+    descriptor: GpuTextureDescriptor;
+    initialData: seq[byte];
+    resource: var GpuBackendResourceId
+): GpuBackendStatus {.raises: [].} =
+  let state = context.mock
+  inc state.textureCreates
+  state.lastTexture = descriptor
+  state.lastTextureDataBytes = initialData.len
+  if state.createTextureStatus == gbsOk:
+    resource = GpuBackendResourceId(state.nextBackendResource)
+    inc state.nextBackendResource
+  state.createTextureStatus
+
+proc destroyResource(
+    context: GpuBackendContext;
+    resource: GpuBackendResourceId;
+    kind: GpuResourceKind
+) {.raises: [].} =
+  discard kind
+  let state = context.mock
+  inc state.resourceDestroys
+  state.destroyedResources.add resource.backendResourceIdValue()
+
 proc backend(state: MockGpuContext): GpuBackendVTable =
   GpuBackendVTable(
     apiVersion: gpuHostApiVersion,
@@ -106,6 +138,8 @@ proc backend(state: MockGpuContext): GpuBackendVTable =
     endFrame: endFrame,
     resize: resize,
     restore: restore,
+    createTexture: createTexture,
+    destroyResource: destroyResource,
     closeOwned: closeOwned,
     detachBorrowed: detachBorrowed
   )
@@ -116,7 +150,9 @@ proc newContext(): MockGpuContext =
     beginStatus: gbsOk,
     endStatus: gbsOk,
     resizeStatus: gbsOk,
-    restoreStatus: gbsOk
+    restoreStatus: gbsOk,
+    createTextureStatus: gbsOk,
+    nextBackendResource: 1
   )
 
 proc presentationConfig(): GpuHostConfig =
@@ -129,6 +165,21 @@ proc standardBudget(): GpuResourceBudget =
     readbackBytesPerFrame: 128,
     workUnitsPerFrame: 10,
     maxResources: 2
+  )
+
+proc textureDescriptor(
+    width = 8'u32;
+    height = 8'u32;
+    format = gtfRgba8;
+    usage = {gtuSampled};
+    label = "texture"
+): GpuTextureDescriptor =
+  GpuTextureDescriptor(
+    width: width,
+    height: height,
+    format: format,
+    usage: usage,
+    label: label
   )
 
 suite "GPU host lifecycle":
@@ -281,6 +332,163 @@ suite "GPU resource namespaces":
     check host.gpuNamespaceUsage(namespace).persistentBytes == 0
     check host.gpuNamespaceUsage(namespace).resourceCount == 1
     host.close()
+
+suite "GPU texture resources":
+  test "texture creation maps backend ownership and exact byte accounting":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("textures", standardBudget())
+    let pixels = newSeq[byte](8 * 8 * 4)
+    let descriptor = textureDescriptor(
+      usage = {gtuSampled, gtuBlitSource},
+      label = "surface-color"
+    )
+
+    let texture = host.createGpuTexture(namespace, descriptor, pixels)
+    check texture.kind == grkTexture
+    check host.isGpuResourceLive(texture)
+    check context.textureCreates == 1
+    check context.lastTexture == descriptor
+    check context.lastTextureDataBytes == pixels.len
+    check host.gpuNamespaceUsage(namespace).persistentBytes == 256
+    check host.gpuNamespaceUsage(namespace).resourceCount == 1
+
+    check host.releaseGpuResource(texture)
+    check context.resourceDestroys == 1
+    check context.destroyedResources == @[1'u64]
+    check host.gpuNamespaceUsage(namespace).persistentBytes == 0
+    check host.gpuNamespaceUsage(namespace).resourceCount == 0
+    host.close()
+    check context.resourceDestroys == 1
+
+  test "texture formats use their declared storage size":
+    for format in GpuTextureFormat:
+      let expectedBytes =
+        if format == gtfR8: 64'u64
+        else: 256'u64
+      let context = newContext()
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace("format", standardBudget())
+      discard host.createGpuTexture(
+        namespace,
+        textureDescriptor(format = format)
+      )
+      check host.gpuNamespaceUsage(namespace).persistentBytes == expectedBytes
+      host.close()
+      check context.resourceDestroys == 1
+
+  test "invalid descriptors fail before calling the backend":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("validation", standardBudget())
+
+    for descriptor in [
+      textureDescriptor(width = 0),
+      textureDescriptor(height = 0),
+      textureDescriptor(usage = {}),
+      textureDescriptor(width = 8193),
+      textureDescriptor(label = repeat('x', maxGpuResourceLabelBytes + 1))
+    ]:
+      expect GpuHostError:
+        discard host.createGpuTexture(namespace, descriptor)
+
+    expect GpuHostError:
+      discard host.createGpuTexture(
+        namespace,
+        textureDescriptor(width = 2, height = 2),
+        newSeq[byte](15)
+      )
+    check context.textureCreates == 0
+    check host.gpuNamespaceUsage(namespace) == GpuResourceUsage()
+    host.close()
+
+  test "budget failure does not allocate a backend texture":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "small",
+      GpuResourceBudget(persistentBytes: 255, maxResources: 1)
+    )
+    expect GpuHostError:
+      discard host.createGpuTexture(namespace, textureDescriptor())
+    check context.textureCreates == 0
+    check context.resourceDestroys == 0
+    host.close()
+
+  test "backend failure leaves namespace accounting unchanged":
+    let context = newContext()
+    context.createTextureStatus = gbsFailed
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("failed", standardBudget())
+    expect GpuHostError:
+      discard host.createGpuTexture(namespace, textureDescriptor())
+    check context.textureCreates == 1
+    check context.resourceDestroys == 0
+    check host.gpuNamespaceUsage(namespace) == GpuResourceUsage()
+    host.close()
+
+  test "backends must expose both texture lifecycle callbacks":
+    let context = newContext()
+    var value = context.backend
+    value.destroyResource = nil
+    let host = openGpuHost(value, ghoOwned)
+    let namespace = host.createGpuNamespace("unsupported", standardBudget())
+    expect GpuHostError:
+      discard host.createGpuTexture(namespace, textureDescriptor())
+    check context.textureCreates == 0
+    host.close()
+
+  test "active frames reject retained resource mutation":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("frame-locked", standardBudget())
+    let texture = host.createGpuTexture(namespace, textureDescriptor())
+    let frame = host.beginGpuFrame()
+    expect GpuHostError:
+      discard host.createGpuTexture(namespace, textureDescriptor())
+    expect GpuHostError:
+      discard host.releaseGpuResource(texture)
+    expect GpuHostError:
+      discard host.closeGpuNamespace(namespace)
+    check host.isGpuResourceLive(texture)
+    host.endGpuFrame(frame)
+    check host.releaseGpuResource(texture)
+    host.close()
+
+  test "namespace and host closure destroy mapped resources newest first":
+    block closeNamespace:
+      let context = newContext()
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace("temporary", standardBudget())
+      discard host.createGpuTexture(namespace, textureDescriptor(format = gtfR8))
+      discard host.createGpuTexture(namespace, textureDescriptor(format = gtfR8))
+      check host.closeGpuNamespace(namespace)
+      check context.destroyedResources == @[2'u64, 1'u64]
+      host.close()
+
+    block closeHost:
+      let context = newContext()
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace("owned", standardBudget())
+      discard host.createGpuTexture(namespace, textureDescriptor(format = gtfR8))
+      discard host.createGpuTexture(namespace, textureDescriptor(format = gtfR8))
+      host.close()
+      check context.destroyedResources == @[2'u64, 1'u64]
+      check context.ownedCloses == 1
+
+  test "device loss invalidates mapped resources without destroying stale handles":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("lost", standardBudget())
+    let texture = host.createGpuTexture(namespace, textureDescriptor())
+    check host.markGpuDeviceLost()
+    check not host.isGpuResourceLive(texture)
+    check host.gpuNamespaceUsage(namespace) == GpuResourceUsage()
+    check context.resourceDestroys == 0
+    host.close()
+    check context.resourceDestroys == 0
+
+suite "GPU resource namespace budgets":
 
   test "persistent byte and resource count budgets reject overflow":
     let context = newContext()
