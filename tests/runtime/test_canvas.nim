@@ -12,6 +12,84 @@ proc resolveUi(ui: UiRoot): tuple[styles: ResolvedTree, layout: LayoutResult] =
   result.layout = computeLayout(ui.tree, result.styles, size(320, 200))
 
 suite "standard canvas surface":
+  test "unstyled raster surfaces use their pixel dimensions as intrinsic size":
+    let ui = initUiRoot()
+    let raster = newRasterSurface(31, 17)
+    let host = ui.rasterSurface(raster)
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(
+      ui.tree, ui.styleSheets(), defaultProperties(), diagnostics
+    )
+    let layout = computeLayout(ui.tree, styles, size(100, 100))
+    check not diagnostics.hasErrors
+    check layout.boxes[host.nodeHandle.id.nodeIndex].rect.w == 31
+    check layout.boxes[host.nodeHandle.id.nodeIndex].rect.h == 17
+
+  test "raster surfaces mount as ordinary canvas boxes and fill content":
+    let ui = initUiRoot()
+    let surface = newRasterSurface(2, 2, [20'u8, 30'u8, 40'u8, 255'u8])
+    let handle = ui.rasterSurface(
+      surface,
+      uiStyle([
+        decl("width", px(80)),
+        decl("height", px(60)),
+        decl("padding", px(5))
+      ]),
+      code = "raster-preview"
+    )
+    let frame = resolveUi(ui)
+    ui.syncRenderSurfaces(frame.styles, frame.layout)
+    let commands = buildPaintCommands(
+      ui.tree, frame.styles, frame.layout, ui.scroll, ui.canvasPaintProvider()
+    )
+
+    check handle.valid
+    check handle.nodeHandle.valid
+    check ui.tree.nodes[handle.nodeHandle.id.nodeIndex].code == "raster-preview"
+    var rasterCommand = none(PaintCommand)
+    for command in commands:
+      if command.kind == pcDrawRasterSurface:
+        rasterCommand = some(command)
+    check rasterCommand.isSome
+    check rasterCommand.get.owner == some(handle.nodeHandle.id)
+    check rasterCommand.get.rasterSurface == surface
+    check rasterCommand.get.rasterRect.w == 80
+    check rasterCommand.get.rasterRect.h == 60
+
+  test "publishing raster pixels invalidates only owning canvas paint":
+    let ui = initUiRoot()
+    let surface = newRasterSurface(4, 4)
+    let handle = ui.rasterSurface(
+      surface,
+      uiStyle([decl("width", px(40)), decl("height", px(40))])
+    )
+    discard ui.consumeInvalidation()
+    surface.updateRegion(
+      rasterRegion(1, 1, 1, 1), @[255'u8, 10, 20, 255]
+    )
+    check not ui.hasPendingInvalidation
+    check handle.publish()
+    let invalidation = ui.consumeInvalidation()
+    check invalidation.domains == {ddPaint}
+    check invalidation.roots == @[handle.nodeHandle.id]
+    check handle.canvas.canvas.revision > 1
+    check not handle.publish()
+    check not ui.hasPendingInvalidation
+
+  test "canvas rejects publication for unrelated raster resources":
+    let ui = initUiRoot()
+    let attached = newRasterSurface(1, 1)
+    let unrelated = newRasterSurface(1, 1)
+    let handle = ui.rasterSurface(
+      attached,
+      uiStyle([decl("width", px(10)), decl("height", px(10))])
+    )
+    unrelated.updateRegion(
+      rasterRegion(0, 0, 1, 1), @[255'u8, 255, 255, 255]
+    )
+    check not handle.canvas.publishRasterSurface(unrelated)
+    check unrelated.pendingUpdateCount == 1
+
   test "canvas is a normal styled box backed by a registered surface":
     let ui = initUiRoot()
     let app = ui.box(uiStyle([

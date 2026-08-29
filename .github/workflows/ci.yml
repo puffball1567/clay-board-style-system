@@ -251,6 +251,9 @@ jobs:
       - name: Check ARC event lifecycle
         run: nimble testEventLifecycleValgrind -y
 
+      - name: Check ARC and ORC RasterSurface ownership
+        run: nimble testRasterSurfaceValgrind -y
+
       - name: Check threaded ARC stream ownership transfer
         run: nimble testStreamMailboxValgrind -y
 

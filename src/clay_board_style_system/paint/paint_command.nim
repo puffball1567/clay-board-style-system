@@ -1,5 +1,5 @@
 import std/[math, options, strutils, unicode]
-import ../core/[color, computed_style, geometry, node]
+import ../core/[color, computed_style, geometry, node, raster_surface]
 import ./path_geometry
 
 type
@@ -21,7 +21,8 @@ type
     pcStrokeRect,
     pcStrokePath,
     pcDrawText,
-    pcDrawImage
+    pcDrawImage,
+    pcDrawRasterSurface
 
   PaintCommand* = object
     owner*: Option[NodeId]
@@ -84,6 +85,10 @@ type
       imageRect*: Rect
       imageOpacity*: float32
       imageStyle*: ComputedImageStyle
+    of pcDrawRasterSurface:
+      rasterSurface*: RasterSurface
+      rasterRect*: Rect
+      rasterOpacity*: float32
 
 proc fillRect*(rect: Rect; color: Color; radius: float32 = 0; owner = none(NodeId)): PaintCommand =
   PaintCommand(kind: pcFillRect, owner: owner, rect: rect, color: color, radius: radius)
@@ -180,6 +185,8 @@ proc visualBounds(command: PaintCommand): Option[Rect] =
     ))
   of pcDrawImage:
     some(command.imageRect)
+  of pcDrawRasterSurface:
+    some(command.rasterRect)
   of pcPushLayer:
     some(command.layerBounds)
   of pcPushTransform, pcPopTransform, pcPopLayer, pcPushClip, pcPopClip:
@@ -297,3 +304,19 @@ proc drawText*(node: NodeId; text: string; position: Vec2; color: Color; style: 
 
 proc drawImage*(node: NodeId; source: string; rect: Rect; opacity: float32; style: ComputedImageStyle): PaintCommand =
   PaintCommand(kind: pcDrawImage, owner: some(node), imageNode: node, imageSource: source, imageRect: rect, imageOpacity: opacity, imageStyle: style)
+
+proc drawRasterSurface*(
+    node: NodeId;
+    surface: RasterSurface;
+    bounds: Rect;
+    opacity = 1.0'f32
+): PaintCommand =
+  if surface.isNil:
+    raise newException(ValueError, "raster surface cannot be nil")
+  PaintCommand(
+    kind: pcDrawRasterSurface,
+    owner: some(node),
+    rasterSurface: surface,
+    rasterRect: bounds,
+    rasterOpacity: clamp(opacity, 0.0'f32, 1.0'f32)
+  )

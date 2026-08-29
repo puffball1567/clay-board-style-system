@@ -1,6 +1,6 @@
 import std/[math, options, tables]
 
-import ../core/[color, computed_style, geometry, node]
+import ../core/[color, computed_style, geometry, node, raster_surface]
 import ../paint/[paint_command, path_geometry]
 import ./render_surface
 
@@ -18,7 +18,8 @@ type
     cckStrokeRect,
     cckStrokePath,
     cckDrawText,
-    cckDrawImage
+    cckDrawImage,
+    cckDrawRasterSurface
 
   CanvasCommand* = object
     case kind*: CanvasCommandKind
@@ -68,6 +69,11 @@ type
       imageRect*: Rect
       imageOpacity*: float32
       imageStyle*: ComputedImageStyle
+    of cckDrawRasterSurface:
+      rasterSurface*: RasterSurface
+      rasterRect*: Rect
+      rasterOpacity*: float32
+      rasterFillContent*: bool
 
   Canvas2D* = ref object
     commands*: seq[CanvasCommand]
@@ -462,6 +468,59 @@ proc drawImage*(
   )
   canvas.touch()
 
+proc drawRasterSurface*(
+    canvas: Canvas2D;
+    surface: RasterSurface;
+    bounds: Rect;
+    opacity = 1.0'f32
+) =
+  if canvas.isNil:
+    raise newException(ValueError, "canvas cannot be nil")
+  if surface.isNil:
+    raise newException(ValueError, "raster surface cannot be nil")
+  if not bounds.finite or bounds.isEmpty:
+    raise newException(ValueError, "raster surface bounds must be finite and positive")
+  canvas.commands.add CanvasCommand(
+    kind: cckDrawRasterSurface,
+    rasterSurface: surface,
+    rasterRect: bounds,
+    rasterOpacity: clamp(opacity, 0.0'f32, 1.0'f32),
+    rasterFillContent: false
+  )
+  canvas.touch()
+
+proc drawRasterSurfaceToContent*(
+    canvas: Canvas2D;
+    surface: RasterSurface;
+    opacity = 1.0'f32
+) =
+  if canvas.isNil:
+    raise newException(ValueError, "canvas cannot be nil")
+  if surface.isNil:
+    raise newException(ValueError, "raster surface cannot be nil")
+  canvas.commands.add CanvasCommand(
+    kind: cckDrawRasterSurface,
+    rasterSurface: surface,
+    rasterRect: rect(0, 0, 0, 0),
+    rasterOpacity: clamp(opacity, 0.0'f32, 1.0'f32),
+    rasterFillContent: true
+  )
+  canvas.touch()
+
+proc containsRasterSurface*(canvas: Canvas2D; surface: RasterSurface): bool =
+  if canvas.isNil or surface.isNil:
+    return false
+  for command in canvas.commands:
+    if command.kind == cckDrawRasterSurface and command.rasterSurface == surface:
+      return true
+
+proc noteRasterUpdate*(canvas: Canvas2D; surface: RasterSurface): bool =
+  ## Advances the display-list revision without rebuilding retained commands.
+  if not canvas.containsRasterSurface(surface):
+    return false
+  canvas.touch()
+  true
+
 proc withOpacity(color: Color; opacity: float32): Color =
   rgba(color.r, color.g, color.b, color.a * opacity)
 
@@ -580,6 +639,18 @@ proc paintCommands*(
         command.imageRect.translated(offset),
         command.imageOpacity * opacity,
         command.imageStyle
+      )
+    of cckDrawRasterSurface:
+      let destination =
+        if command.rasterFillContent:
+          bounds
+        else:
+          command.rasterRect.translated(offset)
+      result.add drawRasterSurface(
+        owner,
+        command.rasterSurface,
+        destination,
+        command.rasterOpacity * opacity
       )
   while scopes.len > 0:
     case scopes.pop()

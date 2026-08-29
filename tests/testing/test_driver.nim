@@ -768,6 +768,30 @@ suite "CBSS headless test driver":
         foundLayer = true
     check foundLayer
 
+  test "driver snapshots retained RasterSurface metadata without pixel payloads":
+    let ui = initUiRoot()
+    let surface = newRasterSurface(4, 3, [8'u8, 16'u8, 24'u8, 255'u8])
+    let handle = ui.rasterSurface(
+      surface,
+      uiStyle([decl("width", px(40)), decl("height", px(30))]),
+      id = "raster"
+    )
+    let driver = initCbssTestDriver(ui, size(80, 60))
+
+    check driver.paintCommandCount(pcDrawRasterSurface) == 1
+    check driver.paintSnapshot(byId("raster")).contains("4x3 rev=1")
+    let paint = driver.structuredSnapshotJson()["paint"]
+    var foundRaster = false
+    for entry in paint:
+      if entry["kind"].getStr() == "pcDrawRasterSurface":
+        check entry["node"].getInt() == handle.nodeHandle.id.nodeIndex
+        check entry["revision"].getInt() == 1
+        check entry["width"].getInt() == 4
+        check entry["height"].getInt() == 3
+        check not entry.hasKey("pixels")
+        foundRaster = true
+    check foundRaster
+
   test "driver exposes debug reports and snapshot diffs":
     let driver = initCbssTestDriver(buildControlsUi, size(320, 240))
 

@@ -1,7 +1,8 @@
 import std/[hashes, math, options, os, strutils, tables]
 
 import ../../assets/asset_resolver
-import ../../core/[color, computed_style, geometry, gradient_sampling, node]
+import ../../core/[color, computed_style, geometry, gradient_sampling, node,
+    raster_surface]
 import ../../input/events
 import ../../paint/[paint_command, path_geometry]
 import ../../text/[cosmic_text_engine, font_registry, text_engine]
@@ -31,6 +32,7 @@ const
   sdlTextureAccessTarget = SDL_TEXTUREACCESS_TARGET
   defaultTextCacheBytes = 64'u64 * 1024 * 1024
   defaultImageCacheBytes = 256'u64 * 1024 * 1024
+  defaultRasterSurfaceCacheBytes = 256'u64 * 1024 * 1024
   defaultRoundedTextureCacheBytes = 128'u64 * 1024 * 1024
   defaultShadowTextureCacheBytes = 128'u64 * 1024 * 1024
   defaultTransformTextureCacheBytes = 128'u64 * 1024 * 1024
@@ -60,6 +62,13 @@ type
     width, height: float32
     lastUsed: uint64
 
+  Sdl3RasterSurfaceCacheEntry = object
+    surfaceId: uint64
+    revision: uint64
+    texture: pointer
+    width, height: int
+    lastUsed: uint64
+
   Sdl3RoundedTextureCacheEntry = object
     key: string
     texture: pointer
@@ -84,9 +93,10 @@ type
     pixels*: seq[uint8]
 
   Sdl3CacheUsage* = object
-    textBytes*, imageBytes*: uint64
+    textBytes*, imageBytes*, rasterSurfaceBytes*: uint64
     roundedTextureBytes*, shadowTextureBytes*: uint64
     transformTextureBytes*: uint64
+    rasterFullUploads*, rasterPartialUploads*: uint64
 
   Sdl3ClipRegion = object
     rect: Rect
@@ -198,6 +208,7 @@ type
     transientTextTextures: seq[pointer]
     imageCache: seq[Sdl3ImageCacheEntry]
     imageCacheIndex: Table[Hash, seq[int]]
+    rasterSurfaceCache: seq[Sdl3RasterSurfaceCacheEntry]
     roundedTextureCache: seq[Sdl3RoundedTextureCacheEntry]
     roundedTextureCacheIndex: Table[Hash, seq[int]]
     shadowTextureCache: seq[Sdl3ShadowTextureCacheEntry]
@@ -212,12 +223,16 @@ type
     assetResolver: AssetResolver
     textCacheLimit: int
     imageCacheLimit: int
+    rasterSurfaceCacheLimit: int
     roundedTextureCacheLimit: int
     shadowTextureCacheLimit: int
     textCacheByteLimit, imageCacheByteLimit: uint64
+    rasterSurfaceCacheByteLimit: uint64
     roundedTextureCacheByteLimit, shadowTextureCacheByteLimit: uint64
     transformTextureCacheByteLimit: uint64
     textCacheBytes, imageCacheBytes: uint64
+    rasterSurfaceCacheBytes: uint64
+    rasterFullUploads, rasterPartialUploads: uint64
     roundedTextureCacheBytes, shadowTextureCacheBytes: uint64
     transformTextureCacheBytes: uint64
     frameId: uint64
@@ -244,9 +259,12 @@ proc cacheUsage*(target: Sdl3Renderer): Sdl3CacheUsage =
   Sdl3CacheUsage(
     textBytes: target.textCacheBytes,
     imageBytes: target.imageCacheBytes,
+    rasterSurfaceBytes: target.rasterSurfaceCacheBytes,
     roundedTextureBytes: target.roundedTextureCacheBytes,
     shadowTextureBytes: target.shadowTextureCacheBytes,
-    transformTextureBytes: target.transformTextureCacheBytes
+    transformTextureBytes: target.transformTextureCacheBytes,
+    rasterFullUploads: target.rasterFullUploads,
+    rasterPartialUploads: target.rasterPartialUploads
   )
 
 proc indexKey(index: var Table[Hash, seq[int]]; key: string; entryIndex: int) =
@@ -426,6 +444,13 @@ proc destroyImageCache(target: var Sdl3Renderer) =
   target.imageFailures.setLen(0)
   target.reportedImageEventKeys.setLen(0)
 
+proc destroyRasterSurfaceCache(target: var Sdl3Renderer) =
+  for entry in target.rasterSurfaceCache:
+    if not entry.texture.isNil:
+      SDL3.destroyTexture(entry.texture)
+  target.rasterSurfaceCache.setLen(0)
+  target.rasterSurfaceCacheBytes = 0
+
 proc destroyRoundedTextureCache(target: var Sdl3Renderer) =
   for entry in target.roundedTextureCache:
     if not entry.texture.isNil:
@@ -525,10 +550,12 @@ proc initSdl3Renderer*(
   result.penStates = initTable[SDL_PenID, Sdl3PenDeviceState]()
   result.textCacheLimit = 256
   result.imageCacheLimit = 128
+  result.rasterSurfaceCacheLimit = 128
   result.roundedTextureCacheLimit = 128
   result.shadowTextureCacheLimit = 128
   result.textCacheByteLimit = defaultTextCacheBytes
   result.imageCacheByteLimit = defaultImageCacheBytes
+  result.rasterSurfaceCacheByteLimit = defaultRasterSurfaceCacheBytes
   result.roundedTextureCacheByteLimit = defaultRoundedTextureCacheBytes
   result.shadowTextureCacheByteLimit = defaultShadowTextureCacheBytes
   result.transformTextureCacheByteLimit = defaultTransformTextureCacheBytes
@@ -539,6 +566,7 @@ proc close*(target: var Sdl3Renderer) =
   target.destroyCursorCache()
   target.destroyTextCache()
   target.destroyImageCache()
+  target.destroyRasterSurfaceCache()
   target.destroyRoundedTextureCache()
   target.destroyShadowTextureCache()
   target.destroyTransformTextureCache()
@@ -659,6 +687,8 @@ proc toSdlCursor(cursor: CursorKind): SDL_SystemCursor =
     SDL_SYSTEM_CURSOR_TEXT
   of ckPointer:
     SDL_SYSTEM_CURSOR_POINTER
+  of ckCrosshair:
+    SDL_SYSTEM_CURSOR_CROSSHAIR
   of ckMove:
     SDL_SYSTEM_CURSOR_MOVE
   of ckNotAllowed:
@@ -1411,7 +1441,7 @@ proc prepareRenderPlan(commands: openArray[PaintCommand]): seq[Sdl3PreparedComma
       result.add Sdl3PreparedCommand(command: command)
       if clipStack.len > 0:
         clipStack.setLen(clipStack.len - 1)
-    of pcDrawImage:
+    of pcDrawImage, pcDrawRasterSurface:
       var roundedClips: seq[Sdl3ClipRegion]
       if clipStack.hasRoundedClip():
         for clip in clipStack:
@@ -1457,6 +1487,8 @@ proc translated(command: PaintCommand; offset: Vec2): PaintCommand =
     result.position = result.position.translated(offset)
   of pcDrawImage:
     result.imageRect = result.imageRect.translated(offset)
+  of pcDrawRasterSurface:
+    result.rasterRect = result.rasterRect.translated(offset)
 
 proc translated(region: Sdl3ClipRegion; offset: Vec2): Sdl3ClipRegion =
   result = region
@@ -3098,6 +3130,151 @@ proc drawImageTexture(
 
   target.renderTextureClipped(texture, rects.src, rects.dst)
 
+proc evictRasterSurfaceCacheIfNeeded(target: var Sdl3Renderer) =
+  let limit =
+    if target.rasterSurfaceCacheLimit > 0: target.rasterSurfaceCacheLimit
+    else: 128
+  while target.rasterSurfaceCache.len > limit or
+      (target.rasterSurfaceCache.len > 1 and
+        target.rasterSurfaceCacheBytes > target.rasterSurfaceCacheByteLimit):
+    var victim = 0
+    for index in 1 ..< target.rasterSurfaceCache.len:
+      if target.rasterSurfaceCache[index].lastUsed <
+          target.rasterSurfaceCache[victim].lastUsed:
+        victim = index
+    let entry = target.rasterSurfaceCache[victim]
+    if not entry.texture.isNil:
+      SDL3.destroyTexture(entry.texture)
+    target.rasterSurfaceCacheBytes -= textureBytes(entry.width, entry.height)
+    target.rasterSurfaceCache.delete(victim)
+
+proc uploadRasterSurface(
+    target: var Sdl3Renderer;
+    texture: pointer;
+    surface: RasterSurface;
+    partial: bool
+): bool =
+  let pixels = surface.pixels
+  if pixels.len == 0:
+    return false
+  if partial:
+    if surface.dirtyRegionCount == 0:
+      return false
+    for region in surface.dirtyRegions:
+      var updateRect = SDL_Rect(
+        x: cint(region.x),
+        y: cint(region.y),
+        w: cint(region.width),
+        h: cint(region.height)
+      )
+      let byteOffset =
+        (region.y * surface.width + region.x) * RasterBytesPerPixel
+      let source = cast[pointer](
+        cast[uint](unsafeAddr pixels[0]) + uint(byteOffset)
+      )
+      if not SDL3.updateTexture(
+        texture, addr updateRect, source,
+        cint(surface.width * RasterBytesPerPixel)
+      ):
+        return false
+    inc target.rasterPartialUploads
+    result = true
+  else:
+    result = SDL3.updateTexture(
+      texture, nil, unsafeAddr pixels[0],
+      cint(surface.width * RasterBytesPerPixel)
+    )
+    if result:
+      inc target.rasterFullUploads
+
+proc rasterSurfaceTexture(
+    target: var Sdl3Renderer;
+    surface: RasterSurface
+): Option[pointer] =
+  if surface.isNil or surface.width <= 0 or surface.height <= 0:
+    return none(pointer)
+  var entryIndex = -1
+  for index, entry in target.rasterSurfaceCache:
+    if entry.surfaceId == surface.id:
+      entryIndex = index
+      break
+
+  if entryIndex >= 0:
+    var entry = target.rasterSurfaceCache[entryIndex]
+    if entry.width != surface.width or entry.height != surface.height:
+      if not entry.texture.isNil:
+        SDL3.destroyTexture(entry.texture)
+      target.rasterSurfaceCacheBytes -= textureBytes(entry.width, entry.height)
+      target.rasterSurfaceCache.delete(entryIndex)
+      entryIndex = -1
+    elif entry.revision != surface.revision:
+      let consecutive = entry.revision < high(uint64) and
+        entry.revision + 1 == surface.revision
+      if consecutive:
+        if not target.uploadRasterSurface(entry.texture, surface, true):
+          if not target.uploadRasterSurface(entry.texture, surface, false):
+            return none(pointer)
+      elif not target.uploadRasterSurface(entry.texture, surface, false):
+        return none(pointer)
+      entry.revision = surface.revision
+      entry.lastUsed = target.frameId
+      target.rasterSurfaceCache[entryIndex] = entry
+      return some(entry.texture)
+    else:
+      target.rasterSurfaceCache[entryIndex].lastUsed = target.frameId
+      return some(entry.texture)
+
+  let texture = SDL3.createTexture(
+    target.renderer,
+    SDL_PIXELFORMAT_RGBA32,
+    sdlTextureAccessStatic,
+    cint(surface.width),
+    cint(surface.height)
+  )
+  if texture.isNil:
+    return none(pointer)
+  discard SDL3.setTextureBlendMode(texture, sdlBlendModeBlend)
+  discard SDL3.setTextureScaleMode(texture, SDL_SCALEMODE_LINEAR)
+  if not target.uploadRasterSurface(texture, surface, false):
+    SDL3.destroyTexture(texture)
+    return none(pointer)
+  target.rasterSurfaceCache.add Sdl3RasterSurfaceCacheEntry(
+    surfaceId: surface.id,
+    revision: surface.revision,
+    texture: texture,
+    width: surface.width,
+    height: surface.height,
+    lastUsed: target.frameId
+  )
+  target.rasterSurfaceCacheBytes += textureBytes(surface.width, surface.height)
+  target.evictRasterSurfaceCacheIfNeeded()
+  some(texture)
+
+proc drawRasterSurfaceTexture(
+    target: var Sdl3Renderer;
+    command: PaintCommand;
+    roundedClips: openArray[Sdl3ClipRegion] = []
+) =
+  let texture = target.rasterSurfaceTexture(command.rasterSurface)
+  if texture.isNone or command.rasterRect.isEmpty:
+    return
+  discard SDL3.setTextureAlphaModFloat(
+    texture.get,
+    cfloat(clamp(command.rasterOpacity, 0.0'f32, 1.0'f32))
+  )
+  var source = SDL_FRect(
+    x: 0,
+    y: 0,
+    w: cfloat(command.rasterSurface.width),
+    h: cfloat(command.rasterSurface.height)
+  )
+  var destination = command.rasterRect.toSdl
+  target.renderTextureClippedWith(
+    texture.get, source, destination,
+    if roundedClips.len > 0: roundedClips else: target.clipStack
+  )
+  target.evictRasterSurfaceCacheIfNeeded()
+
 proc evictTextCacheIfNeeded(target: var Sdl3Renderer) =
   let limit =
     if target.textCacheLimit > 0: target.textCacheLimit
@@ -3199,6 +3376,9 @@ proc render*(target: var Sdl3Renderer; commands: openArray[PaintCommand]; clearC
       transformLayers.markTransformContent()
       target.drawImageTexture(command, prepared.roundedImageClipStack)
       target.evictImageCacheIfNeeded()
+    of pcDrawRasterSurface:
+      transformLayers.markTransformContent()
+      target.drawRasterSurfaceTexture(command, prepared.roundedImageClipStack)
 
   target.closeTransformLayers(transformLayers)
 
@@ -3401,6 +3581,9 @@ proc render*(
       transformLayers.markTransformContent()
       target.drawImageTexture(command, prepared.roundedImageClipStack)
       target.evictImageCacheIfNeeded()
+    of pcDrawRasterSurface:
+      transformLayers.markTransformContent()
+      target.drawRasterSurfaceTexture(command, prepared.roundedImageClipStack)
 
   target.closeTransformLayers(transformLayers)
 
@@ -3487,6 +3670,12 @@ proc renderPreparedCommand(
       transformLayers.markTransformContent()
       target.drawImageTexture(command, localPrepared.roundedImageClipStack)
       target.evictImageCacheIfNeeded()
+  of pcDrawRasterSurface:
+    if drawCommand:
+      transformLayers.markTransformContent()
+      target.drawRasterSurfaceTexture(
+        command, localPrepared.roundedImageClipStack
+      )
 
 proc renderCommandPass(
     target: var Sdl3Renderer;

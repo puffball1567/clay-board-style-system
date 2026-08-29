@@ -26,7 +26,7 @@ extern "C" {
 #endif
 
 /* CBSS_GENERATED_DRIVER_CONTRACT_BEGIN */
-#define CBSS_ABI_VERSION 0x00010019u
+#define CBSS_ABI_VERSION 0x0001001Au
 #define CBSS_DRIVER_CONTRACT_VERSION 0x00010000u
 
 typedef enum CbssCapabilityId {
@@ -48,7 +48,8 @@ typedef enum CbssCapabilityId {
   CBSS_CAPABILITY_CRAFT_STYLE = 16u,
   CBSS_CAPABILITY_CRAFT_PACK = 17u,
   CBSS_CAPABILITY_SUBTREE_LIFECYCLE = 18u,
-  CBSS_CAPABILITY_VALIDATION_PATTERN = 19u
+  CBSS_CAPABILITY_VALIDATION_PATTERN = 19u,
+  CBSS_CAPABILITY_RASTER_SURFACE = 20u
 } CbssCapabilityId;
 
 enum {
@@ -74,6 +75,7 @@ typedef struct CbssCapabilityInfo {
 #define CBSS_MAX_CRAFT_PACK_SOURCE_BYTES (4u * 1024u * 1024u)
 #define CBSS_MAX_VALIDATION_PATTERN_BYTES 65536u
 #define CBSS_MAX_VALIDATION_VALUE_BYTES (16u * 1024u * 1024u)
+#define CBSS_MAX_RASTER_SURFACE_BYTES (256u * 1024u * 1024u)
 
 typedef struct CbssContext CbssContext;
 typedef struct CbssStyle CbssStyle;
@@ -86,6 +88,7 @@ typedef struct CbssFormData CbssFormData;
 typedef struct CbssEventView CbssEventView;
 typedef struct CbssBlobStream CbssBlobStream;
 typedef struct CbssStreamProducer CbssStreamProducer;
+typedef struct CbssRasterSurface CbssRasterSurface;
 typedef uint64_t CbssEventSubscription;
 
 typedef int32_t CbssStatus;
@@ -498,7 +501,8 @@ typedef enum CbssPaintKind {
   CBSS_PAINT_PUSH_TRANSFORM = 9,
   CBSS_PAINT_POP_TRANSFORM = 10,
   CBSS_PAINT_PUSH_LAYER = 11,
-  CBSS_PAINT_POP_LAYER = 12
+  CBSS_PAINT_POP_LAYER = 12,
+  CBSS_PAINT_DRAW_RASTER_SURFACE = 13
 } CbssPaintKind;
 
 typedef enum CbssLayerCompositeMode {
@@ -533,6 +537,13 @@ typedef struct CbssRect {
   float w;
   float h;
 } CbssRect;
+
+typedef struct CbssRasterRegion {
+  uint32_t x;
+  uint32_t y;
+  uint32_t width;
+  uint32_t height;
+} CbssRasterRegion;
 
 typedef struct CbssColor {
   float r;
@@ -904,6 +915,32 @@ CBSS_API uint32_t cbss_capability_name(
 CBSS_API void cbss_thread_attach(void);
 CBSS_API void cbss_thread_detach(void);
 
+/*
+ * Retained, UI-owned RGBA8/sRGB/straight-alpha pixels. Updates copy caller
+ * bytes into pending storage. publish makes all pending regions visible as one
+ * revision. source_stride is measured in bytes; zero selects width * 4.
+ */
+CBSS_API CbssStatus cbss_raster_surface_create(
+    uint32_t width, uint32_t height, const uint8_t *initial_rgba,
+    CbssRasterSurface **output);
+CBSS_API void cbss_raster_surface_destroy(CbssRasterSurface *surface);
+CBSS_API uint32_t cbss_raster_surface_width(
+    const CbssRasterSurface *surface);
+CBSS_API uint32_t cbss_raster_surface_height(
+    const CbssRasterSurface *surface);
+CBSS_API uint64_t cbss_raster_surface_revision(
+    const CbssRasterSurface *surface);
+CBSS_API CbssStatus cbss_raster_surface_update_region(
+    CbssRasterSurface *surface, CbssRasterRegion region,
+    const uint8_t *bytes, uint64_t byte_length, uint32_t source_stride);
+CBSS_API CbssStatus cbss_raster_surface_publish(
+    CbssRasterSurface *surface, uint64_t *output_revision);
+CBSS_API uint32_t cbss_raster_surface_dirty_region_count(
+    const CbssRasterSurface *surface);
+CBSS_API CbssStatus cbss_raster_surface_dirty_region_at(
+    const CbssRasterSurface *surface, uint32_t index,
+    CbssRasterRegion *output);
+
 CBSS_API CbssStatus cbss_blob_create(
     const uint8_t *bytes, uint64_t length, const char *mime_type,
     CbssBlob **output);
@@ -1141,6 +1178,9 @@ CBSS_API CbssStatus cbss_render_surface_canvas_draw_text(
 CBSS_API CbssStatus cbss_render_surface_canvas_draw_image(
     CbssContext *context, uint64_t surface, const char *source,
     CbssRect bounds, float opacity);
+CBSS_API CbssStatus cbss_render_surface_canvas_draw_raster_surface(
+    CbssContext *context, uint64_t surface,
+    CbssRasterSurface *raster_surface, CbssRect bounds, float opacity);
 CBSS_API CbssStatus cbss_render_surface_canvas_commit(
     CbssContext *context, uint64_t surface, uint64_t *output_revision);
 CBSS_API CbssStatus cbss_context_set_pixel_scale(

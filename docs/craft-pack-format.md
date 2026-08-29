@@ -19,8 +19,8 @@ reference fixture is
   "id": "org.example.dashboard",
   "packVersion": "1.2.0",
   "compatibility": {
-    "minimumAbi": 65561,
-    "maximumAbi": 65561,
+    "minimumAbi": 65562,
+    "maximumAbi": 65562,
     "minimumDriverContract": 65536,
     "capabilities": [
       {"id": 16, "minimumVersion": 1},

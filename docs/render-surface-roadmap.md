@@ -115,6 +115,49 @@ The first `CanvasContext` should cover the common 2D substrate:
 - Transforms, save/restore state, clipping, alpha, and blend modes.
 - Texture-backed offscreen surfaces for cached layers and composition.
 
+### Retained Raster Surface
+
+Status: `Version 0.7 release gate; retained RGBA8 core, Canvas composition,
+headless rendering, SDL3 partial uploads, and C ABI implemented`
+
+CBSS provides a first-class `RasterSurface` for drawing engines, image
+editors, progressive decoders, generated imagery, and other producers that
+already own pixels in memory. It is not an encoded-image loader and does not
+require callers to rebuild a Canvas display list for every changed pixel.
+
+The initial public contract provides:
+
+- explicit dimensions, RGBA8 format, color-space and alpha-mode declarations,
+  and checked allocation limits;
+- rectangular pixel updates with destination coordinates, width, height,
+  source stride, byte length, and overflow-safe bounds validation;
+- explicit publication by monotonically increasing revision, with dirty
+  rectangles merged or bounded before renderer work is scheduled;
+- copy-in or otherwise explicitly owned update data so a caller cannot mutate
+  bytes while the UI thread or renderer consumes them;
+- composition in a normal Canvas or Box content region with the same clip,
+  opacity, transform, stacking, DPI, visibility, and local-input rules as
+  other retained surfaces;
+- SDL3 texture caching with partial texture uploads where the backend supports
+  them, plus a bounded full-upload fallback and deterministic headless output;
+- resize, replacement, unmount, renderer loss/recovery, ARC/ORC lifetime, and
+  C ABI ownership rules; and
+- performance and memory tests proving that a small dirty update is
+  proportional to the changed region and does not resolve Style, recompute
+  layout, rebuild unrelated paint commands, or retain an unbounded update
+  history.
+
+Worker threads may prepare immutable pixel blocks, but publication and surface
+lifecycle changes cross the existing UI-thread queue. The surface does not
+grant file access, borrow arbitrary application memory indefinitely, or infer
+pixel ownership from a raw pointer.
+
+This surface is the minimum efficient display boundary for a desktop drawing
+application. Existing mouse and pen events can drive strokes in Version 0.7;
+the multi-touch gestures, gesture arbitration, and palm rejection planned for
+Version 0.9 improve touch-tablet workflows but are not prerequisites for
+mouse- or pen-driven drawing.
+
 Sprites and tile maps are first-class Canvas drawing targets. They are not a
 second layout system: a `SpriteAnimation` or `TileMap` lives inside a resolved
 CBSS box and inherits its clipping, opacity, transform, stacking, hit routing,

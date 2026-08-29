@@ -1,5 +1,6 @@
 import std/[math, options, sequtils]
-import ../../core/[color, computed_style, geometry, gradient_sampling]
+import ../../core/[color, computed_style, geometry, gradient_sampling,
+    raster_surface]
 import ../../paint/[paint_command, path_geometry]
 
 type
@@ -420,6 +421,50 @@ proc strokePath(
       clip
     )
 
+proc rasterPixelColor(surface: RasterSurface; x, y: int; opacity: float32): Color =
+  let offset = (y * surface.width + x) * RasterBytesPerPixel
+  let pixels = surface.pixels
+  rgba(
+    pixels[offset].float32 / 255.0'f32,
+    pixels[offset + 1].float32 / 255.0'f32,
+    pixels[offset + 2].float32 / 255.0'f32,
+    pixels[offset + 3].float32 / 255.0'f32 * opacity
+  )
+
+proc drawRasterSurface(
+    image: var RasterImage;
+    command: PaintCommand;
+    transform: Affine2D;
+    clip: PpmClip
+) =
+  let surface = command.rasterSurface
+  if surface.isNil or command.rasterRect.isEmpty or command.rasterOpacity <= 0:
+    return
+  let shape = transformedRect(command.rasterRect, transform)
+  if shape.inverseTransform.isNone:
+    return
+  let bounds = intBounds(
+    intersect(shape.bounds, clip.bounds), image.width, image.height
+  )
+  let opacity = clamp(command.rasterOpacity, 0.0'f32, 1.0'f32)
+  for y in bounds.y0 ..< bounds.y1:
+    for x in bounds.x0 ..< bounds.x1:
+      let destination = vec2(x.float32 + 0.5'f32, y.float32 + 0.5'f32)
+      if not clip.contains(destination):
+        continue
+      let local = shape.inverseTransform.get.transformPoint(destination)
+      if not command.rasterRect.contains(local):
+        continue
+      let u = (local.x - command.rasterRect.x) / command.rasterRect.w
+      let v = (local.y - command.rasterRect.y) / command.rasterRect.h
+      let sourceX = clamp(
+        floor(u * surface.width.float32).int, 0, surface.width - 1
+      )
+      let sourceY = clamp(
+        floor(v * surface.height.float32).int, 0, surface.height - 1
+      )
+      image.putPixel(x, y, surface.rasterPixelColor(sourceX, sourceY, opacity))
+
 proc prepareLinearGradient(rect: Rect; gradient: LinearGradient): PpmLinearGradientSampler =
   let radians = (gradient.angle - 90.0'f32) * PI / 180.0'f32
   result.dx = cos(radians)
@@ -583,6 +628,10 @@ proc render*(commands: openArray[PaintCommand]; width, height: int; background =
       discard
     of pcDrawImage:
       discard
+    of pcDrawRasterSurface:
+      targets[^1].drawRasterSurface(
+        command, transformStack[^1], clipStack[^1]
+      )
 
   while layers.len > 0 and targets.len > 1:
     let source = targets.pop()

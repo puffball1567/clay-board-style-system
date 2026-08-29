@@ -1,7 +1,7 @@
 import std/[math, options, os, unittest]
 
 import clay_board_style_system/backends/sdl3/renderer
-import clay_board_style_system/core/[color, geometry, node]
+import clay_board_style_system/core/[color, geometry, node, raster_surface]
 import clay_board_style_system/paint/paint_command
 import clay_board_style_system/runtime/canvas
 import clay_board_style_system/text/[cosmic_text_engine, font_registry]
@@ -175,6 +175,51 @@ suite "SDL3 transform rendering":
     let frame = renderer.capturedFrame().get
     check frame.pixel(40, 35).r > 220
     check frame.pixel(15, 35).r < 25
+
+  test "raster surfaces use partial uploads for consecutive revisions":
+    let previousDriver = getEnv("SDL_VIDEODRIVER")
+    putEnv("SDL_VIDEODRIVER", "dummy")
+    defer:
+      if previousDriver.len > 0:
+        putEnv("SDL_VIDEODRIVER", previousDriver)
+      else:
+        delEnv("SDL_VIDEODRIVER")
+
+    let surface = newRasterSurface(4, 4, [0'u8, 0'u8, 0'u8, 255'u8])
+    let commands = @[
+      drawRasterSurface(NodeId(1), surface, rect(0, 0, 40, 40))
+    ]
+    var renderer = initSdl3Renderer("CBSS raster update test", 40, 40, false)
+    defer: renderer.close()
+
+    renderer.requestFrameCapture()
+    renderer.render(commands, rgb(0, 0, 0))
+    check renderer.cacheUsage.rasterFullUploads == 1
+    check renderer.cacheUsage.rasterPartialUploads == 0
+    check renderer.capturedFrame().get.pixel(15, 15) == (0'u8, 0'u8, 0'u8)
+
+    surface.updateRegion(
+      rasterRegion(1, 1, 1, 1), @[255'u8, 0, 0, 255]
+    )
+    check surface.publish()
+    renderer.requestFrameCapture()
+    renderer.render(commands, rgb(0, 0, 0))
+    check renderer.cacheUsage.rasterFullUploads == 1
+    check renderer.cacheUsage.rasterPartialUploads == 1
+    check renderer.capturedFrame().get.pixel(15, 15).r > 220
+    check renderer.capturedFrame().get.pixel(5, 5).r < 10
+
+    surface.updateRegion(
+      rasterRegion(2, 2, 1, 1), @[0'u8, 255, 0, 255]
+    )
+    check surface.publish()
+    surface.updateRegion(
+      rasterRegion(3, 3, 1, 1), @[0'u8, 0, 255, 255]
+    )
+    check surface.publish()
+    renderer.render(commands, rgb(0, 0, 0))
+    check renderer.cacheUsage.rasterFullUploads == 2
+    check renderer.cacheUsage.rasterPartialUploads == 1
 
   test "bounded Canvas layers apply portable composition modes":
     let previousDriver = getEnv("SDL_VIDEODRIVER")

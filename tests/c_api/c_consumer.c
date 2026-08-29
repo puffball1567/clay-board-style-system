@@ -1,6 +1,6 @@
 #include "cbss.h"
 
-_Static_assert(CBSS_ABI_VERSION == 0x00010019u, "unexpected CBSS ABI version");
+_Static_assert(CBSS_ABI_VERSION == 0x0001001Au, "unexpected CBSS ABI version");
 _Static_assert(CBSS_ROLE_SWITCH == 22, "unexpected switch role value");
 _Static_assert(CBSS_ROLE_PASSWORD_TEXT == 23,
                "unexpected password text role value");
@@ -210,7 +210,7 @@ static void test_craft_loading(void) {
   static const char pack_json[] =
       "{\"format\":\"cbss-craft-pack\",\"version\":1,"
       "\"id\":\"org.example.c\",\"packVersion\":\"1.0.0\","
-      "\"compatibility\":{\"minimumAbi\":65561,"
+      "\"compatibility\":{\"minimumAbi\":65562,"
       "\"minimumDriverContract\":65536,\"capabilities\":["
       "{\"id\":16,\"minimumVersion\":1},"
       "{\"id\":17,\"minimumVersion\":1}]},"
@@ -542,12 +542,58 @@ static void test_subtree_lifecycle(void) {
   cbss_context_destroy(context);
 }
 
+static void test_raster_surface(void) {
+  const uint8_t fill[] = {1, 2, 3, 4};
+  CbssRasterSurface *surface = NULL;
+  assert(cbss_raster_surface_create(3, 2, fill, NULL) ==
+         CBSS_INVALID_ARGUMENT);
+  assert(cbss_raster_surface_create(0, 2, fill, &surface) ==
+         CBSS_INVALID_ARGUMENT);
+  assert(surface == NULL);
+  assert(cbss_raster_surface_create(3, 2, fill, &surface) == CBSS_OK);
+  assert(surface != NULL);
+  assert(cbss_raster_surface_width(surface) == 3);
+  assert(cbss_raster_surface_height(surface) == 2);
+  assert(cbss_raster_surface_revision(surface) == 1);
+  assert(cbss_raster_surface_dirty_region_count(surface) == 1);
+
+  CbssRasterRegion dirty = {0};
+  assert(cbss_raster_surface_dirty_region_at(surface, 0, &dirty) == CBSS_OK);
+  assert(dirty.x == 0 && dirty.y == 0 && dirty.width == 3 && dirty.height == 2);
+  assert(cbss_raster_surface_dirty_region_at(surface, 1, &dirty) ==
+         CBSS_OUT_OF_RANGE);
+  assert(dirty.x == 0 && dirty.width == 0);
+
+  const uint8_t update[] = {
+      10, 20, 30, 255, 40, 50, 60, 255, 99, 99, 99, 99,
+      70, 80, 90, 255, 100, 110, 120, 255, 88, 88, 88, 88
+  };
+  const CbssRasterRegion region = {1, 0, 2, 2};
+  assert(cbss_raster_surface_update_region(
+      surface, region, update, sizeof(update), 7) == CBSS_INVALID_ARGUMENT);
+  assert(cbss_raster_surface_update_region(
+      surface, region, update, sizeof(update), 12) == CBSS_OK);
+  assert(cbss_raster_surface_revision(surface) == 1);
+  uint64_t revision = 0;
+  assert(cbss_raster_surface_publish(surface, &revision) == CBSS_OK);
+  assert(revision == 2);
+  assert(cbss_raster_surface_dirty_region_count(surface) == 1);
+  assert(cbss_raster_surface_dirty_region_at(surface, 0, &dirty) == CBSS_OK);
+  assert(dirty.x == 1 && dirty.y == 0 && dirty.width == 2 && dirty.height == 2);
+  assert(cbss_raster_surface_publish(surface, &revision) == CBSS_OK);
+  assert(revision == 2);
+
+  cbss_raster_surface_destroy(surface);
+  cbss_raster_surface_destroy(NULL);
+}
+
 int main(void) {
+  test_raster_surface();
   test_craft_loading();
   test_subtree_lifecycle();
   assert(cbss_abi_version() == CBSS_ABI_VERSION);
   assert(cbss_driver_contract_version() == CBSS_DRIVER_CONTRACT_VERSION);
-  assert(cbss_capability_count() == 19);
+  assert(cbss_capability_count() == 20);
   assert(cbss_has_capability(CBSS_CAPABILITY_RETAINED_TREE, 1));
   assert(!cbss_has_capability(CBSS_CAPABILITY_RETAINED_TREE, 2));
   assert(!cbss_has_capability(UINT32_MAX, 1));
@@ -570,6 +616,9 @@ int main(void) {
   assert(cbss_capability_at(18, &capability) == CBSS_OK);
   assert(capability.id == CBSS_CAPABILITY_VALIDATION_PATTERN);
   assert(capability.since_abi == 0x00010019u);
+  assert(cbss_capability_at(19, &capability) == CBSS_OK);
+  assert(capability.id == CBSS_CAPABILITY_RASTER_SURFACE);
+  assert(capability.since_abi == 0x0001001Au);
   memset(&capability, 0xff, sizeof(capability));
   assert(cbss_capability_at(
       cbss_capability_count(), &capability) == CBSS_OUT_OF_RANGE);
@@ -599,6 +648,7 @@ int main(void) {
   }
   assert(CBSS_PAINT_PUSH_LAYER == 11);
   assert(CBSS_PAINT_POP_LAYER == 12);
+  assert(CBSS_PAINT_DRAW_RASTER_SURFACE == 13);
   assert(CBSS_LAYER_SOURCE_OVER == 0);
   assert(CBSS_LAYER_COPY == 1);
   assert(CBSS_LAYER_ADDITIVE == 2);
@@ -881,6 +931,10 @@ int main(void) {
       context, surface_state.surface, "invalid.png",
       (CbssRect){0.0f, 0.0f, 10.0f, 10.0f}, 1.1f) ==
       CBSS_INVALID_ARGUMENT);
+  assert(cbss_render_surface_canvas_draw_raster_surface(
+      context, surface_state.surface, NULL,
+      (CbssRect){0.0f, 0.0f, 10.0f, 10.0f}, 1.0f) ==
+      CBSS_INVALID_HANDLE);
   assert(cbss_context_set_pixel_scale(context, 0.0f) == CBSS_INVALID_ARGUMENT);
   assert(cbss_context_set_pixel_scale(context, NAN) == CBSS_INVALID_ARGUMENT);
 
@@ -1308,6 +1362,10 @@ int main(void) {
       .font_size = 12.0f,
       .font_weight = 600.0f
   };
+  CbssRasterSurface *canvas_raster = NULL;
+  const uint8_t raster_fill[] = {24, 96, 192, 255};
+  require_ok(context, cbss_raster_surface_create(
+      4, 4, raster_fill, &canvas_raster));
   require_ok(context, cbss_render_surface_canvas_clear(
       context, surface_state.surface));
   require_ok(context, cbss_render_surface_canvas_save(
@@ -1345,6 +1403,10 @@ int main(void) {
   require_ok(context, cbss_render_surface_canvas_draw_image(
       context, surface_state.surface, "surface.png",
       (CbssRect){16.0f, 10.0f, 8.0f, 8.0f}, 0.8f));
+  require_ok(context, cbss_render_surface_canvas_draw_raster_surface(
+      context, surface_state.surface, canvas_raster,
+      (CbssRect){4.0f, 4.0f, 6.0f, 6.0f}, 0.6f));
+  cbss_raster_surface_destroy(canvas_raster);
   require_ok(context, cbss_render_surface_canvas_pop_clip(
       context, surface_state.surface));
   require_ok(context, cbss_render_surface_canvas_end_layer(
@@ -1475,6 +1537,7 @@ int main(void) {
   int found_surface_path = 0;
   int found_surface_text = 0;
   int found_surface_image = 0;
+  int found_surface_raster = 0;
   int found_surface_layer = 0;
   for (uint32_t i = 0; i < command_count; ++i) {
     CbssPaintCommand command;
@@ -1552,6 +1615,12 @@ int main(void) {
           context, i, source, sizeof(source)) == 11);
       assert(strcmp(source, "surface.png") == 0);
       found_surface_image = 1;
+    } else if (command.kind == CBSS_PAINT_DRAW_RASTER_SURFACE &&
+               command.owner == surface_node) {
+      assert(fabsf(command.rect.w - 6.0f) < 0.001f);
+      assert(fabsf(command.rect.h - 6.0f) < 0.001f);
+      assert(fabsf(command.value0 - 0.6f) < 0.001f);
+      found_surface_raster = 1;
     } else if (command.kind == CBSS_PAINT_PUSH_LAYER) {
       assert(fabsf(command.value0 - 0.75f) < 0.001f);
       found_surface_layer = 1;
@@ -1566,6 +1635,7 @@ int main(void) {
   assert(found_surface_path);
   assert(found_surface_text);
   assert(found_surface_image);
+  assert(found_surface_raster);
   assert(found_surface_layer);
 
   require_ok(context, cbss_render_surface_canvas_clear(

@@ -1,7 +1,8 @@
 import std/[algorithm, hashes, math, options, sets, tables]
 
 import ../craft/[pack, style, style_slots]
-import ../core/[color, declaration, geometry, node, rule, selector, style_value]
+import ../core/[color, declaration, geometry, node, raster_surface, rule,
+    selector, style_value]
 import ../core/style_resolver
 import ../input/events
 import ../layout/layout
@@ -121,6 +122,10 @@ type
     node*: NodeHandle
     surface*: RenderSurfaceId
     canvas*: Canvas2D
+
+  RasterSurfaceHandle* = object
+    canvas*: CanvasHandle
+    raster*: RasterSurface
 
 proc initUiRoot*(): UiRoot =
   UiRoot(
@@ -670,6 +675,47 @@ proc requestFrame*(handle: CanvasHandle): bool {.discardable.} =
     return false
   handle.node.root.surfaces.requestSurfaceFrame(handle.surface)
 
+proc valid*(handle: RasterSurfaceHandle): bool =
+  handle.canvas.valid and not handle.raster.isNil and
+    handle.canvas.canvas.containsRasterSurface(handle.raster)
+
+proc nodeHandle*(handle: RasterSurfaceHandle): NodeHandle =
+  handle.canvas.node
+
+proc publishRasterSurface*(
+    handle: CanvasHandle;
+    surface: RasterSurface
+): bool {.discardable.} =
+  ## Publishes pending pixels and invalidates only the owning Canvas paint.
+  if not handle.valid or surface.isNil or
+      not handle.canvas.containsRasterSurface(surface):
+    return false
+  if not surface.publish():
+    return false
+  discard handle.canvas.noteRasterUpdate(surface)
+  handle.node.root.invalidate(handle.node.id, {ddPaint})
+  discard handle.node.root.surfaces.updateSurface(
+    handle.surface, handle.canvas.revision
+  )
+  true
+
+proc publish*(handle: RasterSurfaceHandle): bool {.discardable.} =
+  handle.canvas.publishRasterSurface(handle.raster)
+
+proc updateRegion*(
+    handle: RasterSurfaceHandle;
+    region: RasterRegion;
+    source: openArray[uint8];
+    sourceStride = 0;
+    publish = true
+): bool {.discardable.} =
+  if not handle.valid:
+    return false
+  handle.raster.updateRegion(region, source, sourceStride)
+  if publish:
+    return handle.publish()
+  true
+
 proc storeComponentStyle(root: UiRoot; sheet: StyleSheet): int =
   if root.freeComponentStyleIndices.len > 0:
     result = root.freeComponentStyleIndices.pop()
@@ -1216,6 +1262,39 @@ proc canvas*(
 ): CanvasHandle {.discardable.} =
   result = root.canvas(value, parent, id, code, groups)
   root.applyStyle(result.node, style)
+
+proc rasterSurface*(
+    root: UiRoot;
+    value: RasterSurface;
+    parent = none(NodeHandle);
+    id = "";
+    code = "";
+    groups: openArray[string] = []
+): RasterSurfaceHandle {.discardable.} =
+  if value.isNil:
+    raise newException(ValueError, "raster surface value must not be nil")
+  let drawing = newCanvas2D()
+  drawing.drawRasterSurfaceToContent(value)
+  result = RasterSurfaceHandle(
+    canvas: root.canvas(drawing, parent, id, code, groups),
+    raster: value
+  )
+  root.applyStyle(result.canvas.node, uiStyle([
+    decl("width", px(value.width)),
+    decl("height", px(value.height))
+  ]))
+
+proc rasterSurface*(
+    root: UiRoot;
+    value: RasterSurface;
+    style: UiStyle;
+    parent = none(NodeHandle);
+    id = "";
+    code = "";
+    groups: openArray[string] = []
+): RasterSurfaceHandle {.discardable.} =
+  result = root.rasterSurface(value, parent, id, code, groups)
+  root.applyStyle(result.canvas.node, style)
 
 proc canvasPaintProvider*(root: UiRoot): SurfacePaintProvider =
   let owner = root
