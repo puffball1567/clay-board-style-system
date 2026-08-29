@@ -31,6 +31,43 @@ doAssert host.backendInfo.rendererName.len > 0
 
 let resourceNamespace = host.createGpuNamespace("noop-integration", budget())
 
+let mappedVertexBuffer = host.createGpuBuffer(
+  resourceNamespace,
+  GpuBufferDescriptor(
+    byteSize: 24,
+    role: gbrVertex,
+    access: gbaStatic,
+    vertexLayout: @[
+      GpuVertexAttribute(
+        semantic: gvsPosition,
+        components: 2,
+        componentType: gvctFloat
+      ),
+      GpuVertexAttribute(
+        semantic: gvsColor0,
+        components: 4,
+        componentType: gvctUint8,
+        normalized: true
+      )
+    ],
+    label: "CBSS NOOP mapped vertices"
+  ),
+  newSeq[byte](24)
+)
+let mappedIndexBuffer = host.createGpuBuffer(
+  resourceNamespace,
+  GpuBufferDescriptor(
+    byteSize: 12,
+    role: gbrIndex,
+    access: gbaDynamic,
+    indexFormat: gifUint16,
+    label: "CBSS NOOP mapped indices"
+  )
+)
+host.updateGpuBuffer(mappedIndexBuffer, 2, newSeq[byte](4))
+doAssert host.isGpuResourceLive(mappedVertexBuffer)
+doAssert host.isGpuResourceLive(mappedIndexBuffer)
+
 var layout: bgfx_vertex_layout_t
 discard BGFX.vertexLayoutBegin(addr layout, BGFX_RENDERER_TYPE_NOOP)
 discard BGFX.vertexLayoutAdd(
@@ -238,6 +275,8 @@ doAssert host.releaseGpuResource(mappedTextureResource)
 doAssert host.releaseGpuResource(dynamicResource)
 doAssert host.releaseGpuResource(indexResource)
 doAssert host.releaseGpuResource(vertexResource)
+doAssert host.releaseGpuResource(mappedIndexBuffer)
+doAssert host.releaseGpuResource(mappedVertexBuffer)
 
 let retirement = host.beginGpuFrame()
 host.endGpuFrame(retirement)

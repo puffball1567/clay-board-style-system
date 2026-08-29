@@ -173,6 +173,80 @@ proc bgfxTextureFlags(usage: set[GpuTextureUsage]): uint64 =
   if gtuReadback in usage:
     result = result or BGFX_TEXTURE_READ_BACK
 
+const
+  backendResourceTagShift = 32
+  backendResourcePayloadMask = 0xffff_ffff'u64
+  brtTexture = 1'u64
+  brtStaticVertexBuffer = 2'u64
+  brtStaticIndexBuffer = 3'u64
+  brtDynamicVertexBuffer = 4'u64
+  brtDynamicIndexBuffer = 5'u64
+
+proc packBackendResource(tag: uint64; handleIndex: uint16): GpuBackendResourceId =
+  GpuBackendResourceId(
+    (tag shl backendResourceTagShift) or (uint64(handleIndex) + 1'u64)
+  )
+
+proc unpackBackendResource(
+    resource: GpuBackendResourceId
+): tuple[tag: uint64, handleIndex: uint16, valid: bool] =
+  let raw = resource.backendResourceIdValue()
+  let payload = raw and backendResourcePayloadMask
+  let tag = raw shr backendResourceTagShift
+  if payload == 0 or payload > uint64(high(uint16)) + 1'u64 or tag == 0:
+    return (tag, 0'u16, false)
+  (tag, uint16(payload - 1'u64), true)
+
+proc bgfxVertexSemantic(value: GpuVertexSemantic): bgfx_attrib_t =
+  case value
+  of gvsPosition: BGFX_ATTRIB_POSITION
+  of gvsNormal: BGFX_ATTRIB_NORMAL
+  of gvsTangent: BGFX_ATTRIB_TANGENT
+  of gvsBitangent: BGFX_ATTRIB_BITANGENT
+  of gvsColor0: BGFX_ATTRIB_COLOR0
+  of gvsColor1: BGFX_ATTRIB_COLOR1
+  of gvsColor2: BGFX_ATTRIB_COLOR2
+  of gvsColor3: BGFX_ATTRIB_COLOR3
+  of gvsIndices: BGFX_ATTRIB_INDICES
+  of gvsWeight: BGFX_ATTRIB_WEIGHT
+  of gvsTexCoord0: BGFX_ATTRIB_TEXCOORD0
+  of gvsTexCoord1: BGFX_ATTRIB_TEXCOORD1
+  of gvsTexCoord2: BGFX_ATTRIB_TEXCOORD2
+  of gvsTexCoord3: BGFX_ATTRIB_TEXCOORD3
+  of gvsTexCoord4: BGFX_ATTRIB_TEXCOORD4
+  of gvsTexCoord5: BGFX_ATTRIB_TEXCOORD5
+  of gvsTexCoord6: BGFX_ATTRIB_TEXCOORD6
+  of gvsTexCoord7: BGFX_ATTRIB_TEXCOORD7
+
+proc bgfxVertexComponentType(
+    value: GpuVertexComponentType
+): bgfx_attrib_type_t =
+  case value
+  of gvctUint8: BGFX_ATTRIB_TYPE_UINT8
+  of gvctInt16: BGFX_ATTRIB_TYPE_INT16
+  of gvctHalf: BGFX_ATTRIB_TYPE_HALF
+  of gvctFloat: BGFX_ATTRIB_TYPE_FLOAT
+
+proc buildBgfxVertexLayout(
+    descriptor: GpuBufferDescriptor;
+    layout: var bgfx_vertex_layout_t
+) =
+  discard BGFX.vertexLayoutBegin(addr layout, BGFX.getRendererType())
+  for attribute in descriptor.vertexLayout:
+    discard BGFX.vertexLayoutAdd(
+      addr layout,
+      attribute.semantic.bgfxVertexSemantic(),
+      attribute.components,
+      attribute.componentType.bgfxVertexComponentType(),
+      attribute.normalized,
+      attribute.asInteger
+    )
+  BGFX.vertexLayoutEnd(addr layout)
+
+proc bgfxIndexFlags(descriptor: GpuBufferDescriptor): uint16 =
+  if descriptor.indexFormat == gifUint32: BGFX_BUFFER_INDEX32
+  else: BGFX_BUFFER_NONE
+
 proc createTexture(
     rawContext: GpuBackendContext;
     descriptor: GpuTextureDescriptor;
@@ -215,7 +289,146 @@ proc createTexture(
       descriptor.label.cstring,
       int32(descriptor.label.len)
     )
-  resource = GpuBackendResourceId(uint64(handle.idx) + 1'u64)
+  resource = packBackendResource(brtTexture, handle.idx)
+  gbsOk
+
+proc createBuffer(
+    rawContext: GpuBackendContext;
+    descriptor: GpuBufferDescriptor;
+    initialData: seq[byte];
+    resource: var GpuBackendResourceId
+): GpuBackendStatus {.raises: [].} =
+  let value = rawContext.context
+  if not value.attached:
+    return gbsFailed
+  if descriptor.byteSize == 0 or descriptor.byteSize > uint64(high(uint32)) or
+      uint64(initialData.len) > uint64(high(uint32)):
+    return gbsInvalidConfiguration
+
+  var layout: bgfx_vertex_layout_t
+  case descriptor.role
+  of gbrVertex:
+    descriptor.buildBgfxVertexLayout(layout)
+    if layout.stride == 0 or descriptor.byteSize mod uint64(layout.stride) != 0:
+      return gbsInvalidConfiguration
+  of gbrIndex:
+    let elementBytes = if descriptor.indexFormat == gifUint16: 2'u64 else: 4'u64
+    if descriptor.byteSize mod elementBytes != 0:
+      return gbsInvalidConfiguration
+
+  var memory: ptr bgfx_memory_t
+  if initialData.len > 0:
+    memory = BGFX.copy(unsafeAddr initialData[0], uint32(initialData.len))
+    if memory.isNil:
+      return gbsFailed
+
+  case descriptor.role
+  of gbrVertex:
+    if descriptor.access == gbaStatic:
+      let handle = BGFX.createVertexBuffer(memory, addr layout, BGFX_BUFFER_NONE)
+      if not BGFX_HANDLE_IS_VALID(handle):
+        return gbsFailed
+      if descriptor.label.len > 0:
+        BGFX.setVertexBufferName(
+          handle,
+          descriptor.label.cstring,
+          int32(descriptor.label.len)
+        )
+      resource = packBackendResource(brtStaticVertexBuffer, handle.idx)
+    elif initialData.len > 0:
+      let handle = BGFX.createDynamicVertexBufferMem(
+        memory,
+        addr layout,
+        BGFX_BUFFER_NONE
+      )
+      if not BGFX_HANDLE_IS_VALID(handle):
+        return gbsFailed
+      resource = packBackendResource(brtDynamicVertexBuffer, handle.idx)
+    else:
+      let handle = BGFX.createDynamicVertexBuffer(
+        uint32(descriptor.byteSize div uint64(layout.stride)),
+        addr layout,
+        BGFX_BUFFER_NONE
+      )
+      if not BGFX_HANDLE_IS_VALID(handle):
+        return gbsFailed
+      resource = packBackendResource(brtDynamicVertexBuffer, handle.idx)
+  of gbrIndex:
+    let flags = descriptor.bgfxIndexFlags()
+    let elementBytes = if descriptor.indexFormat == gifUint16: 2'u64 else: 4'u64
+    if descriptor.access == gbaStatic:
+      let handle = BGFX.createIndexBuffer(memory, flags)
+      if not BGFX_HANDLE_IS_VALID(handle):
+        return gbsFailed
+      if descriptor.label.len > 0:
+        BGFX.setIndexBufferName(
+          handle,
+          descriptor.label.cstring,
+          int32(descriptor.label.len)
+        )
+      resource = packBackendResource(brtStaticIndexBuffer, handle.idx)
+    elif initialData.len > 0:
+      let handle = BGFX.createDynamicIndexBufferMem(memory, flags)
+      if not BGFX_HANDLE_IS_VALID(handle):
+        return gbsFailed
+      resource = packBackendResource(brtDynamicIndexBuffer, handle.idx)
+    else:
+      let handle = BGFX.createDynamicIndexBuffer(
+        uint32(descriptor.byteSize div elementBytes),
+        flags
+      )
+      if not BGFX_HANDLE_IS_VALID(handle):
+        return gbsFailed
+      resource = packBackendResource(brtDynamicIndexBuffer, handle.idx)
+  gbsOk
+
+proc updateBuffer(
+    rawContext: GpuBackendContext;
+    resource: GpuBackendResourceId;
+    descriptor: GpuBufferDescriptor;
+    offsetBytes: uint64;
+    data: seq[byte]
+): GpuBackendStatus {.raises: [].} =
+  let value = rawContext.context
+  let decoded = resource.unpackBackendResource()
+  if not value.attached or not decoded.valid or data.len == 0 or
+      uint64(data.len) > uint64(high(uint32)):
+    return gbsInvalidConfiguration
+  if decoded.tag != brtDynamicVertexBuffer and
+      decoded.tag != brtDynamicIndexBuffer:
+    return gbsInvalidConfiguration
+  var startElement: uint32
+  case decoded.tag
+  of brtDynamicVertexBuffer:
+    let stride = descriptor.vertexStride()
+    if stride == 0 or offsetBytes mod stride != 0:
+      return gbsInvalidConfiguration
+    startElement = uint32(offsetBytes div stride)
+  of brtDynamicIndexBuffer:
+    let elementBytes = if descriptor.indexFormat == gifUint16: 2'u64 else: 4'u64
+    if offsetBytes mod elementBytes != 0:
+      return gbsInvalidConfiguration
+    startElement = uint32(offsetBytes div elementBytes)
+  else:
+    discard
+  let memory = BGFX.copy(unsafeAddr data[0], uint32(data.len))
+  if memory.isNil:
+    return gbsFailed
+  case decoded.tag
+  of brtDynamicVertexBuffer:
+    BGFX.updateDynamicVertexBuffer(
+      bgfx_dynamic_vertex_buffer_handle_t(idx: decoded.handleIndex),
+      startElement,
+      memory
+    )
+  of brtDynamicIndexBuffer:
+    BGFX.updateDynamicIndexBuffer(
+      bgfx_dynamic_index_buffer_handle_t(idx: decoded.handleIndex),
+      startElement,
+      memory
+    )
+  else:
+    discard
   gbsOk
 
 proc destroyResource(
@@ -224,12 +437,27 @@ proc destroyResource(
     kind: GpuResourceKind
 ) {.raises: [].} =
   let value = rawContext.context
-  let rawId = resource.backendResourceIdValue()
-  if not value.attached or rawId == 0 or rawId > uint64(high(uint16)) + 1:
+  let decoded = resource.unpackBackendResource()
+  if not value.attached or not decoded.valid:
     return
-  case kind
-  of grkTexture:
-    BGFX.destroyTexture(bgfx_texture_handle_t(idx: uint16(rawId - 1)))
+  discard kind
+  case decoded.tag
+  of brtTexture:
+    BGFX.destroyTexture(bgfx_texture_handle_t(idx: decoded.handleIndex))
+  of brtStaticVertexBuffer:
+    BGFX.destroyVertexBuffer(
+      bgfx_vertex_buffer_handle_t(idx: decoded.handleIndex)
+    )
+  of brtStaticIndexBuffer:
+    BGFX.destroyIndexBuffer(bgfx_index_buffer_handle_t(idx: decoded.handleIndex))
+  of brtDynamicVertexBuffer:
+    BGFX.destroyDynamicVertexBuffer(
+      bgfx_dynamic_vertex_buffer_handle_t(idx: decoded.handleIndex)
+    )
+  of brtDynamicIndexBuffer:
+    BGFX.destroyDynamicIndexBuffer(
+      bgfx_dynamic_index_buffer_handle_t(idx: decoded.handleIndex)
+    )
   else:
     discard
 
@@ -257,6 +485,8 @@ proc newBgfxBackend*(
     resize: resize,
     restore: restore,
     createTexture: createTexture,
+    createBuffer: createBuffer,
+    updateBuffer: updateBuffer,
     destroyResource: destroyResource,
     closeOwned: closeOwned,
     detachBorrowed: detachBorrowed

@@ -27,9 +27,11 @@ release. Before 1.0, minor releases may contain public API changes.
   submission, presentation, and resize. The adapter now preserves bgfx's valid
   constructor defaults unless an option explicitly overrides them, preventing
   invalid color/depth/back-buffer settings from reaching real renderers. The
-  first backend-mapped resource API creates validated R8/RGBA8/BGRA8 textures,
-  enforces namespace byte/count budgets before allocation, copies optional
-  initial pixels, and deterministically destroys textures on release,
+  backend-mapped resource APIs create validated R8/RGBA8/BGRA8 textures and
+  static or dynamic vertex/index buffers with backend-neutral vertex layouts,
+  16/32-bit indices, and aligned bounded updates. They enforce namespace
+  byte/count budgets before allocation, copy optional
+  initial pixels, and deterministically destroy mapped resources on release,
   namespace teardown, or host teardown. Device loss invalidates mapped handles
   without attempting to destroy stale backend objects. ARC/ORC tests cover
   normal, limit, failure, active-frame, teardown-order, and device-loss paths

@@ -1,7 +1,7 @@
 import std/[algorithm, hashes, tables]
 
 const
-  gpuHostApiVersion* = 2'u32
+  gpuHostApiVersion* = 3'u32
   maxGpuNamespaceNameBytes* = 128
   maxGpuResourceLabelBytes* = 128
 
@@ -52,6 +52,51 @@ type
     gtuBlitDestination,
     gtuReadback
 
+  GpuBufferRole* = enum
+    gbrVertex,
+    gbrIndex
+
+  GpuBufferAccess* = enum
+    gbaStatic,
+    gbaDynamic
+
+  GpuIndexFormat* = enum
+    gifUint16,
+    gifUint32
+
+  GpuVertexSemantic* = enum
+    gvsPosition,
+    gvsNormal,
+    gvsTangent,
+    gvsBitangent,
+    gvsColor0,
+    gvsColor1,
+    gvsColor2,
+    gvsColor3,
+    gvsIndices,
+    gvsWeight,
+    gvsTexCoord0,
+    gvsTexCoord1,
+    gvsTexCoord2,
+    gvsTexCoord3,
+    gvsTexCoord4,
+    gvsTexCoord5,
+    gvsTexCoord6,
+    gvsTexCoord7
+
+  GpuVertexComponentType* = enum
+    gvctUint8,
+    gvctInt16,
+    gvctHalf,
+    gvctFloat
+
+  GpuVertexAttribute* = object
+    semantic*: GpuVertexSemantic
+    components*: uint8
+    componentType*: GpuVertexComponentType
+    normalized*: bool
+    asInteger*: bool
+
   GpuNamespaceId* = distinct uint64
   GpuResourceId* = distinct uint64
   GpuBackendResourceId* = distinct uint64
@@ -60,6 +105,14 @@ type
     width*, height*: uint32
     format*: GpuTextureFormat
     usage*: set[GpuTextureUsage]
+    label*: string
+
+  GpuBufferDescriptor* = object
+    byteSize*: uint64
+    role*: GpuBufferRole
+    access*: GpuBufferAccess
+    indexFormat*: GpuIndexFormat
+    vertexLayout*: seq[GpuVertexAttribute]
     label*: string
 
   GpuHostConfig* = object
@@ -133,6 +186,21 @@ type
     resource: var GpuBackendResourceId
   ): GpuBackendStatus {.nimcall, raises: [].}
 
+  GpuBackendCreateBufferProc* = proc(
+    context: GpuBackendContext;
+    descriptor: GpuBufferDescriptor;
+    initialData: seq[byte];
+    resource: var GpuBackendResourceId
+  ): GpuBackendStatus {.nimcall, raises: [].}
+
+  GpuBackendUpdateBufferProc* = proc(
+    context: GpuBackendContext;
+    resource: GpuBackendResourceId;
+    descriptor: GpuBufferDescriptor;
+    offsetBytes: uint64;
+    data: seq[byte]
+  ): GpuBackendStatus {.nimcall, raises: [].}
+
   GpuBackendDestroyResourceProc* = proc(
     context: GpuBackendContext;
     resource: GpuBackendResourceId;
@@ -150,6 +218,8 @@ type
     resize*: GpuBackendResizeProc
     restore*: GpuBackendRestoreProc
     createTexture*: GpuBackendCreateTextureProc
+    createBuffer*: GpuBackendCreateBufferProc
+    updateBuffer*: GpuBackendUpdateBufferProc
     destroyResource*: GpuBackendDestroyResourceProc
     closeOwned*: GpuBackendCloseProc
     detachBorrowed*: GpuBackendCloseProc
@@ -159,6 +229,7 @@ type
     bytes: uint64
     generation: uint64
     backendResource: GpuBackendResourceId
+    bufferDescriptor: GpuBufferDescriptor
 
   GpuNamespaceEntry = object
     name: string
@@ -498,7 +569,8 @@ proc insertGpuResource(
     namespace: GpuNamespaceId;
     kind: GpuResourceKind;
     bytes: uint64;
-    backendResource = GpuBackendResourceId(0)
+    backendResource = GpuBackendResourceId(0);
+    bufferDescriptor = GpuBufferDescriptor()
 ): GpuResourceHandle =
   var entry = host.namespaces[namespace]
   entry.ensureResourceCapacity(bytes)
@@ -508,7 +580,8 @@ proc insertGpuResource(
     kind: kind,
     bytes: bytes,
     generation: host.generationValue,
-    backendResource: backendResource
+    backendResource: backendResource,
+    bufferDescriptor: bufferDescriptor
   )
   entry.usage.persistentBytes += bytes
   inc entry.usage.resourceCount
@@ -547,6 +620,87 @@ proc textureBytes(descriptor: GpuTextureDescriptor): uint64 =
   if pixels != 0 and bytesPerPixel > high(uint64) div pixels:
     raise newException(GpuHostError, "GPU texture byte size overflow")
   pixels * bytesPerPixel
+
+proc vertexComponentBytes(value: GpuVertexComponentType): uint64 =
+  case value
+  of gvctUint8: 1'u64
+  of gvctInt16, gvctHalf: 2'u64
+  of gvctFloat: 4'u64
+
+proc vertexStride*(descriptor: GpuBufferDescriptor): uint64 =
+  if descriptor.role != gbrVertex:
+    return 0
+  for attribute in descriptor.vertexLayout:
+    result += uint64(attribute.components) *
+      attribute.componentType.vertexComponentBytes()
+
+proc bufferElementBytes(descriptor: GpuBufferDescriptor): uint64 =
+  case descriptor.role
+  of gbrVertex:
+    descriptor.vertexStride()
+  of gbrIndex:
+    if descriptor.indexFormat == gifUint16: 2'u64
+    else: 4'u64
+
+proc validateBufferDescriptor(
+    descriptor: GpuBufferDescriptor;
+    initialData: seq[byte]
+) =
+  if descriptor.byteSize == 0:
+    raise newException(GpuHostError, "GPU buffer size must be non-zero")
+  if descriptor.byteSize > uint64(high(uint32)):
+    raise newException(GpuHostError, "GPU buffer exceeds backend-neutral limits")
+  if descriptor.label.len > maxGpuResourceLabelBytes:
+    raise newException(GpuHostError, "GPU resource label is too long")
+  if uint64(initialData.len) > descriptor.byteSize:
+    raise newException(GpuHostError, "GPU buffer initial data exceeds its capacity")
+  if descriptor.access == gbaStatic and uint64(initialData.len) != descriptor.byteSize:
+    raise newException(GpuHostError, "static GPU buffers require complete initial data")
+  if initialData.len != 0 and uint64(initialData.len) != descriptor.byteSize:
+    raise newException(GpuHostError, "GPU buffer initial data must fill its capacity")
+
+  case descriptor.role
+  of gbrVertex:
+    if descriptor.vertexLayout.len == 0:
+      raise newException(GpuHostError, "vertex GPU buffers require a layout")
+    var semantics: set[GpuVertexSemantic]
+    for attribute in descriptor.vertexLayout:
+      if attribute.components < 1 or attribute.components > 4:
+        raise newException(GpuHostError, "GPU vertex component count is invalid")
+      if (attribute.normalized or attribute.asInteger) and
+          attribute.componentType notin {gvctUint8, gvctInt16}:
+        raise newException(
+          GpuHostError,
+          "GPU vertex fixed-point flags require an integer component type"
+        )
+      if attribute.semantic in semantics:
+        raise newException(GpuHostError, "GPU vertex semantic is duplicated")
+      semantics.incl attribute.semantic
+    let stride = descriptor.vertexStride()
+    if stride == 0 or stride > uint64(high(uint16)) or
+        descriptor.byteSize mod stride != 0:
+      raise newException(GpuHostError, "GPU vertex buffer size does not match its layout")
+  of gbrIndex:
+    if descriptor.vertexLayout.len != 0:
+      raise newException(GpuHostError, "index GPU buffers cannot declare a vertex layout")
+    if descriptor.byteSize mod descriptor.bufferElementBytes() != 0:
+      raise newException(GpuHostError, "GPU index buffer size is not aligned")
+
+proc validateBufferUpdate(
+    descriptor: GpuBufferDescriptor;
+    offsetBytes: uint64;
+    data: seq[byte]
+) =
+  if descriptor.access != gbaDynamic:
+    raise newException(GpuHostError, "static GPU buffers cannot be updated")
+  if data.len == 0:
+    raise newException(GpuHostError, "GPU buffer update cannot be empty")
+  let elementBytes = descriptor.bufferElementBytes()
+  if offsetBytes mod elementBytes != 0 or uint64(data.len) mod elementBytes != 0:
+    raise newException(GpuHostError, "GPU buffer update is not element-aligned")
+  if offsetBytes > descriptor.byteSize or
+      uint64(data.len) > descriptor.byteSize - offsetBytes:
+    raise newException(GpuHostError, "GPU buffer update exceeds its capacity")
 
 proc createGpuTexture*(
     host: GpuHost;
@@ -599,6 +753,80 @@ proc createGpuTexture*(
     bytes,
     backendResource
   )
+
+proc createGpuBuffer*(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    descriptor: GpuBufferDescriptor;
+    initialData: seq[byte] = @[]
+): GpuResourceHandle =
+  host.requireHost()
+  if host.stateValue != ghsReady:
+    raise newException(GpuHostError, "GPU host is not ready")
+  if host.activeFrame:
+    raise newException(
+      GpuHostError,
+      "GPU buffer creation is not allowed during an active frame"
+    )
+  if namespace notin host.namespaces:
+    raise newException(GpuHostError, "unknown GPU namespace")
+  descriptor.validateBufferDescriptor(initialData)
+  host.namespaces[namespace].ensureResourceCapacity(descriptor.byteSize)
+  if host.backend.createBuffer.isNil or host.backend.destroyResource.isNil:
+    raise newException(GpuHostError, "GPU backend does not support buffers")
+
+  var backendResource: GpuBackendResourceId
+  let status = host.backend.createBuffer(
+    host.backend.context,
+    descriptor,
+    initialData,
+    backendResource
+  )
+  if status == gbsDeviceLost:
+    host.enterDeviceLost()
+  raiseForStatus(status)
+  if backendResource.backendResourceIdValue == 0:
+    raise newException(GpuHostError, "GPU backend returned an invalid resource")
+  host.insertGpuResource(
+    namespace,
+    grkBuffer,
+    descriptor.byteSize,
+    backendResource,
+    descriptor
+  )
+
+proc isGpuResourceLive*(host: GpuHost; handle: GpuResourceHandle): bool
+
+proc updateGpuBuffer*(
+    host: GpuHost;
+    handle: GpuResourceHandle;
+    offsetBytes: uint64;
+    data: seq[byte]
+) =
+  host.requireHost()
+  if host.stateValue != ghsReady:
+    raise newException(GpuHostError, "GPU host is not ready")
+  if host.activeFrame:
+    raise newException(
+      GpuHostError,
+      "GPU buffer updates are not allowed during an active frame"
+    )
+  if not host.isGpuResourceLive(handle) or handle.kind != grkBuffer:
+    raise newException(GpuHostError, "GPU buffer handle is stale or invalid")
+  let resource = host.namespaces[handle.namespace].resources[handle.resource]
+  resource.bufferDescriptor.validateBufferUpdate(offsetBytes, data)
+  if host.backend.updateBuffer.isNil:
+    raise newException(GpuHostError, "GPU backend does not support buffer updates")
+  let status = host.backend.updateBuffer(
+    host.backend.context,
+    resource.backendResource,
+    resource.bufferDescriptor,
+    offsetBytes,
+    data
+  )
+  if status == gbsDeviceLost:
+    host.enterDeviceLost()
+  raiseForStatus(status)
 
 proc isGpuResourceLive*(host: GpuHost; handle: GpuResourceHandle): bool =
   if host.isNil or host.stateValue == ghsClosed or

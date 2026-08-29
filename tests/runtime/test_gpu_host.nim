@@ -9,6 +9,8 @@ type MockGpuContext = ref object of GpuBackendContext
   resizeStatus: GpuBackendStatus
   restoreStatus: GpuBackendStatus
   createTextureStatus: GpuBackendStatus
+  createBufferStatus: GpuBackendStatus
+  updateBufferStatus: GpuBackendStatus
   ownedOpens: int
   borrowedAttaches: int
   begins: int
@@ -18,10 +20,16 @@ type MockGpuContext = ref object of GpuBackendContext
   ownedCloses: int
   borrowedDetaches: int
   textureCreates: int
+  bufferCreates: int
+  bufferUpdates: int
   resourceDestroys: int
   nextBackendResource: uint64
   lastTexture: GpuTextureDescriptor
   lastTextureDataBytes: int
+  lastBuffer: GpuBufferDescriptor
+  lastBufferDataBytes: int
+  lastBufferUpdateOffset: uint64
+  lastBufferUpdateBytes: int
   destroyedResources: seq[uint64]
   width, height: uint32
 
@@ -117,6 +125,36 @@ proc createTexture(
     inc state.nextBackendResource
   state.createTextureStatus
 
+proc createBuffer(
+    context: GpuBackendContext;
+    descriptor: GpuBufferDescriptor;
+    initialData: seq[byte];
+    resource: var GpuBackendResourceId
+): GpuBackendStatus {.raises: [].} =
+  let state = context.mock
+  inc state.bufferCreates
+  state.lastBuffer = descriptor
+  state.lastBufferDataBytes = initialData.len
+  if state.createBufferStatus == gbsOk:
+    resource = GpuBackendResourceId(state.nextBackendResource)
+    inc state.nextBackendResource
+  state.createBufferStatus
+
+proc updateBuffer(
+    context: GpuBackendContext;
+    resource: GpuBackendResourceId;
+    descriptor: GpuBufferDescriptor;
+    offsetBytes: uint64;
+    data: seq[byte]
+): GpuBackendStatus {.raises: [].} =
+  discard resource
+  let state = context.mock
+  inc state.bufferUpdates
+  state.lastBuffer = descriptor
+  state.lastBufferUpdateOffset = offsetBytes
+  state.lastBufferUpdateBytes = data.len
+  state.updateBufferStatus
+
 proc destroyResource(
     context: GpuBackendContext;
     resource: GpuBackendResourceId;
@@ -139,6 +177,8 @@ proc backend(state: MockGpuContext): GpuBackendVTable =
     resize: resize,
     restore: restore,
     createTexture: createTexture,
+    createBuffer: createBuffer,
+    updateBuffer: updateBuffer,
     destroyResource: destroyResource,
     closeOwned: closeOwned,
     detachBorrowed: detachBorrowed
@@ -152,6 +192,8 @@ proc newContext(): MockGpuContext =
     resizeStatus: gbsOk,
     restoreStatus: gbsOk,
     createTextureStatus: gbsOk,
+    createBufferStatus: gbsOk,
+    updateBufferStatus: gbsOk,
     nextBackendResource: 1
   )
 
@@ -179,6 +221,48 @@ proc textureDescriptor(
     height: height,
     format: format,
     usage: usage,
+    label: label
+  )
+
+proc positionColorLayout(): seq[GpuVertexAttribute] =
+  @[
+    GpuVertexAttribute(
+      semantic: gvsPosition,
+      components: 2,
+      componentType: gvctFloat
+    ),
+    GpuVertexAttribute(
+      semantic: gvsColor0,
+      components: 4,
+      componentType: gvctUint8,
+      normalized: true
+    )
+  ]
+
+proc vertexBufferDescriptor(
+    byteSize = 24'u64;
+    access = gbaStatic;
+    label = "vertices"
+): GpuBufferDescriptor =
+  GpuBufferDescriptor(
+    byteSize: byteSize,
+    role: gbrVertex,
+    access: access,
+    vertexLayout: positionColorLayout(),
+    label: label
+  )
+
+proc indexBufferDescriptor(
+    byteSize = 12'u64;
+    access = gbaStatic;
+    indexFormat = gifUint16;
+    label = "indices"
+): GpuBufferDescriptor =
+  GpuBufferDescriptor(
+    byteSize: byteSize,
+    role: gbrIndex,
+    access: access,
+    indexFormat: indexFormat,
     label: label
   )
 
@@ -487,6 +571,242 @@ suite "GPU texture resources":
     check context.resourceDestroys == 0
     host.close()
     check context.resourceDestroys == 0
+
+suite "GPU buffer resources":
+  test "static vertex buffers map layout data accounting and destruction":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("vertex-buffers", standardBudget())
+    let descriptor = vertexBufferDescriptor()
+    let vertices = newSeq[byte](int(descriptor.byteSize))
+
+    let buffer = host.createGpuBuffer(namespace, descriptor, vertices)
+    check buffer.kind == grkBuffer
+    check host.isGpuResourceLive(buffer)
+    check descriptor.vertexStride() == 12
+    check context.bufferCreates == 1
+    check context.lastBuffer == descriptor
+    check context.lastBufferDataBytes == vertices.len
+    check host.gpuNamespaceUsage(namespace).persistentBytes == descriptor.byteSize
+
+    check host.releaseGpuResource(buffer)
+    check context.destroyedResources == @[1'u64]
+    host.close()
+
+  test "dynamic index buffers accept aligned bounded updates":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("dynamic-indices", standardBudget())
+    let descriptor = indexBufferDescriptor(
+      byteSize = 16,
+      access = gbaDynamic,
+      indexFormat = gifUint32
+    )
+    let buffer = host.createGpuBuffer(namespace, descriptor)
+
+    host.updateGpuBuffer(buffer, 4, newSeq[byte](8))
+    check context.bufferUpdates == 1
+    check context.lastBufferUpdateOffset == 4
+    check context.lastBufferUpdateBytes == 8
+    check host.gpuNamespaceUsage(namespace).persistentBytes == 16
+    host.close()
+    check context.resourceDestroys == 1
+
+  test "dynamic vertex updates use whole layout strides":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("dynamic-vertices", standardBudget())
+    let descriptor = vertexBufferDescriptor(byteSize = 36, access = gbaDynamic)
+    let buffer = host.createGpuBuffer(
+      namespace,
+      descriptor,
+      newSeq[byte](36)
+    )
+    host.updateGpuBuffer(buffer, 12, newSeq[byte](24))
+    check context.lastBufferUpdateOffset == 12
+    check context.lastBufferUpdateBytes == 24
+    expect GpuHostError:
+      host.updateGpuBuffer(buffer, 4, newSeq[byte](12))
+    expect GpuHostError:
+      host.updateGpuBuffer(buffer, 12, newSeq[byte](8))
+    check context.bufferUpdates == 1
+    host.close()
+
+  test "buffer descriptors reject malformed layouts and storage":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("invalid-buffers", standardBudget())
+
+    var missingLayout = vertexBufferDescriptor()
+    missingLayout.vertexLayout = @[]
+    var duplicateSemantic = vertexBufferDescriptor()
+    duplicateSemantic.vertexLayout.add duplicateSemantic.vertexLayout[0]
+    var invalidComponents = vertexBufferDescriptor()
+    invalidComponents.vertexLayout[0].components = 0
+    var invalidNormalizedFloat = vertexBufferDescriptor()
+    invalidNormalizedFloat.vertexLayout[0].normalized = true
+    var invalidIntegerHalf = vertexBufferDescriptor()
+    invalidIntegerHalf.vertexLayout[0].componentType = gvctHalf
+    invalidIntegerHalf.vertexLayout[0].asInteger = true
+    var indexWithLayout = indexBufferDescriptor()
+    indexWithLayout.vertexLayout = positionColorLayout()
+
+    for descriptor in [
+      vertexBufferDescriptor(byteSize = 0),
+      vertexBufferDescriptor(byteSize = 25),
+      vertexBufferDescriptor(label = repeat('x', maxGpuResourceLabelBytes + 1)),
+      missingLayout,
+      duplicateSemantic,
+      invalidComponents,
+      invalidNormalizedFloat,
+      invalidIntegerHalf,
+      indexBufferDescriptor(byteSize = 3),
+      indexWithLayout
+    ]:
+      expect GpuHostError:
+        discard host.createGpuBuffer(namespace, descriptor, newSeq[byte](int(descriptor.byteSize)))
+
+    expect GpuHostError:
+      discard host.createGpuBuffer(
+        namespace,
+        vertexBufferDescriptor(),
+        newSeq[byte](12)
+      )
+    expect GpuHostError:
+      discard host.createGpuBuffer(namespace, vertexBufferDescriptor())
+    check context.bufferCreates == 0
+    host.close()
+
+  test "buffer updates reject static stale empty unaligned and overflowing writes":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("update-validation", standardBudget())
+    let staticBuffer = host.createGpuBuffer(
+      namespace,
+      indexBufferDescriptor(),
+      newSeq[byte](12)
+    )
+    let dynamicBuffer = host.createGpuBuffer(
+      namespace,
+      indexBufferDescriptor(byteSize = 16, access = gbaDynamic)
+    )
+
+    expect GpuHostError:
+      host.updateGpuBuffer(staticBuffer, 0, @[0'u8, 0'u8])
+    expect GpuHostError:
+      host.updateGpuBuffer(dynamicBuffer, 0, @[])
+    expect GpuHostError:
+      host.updateGpuBuffer(dynamicBuffer, 1, @[0'u8, 0'u8])
+    expect GpuHostError:
+      host.updateGpuBuffer(dynamicBuffer, 14, newSeq[byte](4))
+    check context.bufferUpdates == 0
+
+    check host.releaseGpuResource(dynamicBuffer)
+    expect GpuHostError:
+      host.updateGpuBuffer(dynamicBuffer, 0, @[0'u8, 0'u8])
+    host.close()
+
+  test "buffer backend failures and device loss preserve host invariants":
+    block createFailure:
+      let context = newContext()
+      context.createBufferStatus = gbsFailed
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace("create-failure", standardBudget())
+      expect GpuHostError:
+        discard host.createGpuBuffer(
+          namespace,
+          indexBufferDescriptor(),
+          newSeq[byte](12)
+        )
+      check host.gpuNamespaceUsage(namespace) == GpuResourceUsage()
+      check context.resourceDestroys == 0
+      host.close()
+
+  test "buffer budget and callback failures occur before backend allocation":
+    block budgetFailure:
+      let context = newContext()
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace(
+        "buffer-budget",
+        GpuResourceBudget(persistentBytes: 11, maxResources: 1)
+      )
+      expect GpuHostError:
+        discard host.createGpuBuffer(
+          namespace,
+          indexBufferDescriptor(),
+          newSeq[byte](12)
+        )
+      check context.bufferCreates == 0
+      host.close()
+
+    for missingCallback in 0 .. 2:
+      let context = newContext()
+      var value = context.backend
+      case missingCallback
+      of 0: value.createBuffer = nil
+      of 1: value.updateBuffer = nil
+      else: value.destroyResource = nil
+      let host = openGpuHost(value, ghoOwned)
+      let namespace = host.createGpuNamespace(
+        "missing-" & $missingCallback,
+        standardBudget()
+      )
+      if missingCallback == 1:
+        let buffer = host.createGpuBuffer(
+          namespace,
+          indexBufferDescriptor(byteSize = 16, access = gbaDynamic)
+        )
+        expect GpuHostError:
+          host.updateGpuBuffer(buffer, 0, @[0'u8, 0'u8])
+        check context.bufferUpdates == 0
+      else:
+        expect GpuHostError:
+          discard host.createGpuBuffer(
+            namespace,
+            indexBufferDescriptor(),
+            newSeq[byte](12)
+          )
+        check context.bufferCreates == 0
+      host.close()
+
+  test "buffer update device loss invalidates mapped handles safely":
+    let context = newContext()
+    context.updateBufferStatus = gbsDeviceLost
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("update-loss", standardBudget())
+    let buffer = host.createGpuBuffer(
+      namespace,
+      indexBufferDescriptor(byteSize = 16, access = gbaDynamic)
+    )
+    expect GpuHostError:
+      host.updateGpuBuffer(buffer, 0, @[0'u8, 0'u8])
+    check host.state == ghsDeviceLost
+    check not host.isGpuResourceLive(buffer)
+    check context.resourceDestroys == 0
+    host.close()
+
+  test "active frames reject buffer creation update and release":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("buffer-frame-lock", standardBudget())
+    let buffer = host.createGpuBuffer(
+      namespace,
+      indexBufferDescriptor(byteSize = 16, access = gbaDynamic)
+    )
+    let frame = host.beginGpuFrame()
+    expect GpuHostError:
+      discard host.createGpuBuffer(
+        namespace,
+        indexBufferDescriptor(),
+        newSeq[byte](12)
+      )
+    expect GpuHostError:
+      host.updateGpuBuffer(buffer, 0, @[0'u8, 0'u8])
+    expect GpuHostError:
+      discard host.releaseGpuResource(buffer)
+    host.endGpuFrame(frame)
+    host.updateGpuBuffer(buffer, 0, @[0'u8, 0'u8])
+    host.close()
 
 suite "GPU resource namespace budgets":
 
