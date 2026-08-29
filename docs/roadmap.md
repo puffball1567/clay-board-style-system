@@ -2182,8 +2182,8 @@ backend-shaped feature sets. Its release gates are:
   low-level bgfx Nim C99 binding and one compatible selected bgfx runtime
   configuration per process;
 - explicit owned and borrowed `GpuHost` modes, one Surface/Present owner, and
-  documented Instance, Adapter, Device, Queue, swapchain, resize, and
-  device-loss lifecycles;
+  documented bgfx renderer context, platform-data, presentation, resize,
+  frame, shutdown, and device-loss lifecycles;
 - budgeted persistent resource namespaces for independent Nim visualization or
   compute libraries, with frame-scoped submission capabilities and no raw
   swapchain ownership escape;
@@ -2198,6 +2198,14 @@ backend-shaped feature sets. Its release gates are:
   one presentation owner; and
 - device-loss, cancellation, teardown order, version mismatch, GPU-memory
   budget, idle-frame, and CPU fallback verification.
+
+The first part of this scope is implemented: `GpuHost` now provides versioned
+owned/borrowed attachment, ordered frame tokens, resize and device-loss state,
+and generation-checked resource namespaces with bounded accounting. The
+optional `cbssGpuBgfx` adapter consumes `bgfxim` for the bgfx lifecycle while
+remaining absent from standard builds. Actual GPU resource execution,
+offscreen Canvas composition, external targets, shader packaging, restoration,
+and real-GPU qualification remain open Version 0.7 work.
 
 The Version 0.7 drawing baseline is intentionally usable before the complete
 Version 0.9 gesture layer. Mouse input and the existing pen metadata, pressure,

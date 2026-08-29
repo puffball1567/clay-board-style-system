@@ -118,6 +118,75 @@ jobs:
       - name: Test Rust Craft Driver under ORC
         run: nimble testRustDriverOrc -y
 
+  bgfx-contract:
+    name: Optional bgfxim contract (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux x86_64
+            os: ubuntu-latest
+          - platform: Windows x86_64
+            os: windows-latest
+          - platform: macOS arm64
+            os: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out the pinned bgfxim binding
+        uses: actions/checkout@v4
+        with:
+          repository: puffball1567/bgfxim
+          ref: v0.3.0
+          path: bgfxim
+
+      - name: Check out the pinned bgfx headers
+        uses: actions/checkout@v4
+        with:
+          repository: bkaradzic/bgfx
+          ref: d8db55f8123a4a0871b1290fec2e5d0caae01bbf
+          path: bgfx-upstream
+
+      - name: Check out the pinned bx headers
+        uses: actions/checkout@v4
+        with:
+          repository: bkaradzic/bx
+          ref: 9e3fadf6f11380031486be704d2ff46ca143664f
+          path: bx-upstream
+
+      - name: Check out the pinned bimg sources
+        if: runner.os != 'Windows'
+        uses: actions/checkout@v4
+        with:
+          repository: bkaradzic/bimg
+          ref: 371d90098b1fd017cd00205979d5ef74b8c3ed62
+          path: bimg-upstream
+
+      - name: Install Nim
+        uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
+        with:
+          nim-version: '2.2.10'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run the optional adapter contract against bgfxim
+        env:
+          CBSS_BGFXIM_PATH: ${{ github.workspace }}/bgfxim
+          CBSS_BGFX_INCLUDE: ${{ github.workspace }}/bgfx-upstream/include
+          CBSS_BX_INCLUDE: ${{ github.workspace }}/bx-upstream/include
+        run: nimble checkBgfxAdapter -y
+
+      - name: Run real bgfx NOOP resource integration
+        if: runner.os != 'Windows'
+        env:
+          CBSS_BGFXIM_PATH: ${{ github.workspace }}/bgfxim
+          CBSS_BGFX_PATH: ${{ github.workspace }}/bgfx-upstream
+          CBSS_BX_PATH: ${{ github.workspace }}/bx-upstream
+          CBSS_BIMG_PATH: ${{ github.workspace }}/bimg-upstream
+        run: nimble testBgfxNoop -y
+
   linux-atspi:
     name: Linux AT-SPI D-Bus integration
     runs-on: ubuntu-latest
@@ -253,6 +322,9 @@ jobs:
 
       - name: Check ARC and ORC RasterSurface ownership
         run: nimble testRasterSurfaceValgrind -y
+
+      - name: Check ARC and ORC GPU host lifecycle
+        run: nimble testGpuHostValgrind -y
 
       - name: Check threaded ARC stream ownership transfer
         run: nimble testStreamMailboxValgrind -y

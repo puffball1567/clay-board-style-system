@@ -1,0 +1,374 @@
+import std/[strutils, unittest]
+
+import clay_board_style_system/runtime/gpu_host
+
+type MockGpuContext = ref object of GpuBackendContext
+  openStatus: GpuBackendStatus
+  beginStatus: GpuBackendStatus
+  endStatus: GpuBackendStatus
+  resizeStatus: GpuBackendStatus
+  restoreStatus: GpuBackendStatus
+  ownedOpens: int
+  borrowedAttaches: int
+  begins: int
+  ends: int
+  resizes: int
+  restores: int
+  ownedCloses: int
+  borrowedDetaches: int
+  width, height: uint32
+
+proc mock(context: GpuBackendContext): MockGpuContext {.inline.} =
+  MockGpuContext(context)
+
+proc openOwned(
+    context: GpuBackendContext;
+    config: GpuHostConfig;
+    info: var GpuBackendInfo
+): GpuBackendStatus {.raises: [].} =
+  let state = context.mock
+  inc state.ownedOpens
+  state.width = config.width
+  state.height = config.height
+  info = GpuBackendInfo(
+    rendererName: "mock-owned",
+    computeSupported: true,
+    maxTextureSize: 8192
+  )
+  state.openStatus
+
+proc attachBorrowed(
+    context: GpuBackendContext;
+    config: GpuHostConfig;
+    info: var GpuBackendInfo
+): GpuBackendStatus {.raises: [].} =
+  let state = context.mock
+  inc state.borrowedAttaches
+  state.width = config.width
+  state.height = config.height
+  info = GpuBackendInfo(rendererName: "mock-borrowed")
+  state.openStatus
+
+proc beginFrame(
+    context: GpuBackendContext;
+    frameNumber: uint64
+): GpuBackendStatus {.raises: [].} =
+  discard frameNumber
+  let state = context.mock
+  inc state.begins
+  state.beginStatus
+
+proc endFrame(
+    context: GpuBackendContext;
+    frameNumber: uint64
+): GpuBackendStatus {.raises: [].} =
+  discard frameNumber
+  let state = context.mock
+  inc state.ends
+  state.endStatus
+
+proc resize(
+    context: GpuBackendContext;
+    width, height: uint32;
+    resetFlags: uint32
+): GpuBackendStatus {.raises: [].} =
+  discard resetFlags
+  let state = context.mock
+  inc state.resizes
+  state.width = width
+  state.height = height
+  state.resizeStatus
+
+proc restore(
+    context: GpuBackendContext;
+    info: var GpuBackendInfo
+): GpuBackendStatus {.raises: [].} =
+  let state = context.mock
+  inc state.restores
+  info.rendererName = "mock-restored"
+  info.computeSupported = false
+  state.restoreStatus
+
+proc closeOwned(context: GpuBackendContext) {.raises: [].} =
+  inc context.mock.ownedCloses
+
+proc detachBorrowed(context: GpuBackendContext) {.raises: [].} =
+  inc context.mock.borrowedDetaches
+
+proc backend(state: MockGpuContext): GpuBackendVTable =
+  GpuBackendVTable(
+    apiVersion: gpuHostApiVersion,
+    provider: gpkCustom,
+    context: state,
+    openOwned: openOwned,
+    attachBorrowed: attachBorrowed,
+    beginFrame: beginFrame,
+    endFrame: endFrame,
+    resize: resize,
+    restore: restore,
+    closeOwned: closeOwned,
+    detachBorrowed: detachBorrowed
+  )
+
+proc newContext(): MockGpuContext =
+  MockGpuContext(
+    openStatus: gbsOk,
+    beginStatus: gbsOk,
+    endStatus: gbsOk,
+    resizeStatus: gbsOk,
+    restoreStatus: gbsOk
+  )
+
+proc presentationConfig(): GpuHostConfig =
+  GpuHostConfig(width: 1280, height: 720, resetFlags: 7, presentation: true)
+
+proc standardBudget(): GpuResourceBudget =
+  GpuResourceBudget(
+    persistentBytes: 1024,
+    transientBytesPerFrame: 256,
+    readbackBytesPerFrame: 128,
+    workUnitsPerFrame: 10,
+    maxResources: 2
+  )
+
+suite "GPU host lifecycle":
+  test "owned host opens once and closes the owned backend idempotently":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    check host.provider == gpkCustom
+    check host.ownership == ghoOwned
+    check host.state == ghsReady
+    check host.generation == 1
+    check host.backendInfo.rendererName == "mock-owned"
+    check host.backendInfo.computeSupported
+    check context.ownedOpens == 1
+
+    host.close()
+    host.close()
+    check host.state == ghsClosed
+    check context.ownedCloses == 1
+    check context.borrowedDetaches == 0
+
+  test "borrowed host detaches without destroying the backend":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoBorrowed, presentationConfig())
+    check host.backendInfo.rendererName == "mock-borrowed"
+    check context.borrowedAttaches == 1
+    host.close()
+    check context.borrowedDetaches == 1
+    check context.ownedCloses == 0
+
+  test "invalid presentation configuration and unsupported ownership fail closed":
+    let context = newContext()
+    expect GpuHostError:
+      discard openGpuHost(
+        context.backend,
+        ghoOwned,
+        GpuHostConfig(presentation: true)
+      )
+
+    var value = context.backend
+    value.attachBorrowed = nil
+    expect GpuHostError:
+      discard openGpuHost(value, ghoBorrowed)
+
+    value = context.backend
+    value.apiVersion = gpuHostApiVersion + 1
+    expect GpuHostError:
+      discard openGpuHost(value, ghoOwned)
+
+  test "backend initialization failure is reported":
+    let context = newContext()
+    context.openStatus = gbsUnavailable
+    expect GpuHostError:
+      discard openGpuHost(context.backend, ghoOwned)
+    check context.ownedOpens == 1
+    check context.ownedCloses == 1
+
+  test "failed restoration preserves device-lost state and backend information":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let originalInfo = host.backendInfo
+    check host.markGpuDeviceLost()
+    context.restoreStatus = gbsFailed
+    expect GpuHostError:
+      host.restoreGpuHost()
+    check host.state == ghsDeviceLost
+    check host.backendInfo == originalInfo
+    host.close()
+
+  test "frames are ordered and nested or stale tokens are rejected":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let first = host.beginGpuFrame()
+    check first.number == 1
+    expect GpuHostError:
+      discard host.beginGpuFrame()
+    expect GpuHostError:
+      host.endGpuFrame(GpuFrameToken(number: first.number + 1, generation: 1))
+    host.endGpuFrame(first)
+    expect GpuHostError:
+      host.endGpuFrame(first)
+    check context.begins == 1
+    check context.ends == 1
+    host.close()
+
+  test "backend frame device loss changes state and generation":
+    let context = newContext()
+    context.endStatus = gbsDeviceLost
+    let host = openGpuHost(context.backend, ghoOwned)
+    let token = host.beginGpuFrame()
+    expect GpuHostError:
+      host.endGpuFrame(token)
+    check host.state == ghsDeviceLost
+    check host.generation == 2
+    expect GpuHostError:
+      discard host.beginGpuFrame()
+    host.close()
+
+  test "begin-frame device loss invalidates every retained resource":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("scene", standardBudget())
+    let resource = host.reserveGpuResource(namespace, grkBuffer, 128)
+    context.beginStatus = gbsDeviceLost
+    expect GpuHostError:
+      discard host.beginGpuFrame()
+    check host.state == ghsDeviceLost
+    check not host.isGpuResourceLive(resource)
+    check host.gpuNamespaceUsage(namespace).resourceCount == 0
+    host.close()
+
+  test "resize updates retained viewport only after backend success":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    host.resizeGpuHost(1920, 1080)
+    check host.config.width == 1920
+    check host.config.height == 1080
+    check context.width == 1920
+    check context.height == 1080
+
+    context.resizeStatus = gbsFailed
+    expect GpuHostError:
+      host.resizeGpuHost(800, 600)
+    check host.config.width == 1920
+    check host.config.height == 1080
+    host.close()
+
+  test "compute-only hosts reject presentation resize":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    expect GpuHostError:
+      host.resizeGpuHost(640, 480)
+    host.close()
+
+suite "GPU resource namespaces":
+  test "persistent resources retain typed generation-checked handles":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("chart", standardBudget())
+    let texture = host.reserveGpuResource(namespace, grkTexture, 700)
+    let pipeline = host.reserveGpuResource(namespace, grkPipeline, 0)
+
+    check host.hasGpuNamespace(namespace)
+    check host.gpuNamespaceName(namespace) == "chart"
+    check host.isGpuResourceLive(texture)
+    check host.isGpuResourceLive(pipeline)
+    check host.gpuNamespaceUsage(namespace).persistentBytes == 700
+    check host.gpuNamespaceUsage(namespace).resourceCount == 2
+    check host.releaseGpuResource(texture)
+    check not host.releaseGpuResource(texture)
+    check host.gpuNamespaceUsage(namespace).persistentBytes == 0
+    check host.gpuNamespaceUsage(namespace).resourceCount == 1
+    host.close()
+
+  test "persistent byte and resource count budgets reject overflow":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("bounded", standardBudget())
+    discard host.reserveGpuResource(namespace, grkBuffer, 1024)
+    expect GpuHostError:
+      discard host.reserveGpuResource(namespace, grkTexture, 1)
+    discard host.reserveGpuResource(namespace, grkSampler, 0)
+    expect GpuHostError:
+      discard host.reserveGpuResource(namespace, grkPipeline, 0)
+    host.close()
+
+  test "frame budgets reset at the next frame and preserve persistent usage":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("motion", standardBudget())
+    discard host.reserveGpuResource(namespace, grkBuffer, 100)
+
+    let first = host.beginGpuFrame()
+    host.reserveGpuFrameWork(namespace, 200, 100, 8)
+    expect GpuHostError:
+      host.reserveGpuFrameWork(namespace, 57, 0, 0)
+    expect GpuHostError:
+      host.reserveGpuFrameWork(namespace, 0, 29, 0)
+    expect GpuHostError:
+      host.reserveGpuFrameWork(namespace, 0, 0, 3)
+    host.endGpuFrame(first)
+
+    let second = host.beginGpuFrame()
+    check host.gpuNamespaceUsage(namespace).persistentBytes == 100
+    check host.gpuNamespaceUsage(namespace).transientBytes == 0
+    check host.gpuNamespaceUsage(namespace).readbackBytes == 0
+    check host.gpuNamespaceUsage(namespace).workUnits == 0
+    host.reserveGpuFrameWork(namespace, 256, 128, 10)
+    host.endGpuFrame(second)
+    host.close()
+
+  test "device loss invalidates handles while preserving namespaces":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("recoverable", standardBudget())
+    let oldTexture = host.reserveGpuResource(namespace, grkTexture, 512)
+    check host.markGpuDeviceLost()
+    check not host.markGpuDeviceLost()
+    check host.state == ghsDeviceLost
+    check not host.isGpuResourceLive(oldTexture)
+    check host.hasGpuNamespace(namespace)
+    check host.gpuNamespaceUsage(namespace).persistentBytes == 0
+
+    host.restoreGpuHost()
+    check host.state == ghsReady
+    check context.restores == 1
+    check host.backendInfo.rendererName == "mock-restored"
+    check not host.backendInfo.computeSupported
+    let replacement = host.reserveGpuResource(namespace, grkTexture, 512)
+    check replacement.generation != oldTexture.generation
+    check host.isGpuResourceLive(replacement)
+    host.close()
+
+  test "namespace close releases accounting and rejects future use":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("temporary", standardBudget())
+    let resource = host.reserveGpuResource(namespace, grkTexture, 100)
+    check host.closeGpuNamespace(namespace)
+    check not host.closeGpuNamespace(namespace)
+    check not host.isGpuResourceLive(resource)
+    expect GpuHostError:
+      discard host.reserveGpuResource(namespace, grkTexture, 1)
+    host.close()
+
+  test "invalid namespace definitions are rejected":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    expect GpuHostError:
+      discard host.createGpuNamespace("", standardBudget())
+    expect GpuHostError:
+      discard host.createGpuNamespace(
+        "empty",
+        GpuResourceBudget(persistentBytes: 10)
+      )
+    discard host.createGpuNamespace("duplicate", standardBudget())
+    expect GpuHostError:
+      discard host.createGpuNamespace("duplicate", standardBudget())
+    expect GpuHostError:
+      discard host.createGpuNamespace(
+        repeat('x', maxGpuNamespaceNameBytes + 1),
+        standardBudget()
+      )
+    host.close()

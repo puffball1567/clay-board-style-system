@@ -1,6 +1,8 @@
 import std/[algorithm, os, osproc, sequtils, strutils]
 
 const excludedTests = [
+  "tests/backends/test_bgfx_adapter_compile.nim",
+  "tests/backends/test_bgfx_host_noop.nim",
   "tests/integration/atspi_linux_fixture.nim",
   "tests/integration/test_sdl3_large_paste.nim",
   "tests/integration/test_sdl3_wayland_smoke.nim",

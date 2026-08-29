@@ -1,3 +1,5 @@
+import std/os
+
 version       = "0.6.0"
 author        = "Clay Board Style System contributors"
 description   = "A CSS-inspired primitive engine for native GUI toolkits"
@@ -51,6 +53,40 @@ task checkDriverContract, "Verify generated Craft Driver contract surfaces":
 
 task checkPropertySupport, "Verify CSS property support counts and registry coverage":
   exec "nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_property_support_nimcache --out:/tmp/clay_board_style_system_property_support tools/check_property_support.nim"
+
+task checkBgfxAdapter, "Run the optional bgfxim GPU adapter contract":
+  let bgfximPath = getEnv("CBSS_BGFXIM_PATH")
+  let bgfxInclude = getEnv("CBSS_BGFX_INCLUDE")
+  let bxInclude = getEnv("CBSS_BX_INCLUDE")
+  if bgfximPath.len == 0 or not dirExists(bgfximPath) or
+      bgfxInclude.len == 0 or not dirExists(bgfxInclude) or
+      bxInclude.len == 0 or not dirExists(bxInclude):
+    raise newException(
+      ValueError,
+      "CBSS_BGFXIM_PATH, CBSS_BGFX_INCLUDE, and CBSS_BX_INCLUDE must point to compatible source checkouts"
+    )
+  let taskRoot = getTempDir() & "/clay_board_style_system_bgfx_adapter"
+  mkDir(taskRoot)
+  for memoryModel in ["arc", "orc"]:
+    let nimcache = taskRoot & "/" & memoryModel & "_nimcache"
+    let artifact = taskRoot & "/adapter_" & memoryModel
+    exec "nim c -r --mm:" & memoryModel & " -d:cbssGpuBgfx --path:src --path:\"" & bgfximPath & "\" --passC:-I\"" & bgfxInclude & "\" --passC:-I\"" & bxInclude & "\" --nimcache:\"" & nimcache & "\" --out:\"" & artifact & "\" tests/backends/test_bgfx_adapter_compile.nim"
+
+task testBgfxNoop, "Run CBSS resource calls against a real bgfx NOOP runtime":
+  when defined(windows):
+    echo "The temporary NOOP source build runs on Linux and macOS."
+  else:
+    let bgfximPath = getEnv("CBSS_BGFXIM_PATH")
+    let bgfxPath = getEnv("CBSS_BGFX_PATH")
+    let bxPath = getEnv("CBSS_BX_PATH")
+    let bimgPath = getEnv("CBSS_BIMG_PATH")
+    for path in [bgfximPath, bgfxPath, bxPath, bimgPath]:
+      if path.len == 0 or not dirExists(path):
+        raise newException(
+          ValueError,
+          "CBSS_BGFXIM_PATH, CBSS_BGFX_PATH, CBSS_BX_PATH, and CBSS_BIMG_PATH must point to compatible source checkouts"
+        )
+    exec "tests/backends/run_bgfx_host_noop.sh \"" & bgfximPath & "\" \"" & bgfxPath & "\" \"" & bxPath & "\" \"" & bimgPath & "\""
 
 task checkExplicitEventOutcomes, "Reject implicit boolean outcomes in first-party event handlers":
   exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_public src/clay_board_style_system.nim"
@@ -112,6 +148,7 @@ task testMotionAsan, "Run retained runtime tests under AddressSanitizer":
       ("validation_controls", "tests/runtime/test_validation_controls.nim"),
       ("form", "tests/runtime/test_form.nim"),
       ("text_input", "tests/runtime/test_text_input.nim"),
+      ("gpu_host", "tests/runtime/test_gpu_host.nim"),
       ("raster_surface", "tests/core/test_raster_surface.nim")
     ]:
       let testName = test[0]
@@ -135,6 +172,7 @@ task testUbsan, "Run numeric, layout, transform, and motion tests under Undefine
       ("color_conversion", "tests/core/test_color_conversion.nim"),
       ("flex", "tests/layout/test_flex.nim"),
       ("transform_geometry", "tests/layout/test_transform_geometry.nim"),
+      ("gpu_host", "tests/runtime/test_gpu_host.nim"),
       ("raster_surface", "tests/core/test_raster_surface.nim"),
       ("declarative_transition", "tests/runtime/test_declarative_transition.nim"),
       ("declarative_keyframes", "tests/runtime/test_declarative_keyframes.nim"),
@@ -172,6 +210,7 @@ task testLsan, "Run retained lifecycle tests under LeakSanitizer on Linux":
         ("validation_controls", "tests/runtime/test_validation_controls.nim"),
         ("form", "tests/runtime/test_form.nim"),
         ("text_input", "tests/runtime/test_text_input.nim"),
+        ("gpu_host", "tests/runtime/test_gpu_host.nim"),
         ("raster_surface", "tests/core/test_raster_surface.nim")
       ]:
         let testName = test[0]
@@ -393,6 +432,13 @@ task testRasterSurfaceValgrind, "Run ARC and ORC RasterSurface ownership checks 
     let artifact = "/tmp/clay_board_style_system_raster_surface_" & memoryModel & "_valgrind"
     let nimcache = artifact & "_nimcache"
     exec "nim c --mm:" & memoryModel & " -d:release -d:useMalloc --path:src --nimcache:\"" & nimcache & "\" --out:\"" & artifact & "\" tests/core/test_raster_surface.nim"
+    exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 \"" & artifact & "\""
+
+task testGpuHostValgrind, "Run ARC and ORC GPU host lifecycle checks under Valgrind":
+  for memoryModel in ["arc", "orc"]:
+    let artifact = "/tmp/clay_board_style_system_gpu_host_" & memoryModel & "_valgrind"
+    let nimcache = artifact & "_nimcache"
+    exec "nim c --mm:" & memoryModel & " -d:release -d:useMalloc --path:src --nimcache:\"" & nimcache & "\" --out:\"" & artifact & "\" tests/runtime/test_gpu_host.nim"
     exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 \"" & artifact & "\""
 
 task testValidationValgrind, "Run ARC and ORC validation and password-input checks under Valgrind":

@@ -67,8 +67,32 @@ bgfx is the planned standard GPU adapter. Its low-level Nim C99 binding,
 [bgfxim](https://github.com/puffball1567/bgfxim), is an independent package so
 games and visualization libraries may use it without CBSS. CBSS depends on
 that package only when the bgfx capability is selected. `bgfxim` is already
-available; the CBSS adapter, ownership integration, and real-GPU release gates
-remain planned work rather than part of the current standard profile.
+available. The first CBSS adapter and ownership layer are implemented behind
+`-d:cbssGpuBgfx`; GPU Canvas execution, native-window presentation
+qualification, and real-GPU release gates remain Version 0.7 work rather than
+part of the current standard profile.
+
+The public `GpuHost` contract is renderer-neutral. It records an explicit
+`owned` or `borrowed` runtime, rejects incompatible adapter versions, allows
+only one active frame token, and invalidates every generation-bound resource
+after device loss. Independent visualization and compute packages receive
+named resource namespaces with separate persistent, transient-upload,
+readback, per-frame work, and resource-count budgets. The current namespace
+API establishes identity and accounting; backend resource creation and
+submission are added with GPU Canvas rather than exposing raw bgfx handles in
+ordinary UI code.
+
+The bgfx adapter uses `bgfxim` directly. Owned mode initializes and shuts down
+the bgfx runtime. Borrowed mode attaches to an application-initialized runtime
+and detaches without destroying it. A process cannot attach two CBSS bgfx
+hosts at once. Device restoration is deliberately reported as unsupported
+until the adapter can recreate native presentation and retained resources in
+one tested operation. In addition to the portable ABI contract, Linux and
+macOS CI build the pinned real bgfx NOOP renderer and exercise resource,
+partial-update, offscreen-target, encoder, readback, frame, and teardown calls
+inside a CBSS-owned host under ARC and ORC. The portable deterministic adapter
+contract also covers shader/program creation, graphics submission, compute
+dispatch, and destruction without claiming visible renderer output.
 
 CBSS supplies bgfx with bounded scene data, textures, render targets, graphics
 or compute work, and composition metadata. SDL3 supplies the native window and
@@ -86,6 +110,8 @@ bgfx-specific handles remain private to the adapter. Public Canvas, scene,
 resource, frame-scheduling, device-loss, and diagnostics contracts use
 CBSS-owned types. An additional GPU adapter may be implemented later, but it
 does not change the standard profile or require duplicate GPU runtimes.
+
+See [GPU Host](gpu-host.md) for the implemented lifecycle and budget contract.
 
 ## Optional Little CMS Color Management
 

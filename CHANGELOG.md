@@ -9,6 +9,21 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added the first Version 0.7 GPU-host foundation. The backend-neutral
+  `GpuHost` distinguishes owned and borrowed runtimes, enforces versioned
+  backend attachment, ordered frame tokens, resize and device-loss state, and
+  generation-checked persistent resource namespaces with bounded persistent,
+  transient, readback, work, and resource-count budgets. The optional
+  `-d:cbssGpuBgfx` adapter uses the independently distributed `bgfxim` binding
+  for bgfx initialization, attachment, frame presentation, resize, and
+  deterministic owned/borrowed teardown. Standard builds do not import or
+  require bgfx. Contract CI runs against the pinned `bgfxim` declarations on
+  Linux, Windows, and macOS, including shader/program creation, graphics
+  submission, compute dispatch, and destruction. Linux and macOS additionally
+  initialize the real bgfx NOOP renderer and execute buffer, texture, partial
+  update, blit, readback, framebuffer, uniform, encoder, view, frame, and
+  destruction paths under both ARC and ORC.
+
 - Added retained RGBA8 RasterSurface support for drawing engines, progressive
   decoders, and generated imagery. Bounds-checked stride-aware updates are
   copied into bounded pending storage and published atomically as merged dirty
