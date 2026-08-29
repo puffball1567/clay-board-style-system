@@ -88,6 +88,22 @@ task testBgfxNoop, "Run CBSS resource calls against a real bgfx NOOP runtime":
         )
     exec "tests/backends/run_bgfx_host_noop.sh \"" & bgfximPath & "\" \"" & bgfxPath & "\" \"" & bxPath & "\" \"" & bimgPath & "\""
 
+task runBgfxHostDemo, "Build and run the optional visible bgfx GPU-host demo":
+  when defined(linux):
+    let bgfximPath = getEnv("CBSS_BGFXIM_PATH")
+    let bgfxPath = getEnv("CBSS_BGFX_PATH")
+    let bxPath = getEnv("CBSS_BX_PATH")
+    let bimgPath = getEnv("CBSS_BIMG_PATH")
+    for path in [bgfximPath, bgfxPath, bxPath, bimgPath]:
+      if path.len == 0 or not dirExists(path):
+        raise newException(
+          ValueError,
+          "CBSS_BGFXIM_PATH, CBSS_BGFX_PATH, CBSS_BX_PATH, and CBSS_BIMG_PATH must point to compatible source checkouts"
+        )
+    exec "examples/run_bgfx_host_demo.sh \"" & bgfximPath & "\" \"" & bgfxPath & "\" \"" & bxPath & "\" \"" & bimgPath & "\""
+  else:
+    echo "The current visible bgfx host demo runner targets Linux SDL3."
+
 task checkExplicitEventOutcomes, "Reject implicit boolean outcomes in first-party event handlers":
   exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_public src/clay_board_style_system.nim"
   exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_paint examples/paint_demo.nim"

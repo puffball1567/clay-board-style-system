@@ -86,11 +86,16 @@ proc openOwned(
   init.resolution.width = config.width
   init.resolution.height = config.height
   init.resolution.reset = config.resetFlags
-  init.resolution.formatColor = value.options.colorFormat
-  init.resolution.formatDepthStencil = value.options.depthStencilFormat
-  init.resolution.numBackBuffers = value.options.numBackBuffers
-  init.resolution.maxFrameLatency = value.options.maxFrameLatency
-  init.resolution.debugTextScale = value.options.debugTextScale
+  if value.options.colorFormat != BGFX_TEXTURE_FORMAT_COUNT:
+    init.resolution.formatColor = value.options.colorFormat
+  if value.options.depthStencilFormat != BGFX_TEXTURE_FORMAT_COUNT:
+    init.resolution.formatDepthStencil = value.options.depthStencilFormat
+  if value.options.numBackBuffers != 0:
+    init.resolution.numBackBuffers = value.options.numBackBuffers
+  if value.options.maxFrameLatency != 0:
+    init.resolution.maxFrameLatency = value.options.maxFrameLatency
+  if value.options.debugTextScale != 0:
+    init.resolution.debugTextScale = value.options.debugTextScale
 
   if not BGFX.init(addr init):
     value.releaseContext()

@@ -83,10 +83,22 @@ texture, partial-update, blit, readback, framebuffer, uniform, encoder, view,
 frame, and destruction calls inside a CBSS-owned host. The portable adapter
 contract separately executes shader/program creation, graphics submission,
 compute dispatch, and ordered destruction through deterministic C fixtures.
-Valid renderer-specific shader packages, visible graphics and compute output,
-GPU Canvas composition, native-window helpers, device restoration, and a
-visible real-GPU fixture are still required before the GPU profile is
-release-complete.
+The Linux `bgfx_host_demo` additionally opens an SDL3 native window, initializes
+the OpenGL renderer, uploads a changing dynamic vertex buffer, submits indexed
+graphics, presents through `GpuHost`, and follows window resize. Run it with
+compatible source checkouts:
+
+```sh
+CBSS_BGFXIM_PATH=../nim-bindings/bgfxim \
+CBSS_BGFX_PATH=/path/to/bgfx \
+CBSS_BX_PATH=/path/to/bx \
+CBSS_BIMG_PATH=/path/to/bimg \
+nimble runBgfxHostDemo
+```
+
+GPU Canvas composition, a public native-window helper, compute-output
+verification, and device restoration are still required before the GPU profile
+is release-complete.
 
 The NOOP fixture validates that those native calls coexist with host ownership
 and budget accounting. It does not yet map a `GpuResourceHandle` directly to a

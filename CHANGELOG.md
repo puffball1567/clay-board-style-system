@@ -22,7 +22,11 @@ release. Before 1.0, minor releases may contain public API changes.
   submission, compute dispatch, and destruction. Linux and macOS additionally
   initialize the real bgfx NOOP renderer and execute buffer, texture, partial
   update, blit, readback, framebuffer, uniform, encoder, view, frame, and
-  destruction paths under both ARC and ORC.
+  destruction paths under both ARC and ORC. A visible Linux SDL3/OpenGL demo
+  exercises native-window attachment, dynamic vertex uploads, indexed graphics
+  submission, presentation, and resize. The adapter now preserves bgfx's valid
+  constructor defaults unless an option explicitly overrides them, preventing
+  invalid color/depth/back-buffer settings from reaching real renderers.
 
 - Added retained RGBA8 RasterSurface support for drawing engines, progressive
   decoders, and generated imagery. Bounds-checked stride-aware updates are

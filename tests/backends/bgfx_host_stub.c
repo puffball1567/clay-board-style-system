@@ -22,14 +22,18 @@ void bgfx_init_ctor(bgfx_init_t* init)
     memset(init, 0, sizeof(*init));
     init->type = BGFX_RENDERER_TYPE_COUNT;
     init->vendorId = BGFX_PCI_ID_NONE;
-    init->resolution.formatColor = BGFX_TEXTURE_FORMAT_COUNT;
-    init->resolution.formatDepthStencil = BGFX_TEXTURE_FORMAT_COUNT;
+    init->resolution.formatColor = BGFX_TEXTURE_FORMAT_BGRA8;
+    init->resolution.formatDepthStencil = BGFX_TEXTURE_FORMAT_D24S8;
+    init->resolution.numBackBuffers = 2;
 }
 
 bool bgfx_init(const bgfx_init_t* init)
 {
     if (NULL == init || cbss_initialized || 0 == init->resolution.width
-        || 0 == init->resolution.height)
+        || 0 == init->resolution.height
+        || BGFX_TEXTURE_FORMAT_BGRA8 != init->resolution.formatColor
+        || BGFX_TEXTURE_FORMAT_D24S8 != init->resolution.formatDepthStencil
+        || 2 != init->resolution.numBackBuffers)
     {
         return false;
     }
