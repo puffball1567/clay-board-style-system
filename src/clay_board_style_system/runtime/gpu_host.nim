@@ -1,7 +1,7 @@
 import std/[algorithm, hashes, tables]
 
 const
-  gpuHostApiVersion* = 3'u32
+  gpuHostApiVersion* = 4'u32
   maxGpuNamespaceNameBytes* = 128
   maxGpuResourceLabelBytes* = 128
 
@@ -115,6 +115,12 @@ type
     vertexLayout*: seq[GpuVertexAttribute]
     label*: string
 
+  GpuRenderTargetDescriptor* = object
+    width*, height*: uint32
+    format*: GpuTextureFormat
+    usage*: set[GpuTextureUsage]
+    label*: string
+
   GpuHostConfig* = object
     width*, height*: uint32
     resetFlags*: uint32
@@ -201,6 +207,12 @@ type
     data: seq[byte]
   ): GpuBackendStatus {.nimcall, raises: [].}
 
+  GpuBackendCreateRenderTargetProc* = proc(
+    context: GpuBackendContext;
+    descriptor: GpuRenderTargetDescriptor;
+    resource: var GpuBackendResourceId
+  ): GpuBackendStatus {.nimcall, raises: [].}
+
   GpuBackendDestroyResourceProc* = proc(
     context: GpuBackendContext;
     resource: GpuBackendResourceId;
@@ -220,6 +232,7 @@ type
     createTexture*: GpuBackendCreateTextureProc
     createBuffer*: GpuBackendCreateBufferProc
     updateBuffer*: GpuBackendUpdateBufferProc
+    createRenderTarget*: GpuBackendCreateRenderTargetProc
     destroyResource*: GpuBackendDestroyResourceProc
     closeOwned*: GpuBackendCloseProc
     detachBorrowed*: GpuBackendCloseProc
@@ -230,6 +243,7 @@ type
     generation: uint64
     backendResource: GpuBackendResourceId
     bufferDescriptor: GpuBufferDescriptor
+    renderTargetDescriptor: GpuRenderTargetDescriptor
 
   GpuNamespaceEntry = object
     name: string
@@ -570,7 +584,8 @@ proc insertGpuResource(
     kind: GpuResourceKind;
     bytes: uint64;
     backendResource = GpuBackendResourceId(0);
-    bufferDescriptor = GpuBufferDescriptor()
+    bufferDescriptor = GpuBufferDescriptor();
+    renderTargetDescriptor = GpuRenderTargetDescriptor()
 ): GpuResourceHandle =
   var entry = host.namespaces[namespace]
   entry.ensureResourceCapacity(bytes)
@@ -581,7 +596,8 @@ proc insertGpuResource(
     bytes: bytes,
     generation: host.generationValue,
     backendResource: backendResource,
-    bufferDescriptor: bufferDescriptor
+    bufferDescriptor: bufferDescriptor,
+    renderTargetDescriptor: renderTargetDescriptor
   )
   entry.usage.persistentBytes += bytes
   inc entry.usage.resourceCount
@@ -620,6 +636,13 @@ proc textureBytes(descriptor: GpuTextureDescriptor): uint64 =
   if pixels != 0 and bytesPerPixel > high(uint64) div pixels:
     raise newException(GpuHostError, "GPU texture byte size overflow")
   pixels * bytesPerPixel
+
+proc renderTargetBytes(descriptor: GpuRenderTargetDescriptor): uint64 =
+  GpuTextureDescriptor(
+    width: descriptor.width,
+    height: descriptor.height,
+    format: descriptor.format
+  ).textureBytes()
 
 proc vertexComponentBytes(value: GpuVertexComponentType): uint64 =
   case value
@@ -793,6 +816,61 @@ proc createGpuBuffer*(
     descriptor.byteSize,
     backendResource,
     descriptor
+  )
+
+proc createGpuRenderTarget*(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    descriptor: GpuRenderTargetDescriptor
+): GpuResourceHandle =
+  host.requireHost()
+  if host.stateValue != ghsReady:
+    raise newException(GpuHostError, "GPU host is not ready")
+  if host.activeFrame:
+    raise newException(
+      GpuHostError,
+      "GPU render target creation is not allowed during an active frame"
+    )
+  if namespace notin host.namespaces:
+    raise newException(GpuHostError, "unknown GPU namespace")
+  if descriptor.width == 0 or descriptor.height == 0:
+    raise newException(GpuHostError, "GPU render target dimensions must be non-zero")
+  if host.infoValue.maxTextureSize != 0 and
+      (descriptor.width > host.infoValue.maxTextureSize or
+       descriptor.height > host.infoValue.maxTextureSize):
+    raise newException(GpuHostError, "GPU render target exceeds backend limits")
+  if gtuRenderTarget notin descriptor.usage:
+    raise newException(GpuHostError, "GPU render target usage is required")
+  if gtuReadback in descriptor.usage:
+    raise newException(
+      GpuHostError,
+      "GPU render targets cannot be direct readback resources"
+    )
+  if descriptor.label.len > maxGpuResourceLabelBytes:
+    raise newException(GpuHostError, "GPU resource label is too long")
+  let bytes = descriptor.renderTargetBytes()
+  host.namespaces[namespace].ensureResourceCapacity(bytes)
+  if host.backend.createRenderTarget.isNil or
+      host.backend.destroyResource.isNil:
+    raise newException(GpuHostError, "GPU backend does not support render targets")
+
+  var backendResource: GpuBackendResourceId
+  let status = host.backend.createRenderTarget(
+    host.backend.context,
+    descriptor,
+    backendResource
+  )
+  if status == gbsDeviceLost:
+    host.enterDeviceLost()
+  raiseForStatus(status)
+  if backendResource.backendResourceIdValue == 0:
+    raise newException(GpuHostError, "GPU backend returned an invalid resource")
+  host.insertGpuResource(
+    namespace,
+    grkRenderTarget,
+    bytes,
+    backendResource,
+    renderTargetDescriptor = descriptor
   )
 
 proc isGpuResourceLive*(host: GpuHost; handle: GpuResourceHandle): bool

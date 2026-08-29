@@ -27,9 +27,10 @@ release. Before 1.0, minor releases may contain public API changes.
   submission, presentation, and resize. The adapter now preserves bgfx's valid
   constructor defaults unless an option explicitly overrides them, preventing
   invalid color/depth/back-buffer settings from reaching real renderers. The
-  backend-mapped resource APIs create validated R8/RGBA8/BGRA8 textures and
-  static or dynamic vertex/index buffers with backend-neutral vertex layouts,
-  16/32-bit indices, and aligned bounded updates. They enforce namespace
+  backend-mapped resource APIs create validated R8/RGBA8/BGRA8 textures,
+  static or dynamic vertex/index buffers, and owned single-color offscreen
+  render targets. Buffers use backend-neutral vertex layouts, 16/32-bit
+  indices, and aligned bounded updates. These resources enforce namespace
   byte/count budgets before allocation, copy optional
   initial pixels, and deterministically destroy mapped resources on release,
   namespace teardown, or host teardown. Device loss invalidates mapped handles

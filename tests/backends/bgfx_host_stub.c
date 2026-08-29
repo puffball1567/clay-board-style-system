@@ -33,6 +33,13 @@ static uint32_t cbss_last_buffer_data_bytes;
 static uint32_t cbss_last_buffer_update_start;
 static uint16_t cbss_last_buffer_flags;
 static uint16_t cbss_last_vertex_stride;
+static uint32_t cbss_frame_buffer_create_count;
+static uint32_t cbss_frame_buffer_destroy_count;
+static uint32_t cbss_frame_buffer_name_count;
+static uint16_t cbss_frame_buffer_width;
+static uint16_t cbss_frame_buffer_height;
+static uint64_t cbss_frame_buffer_flags;
+static bgfx_texture_format_t cbss_frame_buffer_format;
 static uint16_t cbss_texture_width;
 static uint16_t cbss_texture_height;
 static uint64_t cbss_texture_flags;
@@ -376,6 +383,43 @@ void bgfx_destroy_dynamic_index_buffer(bgfx_dynamic_index_buffer_handle_t handle
     }
 }
 
+bgfx_frame_buffer_handle_t bgfx_create_frame_buffer(
+    uint16_t width, uint16_t height, bgfx_texture_format_t format,
+    uint64_t texture_flags)
+{
+    bgfx_frame_buffer_handle_t handle = { UINT16_MAX };
+    if (!cbss_initialized || 0 == width || 0 == height
+        || BGFX_TEXTURE_FORMAT_COUNT == format
+        || 0 == (texture_flags & BGFX_TEXTURE_RT))
+    {
+        return handle;
+    }
+    ++cbss_frame_buffer_create_count;
+    cbss_frame_buffer_width = width;
+    cbss_frame_buffer_height = height;
+    cbss_frame_buffer_format = format;
+    cbss_frame_buffer_flags = texture_flags;
+    handle.idx = (uint16_t)(180 + cbss_frame_buffer_create_count);
+    return handle;
+}
+
+void bgfx_set_frame_buffer_name(bgfx_frame_buffer_handle_t handle,
+                                const char* name, int32_t len)
+{
+    if (UINT16_MAX != handle.idx && NULL != name && len > 0)
+    {
+        ++cbss_frame_buffer_name_count;
+    }
+}
+
+void bgfx_destroy_frame_buffer(bgfx_frame_buffer_handle_t handle)
+{
+    if (UINT16_MAX != handle.idx)
+    {
+        ++cbss_frame_buffer_destroy_count;
+    }
+}
+
 bgfx_shader_handle_t bgfx_create_shader(const bgfx_memory_t* memory)
 {
     bgfx_shader_handle_t handle = { UINT16_MAX };
@@ -486,6 +530,13 @@ void cbss_bgfx_stub_reset_counters(void)
     cbss_last_buffer_update_start = 0;
     cbss_last_buffer_flags = 0;
     cbss_last_vertex_stride = 0;
+    cbss_frame_buffer_create_count = 0;
+    cbss_frame_buffer_destroy_count = 0;
+    cbss_frame_buffer_name_count = 0;
+    cbss_frame_buffer_width = 0;
+    cbss_frame_buffer_height = 0;
+    cbss_frame_buffer_flags = 0;
+    cbss_frame_buffer_format = BGFX_TEXTURE_FORMAT_COUNT;
 }
 
 uint32_t cbss_bgfx_stub_shutdown_count(void) { return cbss_shutdown_count; }
@@ -565,4 +616,32 @@ uint16_t cbss_bgfx_stub_last_buffer_flags(void)
 uint16_t cbss_bgfx_stub_last_vertex_stride(void)
 {
     return cbss_last_vertex_stride;
+}
+uint32_t cbss_bgfx_stub_frame_buffer_create_count(void)
+{
+    return cbss_frame_buffer_create_count;
+}
+uint32_t cbss_bgfx_stub_frame_buffer_destroy_count(void)
+{
+    return cbss_frame_buffer_destroy_count;
+}
+uint32_t cbss_bgfx_stub_frame_buffer_name_count(void)
+{
+    return cbss_frame_buffer_name_count;
+}
+uint16_t cbss_bgfx_stub_frame_buffer_width(void)
+{
+    return cbss_frame_buffer_width;
+}
+uint16_t cbss_bgfx_stub_frame_buffer_height(void)
+{
+    return cbss_frame_buffer_height;
+}
+uint64_t cbss_bgfx_stub_frame_buffer_flags(void)
+{
+    return cbss_frame_buffer_flags;
+}
+uint32_t cbss_bgfx_stub_frame_buffer_format(void)
+{
+    return (uint32_t)cbss_frame_buffer_format;
 }

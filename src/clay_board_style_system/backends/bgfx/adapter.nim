@@ -181,6 +181,7 @@ const
   brtStaticIndexBuffer = 3'u64
   brtDynamicVertexBuffer = 4'u64
   brtDynamicIndexBuffer = 5'u64
+  brtFrameBuffer = 6'u64
 
 proc packBackendResource(tag: uint64; handleIndex: uint16): GpuBackendResourceId =
   GpuBackendResourceId(
@@ -431,6 +432,38 @@ proc updateBuffer(
     discard
   gbsOk
 
+proc createRenderTarget(
+    rawContext: GpuBackendContext;
+    descriptor: GpuRenderTargetDescriptor;
+    resource: var GpuBackendResourceId
+): GpuBackendStatus {.raises: [].} =
+  let value = rawContext.context
+  if not value.attached:
+    return gbsFailed
+  if descriptor.width == 0 or descriptor.height == 0 or
+      descriptor.width > uint32(high(uint16)) or
+      descriptor.height > uint32(high(uint16)) or
+      gtuRenderTarget notin descriptor.usage or
+      gtuReadback in descriptor.usage:
+    return gbsInvalidConfiguration
+
+  let handle = BGFX.createFrameBuffer(
+    uint16(descriptor.width),
+    uint16(descriptor.height),
+    descriptor.format.bgfxTextureFormat(),
+    descriptor.usage.bgfxTextureFlags()
+  )
+  if not BGFX_HANDLE_IS_VALID(handle):
+    return gbsFailed
+  if descriptor.label.len > 0:
+    BGFX.setFrameBufferName(
+      handle,
+      descriptor.label.cstring,
+      int32(descriptor.label.len)
+    )
+  resource = packBackendResource(brtFrameBuffer, handle.idx)
+  gbsOk
+
 proc destroyResource(
     rawContext: GpuBackendContext;
     resource: GpuBackendResourceId;
@@ -457,6 +490,10 @@ proc destroyResource(
   of brtDynamicIndexBuffer:
     BGFX.destroyDynamicIndexBuffer(
       bgfx_dynamic_index_buffer_handle_t(idx: decoded.handleIndex)
+    )
+  of brtFrameBuffer:
+    BGFX.destroyFrameBuffer(
+      bgfx_frame_buffer_handle_t(idx: decoded.handleIndex)
     )
   else:
     discard
@@ -487,6 +524,7 @@ proc newBgfxBackend*(
     createTexture: createTexture,
     createBuffer: createBuffer,
     updateBuffer: updateBuffer,
+    createRenderTarget: createRenderTarget,
     destroyResource: destroyResource,
     closeOwned: closeOwned,
     detachBorrowed: detachBorrowed
