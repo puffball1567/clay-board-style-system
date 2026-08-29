@@ -14,6 +14,9 @@ static uint32_t cbss_submit_count;
 static uint32_t cbss_dispatch_count;
 static uint32_t cbss_program_destroy_count;
 static uint32_t cbss_shader_destroy_count;
+static uint32_t cbss_shader_create_count;
+static uint32_t cbss_shader_name_count;
+static uint32_t cbss_shader_data_bytes;
 static uint32_t cbss_texture_create_count;
 static uint32_t cbss_texture_destroy_count;
 static uint32_t cbss_texture_name_count;
@@ -425,9 +428,20 @@ bgfx_shader_handle_t bgfx_create_shader(const bgfx_memory_t* memory)
     bgfx_shader_handle_t handle = { UINT16_MAX };
     if (NULL != memory && NULL != memory->data && 0 != memory->size)
     {
-        handle.idx = 10;
+        ++cbss_shader_create_count;
+        cbss_shader_data_bytes = memory->size;
+        handle.idx = (uint16_t)(200 + cbss_shader_create_count);
     }
     return handle;
+}
+
+void bgfx_set_shader_name(bgfx_shader_handle_t handle, const char* name,
+                          int32_t len)
+{
+    if (UINT16_MAX != handle.idx && NULL != name && len > 0)
+    {
+        ++cbss_shader_name_count;
+    }
 }
 
 void bgfx_destroy_shader(bgfx_shader_handle_t handle)
@@ -507,6 +521,9 @@ void cbss_bgfx_stub_reset_counters(void)
     cbss_dispatch_count = 0;
     cbss_program_destroy_count = 0;
     cbss_shader_destroy_count = 0;
+    cbss_shader_create_count = 0;
+    cbss_shader_name_count = 0;
+    cbss_shader_data_bytes = 0;
     cbss_texture_create_count = 0;
     cbss_texture_destroy_count = 0;
     cbss_texture_name_count = 0;
@@ -553,6 +570,18 @@ uint32_t cbss_bgfx_stub_program_destroy_count(void)
 uint32_t cbss_bgfx_stub_shader_destroy_count(void)
 {
     return cbss_shader_destroy_count;
+}
+uint32_t cbss_bgfx_stub_shader_create_count(void)
+{
+    return cbss_shader_create_count;
+}
+uint32_t cbss_bgfx_stub_shader_name_count(void)
+{
+    return cbss_shader_name_count;
+}
+uint32_t cbss_bgfx_stub_shader_data_bytes(void)
+{
+    return cbss_shader_data_bytes;
 }
 uint32_t cbss_bgfx_stub_texture_create_count(void)
 {
