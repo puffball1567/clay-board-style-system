@@ -58,6 +58,20 @@ proc lastBufferFlags(): uint16 {.
   importc: "cbss_bgfx_stub_last_buffer_flags", cdecl.}
 proc lastVertexStride(): uint16 {.
   importc: "cbss_bgfx_stub_last_vertex_stride", cdecl.}
+proc frameBufferCreateCount(): uint32 {.
+  importc: "cbss_bgfx_stub_frame_buffer_create_count", cdecl.}
+proc frameBufferDestroyCount(): uint32 {.
+  importc: "cbss_bgfx_stub_frame_buffer_destroy_count", cdecl.}
+proc frameBufferNameCount(): uint32 {.
+  importc: "cbss_bgfx_stub_frame_buffer_name_count", cdecl.}
+proc frameBufferWidth(): uint16 {.
+  importc: "cbss_bgfx_stub_frame_buffer_width", cdecl.}
+proc frameBufferHeight(): uint16 {.
+  importc: "cbss_bgfx_stub_frame_buffer_height", cdecl.}
+proc frameBufferFlags(): uint64 {.
+  importc: "cbss_bgfx_stub_frame_buffer_flags", cdecl.}
+proc frameBufferFormat(): uint32 {.
+  importc: "cbss_bgfx_stub_frame_buffer_format", cdecl.}
 
 proc config(): GpuHostConfig =
   GpuHostConfig(width: 640, height: 480, presentation: true)
@@ -154,6 +168,24 @@ suite "optional bgfxim adapter":
     check lastBufferUpdateStart() == 1
     check lastBufferDataBytes() == 8
 
+    let renderTarget = host.createGpuRenderTarget(
+      resourceNamespace,
+      GpuRenderTargetDescriptor(
+        width: 16,
+        height: 8,
+        format: gtfRgba8,
+        usage: {gtuRenderTarget, gtuSampled, gtuBlitSource},
+        label: "adapter-render-target"
+      )
+    )
+    check host.isGpuResourceLive(renderTarget)
+    check frameBufferCreateCount() == 1
+    check frameBufferNameCount() == 1
+    check frameBufferWidth() == 16
+    check frameBufferHeight() == 8
+    check frameBufferFormat() == uint32(BGFX_TEXTURE_FORMAT_RGBA8)
+    check frameBufferFlags() == BGFX_TEXTURE_RT
+
     let token = host.beginGpuFrame()
 
     var shaderByte = 0x42'u8
@@ -200,6 +232,8 @@ suite "optional bgfxim adapter":
     expect GpuHostError:
       discard openGpuHost(newBgfxBackend(), ghoBorrowed, config())
 
+    check host.releaseGpuResource(renderTarget)
+    check frameBufferDestroyCount() == 1
     check host.releaseGpuResource(dynamicIndexBuffer)
     check dynamicIndexBufferDestroyCount() == 1
     check host.releaseGpuResource(vertexBuffer)

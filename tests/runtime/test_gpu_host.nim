@@ -11,6 +11,7 @@ type MockGpuContext = ref object of GpuBackendContext
   createTextureStatus: GpuBackendStatus
   createBufferStatus: GpuBackendStatus
   updateBufferStatus: GpuBackendStatus
+  createRenderTargetStatus: GpuBackendStatus
   ownedOpens: int
   borrowedAttaches: int
   begins: int
@@ -22,6 +23,7 @@ type MockGpuContext = ref object of GpuBackendContext
   textureCreates: int
   bufferCreates: int
   bufferUpdates: int
+  renderTargetCreates: int
   resourceDestroys: int
   nextBackendResource: uint64
   lastTexture: GpuTextureDescriptor
@@ -30,6 +32,7 @@ type MockGpuContext = ref object of GpuBackendContext
   lastBufferDataBytes: int
   lastBufferUpdateOffset: uint64
   lastBufferUpdateBytes: int
+  lastRenderTarget: GpuRenderTargetDescriptor
   destroyedResources: seq[uint64]
   width, height: uint32
 
@@ -155,6 +158,19 @@ proc updateBuffer(
   state.lastBufferUpdateBytes = data.len
   state.updateBufferStatus
 
+proc createRenderTarget(
+    context: GpuBackendContext;
+    descriptor: GpuRenderTargetDescriptor;
+    resource: var GpuBackendResourceId
+): GpuBackendStatus {.raises: [].} =
+  let state = context.mock
+  inc state.renderTargetCreates
+  state.lastRenderTarget = descriptor
+  if state.createRenderTargetStatus == gbsOk:
+    resource = GpuBackendResourceId(state.nextBackendResource)
+    inc state.nextBackendResource
+  state.createRenderTargetStatus
+
 proc destroyResource(
     context: GpuBackendContext;
     resource: GpuBackendResourceId;
@@ -179,6 +195,7 @@ proc backend(state: MockGpuContext): GpuBackendVTable =
     createTexture: createTexture,
     createBuffer: createBuffer,
     updateBuffer: updateBuffer,
+    createRenderTarget: createRenderTarget,
     destroyResource: destroyResource,
     closeOwned: closeOwned,
     detachBorrowed: detachBorrowed
@@ -194,6 +211,7 @@ proc newContext(): MockGpuContext =
     createTextureStatus: gbsOk,
     createBufferStatus: gbsOk,
     updateBufferStatus: gbsOk,
+    createRenderTargetStatus: gbsOk,
     nextBackendResource: 1
   )
 
@@ -263,6 +281,21 @@ proc indexBufferDescriptor(
     role: gbrIndex,
     access: access,
     indexFormat: indexFormat,
+    label: label
+  )
+
+proc renderTargetDescriptor(
+    width = 8'u32;
+    height = 8'u32;
+    format = gtfRgba8;
+    usage = {gtuRenderTarget, gtuSampled};
+    label = "render-target"
+): GpuRenderTargetDescriptor =
+  GpuRenderTargetDescriptor(
+    width: width,
+    height: height,
+    format: format,
+    usage: usage,
     label: label
   )
 
@@ -807,6 +840,115 @@ suite "GPU buffer resources":
     host.endGpuFrame(frame)
     host.updateGpuBuffer(buffer, 0, @[0'u8, 0'u8])
     host.close()
+
+suite "GPU render target mapping":
+  test "offscreen color targets are accounted and destroyed":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("render-target", standardBudget())
+    let descriptor = renderTargetDescriptor(
+      width = 8,
+      height = 4,
+      format = gtfBgra8,
+      usage = {gtuRenderTarget, gtuSampled, gtuBlitSource},
+      label = "panel-layer"
+    )
+    let target = host.createGpuRenderTarget(namespace, descriptor)
+
+    check target.kind == grkRenderTarget
+    check host.isGpuResourceLive(target)
+    check context.renderTargetCreates == 1
+    check context.lastRenderTarget == descriptor
+    check host.gpuNamespaceUsage(namespace).persistentBytes == 8'u64 * 4 * 4
+    check host.gpuNamespaceUsage(namespace).resourceCount == 1
+
+    check host.releaseGpuResource(target)
+    check context.resourceDestroys == 1
+    check context.destroyedResources == @[1'u64]
+    check host.gpuNamespaceUsage(namespace) == GpuResourceUsage()
+    host.close()
+
+  test "render target validation happens before backend allocation":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("invalid-targets", standardBudget())
+
+    for descriptor in [
+      renderTargetDescriptor(width = 0),
+      renderTargetDescriptor(height = 0),
+      renderTargetDescriptor(width = 8193),
+      renderTargetDescriptor(usage = {gtuSampled}),
+      renderTargetDescriptor(usage = {gtuRenderTarget, gtuReadback}),
+      renderTargetDescriptor(label = repeat('x', maxGpuResourceLabelBytes + 1))
+    ]:
+      expect GpuHostError:
+        discard host.createGpuRenderTarget(namespace, descriptor)
+
+    check context.renderTargetCreates == 0
+    check host.gpuNamespaceUsage(namespace) == GpuResourceUsage()
+    host.close()
+
+  test "render target budget callback and backend failures preserve accounting":
+    block budgetFailure:
+      let context = newContext()
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace(
+        "target-budget",
+        GpuResourceBudget(persistentBytes: 255, maxResources: 1)
+      )
+      expect GpuHostError:
+        discard host.createGpuRenderTarget(namespace, renderTargetDescriptor())
+      check context.renderTargetCreates == 0
+      host.close()
+
+    block missingCallback:
+      let context = newContext()
+      var value = context.backend
+      value.createRenderTarget = nil
+      let host = openGpuHost(value, ghoOwned)
+      let namespace = host.createGpuNamespace("missing-target", standardBudget())
+      expect GpuHostError:
+        discard host.createGpuRenderTarget(namespace, renderTargetDescriptor())
+      check context.renderTargetCreates == 0
+      host.close()
+
+    block backendFailure:
+      let context = newContext()
+      context.createRenderTargetStatus = gbsFailed
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace("failed-target", standardBudget())
+      expect GpuHostError:
+        discard host.createGpuRenderTarget(namespace, renderTargetDescriptor())
+      check context.renderTargetCreates == 1
+      check context.resourceDestroys == 0
+      check host.gpuNamespaceUsage(namespace) == GpuResourceUsage()
+      host.close()
+
+  test "render target device loss and frame boundaries invalidate safely":
+    block deviceLoss:
+      let context = newContext()
+      context.createRenderTargetStatus = gbsDeviceLost
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace("target-loss", standardBudget())
+      expect GpuHostError:
+        discard host.createGpuRenderTarget(namespace, renderTargetDescriptor())
+      check host.state == ghsDeviceLost
+      check context.resourceDestroys == 0
+      host.close()
+
+    block activeFrame:
+      let context = newContext()
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace("target-frame", standardBudget())
+      let token = host.beginGpuFrame()
+      expect GpuHostError:
+        discard host.createGpuRenderTarget(namespace, renderTargetDescriptor())
+      check context.renderTargetCreates == 0
+      host.endGpuFrame(token)
+      let target = host.createGpuRenderTarget(namespace, renderTargetDescriptor())
+      check host.isGpuResourceLive(target)
+      host.close()
+      check context.resourceDestroys == 1
 
 suite "GPU resource namespace budgets":
 

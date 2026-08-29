@@ -68,6 +68,18 @@ host.updateGpuBuffer(mappedIndexBuffer, 2, newSeq[byte](4))
 doAssert host.isGpuResourceLive(mappedVertexBuffer)
 doAssert host.isGpuResourceLive(mappedIndexBuffer)
 
+let mappedRenderTarget = host.createGpuRenderTarget(
+  resourceNamespace,
+  GpuRenderTargetDescriptor(
+    width: 16,
+    height: 16,
+    format: gtfRgba8,
+    usage: {gtuRenderTarget, gtuSampled, gtuBlitSource},
+    label: "CBSS NOOP mapped target"
+  )
+)
+doAssert host.isGpuResourceLive(mappedRenderTarget)
+
 var layout: bgfx_vertex_layout_t
 discard BGFX.vertexLayoutBegin(addr layout, BGFX_RENDERER_TYPE_NOOP)
 discard BGFX.vertexLayoutAdd(
@@ -272,6 +284,7 @@ doAssert host.releaseGpuResource(frameBufferResource)
 doAssert host.releaseGpuResource(sourceTextureResource)
 doAssert host.releaseGpuResource(textureResource)
 doAssert host.releaseGpuResource(mappedTextureResource)
+doAssert host.releaseGpuResource(mappedRenderTarget)
 doAssert host.releaseGpuResource(dynamicResource)
 doAssert host.releaseGpuResource(indexResource)
 doAssert host.releaseGpuResource(vertexResource)
