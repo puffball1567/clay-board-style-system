@@ -38,6 +38,26 @@ proc textureFlags(): uint64 {.
   importc: "cbss_bgfx_stub_texture_flags", cdecl.}
 proc textureFormat(): uint32 {.
   importc: "cbss_bgfx_stub_texture_format", cdecl.}
+proc vertexBufferCreateCount(): uint32 {.
+  importc: "cbss_bgfx_stub_vertex_buffer_create_count", cdecl.}
+proc vertexBufferDestroyCount(): uint32 {.
+  importc: "cbss_bgfx_stub_vertex_buffer_destroy_count", cdecl.}
+proc dynamicIndexBufferCreateCount(): uint32 {.
+  importc: "cbss_bgfx_stub_dynamic_index_buffer_create_count", cdecl.}
+proc dynamicIndexBufferDestroyCount(): uint32 {.
+  importc: "cbss_bgfx_stub_dynamic_index_buffer_destroy_count", cdecl.}
+proc dynamicIndexBufferUpdateCount(): uint32 {.
+  importc: "cbss_bgfx_stub_dynamic_index_buffer_update_count", cdecl.}
+proc bufferNameCount(): uint32 {.
+  importc: "cbss_bgfx_stub_buffer_name_count", cdecl.}
+proc lastBufferDataBytes(): uint32 {.
+  importc: "cbss_bgfx_stub_last_buffer_data_bytes", cdecl.}
+proc lastBufferUpdateStart(): uint32 {.
+  importc: "cbss_bgfx_stub_last_buffer_update_start", cdecl.}
+proc lastBufferFlags(): uint16 {.
+  importc: "cbss_bgfx_stub_last_buffer_flags", cdecl.}
+proc lastVertexStride(): uint16 {.
+  importc: "cbss_bgfx_stub_last_vertex_stride", cdecl.}
 
 proc config(): GpuHostConfig =
   GpuHostConfig(width: 640, height: 480, presentation: true)
@@ -83,6 +103,56 @@ suite "optional bgfxim adapter":
     check textureHeight() == 2
     check textureFormat() == uint32(BGFX_TEXTURE_FORMAT_RGBA8)
     check textureFlags() == BGFX_TEXTURE_BLIT_DST
+
+    let vertexDescriptor = GpuBufferDescriptor(
+      byteSize: 24,
+      role: gbrVertex,
+      access: gbaStatic,
+      vertexLayout: @[
+        GpuVertexAttribute(
+          semantic: gvsPosition,
+          components: 2,
+          componentType: gvctFloat
+        ),
+        GpuVertexAttribute(
+          semantic: gvsColor0,
+          components: 4,
+          componentType: gvctUint8,
+          normalized: true
+        )
+      ],
+      label: "adapter-vertices"
+    )
+    let vertexBuffer = host.createGpuBuffer(
+      resourceNamespace,
+      vertexDescriptor,
+      newSeq[byte](24)
+    )
+    check host.isGpuResourceLive(vertexBuffer)
+    check vertexBufferCreateCount() == 1
+    check bufferNameCount() == 1
+    check lastBufferDataBytes() == 24
+    check lastVertexStride() == 12
+    check lastBufferFlags() == BGFX_BUFFER_NONE
+
+    let dynamicIndexBuffer = host.createGpuBuffer(
+      resourceNamespace,
+      GpuBufferDescriptor(
+        byteSize: 16,
+        role: gbrIndex,
+        access: gbaDynamic,
+        indexFormat: gifUint32,
+        label: "adapter-indices"
+      )
+    )
+    check host.isGpuResourceLive(dynamicIndexBuffer)
+    check dynamicIndexBufferCreateCount() == 1
+    check lastBufferDataBytes() == 16
+    check lastBufferFlags() == BGFX_BUFFER_INDEX32
+    host.updateGpuBuffer(dynamicIndexBuffer, 4, newSeq[byte](8))
+    check dynamicIndexBufferUpdateCount() == 1
+    check lastBufferUpdateStart() == 1
+    check lastBufferDataBytes() == 8
 
     let token = host.beginGpuFrame()
 
@@ -130,6 +200,10 @@ suite "optional bgfxim adapter":
     expect GpuHostError:
       discard openGpuHost(newBgfxBackend(), ghoBorrowed, config())
 
+    check host.releaseGpuResource(dynamicIndexBuffer)
+    check dynamicIndexBufferDestroyCount() == 1
+    check host.releaseGpuResource(vertexBuffer)
+    check vertexBufferDestroyCount() == 1
     check host.releaseGpuResource(texture)
     check textureDestroyCount() == 1
     host.close()
