@@ -329,7 +329,8 @@ closure for the standard CPU/SDL 2D profile and the target's full profile.
 
 ## Phase 3: bgfx GPU Canvas Capability
 
-Status: `Planned`
+Status: `In progress; GpuHost ownership, budget accounting, and the optional
+bgfxim lifecycle adapter are implemented`
 
 bgfx provides portable graphics and compute primitives across the GPU APIs
 selected for each target. CBSS exposes it as an optional capability of the
@@ -366,6 +367,15 @@ the selected GPU profile. A later wgpu-native or other provider may implement
 the same Canvas composition, input, resource, and lifecycle contract, but it
 is not a prerequisite for this roadmap and must not change the canonical
 renderer for ordinary CBSS UI.
+
+The first implementation slice provides a versioned backend-neutral `GpuHost`,
+owned and borrowed attachment, ordered frame tokens, resize and device-loss
+state, and generation-checked resource namespaces with explicit budgets. The
+`cbssGpuBgfx` adapter uses `bgfxim` for the corresponding bgfx lifecycle and
+rejects a second attached bgfx host. It intentionally does not yet claim GPU
+Canvas rendering: native SDL-window handoff, shader packaging, actual resource
+creation, offscreen render targets, composition, synchronization, restoration,
+and real-GPU conformance remain release gates below.
 
 ### WGSL-Backed Custom Style Painting
 

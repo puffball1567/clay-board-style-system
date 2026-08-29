@@ -37,7 +37,7 @@ import clay_board_style_system/runtime/[accessibility, button, checkbox,
     animation_clock, canvas, component, declarative_keyframes,
     declarative_transition, details, dialog,
     fieldset, focus, form,
-    file_input, frame_scheduler, image,
+    file_input, frame_scheduler, gpu_host, image,
     invalidation, label, link, navigation, navigation_focus,
     navigation_transition, navigation_screen_host, platform_links, progress,
     providers, radio, render_surface, select_box, signal, slider, state_runtime,
@@ -49,6 +49,8 @@ import clay_board_style_system/design_source/model
 import clay_board_style_system/backends/atspi/adapter
 when defined(linux) and defined(cbssLinuxAtspi):
   import clay_board_style_system/backends/atspi/linux_dbus
+when defined(cbssGpuBgfx):
+  import clay_board_style_system/backends/bgfx/adapter as bgfx_adapter
 import clay_board_style_system/craft/[pack, style, style_slots]
 
 export asset_resolver
@@ -104,6 +106,7 @@ export file_input
 export focus
 export form
 export frame_scheduler
+export gpu_host
 export image
 export invalidation
 export label
@@ -140,6 +143,8 @@ export model
 export adapter
 when defined(linux) and defined(cbssLinuxAtspi):
   export linux_dbus
+when defined(cbssGpuBgfx):
+  export bgfx_adapter
 export pack
 export style
 export style_slots
