@@ -97,6 +97,18 @@ var pixels = [
   0x60'u8, 0xa0'u8, 0xe0'u8, 0xff'u8,
   0x80'u8, 0xc0'u8, 0xff'u8, 0xff'u8
 ]
+let mappedTextureResource = host.createGpuTexture(
+  resourceNamespace,
+  GpuTextureDescriptor(
+    width: 2,
+    height: 2,
+    format: gtfRgba8,
+    usage: {gtuSampled},
+    label: "CBSS NOOP mapped texture"
+  ),
+  @pixels
+)
+doAssert host.isGpuResourceLive(mappedTextureResource)
 let textureMemory = BGFX.copy(addr pixels[0], uint32(sizeof(pixels)))
 doAssert not textureMemory.isNil
 let textureFlags = BGFX_TEXTURE_BLIT_DST or BGFX_TEXTURE_READ_BACK
@@ -222,6 +234,7 @@ doAssert host.releaseGpuResource(uniformResource)
 doAssert host.releaseGpuResource(frameBufferResource)
 doAssert host.releaseGpuResource(sourceTextureResource)
 doAssert host.releaseGpuResource(textureResource)
+doAssert host.releaseGpuResource(mappedTextureResource)
 doAssert host.releaseGpuResource(dynamicResource)
 doAssert host.releaseGpuResource(indexResource)
 doAssert host.releaseGpuResource(vertexResource)

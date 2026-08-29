@@ -1,8 +1,9 @@
-import std/[hashes, tables]
+import std/[algorithm, hashes, tables]
 
 const
-  gpuHostApiVersion* = 1'u32
+  gpuHostApiVersion* = 2'u32
   maxGpuNamespaceNameBytes* = 128
+  maxGpuResourceLabelBytes* = 128
 
 type
   GpuHostError* = object of CatchableError
@@ -38,8 +39,28 @@ type
     grkShader,
     grkPipeline
 
+  GpuTextureFormat* = enum
+    gtfR8,
+    gtfRgba8,
+    gtfBgra8
+
+  GpuTextureUsage* = enum
+    gtuSampled,
+    gtuRenderTarget,
+    gtuStorage,
+    gtuBlitSource,
+    gtuBlitDestination,
+    gtuReadback
+
   GpuNamespaceId* = distinct uint64
   GpuResourceId* = distinct uint64
+  GpuBackendResourceId* = distinct uint64
+
+  GpuTextureDescriptor* = object
+    width*, height*: uint32
+    format*: GpuTextureFormat
+    usage*: set[GpuTextureUsage]
+    label*: string
 
   GpuHostConfig* = object
     width*, height*: uint32
@@ -105,6 +126,19 @@ type
     context: GpuBackendContext
   ) {.nimcall, raises: [].}
 
+  GpuBackendCreateTextureProc* = proc(
+    context: GpuBackendContext;
+    descriptor: GpuTextureDescriptor;
+    initialData: seq[byte];
+    resource: var GpuBackendResourceId
+  ): GpuBackendStatus {.nimcall, raises: [].}
+
+  GpuBackendDestroyResourceProc* = proc(
+    context: GpuBackendContext;
+    resource: GpuBackendResourceId;
+    kind: GpuResourceKind
+  ) {.nimcall, raises: [].}
+
   GpuBackendVTable* = object
     apiVersion*: uint32
     provider*: GpuProviderKind
@@ -115,6 +149,8 @@ type
     endFrame*: GpuBackendFrameProc
     resize*: GpuBackendResizeProc
     restore*: GpuBackendRestoreProc
+    createTexture*: GpuBackendCreateTextureProc
+    destroyResource*: GpuBackendDestroyResourceProc
     closeOwned*: GpuBackendCloseProc
     detachBorrowed*: GpuBackendCloseProc
 
@@ -122,6 +158,7 @@ type
     kind: GpuResourceKind
     bytes: uint64
     generation: uint64
+    backendResource: GpuBackendResourceId
 
   GpuNamespaceEntry = object
     name: string
@@ -149,6 +186,8 @@ proc hash*(id: GpuResourceId): Hash {.borrow.}
 
 proc namespaceIdValue*(id: GpuNamespaceId): uint64 {.inline.} = uint64(id)
 proc resourceIdValue*(id: GpuResourceId): uint64 {.inline.} = uint64(id)
+proc backendResourceIdValue*(id: GpuBackendResourceId): uint64 {.inline.} =
+  uint64(id)
 
 proc statusMessage(status: GpuBackendStatus): string =
   case status
@@ -243,11 +282,36 @@ proc generation*(host: GpuHost): uint64 =
 proc isReady*(host: GpuHost): bool =
   not host.isNil and host.stateValue == ghsReady
 
+proc destroyNamespaceResources(host: GpuHost; id: GpuNamespaceId) =
+  if id notin host.namespaces:
+    return
+  var resourceIds: seq[GpuResourceId]
+  for resourceId in host.namespaces[id].resources.keys:
+    resourceIds.add resourceId
+  resourceIds.sort(proc(a, b: GpuResourceId): int =
+    cmp(resourceIdValue(b), resourceIdValue(a)))
+  if not host.backend.destroyResource.isNil:
+    for resourceId in resourceIds:
+      let entry = host.namespaces[id].resources[resourceId]
+      if entry.backendResource.backendResourceIdValue != 0:
+        host.backend.destroyResource(
+          host.backend.context,
+          entry.backendResource,
+          entry.kind
+        )
+
 proc close*(host: GpuHost) =
   if host.isNil or host.stateValue == ghsClosed:
     return
 
   host.activeFrame = false
+  var namespaceIds: seq[GpuNamespaceId]
+  for id in host.namespaces.keys:
+    namespaceIds.add id
+  namespaceIds.sort(proc(a, b: GpuNamespaceId): int =
+    cmp(namespaceIdValue(b), namespaceIdValue(a)))
+  for id in namespaceIds:
+    host.destroyNamespaceResources(id)
   host.namespaces.clear()
   case host.ownershipValue
   of ghoOwned:
@@ -406,11 +470,55 @@ proc closeGpuNamespace*(host: GpuHost; id: GpuNamespaceId): bool =
   host.requireHost()
   if id notin host.namespaces:
     return false
+  if host.activeFrame:
+    raise newException(
+      GpuHostError,
+      "GPU namespace cannot close during an active frame"
+    )
+  host.destroyNamespaceResources(id)
   host.namespaces.del(id)
   true
 
 proc fits(current, addition, limit: uint64): bool {.inline.} =
   current <= limit and addition <= limit - current
+
+proc ensureResourceCapacity(
+    entry: GpuNamespaceEntry;
+    bytes: uint64
+) =
+  if entry.usage.resourceCount >= entry.budget.maxResources:
+    raise newException(GpuHostError, "GPU namespace resource count exceeded")
+  if not fits(entry.usage.persistentBytes, bytes, entry.budget.persistentBytes):
+    raise newException(GpuHostError, "GPU namespace persistent budget exceeded")
+  if entry.nextResourceId == 0:
+    raise newException(GpuHostError, "GPU resource identifier space exhausted")
+
+proc insertGpuResource(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    kind: GpuResourceKind;
+    bytes: uint64;
+    backendResource = GpuBackendResourceId(0)
+): GpuResourceHandle =
+  var entry = host.namespaces[namespace]
+  entry.ensureResourceCapacity(bytes)
+  let resource = GpuResourceId(entry.nextResourceId)
+  inc entry.nextResourceId
+  entry.resources[resource] = GpuResourceEntry(
+    kind: kind,
+    bytes: bytes,
+    generation: host.generationValue,
+    backendResource: backendResource
+  )
+  entry.usage.persistentBytes += bytes
+  inc entry.usage.resourceCount
+  host.namespaces[namespace] = entry
+  GpuResourceHandle(
+    namespace: namespace,
+    resource: resource,
+    generation: host.generationValue,
+    kind: kind
+  )
 
 proc reserveGpuResource*(
     host: GpuHost;
@@ -424,29 +532,72 @@ proc reserveGpuResource*(
   if namespace notin host.namespaces:
     raise newException(GpuHostError, "unknown GPU namespace")
 
-  var entry = host.namespaces[namespace]
-  if entry.usage.resourceCount >= entry.budget.maxResources:
-    raise newException(GpuHostError, "GPU namespace resource count exceeded")
-  if not fits(entry.usage.persistentBytes, bytes, entry.budget.persistentBytes):
-    raise newException(GpuHostError, "GPU namespace persistent budget exceeded")
-  if entry.nextResourceId == 0:
-    raise newException(GpuHostError, "GPU resource identifier space exhausted")
+  host.insertGpuResource(namespace, kind, bytes)
 
-  let resource = GpuResourceId(entry.nextResourceId)
-  inc entry.nextResourceId
-  entry.resources[resource] = GpuResourceEntry(
-    kind: kind,
-    bytes: bytes,
-    generation: host.generationValue
+proc textureBytes(descriptor: GpuTextureDescriptor): uint64 =
+  let bytesPerPixel =
+    case descriptor.format
+    of gtfR8: 1'u64
+    of gtfRgba8, gtfBgra8: 4'u64
+  let width = uint64(descriptor.width)
+  let height = uint64(descriptor.height)
+  if width != 0 and height > high(uint64) div width:
+    raise newException(GpuHostError, "GPU texture dimensions overflow")
+  let pixels = width * height
+  if pixels != 0 and bytesPerPixel > high(uint64) div pixels:
+    raise newException(GpuHostError, "GPU texture byte size overflow")
+  pixels * bytesPerPixel
+
+proc createGpuTexture*(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    descriptor: GpuTextureDescriptor;
+    initialData: seq[byte] = @[]
+): GpuResourceHandle =
+  host.requireHost()
+  if host.stateValue != ghsReady:
+    raise newException(GpuHostError, "GPU host is not ready")
+  if host.activeFrame:
+    raise newException(
+      GpuHostError,
+      "GPU texture creation is not allowed during an active frame"
+    )
+  if namespace notin host.namespaces:
+    raise newException(GpuHostError, "unknown GPU namespace")
+  if descriptor.width == 0 or descriptor.height == 0:
+    raise newException(GpuHostError, "GPU texture dimensions must be non-zero")
+  if host.infoValue.maxTextureSize != 0 and
+      (descriptor.width > host.infoValue.maxTextureSize or
+       descriptor.height > host.infoValue.maxTextureSize):
+    raise newException(GpuHostError, "GPU texture exceeds backend limits")
+  if descriptor.usage == {}:
+    raise newException(GpuHostError, "GPU texture usage cannot be empty")
+  if descriptor.label.len > maxGpuResourceLabelBytes:
+    raise newException(GpuHostError, "GPU resource label is too long")
+  let bytes = descriptor.textureBytes()
+  if initialData.len != 0 and uint64(initialData.len) != bytes:
+    raise newException(GpuHostError, "GPU texture initial data size is invalid")
+  host.namespaces[namespace].ensureResourceCapacity(bytes)
+  if host.backend.createTexture.isNil or host.backend.destroyResource.isNil:
+    raise newException(GpuHostError, "GPU backend does not support textures")
+
+  var backendResource: GpuBackendResourceId
+  let status = host.backend.createTexture(
+    host.backend.context,
+    descriptor,
+    initialData,
+    backendResource
   )
-  entry.usage.persistentBytes += bytes
-  inc entry.usage.resourceCount
-  host.namespaces[namespace] = entry
-  GpuResourceHandle(
-    namespace: namespace,
-    resource: resource,
-    generation: host.generationValue,
-    kind: kind
+  if status == gbsDeviceLost:
+    host.enterDeviceLost()
+  raiseForStatus(status)
+  if backendResource.backendResourceIdValue == 0:
+    raise newException(GpuHostError, "GPU backend returned an invalid resource")
+  host.insertGpuResource(
+    namespace,
+    grkTexture,
+    bytes,
+    backendResource
   )
 
 proc isGpuResourceLive*(host: GpuHost; handle: GpuResourceHandle): bool =
@@ -464,8 +615,20 @@ proc releaseGpuResource*(host: GpuHost; handle: GpuResourceHandle): bool =
   host.requireHost()
   if not host.isGpuResourceLive(handle):
     return false
+  if host.activeFrame:
+    raise newException(
+      GpuHostError,
+      "GPU resource cannot be released during an active frame"
+    )
   var namespace = host.namespaces[handle.namespace]
   let resource = namespace.resources[handle.resource]
+  if resource.backendResource.backendResourceIdValue != 0 and
+      not host.backend.destroyResource.isNil:
+    host.backend.destroyResource(
+      host.backend.context,
+      resource.backendResource,
+      resource.kind
+    )
   namespace.usage.persistentBytes -= resource.bytes
   dec namespace.usage.resourceCount
   namespace.resources.del(handle.resource)

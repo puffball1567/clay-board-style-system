@@ -22,6 +22,22 @@ proc programDestroyCount(): uint32 {.
   importc: "cbss_bgfx_stub_program_destroy_count", cdecl.}
 proc shaderDestroyCount(): uint32 {.
   importc: "cbss_bgfx_stub_shader_destroy_count", cdecl.}
+proc textureCreateCount(): uint32 {.
+  importc: "cbss_bgfx_stub_texture_create_count", cdecl.}
+proc textureDestroyCount(): uint32 {.
+  importc: "cbss_bgfx_stub_texture_destroy_count", cdecl.}
+proc textureNameCount(): uint32 {.
+  importc: "cbss_bgfx_stub_texture_name_count", cdecl.}
+proc textureDataBytes(): uint32 {.
+  importc: "cbss_bgfx_stub_texture_data_bytes", cdecl.}
+proc textureWidth(): uint16 {.
+  importc: "cbss_bgfx_stub_texture_width", cdecl.}
+proc textureHeight(): uint16 {.
+  importc: "cbss_bgfx_stub_texture_height", cdecl.}
+proc textureFlags(): uint64 {.
+  importc: "cbss_bgfx_stub_texture_flags", cdecl.}
+proc textureFormat(): uint32 {.
+  importc: "cbss_bgfx_stub_texture_format", cdecl.}
 
 proc config(): GpuHostConfig =
   GpuHostConfig(width: 640, height: 480, presentation: true)
@@ -42,6 +58,31 @@ suite "optional bgfxim adapter":
     check host.backendInfo.maxTextureSize == 16384
     check stubWidth() == 640
     check stubHeight() == 480
+
+    let resourceNamespace = host.createGpuNamespace(
+      "adapter-textures",
+      GpuResourceBudget(persistentBytes: 1024, maxResources: 4)
+    )
+    let pixels = newSeq[byte](4 * 2 * 4)
+    let texture = host.createGpuTexture(
+      resourceNamespace,
+      GpuTextureDescriptor(
+        width: 4,
+        height: 2,
+        format: gtfRgba8,
+        usage: {gtuSampled, gtuBlitDestination},
+        label: "adapter-texture"
+      ),
+      pixels
+    )
+    check host.isGpuResourceLive(texture)
+    check textureCreateCount() == 1
+    check textureNameCount() == 1
+    check textureDataBytes() == uint32(pixels.len)
+    check textureWidth() == 4
+    check textureHeight() == 2
+    check textureFormat() == uint32(BGFX_TEXTURE_FORMAT_RGBA8)
+    check textureFlags() == BGFX_TEXTURE_BLIT_DST
 
     let token = host.beginGpuFrame()
 
@@ -89,6 +130,8 @@ suite "optional bgfxim adapter":
     expect GpuHostError:
       discard openGpuHost(newBgfxBackend(), ghoBorrowed, config())
 
+    check host.releaseGpuResource(texture)
+    check textureDestroyCount() == 1
     host.close()
     check shutdownCount() == 1
 

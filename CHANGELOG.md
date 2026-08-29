@@ -26,7 +26,14 @@ release. Before 1.0, minor releases may contain public API changes.
   exercises native-window attachment, dynamic vertex uploads, indexed graphics
   submission, presentation, and resize. The adapter now preserves bgfx's valid
   constructor defaults unless an option explicitly overrides them, preventing
-  invalid color/depth/back-buffer settings from reaching real renderers.
+  invalid color/depth/back-buffer settings from reaching real renderers. The
+  first backend-mapped resource API creates validated R8/RGBA8/BGRA8 textures,
+  enforces namespace byte/count budgets before allocation, copies optional
+  initial pixels, and deterministically destroys textures on release,
+  namespace teardown, or host teardown. Device loss invalidates mapped handles
+  without attempting to destroy stale backend objects. ARC/ORC tests cover
+  normal, limit, failure, active-frame, teardown-order, and device-loss paths
+  against both deterministic C fixtures and the real bgfx NOOP runtime.
 
 - Added retained RGBA8 RasterSurface support for drawing engines, progressive
   decoders, and generated imagery. Bounds-checked stride-aware updates are
