@@ -278,9 +278,57 @@ storage images require `gtuStorage`. Binding stage collisions, duplicate
 uniforms, stale or foreign handles, non-finite values, unsupported mip levels,
 and fixed per-command binding limits fail before pass setup or dispatch.
 
-The current contract deliberately omits storage-buffer bindings, copies, and
-readback commands. Those operations need the same typed namespace and budget
-checks and are added before GPU Canvas is declared complete.
+The current contract deliberately omits storage-buffer bindings. They require
+the same typed namespace, dependency, and budget checks before GPU Canvas is
+declared complete.
+
+## Texture Transfer And Readback
+
+GPU output can cross the portable CPU composition boundary without exposing a
+backend handle. A render target or texture with `gtuBlitSource` is copied into
+a distinct readback texture, then read asynchronously:
+
+```nim
+let readbackTexture = host.createGpuTexture(
+  resources,
+  GpuTextureDescriptor(
+    width: 640,
+    height: 360,
+    format: gtfRgba8,
+    usage: {gtuBlitDestination, gtuReadback},
+    label: "panel-readback"
+  )
+)
+
+let frame = host.beginGpuFrame()
+host.copyGpuTexture(resources, panelLayer, readbackTexture)
+let pending = host.requestGpuReadback(resources, readbackTexture)
+host.endGpuFrame(frame)
+
+var pixels: GpuReadbackData
+if host.tryTakeGpuReadback(pending, pixels):
+  discard pixels # Publish through RasterSurface on the UI thread.
+```
+
+`copyGpuTexture` also accepts a checked source/destination region. Source and
+destination formats must match, coordinates use the portable 16-bit baseline,
+and copies consume one reserved view and one work unit only after the adapter
+accepts the command.
+
+Readback is never a synchronous pointer-event operation. The backend writes
+into host-owned storage retained until `tryTakeGpuReadback` succeeds. Polling
+returns `pending`, `ready`, or `invalid`; taking a ready result transfers its
+pixel sequence to the caller exactly once. A readback texture cannot be
+released, its namespace cannot close, and a borrowed host cannot detach while
+a request still owns that texture. Device loss invalidates all requests.
+
+Readback textures intentionally accept exactly
+`{gtuBlitDestination, gtuReadback}` and no initial data. They are CPU transfer
+destinations, not sampled or storage textures. Per-frame readback-byte and work
+budgets, plus a fixed per-namespace pending-request limit, bound retained CPU
+memory and queued work. `GpuReadbackData.format` remains explicit; the next
+Canvas composition layer is responsible for any BGRA-to-RGBA conversion before
+publishing to `RasterSurface`.
 
 ## Optional bgfx Adapter
 
@@ -316,7 +364,8 @@ The current adapter covers initialization or borrowed attachment, capability
 reporting, frame completion, resize, mapped Texture, Buffer, RenderTarget,
 Shader, Uniform, Sampler, Graphics/Compute Pipeline creation, bounded
 graphics/compute submission with sampled textures and storage images, and
-deterministic teardown under both ARC and ORC. Its
+typed texture copies and asynchronous readback, and deterministic teardown
+under both ARC and ORC. Its
 maintained NOOP integration also executes real bgfx static and dynamic buffers,
 aligned partial updates, textures, blit, readback, framebuffer, uniform,
 encoder, view, frame, and destruction calls inside a CBSS-owned host. The
@@ -337,13 +386,13 @@ CBSS_BIMG_PATH=/path/to/bimg \
 nimble runBgfxHostDemo
 ```
 
-GPU Canvas composition, storage-buffer bindings, copies/readback, a public
-native-window helper, compute-output verification, and device restoration are
-still required before the GPU profile is release-complete.
+GPU Canvas composition, storage-buffer bindings, a public native-window helper,
+real-renderer output verification, and device restoration are still required
+before the GPU profile is release-complete.
 
-The NOOP fixture validates that those native calls coexist with host ownership
-and budget accounting. Texture, Buffer, the first owned RenderTarget, Shader,
-Uniform, Sampler, Pipeline, graphics submission, and compute dispatch are
-mapped through typed CBSS contracts. The fixture's remaining direct copy and
-readback calls exercise backend capability that does not yet have a final
-public API.
+The NOOP fixture validates that native resource calls coexist with host
+ownership and budget accounting. Because the NOOP renderer does not advertise
+portable blit or readback capabilities, public transfer calls fail closed
+there. Deterministic C fixtures advertise those capabilities and cover the
+complete typed copy/readback path under ARC and ORC; visible real-renderer
+qualification remains a GPU Canvas release gate.

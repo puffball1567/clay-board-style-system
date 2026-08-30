@@ -333,7 +333,8 @@ Status: `In progress; GpuHost ownership, budget accounting, mapped Texture,
 Buffer, owned color RenderTarget, precompiled Shader, typed Uniform and
 Sampler resources, sampled-texture and compute storage-image bindings,
 dependency-safe Graphics and Compute Pipeline resources, bounded Draw/Dispatch
-submission, and the optional bgfxim lifecycle adapter are implemented`
+submission, typed texture copy, asynchronous readback, and the optional bgfxim
+lifecycle adapter are implemented`
 
 bgfx provides portable graphics and compute primitives across the GPU APIs
 selected for each target. CBSS exposes it as an optional capability of the
@@ -410,10 +411,16 @@ work budget, and a host-reserved view-ID range before reaching bgfx. Batched
 draw commands share one ordered view and `endGpuFrame` remains the only Present
 boundary. View target, viewport, scissor, and clear configuration is performed
 once per graphics pass rather than once per draw.
-It intentionally does not yet claim GPU Canvas rendering: public native
-SDL-window handoff, shader packaging, storage-buffer bindings, copies/readback,
-Canvas composition, synchronization, restoration, and real-GPU conformance
-remain release gates below.
+Render-target and texture output can now be copied into a dedicated CPU-only
+readback texture and collected through a bounded asynchronous handle without
+exposing bgfx resources. The host retains destination memory and the source
+dependency until the caller takes the completed result; namespace closure,
+borrowed-host detach, device loss, and frame budgets have explicit behavior.
+This establishes the portable `GPU -> RasterSurface` transfer boundary used by
+the first GPU Canvas path. It intentionally does not yet claim GPU Canvas
+rendering: public native SDL-window handoff, shader packaging, storage-buffer
+bindings, Canvas composition, restoration, and real-GPU conformance remain
+release gates below.
 
 ### WGSL-Backed Custom Style Painting
 
