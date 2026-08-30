@@ -331,8 +331,8 @@ closure for the standard CPU/SDL 2D profile and the target's full profile.
 
 Status: `In progress; GpuHost ownership, budget accounting, mapped Texture,
 Buffer, owned color RenderTarget, precompiled Shader, dependency-safe Graphics
-and Compute Pipeline resources, and the optional bgfxim lifecycle adapter are
-implemented`
+and Compute Pipeline resources, bounded Draw/Dispatch submission, and the
+optional bgfxim lifecycle adapter are implemented`
 
 bgfx provides portable graphics and compute primitives across the GPU APIs
 selected for each target. CBSS exposes it as an optional capability of the
@@ -403,8 +403,14 @@ Buffer, owned single-color RenderTarget, precompiled Shader, and typed Graphics
 and Compute Pipeline descriptors now map to real bgfx resources with bounded
 updates and deterministic destruction. Pipelines retain same-namespace,
 stage-correct shader dependencies and prevent early stage destruction.
+Typed graphics passes and compute dispatches validate target bounds, scissors,
+color formats, layouts, buffer ranges, pipeline kind, namespace, generation,
+work budget, and a host-reserved view-ID range before reaching bgfx. Batched
+draw commands share one ordered view and `endGpuFrame` remains the only Present
+boundary. View target, viewport, scissor, and clear configuration is performed
+once per graphics pass rather than once per draw.
 It intentionally does not yet claim GPU Canvas rendering: public native
-SDL-window handoff, shader packaging, target submission, Canvas
+SDL-window handoff, shader packaging, texture/uniform/storage bindings, Canvas
 composition, synchronization, restoration, and real-GPU conformance remain
 release gates below.
 

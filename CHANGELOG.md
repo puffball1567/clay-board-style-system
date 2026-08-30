@@ -45,6 +45,13 @@ release. Before 1.0, minor releases may contain public API changes.
   never interpreted as a runtime source string. ARC/ORC tests cover
   normal, dependency, limit, failure, active-frame, teardown-order, and device-loss paths
   against both deterministic C fixtures and the real bgfx NOOP runtime.
+  Typed graphics passes and compute dispatches submit retained resources
+  without exposing bgfx handles. The host validates render-target, viewport,
+  scissor, clear color, pipeline kind, vertex layout, buffer ranges, compute
+  groups, namespace generation, work budget, and a configurable per-frame
+  view-ID range before adapter work. Batched draws share one ordered view and
+  configure their target, viewport, scissor, and clear state once per pass;
+  frame completion remains the sole Present boundary.
 
 - Added retained RGBA8 RasterSurface support for drawing engines, progressive
   decoders, and generated imagery. Bounds-checked stride-aware updates are

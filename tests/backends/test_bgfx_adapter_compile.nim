@@ -18,6 +18,21 @@ proc stubWidth(): uint32 {.importc: "cbss_bgfx_stub_width", cdecl.}
 proc stubHeight(): uint32 {.importc: "cbss_bgfx_stub_height", cdecl.}
 proc submitCount(): uint32 {.importc: "cbss_bgfx_stub_submit_count", cdecl.}
 proc dispatchCount(): uint32 {.importc: "cbss_bgfx_stub_dispatch_count", cdecl.}
+proc viewRectCount(): uint32 {.
+  importc: "cbss_bgfx_stub_view_rect_count", cdecl.}
+proc viewScissorCount(): uint32 {.
+  importc: "cbss_bgfx_stub_view_scissor_count", cdecl.}
+proc viewClearCount(): uint32 {.
+  importc: "cbss_bgfx_stub_view_clear_count", cdecl.}
+proc viewFrameBufferCount(): uint32 {.
+  importc: "cbss_bgfx_stub_view_frame_buffer_count", cdecl.}
+proc vertexBindCount(): uint32 {.
+  importc: "cbss_bgfx_stub_vertex_bind_count", cdecl.}
+proc indexBindCount(): uint32 {.
+  importc: "cbss_bgfx_stub_index_bind_count", cdecl.}
+proc stateCount(): uint32 {.importc: "cbss_bgfx_stub_state_count", cdecl.}
+proc lastViewId(): uint16 {.importc: "cbss_bgfx_stub_last_view_id", cdecl.}
+proc lastState(): uint64 {.importc: "cbss_bgfx_stub_last_state", cdecl.}
 proc programDestroyCount(): uint32 {.
   importc: "cbss_bgfx_stub_program_destroy_count", cdecl.}
 proc graphicsProgramCreateCount(): uint32 {.
@@ -52,6 +67,14 @@ proc vertexBufferCreateCount(): uint32 {.
   importc: "cbss_bgfx_stub_vertex_buffer_create_count", cdecl.}
 proc vertexBufferDestroyCount(): uint32 {.
   importc: "cbss_bgfx_stub_vertex_buffer_destroy_count", cdecl.}
+proc indexBufferCreateCount(): uint32 {.
+  importc: "cbss_bgfx_stub_index_buffer_create_count", cdecl.}
+proc indexBufferDestroyCount(): uint32 {.
+  importc: "cbss_bgfx_stub_index_buffer_destroy_count", cdecl.}
+proc dynamicVertexBufferCreateCount(): uint32 {.
+  importc: "cbss_bgfx_stub_dynamic_vertex_buffer_create_count", cdecl.}
+proc dynamicVertexBufferDestroyCount(): uint32 {.
+  importc: "cbss_bgfx_stub_dynamic_vertex_buffer_destroy_count", cdecl.}
 proc dynamicIndexBufferCreateCount(): uint32 {.
   importc: "cbss_bgfx_stub_dynamic_index_buffer_create_count", cdecl.}
 proc dynamicIndexBufferDestroyCount(): uint32 {.
@@ -105,7 +128,11 @@ suite "optional bgfxim adapter":
 
     let resourceNamespace = host.createGpuNamespace(
       "adapter-textures",
-      GpuResourceBudget(persistentBytes: 1024, maxResources: 10)
+      GpuResourceBudget(
+        persistentBytes: 1024,
+        workUnitsPerFrame: 4,
+        maxResources: 12
+      )
     )
     let pixels = newSeq[byte](4 * 2 * 4)
     let texture = host.createGpuTexture(
@@ -158,6 +185,30 @@ suite "optional bgfxim adapter":
     check lastBufferDataBytes() == 24
     check lastVertexStride() == 12
     check lastBufferFlags() == BGFX_BUFFER_NONE
+
+    var dynamicVertexDescriptor = vertexDescriptor
+    dynamicVertexDescriptor.access = gbaDynamic
+    dynamicVertexDescriptor.label = "adapter-dynamic-vertices"
+    let dynamicVertexBuffer = host.createGpuBuffer(
+      resourceNamespace,
+      dynamicVertexDescriptor
+    )
+    check host.isGpuResourceLive(dynamicVertexBuffer)
+    check dynamicVertexBufferCreateCount() == 1
+
+    let indexBuffer = host.createGpuBuffer(
+      resourceNamespace,
+      GpuBufferDescriptor(
+        byteSize: 12,
+        role: gbrIndex,
+        access: gbaStatic,
+        indexFormat: gifUint16,
+        label: "adapter-static-indices"
+      ),
+      newSeq[byte](12)
+    )
+    check host.isGpuResourceLive(indexBuffer)
+    check indexBufferCreateCount() == 1
 
     let dynamicIndexBuffer = host.createGpuBuffer(
       resourceNamespace,
@@ -243,50 +294,70 @@ suite "optional bgfxim adapter":
     check computeProgramCreateCount() == 1
 
     let token = host.beginGpuFrame()
-
-    var shaderByte = 0x42'u8
-    var shaderMemory = bgfx_memory_t(
-      data: addr shaderByte,
-      size: uint32(sizeof(shaderByte))
+    host.submitGpuDraws(
+      resourceNamespace,
+      GpuGraphicsPassDescriptor(
+        viewport: GpuViewport(width: 16, height: 8),
+        scissorEnabled: true,
+        scissor: GpuViewport(x: 1, y: 1, width: 14, height: 6),
+        clearColorEnabled: true,
+        clearColor: GpuClearColor(
+          red: 0.25,
+          green: 0.5,
+          blue: 0.75,
+          alpha: 1
+        ),
+        renderTarget: renderTarget
+      ),
+      [
+        GpuDrawCommand(
+          pipeline: mappedGraphicsPipeline,
+          vertexBuffer: vertexBuffer,
+          vertexCount: 2,
+          indexBuffer: dynamicIndexBuffer,
+          indexCount: 4
+        ),
+        GpuDrawCommand(
+          pipeline: mappedGraphicsPipeline,
+          vertexBuffer: dynamicVertexBuffer,
+          vertexCount: 2,
+          indexBuffer: indexBuffer,
+          indexCount: 4
+        )
+      ]
     )
-    let vertexShader = BGFX.createShader(addr shaderMemory)
-    let fragmentShader = BGFX.createShader(addr shaderMemory)
-    let computeShader = BGFX.createShader(addr shaderMemory)
-    check BGFX_HANDLE_IS_VALID(vertexShader)
-    check BGFX_HANDLE_IS_VALID(fragmentShader)
-    check BGFX_HANDLE_IS_VALID(computeShader)
-
-    let graphicsProgram = BGFX.createProgram(
-      vertexShader,
-      fragmentShader,
-      false
+    host.dispatchGpuCompute(
+      resourceNamespace,
+      GpuComputeCommand(
+        pipeline: mappedComputePipeline,
+        groupsX: 2,
+        groupsY: 3,
+        groupsZ: 4
+      )
     )
-    let computeProgram = BGFX.createComputeProgram(computeShader, false)
-    check BGFX_HANDLE_IS_VALID(graphicsProgram)
-    check BGFX_HANDLE_IS_VALID(computeProgram)
-    check graphicsProgramCreateCount() == 2
-    check computeProgramCreateCount() == 2
-
-    BGFX.submit(0, graphicsProgram, 0, BGFX_DISCARD_ALL)
-    BGFX.dispatch(1, computeProgram, 2, 3, 4, BGFX_DISCARD_ALL)
     host.endGpuFrame(token)
     check frameCount() == 1
-    check submitCount() == 1
+    check submitCount() == 2
     check dispatchCount() == 1
-
-    BGFX.destroyProgram(computeProgram)
-    BGFX.destroyProgram(graphicsProgram)
-    BGFX.destroyShader(computeShader)
-    BGFX.destroyShader(fragmentShader)
-    BGFX.destroyShader(vertexShader)
+    check viewRectCount() == 1
+    check viewScissorCount() == 1
+    check viewClearCount() == 1
+    check viewFrameBufferCount() == 1
+    check vertexBindCount() == 2
+    check indexBindCount() == 2
+    check stateCount() == 2
+    check lastViewId() == 0
+    check (lastState() and BGFX_STATE_WRITE_RGB) == BGFX_STATE_WRITE_RGB
+    check (lastState() and BGFX_STATE_WRITE_A) == BGFX_STATE_WRITE_A
+    check (lastState() and BGFX_STATE_CULL_CW) == BGFX_STATE_CULL_CW
 
     check host.releaseGpuResource(mappedComputePipeline)
     check host.releaseGpuResource(mappedGraphicsPipeline)
-    check programDestroyCount() == 4
+    check programDestroyCount() == 2
     check host.releaseGpuResource(mappedComputeShader)
     check host.releaseGpuResource(mappedVertexShader)
     check host.releaseGpuResource(mappedFragmentShader)
-    check shaderDestroyCount() == 6
+    check shaderDestroyCount() == 3
 
     host.resizeGpuHost(800, 600)
     check resetCount() == 1
@@ -298,6 +369,10 @@ suite "optional bgfxim adapter":
 
     check host.releaseGpuResource(renderTarget)
     check frameBufferDestroyCount() == 1
+    check host.releaseGpuResource(indexBuffer)
+    check indexBufferDestroyCount() == 1
+    check host.releaseGpuResource(dynamicVertexBuffer)
+    check dynamicVertexBufferDestroyCount() == 1
     check host.releaseGpuResource(dynamicIndexBuffer)
     check dynamicIndexBufferDestroyCount() == 1
     check host.releaseGpuResource(vertexBuffer)

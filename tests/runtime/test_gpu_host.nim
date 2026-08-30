@@ -15,6 +15,9 @@ type MockGpuContext = ref object of GpuBackendContext
   createShaderStatus: GpuBackendStatus
   createGraphicsPipelineStatus: GpuBackendStatus
   createComputePipelineStatus: GpuBackendStatus
+  beginGraphicsPassStatus: GpuBackendStatus
+  submitDrawStatus: GpuBackendStatus
+  dispatchStatus: GpuBackendStatus
   ownedOpens: int
   borrowedAttaches: int
   begins: int
@@ -30,6 +33,9 @@ type MockGpuContext = ref object of GpuBackendContext
   shaderCreates: int
   graphicsPipelineCreates: int
   computePipelineCreates: int
+  graphicsPassBegins: int
+  drawSubmits: int
+  computeDispatches: int
   resourceDestroys: int
   nextBackendResource: uint64
   lastTexture: GpuTextureDescriptor
@@ -44,6 +50,11 @@ type MockGpuContext = ref object of GpuBackendContext
   lastGraphicsPipeline: GpuGraphicsPipelineDescriptor
   lastComputePipeline: GpuComputePipelineDescriptor
   lastPipelineShaders: seq[uint64]
+  lastViewId: uint16
+  lastGraphicsPass: GpuGraphicsPassDescriptor
+  lastDrawCommand: GpuDrawCommand
+  lastComputeCommand: GpuComputeCommand
+  lastSubmissionResources: seq[uint64]
   destroyedResources: seq[uint64]
   width, height: uint32
 
@@ -230,6 +241,54 @@ proc createComputePipeline(
     inc state.nextBackendResource
   state.createComputePipelineStatus
 
+proc beginGraphicsPass(
+    context: GpuBackendContext;
+    viewId: uint16;
+    pass: GpuGraphicsPassDescriptor;
+    renderTarget: GpuBackendResourceId
+): GpuBackendStatus {.raises: [].} =
+  let state = context.mock
+  inc state.graphicsPassBegins
+  state.lastViewId = viewId
+  state.lastGraphicsPass = pass
+  state.lastSubmissionResources = @[renderTarget.backendResourceIdValue()]
+  state.beginGraphicsPassStatus
+
+proc submitDraw(
+    context: GpuBackendContext;
+    viewId: uint16;
+    pipeline, vertexBuffer, indexBuffer: GpuBackendResourceId;
+    pipelineDescriptor: GpuGraphicsPipelineDescriptor;
+    vertexDescriptor, indexDescriptor: GpuBufferDescriptor;
+    command: GpuDrawCommand
+): GpuBackendStatus {.raises: [].} =
+  discard pipelineDescriptor
+  discard vertexDescriptor
+  discard indexDescriptor
+  let state = context.mock
+  inc state.drawSubmits
+  state.lastViewId = viewId
+  state.lastDrawCommand = command
+  state.lastSubmissionResources = @[
+    pipeline.backendResourceIdValue(),
+    vertexBuffer.backendResourceIdValue(),
+    indexBuffer.backendResourceIdValue()
+  ]
+  state.submitDrawStatus
+
+proc dispatch(
+    context: GpuBackendContext;
+    viewId: uint16;
+    pipeline: GpuBackendResourceId;
+    command: GpuComputeCommand
+): GpuBackendStatus {.raises: [].} =
+  let state = context.mock
+  inc state.computeDispatches
+  state.lastViewId = viewId
+  state.lastComputeCommand = command
+  state.lastSubmissionResources = @[pipeline.backendResourceIdValue()]
+  state.dispatchStatus
+
 proc destroyResource(
     context: GpuBackendContext;
     resource: GpuBackendResourceId;
@@ -258,6 +317,9 @@ proc backend(state: MockGpuContext): GpuBackendVTable =
     createShader: createShader,
     createGraphicsPipeline: createGraphicsPipeline,
     createComputePipeline: createComputePipeline,
+    beginGraphicsPass: beginGraphicsPass,
+    submitDraw: submitDraw,
+    dispatch: dispatch,
     destroyResource: destroyResource,
     closeOwned: closeOwned,
     detachBorrowed: detachBorrowed
@@ -277,6 +339,9 @@ proc newContext(): MockGpuContext =
     createShaderStatus: gbsOk,
     createGraphicsPipelineStatus: gbsOk,
     createComputePipelineStatus: gbsOk,
+    beginGraphicsPassStatus: gbsOk,
+    submitDrawStatus: gbsOk,
+    dispatchStatus: gbsOk,
     nextBackendResource: 1
   )
 
@@ -393,6 +458,47 @@ proc computePipelineDescriptor(
   GpuComputePipelineDescriptor(
     computeShader: computeShader,
     label: label
+  )
+
+proc graphicsPass(
+    width = 640'u32;
+    height = 480'u32;
+    renderTarget = GpuResourceHandle()
+): GpuGraphicsPassDescriptor =
+  GpuGraphicsPassDescriptor(
+    viewport: GpuViewport(width: width, height: height),
+    renderTarget: renderTarget
+  )
+
+proc createDrawingResources(
+    host: GpuHost;
+    namespace: GpuNamespaceId
+): tuple[
+    pipeline, vertexBuffer, indexBuffer: GpuResourceHandle
+  ] =
+  let vertexShader = host.createGpuShader(
+    namespace,
+    shaderDescriptor(gssVertex, "draw-vertex"),
+    @[1'u8]
+  )
+  let fragmentShader = host.createGpuShader(
+    namespace,
+    shaderDescriptor(gssFragment, "draw-fragment"),
+    @[2'u8]
+  )
+  result.pipeline = host.createGpuGraphicsPipeline(
+    namespace,
+    graphicsPipelineDescriptor(vertexShader, fragmentShader)
+  )
+  result.vertexBuffer = host.createGpuBuffer(
+    namespace,
+    vertexBufferDescriptor(),
+    newSeq[byte](24)
+  )
+  result.indexBuffer = host.createGpuBuffer(
+    namespace,
+    indexBufferDescriptor(),
+    newSeq[byte](12)
   )
 
 suite "GPU host lifecycle":
@@ -657,6 +763,8 @@ suite "GPU texture resources":
     let namespace = host.createGpuNamespace("frame-locked", standardBudget())
     let texture = host.createGpuTexture(namespace, textureDescriptor())
     let frame = host.beginGpuFrame()
+    expect GpuHostError:
+      discard host.reserveGpuResource(namespace, grkBuffer, 0)
     expect GpuHostError:
       discard host.createGpuTexture(namespace, textureDescriptor())
     expect GpuHostError:
@@ -1420,6 +1528,412 @@ suite "GPU pipeline mapping":
       )
       host.close()
       check context.destroyedResources == @[3'u64, 2'u64, 1'u64]
+
+suite "GPU bounded submission":
+  test "draw and compute commands map resources onto reserved view identifiers":
+    let context = newContext()
+    var config = presentationConfig()
+    config.viewIdBase = 20
+    config.viewIdCount = 3
+    let host = openGpuHost(context.backend, ghoOwned, config)
+    let namespace = host.createGpuNamespace(
+      "submission",
+      GpuResourceBudget(
+        persistentBytes: 1024,
+        workUnitsPerFrame: 4,
+        maxResources: 8
+      )
+    )
+    let drawing = host.createDrawingResources(namespace)
+    let target = host.createGpuRenderTarget(
+      namespace,
+      renderTargetDescriptor(width = 8, height = 8)
+    )
+    let computeShader = host.createGpuShader(
+      namespace,
+      shaderDescriptor(gssCompute, "dispatch"),
+      @[3'u8]
+    )
+    let computePipeline = host.createGpuComputePipeline(
+      namespace,
+      computePipelineDescriptor(computeShader)
+    )
+    var pass = graphicsPass(8, 8, target)
+    pass.scissorEnabled = true
+    pass.scissor = GpuViewport(x: 1, y: 1, width: 6, height: 6)
+    pass.clearColorEnabled = true
+    pass.clearColor = GpuClearColor(
+      red: 0.1,
+      green: 0.2,
+      blue: 0.3,
+      alpha: 1
+    )
+    let indexed = GpuDrawCommand(
+      pipeline: drawing.pipeline,
+      vertexBuffer: drawing.vertexBuffer,
+      firstVertex: 0,
+      vertexCount: 2,
+      indexBuffer: drawing.indexBuffer,
+      firstIndex: 1,
+      indexCount: 5,
+      depth: 7
+    )
+    let plain = GpuDrawCommand(
+      pipeline: drawing.pipeline,
+      vertexBuffer: drawing.vertexBuffer,
+      vertexCount: 2
+    )
+
+    let token = host.beginGpuFrame()
+    host.submitGpuDraws(namespace, pass, [indexed, plain])
+    check context.graphicsPassBegins == 1
+    check context.drawSubmits == 2
+    check context.lastViewId == 20
+    check context.lastGraphicsPass == pass
+    check context.lastDrawCommand == plain
+    check context.lastSubmissionResources == @[3'u64, 4'u64, 0'u64]
+    check host.gpuNamespaceUsage(namespace).workUnits == 2
+
+    let compute = GpuComputeCommand(
+      pipeline: computePipeline,
+      groupsX: 2,
+      groupsY: 3,
+      groupsZ: 4
+    )
+    host.dispatchGpuCompute(namespace, compute)
+    check context.computeDispatches == 1
+    check context.lastViewId == 21
+    check context.lastComputeCommand == compute
+    check context.lastSubmissionResources == @[8'u64]
+    check host.gpuNamespaceUsage(namespace).workUnits == 3
+    host.endGpuFrame(token)
+
+    let next = host.beginGpuFrame()
+    host.submitGpuDraw(namespace, graphicsPass(), plain)
+    check context.graphicsPassBegins == 2
+    check context.lastViewId == 20
+    host.endGpuFrame(next)
+    host.close()
+
+  test "draw validation rejects unsafe passes buffers pipelines and ranges":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let budget = GpuResourceBudget(
+      persistentBytes: 2048,
+      workUnitsPerFrame: 20,
+      maxResources: 12
+    )
+    let namespace = host.createGpuNamespace("draw-validation", budget)
+    let foreign = host.createGpuNamespace("foreign-draw", budget)
+    let drawing = host.createDrawingResources(namespace)
+    let foreignDrawing = host.createDrawingResources(foreign)
+    let target = host.createGpuRenderTarget(
+      namespace,
+      renderTargetDescriptor(width = 8, height = 8)
+    )
+    let wrongTarget = host.createGpuRenderTarget(
+      namespace,
+      renderTargetDescriptor(width = 8, height = 8, format = gtfBgra8)
+    )
+    let unmappedPipeline = host.reserveGpuResource(
+      namespace,
+      grkPipeline,
+      0
+    )
+    let unmappedBuffer = host.reserveGpuResource(namespace, grkBuffer, 0)
+    let command = GpuDrawCommand(
+      pipeline: drawing.pipeline,
+      vertexBuffer: drawing.vertexBuffer,
+      vertexCount: 2
+    )
+
+    expect GpuHostError:
+      host.submitGpuDraw(namespace, graphicsPass(), command)
+    let token = host.beginGpuFrame()
+
+    for pass in [
+      graphicsPass(width = 0),
+      graphicsPass(width = 1281),
+      graphicsPass(8, 8, wrongTarget)
+    ]:
+      expect GpuHostError:
+        host.submitGpuDraw(namespace, pass, command)
+
+    var badScissor = graphicsPass()
+    badScissor.scissorEnabled = true
+    badScissor.scissor = GpuViewport(x: 1279, width: 2, height: 1)
+    expect GpuHostError:
+      host.submitGpuDraw(namespace, badScissor, command)
+
+    var badClear = graphicsPass()
+    badClear.clearColorEnabled = true
+    badClear.clearColor = GpuClearColor(red: -0.1, alpha: 1)
+    expect GpuHostError:
+      host.submitGpuDraw(namespace, badClear, command)
+
+    for badCommand in [
+      GpuDrawCommand(
+        pipeline: foreignDrawing.pipeline,
+        vertexBuffer: drawing.vertexBuffer,
+        vertexCount: 2
+      ),
+      GpuDrawCommand(
+        pipeline: unmappedPipeline,
+        vertexBuffer: drawing.vertexBuffer,
+        vertexCount: 2
+      ),
+      GpuDrawCommand(
+        pipeline: drawing.pipeline,
+        vertexBuffer: unmappedBuffer,
+        vertexCount: 1
+      ),
+      GpuDrawCommand(
+        pipeline: drawing.pipeline,
+        vertexBuffer: drawing.indexBuffer,
+        vertexCount: 2
+      ),
+      GpuDrawCommand(
+        pipeline: drawing.pipeline,
+        vertexBuffer: drawing.vertexBuffer,
+        firstVertex: 1,
+        vertexCount: 2
+      ),
+      GpuDrawCommand(
+        pipeline: drawing.pipeline,
+        vertexBuffer: drawing.vertexBuffer,
+        vertexCount: 2,
+        firstIndex: 1,
+        indexCount: 1
+      ),
+      GpuDrawCommand(
+        pipeline: drawing.pipeline,
+        vertexBuffer: drawing.vertexBuffer,
+        vertexCount: 2,
+        indexBuffer: drawing.indexBuffer,
+        firstIndex: 5,
+        indexCount: 2
+      )
+    ]:
+      expect GpuHostError:
+        host.submitGpuDraw(namespace, graphicsPass(), badCommand)
+
+    expect GpuHostError:
+      host.submitGpuDraws(namespace, graphicsPass(), newSeq[GpuDrawCommand]())
+    check context.drawSubmits == 0
+    check host.gpuNamespaceUsage(namespace).workUnits == 0
+    host.endGpuFrame(token)
+    discard target
+    host.close()
+
+  test "submission callbacks budgets view ranges and device loss fail closed":
+    block missingCallback:
+      let context = newContext()
+      var backend = context.backend
+      backend.beginGraphicsPass = nil
+      let host = openGpuHost(backend, ghoOwned, presentationConfig())
+      let namespace = host.createGpuNamespace(
+        "missing-submit",
+        GpuResourceBudget(
+          persistentBytes: 128,
+          workUnitsPerFrame: 2,
+          maxResources: 5
+        )
+      )
+      let drawing = host.createDrawingResources(namespace)
+      let token = host.beginGpuFrame()
+      expect GpuHostError:
+        host.submitGpuDraw(
+          namespace,
+          graphicsPass(),
+          GpuDrawCommand(
+            pipeline: drawing.pipeline,
+            vertexBuffer: drawing.vertexBuffer,
+            vertexCount: 2
+          )
+        )
+      host.endGpuFrame(token)
+      host.close()
+
+    block missingDrawCallback:
+      let context = newContext()
+      var backend = context.backend
+      backend.submitDraw = nil
+      let host = openGpuHost(backend, ghoOwned, presentationConfig())
+      let namespace = host.createGpuNamespace(
+        "missing-draw",
+        GpuResourceBudget(
+          persistentBytes: 128,
+          workUnitsPerFrame: 1,
+          maxResources: 5
+        )
+      )
+      let drawing = host.createDrawingResources(namespace)
+      let token = host.beginGpuFrame()
+      expect GpuHostError:
+        host.submitGpuDraw(
+          namespace,
+          graphicsPass(),
+          GpuDrawCommand(
+            pipeline: drawing.pipeline,
+            vertexBuffer: drawing.vertexBuffer,
+            vertexCount: 2
+          )
+        )
+      check context.graphicsPassBegins == 0
+      host.endGpuFrame(token)
+      host.close()
+
+    block failedPassDoesNotConsumeViewOrWork:
+      let context = newContext()
+      context.beginGraphicsPassStatus = gbsInvalidConfiguration
+      var config = presentationConfig()
+      config.viewIdBase = 42
+      config.viewIdCount = 1
+      let host = openGpuHost(context.backend, ghoOwned, config)
+      let namespace = host.createGpuNamespace(
+        "failed-pass",
+        GpuResourceBudget(
+          persistentBytes: 128,
+          workUnitsPerFrame: 1,
+          maxResources: 5
+        )
+      )
+      let drawing = host.createDrawingResources(namespace)
+      let command = GpuDrawCommand(
+        pipeline: drawing.pipeline,
+        vertexBuffer: drawing.vertexBuffer,
+        vertexCount: 2
+      )
+      let token = host.beginGpuFrame()
+      expect GpuHostError:
+        host.submitGpuDraw(namespace, graphicsPass(), command)
+      check context.graphicsPassBegins == 1
+      check context.drawSubmits == 0
+      check host.gpuNamespaceUsage(namespace).workUnits == 0
+
+      context.beginGraphicsPassStatus = gbsOk
+      host.submitGpuDraw(namespace, graphicsPass(), command)
+      check context.graphicsPassBegins == 2
+      check context.drawSubmits == 1
+      check context.lastViewId == 42
+      check host.gpuNamespaceUsage(namespace).workUnits == 1
+      host.endGpuFrame(token)
+      host.close()
+
+    block boundedViewsAndWork:
+      let context = newContext()
+      var config = presentationConfig()
+      config.viewIdBase = 255
+      config.viewIdCount = 1
+      let host = openGpuHost(context.backend, ghoOwned, config)
+      let namespace = host.createGpuNamespace(
+        "bounded-submit",
+        GpuResourceBudget(
+          persistentBytes: 128,
+          workUnitsPerFrame: 2,
+          maxResources: 5
+        )
+      )
+      let drawing = host.createDrawingResources(namespace)
+      let command = GpuDrawCommand(
+        pipeline: drawing.pipeline,
+        vertexBuffer: drawing.vertexBuffer,
+        vertexCount: 2
+      )
+      let token = host.beginGpuFrame()
+      host.submitGpuDraw(namespace, graphicsPass(), command)
+      check context.lastViewId == 255
+      expect GpuHostError:
+        host.submitGpuDraw(namespace, graphicsPass(), command)
+      check host.gpuNamespaceUsage(namespace).workUnits == 1
+      host.endGpuFrame(token)
+      host.close()
+
+    block deviceLoss:
+      let context = newContext()
+      context.submitDrawStatus = gbsDeviceLost
+      let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+      let namespace = host.createGpuNamespace(
+        "lost-submit",
+        GpuResourceBudget(
+          persistentBytes: 128,
+          workUnitsPerFrame: 1,
+          maxResources: 5
+        )
+      )
+      let drawing = host.createDrawingResources(namespace)
+      discard host.beginGpuFrame()
+      expect GpuHostError:
+        host.submitGpuDraw(
+          namespace,
+          graphicsPass(),
+          GpuDrawCommand(
+            pipeline: drawing.pipeline,
+            vertexBuffer: drawing.vertexBuffer,
+            vertexCount: 2
+          )
+        )
+      check host.state == ghsDeviceLost
+      check not host.isGpuResourceLive(drawing.pipeline)
+      host.close()
+
+  test "compute dispatch validates pipeline groups capability and namespace":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let budget = GpuResourceBudget(
+      persistentBytes: 128,
+      workUnitsPerFrame: 4,
+      maxResources: 5
+    )
+    let namespace = host.createGpuNamespace("compute-submit", budget)
+    let foreign = host.createGpuNamespace("foreign-compute", budget)
+    let shader = host.createGpuShader(
+      namespace,
+      shaderDescriptor(gssCompute),
+      @[1'u8]
+    )
+    let pipeline = host.createGpuComputePipeline(
+      namespace,
+      computePipelineDescriptor(shader)
+    )
+    let foreignShader = host.createGpuShader(
+      foreign,
+      shaderDescriptor(gssCompute),
+      @[2'u8]
+    )
+    let foreignPipeline = host.createGpuComputePipeline(
+      foreign,
+      computePipelineDescriptor(foreignShader)
+    )
+    let token = host.beginGpuFrame()
+    for command in [
+      GpuComputeCommand(pipeline: pipeline),
+      GpuComputeCommand(pipeline: pipeline, groupsX: 65536, groupsY: 1, groupsZ: 1),
+      GpuComputeCommand(
+        pipeline: foreignPipeline,
+        groupsX: 1,
+        groupsY: 1,
+        groupsZ: 1
+      )
+    ]:
+      expect GpuHostError:
+        host.dispatchGpuCompute(namespace, command)
+    check context.computeDispatches == 0
+    host.endGpuFrame(token)
+    host.close()
+
+  test "invalid view ranges are rejected and zero count normalizes to all views":
+    let context = newContext()
+    var config = presentationConfig()
+    config.viewIdBase = 1
+    config.viewIdCount = maxGpuViewCount
+    expect GpuHostError:
+      discard openGpuHost(context.backend, ghoOwned, config)
+
+    config = presentationConfig()
+    let host = openGpuHost(context.backend, ghoOwned, config)
+    check host.config.viewIdCount == maxGpuViewCount
+    host.close()
 
 suite "GPU resource namespace budgets":
 

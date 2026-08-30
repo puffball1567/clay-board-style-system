@@ -1,9 +1,10 @@
 import std/[algorithm, hashes, tables]
 
 const
-  gpuHostApiVersion* = 6'u32
+  gpuHostApiVersion* = 7'u32
   maxGpuNamespaceNameBytes* = 128
   maxGpuResourceLabelBytes* = 128
+  maxGpuViewCount* = 256'u16
 
 type
   GpuHostError* = object of CatchableError
@@ -94,6 +95,10 @@ type
     gssVertex,
     gssFragment,
     gssCompute
+
+  GpuPipelineKind* = enum
+    gplkGraphics,
+    gplkCompute
 
   GpuPrimitiveTopology* = enum
     gptTriangleList,
@@ -193,10 +198,38 @@ type
     computeShader*: GpuResourceHandle
     label*: string
 
+  GpuViewport* = object
+    x*, y*: uint32
+    width*, height*: uint32
+
+  GpuClearColor* = object
+    red*, green*, blue*, alpha*: float32
+
+  GpuGraphicsPassDescriptor* = object
+    viewport*: GpuViewport
+    scissorEnabled*: bool
+    scissor*: GpuViewport
+    clearColorEnabled*: bool
+    clearColor*: GpuClearColor
+    renderTarget*: GpuResourceHandle
+
+  GpuDrawCommand* = object
+    pipeline*: GpuResourceHandle
+    vertexBuffer*: GpuResourceHandle
+    firstVertex*, vertexCount*: uint32
+    indexBuffer*: GpuResourceHandle
+    firstIndex*, indexCount*: uint32
+    depth*: uint32
+
+  GpuComputeCommand* = object
+    pipeline*: GpuResourceHandle
+    groupsX*, groupsY*, groupsZ*: uint32
+
   GpuHostConfig* = object
     width*, height*: uint32
     resetFlags*: uint32
     presentation*: bool
+    viewIdBase*, viewIdCount*: uint16
 
   GpuBackendInfo* = object
     rendererName*: string
@@ -306,6 +339,29 @@ type
     resource: var GpuBackendResourceId
   ): GpuBackendStatus {.nimcall, raises: [].}
 
+  GpuBackendBeginGraphicsPassProc* = proc(
+    context: GpuBackendContext;
+    viewId: uint16;
+    pass: GpuGraphicsPassDescriptor;
+    renderTarget: GpuBackendResourceId
+  ): GpuBackendStatus {.nimcall, raises: [].}
+
+  GpuBackendSubmitDrawProc* = proc(
+    context: GpuBackendContext;
+    viewId: uint16;
+    pipeline, vertexBuffer, indexBuffer: GpuBackendResourceId;
+    pipelineDescriptor: GpuGraphicsPipelineDescriptor;
+    vertexDescriptor, indexDescriptor: GpuBufferDescriptor;
+    command: GpuDrawCommand
+  ): GpuBackendStatus {.nimcall, raises: [].}
+
+  GpuBackendDispatchProc* = proc(
+    context: GpuBackendContext;
+    viewId: uint16;
+    pipeline: GpuBackendResourceId;
+    command: GpuComputeCommand
+  ): GpuBackendStatus {.nimcall, raises: [].}
+
   GpuBackendDestroyResourceProc* = proc(
     context: GpuBackendContext;
     resource: GpuBackendResourceId;
@@ -329,6 +385,9 @@ type
     createShader*: GpuBackendCreateShaderProc
     createGraphicsPipeline*: GpuBackendCreateGraphicsPipelineProc
     createComputePipeline*: GpuBackendCreateComputePipelineProc
+    beginGraphicsPass*: GpuBackendBeginGraphicsPassProc
+    submitDraw*: GpuBackendSubmitDrawProc
+    dispatch*: GpuBackendDispatchProc
     destroyResource*: GpuBackendDestroyResourceProc
     closeOwned*: GpuBackendCloseProc
     detachBorrowed*: GpuBackendCloseProc
@@ -343,6 +402,7 @@ type
     shaderDescriptor: GpuShaderDescriptor
     graphicsPipelineDescriptor: GpuGraphicsPipelineDescriptor
     computePipelineDescriptor: GpuComputePipelineDescriptor
+    pipelineKind: GpuPipelineKind
     dependencies: seq[GpuResourceId]
     dependentCount: uint32
 
@@ -362,6 +422,7 @@ type
     generationValue: uint64
     frameNumber: uint64
     activeFrame: bool
+    nextViewOffset: uint16
     nextNamespaceId: uint64
     namespaces: Table[GpuNamespaceId, GpuNamespaceEntry]
 
@@ -413,13 +474,21 @@ proc validateConfig(config: GpuHostConfig) =
       GpuHostError,
       "a presentation GPU host requires a non-zero viewport"
     )
+  let viewCount =
+    if config.viewIdCount == 0: maxGpuViewCount
+    else: config.viewIdCount
+  if uint32(config.viewIdBase) + uint32(viewCount) > uint32(maxGpuViewCount):
+    raise newException(GpuHostError, "GPU view identifier range is invalid")
 
 proc openGpuHost*(
     backend: GpuBackendVTable;
     ownership: GpuHostOwnership;
     config = GpuHostConfig()
 ): GpuHost =
-  config.validateConfig()
+  var normalizedConfig = config
+  if normalizedConfig.viewIdCount == 0:
+    normalizedConfig.viewIdCount = maxGpuViewCount
+  normalizedConfig.validateConfig()
   if backend.apiVersion != gpuHostApiVersion:
     raise newException(GpuHostError, "GPU backend API version is incompatible")
   if backend.context.isNil:
@@ -435,14 +504,14 @@ proc openGpuHost*(
     backend: backend,
     ownershipValue: ownership,
     stateValue: ghsOpening,
-    configValue: config,
+    configValue: normalizedConfig,
     generationValue: 1'u64,
     nextNamespaceId: 1'u64,
     namespaces: initTable[GpuNamespaceId, GpuNamespaceEntry]()
   )
 
   var info: GpuBackendInfo
-  let status = openProc(backend.context, config, info)
+  let status = openProc(backend.context, normalizedConfig, info)
   if status != gbsOk:
     result.stateValue = ghsClosed
     case ownership
@@ -559,6 +628,7 @@ proc beginGpuFrame*(host: GpuHost): GpuFrameToken =
     entry.usage.readbackBytes = 0
     entry.usage.workUnits = 0
 
+  host.nextViewOffset = 0
   host.activeFrame = true
   GpuFrameToken(number: host.frameNumber, generation: host.generationValue)
 
@@ -705,6 +775,7 @@ proc insertGpuResource(
     shaderDescriptor = GpuShaderDescriptor();
     graphicsPipelineDescriptor = GpuGraphicsPipelineDescriptor();
     computePipelineDescriptor = GpuComputePipelineDescriptor();
+    pipelineKind = gplkGraphics;
     dependencies: seq[GpuResourceId] = @[]
 ): GpuResourceHandle =
   var entry = host.namespaces[namespace]
@@ -721,6 +792,7 @@ proc insertGpuResource(
     shaderDescriptor: shaderDescriptor,
     graphicsPipelineDescriptor: graphicsPipelineDescriptor,
     computePipelineDescriptor: computePipelineDescriptor,
+    pipelineKind: pipelineKind,
     dependencies: dependencies
   )
   entry.usage.persistentBytes += bytes
@@ -742,6 +814,11 @@ proc reserveGpuResource*(
   host.requireHost()
   if host.stateValue != ghsReady:
     raise newException(GpuHostError, "GPU host is not ready")
+  if host.activeFrame:
+    raise newException(
+      GpuHostError,
+      "retained GPU resources cannot be reserved during an active frame"
+    )
   if namespace notin host.namespaces:
     raise newException(GpuHostError, "unknown GPU namespace")
 
@@ -1147,6 +1224,7 @@ proc createGpuGraphicsPipeline*(
     0,
     backendResource,
     graphicsPipelineDescriptor = descriptor,
+    pipelineKind = gplkGraphics,
     dependencies = dependencies
   )
   host.retainPipelineDependencies(namespace, dependencies)
@@ -1190,6 +1268,7 @@ proc createGpuComputePipeline*(
     0,
     backendResource,
     computePipelineDescriptor = descriptor,
+    pipelineKind = gplkCompute,
     dependencies = dependencies
   )
   host.retainPipelineDependencies(namespace, dependencies)
@@ -1269,7 +1348,7 @@ proc releaseGpuResource*(host: GpuHost; handle: GpuResourceHandle): bool =
   host.namespaces[handle.namespace] = namespace
   true
 
-proc reserveGpuFrameWork*(
+proc validateGpuFrameWork(
     host: GpuHost;
     namespace: GpuNamespaceId;
     transientBytes = 0'u64;
@@ -1282,7 +1361,7 @@ proc reserveGpuFrameWork*(
   if namespace notin host.namespaces:
     raise newException(GpuHostError, "unknown GPU namespace")
 
-  var entry = host.namespaces[namespace]
+  let entry = host.namespaces[namespace]
   if not fits(
       entry.usage.transientBytes,
       transientBytes,
@@ -1299,7 +1378,279 @@ proc reserveGpuFrameWork*(
       uint64(entry.budget.workUnitsPerFrame):
     raise newException(GpuHostError, "GPU namespace frame work budget exceeded")
 
+proc reserveGpuFrameWork*(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    transientBytes = 0'u64;
+    readbackBytes = 0'u64;
+    workUnits = 0'u32
+) =
+  host.validateGpuFrameWork(
+    namespace,
+    transientBytes,
+    readbackBytes,
+    workUnits
+  )
+
+  var entry = host.namespaces[namespace]
   entry.usage.transientBytes += transientBytes
   entry.usage.readbackBytes += readbackBytes
   entry.usage.workUnits += workUnits
   host.namespaces[namespace] = entry
+
+proc isEmptyGpuHandle(handle: GpuResourceHandle): bool {.inline.} =
+  handle.resource.resourceIdValue() == 0
+
+proc requireGpuResource(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    handle: GpuResourceHandle;
+    kind: GpuResourceKind;
+    message: string
+): GpuResourceEntry =
+  if handle.namespace != namespace or handle.kind != kind or
+      not host.isGpuResourceLive(handle):
+    raise newException(GpuHostError, message)
+  host.namespaces[namespace].resources[handle.resource]
+
+proc validateViewport(viewport: GpuViewport; limitWidth, limitHeight: uint32) =
+  if viewport.width == 0 or viewport.height == 0:
+    raise newException(GpuHostError, "GPU viewport dimensions must be non-zero")
+  if viewport.x > uint32(high(int16)) or viewport.y > uint32(high(int16)) or
+      viewport.width > uint32(high(uint16)) or
+      viewport.height > uint32(high(uint16)):
+    raise newException(GpuHostError, "GPU viewport exceeds backend-neutral limits")
+  if viewport.x > limitWidth or viewport.width > limitWidth - viewport.x or
+      viewport.y > limitHeight or viewport.height > limitHeight - viewport.y:
+    raise newException(GpuHostError, "GPU viewport exceeds its render target")
+
+proc validateClearColor(color: GpuClearColor) =
+  for component in [color.red, color.green, color.blue, color.alpha]:
+    if not (component >= 0'f32 and component <= 1'f32):
+      raise newException(GpuHostError, "GPU clear color must be finite and normalized")
+
+proc nextGpuViewId(host: GpuHost): uint16 =
+  if host.nextViewOffset >= host.configValue.viewIdCount:
+    raise newException(GpuHostError, "GPU frame view identifier range exhausted")
+  result = host.configValue.viewIdBase + host.nextViewOffset
+  inc host.nextViewOffset
+
+proc ensureGpuViewAvailable(host: GpuHost) =
+  if host.nextViewOffset >= host.configValue.viewIdCount:
+    raise newException(GpuHostError, "GPU frame view identifier range exhausted")
+
+proc validateGraphicsPass(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    pass: GpuGraphicsPassDescriptor
+): GpuBackendResourceId =
+  var limitWidth, limitHeight: uint32
+  if pass.renderTarget.isEmptyGpuHandle():
+    if not host.configValue.presentation:
+      raise newException(
+        GpuHostError,
+        "a compute-only GPU host has no presentation render target"
+      )
+    limitWidth = host.configValue.width
+    limitHeight = host.configValue.height
+  else:
+    let target = host.requireGpuResource(
+      namespace,
+      pass.renderTarget,
+      grkRenderTarget,
+      "GPU draw render target is stale invalid or belongs to another namespace"
+    )
+    limitWidth = target.renderTargetDescriptor.width
+    limitHeight = target.renderTargetDescriptor.height
+    if target.backendResource.backendResourceIdValue() == 0:
+      raise newException(GpuHostError, "GPU render target is not backend-mapped")
+    result = target.backendResource
+
+  pass.viewport.validateViewport(limitWidth, limitHeight)
+  if pass.scissorEnabled:
+    pass.scissor.validateViewport(limitWidth, limitHeight)
+  if pass.clearColorEnabled:
+    pass.clearColor.validateClearColor()
+
+proc validateDrawCommand(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    pass: GpuGraphicsPassDescriptor;
+    command: GpuDrawCommand
+): tuple[
+    pipeline, vertexBuffer, indexBuffer: GpuBackendResourceId,
+    pipelineDescriptor: GpuGraphicsPipelineDescriptor,
+    vertexDescriptor, indexDescriptor: GpuBufferDescriptor
+  ] =
+  let pipeline = host.requireGpuResource(
+    namespace,
+    command.pipeline,
+    grkPipeline,
+    "GPU draw pipeline is stale invalid or belongs to another namespace"
+  )
+  if pipeline.pipelineKind != gplkGraphics or
+      pipeline.backendResource.backendResourceIdValue() == 0:
+    raise newException(GpuHostError, "GPU draw requires a graphics pipeline")
+  let vertex = host.requireGpuResource(
+    namespace,
+    command.vertexBuffer,
+    grkBuffer,
+    "GPU vertex buffer is stale invalid or belongs to another namespace"
+  )
+  if vertex.bufferDescriptor.role != gbrVertex:
+    raise newException(GpuHostError, "GPU draw requires a vertex buffer")
+  if vertex.backendResource.backendResourceIdValue() == 0:
+    raise newException(GpuHostError, "GPU vertex buffer is not backend-mapped")
+  if vertex.bufferDescriptor.vertexLayout !=
+      pipeline.graphicsPipelineDescriptor.vertexLayout:
+    raise newException(GpuHostError, "GPU vertex layout does not match the pipeline")
+  if command.vertexCount == 0:
+    raise newException(GpuHostError, "GPU draw vertex count must be non-zero")
+  let availableVertices =
+    vertex.bufferDescriptor.byteSize div vertex.bufferDescriptor.vertexStride()
+  if uint64(command.firstVertex) > availableVertices or
+      uint64(command.vertexCount) > availableVertices - uint64(command.firstVertex):
+    raise newException(GpuHostError, "GPU draw vertex range exceeds its buffer")
+
+  if pass.renderTarget.isEmptyGpuHandle():
+    discard
+  else:
+    let target = host.namespaces[namespace].resources[pass.renderTarget.resource]
+    if target.renderTargetDescriptor.format !=
+        pipeline.graphicsPipelineDescriptor.colorFormat:
+      raise newException(
+        GpuHostError,
+        "GPU graphics pipeline color format does not match the render target"
+      )
+
+  result.pipeline = pipeline.backendResource
+  result.vertexBuffer = vertex.backendResource
+  result.pipelineDescriptor = pipeline.graphicsPipelineDescriptor
+  result.vertexDescriptor = vertex.bufferDescriptor
+
+  if command.indexBuffer.isEmptyGpuHandle():
+    if command.firstIndex != 0 or command.indexCount != 0:
+      raise newException(GpuHostError, "GPU draw index range has no index buffer")
+    return
+
+  let index = host.requireGpuResource(
+    namespace,
+    command.indexBuffer,
+    grkBuffer,
+    "GPU index buffer is stale invalid or belongs to another namespace"
+  )
+  if index.bufferDescriptor.role != gbrIndex:
+    raise newException(GpuHostError, "GPU draw requires an index buffer")
+  if index.backendResource.backendResourceIdValue() == 0:
+    raise newException(GpuHostError, "GPU index buffer is not backend-mapped")
+  if command.indexCount == 0:
+    raise newException(GpuHostError, "indexed GPU draw count must be non-zero")
+  let availableIndices =
+    index.bufferDescriptor.byteSize div index.bufferDescriptor.bufferElementBytes()
+  if uint64(command.firstIndex) > availableIndices or
+      uint64(command.indexCount) > availableIndices - uint64(command.firstIndex):
+    raise newException(GpuHostError, "GPU draw index range exceeds its buffer")
+  result.indexBuffer = index.backendResource
+  result.indexDescriptor = index.bufferDescriptor
+
+proc submitGpuDraws*(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    pass: GpuGraphicsPassDescriptor;
+    commands: openArray[GpuDrawCommand]
+) =
+  host.requireHost()
+  if host.stateValue != ghsReady or not host.activeFrame:
+    raise newException(GpuHostError, "GPU draw submission requires an active frame")
+  if namespace notin host.namespaces:
+    raise newException(GpuHostError, "unknown GPU namespace")
+  if commands.len == 0:
+    raise newException(GpuHostError, "GPU draw pass cannot be empty")
+  if uint64(commands.len) > uint64(high(uint32)):
+    raise newException(GpuHostError, "GPU draw pass has too many commands")
+  if host.backend.beginGraphicsPass.isNil or host.backend.submitDraw.isNil:
+    raise newException(GpuHostError, "GPU backend does not support draw submission")
+
+  let target = host.validateGraphicsPass(namespace, pass)
+  for command in commands:
+    discard host.validateDrawCommand(namespace, pass, command)
+  host.ensureGpuViewAvailable()
+  host.validateGpuFrameWork(namespace, workUnits = uint32(commands.len))
+  let viewId = host.configValue.viewIdBase + host.nextViewOffset
+  let passStatus = host.backend.beginGraphicsPass(
+    host.backend.context,
+    viewId,
+    pass,
+    target
+  )
+  if passStatus == gbsDeviceLost:
+    host.enterDeviceLost()
+  raiseForStatus(passStatus)
+  inc host.nextViewOffset
+  host.reserveGpuFrameWork(namespace, workUnits = uint32(commands.len))
+
+  for command in commands:
+    let resolved = host.validateDrawCommand(namespace, pass, command)
+    let status = host.backend.submitDraw(
+      host.backend.context,
+      viewId,
+      resolved.pipeline,
+      resolved.vertexBuffer,
+      resolved.indexBuffer,
+      resolved.pipelineDescriptor,
+      resolved.vertexDescriptor,
+      resolved.indexDescriptor,
+      command
+    )
+    if status == gbsDeviceLost:
+      host.enterDeviceLost()
+    raiseForStatus(status)
+
+proc submitGpuDraw*(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    pass: GpuGraphicsPassDescriptor;
+    command: GpuDrawCommand
+) =
+  host.submitGpuDraws(namespace, pass, [command])
+
+proc dispatchGpuCompute*(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    command: GpuComputeCommand
+) =
+  host.requireHost()
+  if host.stateValue != ghsReady or not host.activeFrame:
+    raise newException(GpuHostError, "GPU compute dispatch requires an active frame")
+  if namespace notin host.namespaces:
+    raise newException(GpuHostError, "unknown GPU namespace")
+  if not host.infoValue.computeSupported:
+    raise newException(GpuHostError, "GPU compute dispatch is not supported")
+  if host.backend.dispatch.isNil:
+    raise newException(GpuHostError, "GPU backend does not support compute dispatch")
+  if command.groupsX == 0 or command.groupsY == 0 or command.groupsZ == 0 or
+      command.groupsX > uint32(high(uint16)) or
+      command.groupsY > uint32(high(uint16)) or
+      command.groupsZ > uint32(high(uint16)):
+    raise newException(GpuHostError, "GPU compute work group dimensions are invalid")
+  let pipeline = host.requireGpuResource(
+    namespace,
+    command.pipeline,
+    grkPipeline,
+    "GPU compute pipeline is stale invalid or belongs to another namespace"
+  )
+  if pipeline.pipelineKind != gplkCompute or
+      pipeline.backendResource.backendResourceIdValue() == 0:
+    raise newException(GpuHostError, "GPU compute dispatch requires a compute pipeline")
+
+  host.ensureGpuViewAvailable()
+  host.reserveGpuFrameWork(namespace, workUnits = 1)
+  let status = host.backend.dispatch(
+    host.backend.context,
+    host.nextGpuViewId(),
+    pipeline.backendResource,
+    command
+  )
+  if status == gbsDeviceLost:
+    host.enterDeviceLost()
+  raiseForStatus(status)
