@@ -12,6 +12,15 @@ static uint32_t cbss_frame_count;
 static uint32_t cbss_reset_count;
 static uint32_t cbss_submit_count;
 static uint32_t cbss_dispatch_count;
+static uint32_t cbss_view_rect_count;
+static uint32_t cbss_view_scissor_count;
+static uint32_t cbss_view_clear_count;
+static uint32_t cbss_view_frame_buffer_count;
+static uint32_t cbss_vertex_bind_count;
+static uint32_t cbss_index_bind_count;
+static uint32_t cbss_state_count;
+static bgfx_view_id_t cbss_last_view_id;
+static uint64_t cbss_last_state;
 static uint32_t cbss_program_destroy_count;
 static uint32_t cbss_graphics_program_create_count;
 static uint32_t cbss_compute_program_create_count;
@@ -489,6 +498,103 @@ void bgfx_destroy_program(bgfx_program_handle_t handle)
     }
 }
 
+void bgfx_set_view_rect(bgfx_view_id_t id, int16_t x, int16_t y,
+                        uint16_t width, uint16_t height)
+{
+    (void)x;
+    (void)y;
+    (void)width;
+    (void)height;
+    cbss_last_view_id = id;
+    ++cbss_view_rect_count;
+}
+
+void bgfx_set_view_scissor(bgfx_view_id_t id, uint16_t x, uint16_t y,
+                           uint16_t width, uint16_t height)
+{
+    (void)id;
+    (void)x;
+    (void)y;
+    (void)width;
+    (void)height;
+    ++cbss_view_scissor_count;
+}
+
+void bgfx_set_view_clear(bgfx_view_id_t id, uint16_t flags, uint32_t rgba,
+                         float depth, uint8_t stencil)
+{
+    (void)id;
+    (void)flags;
+    (void)rgba;
+    (void)depth;
+    (void)stencil;
+    ++cbss_view_clear_count;
+}
+
+void bgfx_set_view_frame_buffer(bgfx_view_id_t id,
+                                bgfx_frame_buffer_handle_t handle)
+{
+    (void)id;
+    (void)handle;
+    ++cbss_view_frame_buffer_count;
+}
+
+void bgfx_set_vertex_buffer(uint8_t stream,
+                            bgfx_vertex_buffer_handle_t handle,
+                            uint32_t start_vertex, uint32_t num_vertices)
+{
+    (void)stream;
+    (void)start_vertex;
+    (void)num_vertices;
+    if (UINT16_MAX != handle.idx)
+    {
+        ++cbss_vertex_bind_count;
+    }
+}
+
+void bgfx_set_dynamic_vertex_buffer(
+    uint8_t stream, bgfx_dynamic_vertex_buffer_handle_t handle,
+    uint32_t start_vertex, uint32_t num_vertices)
+{
+    (void)stream;
+    (void)start_vertex;
+    (void)num_vertices;
+    if (UINT16_MAX != handle.idx)
+    {
+        ++cbss_vertex_bind_count;
+    }
+}
+
+void bgfx_set_index_buffer(bgfx_index_buffer_handle_t handle,
+                           uint32_t first_index, uint32_t num_indices)
+{
+    (void)first_index;
+    (void)num_indices;
+    if (UINT16_MAX != handle.idx)
+    {
+        ++cbss_index_bind_count;
+    }
+}
+
+void bgfx_set_dynamic_index_buffer(
+    bgfx_dynamic_index_buffer_handle_t handle, uint32_t first_index,
+    uint32_t num_indices)
+{
+    (void)first_index;
+    (void)num_indices;
+    if (UINT16_MAX != handle.idx)
+    {
+        ++cbss_index_bind_count;
+    }
+}
+
+void bgfx_set_state(uint64_t state, uint32_t rgba)
+{
+    (void)rgba;
+    cbss_last_state = state;
+    ++cbss_state_count;
+}
+
 void bgfx_submit(bgfx_view_id_t id, bgfx_program_handle_t program,
                  uint32_t depth, uint8_t flags)
 {
@@ -523,6 +629,15 @@ void cbss_bgfx_stub_reset_counters(void)
     cbss_reset_count = 0;
     cbss_submit_count = 0;
     cbss_dispatch_count = 0;
+    cbss_view_rect_count = 0;
+    cbss_view_scissor_count = 0;
+    cbss_view_clear_count = 0;
+    cbss_view_frame_buffer_count = 0;
+    cbss_vertex_bind_count = 0;
+    cbss_index_bind_count = 0;
+    cbss_state_count = 0;
+    cbss_last_view_id = 0;
+    cbss_last_state = 0;
     cbss_program_destroy_count = 0;
     cbss_graphics_program_create_count = 0;
     cbss_compute_program_create_count = 0;
@@ -569,6 +684,21 @@ uint32_t cbss_bgfx_stub_width(void) { return cbss_width; }
 uint32_t cbss_bgfx_stub_height(void) { return cbss_height; }
 uint32_t cbss_bgfx_stub_submit_count(void) { return cbss_submit_count; }
 uint32_t cbss_bgfx_stub_dispatch_count(void) { return cbss_dispatch_count; }
+uint32_t cbss_bgfx_stub_view_rect_count(void) { return cbss_view_rect_count; }
+uint32_t cbss_bgfx_stub_view_scissor_count(void)
+{
+    return cbss_view_scissor_count;
+}
+uint32_t cbss_bgfx_stub_view_clear_count(void) { return cbss_view_clear_count; }
+uint32_t cbss_bgfx_stub_view_frame_buffer_count(void)
+{
+    return cbss_view_frame_buffer_count;
+}
+uint32_t cbss_bgfx_stub_vertex_bind_count(void) { return cbss_vertex_bind_count; }
+uint32_t cbss_bgfx_stub_index_bind_count(void) { return cbss_index_bind_count; }
+uint32_t cbss_bgfx_stub_state_count(void) { return cbss_state_count; }
+uint16_t cbss_bgfx_stub_last_view_id(void) { return cbss_last_view_id; }
+uint64_t cbss_bgfx_stub_last_state(void) { return cbss_last_state; }
 uint32_t cbss_bgfx_stub_program_destroy_count(void)
 {
     return cbss_program_destroy_count;
@@ -627,6 +757,22 @@ uint32_t cbss_bgfx_stub_vertex_buffer_create_count(void)
 uint32_t cbss_bgfx_stub_vertex_buffer_destroy_count(void)
 {
     return cbss_vertex_buffer_destroy_count;
+}
+uint32_t cbss_bgfx_stub_index_buffer_create_count(void)
+{
+    return cbss_index_buffer_create_count;
+}
+uint32_t cbss_bgfx_stub_index_buffer_destroy_count(void)
+{
+    return cbss_index_buffer_destroy_count;
+}
+uint32_t cbss_bgfx_stub_dynamic_vertex_buffer_create_count(void)
+{
+    return cbss_dynamic_vertex_buffer_create_count;
+}
+uint32_t cbss_bgfx_stub_dynamic_vertex_buffer_destroy_count(void)
+{
+    return cbss_dynamic_vertex_buffer_destroy_count;
 }
 uint32_t cbss_bgfx_stub_dynamic_index_buffer_create_count(void)
 {

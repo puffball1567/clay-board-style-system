@@ -2205,8 +2205,11 @@ generation-checked resource namespaces with bounded accounting, and mapped
 Texture, Buffer, owned RenderTarget, precompiled Shader, and dependency-safe
 Graphics/Compute Pipeline resources. The
 optional `cbssGpuBgfx` adapter consumes `bgfxim` for the bgfx lifecycle while
-remaining absent from standard builds. Ordered submission,
-offscreen Canvas composition, external targets, portable shader packaging,
+remaining absent from standard builds. Bounded graphics and compute submission
+now validates retained resources, pass bounds, work budgets, and a reserved
+backend view range without exposing backend handles. Batched draws initialize
+their shared view once per pass before issuing draw commands. Offscreen Canvas
+composition, resource bindings, external targets, portable shader packaging,
 restoration, and real-GPU qualification remain open Version 0.7 work.
 
 The Version 0.7 drawing baseline is intentionally usable before the complete

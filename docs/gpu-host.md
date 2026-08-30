@@ -48,8 +48,9 @@ map backend-neutral descriptors to real backend objects,
 record them under generation-checked handles, and destroy them on explicit
 release, namespace teardown, or host teardown. Device loss drops the stale
 generation without issuing unsafe destruction calls to the lost device.
-Pipeline dependencies are retained explicitly. Later Version 0.7 work adds
-ordered submission without exposing a second Present path.
+Pipeline dependencies are retained explicitly. `submitGpuDraw`,
+`submitGpuDraws`, and `dispatchGpuCompute` provide ordered frame submission
+without exposing backend handles or a second Present path.
 
 ```nim
 let resources = host.createGpuNamespace(
@@ -187,6 +188,48 @@ front-face, vertex layout, output color format, blending, and color-write state.
 bgfx applies state that is dynamic in its API during the later submission step;
 adapters with immutable pipeline state may consume it during creation.
 
+## Bounded Submission
+
+Submission requires an active GPU frame. A graphics pass declares its render
+target, viewport, optional scissor, and optional normalized clear color. Draw
+commands refer only to retained CBSS handles:
+
+```nim
+let frame = host.beginGpuFrame()
+host.submitGpuDraw(
+  resources,
+  GpuGraphicsPassDescriptor(
+    viewport: GpuViewport(width: 640, height: 360),
+    renderTarget: panelLayer
+  ),
+  GpuDrawCommand(
+    pipeline: graphics,
+    vertexBuffer: vertices,
+    vertexCount: 3
+  )
+)
+host.endGpuFrame(frame)
+```
+
+The host validates generation, namespace, resource kind, graphics-versus-
+compute pipeline kind, vertex layout, vertex and index ranges, target format,
+viewport and scissor bounds, compute group dimensions, and per-frame work
+budget before calling the adapter. Multiple draw commands submitted through
+`submitGpuDraws` share one ordered pass identifier. The adapter configures the
+target, viewport, scissor, and clear state once for that pass, then receives
+only the validated draw commands; adding draws does not repeat pass setup.
+
+`GpuHostConfig.viewIdBase` and `viewIdCount` reserve the backend view range used
+by CBSS. A zero count means the complete 256-view range. Borrowed runtimes can
+assign a smaller non-overlapping range so application-owned bgfx work and CBSS
+cannot silently reuse one another's view identifiers. The range resets each
+frame and exhaustion fails before submission.
+
+The current contract deliberately omits texture/sampler/uniform bindings,
+storage-buffer bindings, copies, and readback commands. Those operations need
+the same typed namespace and budget checks and are added before GPU Canvas is
+declared complete.
+
 ## Optional bgfx Adapter
 
 The bgfx adapter is compiled only with `-d:cbssGpuBgfx` and imports the separate
@@ -219,8 +262,8 @@ present to the same window.
 
 The current adapter covers initialization or borrowed attachment, capability
 reporting, frame completion, resize, mapped Texture, Buffer, RenderTarget,
-Shader, and Graphics/Compute Pipeline creation, and deterministic teardown
-under both ARC and ORC. Its
+Shader, Graphics/Compute Pipeline creation, bounded graphics/compute
+submission, and deterministic teardown under both ARC and ORC. Its
 maintained NOOP integration also executes real bgfx static and dynamic buffers,
 aligned partial updates, textures, blit, readback, framebuffer, uniform,
 encoder, view, frame, and destruction calls inside a CBSS-owned host. The
@@ -241,11 +284,12 @@ CBSS_BIMG_PATH=/path/to/bimg \
 nimble runBgfxHostDemo
 ```
 
-GPU Canvas composition, a public native-window helper, compute-output
-verification, and device restoration are still required before the GPU profile
-is release-complete.
+GPU Canvas composition, resource bindings, a public native-window helper,
+compute-output verification, and device restoration are still required before
+the GPU profile is release-complete.
 
 The NOOP fixture validates that those native calls coexist with host ownership
 and budget accounting. Texture, Buffer, the first owned RenderTarget, Shader,
-and Pipeline are now mapped through `GpuResourceHandle`; the fixture's remaining
-direct uniform, view, and submission calls are not the final public APIs.
+Pipeline, graphics submission, and compute dispatch are mapped through typed
+CBSS contracts. The fixture's remaining direct uniform, copy, and readback
+calls exercise backend capability that does not yet have a final public API.

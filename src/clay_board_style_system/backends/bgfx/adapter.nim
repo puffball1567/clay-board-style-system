@@ -542,6 +542,219 @@ proc createComputePipeline(
   resource = packBackendResource(brtProgram, handle.idx)
   gbsOk
 
+proc bgfxBlendFactor(value: GpuBlendFactor): uint64 =
+  case value
+  of gbfZero: BGFX_STATE_BLEND_ZERO
+  of gbfOne: BGFX_STATE_BLEND_ONE
+  of gbfSourceColor: BGFX_STATE_BLEND_SRC_COLOR
+  of gbfOneMinusSourceColor: BGFX_STATE_BLEND_INV_SRC_COLOR
+  of gbfDestinationColor: BGFX_STATE_BLEND_DST_COLOR
+  of gbfOneMinusDestinationColor: BGFX_STATE_BLEND_INV_DST_COLOR
+  of gbfSourceAlpha: BGFX_STATE_BLEND_SRC_ALPHA
+  of gbfOneMinusSourceAlpha: BGFX_STATE_BLEND_INV_SRC_ALPHA
+  of gbfDestinationAlpha: BGFX_STATE_BLEND_DST_ALPHA
+  of gbfOneMinusDestinationAlpha: BGFX_STATE_BLEND_INV_DST_ALPHA
+
+proc bgfxBlendOperation(value: GpuBlendOperation): uint64 =
+  case value
+  of gboAdd: BGFX_STATE_BLEND_EQUATION_ADD
+  of gboSubtract: BGFX_STATE_BLEND_EQUATION_SUB
+  of gboReverseSubtract: BGFX_STATE_BLEND_EQUATION_REVSUB
+  of gboMinimum: BGFX_STATE_BLEND_EQUATION_MIN
+  of gboMaximum: BGFX_STATE_BLEND_EQUATION_MAX
+
+proc bgfxDrawState(descriptor: GpuGraphicsPipelineDescriptor): uint64 =
+  if gccRed in descriptor.blend.writeMask:
+    result = result or BGFX_STATE_WRITE_R
+  if gccGreen in descriptor.blend.writeMask:
+    result = result or BGFX_STATE_WRITE_G
+  if gccBlue in descriptor.blend.writeMask:
+    result = result or BGFX_STATE_WRITE_B
+  if gccAlpha in descriptor.blend.writeMask:
+    result = result or BGFX_STATE_WRITE_A
+
+  case descriptor.topology
+  of gptTriangleList: discard
+  of gptTriangleStrip: result = result or BGFX_STATE_PT_TRISTRIP
+  of gptLineList: result = result or BGFX_STATE_PT_LINES
+  of gptLineStrip: result = result or BGFX_STATE_PT_LINESTRIP
+  of gptPointList: result = result or BGFX_STATE_PT_POINTS
+
+  if descriptor.frontFace == gffCounterClockwise:
+    result = result or BGFX_STATE_FRONT_CCW
+  case descriptor.cullMode
+  of gcmNone: discard
+  of gcmFront:
+    if descriptor.frontFace == gffCounterClockwise:
+      result = result or BGFX_STATE_CULL_CCW
+    else:
+      result = result or BGFX_STATE_CULL_CW
+  of gcmBack:
+    if descriptor.frontFace == gffCounterClockwise:
+      result = result or BGFX_STATE_CULL_CW
+    else:
+      result = result or BGFX_STATE_CULL_CCW
+
+  if descriptor.blend.enabled:
+    result = result or BGFX_STATE_BLEND_FUNC_SEPARATE(
+      descriptor.blend.sourceColor.bgfxBlendFactor(),
+      descriptor.blend.destinationColor.bgfxBlendFactor(),
+      descriptor.blend.sourceAlpha.bgfxBlendFactor(),
+      descriptor.blend.destinationAlpha.bgfxBlendFactor()
+    )
+    result = result or BGFX_STATE_BLEND_EQUATION_SEPARATE(
+      descriptor.blend.colorOperation.bgfxBlendOperation(),
+      descriptor.blend.alphaOperation.bgfxBlendOperation()
+    )
+
+proc packedClearColor(color: GpuClearColor): uint32 =
+  let red = uint32(color.red * 255'f32 + 0.5'f32)
+  let green = uint32(color.green * 255'f32 + 0.5'f32)
+  let blue = uint32(color.blue * 255'f32 + 0.5'f32)
+  let alpha = uint32(color.alpha * 255'f32 + 0.5'f32)
+  (red shl 24) or (green shl 16) or (blue shl 8) or alpha
+
+proc beginGraphicsPass(
+    rawContext: GpuBackendContext;
+    viewId: uint16;
+    pass: GpuGraphicsPassDescriptor;
+    renderTarget: GpuBackendResourceId
+): GpuBackendStatus {.raises: [].} =
+  if not rawContext.context.attached:
+    return gbsInvalidConfiguration
+  let target = renderTarget.unpackBackendResource()
+  if renderTarget.backendResourceIdValue() == 0:
+    BGFX.setViewFrameBuffer(
+      viewId,
+      bgfx_frame_buffer_handle_t(idx: BGFX_INVALID_HANDLE)
+    )
+  elif not target.valid or target.tag != brtFrameBuffer:
+    return gbsInvalidConfiguration
+  else:
+    BGFX.setViewFrameBuffer(
+      viewId,
+      bgfx_frame_buffer_handle_t(idx: target.handleIndex)
+    )
+  BGFX.setViewRect(
+    viewId,
+    int16(pass.viewport.x),
+    int16(pass.viewport.y),
+    uint16(pass.viewport.width),
+    uint16(pass.viewport.height)
+  )
+  if pass.scissorEnabled:
+    BGFX.setViewScissor(
+      viewId,
+      uint16(pass.scissor.x),
+      uint16(pass.scissor.y),
+      uint16(pass.scissor.width),
+      uint16(pass.scissor.height)
+    )
+  else:
+    BGFX.setViewScissor(viewId, 0, 0, 0, 0)
+  if pass.clearColorEnabled:
+    BGFX.setViewClear(
+      viewId,
+      BGFX_CLEAR_COLOR,
+      pass.clearColor.packedClearColor(),
+      1'f32,
+      0
+    )
+  else:
+    BGFX.setViewClear(viewId, BGFX_CLEAR_NONE, 0, 1'f32, 0)
+  gbsOk
+
+proc submitDraw(
+    rawContext: GpuBackendContext;
+    viewId: uint16;
+    pipeline, vertexBuffer, indexBuffer: GpuBackendResourceId;
+    pipelineDescriptor: GpuGraphicsPipelineDescriptor;
+    vertexDescriptor, indexDescriptor: GpuBufferDescriptor;
+    command: GpuDrawCommand
+): GpuBackendStatus {.raises: [].} =
+  discard vertexDescriptor
+  discard indexDescriptor
+  let value = rawContext.context
+  let program = pipeline.unpackBackendResource()
+  let vertex = vertexBuffer.unpackBackendResource()
+  let index = indexBuffer.unpackBackendResource()
+  if not value.attached or not program.valid or program.tag != brtProgram or
+      not vertex.valid or
+      (vertex.tag != brtStaticVertexBuffer and
+       vertex.tag != brtDynamicVertexBuffer):
+    return gbsInvalidConfiguration
+  if indexBuffer.backendResourceIdValue() != 0 and
+      (not index.valid or
+       (index.tag != brtStaticIndexBuffer and
+        index.tag != brtDynamicIndexBuffer)):
+    return gbsInvalidConfiguration
+  case vertex.tag
+  of brtStaticVertexBuffer:
+    BGFX.setVertexBuffer(
+      0,
+      bgfx_vertex_buffer_handle_t(idx: vertex.handleIndex),
+      command.firstVertex,
+      command.vertexCount
+    )
+  of brtDynamicVertexBuffer:
+    BGFX.setDynamicVertexBuffer(
+      0,
+      bgfx_dynamic_vertex_buffer_handle_t(idx: vertex.handleIndex),
+      command.firstVertex,
+      command.vertexCount
+    )
+  else:
+    return gbsInvalidConfiguration
+
+  if indexBuffer.backendResourceIdValue() != 0:
+    case index.tag
+    of brtStaticIndexBuffer:
+      BGFX.setIndexBuffer(
+        bgfx_index_buffer_handle_t(idx: index.handleIndex),
+        command.firstIndex,
+        command.indexCount
+      )
+    of brtDynamicIndexBuffer:
+      BGFX.setDynamicIndexBuffer(
+        bgfx_dynamic_index_buffer_handle_t(idx: index.handleIndex),
+        command.firstIndex,
+        command.indexCount
+      )
+    else:
+      return gbsInvalidConfiguration
+
+  BGFX.setState(pipelineDescriptor.bgfxDrawState(), 0)
+  BGFX.submit(
+    viewId,
+    bgfx_program_handle_t(idx: program.handleIndex),
+    command.depth,
+    BGFX_DISCARD_ALL
+  )
+  result = gbsOk
+
+proc dispatch(
+    rawContext: GpuBackendContext;
+    viewId: uint16;
+    pipeline: GpuBackendResourceId;
+    command: GpuComputeCommand
+): GpuBackendStatus {.raises: [].} =
+  let value = rawContext.context
+  let program = pipeline.unpackBackendResource()
+  if not value.attached or not program.valid or program.tag != brtProgram:
+    return gbsInvalidConfiguration
+  let caps = BGFX.getCaps()
+  if caps.isNil or (caps.supported and BGFX_CAPS_COMPUTE) == 0:
+    return gbsUnsupported
+  BGFX.dispatch(
+    viewId,
+    bgfx_program_handle_t(idx: program.handleIndex),
+    command.groupsX,
+    command.groupsY,
+    command.groupsZ,
+    BGFX_DISCARD_ALL
+  )
+  gbsOk
+
 proc destroyResource(
     rawContext: GpuBackendContext;
     resource: GpuBackendResourceId;
@@ -610,6 +823,9 @@ proc newBgfxBackend*(
     createShader: createShader,
     createGraphicsPipeline: createGraphicsPipeline,
     createComputePipeline: createComputePipeline,
+    beginGraphicsPass: beginGraphicsPass,
+    submitDraw: submitDraw,
+    dispatch: dispatch,
     destroyResource: destroyResource,
     closeOwned: closeOwned,
     detachBorrowed: detachBorrowed
