@@ -1,10 +1,13 @@
-import std/[algorithm, hashes, tables]
+import std/[algorithm, hashes, math, tables]
 
 const
-  gpuHostApiVersion* = 7'u32
+  gpuHostApiVersion* = 8'u32
   maxGpuNamespaceNameBytes* = 128
   maxGpuResourceLabelBytes* = 128
   maxGpuViewCount* = 256'u16
+  maxGpuUniformBindings* = 32
+  maxGpuTextureBindings* = 16
+  maxGpuStorageImageBindings* = 16
 
 type
   GpuHostError* = object of CatchableError
@@ -96,6 +99,27 @@ type
     gssFragment,
     gssCompute
 
+  GpuUniformType* = enum
+    gutVec4,
+    gutMat3,
+    gutMat4
+
+  GpuSamplerAddressMode* = enum
+    gsamRepeat,
+    gsamMirror,
+    gsamClamp,
+    gsamBorder
+
+  GpuSamplerFilter* = enum
+    gsfLinear,
+    gsfNearest,
+    gsfAnisotropic
+
+  GpuStorageAccess* = enum
+    gsaRead,
+    gsaWrite,
+    gsaReadWrite
+
   GpuPipelineKind* = enum
     gplkGraphics,
     gplkCompute
@@ -176,6 +200,19 @@ type
     stage*: GpuShaderStage
     label*: string
 
+  GpuUniformDescriptor* = object
+    name*: string
+    uniformType*: GpuUniformType
+    arrayLength*: uint16
+    label*: string
+
+  GpuSamplerDescriptor* = object
+    name*: string
+    addressU*, addressV*, addressW*: GpuSamplerAddressMode
+    minFilter*, magFilter*, mipFilter*: GpuSamplerFilter
+    borderColorIndex*: uint8
+    label*: string
+
   GpuBlendState* = object
     enabled*: bool
     sourceColor*, destinationColor*: GpuBlendFactor
@@ -213,6 +250,26 @@ type
     clearColor*: GpuClearColor
     renderTarget*: GpuResourceHandle
 
+  GpuUniformBinding* = object
+    uniform*: GpuResourceHandle
+    values*: seq[float32]
+
+  GpuTextureBinding* = object
+    stage*: uint8
+    sampler*: GpuResourceHandle
+    texture*: GpuResourceHandle
+
+  GpuStorageImageBinding* = object
+    stage*: uint8
+    texture*: GpuResourceHandle
+    access*: GpuStorageAccess
+    mip*: uint8
+
+  GpuBindingSet* = object
+    uniforms*: seq[GpuUniformBinding]
+    textures*: seq[GpuTextureBinding]
+    storageImages*: seq[GpuStorageImageBinding]
+
   GpuDrawCommand* = object
     pipeline*: GpuResourceHandle
     vertexBuffer*: GpuResourceHandle
@@ -220,10 +277,34 @@ type
     indexBuffer*: GpuResourceHandle
     firstIndex*, indexCount*: uint32
     depth*: uint32
+    bindings*: GpuBindingSet
 
   GpuComputeCommand* = object
     pipeline*: GpuResourceHandle
     groupsX*, groupsY*, groupsZ*: uint32
+    bindings*: GpuBindingSet
+
+  GpuBackendUniformBinding* = object
+    resource*: GpuBackendResourceId
+    descriptor*: GpuUniformDescriptor
+    values*: seq[float32]
+
+  GpuBackendTextureBinding* = object
+    stage*: uint8
+    sampler*, texture*: GpuBackendResourceId
+    samplerDescriptor*: GpuSamplerDescriptor
+
+  GpuBackendStorageImageBinding* = object
+    stage*: uint8
+    texture*: GpuBackendResourceId
+    format*: GpuTextureFormat
+    access*: GpuStorageAccess
+    mip*: uint8
+
+  GpuBackendBindingSet* = object
+    uniforms*: seq[GpuBackendUniformBinding]
+    textures*: seq[GpuBackendTextureBinding]
+    storageImages*: seq[GpuBackendStorageImageBinding]
 
   GpuHostConfig* = object
     width*, height*: uint32
@@ -325,6 +406,18 @@ type
     resource: var GpuBackendResourceId
   ): GpuBackendStatus {.nimcall, raises: [].}
 
+  GpuBackendCreateUniformProc* = proc(
+    context: GpuBackendContext;
+    descriptor: GpuUniformDescriptor;
+    resource: var GpuBackendResourceId
+  ): GpuBackendStatus {.nimcall, raises: [].}
+
+  GpuBackendCreateSamplerProc* = proc(
+    context: GpuBackendContext;
+    descriptor: GpuSamplerDescriptor;
+    resource: var GpuBackendResourceId
+  ): GpuBackendStatus {.nimcall, raises: [].}
+
   GpuBackendCreateGraphicsPipelineProc* = proc(
     context: GpuBackendContext;
     descriptor: GpuGraphicsPipelineDescriptor;
@@ -352,6 +445,7 @@ type
     pipeline, vertexBuffer, indexBuffer: GpuBackendResourceId;
     pipelineDescriptor: GpuGraphicsPipelineDescriptor;
     vertexDescriptor, indexDescriptor: GpuBufferDescriptor;
+    bindings: GpuBackendBindingSet;
     command: GpuDrawCommand
   ): GpuBackendStatus {.nimcall, raises: [].}
 
@@ -359,6 +453,7 @@ type
     context: GpuBackendContext;
     viewId: uint16;
     pipeline: GpuBackendResourceId;
+    bindings: GpuBackendBindingSet;
     command: GpuComputeCommand
   ): GpuBackendStatus {.nimcall, raises: [].}
 
@@ -383,6 +478,8 @@ type
     updateBuffer*: GpuBackendUpdateBufferProc
     createRenderTarget*: GpuBackendCreateRenderTargetProc
     createShader*: GpuBackendCreateShaderProc
+    createUniform*: GpuBackendCreateUniformProc
+    createSampler*: GpuBackendCreateSamplerProc
     createGraphicsPipeline*: GpuBackendCreateGraphicsPipelineProc
     createComputePipeline*: GpuBackendCreateComputePipelineProc
     beginGraphicsPass*: GpuBackendBeginGraphicsPassProc
@@ -398,13 +495,22 @@ type
     generation: uint64
     backendResource: GpuBackendResourceId
     bufferDescriptor: GpuBufferDescriptor
+    textureDescriptor: GpuTextureDescriptor
     renderTargetDescriptor: GpuRenderTargetDescriptor
     shaderDescriptor: GpuShaderDescriptor
+    uniformDescriptor: GpuUniformDescriptor
+    samplerDescriptor: GpuSamplerDescriptor
     graphicsPipelineDescriptor: GpuGraphicsPipelineDescriptor
     computePipelineDescriptor: GpuComputePipelineDescriptor
     pipelineKind: GpuPipelineKind
     dependencies: seq[GpuResourceId]
     dependentCount: uint32
+
+  GpuResolvedDrawCommand = object
+    pipeline, vertexBuffer, indexBuffer: GpuBackendResourceId
+    pipelineDescriptor: GpuGraphicsPipelineDescriptor
+    vertexDescriptor, indexDescriptor: GpuBufferDescriptor
+    bindings: GpuBackendBindingSet
 
   GpuNamespaceEntry = object
     name: string
@@ -771,8 +877,11 @@ proc insertGpuResource(
     bytes: uint64;
     backendResource = GpuBackendResourceId(0);
     bufferDescriptor = GpuBufferDescriptor();
+    textureDescriptor = GpuTextureDescriptor();
     renderTargetDescriptor = GpuRenderTargetDescriptor();
     shaderDescriptor = GpuShaderDescriptor();
+    uniformDescriptor = GpuUniformDescriptor();
+    samplerDescriptor = GpuSamplerDescriptor();
     graphicsPipelineDescriptor = GpuGraphicsPipelineDescriptor();
     computePipelineDescriptor = GpuComputePipelineDescriptor();
     pipelineKind = gplkGraphics;
@@ -788,8 +897,11 @@ proc insertGpuResource(
     generation: host.generationValue,
     backendResource: backendResource,
     bufferDescriptor: bufferDescriptor,
+    textureDescriptor: textureDescriptor,
     renderTargetDescriptor: renderTargetDescriptor,
     shaderDescriptor: shaderDescriptor,
+    uniformDescriptor: uniformDescriptor,
+    samplerDescriptor: samplerDescriptor,
     graphicsPipelineDescriptor: graphicsPipelineDescriptor,
     computePipelineDescriptor: computePipelineDescriptor,
     pipelineKind: pipelineKind,
@@ -980,7 +1092,8 @@ proc createGpuTexture*(
     namespace,
     grkTexture,
     bytes,
-    backendResource
+    backendResource,
+    textureDescriptor = descriptor
   )
 
 proc createGpuBuffer*(
@@ -1126,6 +1239,116 @@ proc createGpuShader*(
     bytes,
     backendResource,
     shaderDescriptor = descriptor
+  )
+
+proc validateGpuBindingName(name: string) =
+  if name.len == 0 or name.len > maxGpuResourceLabelBytes:
+    raise newException(GpuHostError, "GPU binding name length is invalid")
+  for index, character in name:
+    let valid = character == '_' or
+      character in {'a' .. 'z'} or
+      character in {'A' .. 'Z'} or
+      (index > 0 and character in {'0' .. '9'})
+    if not valid:
+      raise newException(GpuHostError, "GPU binding name is not a portable identifier")
+
+proc uniformFloatCount(uniformType: GpuUniformType): uint64 =
+  case uniformType
+  of gutVec4: 4'u64
+  of gutMat3: 9'u64
+  of gutMat4: 16'u64
+
+proc createGpuUniform*(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    descriptor: GpuUniformDescriptor
+): GpuResourceHandle =
+  host.requireHost()
+  if host.stateValue != ghsReady:
+    raise newException(GpuHostError, "GPU host is not ready")
+  if host.activeFrame:
+    raise newException(
+      GpuHostError,
+      "GPU uniform creation is not allowed during an active frame"
+    )
+  if namespace notin host.namespaces:
+    raise newException(GpuHostError, "unknown GPU namespace")
+  descriptor.name.validateGpuBindingName()
+  if descriptor.label.len > maxGpuResourceLabelBytes:
+    raise newException(GpuHostError, "GPU resource label is too long")
+  if descriptor.arrayLength == 0:
+    raise newException(GpuHostError, "GPU uniform array length must be non-zero")
+  let bytes = descriptor.uniformType.uniformFloatCount() *
+    uint64(descriptor.arrayLength) * uint64(sizeof(float32))
+  host.namespaces[namespace].ensureResourceCapacity(bytes)
+  if host.backend.createUniform.isNil or host.backend.destroyResource.isNil:
+    raise newException(GpuHostError, "GPU backend does not support uniforms")
+
+  var backendResource: GpuBackendResourceId
+  let status = host.backend.createUniform(
+    host.backend.context,
+    descriptor,
+    backendResource
+  )
+  if status == gbsDeviceLost:
+    host.enterDeviceLost()
+  raiseForStatus(status)
+  if backendResource.backendResourceIdValue == 0:
+    raise newException(GpuHostError, "GPU backend returned an invalid resource")
+  host.insertGpuResource(
+    namespace,
+    grkUniform,
+    bytes,
+    backendResource,
+    uniformDescriptor = descriptor
+  )
+
+proc createGpuSampler*(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    descriptor: GpuSamplerDescriptor
+): GpuResourceHandle =
+  host.requireHost()
+  if host.stateValue != ghsReady:
+    raise newException(GpuHostError, "GPU host is not ready")
+  if host.activeFrame:
+    raise newException(
+      GpuHostError,
+      "GPU sampler creation is not allowed during an active frame"
+    )
+  if namespace notin host.namespaces:
+    raise newException(GpuHostError, "unknown GPU namespace")
+  descriptor.name.validateGpuBindingName()
+  if descriptor.label.len > maxGpuResourceLabelBytes:
+    raise newException(GpuHostError, "GPU resource label is too long")
+  if descriptor.borderColorIndex > 15:
+    raise newException(GpuHostError, "GPU sampler border color index is invalid")
+  if descriptor.mipFilter == gsfAnisotropic:
+    raise newException(
+      GpuHostError,
+      "GPU sampler mip filtering cannot be anisotropic"
+    )
+  host.namespaces[namespace].ensureResourceCapacity(0)
+  if host.backend.createSampler.isNil or host.backend.destroyResource.isNil:
+    raise newException(GpuHostError, "GPU backend does not support samplers")
+
+  var backendResource: GpuBackendResourceId
+  let status = host.backend.createSampler(
+    host.backend.context,
+    descriptor,
+    backendResource
+  )
+  if status == gbsDeviceLost:
+    host.enterDeviceLost()
+  raiseForStatus(status)
+  if backendResource.backendResourceIdValue == 0:
+    raise newException(GpuHostError, "GPU backend returned an invalid resource")
+  host.insertGpuResource(
+    namespace,
+    grkSampler,
+    0,
+    backendResource,
+    samplerDescriptor = descriptor
   )
 
 proc isGpuResourceLive*(host: GpuHost; handle: GpuResourceHandle): bool
@@ -1472,16 +1695,122 @@ proc validateGraphicsPass(
   if pass.clearColorEnabled:
     pass.clearColor.validateClearColor()
 
+proc validateGpuBindings(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    bindings: GpuBindingSet;
+    allowStorageImages: bool
+): GpuBackendBindingSet =
+  if bindings.uniforms.len > maxGpuUniformBindings:
+    raise newException(GpuHostError, "GPU uniform binding count exceeded")
+  if bindings.textures.len > maxGpuTextureBindings:
+    raise newException(GpuHostError, "GPU texture binding count exceeded")
+  if bindings.storageImages.len > maxGpuStorageImageBindings:
+    raise newException(GpuHostError, "GPU storage image binding count exceeded")
+  if not allowStorageImages and bindings.storageImages.len != 0:
+    raise newException(
+      GpuHostError,
+      "GPU storage image bindings require a compute dispatch"
+    )
+
+  var uniformIds: seq[GpuResourceId]
+  result.uniforms = newSeqOfCap[GpuBackendUniformBinding](bindings.uniforms.len)
+  for binding in bindings.uniforms:
+    let entry = host.requireGpuResource(
+      namespace,
+      binding.uniform,
+      grkUniform,
+      "GPU uniform binding is stale invalid or belongs to another namespace"
+    )
+    if binding.uniform.resource in uniformIds:
+      raise newException(GpuHostError, "GPU uniform is bound more than once")
+    uniformIds.add binding.uniform.resource
+    if entry.backendResource.backendResourceIdValue() == 0:
+      raise newException(GpuHostError, "GPU uniform is not backend-mapped")
+    let expectedValues = entry.uniformDescriptor.uniformType.uniformFloatCount() *
+      uint64(entry.uniformDescriptor.arrayLength)
+    if uint64(binding.values.len) != expectedValues:
+      raise newException(GpuHostError, "GPU uniform value count is invalid")
+    for value in binding.values:
+      if value.classify notin {fcNormal, fcSubnormal, fcZero, fcNegZero}:
+        raise newException(GpuHostError, "GPU uniform values must be finite")
+    result.uniforms.add GpuBackendUniformBinding(
+      resource: entry.backendResource,
+      descriptor: entry.uniformDescriptor,
+      values: binding.values
+    )
+
+  var occupiedStages: set[uint8]
+  result.textures = newSeqOfCap[GpuBackendTextureBinding](bindings.textures.len)
+  for binding in bindings.textures:
+    if binding.stage >= uint8(maxGpuTextureBindings) or
+        binding.stage in occupiedStages:
+      raise newException(GpuHostError, "GPU texture binding stage is invalid or duplicated")
+    occupiedStages.incl binding.stage
+    let sampler = host.requireGpuResource(
+      namespace,
+      binding.sampler,
+      grkSampler,
+      "GPU sampler binding is stale invalid or belongs to another namespace"
+    )
+    let texture = host.requireGpuResource(
+      namespace,
+      binding.texture,
+      grkTexture,
+      "GPU texture binding is stale invalid or belongs to another namespace"
+    )
+    if sampler.backendResource.backendResourceIdValue() == 0 or
+        texture.backendResource.backendResourceIdValue() == 0:
+      raise newException(GpuHostError, "GPU texture binding is not backend-mapped")
+    if gtuSampled notin texture.textureDescriptor.usage:
+      raise newException(GpuHostError, "GPU texture binding requires sampled usage")
+    result.textures.add GpuBackendTextureBinding(
+      stage: binding.stage,
+      sampler: sampler.backendResource,
+      texture: texture.backendResource,
+      samplerDescriptor: sampler.samplerDescriptor
+    )
+
+  result.storageImages = newSeqOfCap[GpuBackendStorageImageBinding](
+    bindings.storageImages.len
+  )
+  for binding in bindings.storageImages:
+    if binding.stage >= uint8(maxGpuStorageImageBindings) or
+        binding.stage in occupiedStages:
+      raise newException(
+        GpuHostError,
+        "GPU storage image binding stage is invalid or duplicated"
+      )
+    occupiedStages.incl binding.stage
+    if binding.mip != 0:
+      raise newException(
+        GpuHostError,
+        "GPU storage image mip levels are not yet supported"
+      )
+    let texture = host.requireGpuResource(
+      namespace,
+      binding.texture,
+      grkTexture,
+      "GPU storage image is stale invalid or belongs to another namespace"
+    )
+    if texture.backendResource.backendResourceIdValue() == 0:
+      raise newException(GpuHostError, "GPU storage image is not backend-mapped")
+    if gtuStorage notin texture.textureDescriptor.usage:
+      raise newException(GpuHostError, "GPU storage image requires storage usage")
+    result.storageImages.add GpuBackendStorageImageBinding(
+      stage: binding.stage,
+      texture: texture.backendResource,
+      format: texture.textureDescriptor.format,
+      access: binding.access,
+      mip: binding.mip
+    )
+
 proc validateDrawCommand(
     host: GpuHost;
     namespace: GpuNamespaceId;
     pass: GpuGraphicsPassDescriptor;
     command: GpuDrawCommand
-): tuple[
-    pipeline, vertexBuffer, indexBuffer: GpuBackendResourceId,
-    pipelineDescriptor: GpuGraphicsPipelineDescriptor,
-    vertexDescriptor, indexDescriptor: GpuBufferDescriptor
-  ] =
+): GpuResolvedDrawCommand =
   let pipeline = host.requireGpuResource(
     namespace,
     command.pipeline,
@@ -1527,6 +1856,11 @@ proc validateDrawCommand(
   result.vertexBuffer = vertex.backendResource
   result.pipelineDescriptor = pipeline.graphicsPipelineDescriptor
   result.vertexDescriptor = vertex.bufferDescriptor
+  result.bindings = host.validateGpuBindings(
+    namespace,
+    command.bindings,
+    allowStorageImages = false
+  )
 
   if command.indexBuffer.isEmptyGpuHandle():
     if command.firstIndex != 0 or command.indexCount != 0:
@@ -1572,8 +1906,9 @@ proc submitGpuDraws*(
     raise newException(GpuHostError, "GPU backend does not support draw submission")
 
   let target = host.validateGraphicsPass(namespace, pass)
+  var resolvedCommands = newSeqOfCap[GpuResolvedDrawCommand](commands.len)
   for command in commands:
-    discard host.validateDrawCommand(namespace, pass, command)
+    resolvedCommands.add host.validateDrawCommand(namespace, pass, command)
   host.ensureGpuViewAvailable()
   host.validateGpuFrameWork(namespace, workUnits = uint32(commands.len))
   let viewId = host.configValue.viewIdBase + host.nextViewOffset
@@ -1589,8 +1924,8 @@ proc submitGpuDraws*(
   inc host.nextViewOffset
   host.reserveGpuFrameWork(namespace, workUnits = uint32(commands.len))
 
-  for command in commands:
-    let resolved = host.validateDrawCommand(namespace, pass, command)
+  for index, command in commands:
+    let resolved = resolvedCommands[index]
     let status = host.backend.submitDraw(
       host.backend.context,
       viewId,
@@ -1600,6 +1935,7 @@ proc submitGpuDraws*(
       resolved.pipelineDescriptor,
       resolved.vertexDescriptor,
       resolved.indexDescriptor,
+      resolved.bindings,
       command
     )
     if status == gbsDeviceLost:
@@ -1642,6 +1978,11 @@ proc dispatchGpuCompute*(
   if pipeline.pipelineKind != gplkCompute or
       pipeline.backendResource.backendResourceIdValue() == 0:
     raise newException(GpuHostError, "GPU compute dispatch requires a compute pipeline")
+  let bindings = host.validateGpuBindings(
+    namespace,
+    command.bindings,
+    allowStorageImages = true
+  )
 
   host.ensureGpuViewAvailable()
   host.reserveGpuFrameWork(namespace, workUnits = 1)
@@ -1649,6 +1990,7 @@ proc dispatchGpuCompute*(
     host.backend.context,
     host.nextGpuViewId(),
     pipeline.backendResource,
+    bindings,
     command
   )
   if status == gbsDeviceLost:

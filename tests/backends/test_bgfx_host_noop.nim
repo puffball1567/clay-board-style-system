@@ -223,12 +223,27 @@ let frameBufferResource = host.reserveGpuResource(
   0
 )
 
-let uniform = BGFX.createUniform("u_cbssNoop", BGFX_UNIFORM_TYPE_VEC4, 1)
-doAssert BGFX_HANDLE_IS_VALID(uniform)
-let uniformResource = host.reserveGpuResource(
+let uniformResource = host.createGpuUniform(
   resourceNamespace,
-  grkUniform,
-  0
+  GpuUniformDescriptor(
+    name: "u_cbssNoop",
+    uniformType: gutVec4,
+    arrayLength: 1,
+    label: "CBSS NOOP uniform"
+  )
+)
+let samplerResource = host.createGpuSampler(
+  resourceNamespace,
+  GpuSamplerDescriptor(
+    name: "s_cbssNoop",
+    addressU: gsamClamp,
+    addressV: gsamClamp,
+    addressW: gsamClamp,
+    minFilter: gsfLinear,
+    magFilter: gsfLinear,
+    mipFilter: gsfLinear,
+    label: "CBSS NOOP sampler"
+  )
 )
 
 let token = host.beginGpuFrame()
@@ -271,7 +286,6 @@ let readbackFrame = BGFX.readTexture(texture, addr readback[0], 0, 0)
 doAssert readbackFrame > 0
 host.endGpuFrame(token)
 
-BGFX.destroyUniform(uniform)
 BGFX.destroyFrameBuffer(frameBuffer)
 BGFX.destroyTexture(sourceTexture)
 BGFX.destroyTexture(texture)
@@ -280,6 +294,7 @@ BGFX.destroyIndexBuffer(indexBuffer)
 BGFX.destroyVertexBuffer(vertexBuffer)
 
 doAssert host.releaseGpuResource(uniformResource)
+doAssert host.releaseGpuResource(samplerResource)
 doAssert host.releaseGpuResource(frameBufferResource)
 doAssert host.releaseGpuResource(sourceTextureResource)
 doAssert host.releaseGpuResource(textureResource)

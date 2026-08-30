@@ -1,4 +1,4 @@
-import std/[strutils, unittest]
+import std/[math, strutils, unittest]
 
 import clay_board_style_system/runtime/gpu_host
 
@@ -13,6 +13,8 @@ type MockGpuContext = ref object of GpuBackendContext
   updateBufferStatus: GpuBackendStatus
   createRenderTargetStatus: GpuBackendStatus
   createShaderStatus: GpuBackendStatus
+  createUniformStatus: GpuBackendStatus
+  createSamplerStatus: GpuBackendStatus
   createGraphicsPipelineStatus: GpuBackendStatus
   createComputePipelineStatus: GpuBackendStatus
   beginGraphicsPassStatus: GpuBackendStatus
@@ -31,6 +33,8 @@ type MockGpuContext = ref object of GpuBackendContext
   bufferUpdates: int
   renderTargetCreates: int
   shaderCreates: int
+  uniformCreates: int
+  samplerCreates: int
   graphicsPipelineCreates: int
   computePipelineCreates: int
   graphicsPassBegins: int
@@ -46,6 +50,8 @@ type MockGpuContext = ref object of GpuBackendContext
   lastBufferUpdateBytes: int
   lastRenderTarget: GpuRenderTargetDescriptor
   lastShader: GpuShaderDescriptor
+  lastUniform: GpuUniformDescriptor
+  lastSampler: GpuSamplerDescriptor
   lastShaderBytecodeBytes: int
   lastGraphicsPipeline: GpuGraphicsPipelineDescriptor
   lastComputePipeline: GpuComputePipelineDescriptor
@@ -54,6 +60,7 @@ type MockGpuContext = ref object of GpuBackendContext
   lastGraphicsPass: GpuGraphicsPassDescriptor
   lastDrawCommand: GpuDrawCommand
   lastComputeCommand: GpuComputeCommand
+  lastBindings: GpuBackendBindingSet
   lastSubmissionResources: seq[uint64]
   destroyedResources: seq[uint64]
   width, height: uint32
@@ -208,6 +215,32 @@ proc createShader(
     inc state.nextBackendResource
   state.createShaderStatus
 
+proc createUniform(
+    context: GpuBackendContext;
+    descriptor: GpuUniformDescriptor;
+    resource: var GpuBackendResourceId
+): GpuBackendStatus {.raises: [].} =
+  let state = context.mock
+  inc state.uniformCreates
+  state.lastUniform = descriptor
+  if state.createUniformStatus == gbsOk:
+    resource = GpuBackendResourceId(state.nextBackendResource)
+    inc state.nextBackendResource
+  state.createUniformStatus
+
+proc createSampler(
+    context: GpuBackendContext;
+    descriptor: GpuSamplerDescriptor;
+    resource: var GpuBackendResourceId
+): GpuBackendStatus {.raises: [].} =
+  let state = context.mock
+  inc state.samplerCreates
+  state.lastSampler = descriptor
+  if state.createSamplerStatus == gbsOk:
+    resource = GpuBackendResourceId(state.nextBackendResource)
+    inc state.nextBackendResource
+  state.createSamplerStatus
+
 proc createGraphicsPipeline(
     context: GpuBackendContext;
     descriptor: GpuGraphicsPipelineDescriptor;
@@ -260,6 +293,7 @@ proc submitDraw(
     pipeline, vertexBuffer, indexBuffer: GpuBackendResourceId;
     pipelineDescriptor: GpuGraphicsPipelineDescriptor;
     vertexDescriptor, indexDescriptor: GpuBufferDescriptor;
+    bindings: GpuBackendBindingSet;
     command: GpuDrawCommand
 ): GpuBackendStatus {.raises: [].} =
   discard pipelineDescriptor
@@ -269,6 +303,7 @@ proc submitDraw(
   inc state.drawSubmits
   state.lastViewId = viewId
   state.lastDrawCommand = command
+  state.lastBindings = bindings
   state.lastSubmissionResources = @[
     pipeline.backendResourceIdValue(),
     vertexBuffer.backendResourceIdValue(),
@@ -280,12 +315,14 @@ proc dispatch(
     context: GpuBackendContext;
     viewId: uint16;
     pipeline: GpuBackendResourceId;
+    bindings: GpuBackendBindingSet;
     command: GpuComputeCommand
 ): GpuBackendStatus {.raises: [].} =
   let state = context.mock
   inc state.computeDispatches
   state.lastViewId = viewId
   state.lastComputeCommand = command
+  state.lastBindings = bindings
   state.lastSubmissionResources = @[pipeline.backendResourceIdValue()]
   state.dispatchStatus
 
@@ -315,6 +352,8 @@ proc backend(state: MockGpuContext): GpuBackendVTable =
     updateBuffer: updateBuffer,
     createRenderTarget: createRenderTarget,
     createShader: createShader,
+    createUniform: createUniform,
+    createSampler: createSampler,
     createGraphicsPipeline: createGraphicsPipeline,
     createComputePipeline: createComputePipeline,
     beginGraphicsPass: beginGraphicsPass,
@@ -337,6 +376,8 @@ proc newContext(): MockGpuContext =
     updateBufferStatus: gbsOk,
     createRenderTargetStatus: gbsOk,
     createShaderStatus: gbsOk,
+    createUniformStatus: gbsOk,
+    createSamplerStatus: gbsOk,
     createGraphicsPipelineStatus: gbsOk,
     createComputePipelineStatus: gbsOk,
     beginGraphicsPassStatus: gbsOk,
@@ -499,6 +540,34 @@ proc createDrawingResources(
     namespace,
     indexBufferDescriptor(),
     newSeq[byte](12)
+  )
+
+proc uniformDescriptor(
+    name = "u_cbssValue";
+    uniformType = gutVec4;
+    arrayLength = 1'u16;
+    label = "uniform"
+): GpuUniformDescriptor =
+  GpuUniformDescriptor(
+    name: name,
+    uniformType: uniformType,
+    arrayLength: arrayLength,
+    label: label
+  )
+
+proc samplerDescriptor(
+    name = "s_cbssTexture";
+    label = "sampler"
+): GpuSamplerDescriptor =
+  GpuSamplerDescriptor(
+    name: name,
+    addressU: gsamClamp,
+    addressV: gsamClamp,
+    addressW: gsamClamp,
+    minFilter: gsfLinear,
+    magFilter: gsfLinear,
+    mipFilter: gsfLinear,
+    label: label
   )
 
 suite "GPU host lifecycle":
@@ -1528,6 +1597,385 @@ suite "GPU pipeline mapping":
       )
       host.close()
       check context.destroyedResources == @[3'u64, 2'u64, 1'u64]
+
+suite "GPU binding resources":
+  test "uniforms and samplers map typed descriptors and accounting":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "binding-resources",
+      GpuResourceBudget(persistentBytes: 128, maxResources: 4)
+    )
+    let uniform = host.createGpuUniform(
+      namespace,
+      uniformDescriptor(
+        name = "u_cbssPalette",
+        uniformType = gutMat4,
+        arrayLength = 2,
+        label = "palette"
+      )
+    )
+    let sampler = host.createGpuSampler(
+      namespace,
+      GpuSamplerDescriptor(
+        name: "s_cbssSurface",
+        addressU: gsamMirror,
+        addressV: gsamClamp,
+        addressW: gsamBorder,
+        minFilter: gsfNearest,
+        magFilter: gsfAnisotropic,
+        mipFilter: gsfNearest,
+        borderColorIndex: 15,
+        label: "surface"
+      )
+    )
+
+    check host.isGpuResourceLive(uniform)
+    check host.isGpuResourceLive(sampler)
+    check context.uniformCreates == 1
+    check context.samplerCreates == 1
+    check context.lastUniform.name == "u_cbssPalette"
+    check context.lastUniform.uniformType == gutMat4
+    check context.lastUniform.arrayLength == 2
+    check context.lastSampler.addressW == gsamBorder
+    check context.lastSampler.borderColorIndex == 15
+    check host.gpuNamespaceUsage(namespace).persistentBytes == 128
+    check host.gpuNamespaceUsage(namespace).resourceCount == 2
+
+    check host.releaseGpuResource(sampler)
+    check host.releaseGpuResource(uniform)
+    check context.destroyedResources == @[2'u64, 1'u64]
+    host.close()
+
+  test "binding descriptors fail before backend allocation":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "invalid-bindings",
+      GpuResourceBudget(persistentBytes: 256, maxResources: 8)
+    )
+
+    for name in ["", "1value", "bad-value", "bad value"]:
+      expect GpuHostError:
+        discard host.createGpuUniform(namespace, uniformDescriptor(name = name))
+    expect GpuHostError:
+      discard host.createGpuUniform(
+        namespace,
+        uniformDescriptor(arrayLength = 0)
+      )
+    expect GpuHostError:
+      discard host.createGpuUniform(
+        namespace,
+        uniformDescriptor(label = repeat('u', maxGpuResourceLabelBytes + 1))
+      )
+    check context.uniformCreates == 0
+
+    for name in ["", "2sampler", "bad-sampler", "bad sampler"]:
+      expect GpuHostError:
+        discard host.createGpuSampler(namespace, samplerDescriptor(name = name))
+    var invalidBorder = samplerDescriptor()
+    invalidBorder.borderColorIndex = 16
+    expect GpuHostError:
+      discard host.createGpuSampler(namespace, invalidBorder)
+    var invalidMip = samplerDescriptor()
+    invalidMip.mipFilter = gsfAnisotropic
+    expect GpuHostError:
+      discard host.createGpuSampler(namespace, invalidMip)
+    check context.samplerCreates == 0
+
+    let token = host.beginGpuFrame()
+    expect GpuHostError:
+      discard host.createGpuUniform(namespace, uniformDescriptor())
+    expect GpuHostError:
+      discard host.createGpuSampler(namespace, samplerDescriptor())
+    host.endGpuFrame(token)
+    host.close()
+
+  test "binding callback budget failure and device loss preserve invariants":
+    block missingCallbacks:
+      let context = newContext()
+      var backend = context.backend
+      backend.createUniform = nil
+      backend.createSampler = nil
+      let host = openGpuHost(backend, ghoOwned)
+      let namespace = host.createGpuNamespace(
+        "missing-binding-callbacks",
+        GpuResourceBudget(persistentBytes: 64, maxResources: 2)
+      )
+      expect GpuHostError:
+        discard host.createGpuUniform(namespace, uniformDescriptor())
+      expect GpuHostError:
+        discard host.createGpuSampler(namespace, samplerDescriptor())
+      check host.gpuNamespaceUsage(namespace).resourceCount == 0
+      host.close()
+
+    block budgetFailure:
+      let context = newContext()
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace(
+        "binding-budget",
+        GpuResourceBudget(persistentBytes: 15, maxResources: 1)
+      )
+      expect GpuHostError:
+        discard host.createGpuUniform(namespace, uniformDescriptor())
+      check context.uniformCreates == 0
+      check host.gpuNamespaceUsage(namespace).resourceCount == 0
+      host.close()
+
+    block backendFailure:
+      let context = newContext()
+      context.createSamplerStatus = gbsFailed
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace(
+        "binding-failure",
+        GpuResourceBudget(persistentBytes: 64, maxResources: 1)
+      )
+      expect GpuHostError:
+        discard host.createGpuSampler(namespace, samplerDescriptor())
+      check context.samplerCreates == 1
+      check host.gpuNamespaceUsage(namespace).resourceCount == 0
+      host.close()
+
+    block deviceLoss:
+      let context = newContext()
+      context.createUniformStatus = gbsDeviceLost
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace(
+        "binding-loss",
+        GpuResourceBudget(persistentBytes: 64, maxResources: 1)
+      )
+      expect GpuHostError:
+        discard host.createGpuUniform(namespace, uniformDescriptor())
+      check host.state == ghsDeviceLost
+      check host.gpuNamespaceUsage(namespace).resourceCount == 0
+      host.close()
+
+suite "GPU command bindings":
+  test "draw and compute bindings resolve before backend submission":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let namespace = host.createGpuNamespace(
+      "command-bindings",
+      GpuResourceBudget(
+        persistentBytes: 4096,
+        workUnitsPerFrame: 4,
+        maxResources: 16
+      )
+    )
+    let drawing = host.createDrawingResources(namespace)
+    let sampledTexture = host.createGpuTexture(
+      namespace,
+      textureDescriptor(usage = {gtuSampled})
+    )
+    let storageTexture = host.createGpuTexture(
+      namespace,
+      textureDescriptor(usage = {gtuSampled, gtuStorage})
+    )
+    let uniform = host.createGpuUniform(namespace, uniformDescriptor())
+    let sampler = host.createGpuSampler(namespace, samplerDescriptor())
+    let computeShader = host.createGpuShader(
+      namespace,
+      shaderDescriptor(gssCompute),
+      @[3'u8]
+    )
+    let computePipeline = host.createGpuComputePipeline(
+      namespace,
+      computePipelineDescriptor(computeShader)
+    )
+
+    let token = host.beginGpuFrame()
+    host.submitGpuDraw(
+      namespace,
+      graphicsPass(),
+      GpuDrawCommand(
+        pipeline: drawing.pipeline,
+        vertexBuffer: drawing.vertexBuffer,
+        vertexCount: 2,
+        bindings: GpuBindingSet(
+          uniforms: @[
+            GpuUniformBinding(
+              uniform: uniform,
+              values: @[0.25'f32, 0.5'f32, 0.75'f32, 1'f32]
+            )
+          ],
+          textures: @[
+            GpuTextureBinding(
+              stage: 3,
+              sampler: sampler,
+              texture: sampledTexture
+            )
+          ]
+        )
+      )
+    )
+    check context.lastBindings.uniforms.len == 1
+    check context.lastBindings.uniforms[0].descriptor.name == "u_cbssValue"
+    check context.lastBindings.uniforms[0].values[2] == 0.75'f32
+    check context.lastBindings.textures.len == 1
+    check context.lastBindings.textures[0].stage == 3
+    check context.lastBindings.textures[0].samplerDescriptor.addressU == gsamClamp
+
+    host.dispatchGpuCompute(
+      namespace,
+      GpuComputeCommand(
+        pipeline: computePipeline,
+        groupsX: 2,
+        groupsY: 1,
+        groupsZ: 1,
+        bindings: GpuBindingSet(
+          uniforms: @[
+            GpuUniformBinding(
+              uniform: uniform,
+              values: @[1'f32, 2'f32, 3'f32, 4'f32]
+            )
+          ],
+          storageImages: @[
+            GpuStorageImageBinding(
+              stage: 4,
+              texture: storageTexture,
+              access: gsaReadWrite
+            )
+          ]
+        )
+      )
+    )
+    check context.lastBindings.storageImages.len == 1
+    check context.lastBindings.storageImages[0].stage == 4
+    check context.lastBindings.storageImages[0].format == gtfRgba8
+    check context.lastBindings.storageImages[0].access == gsaReadWrite
+    host.endGpuFrame(token)
+    host.close()
+
+  test "invalid command bindings never reach a graphics pass or dispatch":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let budget = GpuResourceBudget(
+      persistentBytes: 8192,
+      workUnitsPerFrame: 64,
+      maxResources: 32
+    )
+    let namespace = host.createGpuNamespace("invalid-command-bindings", budget)
+    let foreign = host.createGpuNamespace("foreign-command-bindings", budget)
+    let drawing = host.createDrawingResources(namespace)
+    let sampled = host.createGpuTexture(
+      namespace,
+      textureDescriptor(usage = {gtuSampled})
+    )
+    let notSampled = host.createGpuTexture(
+      namespace,
+      textureDescriptor(usage = {gtuBlitDestination})
+    )
+    let storage = host.createGpuTexture(
+      namespace,
+      textureDescriptor(usage = {gtuStorage})
+    )
+    let uniform = host.createGpuUniform(namespace, uniformDescriptor())
+    let sampler = host.createGpuSampler(namespace, samplerDescriptor())
+    let foreignSampler = host.createGpuSampler(foreign, samplerDescriptor())
+    let computeShader = host.createGpuShader(
+      namespace,
+      shaderDescriptor(gssCompute),
+      @[3'u8]
+    )
+    let computePipeline = host.createGpuComputePipeline(
+      namespace,
+      computePipelineDescriptor(computeShader)
+    )
+    let base = GpuDrawCommand(
+      pipeline: drawing.pipeline,
+      vertexBuffer: drawing.vertexBuffer,
+      vertexCount: 2
+    )
+    let token = host.beginGpuFrame()
+
+    for values in [
+      @[1'f32, 2'f32, 3'f32],
+      @[1'f32, 2'f32, 3'f32, Inf.float32]
+    ]:
+      var command = base
+      command.bindings.uniforms = @[
+        GpuUniformBinding(uniform: uniform, values: values)
+      ]
+      expect GpuHostError:
+        host.submitGpuDraw(namespace, graphicsPass(), command)
+
+    var duplicateUniform = base
+    duplicateUniform.bindings.uniforms = @[
+      GpuUniformBinding(uniform: uniform, values: @[1'f32, 2, 3, 4]),
+      GpuUniformBinding(uniform: uniform, values: @[4'f32, 3, 2, 1])
+    ]
+    expect GpuHostError:
+      host.submitGpuDraw(namespace, graphicsPass(), duplicateUniform)
+
+    for textureBinding in [
+      GpuTextureBinding(stage: 0, sampler: foreignSampler, texture: sampled),
+      GpuTextureBinding(stage: 0, sampler: sampler, texture: notSampled),
+      GpuTextureBinding(stage: uint8(maxGpuTextureBindings), sampler: sampler,
+        texture: sampled)
+    ]:
+      var command = base
+      command.bindings.textures = @[textureBinding]
+      expect GpuHostError:
+        host.submitGpuDraw(namespace, graphicsPass(), command)
+
+    var duplicateStage = base
+    duplicateStage.bindings.textures = @[
+      GpuTextureBinding(stage: 1, sampler: sampler, texture: sampled),
+      GpuTextureBinding(stage: 1, sampler: sampler, texture: sampled)
+    ]
+    expect GpuHostError:
+      host.submitGpuDraw(namespace, graphicsPass(), duplicateStage)
+
+    var storageOnDraw = base
+    storageOnDraw.bindings.storageImages = @[
+      GpuStorageImageBinding(stage: 0, texture: storage, access: gsaRead)
+    ]
+    expect GpuHostError:
+      host.submitGpuDraw(namespace, graphicsPass(), storageOnDraw)
+
+    let computeBase = GpuComputeCommand(
+      pipeline: computePipeline,
+      groupsX: 1,
+      groupsY: 1,
+      groupsZ: 1
+    )
+    for imageBinding in [
+      GpuStorageImageBinding(stage: 0, texture: sampled, access: gsaRead),
+      GpuStorageImageBinding(stage: 0, texture: storage, access: gsaWrite, mip: 1),
+      GpuStorageImageBinding(stage: uint8(maxGpuStorageImageBindings),
+        texture: storage, access: gsaReadWrite)
+    ]:
+      var command = computeBase
+      command.bindings.storageImages = @[imageBinding]
+      expect GpuHostError:
+        host.dispatchGpuCompute(namespace, command)
+
+    var crossStage = computeBase
+    crossStage.bindings.textures = @[
+      GpuTextureBinding(stage: 2, sampler: sampler, texture: sampled)
+    ]
+    crossStage.bindings.storageImages = @[
+      GpuStorageImageBinding(stage: 2, texture: storage, access: gsaReadWrite)
+    ]
+    expect GpuHostError:
+      host.dispatchGpuCompute(namespace, crossStage)
+
+    var tooManyUniforms = base
+    for index in 0 .. maxGpuUniformBindings:
+      discard index
+      tooManyUniforms.bindings.uniforms.add GpuUniformBinding(
+        uniform: uniform,
+        values: @[1'f32, 2, 3, 4]
+      )
+    expect GpuHostError:
+      host.submitGpuDraw(namespace, graphicsPass(), tooManyUniforms)
+
+    check context.graphicsPassBegins == 0
+    check context.drawSubmits == 0
+    check context.computeDispatches == 0
+    check host.gpuNamespaceUsage(namespace).workUnits == 0
+    host.endGpuFrame(token)
+    host.close()
 
 suite "GPU bounded submission":
   test "draw and compute commands map resources onto reserved view identifiers":

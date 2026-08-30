@@ -31,6 +31,20 @@ proc vertexBindCount(): uint32 {.
 proc indexBindCount(): uint32 {.
   importc: "cbss_bgfx_stub_index_bind_count", cdecl.}
 proc stateCount(): uint32 {.importc: "cbss_bgfx_stub_state_count", cdecl.}
+proc uniformCreateCount(): uint32 {.
+  importc: "cbss_bgfx_stub_uniform_create_count", cdecl.}
+proc uniformDestroyCount(): uint32 {.
+  importc: "cbss_bgfx_stub_uniform_destroy_count", cdecl.}
+proc uniformSetCount(): uint32 {.
+  importc: "cbss_bgfx_stub_uniform_set_count", cdecl.}
+proc textureBindCount(): uint32 {.
+  importc: "cbss_bgfx_stub_texture_bind_count", cdecl.}
+proc imageBindCount(): uint32 {.
+  importc: "cbss_bgfx_stub_image_bind_count", cdecl.}
+proc lastSamplerFlags(): uint32 {.
+  importc: "cbss_bgfx_stub_last_sampler_flags", cdecl.}
+proc lastImageAccess(): uint32 {.
+  importc: "cbss_bgfx_stub_last_image_access", cdecl.}
 proc lastViewId(): uint16 {.importc: "cbss_bgfx_stub_last_view_id", cdecl.}
 proc lastState(): uint64 {.importc: "cbss_bgfx_stub_last_state", cdecl.}
 proc programDestroyCount(): uint32 {.
@@ -131,7 +145,7 @@ suite "optional bgfxim adapter":
       GpuResourceBudget(
         persistentBytes: 1024,
         workUnitsPerFrame: 4,
-        maxResources: 12
+        maxResources: 16
       )
     )
     let pixels = newSeq[byte](4 * 2 * 4)
@@ -154,6 +168,40 @@ suite "optional bgfxim adapter":
     check textureHeight() == 2
     check textureFormat() == uint32(BGFX_TEXTURE_FORMAT_RGBA8)
     check textureFlags() == BGFX_TEXTURE_BLIT_DST
+
+    let storageTexture = host.createGpuTexture(
+      resourceNamespace,
+      GpuTextureDescriptor(
+        width: 4,
+        height: 2,
+        format: gtfRgba8,
+        usage: {gtuSampled, gtuStorage},
+        label: "adapter-storage-texture"
+      )
+    )
+    let colorUniform = host.createGpuUniform(
+      resourceNamespace,
+      GpuUniformDescriptor(
+        name: "u_cbssColor",
+        uniformType: gutVec4,
+        arrayLength: 1,
+        label: "adapter-color"
+      )
+    )
+    let colorSampler = host.createGpuSampler(
+      resourceNamespace,
+      GpuSamplerDescriptor(
+        name: "s_cbssColor",
+        addressU: gsamClamp,
+        addressV: gsamMirror,
+        minFilter: gsfNearest,
+        magFilter: gsfAnisotropic,
+        mipFilter: gsfNearest,
+        borderColorIndex: 3,
+        label: "adapter-sampler"
+      )
+    )
+    check uniformCreateCount() == 2
 
     let vertexDescriptor = GpuBufferDescriptor(
       byteSize: 24,
@@ -315,7 +363,22 @@ suite "optional bgfxim adapter":
           vertexBuffer: vertexBuffer,
           vertexCount: 2,
           indexBuffer: dynamicIndexBuffer,
-          indexCount: 4
+          indexCount: 4,
+          bindings: GpuBindingSet(
+            uniforms: @[
+              GpuUniformBinding(
+                uniform: colorUniform,
+                values: @[0.2'f32, 0.4'f32, 0.6'f32, 1'f32]
+              )
+            ],
+            textures: @[
+              GpuTextureBinding(
+                stage: 0,
+                sampler: colorSampler,
+                texture: texture
+              )
+            ]
+          )
         ),
         GpuDrawCommand(
           pipeline: mappedGraphicsPipeline,
@@ -332,7 +395,22 @@ suite "optional bgfxim adapter":
         pipeline: mappedComputePipeline,
         groupsX: 2,
         groupsY: 3,
-        groupsZ: 4
+        groupsZ: 4,
+        bindings: GpuBindingSet(
+          uniforms: @[
+            GpuUniformBinding(
+              uniform: colorUniform,
+              values: @[1'f32, 0.75'f32, 0.5'f32, 0.25'f32]
+            )
+          ],
+          storageImages: @[
+            GpuStorageImageBinding(
+              stage: 1,
+              texture: storageTexture,
+              access: gsaReadWrite
+            )
+          ]
+        )
       )
     )
     host.endGpuFrame(token)
@@ -346,6 +424,15 @@ suite "optional bgfxim adapter":
     check vertexBindCount() == 2
     check indexBindCount() == 2
     check stateCount() == 2
+    check uniformSetCount() == 2
+    check textureBindCount() == 1
+    check imageBindCount() == 1
+    check (lastSamplerFlags() and BGFX_SAMPLER_U_CLAMP) != 0
+    check (lastSamplerFlags() and BGFX_SAMPLER_V_MIRROR) != 0
+    check (lastSamplerFlags() and BGFX_SAMPLER_MIN_POINT) != 0
+    check (lastSamplerFlags() and BGFX_SAMPLER_MAG_ANISOTROPIC) != 0
+    check (lastSamplerFlags() and BGFX_SAMPLER_MIP_POINT) != 0
+    check lastImageAccess() == uint32(BGFX_ACCESS_READWRITE)
     check lastViewId() == 0
     check (lastState() and BGFX_STATE_WRITE_RGB) == BGFX_STATE_WRITE_RGB
     check (lastState() and BGFX_STATE_WRITE_A) == BGFX_STATE_WRITE_A
@@ -358,6 +445,9 @@ suite "optional bgfxim adapter":
     check host.releaseGpuResource(mappedVertexShader)
     check host.releaseGpuResource(mappedFragmentShader)
     check shaderDestroyCount() == 3
+    check host.releaseGpuResource(colorSampler)
+    check host.releaseGpuResource(colorUniform)
+    check uniformDestroyCount() == 2
 
     host.resizeGpuHost(800, 600)
     check resetCount() == 1
@@ -378,7 +468,8 @@ suite "optional bgfxim adapter":
     check host.releaseGpuResource(vertexBuffer)
     check vertexBufferDestroyCount() == 1
     check host.releaseGpuResource(texture)
-    check textureDestroyCount() == 1
+    check host.releaseGpuResource(storageTexture)
+    check textureDestroyCount() == 2
     host.close()
     check shutdownCount() == 1
 
