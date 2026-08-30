@@ -59,6 +59,14 @@ release. Before 1.0, minor releases may contain public API changes.
   before pass setup or dispatch. The bgfx adapter maps wrap/filter state,
   uniform updates, texture sampling, and image read/write access, with ARC/ORC
   mock, C-fixture, and real-NOOP resource coverage.
+  Typed texture transfer now copies complete or bounded regions from textures
+  and render targets into dedicated readback textures. Asynchronous readback
+  retains host-owned destination memory until one-time collection, enforces
+  readback/work/pending-request limits, prevents premature resource or
+  namespace release, and invalidates safely on device loss. The bgfx adapter
+  maps this contract to `bgfx_blit` and `bgfx_read_texture`; deterministic C
+  fixtures cover completion and byte transfer under ARC/ORC, while adapters
+  that do not advertise both capabilities fail closed.
 
 - Added retained RGBA8 RasterSurface support for drawing engines, progressive
   decoders, and generated imagery. Bounds-checked stride-aware updates are
@@ -72,6 +80,14 @@ release. Before 1.0, minor releases may contain public API changes.
 
 - Added the standard `crosshair` cursor value for drawing and precision-input
   surfaces, including authoring, computed-style, and SDL3 cursor mapping.
+
+### Fixed
+
+- GPU draw validation now builds managed binding and descriptor results in
+  exception-safe local storage before transferring ownership to the submitted
+  command. Invalid binding and index paths no longer leak temporary sequences
+  under ARC; the GPU-host Valgrind gate reports zero definite or indirect leaks
+  under both ARC and ORC.
 
 ## [0.6.0] - 2026-08-28
 

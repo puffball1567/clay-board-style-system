@@ -1,13 +1,14 @@
 import std/[algorithm, hashes, math, tables]
 
 const
-  gpuHostApiVersion* = 8'u32
+  gpuHostApiVersion* = 9'u32
   maxGpuNamespaceNameBytes* = 128
   maxGpuResourceLabelBytes* = 128
   maxGpuViewCount* = 256'u16
   maxGpuUniformBindings* = 32
   maxGpuTextureBindings* = 16
   maxGpuStorageImageBindings* = 16
+  maxGpuPendingReadbacksPerNamespace* = 8
 
 type
   GpuHostError* = object of CatchableError
@@ -174,6 +175,7 @@ type
 
   GpuNamespaceId* = distinct uint64
   GpuResourceId* = distinct uint64
+  GpuReadbackId* = distinct uint64
   GpuBackendResourceId* = distinct uint64
 
   GpuTextureDescriptor* = object
@@ -284,6 +286,27 @@ type
     groupsX*, groupsY*, groupsZ*: uint32
     bindings*: GpuBindingSet
 
+  GpuTextureCopyRegion* = object
+    sourceX*, sourceY*: uint32
+    destinationX*, destinationY*: uint32
+    width*, height*: uint32
+
+  GpuReadbackState* = enum
+    grsInvalid,
+    grsPending,
+    grsReady
+
+  GpuReadbackHandle* = object
+    namespace*: GpuNamespaceId
+    readback*: GpuReadbackId
+    generation*: uint64
+
+  GpuReadbackData* = object
+    width*, height*: uint32
+    format*: GpuTextureFormat
+    rowStride*: uint32
+    pixels*: seq[byte]
+
   GpuBackendUniformBinding* = object
     resource*: GpuBackendResourceId
     descriptor*: GpuUniformDescriptor
@@ -315,6 +338,8 @@ type
   GpuBackendInfo* = object
     rendererName*: string
     computeSupported*: bool
+    textureCopySupported*: bool
+    textureReadbackSupported*: bool
     homogeneousDepth*: bool
     originBottomLeft*: bool
     maxTextureSize*: uint32
@@ -457,6 +482,30 @@ type
     command: GpuComputeCommand
   ): GpuBackendStatus {.nimcall, raises: [].}
 
+  GpuBackendCopyTextureProc* = proc(
+    context: GpuBackendContext;
+    viewId: uint16;
+    source: GpuBackendResourceId;
+    sourceKind: GpuResourceKind;
+    destination: GpuBackendResourceId;
+    region: GpuTextureCopyRegion
+  ): GpuBackendStatus {.nimcall, raises: [].}
+
+  GpuBackendRequestReadbackProc* = proc(
+    context: GpuBackendContext;
+    texture: GpuBackendResourceId;
+    descriptor: GpuTextureDescriptor;
+    destination: pointer;
+    destinationBytes: uint64;
+    completionToken: var uint64
+  ): GpuBackendStatus {.nimcall, raises: [].}
+
+  GpuBackendPollReadbackProc* = proc(
+    context: GpuBackendContext;
+    completionToken: uint64;
+    ready: var bool
+  ): GpuBackendStatus {.nimcall, raises: [].}
+
   GpuBackendDestroyResourceProc* = proc(
     context: GpuBackendContext;
     resource: GpuBackendResourceId;
@@ -485,6 +534,9 @@ type
     beginGraphicsPass*: GpuBackendBeginGraphicsPassProc
     submitDraw*: GpuBackendSubmitDrawProc
     dispatch*: GpuBackendDispatchProc
+    copyTexture*: GpuBackendCopyTextureProc
+    requestReadback*: GpuBackendRequestReadbackProc
+    pollReadback*: GpuBackendPollReadbackProc
     destroyResource*: GpuBackendDestroyResourceProc
     closeOwned*: GpuBackendCloseProc
     detachBorrowed*: GpuBackendCloseProc
@@ -512,12 +564,22 @@ type
     vertexDescriptor, indexDescriptor: GpuBufferDescriptor
     bindings: GpuBackendBindingSet
 
+  GpuReadbackEntry = object
+    generation: uint64
+    texture: GpuResourceId
+    descriptor: GpuTextureDescriptor
+    completionToken: uint64
+    pixels: seq[byte]
+    ready: bool
+
   GpuNamespaceEntry = object
     name: string
     budget: GpuResourceBudget
     usage: GpuResourceUsage
     nextResourceId: uint64
+    nextReadbackId: uint64
     resources: Table[GpuResourceId, GpuResourceEntry]
+    readbacks: Table[GpuReadbackId, GpuReadbackEntry]
 
   GpuHost* = ref object
     backend: GpuBackendVTable
@@ -536,9 +598,12 @@ proc `==`*(a, b: GpuNamespaceId): bool {.borrow.}
 proc hash*(id: GpuNamespaceId): Hash {.borrow.}
 proc `==`*(a, b: GpuResourceId): bool {.borrow.}
 proc hash*(id: GpuResourceId): Hash {.borrow.}
+proc `==`*(a, b: GpuReadbackId): bool {.borrow.}
+proc hash*(id: GpuReadbackId): Hash {.borrow.}
 
 proc namespaceIdValue*(id: GpuNamespaceId): uint64 {.inline.} = uint64(id)
 proc resourceIdValue*(id: GpuResourceId): uint64 {.inline.} = uint64(id)
+proc readbackIdValue*(id: GpuReadbackId): uint64 {.inline.} = uint64(id)
 proc backendResourceIdValue*(id: GpuBackendResourceId): uint64 {.inline.} =
   uint64(id)
 
@@ -679,6 +744,14 @@ proc destroyNamespaceResources(host: GpuHost; id: GpuNamespaceId) =
 proc close*(host: GpuHost) =
   if host.isNil or host.stateValue == ghsClosed:
     return
+  if host.ownershipValue == ghoBorrowed:
+    for id, entry in host.namespaces.pairs:
+      discard id
+      if entry.readbacks.len != 0:
+        raise newException(
+          GpuHostError,
+          "a borrowed GPU host cannot detach with retained readbacks"
+        )
 
   host.activeFrame = false
   var namespaceIds: seq[GpuNamespaceId]
@@ -688,7 +761,6 @@ proc close*(host: GpuHost) =
     cmp(namespaceIdValue(b), namespaceIdValue(a)))
   for id in namespaceIds:
     host.destroyNamespaceResources(id)
-  host.namespaces.clear()
   case host.ownershipValue
   of ghoOwned:
     if not host.backend.closeOwned.isNil:
@@ -696,12 +768,16 @@ proc close*(host: GpuHost) =
   of ghoBorrowed:
     if not host.backend.detachBorrowed.isNil:
       host.backend.detachBorrowed(host.backend.context)
+  # Readback destinations must remain alive until the backend has drained its
+  # queued work during shutdown or detach.
+  host.namespaces.clear()
   host.stateValue = ghsClosed
 
 proc invalidateResources(host: GpuHost) =
   for id, entry in host.namespaces.mpairs:
     discard id
     entry.resources.clear()
+    entry.readbacks.clear()
     entry.usage = GpuResourceUsage()
 
 proc enterDeviceLost(host: GpuHost) =
@@ -825,7 +901,9 @@ proc createGpuNamespace*(
     name: name,
     budget: budget,
     nextResourceId: 1'u64,
-    resources: initTable[GpuResourceId, GpuResourceEntry]()
+    nextReadbackId: 1'u64,
+    resources: initTable[GpuResourceId, GpuResourceEntry](),
+    readbacks: initTable[GpuReadbackId, GpuReadbackEntry]()
   )
 
 proc hasGpuNamespace*(host: GpuHost; id: GpuNamespaceId): bool =
@@ -851,6 +929,11 @@ proc closeGpuNamespace*(host: GpuHost; id: GpuNamespaceId): bool =
     raise newException(
       GpuHostError,
       "GPU namespace cannot close during an active frame"
+    )
+  if host.namespaces[id].readbacks.len != 0:
+    raise newException(
+      GpuHostError,
+      "GPU namespace cannot close with retained readbacks"
     )
   host.destroyNamespaceResources(id)
   host.namespaces.del(id)
@@ -1067,6 +1150,19 @@ proc createGpuTexture*(
     raise newException(GpuHostError, "GPU texture exceeds backend limits")
   if descriptor.usage == {}:
     raise newException(GpuHostError, "GPU texture usage cannot be empty")
+  if gtuReadback in descriptor.usage:
+    if not host.infoValue.textureReadbackSupported:
+      raise newException(GpuHostError, "GPU texture readback is not supported")
+    if descriptor.usage != {gtuBlitDestination, gtuReadback}:
+      raise newException(
+        GpuHostError,
+        "GPU readback textures only support blit-destination and readback usage"
+      )
+    if initialData.len != 0:
+      raise newException(
+        GpuHostError,
+        "GPU readback textures cannot have initial data"
+      )
   if descriptor.label.len > maxGpuResourceLabelBytes:
     raise newException(GpuHostError, "GPU resource label is too long")
   let bytes = descriptor.textureBytes()
@@ -1713,8 +1809,9 @@ proc validateGpuBindings(
       "GPU storage image bindings require a compute dispatch"
     )
 
+  var resolved: GpuBackendBindingSet
   var uniformIds: seq[GpuResourceId]
-  result.uniforms = newSeqOfCap[GpuBackendUniformBinding](bindings.uniforms.len)
+  resolved.uniforms = newSeqOfCap[GpuBackendUniformBinding](bindings.uniforms.len)
   for binding in bindings.uniforms:
     let entry = host.requireGpuResource(
       namespace,
@@ -1734,14 +1831,14 @@ proc validateGpuBindings(
     for value in binding.values:
       if value.classify notin {fcNormal, fcSubnormal, fcZero, fcNegZero}:
         raise newException(GpuHostError, "GPU uniform values must be finite")
-    result.uniforms.add GpuBackendUniformBinding(
+    resolved.uniforms.add GpuBackendUniformBinding(
       resource: entry.backendResource,
       descriptor: entry.uniformDescriptor,
       values: binding.values
     )
 
   var occupiedStages: set[uint8]
-  result.textures = newSeqOfCap[GpuBackendTextureBinding](bindings.textures.len)
+  resolved.textures = newSeqOfCap[GpuBackendTextureBinding](bindings.textures.len)
   for binding in bindings.textures:
     if binding.stage >= uint8(maxGpuTextureBindings) or
         binding.stage in occupiedStages:
@@ -1764,14 +1861,14 @@ proc validateGpuBindings(
       raise newException(GpuHostError, "GPU texture binding is not backend-mapped")
     if gtuSampled notin texture.textureDescriptor.usage:
       raise newException(GpuHostError, "GPU texture binding requires sampled usage")
-    result.textures.add GpuBackendTextureBinding(
+    resolved.textures.add GpuBackendTextureBinding(
       stage: binding.stage,
       sampler: sampler.backendResource,
       texture: texture.backendResource,
       samplerDescriptor: sampler.samplerDescriptor
     )
 
-  result.storageImages = newSeqOfCap[GpuBackendStorageImageBinding](
+  resolved.storageImages = newSeqOfCap[GpuBackendStorageImageBinding](
     bindings.storageImages.len
   )
   for binding in bindings.storageImages:
@@ -1797,13 +1894,14 @@ proc validateGpuBindings(
       raise newException(GpuHostError, "GPU storage image is not backend-mapped")
     if gtuStorage notin texture.textureDescriptor.usage:
       raise newException(GpuHostError, "GPU storage image requires storage usage")
-    result.storageImages.add GpuBackendStorageImageBinding(
+    resolved.storageImages.add GpuBackendStorageImageBinding(
       stage: binding.stage,
       texture: texture.backendResource,
       format: texture.textureDescriptor.format,
       access: binding.access,
       mip: binding.mip
     )
+  result = move(resolved)
 
 proc validateDrawCommand(
     host: GpuHost;
@@ -1852,40 +1950,46 @@ proc validateDrawCommand(
         "GPU graphics pipeline color format does not match the render target"
       )
 
-  result.pipeline = pipeline.backendResource
-  result.vertexBuffer = vertex.backendResource
-  result.pipelineDescriptor = pipeline.graphicsPipelineDescriptor
-  result.vertexDescriptor = vertex.bufferDescriptor
-  result.bindings = host.validateGpuBindings(
+  var indexBackend: GpuBackendResourceId
+  var indexDescriptor: GpuBufferDescriptor
+  if command.indexBuffer.isEmptyGpuHandle():
+    if command.firstIndex != 0 or command.indexCount != 0:
+      raise newException(GpuHostError, "GPU draw index range has no index buffer")
+  else:
+    let index = host.requireGpuResource(
+      namespace,
+      command.indexBuffer,
+      grkBuffer,
+      "GPU index buffer is stale invalid or belongs to another namespace"
+    )
+    if index.bufferDescriptor.role != gbrIndex:
+      raise newException(GpuHostError, "GPU draw requires an index buffer")
+    if index.backendResource.backendResourceIdValue() == 0:
+      raise newException(GpuHostError, "GPU index buffer is not backend-mapped")
+    if command.indexCount == 0:
+      raise newException(GpuHostError, "indexed GPU draw count must be non-zero")
+    let availableIndices = index.bufferDescriptor.byteSize div
+      index.bufferDescriptor.bufferElementBytes()
+    if uint64(command.firstIndex) > availableIndices or
+        uint64(command.indexCount) > availableIndices - uint64(command.firstIndex):
+      raise newException(GpuHostError, "GPU draw index range exceeds its buffer")
+    indexBackend = index.backendResource
+    indexDescriptor = index.bufferDescriptor
+
+  var resolvedBindings = host.validateGpuBindings(
     namespace,
     command.bindings,
     allowStorageImages = false
   )
-
-  if command.indexBuffer.isEmptyGpuHandle():
-    if command.firstIndex != 0 or command.indexCount != 0:
-      raise newException(GpuHostError, "GPU draw index range has no index buffer")
-    return
-
-  let index = host.requireGpuResource(
-    namespace,
-    command.indexBuffer,
-    grkBuffer,
-    "GPU index buffer is stale invalid or belongs to another namespace"
+  result = GpuResolvedDrawCommand(
+    pipeline: pipeline.backendResource,
+    vertexBuffer: vertex.backendResource,
+    indexBuffer: indexBackend,
+    pipelineDescriptor: pipeline.graphicsPipelineDescriptor,
+    vertexDescriptor: vertex.bufferDescriptor,
+    indexDescriptor: move(indexDescriptor),
+    bindings: move(resolvedBindings)
   )
-  if index.bufferDescriptor.role != gbrIndex:
-    raise newException(GpuHostError, "GPU draw requires an index buffer")
-  if index.backendResource.backendResourceIdValue() == 0:
-    raise newException(GpuHostError, "GPU index buffer is not backend-mapped")
-  if command.indexCount == 0:
-    raise newException(GpuHostError, "indexed GPU draw count must be non-zero")
-  let availableIndices =
-    index.bufferDescriptor.byteSize div index.bufferDescriptor.bufferElementBytes()
-  if uint64(command.firstIndex) > availableIndices or
-      uint64(command.indexCount) > availableIndices - uint64(command.firstIndex):
-    raise newException(GpuHostError, "GPU draw index range exceeds its buffer")
-  result.indexBuffer = index.backendResource
-  result.indexDescriptor = index.bufferDescriptor
 
 proc submitGpuDraws*(
     host: GpuHost;
@@ -1996,3 +2100,273 @@ proc dispatchGpuCompute*(
   if status == gbsDeviceLost:
     host.enterDeviceLost()
   raiseForStatus(status)
+
+proc textureShape(
+    entry: GpuResourceEntry
+): tuple[width, height: uint32, format: GpuTextureFormat, usage: set[GpuTextureUsage]] =
+  case entry.kind
+  of grkTexture:
+    (
+      entry.textureDescriptor.width,
+      entry.textureDescriptor.height,
+      entry.textureDescriptor.format,
+      entry.textureDescriptor.usage
+    )
+  of grkRenderTarget:
+    (
+      entry.renderTargetDescriptor.width,
+      entry.renderTargetDescriptor.height,
+      entry.renderTargetDescriptor.format,
+      entry.renderTargetDescriptor.usage
+    )
+  else:
+    (0'u32, 0'u32, gtfR8, {})
+
+proc requireCopyResource(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    handle: GpuResourceHandle;
+    source: bool
+): GpuResourceEntry =
+  if handle.namespace != namespace or
+      handle.kind notin {grkTexture, grkRenderTarget} or
+      not host.isGpuResourceLive(handle):
+    raise newException(
+      GpuHostError,
+      if source:
+        "GPU copy source is stale invalid or belongs to another namespace"
+      else:
+        "GPU copy destination is stale invalid or belongs to another namespace"
+    )
+  result = host.namespaces[namespace].resources[handle.resource]
+  if result.backendResource.backendResourceIdValue() == 0:
+    raise newException(GpuHostError, "GPU copy resource is not backend-mapped")
+
+proc validateCopyBounds(
+    region: GpuTextureCopyRegion;
+    sourceWidth, sourceHeight, destinationWidth, destinationHeight: uint32
+) =
+  if region.width == 0 or region.height == 0:
+    raise newException(GpuHostError, "GPU copy dimensions must be non-zero")
+  if region.width > uint32(high(uint16)) or region.height > uint32(high(uint16)) or
+      region.sourceX > uint32(high(uint16)) or
+      region.sourceY > uint32(high(uint16)) or
+      region.destinationX > uint32(high(uint16)) or
+      region.destinationY > uint32(high(uint16)):
+    raise newException(GpuHostError, "GPU copy region exceeds backend-neutral limits")
+  if region.sourceX > sourceWidth or region.width > sourceWidth - region.sourceX or
+      region.sourceY > sourceHeight or region.height > sourceHeight - region.sourceY:
+    raise newException(GpuHostError, "GPU copy source region is out of bounds")
+  if region.destinationX > destinationWidth or
+      region.width > destinationWidth - region.destinationX or
+      region.destinationY > destinationHeight or
+      region.height > destinationHeight - region.destinationY:
+    raise newException(GpuHostError, "GPU copy destination region is out of bounds")
+
+proc copyGpuTexture*(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    source, destination: GpuResourceHandle;
+    region: GpuTextureCopyRegion
+) =
+  host.requireHost()
+  if host.stateValue != ghsReady or not host.activeFrame:
+    raise newException(GpuHostError, "GPU texture copy requires an active frame")
+  if namespace notin host.namespaces:
+    raise newException(GpuHostError, "unknown GPU namespace")
+  if host.backend.copyTexture.isNil:
+    raise newException(GpuHostError, "GPU backend does not support texture copies")
+  if not host.infoValue.textureCopySupported:
+    raise newException(GpuHostError, "GPU texture copies are not supported")
+  if source.resource == destination.resource and source.kind == destination.kind:
+    raise newException(GpuHostError, "GPU texture copy resources must be distinct")
+
+  let sourceEntry = host.requireCopyResource(namespace, source, source = true)
+  let destinationEntry = host.requireCopyResource(
+    namespace, destination, source = false
+  )
+  if destinationEntry.kind != grkTexture:
+    raise newException(GpuHostError, "GPU copy destination must be a texture")
+  let sourceShape = sourceEntry.textureShape()
+  let destinationShape = destinationEntry.textureShape()
+  if gtuBlitSource notin sourceShape.usage:
+    raise newException(GpuHostError, "GPU copy source requires blit-source usage")
+  if gtuBlitDestination notin destinationShape.usage:
+    raise newException(
+      GpuHostError, "GPU copy destination requires blit-destination usage"
+    )
+  if sourceShape.format != destinationShape.format:
+    raise newException(GpuHostError, "GPU copy formats must match")
+  region.validateCopyBounds(
+    sourceShape.width,
+    sourceShape.height,
+    destinationShape.width,
+    destinationShape.height
+  )
+
+  host.ensureGpuViewAvailable()
+  host.validateGpuFrameWork(namespace, workUnits = 1)
+  let viewId = host.configValue.viewIdBase + host.nextViewOffset
+  let status = host.backend.copyTexture(
+    host.backend.context,
+    viewId,
+    sourceEntry.backendResource,
+    sourceEntry.kind,
+    destinationEntry.backendResource,
+    region
+  )
+  if status == gbsDeviceLost:
+    host.enterDeviceLost()
+  raiseForStatus(status)
+  inc host.nextViewOffset
+  host.reserveGpuFrameWork(namespace, workUnits = 1)
+
+proc copyGpuTexture*(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    source, destination: GpuResourceHandle
+) =
+  let sourceEntry = host.requireCopyResource(namespace, source, source = true)
+  let shape = sourceEntry.textureShape()
+  host.copyGpuTexture(
+    namespace,
+    source,
+    destination,
+    GpuTextureCopyRegion(width: shape.width, height: shape.height)
+  )
+
+proc isGpuReadbackLive(host: GpuHost; handle: GpuReadbackHandle): bool =
+  not host.isNil and host.stateValue != ghsClosed and
+    handle.generation == host.generationValue and
+    handle.namespace in host.namespaces and
+    handle.readback in host.namespaces[handle.namespace].readbacks and
+    host.namespaces[handle.namespace].readbacks[handle.readback].generation ==
+      handle.generation
+
+proc requestGpuReadback*(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    texture: GpuResourceHandle
+): GpuReadbackHandle =
+  host.requireHost()
+  if host.stateValue != ghsReady or not host.activeFrame:
+    raise newException(GpuHostError, "GPU readback requires an active frame")
+  if namespace notin host.namespaces:
+    raise newException(GpuHostError, "unknown GPU namespace")
+  if host.backend.requestReadback.isNil or host.backend.pollReadback.isNil:
+    raise newException(GpuHostError, "GPU backend does not support readback")
+  if not host.infoValue.textureReadbackSupported:
+    raise newException(GpuHostError, "GPU texture readback is not supported")
+  let entry = host.requireGpuResource(
+    namespace,
+    texture,
+    grkTexture,
+    "GPU readback texture is stale invalid or belongs to another namespace"
+  )
+  if entry.backendResource.backendResourceIdValue() == 0:
+    raise newException(GpuHostError, "GPU readback texture is not backend-mapped")
+  if entry.textureDescriptor.usage != {gtuBlitDestination, gtuReadback}:
+    raise newException(GpuHostError, "GPU readback requires a readback texture")
+  if host.namespaces[namespace].readbacks.len >= maxGpuPendingReadbacksPerNamespace:
+    raise newException(GpuHostError, "GPU pending readback count exceeded")
+  let bytes = entry.textureDescriptor.textureBytes()
+  if bytes > uint64(high(int)):
+    raise newException(GpuHostError, "GPU readback exceeds addressable memory")
+  host.validateGpuFrameWork(namespace, readbackBytes = bytes, workUnits = 1)
+
+  if host.namespaces[namespace].nextReadbackId == 0:
+    raise newException(GpuHostError, "GPU readback identifier space exhausted")
+
+  var pixels = newSeq[byte](int(bytes))
+  var completionToken: uint64
+  let status = host.backend.requestReadback(
+    host.backend.context,
+    entry.backendResource,
+    entry.textureDescriptor,
+    addr pixels[0],
+    bytes,
+    completionToken
+  )
+  if status == gbsDeviceLost:
+    host.enterDeviceLost()
+  raiseForStatus(status)
+
+  var namespaceEntry = host.namespaces[namespace]
+  let id = GpuReadbackId(namespaceEntry.nextReadbackId)
+  inc namespaceEntry.nextReadbackId
+  namespaceEntry.readbacks[id] = GpuReadbackEntry(
+    generation: host.generationValue,
+    texture: texture.resource,
+    descriptor: entry.textureDescriptor,
+    completionToken: completionToken,
+    pixels: move(pixels)
+  )
+  inc namespaceEntry.resources[texture.resource].dependentCount
+  host.namespaces[namespace] = namespaceEntry
+  host.reserveGpuFrameWork(namespace, readbackBytes = bytes, workUnits = 1)
+  GpuReadbackHandle(
+    namespace: namespace,
+    readback: id,
+    generation: host.generationValue
+  )
+
+proc refreshGpuReadback(host: GpuHost; handle: GpuReadbackHandle) =
+  if not host.isGpuReadbackLive(handle):
+    return
+  var namespaceEntry = host.namespaces[handle.namespace]
+  if namespaceEntry.readbacks[handle.readback].ready:
+    return
+  var ready = false
+  let status = host.backend.pollReadback(
+    host.backend.context,
+    namespaceEntry.readbacks[handle.readback].completionToken,
+    ready
+  )
+  if status == gbsDeviceLost:
+    host.enterDeviceLost()
+  raiseForStatus(status)
+  if ready:
+    namespaceEntry.readbacks[handle.readback].ready = true
+    host.namespaces[handle.namespace] = namespaceEntry
+
+proc gpuReadbackState*(host: GpuHost; handle: GpuReadbackHandle): GpuReadbackState =
+  if not host.isGpuReadbackLive(handle):
+    return grsInvalid
+  host.refreshGpuReadback(handle)
+  if not host.isGpuReadbackLive(handle):
+    return grsInvalid
+  if host.namespaces[handle.namespace].readbacks[handle.readback].ready:
+    grsReady
+  else:
+    grsPending
+
+proc tryTakeGpuReadback*(
+    host: GpuHost;
+    handle: GpuReadbackHandle;
+    data: var GpuReadbackData
+): bool =
+  if host.gpuReadbackState(handle) != grsReady:
+    return false
+  var namespaceEntry = host.namespaces[handle.namespace]
+  var readback = namespaceEntry.readbacks[handle.readback]
+  data = GpuReadbackData(
+    width: readback.descriptor.width,
+    height: readback.descriptor.height,
+    format: readback.descriptor.format,
+    rowStride: uint32(
+      readback.descriptor.textureBytes() div uint64(readback.descriptor.height)
+    ),
+    pixels: move(readback.pixels)
+  )
+  if readback.texture in namespaceEntry.resources and
+      namespaceEntry.resources[readback.texture].dependentCount != 0:
+    dec namespaceEntry.resources[readback.texture].dependentCount
+  namespaceEntry.readbacks.del(handle.readback)
+  host.namespaces[handle.namespace] = namespaceEntry
+  true
+
+proc pendingGpuReadbackCount*(host: GpuHost; namespace: GpuNamespaceId): int =
+  host.requireHost()
+  if namespace notin host.namespaces:
+    return 0
+  host.namespaces[namespace].readbacks.len

@@ -41,6 +41,9 @@ proc textureBindCount(): uint32 {.
   importc: "cbss_bgfx_stub_texture_bind_count", cdecl.}
 proc imageBindCount(): uint32 {.
   importc: "cbss_bgfx_stub_image_bind_count", cdecl.}
+proc blitCount(): uint32 {.importc: "cbss_bgfx_stub_blit_count", cdecl.}
+proc readbackCount(): uint32 {.
+  importc: "cbss_bgfx_stub_readback_count", cdecl.}
 proc lastSamplerFlags(): uint32 {.
   importc: "cbss_bgfx_stub_last_sampler_flags", cdecl.}
 proc lastImageAccess(): uint32 {.
@@ -143,9 +146,10 @@ suite "optional bgfxim adapter":
     let resourceNamespace = host.createGpuNamespace(
       "adapter-textures",
       GpuResourceBudget(
-        persistentBytes: 1024,
-        workUnitsPerFrame: 4,
-        maxResources: 16
+        persistentBytes: 4096,
+        readbackBytesPerFrame: 512,
+        workUnitsPerFrame: 8,
+        maxResources: 20
       )
     )
     let pixels = newSeq[byte](4 * 2 * 4)
@@ -295,6 +299,19 @@ suite "optional bgfxim adapter":
     check frameBufferFormat() == uint32(BGFX_TEXTURE_FORMAT_RGBA8)
     check frameBufferFlags() == BGFX_TEXTURE_RT
 
+    let readbackTexture = host.createGpuTexture(
+      resourceNamespace,
+      GpuTextureDescriptor(
+        width: 16,
+        height: 8,
+        format: gtfRgba8,
+        usage: {gtuBlitDestination, gtuReadback},
+        label: "adapter-readback"
+      )
+    )
+    check (textureFlags() and BGFX_TEXTURE_BLIT_DST) != 0
+    check (textureFlags() and BGFX_TEXTURE_READ_BACK) != 0
+
     let mappedFragmentShader = host.createGpuShader(
       resourceNamespace,
       GpuShaderDescriptor(stage: gssFragment, label: "adapter-fragment"),
@@ -413,7 +430,18 @@ suite "optional bgfxim adapter":
         )
       )
     )
+    host.copyGpuTexture(resourceNamespace, renderTarget, readbackTexture)
+    let readback = host.requestGpuReadback(resourceNamespace, readbackTexture)
+    check host.gpuReadbackState(readback) == grsPending
     host.endGpuFrame(token)
+    check host.gpuReadbackState(readback) == grsReady
+    var readbackData: GpuReadbackData
+    check host.tryTakeGpuReadback(readback, readbackData)
+    check readbackData.width == 16
+    check readbackData.height == 8
+    check readbackData.rowStride == 64
+    check readbackData.pixels.len == 512
+    check readbackData.pixels[511] == byte(511 mod 251)
     check frameCount() == 1
     check submitCount() == 2
     check dispatchCount() == 1
@@ -427,13 +455,15 @@ suite "optional bgfxim adapter":
     check uniformSetCount() == 2
     check textureBindCount() == 1
     check imageBindCount() == 1
+    check blitCount() == 1
+    check readbackCount() == 1
     check (lastSamplerFlags() and BGFX_SAMPLER_U_CLAMP) != 0
     check (lastSamplerFlags() and BGFX_SAMPLER_V_MIRROR) != 0
     check (lastSamplerFlags() and BGFX_SAMPLER_MIN_POINT) != 0
     check (lastSamplerFlags() and BGFX_SAMPLER_MAG_ANISOTROPIC) != 0
     check (lastSamplerFlags() and BGFX_SAMPLER_MIP_POINT) != 0
     check lastImageAccess() == uint32(BGFX_ACCESS_READWRITE)
-    check lastViewId() == 0
+    check lastViewId() == 2
     check (lastState() and BGFX_STATE_WRITE_RGB) == BGFX_STATE_WRITE_RGB
     check (lastState() and BGFX_STATE_WRITE_A) == BGFX_STATE_WRITE_A
     check (lastState() and BGFX_STATE_CULL_CW) == BGFX_STATE_CULL_CW
@@ -459,6 +489,7 @@ suite "optional bgfxim adapter":
 
     check host.releaseGpuResource(renderTarget)
     check frameBufferDestroyCount() == 1
+    check host.releaseGpuResource(readbackTexture)
     check host.releaseGpuResource(indexBuffer)
     check indexBufferDestroyCount() == 1
     check host.releaseGpuResource(dynamicVertexBuffer)
@@ -469,7 +500,7 @@ suite "optional bgfxim adapter":
     check vertexBufferDestroyCount() == 1
     check host.releaseGpuResource(texture)
     check host.releaseGpuResource(storageTexture)
-    check textureDestroyCount() == 2
+    check textureDestroyCount() == 3
     host.close()
     check shutdownCount() == 1
 

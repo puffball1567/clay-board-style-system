@@ -20,6 +20,7 @@ type
     options: BgfxHostOptions
     attached: bool
     owned: bool
+    completedFrame: uint32
 
 var activeBgfxContext: BgfxAdapterContext
 
@@ -43,6 +44,9 @@ proc fillBackendInfo(info: var GpuBackendInfo): GpuBackendStatus =
   info = GpuBackendInfo(
     rendererName: (if name.isNil: "bgfx" else: $name),
     computeSupported: (caps.supported and BGFX_CAPS_COMPUTE) != 0,
+    textureCopySupported: (caps.supported and BGFX_CAPS_TEXTURE_BLIT) != 0,
+    textureReadbackSupported:
+      (caps.supported and BGFX_CAPS_TEXTURE_READ_BACK) != 0,
     homogeneousDepth: caps.homogeneousDepth,
     originBottomLeft: caps.originBottomLeft,
     maxTextureSize: caps.limits.maxTextureSize
@@ -135,7 +139,7 @@ proc endFrame(
   discard frameNumber
   if not rawContext.context.attached:
     return gbsFailed
-  discard BGFX.frame(BGFX_FRAME_NONE)
+  rawContext.context.completedFrame = BGFX.frame(BGFX_FRAME_NONE)
   gbsOk
 
 proc resize(
@@ -887,6 +891,103 @@ proc dispatch(
   )
   gbsOk
 
+proc copyTexture(
+    rawContext: GpuBackendContext;
+    viewId: uint16;
+    source: GpuBackendResourceId;
+    sourceKind: GpuResourceKind;
+    destination: GpuBackendResourceId;
+    region: GpuTextureCopyRegion
+): GpuBackendStatus {.raises: [].} =
+  let value = rawContext.context
+  let sourceResource = source.unpackBackendResource()
+  let destinationResource = destination.unpackBackendResource()
+  if not value.attached or not sourceResource.valid or
+      not destinationResource.valid or destinationResource.tag != brtTexture:
+    return gbsInvalidConfiguration
+  let caps = BGFX.getCaps()
+  if caps.isNil or (caps.supported and BGFX_CAPS_TEXTURE_BLIT) == 0:
+    return gbsUnsupported
+
+  var sourceTexture: bgfx_texture_handle_t
+  case sourceKind
+  of grkTexture:
+    if sourceResource.tag != brtTexture:
+      return gbsInvalidConfiguration
+    sourceTexture = bgfx_texture_handle_t(idx: sourceResource.handleIndex)
+  of grkRenderTarget:
+    if sourceResource.tag != brtFrameBuffer:
+      return gbsInvalidConfiguration
+    sourceTexture = BGFX.getTexture(
+      bgfx_frame_buffer_handle_t(idx: sourceResource.handleIndex),
+      0
+    )
+    if not BGFX_HANDLE_IS_VALID(sourceTexture):
+      return gbsFailed
+  else:
+    return gbsInvalidConfiguration
+
+  BGFX.blit(
+    viewId,
+    bgfx_texture_handle_t(idx: destinationResource.handleIndex),
+    0,
+    uint16(region.destinationX),
+    uint16(region.destinationY),
+    0,
+    sourceTexture,
+    0,
+    uint16(region.sourceX),
+    uint16(region.sourceY),
+    0,
+    uint16(region.width),
+    uint16(region.height),
+    1
+  )
+  gbsOk
+
+proc requestReadback(
+    rawContext: GpuBackendContext;
+    texture: GpuBackendResourceId;
+    descriptor: GpuTextureDescriptor;
+    destination: pointer;
+    destinationBytes: uint64;
+    completionToken: var uint64
+): GpuBackendStatus {.raises: [].} =
+  let value = rawContext.context
+  let resource = texture.unpackBackendResource()
+  let bytesPerPixel =
+    case descriptor.format
+    of gtfR8: 1'u64
+    of gtfRgba8, gtfBgra8: 4'u64
+  let expectedBytes = uint64(descriptor.width) * uint64(descriptor.height) *
+    bytesPerPixel
+  if not value.attached or not resource.valid or resource.tag != brtTexture or
+      destination.isNil or destinationBytes == 0 or
+      descriptor.width == 0 or descriptor.height == 0 or
+      destinationBytes != expectedBytes:
+    return gbsInvalidConfiguration
+  let caps = BGFX.getCaps()
+  if caps.isNil or (caps.supported and BGFX_CAPS_TEXTURE_READ_BACK) == 0:
+    return gbsUnsupported
+  completionToken = uint64(BGFX.readTexture(
+    bgfx_texture_handle_t(idx: resource.handleIndex),
+    destination,
+    0,
+    0
+  ))
+  gbsOk
+
+proc pollReadback(
+    rawContext: GpuBackendContext;
+    completionToken: uint64;
+    ready: var bool
+): GpuBackendStatus {.raises: [].} =
+  let value = rawContext.context
+  if not value.attached or completionToken > uint64(high(uint32)):
+    return gbsInvalidConfiguration
+  ready = cast[int32](value.completedFrame - uint32(completionToken)) >= 0
+  gbsOk
+
 proc destroyResource(
     rawContext: GpuBackendContext;
     resource: GpuBackendResourceId;
@@ -962,6 +1063,9 @@ proc newBgfxBackend*(
     beginGraphicsPass: beginGraphicsPass,
     submitDraw: submitDraw,
     dispatch: dispatch,
+    copyTexture: copyTexture,
+    requestReadback: requestReadback,
+    pollReadback: pollReadback,
     destroyResource: destroyResource,
     closeOwned: closeOwned,
     detachBorrowed: detachBorrowed

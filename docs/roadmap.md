@@ -1038,7 +1038,8 @@ an enum-only API.
 
 ## GPU Canvas Capability
 
-Status: `Planned`
+Status: `Version 0.7 in progress; typed GPU resources, submission, texture
+transfer, and asynchronous readback implemented; Canvas composition pending`
 
 CBSS will support optional GPU-backed drawing inside the standard Canvas
 element. This is a capability for game scenes, charts, visualizations, image
@@ -1053,6 +1054,19 @@ bounded retained element/layer texture. It does not require a GPU-specific
 Button or a second interpretation of Flex, text, events, or accessibility.
 Static CPU content remains baked while an animated shader overlay runs, so
 shader-only frames do not repeat layout, shaping, or unrelated paint work.
+
+The first portable composition path is explicit and asynchronous:
+
+```text
+GPU RenderTarget -> typed blit -> CPU-only readback Texture
+                 -> async completion -> RasterSurface -> normal CBSS Canvas
+```
+
+The implemented host bounds copy work, readback bytes, and pending requests;
+retains destination storage until completion; and rejects unsupported adapters
+before submission. Zero-copy external textures may optimize this path later,
+but cannot replace its deterministic fallback or change the upper Canvas
+contract.
 
 The planned standard GPU adapter is bgfx, with explicit resource, swapchain,
 shader, synchronization, resize, device-loss, and presentation ownership.
@@ -2211,9 +2225,11 @@ backend view range without exposing backend handles. Batched draws initialize
 their shared view once per pass before issuing draw commands. Typed Vec4/Mat3/
 Mat4 Uniforms, wrap/filter Samplers, sampled textures, and compute storage
 images are resolved through the same namespace and generation checks before
-backend submission. Offscreen Canvas composition, storage-buffer bindings,
-copies/readback, external targets, portable shader packaging, restoration, and
-real-GPU qualification remain open Version 0.7 work.
+backend submission. Checked texture-region copies and bounded asynchronous
+readback now establish the portable GPU-to-`RasterSurface` transfer boundary.
+Offscreen Canvas composition, storage-buffer bindings, external targets,
+portable shader packaging, restoration, and real-GPU qualification remain open
+Version 0.7 work.
 
 The Version 0.7 drawing baseline is intentionally usable before the complete
 Version 0.9 gesture layer. Mouse input and the existing pen metadata, pressure,

@@ -78,9 +78,11 @@ only one active frame token, and invalidates every generation-bound resource
 after device loss. Independent visualization and compute packages receive
 named resource namespaces with separate persistent, transient-upload,
 readback, per-frame work, and resource-count budgets. The current namespace
-API establishes identity and accounting; backend resource creation and
-submission are added with GPU Canvas rather than exposing raw bgfx handles in
-ordinary UI code.
+API establishes identity and accounting. Typed resources, graphics/compute
+submission, texture blits, and asynchronous readback are implemented without
+exposing raw bgfx handles in ordinary UI code. The portable first composition
+path publishes completed GPU pixels through the existing `RasterSurface`;
+zero-copy external texture support remains an optional later optimization.
 
 The bgfx adapter uses `bgfxim` directly. Owned mode initializes and shuts down
 the bgfx runtime. Borrowed mode attaches to an application-initialized runtime
