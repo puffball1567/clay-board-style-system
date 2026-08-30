@@ -183,6 +183,7 @@ const
   brtDynamicIndexBuffer = 5'u64
   brtFrameBuffer = 6'u64
   brtShader = 7'u64
+  brtProgram = 8'u64
 
 proc packBackendResource(tag: uint64; handleIndex: uint16): GpuBackendResourceId =
   GpuBackendResourceId(
@@ -495,6 +496,52 @@ proc createShader(
   resource = packBackendResource(brtShader, handle.idx)
   gbsOk
 
+proc createGraphicsPipeline(
+    rawContext: GpuBackendContext;
+    descriptor: GpuGraphicsPipelineDescriptor;
+    vertexShader, fragmentShader: GpuBackendResourceId;
+    resource: var GpuBackendResourceId
+): GpuBackendStatus {.raises: [].} =
+  discard descriptor
+  let value = rawContext.context
+  let vertex = vertexShader.unpackBackendResource()
+  let fragment = fragmentShader.unpackBackendResource()
+  if not value.attached or not vertex.valid or not fragment.valid or
+      vertex.tag != brtShader or fragment.tag != brtShader:
+    return gbsInvalidConfiguration
+  let handle = BGFX.createProgram(
+    bgfx_shader_handle_t(idx: vertex.handleIndex),
+    bgfx_shader_handle_t(idx: fragment.handleIndex),
+    false
+  )
+  if not BGFX_HANDLE_IS_VALID(handle):
+    return gbsFailed
+  resource = packBackendResource(brtProgram, handle.idx)
+  gbsOk
+
+proc createComputePipeline(
+    rawContext: GpuBackendContext;
+    descriptor: GpuComputePipelineDescriptor;
+    computeShader: GpuBackendResourceId;
+    resource: var GpuBackendResourceId
+): GpuBackendStatus {.raises: [].} =
+  discard descriptor
+  let value = rawContext.context
+  let compute = computeShader.unpackBackendResource()
+  if not value.attached or not compute.valid or compute.tag != brtShader:
+    return gbsInvalidConfiguration
+  let caps = BGFX.getCaps()
+  if caps.isNil or (caps.supported and BGFX_CAPS_COMPUTE) == 0:
+    return gbsUnsupported
+  let handle = BGFX.createComputeProgram(
+    bgfx_shader_handle_t(idx: compute.handleIndex),
+    false
+  )
+  if not BGFX_HANDLE_IS_VALID(handle):
+    return gbsFailed
+  resource = packBackendResource(brtProgram, handle.idx)
+  gbsOk
+
 proc destroyResource(
     rawContext: GpuBackendContext;
     resource: GpuBackendResourceId;
@@ -528,6 +575,8 @@ proc destroyResource(
     )
   of brtShader:
     BGFX.destroyShader(bgfx_shader_handle_t(idx: decoded.handleIndex))
+  of brtProgram:
+    BGFX.destroyProgram(bgfx_program_handle_t(idx: decoded.handleIndex))
   else:
     discard
 
@@ -559,6 +608,8 @@ proc newBgfxBackend*(
     updateBuffer: updateBuffer,
     createRenderTarget: createRenderTarget,
     createShader: createShader,
+    createGraphicsPipeline: createGraphicsPipeline,
+    createComputePipeline: createComputePipeline,
     destroyResource: destroyResource,
     closeOwned: closeOwned,
     detachBorrowed: detachBorrowed

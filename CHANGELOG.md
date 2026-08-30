@@ -29,7 +29,12 @@ release. Before 1.0, minor releases may contain public API changes.
   invalid color/depth/back-buffer settings from reaching real renderers. The
   backend-mapped resource APIs create validated R8/RGBA8/BGRA8 textures,
   static or dynamic vertex/index buffers, owned single-color offscreen render
-  targets, and retained precompiled vertex/fragment/compute shaders. Buffers
+  targets, retained precompiled vertex/fragment/compute shaders, and typed
+  graphics/compute pipelines. Pipeline creation validates shader stage,
+  namespace, generation, color-write state, compute capability, and backend
+  support before allocation. Live pipelines retain their shader dependencies,
+  preventing early shader destruction while namespace teardown still destroys
+  programs before their stages. Buffers
   use backend-neutral vertex layouts, 16/32-bit
   indices, and aligned bounded updates. These resources enforce namespace
   byte/count budgets before allocation, copy optional
@@ -38,7 +43,7 @@ release. Before 1.0, minor releases may contain public API changes.
   without attempting to destroy stale backend objects. Shader bytecode is
   copied into the selected adapter, budgeted by its retained binary size, and
   never interpreted as a runtime source string. ARC/ORC tests cover
-  normal, limit, failure, active-frame, teardown-order, and device-loss paths
+  normal, dependency, limit, failure, active-frame, teardown-order, and device-loss paths
   against both deterministic C fixtures and the real bgfx NOOP runtime.
 
 - Added retained RGBA8 RasterSurface support for drawing engines, progressive

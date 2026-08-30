@@ -13,6 +13,8 @@ type MockGpuContext = ref object of GpuBackendContext
   updateBufferStatus: GpuBackendStatus
   createRenderTargetStatus: GpuBackendStatus
   createShaderStatus: GpuBackendStatus
+  createGraphicsPipelineStatus: GpuBackendStatus
+  createComputePipelineStatus: GpuBackendStatus
   ownedOpens: int
   borrowedAttaches: int
   begins: int
@@ -26,6 +28,8 @@ type MockGpuContext = ref object of GpuBackendContext
   bufferUpdates: int
   renderTargetCreates: int
   shaderCreates: int
+  graphicsPipelineCreates: int
+  computePipelineCreates: int
   resourceDestroys: int
   nextBackendResource: uint64
   lastTexture: GpuTextureDescriptor
@@ -37,6 +41,9 @@ type MockGpuContext = ref object of GpuBackendContext
   lastRenderTarget: GpuRenderTargetDescriptor
   lastShader: GpuShaderDescriptor
   lastShaderBytecodeBytes: int
+  lastGraphicsPipeline: GpuGraphicsPipelineDescriptor
+  lastComputePipeline: GpuComputePipelineDescriptor
+  lastPipelineShaders: seq[uint64]
   destroyedResources: seq[uint64]
   width, height: uint32
 
@@ -190,6 +197,39 @@ proc createShader(
     inc state.nextBackendResource
   state.createShaderStatus
 
+proc createGraphicsPipeline(
+    context: GpuBackendContext;
+    descriptor: GpuGraphicsPipelineDescriptor;
+    vertexShader, fragmentShader: GpuBackendResourceId;
+    resource: var GpuBackendResourceId
+): GpuBackendStatus {.raises: [].} =
+  let state = context.mock
+  inc state.graphicsPipelineCreates
+  state.lastGraphicsPipeline = descriptor
+  state.lastPipelineShaders = @[
+    vertexShader.backendResourceIdValue(),
+    fragmentShader.backendResourceIdValue()
+  ]
+  if state.createGraphicsPipelineStatus == gbsOk:
+    resource = GpuBackendResourceId(state.nextBackendResource)
+    inc state.nextBackendResource
+  state.createGraphicsPipelineStatus
+
+proc createComputePipeline(
+    context: GpuBackendContext;
+    descriptor: GpuComputePipelineDescriptor;
+    computeShader: GpuBackendResourceId;
+    resource: var GpuBackendResourceId
+): GpuBackendStatus {.raises: [].} =
+  let state = context.mock
+  inc state.computePipelineCreates
+  state.lastComputePipeline = descriptor
+  state.lastPipelineShaders = @[computeShader.backendResourceIdValue()]
+  if state.createComputePipelineStatus == gbsOk:
+    resource = GpuBackendResourceId(state.nextBackendResource)
+    inc state.nextBackendResource
+  state.createComputePipelineStatus
+
 proc destroyResource(
     context: GpuBackendContext;
     resource: GpuBackendResourceId;
@@ -216,6 +256,8 @@ proc backend(state: MockGpuContext): GpuBackendVTable =
     updateBuffer: updateBuffer,
     createRenderTarget: createRenderTarget,
     createShader: createShader,
+    createGraphicsPipeline: createGraphicsPipeline,
+    createComputePipeline: createComputePipeline,
     destroyResource: destroyResource,
     closeOwned: closeOwned,
     detachBorrowed: detachBorrowed
@@ -233,6 +275,8 @@ proc newContext(): MockGpuContext =
     updateBufferStatus: gbsOk,
     createRenderTargetStatus: gbsOk,
     createShaderStatus: gbsOk,
+    createGraphicsPipelineStatus: gbsOk,
+    createComputePipelineStatus: gbsOk,
     nextBackendResource: 1
   )
 
@@ -325,6 +369,31 @@ proc shaderDescriptor(
     label = "shader"
 ): GpuShaderDescriptor =
   GpuShaderDescriptor(stage: stage, label: label)
+
+proc graphicsPipelineDescriptor(
+    vertexShader, fragmentShader: GpuResourceHandle;
+    label = "graphics-pipeline"
+): GpuGraphicsPipelineDescriptor =
+  GpuGraphicsPipelineDescriptor(
+    vertexShader: vertexShader,
+    fragmentShader: fragmentShader,
+    vertexLayout: positionColorLayout(),
+    colorFormat: gtfRgba8,
+    topology: gptTriangleList,
+    cullMode: gcmBack,
+    frontFace: gffCounterClockwise,
+    blend: alphaGpuBlendState(),
+    label: label
+  )
+
+proc computePipelineDescriptor(
+    computeShader: GpuResourceHandle;
+    label = "compute-pipeline"
+): GpuComputePipelineDescriptor =
+  GpuComputePipelineDescriptor(
+    computeShader: computeShader,
+    label: label
+  )
 
 suite "GPU host lifecycle":
   test "owned host opens once and closes the owned backend idempotently":
@@ -1107,6 +1176,250 @@ suite "GPU shader mapping":
       check host.isGpuResourceLive(shader)
       host.close()
       check context.resourceDestroys == 1
+
+suite "GPU pipeline mapping":
+  test "graphics and compute pipelines retain typed shader dependencies":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "pipelines",
+      GpuResourceBudget(persistentBytes: 32, maxResources: 5)
+    )
+    let vertex = host.createGpuShader(
+      namespace,
+      shaderDescriptor(gssVertex, "vertex"),
+      @[1'u8]
+    )
+    let fragment = host.createGpuShader(
+      namespace,
+      shaderDescriptor(gssFragment, "fragment"),
+      @[2'u8]
+    )
+    let graphicsDescriptor = graphicsPipelineDescriptor(vertex, fragment)
+    let graphics = host.createGpuGraphicsPipeline(namespace, graphicsDescriptor)
+
+    check graphics.kind == grkPipeline
+    check host.isGpuResourceLive(graphics)
+    check context.graphicsPipelineCreates == 1
+    check context.lastGraphicsPipeline == graphicsDescriptor
+    check context.lastPipelineShaders == @[1'u64, 2'u64]
+    check host.gpuNamespaceUsage(namespace).persistentBytes == 2
+    check host.gpuNamespaceUsage(namespace).resourceCount == 3
+    expect GpuHostError:
+      discard host.releaseGpuResource(vertex)
+
+    check host.releaseGpuResource(graphics)
+    check host.releaseGpuResource(vertex)
+    check host.releaseGpuResource(fragment)
+
+    let compute = host.createGpuShader(
+      namespace,
+      shaderDescriptor(gssCompute, "compute"),
+      @[3'u8]
+    )
+    let computeDescriptor = computePipelineDescriptor(compute)
+    let computePipeline = host.createGpuComputePipeline(
+      namespace,
+      computeDescriptor
+    )
+    check context.computePipelineCreates == 1
+    check context.lastComputePipeline == computeDescriptor
+    check context.lastPipelineShaders == @[4'u64]
+    expect GpuHostError:
+      discard host.releaseGpuResource(compute)
+    check host.releaseGpuResource(computePipeline)
+    check host.releaseGpuResource(compute)
+    check host.gpuNamespaceUsage(namespace) == GpuResourceUsage()
+    host.close()
+
+  test "pipeline validation rejects unsafe shader relationships before backend work":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let budget = GpuResourceBudget(persistentBytes: 64, maxResources: 12)
+    let first = host.createGpuNamespace("first-pipelines", budget)
+    let second = host.createGpuNamespace("second-pipelines", budget)
+    let vertex = host.createGpuShader(first, shaderDescriptor(gssVertex), @[1'u8])
+    let fragment = host.createGpuShader(
+      first,
+      shaderDescriptor(gssFragment),
+      @[2'u8]
+    )
+    let foreignFragment = host.createGpuShader(
+      second,
+      shaderDescriptor(gssFragment),
+      @[3'u8]
+    )
+
+    expect GpuHostError:
+      discard host.createGpuGraphicsPipeline(
+        first,
+        graphicsPipelineDescriptor(vertex, foreignFragment)
+      )
+    expect GpuHostError:
+      discard host.createGpuGraphicsPipeline(
+        first,
+        graphicsPipelineDescriptor(fragment, vertex)
+      )
+    var noWrites = graphicsPipelineDescriptor(vertex, fragment)
+    noWrites.blend.writeMask = {}
+    expect GpuHostError:
+      discard host.createGpuGraphicsPipeline(first, noWrites)
+    var noLayout = graphicsPipelineDescriptor(vertex, fragment)
+    noLayout.vertexLayout = @[]
+    expect GpuHostError:
+      discard host.createGpuGraphicsPipeline(first, noLayout)
+    expect GpuHostError:
+      discard host.createGpuGraphicsPipeline(
+        first,
+        graphicsPipelineDescriptor(
+          vertex,
+          fragment,
+          repeat('p', maxGpuResourceLabelBytes + 1)
+        )
+      )
+    expect GpuHostError:
+      discard host.createGpuComputePipeline(
+        first,
+        computePipelineDescriptor(vertex)
+      )
+    check context.graphicsPipelineCreates == 0
+    check context.computePipelineCreates == 0
+    host.close()
+
+  test "pipeline callback budget and backend failures preserve accounting":
+    block missingCallback:
+      let context = newContext()
+      var value = context.backend
+      value.createGraphicsPipeline = nil
+      let host = openGpuHost(value, ghoOwned)
+      let namespace = host.createGpuNamespace(
+        "missing-pipeline",
+        GpuResourceBudget(persistentBytes: 8, maxResources: 3)
+      )
+      let vertex = host.createGpuShader(
+        namespace,
+        shaderDescriptor(gssVertex),
+        @[1'u8]
+      )
+      let fragment = host.createGpuShader(
+        namespace,
+        shaderDescriptor(gssFragment),
+        @[2'u8]
+      )
+      expect GpuHostError:
+        discard host.createGpuGraphicsPipeline(
+          namespace,
+          graphicsPipelineDescriptor(vertex, fragment)
+        )
+      check context.graphicsPipelineCreates == 0
+      host.close()
+
+    block resourceBudget:
+      let context = newContext()
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace(
+        "pipeline-budget",
+        GpuResourceBudget(persistentBytes: 8, maxResources: 2)
+      )
+      let vertex = host.createGpuShader(
+        namespace,
+        shaderDescriptor(gssVertex),
+        @[1'u8]
+      )
+      let fragment = host.createGpuShader(
+        namespace,
+        shaderDescriptor(gssFragment),
+        @[2'u8]
+      )
+      expect GpuHostError:
+        discard host.createGpuGraphicsPipeline(
+          namespace,
+          graphicsPipelineDescriptor(vertex, fragment)
+        )
+      check context.graphicsPipelineCreates == 0
+      host.close()
+
+    block backendFailure:
+      let context = newContext()
+      context.createGraphicsPipelineStatus = gbsFailed
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace(
+        "failed-pipeline",
+        GpuResourceBudget(persistentBytes: 8, maxResources: 3)
+      )
+      let vertex = host.createGpuShader(
+        namespace,
+        shaderDescriptor(gssVertex),
+        @[1'u8]
+      )
+      let fragment = host.createGpuShader(
+        namespace,
+        shaderDescriptor(gssFragment),
+        @[2'u8]
+      )
+      expect GpuHostError:
+        discard host.createGpuGraphicsPipeline(
+          namespace,
+          graphicsPipelineDescriptor(vertex, fragment)
+        )
+      check context.graphicsPipelineCreates == 1
+      check host.gpuNamespaceUsage(namespace).resourceCount == 2
+      check context.resourceDestroys == 0
+      host.close()
+
+  test "pipeline device loss frame boundaries and teardown order are safe":
+    block deviceLoss:
+      let context = newContext()
+      context.createComputePipelineStatus = gbsDeviceLost
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace(
+        "pipeline-loss",
+        GpuResourceBudget(persistentBytes: 8, maxResources: 2)
+      )
+      let compute = host.createGpuShader(
+        namespace,
+        shaderDescriptor(gssCompute),
+        @[1'u8]
+      )
+      expect GpuHostError:
+        discard host.createGpuComputePipeline(
+          namespace,
+          computePipelineDescriptor(compute)
+        )
+      check host.state == ghsDeviceLost
+      check not host.isGpuResourceLive(compute)
+      host.close()
+
+    block activeFrame:
+      let context = newContext()
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace(
+        "pipeline-frame",
+        GpuResourceBudget(persistentBytes: 8, maxResources: 3)
+      )
+      let vertex = host.createGpuShader(
+        namespace,
+        shaderDescriptor(gssVertex),
+        @[1'u8]
+      )
+      let fragment = host.createGpuShader(
+        namespace,
+        shaderDescriptor(gssFragment),
+        @[2'u8]
+      )
+      let token = host.beginGpuFrame()
+      expect GpuHostError:
+        discard host.createGpuGraphicsPipeline(
+          namespace,
+          graphicsPipelineDescriptor(vertex, fragment)
+        )
+      host.endGpuFrame(token)
+      discard host.createGpuGraphicsPipeline(
+        namespace,
+        graphicsPipelineDescriptor(vertex, fragment)
+      )
+      host.close()
+      check context.destroyedResources == @[3'u64, 2'u64, 1'u64]
 
 suite "GPU resource namespace budgets":
 
