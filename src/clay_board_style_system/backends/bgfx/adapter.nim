@@ -184,6 +184,8 @@ const
   brtFrameBuffer = 6'u64
   brtShader = 7'u64
   brtProgram = 8'u64
+  brtUniform = 9'u64
+  brtSampler = 10'u64
 
 proc packBackendResource(tag: uint64; handleIndex: uint16): GpuBackendResourceId =
   GpuBackendResourceId(
@@ -496,6 +498,47 @@ proc createShader(
   resource = packBackendResource(brtShader, handle.idx)
   gbsOk
 
+proc bgfxUniformType(value: GpuUniformType): bgfx_uniform_type_t =
+  case value
+  of gutVec4: BGFX_UNIFORM_TYPE_VEC4
+  of gutMat3: BGFX_UNIFORM_TYPE_MAT3
+  of gutMat4: BGFX_UNIFORM_TYPE_MAT4
+
+proc createUniform(
+    rawContext: GpuBackendContext;
+    descriptor: GpuUniformDescriptor;
+    resource: var GpuBackendResourceId
+): GpuBackendStatus {.raises: [].} =
+  if not rawContext.context.attached or descriptor.name.len == 0 or
+      descriptor.arrayLength == 0:
+    return gbsInvalidConfiguration
+  let handle = BGFX.createUniform(
+    descriptor.name.cstring,
+    descriptor.uniformType.bgfxUniformType(),
+    descriptor.arrayLength
+  )
+  if not BGFX_HANDLE_IS_VALID(handle):
+    return gbsFailed
+  resource = packBackendResource(brtUniform, handle.idx)
+  gbsOk
+
+proc createSampler(
+    rawContext: GpuBackendContext;
+    descriptor: GpuSamplerDescriptor;
+    resource: var GpuBackendResourceId
+): GpuBackendStatus {.raises: [].} =
+  if not rawContext.context.attached or descriptor.name.len == 0:
+    return gbsInvalidConfiguration
+  let handle = BGFX.createUniform(
+    descriptor.name.cstring,
+    BGFX_UNIFORM_TYPE_SAMPLER,
+    1
+  )
+  if not BGFX_HANDLE_IS_VALID(handle):
+    return gbsFailed
+  resource = packBackendResource(brtSampler, handle.idx)
+  gbsOk
+
 proc createGraphicsPipeline(
     rawContext: GpuBackendContext;
     descriptor: GpuGraphicsPipelineDescriptor;
@@ -614,6 +657,87 @@ proc packedClearColor(color: GpuClearColor): uint32 =
   let alpha = uint32(color.alpha * 255'f32 + 0.5'f32)
   (red shl 24) or (green shl 16) or (blue shl 8) or alpha
 
+proc bgfxSamplerFlags(descriptor: GpuSamplerDescriptor): uint32 =
+  template addAddress(mode: GpuSamplerAddressMode; mirror, clamp, border: uint32) =
+    case mode
+    of gsamRepeat: discard
+    of gsamMirror: result = result or mirror
+    of gsamClamp: result = result or clamp
+    of gsamBorder: result = result or border
+
+  addAddress(
+    descriptor.addressU,
+    BGFX_SAMPLER_U_MIRROR,
+    BGFX_SAMPLER_U_CLAMP,
+    BGFX_SAMPLER_U_BORDER
+  )
+  addAddress(
+    descriptor.addressV,
+    BGFX_SAMPLER_V_MIRROR,
+    BGFX_SAMPLER_V_CLAMP,
+    BGFX_SAMPLER_V_BORDER
+  )
+  addAddress(
+    descriptor.addressW,
+    BGFX_SAMPLER_W_MIRROR,
+    BGFX_SAMPLER_W_CLAMP,
+    BGFX_SAMPLER_W_BORDER
+  )
+  case descriptor.minFilter
+  of gsfLinear: discard
+  of gsfNearest: result = result or BGFX_SAMPLER_MIN_POINT
+  of gsfAnisotropic: result = result or BGFX_SAMPLER_MIN_ANISOTROPIC
+  case descriptor.magFilter
+  of gsfLinear: discard
+  of gsfNearest: result = result or BGFX_SAMPLER_MAG_POINT
+  of gsfAnisotropic: result = result or BGFX_SAMPLER_MAG_ANISOTROPIC
+  case descriptor.mipFilter
+  of gsfLinear: discard
+  of gsfNearest: result = result or BGFX_SAMPLER_MIP_POINT
+  of gsfAnisotropic: discard
+  result = result or BGFX_SAMPLER_BORDER_COLOR(descriptor.borderColorIndex)
+
+proc bgfxStorageAccess(value: GpuStorageAccess): bgfx_access_t =
+  case value
+  of gsaRead: BGFX_ACCESS_READ
+  of gsaWrite: BGFX_ACCESS_WRITE
+  of gsaReadWrite: BGFX_ACCESS_READWRITE
+
+proc applyBindings(bindings: GpuBackendBindingSet): GpuBackendStatus =
+  for binding in bindings.uniforms:
+    let uniform = binding.resource.unpackBackendResource()
+    if not uniform.valid or uniform.tag != brtUniform or binding.values.len == 0:
+      return gbsInvalidConfiguration
+    BGFX.setUniform(
+      bgfx_uniform_handle_t(idx: uniform.handleIndex),
+      unsafeAddr binding.values[0],
+      binding.descriptor.arrayLength
+    )
+  for binding in bindings.textures:
+    let sampler = binding.sampler.unpackBackendResource()
+    let texture = binding.texture.unpackBackendResource()
+    if not sampler.valid or sampler.tag != brtSampler or
+        not texture.valid or texture.tag != brtTexture:
+      return gbsInvalidConfiguration
+    BGFX.setTexture(
+      binding.stage,
+      bgfx_uniform_handle_t(idx: sampler.handleIndex),
+      bgfx_texture_handle_t(idx: texture.handleIndex),
+      binding.samplerDescriptor.bgfxSamplerFlags()
+    )
+  for binding in bindings.storageImages:
+    let texture = binding.texture.unpackBackendResource()
+    if not texture.valid or texture.tag != brtTexture:
+      return gbsInvalidConfiguration
+    BGFX.setImage(
+      binding.stage,
+      bgfx_texture_handle_t(idx: texture.handleIndex),
+      binding.mip,
+      binding.access.bgfxStorageAccess(),
+      binding.format.bgfxTextureFormat()
+    )
+  gbsOk
+
 proc beginGraphicsPass(
     rawContext: GpuBackendContext;
     viewId: uint16;
@@ -670,6 +794,7 @@ proc submitDraw(
     pipeline, vertexBuffer, indexBuffer: GpuBackendResourceId;
     pipelineDescriptor: GpuGraphicsPipelineDescriptor;
     vertexDescriptor, indexDescriptor: GpuBufferDescriptor;
+    bindings: GpuBackendBindingSet;
     command: GpuDrawCommand
 ): GpuBackendStatus {.raises: [].} =
   discard vertexDescriptor
@@ -688,6 +813,9 @@ proc submitDraw(
        (index.tag != brtStaticIndexBuffer and
         index.tag != brtDynamicIndexBuffer)):
     return gbsInvalidConfiguration
+  let bindingStatus = bindings.applyBindings()
+  if bindingStatus != gbsOk:
+    return bindingStatus
   case vertex.tag
   of brtStaticVertexBuffer:
     BGFX.setVertexBuffer(
@@ -736,6 +864,7 @@ proc dispatch(
     rawContext: GpuBackendContext;
     viewId: uint16;
     pipeline: GpuBackendResourceId;
+    bindings: GpuBackendBindingSet;
     command: GpuComputeCommand
 ): GpuBackendStatus {.raises: [].} =
   let value = rawContext.context
@@ -745,6 +874,9 @@ proc dispatch(
   let caps = BGFX.getCaps()
   if caps.isNil or (caps.supported and BGFX_CAPS_COMPUTE) == 0:
     return gbsUnsupported
+  let bindingStatus = bindings.applyBindings()
+  if bindingStatus != gbsOk:
+    return bindingStatus
   BGFX.dispatch(
     viewId,
     bgfx_program_handle_t(idx: program.handleIndex),
@@ -790,6 +922,8 @@ proc destroyResource(
     BGFX.destroyShader(bgfx_shader_handle_t(idx: decoded.handleIndex))
   of brtProgram:
     BGFX.destroyProgram(bgfx_program_handle_t(idx: decoded.handleIndex))
+  of brtUniform, brtSampler:
+    BGFX.destroyUniform(bgfx_uniform_handle_t(idx: decoded.handleIndex))
   else:
     discard
 
@@ -821,6 +955,8 @@ proc newBgfxBackend*(
     updateBuffer: updateBuffer,
     createRenderTarget: createRenderTarget,
     createShader: createShader,
+    createUniform: createUniform,
+    createSampler: createSampler,
     createGraphicsPipeline: createGraphicsPipeline,
     createComputePipeline: createComputePipeline,
     beginGraphicsPass: beginGraphicsPass,

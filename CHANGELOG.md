@@ -52,6 +52,13 @@ release. Before 1.0, minor releases may contain public API changes.
   view-ID range before adapter work. Batched draws share one ordered view and
   configure their target, viewport, scissor, and clear state once per pass;
   frame completion remains the sole Present boundary.
+  Typed Uniform and Sampler resources now bind finite Vec4/Mat3/Mat4 arrays,
+  sampled textures, and compute storage images without exposing backend
+  handles. Portable identifier, exact value-shape, usage, namespace,
+  generation, stage-collision, mip, and per-command count checks complete
+  before pass setup or dispatch. The bgfx adapter maps wrap/filter state,
+  uniform updates, texture sampling, and image read/write access, with ARC/ORC
+  mock, C-fixture, and real-NOOP resource coverage.
 
 - Added retained RGBA8 RasterSurface support for drawing engines, progressive
   decoders, and generated imagery. Bounds-checked stride-aware updates are

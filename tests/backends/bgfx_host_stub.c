@@ -19,6 +19,13 @@ static uint32_t cbss_view_frame_buffer_count;
 static uint32_t cbss_vertex_bind_count;
 static uint32_t cbss_index_bind_count;
 static uint32_t cbss_state_count;
+static uint32_t cbss_uniform_create_count;
+static uint32_t cbss_uniform_destroy_count;
+static uint32_t cbss_uniform_set_count;
+static uint32_t cbss_texture_bind_count;
+static uint32_t cbss_image_bind_count;
+static uint32_t cbss_last_sampler_flags;
+static bgfx_access_t cbss_last_image_access;
 static bgfx_view_id_t cbss_last_view_id;
 static uint64_t cbss_last_state;
 static uint32_t cbss_program_destroy_count;
@@ -498,6 +505,61 @@ void bgfx_destroy_program(bgfx_program_handle_t handle)
     }
 }
 
+bgfx_uniform_handle_t bgfx_create_uniform(const char* name,
+                                          bgfx_uniform_type_t type,
+                                          uint16_t num)
+{
+    bgfx_uniform_handle_t handle = { UINT16_MAX };
+    if (cbss_initialized && NULL != name && '\0' != name[0]
+        && type < BGFX_UNIFORM_TYPE_COUNT && 0 != num)
+    {
+        ++cbss_uniform_create_count;
+        handle.idx = (uint16_t)(260 + cbss_uniform_create_count);
+    }
+    return handle;
+}
+
+void bgfx_destroy_uniform(bgfx_uniform_handle_t handle)
+{
+    if (UINT16_MAX != handle.idx)
+    {
+        ++cbss_uniform_destroy_count;
+    }
+}
+
+void bgfx_set_uniform(bgfx_uniform_handle_t handle, const void* value,
+                      uint16_t num)
+{
+    if (UINT16_MAX != handle.idx && NULL != value && 0 != num)
+    {
+        ++cbss_uniform_set_count;
+    }
+}
+
+void bgfx_set_texture(uint8_t stage, bgfx_uniform_handle_t sampler,
+                      bgfx_texture_handle_t texture, uint32_t flags)
+{
+    (void)stage;
+    if (UINT16_MAX != sampler.idx && UINT16_MAX != texture.idx)
+    {
+        ++cbss_texture_bind_count;
+        cbss_last_sampler_flags = flags;
+    }
+}
+
+void bgfx_set_image(uint8_t stage, bgfx_texture_handle_t texture, uint8_t mip,
+                    bgfx_access_t access, bgfx_texture_format_t format)
+{
+    (void)stage;
+    (void)mip;
+    (void)format;
+    if (UINT16_MAX != texture.idx)
+    {
+        ++cbss_image_bind_count;
+        cbss_last_image_access = access;
+    }
+}
+
 void bgfx_set_view_rect(bgfx_view_id_t id, int16_t x, int16_t y,
                         uint16_t width, uint16_t height)
 {
@@ -636,6 +698,13 @@ void cbss_bgfx_stub_reset_counters(void)
     cbss_vertex_bind_count = 0;
     cbss_index_bind_count = 0;
     cbss_state_count = 0;
+    cbss_uniform_create_count = 0;
+    cbss_uniform_destroy_count = 0;
+    cbss_uniform_set_count = 0;
+    cbss_texture_bind_count = 0;
+    cbss_image_bind_count = 0;
+    cbss_last_sampler_flags = 0;
+    cbss_last_image_access = BGFX_ACCESS_COUNT;
     cbss_last_view_id = 0;
     cbss_last_state = 0;
     cbss_program_destroy_count = 0;
@@ -697,6 +766,34 @@ uint32_t cbss_bgfx_stub_view_frame_buffer_count(void)
 uint32_t cbss_bgfx_stub_vertex_bind_count(void) { return cbss_vertex_bind_count; }
 uint32_t cbss_bgfx_stub_index_bind_count(void) { return cbss_index_bind_count; }
 uint32_t cbss_bgfx_stub_state_count(void) { return cbss_state_count; }
+uint32_t cbss_bgfx_stub_uniform_create_count(void)
+{
+    return cbss_uniform_create_count;
+}
+uint32_t cbss_bgfx_stub_uniform_destroy_count(void)
+{
+    return cbss_uniform_destroy_count;
+}
+uint32_t cbss_bgfx_stub_uniform_set_count(void)
+{
+    return cbss_uniform_set_count;
+}
+uint32_t cbss_bgfx_stub_texture_bind_count(void)
+{
+    return cbss_texture_bind_count;
+}
+uint32_t cbss_bgfx_stub_image_bind_count(void)
+{
+    return cbss_image_bind_count;
+}
+uint32_t cbss_bgfx_stub_last_sampler_flags(void)
+{
+    return cbss_last_sampler_flags;
+}
+uint32_t cbss_bgfx_stub_last_image_access(void)
+{
+    return (uint32_t)cbss_last_image_access;
+}
 uint16_t cbss_bgfx_stub_last_view_id(void) { return cbss_last_view_id; }
 uint64_t cbss_bgfx_stub_last_state(void) { return cbss_last_state; }
 uint32_t cbss_bgfx_stub_program_destroy_count(void)
