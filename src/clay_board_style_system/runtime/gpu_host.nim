@@ -1,7 +1,7 @@
 import std/[algorithm, hashes, tables]
 
 const
-  gpuHostApiVersion* = 5'u32
+  gpuHostApiVersion* = 6'u32
   maxGpuNamespaceNameBytes* = 128
   maxGpuResourceLabelBytes* = 128
 
@@ -95,6 +95,47 @@ type
     gssFragment,
     gssCompute
 
+  GpuPrimitiveTopology* = enum
+    gptTriangleList,
+    gptTriangleStrip,
+    gptLineList,
+    gptLineStrip,
+    gptPointList
+
+  GpuCullMode* = enum
+    gcmNone,
+    gcmFront,
+    gcmBack
+
+  GpuFrontFace* = enum
+    gffClockwise,
+    gffCounterClockwise
+
+  GpuBlendFactor* = enum
+    gbfZero,
+    gbfOne,
+    gbfSourceColor,
+    gbfOneMinusSourceColor,
+    gbfDestinationColor,
+    gbfOneMinusDestinationColor,
+    gbfSourceAlpha,
+    gbfOneMinusSourceAlpha,
+    gbfDestinationAlpha,
+    gbfOneMinusDestinationAlpha
+
+  GpuBlendOperation* = enum
+    gboAdd,
+    gboSubtract,
+    gboReverseSubtract,
+    gboMinimum,
+    gboMaximum
+
+  GpuColorChannel* = enum
+    gccRed,
+    gccGreen,
+    gccBlue,
+    gccAlpha
+
   GpuVertexAttribute* = object
     semantic*: GpuVertexSemantic
     components*: uint8
@@ -128,6 +169,28 @@ type
 
   GpuShaderDescriptor* = object
     stage*: GpuShaderStage
+    label*: string
+
+  GpuBlendState* = object
+    enabled*: bool
+    sourceColor*, destinationColor*: GpuBlendFactor
+    colorOperation*: GpuBlendOperation
+    sourceAlpha*, destinationAlpha*: GpuBlendFactor
+    alphaOperation*: GpuBlendOperation
+    writeMask*: set[GpuColorChannel]
+
+  GpuGraphicsPipelineDescriptor* = object
+    vertexShader*, fragmentShader*: GpuResourceHandle
+    vertexLayout*: seq[GpuVertexAttribute]
+    colorFormat*: GpuTextureFormat
+    topology*: GpuPrimitiveTopology
+    cullMode*: GpuCullMode
+    frontFace*: GpuFrontFace
+    blend*: GpuBlendState
+    label*: string
+
+  GpuComputePipelineDescriptor* = object
+    computeShader*: GpuResourceHandle
     label*: string
 
   GpuHostConfig* = object
@@ -229,6 +292,20 @@ type
     resource: var GpuBackendResourceId
   ): GpuBackendStatus {.nimcall, raises: [].}
 
+  GpuBackendCreateGraphicsPipelineProc* = proc(
+    context: GpuBackendContext;
+    descriptor: GpuGraphicsPipelineDescriptor;
+    vertexShader, fragmentShader: GpuBackendResourceId;
+    resource: var GpuBackendResourceId
+  ): GpuBackendStatus {.nimcall, raises: [].}
+
+  GpuBackendCreateComputePipelineProc* = proc(
+    context: GpuBackendContext;
+    descriptor: GpuComputePipelineDescriptor;
+    computeShader: GpuBackendResourceId;
+    resource: var GpuBackendResourceId
+  ): GpuBackendStatus {.nimcall, raises: [].}
+
   GpuBackendDestroyResourceProc* = proc(
     context: GpuBackendContext;
     resource: GpuBackendResourceId;
@@ -250,6 +327,8 @@ type
     updateBuffer*: GpuBackendUpdateBufferProc
     createRenderTarget*: GpuBackendCreateRenderTargetProc
     createShader*: GpuBackendCreateShaderProc
+    createGraphicsPipeline*: GpuBackendCreateGraphicsPipelineProc
+    createComputePipeline*: GpuBackendCreateComputePipelineProc
     destroyResource*: GpuBackendDestroyResourceProc
     closeOwned*: GpuBackendCloseProc
     detachBorrowed*: GpuBackendCloseProc
@@ -262,6 +341,10 @@ type
     bufferDescriptor: GpuBufferDescriptor
     renderTargetDescriptor: GpuRenderTargetDescriptor
     shaderDescriptor: GpuShaderDescriptor
+    graphicsPipelineDescriptor: GpuGraphicsPipelineDescriptor
+    computePipelineDescriptor: GpuComputePipelineDescriptor
+    dependencies: seq[GpuResourceId]
+    dependentCount: uint32
 
   GpuNamespaceEntry = object
     name: string
@@ -291,6 +374,21 @@ proc namespaceIdValue*(id: GpuNamespaceId): uint64 {.inline.} = uint64(id)
 proc resourceIdValue*(id: GpuResourceId): uint64 {.inline.} = uint64(id)
 proc backendResourceIdValue*(id: GpuBackendResourceId): uint64 {.inline.} =
   uint64(id)
+
+proc opaqueGpuBlendState*(): GpuBlendState =
+  GpuBlendState(writeMask: {gccRed, gccGreen, gccBlue, gccAlpha})
+
+proc alphaGpuBlendState*(): GpuBlendState =
+  GpuBlendState(
+    enabled: true,
+    sourceColor: gbfSourceAlpha,
+    destinationColor: gbfOneMinusSourceAlpha,
+    colorOperation: gboAdd,
+    sourceAlpha: gbfOne,
+    destinationAlpha: gbfOneMinusSourceAlpha,
+    alphaOperation: gboAdd,
+    writeMask: {gccRed, gccGreen, gccBlue, gccAlpha}
+  )
 
 proc statusMessage(status: GpuBackendStatus): string =
   case status
@@ -604,7 +702,10 @@ proc insertGpuResource(
     backendResource = GpuBackendResourceId(0);
     bufferDescriptor = GpuBufferDescriptor();
     renderTargetDescriptor = GpuRenderTargetDescriptor();
-    shaderDescriptor = GpuShaderDescriptor()
+    shaderDescriptor = GpuShaderDescriptor();
+    graphicsPipelineDescriptor = GpuGraphicsPipelineDescriptor();
+    computePipelineDescriptor = GpuComputePipelineDescriptor();
+    dependencies: seq[GpuResourceId] = @[]
 ): GpuResourceHandle =
   var entry = host.namespaces[namespace]
   entry.ensureResourceCapacity(bytes)
@@ -617,7 +718,10 @@ proc insertGpuResource(
     backendResource: backendResource,
     bufferDescriptor: bufferDescriptor,
     renderTargetDescriptor: renderTargetDescriptor,
-    shaderDescriptor: shaderDescriptor
+    shaderDescriptor: shaderDescriptor,
+    graphicsPipelineDescriptor: graphicsPipelineDescriptor,
+    computePipelineDescriptor: computePipelineDescriptor,
+    dependencies: dependencies
   )
   entry.usage.persistentBytes += bytes
   inc entry.usage.resourceCount
@@ -677,6 +781,27 @@ proc vertexStride*(descriptor: GpuBufferDescriptor): uint64 =
     result += uint64(attribute.components) *
       attribute.componentType.vertexComponentBytes()
 
+proc validateVertexLayout(layout: seq[GpuVertexAttribute]): uint64 =
+  if layout.len == 0:
+    raise newException(GpuHostError, "GPU vertex layout cannot be empty")
+  var semantics: set[GpuVertexSemantic]
+  for attribute in layout:
+    if attribute.components < 1 or attribute.components > 4:
+      raise newException(GpuHostError, "GPU vertex component count is invalid")
+    if (attribute.normalized or attribute.asInteger) and
+        attribute.componentType notin {gvctUint8, gvctInt16}:
+      raise newException(
+        GpuHostError,
+        "GPU vertex fixed-point flags require an integer component type"
+      )
+    if attribute.semantic in semantics:
+      raise newException(GpuHostError, "GPU vertex semantic is duplicated")
+    semantics.incl attribute.semantic
+    result += uint64(attribute.components) *
+      attribute.componentType.vertexComponentBytes()
+  if result == 0 or result > uint64(high(uint16)):
+    raise newException(GpuHostError, "GPU vertex layout stride is invalid")
+
 proc bufferElementBytes(descriptor: GpuBufferDescriptor): uint64 =
   case descriptor.role
   of gbrVertex:
@@ -704,24 +829,8 @@ proc validateBufferDescriptor(
 
   case descriptor.role
   of gbrVertex:
-    if descriptor.vertexLayout.len == 0:
-      raise newException(GpuHostError, "vertex GPU buffers require a layout")
-    var semantics: set[GpuVertexSemantic]
-    for attribute in descriptor.vertexLayout:
-      if attribute.components < 1 or attribute.components > 4:
-        raise newException(GpuHostError, "GPU vertex component count is invalid")
-      if (attribute.normalized or attribute.asInteger) and
-          attribute.componentType notin {gvctUint8, gvctInt16}:
-        raise newException(
-          GpuHostError,
-          "GPU vertex fixed-point flags require an integer component type"
-        )
-      if attribute.semantic in semantics:
-        raise newException(GpuHostError, "GPU vertex semantic is duplicated")
-      semantics.incl attribute.semantic
-    let stride = descriptor.vertexStride()
-    if stride == 0 or stride > uint64(high(uint16)) or
-        descriptor.byteSize mod stride != 0:
+    let stride = descriptor.vertexLayout.validateVertexLayout()
+    if descriptor.byteSize mod stride != 0:
       raise newException(GpuHostError, "GPU vertex buffer size does not match its layout")
   of gbrIndex:
     if descriptor.vertexLayout.len != 0:
@@ -944,6 +1053,147 @@ proc createGpuShader*(
 
 proc isGpuResourceLive*(host: GpuHost; handle: GpuResourceHandle): bool
 
+proc pipelineShader(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    handle: GpuResourceHandle;
+    stage: GpuShaderStage
+): GpuResourceEntry =
+  if handle.namespace != namespace or not host.isGpuResourceLive(handle) or
+      handle.kind != grkShader:
+    raise newException(
+      GpuHostError,
+      "GPU pipeline shaders must be live resources in the same namespace"
+    )
+  result = host.namespaces[namespace].resources[handle.resource]
+  if result.shaderDescriptor.stage != stage:
+    raise newException(GpuHostError, "GPU pipeline shader stage is invalid")
+
+proc validatePipelineCreation(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    label: string
+) =
+  host.requireHost()
+  if host.stateValue != ghsReady:
+    raise newException(GpuHostError, "GPU host is not ready")
+  if host.activeFrame:
+    raise newException(
+      GpuHostError,
+      "GPU pipeline creation is not allowed during an active frame"
+    )
+  if namespace notin host.namespaces:
+    raise newException(GpuHostError, "unknown GPU namespace")
+  if label.len > maxGpuResourceLabelBytes:
+    raise newException(GpuHostError, "GPU resource label is too long")
+  host.namespaces[namespace].ensureResourceCapacity(0)
+
+proc retainPipelineDependencies(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    dependencies: openArray[GpuResourceId]
+) =
+  var entry = host.namespaces[namespace]
+  for resource in dependencies:
+    inc entry.resources[resource].dependentCount
+  host.namespaces[namespace] = entry
+
+proc createGpuGraphicsPipeline*(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    descriptor: GpuGraphicsPipelineDescriptor
+): GpuResourceHandle =
+  host.validatePipelineCreation(namespace, descriptor.label)
+  if descriptor.blend.writeMask == {}:
+    raise newException(GpuHostError, "GPU graphics pipeline writes no color channels")
+  discard descriptor.vertexLayout.validateVertexLayout()
+  let vertex = host.pipelineShader(
+    namespace,
+    descriptor.vertexShader,
+    gssVertex
+  )
+  let fragment = host.pipelineShader(
+    namespace,
+    descriptor.fragmentShader,
+    gssFragment
+  )
+  if host.backend.createGraphicsPipeline.isNil or
+      host.backend.destroyResource.isNil:
+    raise newException(
+      GpuHostError,
+      "GPU backend does not support graphics pipelines"
+    )
+
+  var backendResource: GpuBackendResourceId
+  let status = host.backend.createGraphicsPipeline(
+    host.backend.context,
+    descriptor,
+    vertex.backendResource,
+    fragment.backendResource,
+    backendResource
+  )
+  if status == gbsDeviceLost:
+    host.enterDeviceLost()
+  raiseForStatus(status)
+  if backendResource.backendResourceIdValue == 0:
+    raise newException(GpuHostError, "GPU backend returned an invalid resource")
+  let dependencies = @[
+    descriptor.vertexShader.resource,
+    descriptor.fragmentShader.resource
+  ]
+  result = host.insertGpuResource(
+    namespace,
+    grkPipeline,
+    0,
+    backendResource,
+    graphicsPipelineDescriptor = descriptor,
+    dependencies = dependencies
+  )
+  host.retainPipelineDependencies(namespace, dependencies)
+
+proc createGpuComputePipeline*(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    descriptor: GpuComputePipelineDescriptor
+): GpuResourceHandle =
+  host.validatePipelineCreation(namespace, descriptor.label)
+  if not host.infoValue.computeSupported:
+    raise newException(GpuHostError, "GPU compute pipelines are not supported")
+  let compute = host.pipelineShader(
+    namespace,
+    descriptor.computeShader,
+    gssCompute
+  )
+  if host.backend.createComputePipeline.isNil or
+      host.backend.destroyResource.isNil:
+    raise newException(
+      GpuHostError,
+      "GPU backend does not support compute pipelines"
+    )
+
+  var backendResource: GpuBackendResourceId
+  let status = host.backend.createComputePipeline(
+    host.backend.context,
+    descriptor,
+    compute.backendResource,
+    backendResource
+  )
+  if status == gbsDeviceLost:
+    host.enterDeviceLost()
+  raiseForStatus(status)
+  if backendResource.backendResourceIdValue == 0:
+    raise newException(GpuHostError, "GPU backend returned an invalid resource")
+  let dependencies = @[descriptor.computeShader.resource]
+  result = host.insertGpuResource(
+    namespace,
+    grkPipeline,
+    0,
+    backendResource,
+    computePipelineDescriptor = descriptor,
+    dependencies = dependencies
+  )
+  host.retainPipelineDependencies(namespace, dependencies)
+
 proc updateGpuBuffer*(
     host: GpuHost;
     handle: GpuResourceHandle;
@@ -997,6 +1247,11 @@ proc releaseGpuResource*(host: GpuHost; handle: GpuResourceHandle): bool =
     )
   var namespace = host.namespaces[handle.namespace]
   let resource = namespace.resources[handle.resource]
+  if resource.dependentCount != 0:
+    raise newException(
+      GpuHostError,
+      "GPU resource cannot be released while another resource depends on it"
+    )
   if resource.backendResource.backendResourceIdValue != 0 and
       not host.backend.destroyResource.isNil:
     host.backend.destroyResource(
@@ -1006,6 +1261,10 @@ proc releaseGpuResource*(host: GpuHost; handle: GpuResourceHandle): bool =
     )
   namespace.usage.persistentBytes -= resource.bytes
   dec namespace.usage.resourceCount
+  for dependency in resource.dependencies:
+    if dependency in namespace.resources and
+        namespace.resources[dependency].dependentCount != 0:
+      dec namespace.resources[dependency].dependentCount
   namespace.resources.del(handle.resource)
   host.namespaces[handle.namespace] = namespace
   true

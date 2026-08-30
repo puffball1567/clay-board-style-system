@@ -20,6 +20,10 @@ proc submitCount(): uint32 {.importc: "cbss_bgfx_stub_submit_count", cdecl.}
 proc dispatchCount(): uint32 {.importc: "cbss_bgfx_stub_dispatch_count", cdecl.}
 proc programDestroyCount(): uint32 {.
   importc: "cbss_bgfx_stub_program_destroy_count", cdecl.}
+proc graphicsProgramCreateCount(): uint32 {.
+  importc: "cbss_bgfx_stub_graphics_program_create_count", cdecl.}
+proc computeProgramCreateCount(): uint32 {.
+  importc: "cbss_bgfx_stub_compute_program_create_count", cdecl.}
 proc shaderDestroyCount(): uint32 {.
   importc: "cbss_bgfx_stub_shader_destroy_count", cdecl.}
 proc shaderCreateCount(): uint32 {.
@@ -101,7 +105,7 @@ suite "optional bgfxim adapter":
 
     let resourceNamespace = host.createGpuNamespace(
       "adapter-textures",
-      GpuResourceBudget(persistentBytes: 1024, maxResources: 5)
+      GpuResourceBudget(persistentBytes: 1024, maxResources: 10)
     )
     let pixels = newSeq[byte](4 * 2 * 4)
     let texture = host.createGpuTexture(
@@ -192,15 +196,51 @@ suite "optional bgfxim adapter":
     check frameBufferFormat() == uint32(BGFX_TEXTURE_FORMAT_RGBA8)
     check frameBufferFlags() == BGFX_TEXTURE_RT
 
-    let mappedShader = host.createGpuShader(
+    let mappedFragmentShader = host.createGpuShader(
       resourceNamespace,
       GpuShaderDescriptor(stage: gssFragment, label: "adapter-fragment"),
       @[0x43'u8, 0x42'u8, 0x53'u8, 0x53'u8]
     )
-    check host.isGpuResourceLive(mappedShader)
-    check shaderCreateCount() == 1
-    check shaderNameCount() == 1
-    check shaderDataBytes() == 4
+    let mappedVertexShader = host.createGpuShader(
+      resourceNamespace,
+      GpuShaderDescriptor(stage: gssVertex, label: "adapter-vertex"),
+      @[0x56'u8]
+    )
+    let mappedComputeShader = host.createGpuShader(
+      resourceNamespace,
+      GpuShaderDescriptor(stage: gssCompute, label: "adapter-compute"),
+      @[0x43'u8]
+    )
+    check host.isGpuResourceLive(mappedFragmentShader)
+    check shaderCreateCount() == 3
+    check shaderNameCount() == 3
+    check shaderDataBytes() == 1
+
+    let mappedGraphicsPipeline = host.createGpuGraphicsPipeline(
+      resourceNamespace,
+      GpuGraphicsPipelineDescriptor(
+        vertexShader: mappedVertexShader,
+        fragmentShader: mappedFragmentShader,
+        vertexLayout: vertexDescriptor.vertexLayout,
+        colorFormat: gtfRgba8,
+        topology: gptTriangleList,
+        cullMode: gcmBack,
+        frontFace: gffCounterClockwise,
+        blend: alphaGpuBlendState(),
+        label: "adapter-graphics"
+      )
+    )
+    let mappedComputePipeline = host.createGpuComputePipeline(
+      resourceNamespace,
+      GpuComputePipelineDescriptor(
+        computeShader: mappedComputeShader,
+        label: "adapter-compute-pipeline"
+      )
+    )
+    check host.isGpuResourceLive(mappedGraphicsPipeline)
+    check host.isGpuResourceLive(mappedComputePipeline)
+    check graphicsProgramCreateCount() == 1
+    check computeProgramCreateCount() == 1
 
     let token = host.beginGpuFrame()
 
@@ -224,6 +264,8 @@ suite "optional bgfxim adapter":
     let computeProgram = BGFX.createComputeProgram(computeShader, false)
     check BGFX_HANDLE_IS_VALID(graphicsProgram)
     check BGFX_HANDLE_IS_VALID(computeProgram)
+    check graphicsProgramCreateCount() == 2
+    check computeProgramCreateCount() == 2
 
     BGFX.submit(0, graphicsProgram, 0, BGFX_DISCARD_ALL)
     BGFX.dispatch(1, computeProgram, 2, 3, 4, BGFX_DISCARD_ALL)
@@ -238,9 +280,13 @@ suite "optional bgfxim adapter":
     BGFX.destroyShader(fragmentShader)
     BGFX.destroyShader(vertexShader)
 
-    check host.releaseGpuResource(mappedShader)
-    check programDestroyCount() == 2
-    check shaderDestroyCount() == 4
+    check host.releaseGpuResource(mappedComputePipeline)
+    check host.releaseGpuResource(mappedGraphicsPipeline)
+    check programDestroyCount() == 4
+    check host.releaseGpuResource(mappedComputeShader)
+    check host.releaseGpuResource(mappedVertexShader)
+    check host.releaseGpuResource(mappedFragmentShader)
+    check shaderDestroyCount() == 6
 
     host.resizeGpuHost(800, 600)
     check resetCount() == 1

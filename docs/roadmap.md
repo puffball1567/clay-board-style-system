@@ -2202,9 +2202,10 @@ backend-shaped feature sets. Its release gates are:
 The first part of this scope is implemented: `GpuHost` now provides versioned
 owned/borrowed attachment, ordered frame tokens, resize and device-loss state,
 generation-checked resource namespaces with bounded accounting, and mapped
-Texture, Buffer, owned RenderTarget, and precompiled Shader resources. The
+Texture, Buffer, owned RenderTarget, precompiled Shader, and dependency-safe
+Graphics/Compute Pipeline resources. The
 optional `cbssGpuBgfx` adapter consumes `bgfxim` for the bgfx lifecycle while
-remaining absent from standard builds. Pipeline resources, ordered submission,
+remaining absent from standard builds. Ordered submission,
 offscreen Canvas composition, external targets, portable shader packaging,
 restoration, and real-GPU qualification remain open Version 0.7 work.
 

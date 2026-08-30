@@ -13,6 +13,8 @@ static uint32_t cbss_reset_count;
 static uint32_t cbss_submit_count;
 static uint32_t cbss_dispatch_count;
 static uint32_t cbss_program_destroy_count;
+static uint32_t cbss_graphics_program_create_count;
+static uint32_t cbss_compute_program_create_count;
 static uint32_t cbss_shader_destroy_count;
 static uint32_t cbss_shader_create_count;
 static uint32_t cbss_shader_name_count;
@@ -460,7 +462,8 @@ bgfx_program_handle_t bgfx_create_program(bgfx_shader_handle_t vertex,
     bgfx_program_handle_t handle = { UINT16_MAX };
     if (UINT16_MAX != vertex.idx && UINT16_MAX != fragment.idx)
     {
-        handle.idx = 20;
+        ++cbss_graphics_program_create_count;
+        handle.idx = (uint16_t)(220 + cbss_graphics_program_create_count);
     }
     return handle;
 }
@@ -472,7 +475,8 @@ bgfx_program_handle_t bgfx_create_compute_program(bgfx_shader_handle_t shader,
     bgfx_program_handle_t handle = { UINT16_MAX };
     if (UINT16_MAX != shader.idx)
     {
-        handle.idx = 21;
+        ++cbss_compute_program_create_count;
+        handle.idx = (uint16_t)(240 + cbss_compute_program_create_count);
     }
     return handle;
 }
@@ -520,6 +524,8 @@ void cbss_bgfx_stub_reset_counters(void)
     cbss_submit_count = 0;
     cbss_dispatch_count = 0;
     cbss_program_destroy_count = 0;
+    cbss_graphics_program_create_count = 0;
+    cbss_compute_program_create_count = 0;
     cbss_shader_destroy_count = 0;
     cbss_shader_create_count = 0;
     cbss_shader_name_count = 0;
@@ -566,6 +572,14 @@ uint32_t cbss_bgfx_stub_dispatch_count(void) { return cbss_dispatch_count; }
 uint32_t cbss_bgfx_stub_program_destroy_count(void)
 {
     return cbss_program_destroy_count;
+}
+uint32_t cbss_bgfx_stub_graphics_program_create_count(void)
+{
+    return cbss_graphics_program_create_count;
+}
+uint32_t cbss_bgfx_stub_compute_program_create_count(void)
+{
+    return cbss_compute_program_create_count;
 }
 uint32_t cbss_bgfx_stub_shader_destroy_count(void)
 {
