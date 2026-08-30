@@ -68,9 +68,10 @@ bgfx is the planned standard GPU adapter. Its low-level Nim C99 binding,
 games and visualization libraries may use it without CBSS. CBSS depends on
 that package only when the bgfx capability is selected. `bgfxim` is already
 available. The first CBSS adapter and ownership layer are implemented behind
-`-d:cbssGpuBgfx`; GPU Canvas execution, native-window presentation
-qualification, and real-GPU release gates remain Version 0.7 work rather than
-part of the current standard profile.
+`-d:cbssGpuBgfx`; portable GPU Canvas composition through `RasterSurface` is
+implemented, while shared-texture composition, native-window presentation
+qualification, and visible real-GPU release gates remain Version 0.7 work
+rather than part of the current standard profile.
 
 The public `GpuHost` contract is renderer-neutral. It records an explicit
 `owned` or `borrowed` runtime, rejects incompatible adapter versions, allows
@@ -80,9 +81,10 @@ named resource namespaces with separate persistent, transient-upload,
 readback, per-frame work, and resource-count budgets. The current namespace
 API establishes identity and accounting. Typed resources, graphics/compute
 submission, texture blits, and asynchronous readback are implemented without
-exposing raw bgfx handles in ordinary UI code. The portable first composition
-path publishes completed GPU pixels through the existing `RasterSurface`;
-zero-copy external texture support remains an optional later optimization.
+exposing raw bgfx handles in ordinary UI code. `GpuCanvasSurface` now owns a
+bounded asynchronous readback ring and publishes the newest ordered GPU frame
+through the existing `RasterSurface`; zero-copy external texture support
+remains an optional later optimization.
 
 The bgfx adapter uses `bgfxim` directly. Owned mode initializes and shuts down
 the bgfx runtime. Borrowed mode attaches to an application-initialized runtime

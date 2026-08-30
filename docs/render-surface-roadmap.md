@@ -417,10 +417,12 @@ exposing bgfx resources. The host retains destination memory and the source
 dependency until the caller takes the completed result; namespace closure,
 borrowed-host detach, device loss, and frame budgets have explicit behavior.
 This establishes the portable `GPU -> RasterSurface` transfer boundary used by
-the first GPU Canvas path. It intentionally does not yet claim GPU Canvas
-rendering: public native SDL-window handoff, shader packaging, storage-buffer
-bindings, Canvas composition, restoration, and real-GPU conformance remain
-release gates below.
+the first GPU Canvas path. `GpuCanvasSurface` now composes that boundary into a
+normal retained surface with a bounded asynchronous readback ring, ordered
+collection, latest-frame coalescing, backpressure, and explicit R8/RGBA8/BGRA8
+plus alpha-mode normalization. Public native SDL-window handoff, shader
+packaging, storage-buffer bindings, zero-copy shared textures, restoration,
+and visible real-GPU conformance remain release gates below.
 
 ### WGSL-Backed Custom Style Painting
 
