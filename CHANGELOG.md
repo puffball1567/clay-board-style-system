@@ -76,6 +76,8 @@ release. Before 1.0, minor releases may contain public API changes.
   accessibility, and events remain the only UI contract; the GPU path does not
   create a second widget tree. ARC/ORC tests cover lifecycle, budgets, rollback,
   conversion, backpressure, publication, and device loss.
+  `ui.gpuCanvas(...)` adds a non-owning UI attachment that publishes completed
+  GPU frames with paint-only subtree invalidation.
 
 - Added retained RGBA8 RasterSurface support for drawing engines, progressive
   decoders, and generated imagery. Bounds-checked stride-aware updates are
