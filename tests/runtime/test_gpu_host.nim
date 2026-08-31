@@ -1,8 +1,13 @@
 import std/[math, strutils, unittest]
 
-import clay_board_style_system/core/raster_surface
+import clay_board_style_system/core/[declaration, diagnostics, geometry, node,
+    raster_surface, style_resolver, style_value]
+import clay_board_style_system/generated/default_properties
+import clay_board_style_system/layout/layout
 import clay_board_style_system/runtime/gpu_canvas
+import clay_board_style_system/runtime/gpu_canvas_ui
 import clay_board_style_system/runtime/gpu_host
+import clay_board_style_system/runtime/[invalidation, ui_root]
 
 type MockGpuContext = ref object of GpuBackendContext
   openStatus: GpuBackendStatus
@@ -2823,6 +2828,88 @@ suite "GPU texture transfer and readback":
     check context.borrowedDetaches == 1
 
 suite "GPU canvas composition bridge":
+
+  test "UI attachment publishes only the completed GPU canvas surface":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "gpu-canvas-ui",
+      GpuResourceBudget(
+        persistentBytes: 8,
+        readbackBytesPerFrame: 4,
+        workUnitsPerFrame: 2,
+        maxResources: 2
+      )
+    )
+    var config = defaultGpuCanvasConfig(1, 1)
+    config.readbackSlots = 1
+    let canvas = host.newGpuCanvasSurface(namespace, config)
+    let ui = initUiRoot()
+    let handle = ui.gpuCanvas(
+      canvas,
+      uiStyle([
+        decl("width", px(24)),
+        decl("height", px(12)),
+        decl("border-radius", px(6)),
+        decl("overflow", keyword("hidden"))
+      ]),
+      code = "gpu-accent"
+    )
+
+    check handle.valid
+    check handle.nodeHandle.valid
+    check ui.tree.nodes[handle.nodeHandle.id.nodeIndex].kind == nkBox
+    check ui.tree.nodes[handle.nodeHandle.id.nodeIndex].code == "gpu-accent"
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(
+      ui.tree, ui.styleSheets(), defaultProperties(), diagnostics
+    )
+    let layout = computeLayout(ui.tree, styles, size(80, 60))
+    check not diagnostics.hasErrors
+    check layout.boxes[handle.nodeHandle.id.nodeIndex].rect.w == 24
+    check layout.boxes[handle.nodeHandle.id.nodeIndex].rect.h == 12
+    discard ui.consumeInvalidation()
+
+    let frame = host.beginGpuFrame()
+    check handle.queueGpuFrame()
+    check not handle.queueGpuFrame()
+    host.endGpuFrame(frame)
+    check not handle.collectGpuFrame()
+    check not ui.hasPendingInvalidation
+
+    context.readbackReady = true
+    check handle.collectGpuFrame()
+    check canvas.rasterSurface.revision == 2
+    let invalidation = ui.consumeInvalidation()
+    check invalidation.domains == {ddPaint}
+    check invalidation.roots == @[handle.nodeHandle.id]
+    check not handle.collectGpuFrame()
+    check not ui.hasPendingInvalidation
+
+    check canvas.closeGpuCanvasSurface()
+    check not handle.valid
+    check not handle.queueGpuFrame()
+    check not handle.collectGpuFrame()
+    host.close()
+
+  test "UI attachment rejects nil and closed GPU canvases":
+    let ui = initUiRoot()
+    expect ValueError:
+      discard ui.gpuCanvas(nil)
+
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "gpu-canvas-ui-closed",
+      GpuResourceBudget(persistentBytes: 8, maxResources: 2)
+    )
+    var config = defaultGpuCanvasConfig(1, 1)
+    config.readbackSlots = 1
+    let canvas = host.newGpuCanvasSurface(namespace, config)
+    check canvas.closeGpuCanvasSurface()
+    expect ValueError:
+      discard ui.gpuCanvas(canvas)
+    host.close()
 
   test "canvas owns a render target and bounded readback ring":
     let context = newContext()

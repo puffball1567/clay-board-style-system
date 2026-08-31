@@ -341,24 +341,25 @@ and readback:
 var gpuCanvasConfig = defaultGpuCanvasConfig(640, 360)
 gpuCanvasConfig.alphaMode = gcamPremultiplied
 let gpuCanvas = newGpuCanvasSurface(host, resources, gpuCanvasConfig)
-let canvasView = ui.rasterSurface(gpuCanvas.rasterSurface(), panelStyle)
+let canvasView = ui.gpuCanvas(gpuCanvas, panelStyle)
 
 # Submit graphics or compute work to gpuCanvas.renderTarget() first.
 let frame = host.beginGpuFrame()
 host.submitGpuDraw(resources, pass, commands)
-discard gpuCanvas.queueGpuCanvasFrame()
+discard canvasView.queueGpuFrame()
 host.endGpuFrame(frame)
 
 # Poll from the ordinary UI frame loop; this never waits for the GPU.
-if gpuCanvas.collectGpuCanvasFrame():
-  discard canvasView.publish()
+discard canvasView.collectGpuFrame()
 ```
 
-The `RasterSurfaceHandle.publish()` call performs the existing Canvas revision
-and paint invalidation. Layout, clipping, transforms, opacity, stacking, hit
-testing, focus, keyboard behavior, accessibility semantics, and events remain
-owned by the surrounding CBSS component. GPU content does not introduce a
-second UI tree or a coordinate-placement API.
+`GpuCanvasHandle` is a non-owning UI attachment. The application retains the
+`GpuCanvasSurface`, closes it after pending transfers drain, and owns the GPU
+host lifetime. A completed frame performs the existing Canvas revision and
+paint-only subtree invalidation. Layout, clipping, transforms, opacity,
+stacking, hit testing, focus, keyboard behavior, accessibility semantics, and
+events remain owned by the surrounding CBSS component. GPU content does not
+introduce a second UI tree or a coordinate-placement API.
 
 The readback ring defaults to three slots. `queueGpuCanvasFrame()` returns
 `false` when every slot is in flight instead of blocking the UI thread. Ready

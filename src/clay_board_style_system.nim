@@ -38,7 +38,7 @@ import clay_board_style_system/runtime/[accessibility, button, checkbox,
     declarative_transition, details, dialog,
     fieldset, focus, form,
     file_input, frame_scheduler, gpu_host, image,
-    gpu_canvas,
+    gpu_canvas, gpu_canvas_ui,
     invalidation, label, link, navigation, navigation_focus,
     navigation_transition, navigation_screen_host, platform_links, progress,
     providers, radio, render_surface, select_box, signal, slider, state_runtime,
@@ -109,6 +109,7 @@ export form
 export frame_scheduler
 export gpu_host
 export gpu_canvas
+export gpu_canvas_ui
 export image
 export invalidation
 export label
