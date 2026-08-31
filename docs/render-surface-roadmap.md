@@ -376,6 +376,13 @@ post-process layer, but it must not create a second GPU-only control hierarchy.
 This preserves behavior and testability when the effect is disabled or the GPU
 profile is unavailable.
 
+The first public part of this contract is implemented as `gpuVisualLayer`.
+`gvlUnderlay` and `gvlOverlay` attach a `GpuCanvasSurface` to any existing
+component owner. CBSS fixes the layer to the owner's bounds, removes it from
+pointer and accessibility targeting, preserves component-owned semantics, and
+invalidates only the visual layer when a completed GPU frame is published.
+Mask and post-process stages remain later work.
+
 Version 0.7 visual acceptance includes multiple independent scenes rather than
 one backend probe:
 
@@ -420,9 +427,11 @@ This establishes the portable `GPU -> RasterSurface` transfer boundary used by
 the first GPU Canvas path. `GpuCanvasSurface` now composes that boundary into a
 normal retained surface with a bounded asynchronous readback ring, ordered
 collection, latest-frame coalescing, backpressure, and explicit R8/RGBA8/BGRA8
-plus alpha-mode normalization. Public native SDL-window handoff, shader
-packaging, storage-buffer bindings, zero-copy shared textures, restoration,
-and visible real-GPU conformance remain release gates below.
+plus alpha-mode normalization. `gpuVisualLayer` additionally attaches this
+surface as a bounded underlay or overlay of an ordinary component without
+duplicating input or semantic ownership. Public native SDL-window handoff,
+shader packaging, storage-buffer bindings, zero-copy shared textures,
+restoration, and visible real-GPU conformance remain release gates below.
 
 ### WGSL-Backed Custom Style Painting
 

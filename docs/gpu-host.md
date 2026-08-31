@@ -353,6 +353,26 @@ host.endGpuFrame(frame)
 discard canvasView.collectGpuFrame()
 ```
 
+GPU pixels can also be attached to an existing semantic component as a
+visual-only layer:
+
+```nim
+let runButton = ui.button("Run", style = buttonStyle)
+let accent = ui.gpuVisualLayer(
+  runButton.container,
+  gpuCanvas,
+  placement = gvlUnderlay,
+  style = uiStyle([decl("opacity", number(0.9))])
+)
+```
+
+`gpuVisualLayer` fills the owner bounds and supports `gvlUnderlay` and
+`gvlOverlay`. CBSS enforces absolute placement, full-size geometry,
+`pointer-events: none`, and accessibility hiding after applying the caller's
+visual Style. The ordinary component therefore remains the only click, focus,
+keyboard, disabled-state, and accessibility target. The owner may use
+`overflow: hidden` when its border shape must clip the GPU pixels.
+
 `GpuCanvasHandle` is a non-owning UI attachment. The application retains the
 `GpuCanvasSurface`, closes it after pending transfers drain, and owns the GPU
 host lifetime. A completed frame performs the existing Canvas revision and
@@ -436,9 +456,10 @@ CBSS_BIMG_PATH=/path/to/bimg \
 nimble runBgfxHostDemo
 ```
 
-GPU Canvas composition, storage-buffer bindings, a public native-window helper,
-real-renderer output verification, and device restoration are still required
-before the GPU profile is release-complete.
+Storage-buffer bindings, zero-copy external targets, a public native-window
+helper, real-renderer output verification, and device restoration are still
+required before the GPU profile is release-complete. Portable GPU Canvas
+composition and ordinary-component underlay/overlay attachment are implemented.
 
 The NOOP fixture validates that native resource calls coexist with host
 ownership and budget accounting. Because the NOOP renderer does not advertise
