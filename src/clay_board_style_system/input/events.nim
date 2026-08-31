@@ -1700,12 +1700,17 @@ proc processInputImpl(
       state.processScrollbarPointer(hit, event, scroll[], result):
     return
 
+  let physicalTarget =
+    if hit.isSome: some(hit.get.node)
+    else: none(NodeId)
   var dispatch = dispatchInput(hit, event)
   case event.kind
   of iekPointerMove, iekPointerDown, iekPointerUp, iekPointerCancel:
     if state.pointerCaptureTarget.isSome:
       dispatch.target = state.pointerCaptureTarget
-      dispatch.local = none(Vec2)
+      dispatch.local = localForTarget(
+        regions, state.pointerCaptureTarget, event.position
+      )
   else:
     discard
   let blockedByFocusScope = tree.focusScopeRoot.isSome and
@@ -1825,7 +1830,8 @@ proc processInputImpl(
         local: localForTarget(regions, dragTarget, event.position),
         event: InputEvent(kind: iekDragEnd, position: event.position)
       )
-    if dragTarget.isNone and pressed.isSome and dispatch.target == pressed and event.position.isSome:
+    if dragTarget.isNone and pressed.isSome and physicalTarget == pressed and
+        event.position.isSome:
       let button = if event.button.isSome: event.button.get else: 0
       result.add DispatchResult(
         target: pressed,
@@ -1857,6 +1863,9 @@ proc processInputImpl(
           event: doubleClickEvent(event.position.get, button)
         )
         state.clickCount = 0
+    let released = state.releasePointer()
+    if released.isSome:
+      result.add released.get
   of iekPointerCancel:
     let dragTarget = state.dragTarget
     state.pressedTarget = none(NodeId)

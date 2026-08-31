@@ -256,7 +256,7 @@ proc main() =
         discard ui.handleEvents(interaction.processInput(
           ui.tree, frame.regions, input.get, ui.scroll
         ))
-    of sekPointerDown, sekPointerUp,
+    of sekPointerDown, sekPointerUp, sekPointerCancel,
        sekTouchStart, sekTouchMove, sekTouchEnd, sekTouchCancel,
        sekPenProximityIn, sekPenProximityOut,
        sekPenButtonDown, sekPenButtonUp:

@@ -655,6 +655,70 @@ suite "CBSS headless test driver":
       check driver.isVisible(byGroup("textarea-scrollbar-thumb"))
       check driver.rectFor(byGroup("textarea-scrollbar-thumb")).get.y == thumbAfter.get.y
 
+  test "slider releases capture after pointer up outside its bounds":
+    let driver = initCbssTestDriver(buildControlsUi, size(360, 320))
+    let slider = driver.requireOne(byId("volume"))
+    let start = driver.centerFor(slider)
+    let outside = vec2(520, start.y)
+
+    discard driver.sendPointer(pointerDownEvent(start))
+    check driver.input.pointerCaptureTarget == some(slider)
+    check esActive in driver.ui.tree.nodes[slider.nodeIndex].states
+
+    discard driver.sendPointer(pointerMoveEvent(outside))
+    check driver.value(byId("volume")) == "100.0"
+    discard driver.sendPointer(pointerUpEvent(outside))
+
+    check driver.input.pointerCaptureTarget.isNone
+    check driver.input.pressedTarget.isNone
+    check esActive notin driver.ui.tree.nodes[slider.nodeIndex].states
+    discard driver.sendPointer(pointerMoveEvent(vec2(0, start.y)))
+    check driver.value(byId("volume")) == "100.0"
+
+  test "Canvas receives captured motion and release outside its bounds":
+    let ui = initUiRoot()
+    let drawing = newCanvas2D()
+    var inputs: seq[RenderSurfaceInput] = @[]
+    drawing.onInput = proc(canvas: Canvas2D; event: RenderSurfaceInput): bool =
+      discard canvas
+      inputs.add event
+      event.event.kind in {
+        iekPointerDown, iekPointerMove, iekPointerUp, iekPointerCancel
+      }
+    discard ui.canvas(
+      drawing,
+      uiStyle([decl("width", px(80)), decl("height", px(60))]),
+      id = "canvas"
+    )
+    let driver = initCbssTestDriver(ui, size(120, 100))
+    let canvas = driver.requireOne(byId("canvas"))
+    let start = driver.centerFor(canvas)
+    let outside = vec2(180, 140)
+
+    discard driver.sendPointer(pointerDownEvent(start))
+    check driver.input.pointerCaptureTarget == some(canvas)
+    discard driver.sendPointer(pointerMoveEvent(outside))
+    check inputs[^1].event.kind == iekPointerMove
+    check inputs[^1].captured
+    check not inputs[^1].inside
+
+    discard driver.sendPointer(pointerUpEvent(outside))
+    var capturedUp = false
+    var capturedDragEnd = false
+    for input in inputs:
+      if input.event.kind == iekPointerUp:
+        capturedUp = input.captured
+      elif input.event.kind == iekDragEnd:
+        capturedDragEnd = input.captured
+    check capturedUp
+    check capturedDragEnd
+    check driver.input.pointerCaptureTarget.isNone
+
+    let received = inputs.len
+    discard driver.sendPointer(pointerMoveEvent(outside))
+    check inputs.len == received + 1
+    check inputs[^1].event.kind == iekPointerLeave
+
   test "driver can target direct node handles and wheel events":
     let ui = initUiRoot()
     var wheelCount = 0

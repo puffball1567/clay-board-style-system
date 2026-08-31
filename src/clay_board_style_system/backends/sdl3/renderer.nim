@@ -140,6 +140,7 @@ type
     sekPointerMove,
     sekPointerDown,
     sekPointerUp,
+    sekPointerCancel,
     sekKeyDown,
     sekKeyUp,
     sekTextInput,
@@ -168,7 +169,7 @@ type
       width*, height*: int
     of sekFocus, sekBlur:
       discard
-    of sekPointerMove:
+    of sekPointerMove, sekPointerCancel:
       x*, y*: float32
     of sekPointerDown, sekPointerUp:
       button*: int
@@ -238,6 +239,9 @@ type
     frameId: uint64
     pendingEvents: seq[Sdl3Event]
     penStates: Table[SDL_PenID, Sdl3PenDeviceState]
+    mouseButtonsDown: uint32
+    nativeMouseCaptured: bool
+    lastMousePosition: Vec2
     captureNextFrame: bool
     capturedFrame: Option[Sdl3CapturedFrame]
     composing: bool
@@ -313,6 +317,12 @@ proc pointerInputEvent*(event: Sdl3Event): Option[InputEvent] =
   of sekPointerUp:
     result = some(pointerUpEvent(
       vec2(event.buttonX, event.buttonY), event.button, event.pointer
+    ))
+  of sekPointerCancel:
+    result = some(InputEvent(
+      kind: iekPointerCancel,
+      position: some(vec2(event.x, event.y)),
+      pointer: event.pointer
     ))
   of sekTouchStart:
     result = some(InputEvent(
@@ -562,7 +572,37 @@ proc initSdl3Renderer*(
   result.imeCandidatesEnabled = imeUi == siuCompositionAndCandidates
   result.activeCursor = ckDefault
 
+proc mouseButtonBit(button: uint8): uint32 {.inline.} =
+  if button >= 1 and button <= 32:
+    1'u32 shl (uint32(button) - 1)
+  else:
+    0'u32
+
+proc updateNativeMouseCapture(
+    target: var Sdl3Renderer;
+    button: uint8;
+    pressed: bool
+) =
+  let previous = target.mouseButtonsDown
+  let bit = mouseButtonBit(button)
+  if pressed:
+    target.mouseButtonsDown = target.mouseButtonsDown or bit
+  else:
+    target.mouseButtonsDown = target.mouseButtonsDown and not bit
+  if previous == 0 and target.mouseButtonsDown != 0:
+    target.nativeMouseCaptured = SDL3.captureMouse(true)
+  elif previous != 0 and target.mouseButtonsDown == 0:
+    discard SDL3.captureMouse(false)
+    target.nativeMouseCaptured = false
+
+proc cancelNativeMouseCapture(target: var Sdl3Renderer) =
+  if target.mouseButtonsDown != 0 or target.nativeMouseCaptured:
+    discard SDL3.captureMouse(false)
+  target.mouseButtonsDown = 0
+  target.nativeMouseCaptured = false
+
 proc close*(target: var Sdl3Renderer) =
+  target.cancelNativeMouseCapture()
   target.destroyCursorCache()
   target.destroyTextCache()
   target.destroyImageCache()
@@ -954,15 +994,41 @@ proc pollEventFromRaw(
       event = Sdl3Event(kind: sekFocus, timestamp: raw.window.timestamp)
       return true
     of SDL_EVENT_WINDOW_FOCUS_LOST:
+      if target.mouseButtonsDown != 0:
+        target.cancelNativeMouseCapture()
+        target.pendingEvents.add Sdl3Event(
+          kind: sekBlur,
+          timestamp: raw.window.timestamp
+        )
+        event = Sdl3Event(
+          kind: sekPointerCancel,
+          timestamp: raw.window.timestamp,
+          x: target.lastMousePosition.x,
+          y: target.lastMousePosition.y,
+          pointer: some(PointerData(device: pdkMouse, primary: true))
+        )
+        return true
       event = Sdl3Event(kind: sekBlur, timestamp: raw.window.timestamp)
       return true
     of SDL_EVENT_WINDOW_MOUSE_ENTER:
       # Client-side decorations own the cursor while it is over the frame.
       # Reapply the cached application cursor when control returns to content.
       target.reapplyActiveCursor()
+    of SDL_EVENT_WINDOW_MOUSE_LEAVE:
+      if target.mouseButtonsDown != 0 and not target.nativeMouseCaptured:
+        target.cancelNativeMouseCapture()
+        event = Sdl3Event(
+          kind: sekPointerCancel,
+          timestamp: raw.window.timestamp,
+          x: target.lastMousePosition.x,
+          y: target.lastMousePosition.y,
+          pointer: some(PointerData(device: pdkMouse, primary: true))
+        )
+        return true
     of SDL_EVENT_MOUSE_MOTION:
       if raw.motion.which in [SDL_TOUCH_MOUSEID, SDL_PEN_MOUSEID]:
         continue
+      target.lastMousePosition = vec2(raw.motion.x.float32, raw.motion.y.float32)
       event = Sdl3Event(
         kind: sekPointerMove,
         timestamp: raw.motion.timestamp,
@@ -974,6 +1040,8 @@ proc pollEventFromRaw(
     of SDL_EVENT_MOUSE_BUTTON_DOWN:
       if raw.button.which in [SDL_TOUCH_MOUSEID, SDL_PEN_MOUSEID]:
         continue
+      target.lastMousePosition = vec2(raw.button.x.float32, raw.button.y.float32)
+      target.updateNativeMouseCapture(raw.button.button, true)
       event = Sdl3Event(
         kind: sekPointerDown,
         timestamp: raw.button.timestamp,
@@ -996,6 +1064,8 @@ proc pollEventFromRaw(
     of SDL_EVENT_MOUSE_BUTTON_UP:
       if raw.button.which in [SDL_TOUCH_MOUSEID, SDL_PEN_MOUSEID]:
         continue
+      target.lastMousePosition = vec2(raw.button.x.float32, raw.button.y.float32)
+      target.updateNativeMouseCapture(raw.button.button, false)
       event = Sdl3Event(
         kind: sekPointerUp,
         timestamp: raw.button.timestamp,

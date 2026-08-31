@@ -518,7 +518,7 @@ proc main() =
         discard ui.handleEvents(dispatches)
         if previousHover != interaction.hoveredTarget:
           scheduler.markDirty({ddStyle, ddPaint, ddHit})
-    of sekPointerDown, sekPointerUp,
+    of sekPointerDown, sekPointerUp, sekPointerCancel,
        sekTouchStart, sekTouchMove, sekTouchEnd, sekTouchCancel,
        sekPenProximityIn, sekPenProximityOut,
        sekPenButtonDown, sekPenButtonUp:

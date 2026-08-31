@@ -631,6 +631,14 @@ proc main() =
           " current=", navigator.currentDestination().get(dsOverview).screenName()
       discard ui.reconcileFocus(interaction)
       scheduler.markDirty({ddStyle, ddPaint, ddHit})
+    of sekPointerCancel:
+      let input = event.pointerInputEvent()
+      if input.isSome:
+        let dispatches = interaction.processInput(
+          ui.tree, frame.regions, input.get, ui.scroll
+        )
+        discard ui.handleEvents(dispatches)
+      scheduler.markDirty({ddStyle, ddPaint, ddHit})
     of sekKeyDown:
       if event.key == "Tab" and not event.ctrl and not event.alt and not event.meta:
         discard ui.moveFocus(interaction, if event.shift: -1 else: 1)

@@ -550,3 +550,17 @@ suite "SDL3 Wayland integration driver":
     check converted.get.position == some(vec2(17, 23))
     check converted.get.delta == some(vec2(2, -3))
     check converted.get.pointer == some(touch)
+
+  test "SDL pointer cancellation preserves its last known position":
+    let converted = Sdl3Event(
+      kind: sekPointerCancel,
+      timestamp: 13,
+      pointer: some(PointerData(device: pdkMouse, primary: true)),
+      x: 91,
+      y: 47
+    ).pointerInputEvent()
+
+    check converted.isSome
+    check converted.get.kind == iekPointerCancel
+    check converted.get.timestamp == 13
+    check converted.get.position == some(vec2(91, 47))
