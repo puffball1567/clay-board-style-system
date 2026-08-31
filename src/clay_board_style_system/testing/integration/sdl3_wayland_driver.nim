@@ -486,6 +486,9 @@ proc dispatchSdlEvent*(
     let hit = driver.headless.hitAt(point).isSome
     let input = event.pointerInputEvent()
     result = (input.isSome and driver.headless.sendPointer(input.get)) or hit
+  of sekPointerCancel:
+    let input = event.pointerInputEvent()
+    result = input.isSome and driver.headless.sendPointer(input.get)
   of sekKeyDown:
     if event.isPrintableTextKey:
       # SDL_TEXT_INPUT is authoritative for layout-dependent printable text.

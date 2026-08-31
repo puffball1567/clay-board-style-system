@@ -1191,8 +1191,10 @@ proc box*(
 
 proc bindRenderSurfaceEvents(root: UiRoot; node: NodeHandle; surface: RenderSurfaceId) =
   let target = node
+  var pointerCaptured = false
   const surfaceInputEventKinds = {
     iekPointerMove, iekPointerDown, iekPointerUp, iekPointerCancel,
+    iekGotPointerCapture, iekLostPointerCapture,
     iekPointerEnter, iekPointerLeave, iekClick, iekAuxClick,
     iekContextMenu, iekDoubleClick, iekWheel,
     iekKeyDown, iekKeyUp, iekTextInput,
@@ -1213,8 +1215,21 @@ proc bindRenderSurfaceEvents(root: UiRoot; node: NodeHandle; surface: RenderSurf
       let handled = target.root.surfaces.dispatchSurfaceInput(
         surface,
         event.event,
-        captured = false
+        captured = pointerCaptured
       )
+      case event.event.kind
+      of iekPointerDown, iekTouchStart:
+        if handled and event.capturePointer():
+          pointerCaptured = true
+      of iekGotPointerCapture:
+        pointerCaptured = true
+      of iekLostPointerCapture:
+        pointerCaptured = false
+      of iekPointerUp, iekPointerCancel, iekTouchEnd, iekTouchCancel:
+        if pointerCaptured:
+          discard event.releasePointer()
+      else:
+        discard
       if handled: stoppedEvent() else: ignoredEvent()
     )
 
