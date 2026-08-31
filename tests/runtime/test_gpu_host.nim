@@ -1,5 +1,7 @@
 import std/[math, strutils, unittest]
 
+import clay_board_style_system/core/raster_surface
+import clay_board_style_system/runtime/gpu_canvas
 import clay_board_style_system/runtime/gpu_host
 
 type MockGpuContext = ref object of GpuBackendContext
@@ -72,6 +74,7 @@ type MockGpuContext = ref object of GpuBackendContext
   lastReadbackBytes: uint64
   readbackReady: bool
   nextCompletionToken: uint64
+  readbackSeed: int
   copySupported: bool
   readbackSupported: bool
   lastSubmissionResources: seq[uint64]
@@ -380,7 +383,8 @@ proc requestReadback(
   if state.requestReadbackStatus == gbsOk:
     let bytes = cast[ptr UncheckedArray[byte]](destination)
     for index in 0 ..< int(destinationBytes):
-      bytes[index] = byte(index mod 251)
+      bytes[index] = byte((index + state.readbackSeed) mod 251)
+    inc state.readbackSeed
     completionToken = state.nextCompletionToken
     inc state.nextCompletionToken
   state.requestReadbackStatus
@@ -2817,6 +2821,203 @@ suite "GPU texture transfer and readback":
     check host.tryTakeGpuReadback(readback, data)
     host.close()
     check context.borrowedDetaches == 1
+
+suite "GPU canvas composition bridge":
+
+  test "canvas owns a render target and bounded readback ring":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "gpu-canvas-lifecycle",
+      GpuResourceBudget(
+        persistentBytes: 32,
+        readbackBytesPerFrame: 24,
+        workUnitsPerFrame: 6,
+        maxResources: 4
+      )
+    )
+    let canvas = host.newGpuCanvasSurface(namespace, 2, 1)
+    check canvas.width == 2
+    check canvas.height == 1
+    check canvas.pendingFrameCount == 0
+    check canvas.queuedFrameNumber == 0
+    check canvas.completedFrameNumber == 0
+    check canvas.renderTarget.kind == grkRenderTarget
+    check canvas.rasterSurface.width == 2
+    check canvas.rasterSurface.height == 1
+    check context.renderTargetCreates == 1
+    check context.textureCreates == DefaultGpuCanvasReadbackSlots
+    check host.gpuNamespaceUsage(namespace).resourceCount == 4
+    check canvas.closeGpuCanvasSurface()
+    check canvas.isClosed
+    check context.resourceDestroys == 4
+    check host.gpuNamespaceUsage(namespace).resourceCount == 0
+    check not canvas.closeGpuCanvasSurface()
+    host.close()
+
+  test "queued frames use backpressure and publish only the latest ready frame":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "gpu-canvas-frames",
+      GpuResourceBudget(
+        persistentBytes: 24,
+        readbackBytesPerFrame: 16,
+        workUnitsPerFrame: 4,
+        maxResources: 3
+      )
+    )
+    var config = defaultGpuCanvasConfig(2, 1)
+    config.readbackSlots = 2
+    let canvas = host.newGpuCanvasSurface(namespace, config)
+    let frame = host.beginGpuFrame()
+    check canvas.queueGpuCanvasFrame()
+    check canvas.queueGpuCanvasFrame()
+    check not canvas.queueGpuCanvasFrame()
+    check canvas.pendingFrameCount == 2
+    check canvas.queuedFrameNumber == 2
+    check context.textureCopies == 2
+    check context.readbackRequests == 2
+    host.endGpuFrame(frame)
+
+    check not canvas.collectGpuCanvasFrame()
+    check canvas.rasterSurface.pendingUpdateCount == 0
+    context.readbackReady = true
+    check canvas.collectGpuCanvasFrame()
+    check canvas.pendingFrameCount == 0
+    check canvas.completedFrameNumber == 2
+    check canvas.rasterSurface.pendingUpdateCount == 1
+    check canvas.rasterSurface.revision == 1
+    check canvas.rasterSurface.publish()
+    check canvas.rasterSurface.revision == 2
+    check canvas.rasterSurface.pixels == @[1'u8, 2, 3, 4, 5, 6, 7, 8]
+    check canvas.closeGpuCanvasSurface()
+    host.close()
+
+  test "readback formats and alpha modes normalize to straight RGBA":
+    for format in [gtfRgba8, gtfBgra8, gtfR8]:
+      for alphaMode in [gcamStraight, gcamPremultiplied, gcamOpaque]:
+        let context = newContext()
+        let host = openGpuHost(context.backend, ghoOwned)
+        let bytesPerTexture = if format == gtfR8: 1'u64 else: 4'u64
+        let namespace = host.createGpuNamespace(
+          "gpu-canvas-conversion-" & $format & "-" & $alphaMode,
+          GpuResourceBudget(
+            persistentBytes: bytesPerTexture * 2,
+            readbackBytesPerFrame: bytesPerTexture,
+            workUnitsPerFrame: 2,
+            maxResources: 2
+          )
+        )
+        var config = defaultGpuCanvasConfig(1, 1)
+        config.format = format
+        config.alphaMode = alphaMode
+        config.readbackSlots = 1
+        let canvas = host.newGpuCanvasSurface(namespace, config)
+        let frame = host.beginGpuFrame()
+        check canvas.queueGpuCanvasFrame()
+        host.endGpuFrame(frame)
+        context.readbackReady = true
+        check canvas.collectGpuCanvasFrame()
+        check canvas.rasterSurface.publish()
+        case format
+        of gtfR8:
+          check canvas.rasterSurface.pixels == @[0'u8, 0, 0, 255]
+        of gtfBgra8:
+          case alphaMode
+          of gcamStraight:
+            check canvas.rasterSurface.pixels == @[2'u8, 1, 0, 3]
+          of gcamPremultiplied:
+            check canvas.rasterSurface.pixels == @[170'u8, 85, 0, 3]
+          of gcamOpaque:
+            check canvas.rasterSurface.pixels == @[2'u8, 1, 0, 255]
+        of gtfRgba8:
+          case alphaMode
+          of gcamStraight:
+            check canvas.rasterSurface.pixels == @[0'u8, 1, 2, 3]
+          of gcamPremultiplied:
+            check canvas.rasterSurface.pixels == @[0'u8, 85, 170, 3]
+          of gcamOpaque:
+            check canvas.rasterSurface.pixels == @[0'u8, 1, 2, 255]
+        check canvas.closeGpuCanvasSurface()
+        host.close()
+
+  test "construction validates capabilities configuration and resource budgets":
+    block invalidConfiguration:
+      let context = newContext()
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace(
+        "gpu-canvas-invalid-config",
+        GpuResourceBudget(persistentBytes: 64, maxResources: 4)
+      )
+      var config = defaultGpuCanvasConfig(1, 1)
+      config.readbackSlots = maxGpuPendingReadbacksPerNamespace + 1
+      expect ValueError:
+        discard host.newGpuCanvasSurface(namespace, config)
+      config = defaultGpuCanvasConfig(1, 1)
+      config.label = repeat('x', maxGpuResourceLabelBytes)
+      expect ValueError:
+        discard host.newGpuCanvasSurface(namespace, config)
+      host.close()
+
+    block missingCapability:
+      let context = newContext()
+      context.copySupported = false
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace(
+        "gpu-canvas-no-copy",
+        GpuResourceBudget(persistentBytes: 8, maxResources: 2)
+      )
+      expect GpuHostError:
+        discard host.newGpuCanvasSurface(namespace, 1, 1)
+      check context.renderTargetCreates == 0
+      host.close()
+
+    block rollback:
+      let context = newContext()
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace(
+        "gpu-canvas-rollback",
+        GpuResourceBudget(persistentBytes: 16, maxResources: 4)
+      )
+      var config = defaultGpuCanvasConfig(2, 1)
+      config.readbackSlots = 3
+      expect GpuHostError:
+        discard host.newGpuCanvasSurface(namespace, config)
+      check context.renderTargetCreates == 1
+      check context.textureCreates == 1
+      check context.resourceDestroys == 2
+      check host.gpuNamespaceUsage(namespace).persistentBytes == 0
+      check host.gpuNamespaceUsage(namespace).resourceCount == 0
+      host.close()
+
+  test "pending frames retain resources and device loss makes the canvas stale":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "gpu-canvas-stale",
+      GpuResourceBudget(
+        persistentBytes: 8,
+        readbackBytesPerFrame: 4,
+        workUnitsPerFrame: 2,
+        maxResources: 2
+      )
+    )
+    var config = defaultGpuCanvasConfig(1, 1)
+    config.readbackSlots = 1
+    let canvas = host.newGpuCanvasSurface(namespace, config)
+    let frame = host.beginGpuFrame()
+    check canvas.queueGpuCanvasFrame()
+    host.endGpuFrame(frame)
+    check not canvas.closeGpuCanvasSurface()
+    check host.markGpuDeviceLost()
+    expect GpuHostError:
+      discard canvas.collectGpuCanvasFrame()
+    expect GpuHostError:
+      discard canvas.renderTarget
+    check canvas.closeGpuCanvasSurface()
+    check canvas.isClosed
+    host.close()
 
 suite "GPU resource namespace budgets":
 

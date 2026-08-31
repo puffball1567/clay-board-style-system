@@ -1038,8 +1038,8 @@ an enum-only API.
 
 ## GPU Canvas Capability
 
-Status: `Version 0.7 in progress; typed GPU resources, submission, texture
-transfer, and asynchronous readback implemented; Canvas composition pending`
+Status: `Version 0.7 in progress; typed GPU resources, submission, transfer,
+asynchronous readback, and portable RasterSurface composition implemented`
 
 CBSS will support optional GPU-backed drawing inside the standard Canvas
 element. This is a capability for game scenes, charts, visualizations, image
@@ -1064,9 +1064,11 @@ GPU RenderTarget -> typed blit -> CPU-only readback Texture
 
 The implemented host bounds copy work, readback bytes, and pending requests;
 retains destination storage until completion; and rejects unsupported adapters
-before submission. Zero-copy external textures may optimize this path later,
-but cannot replace its deterministic fallback or change the upper Canvas
-contract.
+before submission. `GpuCanvasSurface` adds a bounded multi-frame readback ring,
+non-blocking backpressure, ordered latest-frame publication, and explicit
+format/alpha normalization before exposing the result as a normal
+`RasterSurface`. Zero-copy external textures may optimize this path later, but
+cannot replace its deterministic fallback or change the upper Canvas contract.
 
 The planned standard GPU adapter is bgfx, with explicit resource, swapchain,
 shader, synchronization, resize, device-loss, and presentation ownership.

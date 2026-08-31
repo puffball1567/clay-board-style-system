@@ -1,6 +1,6 @@
 # GPU Host
 
-Status: `Version 0.7 foundation implemented; GPU Canvas execution remains in progress`
+Status: `Version 0.7 foundation and portable GPU Canvas composition implemented`
 
 `GpuHost` is the renderer-neutral lifecycle and ownership boundary for optional
 GPU work. It does not make bgfx part of ordinary CBSS builds and does not expose
@@ -326,9 +326,58 @@ Readback textures intentionally accept exactly
 `{gtuBlitDestination, gtuReadback}` and no initial data. They are CPU transfer
 destinations, not sampled or storage textures. Per-frame readback-byte and work
 budgets, plus a fixed per-namespace pending-request limit, bound retained CPU
-memory and queued work. `GpuReadbackData.format` remains explicit; the next
-Canvas composition layer is responsible for any BGRA-to-RGBA conversion before
-publishing to `RasterSurface`.
+memory and queued work. `GpuReadbackData.format` remains explicit. The
+high-level GPU Canvas bridge normalizes R8, RGBA8, and BGRA8 output into the
+straight-alpha RGBA8 contract owned by `RasterSurface`.
+
+## GPU Canvas Composition
+
+`GpuCanvasSurface` packages a render target and a bounded ring of asynchronous
+readback textures behind one ordinary `RasterSurface`. It is the portable,
+deterministic composition path for adapters that advertise both texture copy
+and readback:
+
+```nim
+var gpuCanvasConfig = defaultGpuCanvasConfig(640, 360)
+gpuCanvasConfig.alphaMode = gcamPremultiplied
+let gpuCanvas = newGpuCanvasSurface(host, resources, gpuCanvasConfig)
+let canvasView = ui.rasterSurface(gpuCanvas.rasterSurface(), panelStyle)
+
+# Submit graphics or compute work to gpuCanvas.renderTarget() first.
+let frame = host.beginGpuFrame()
+host.submitGpuDraw(resources, pass, commands)
+discard gpuCanvas.queueGpuCanvasFrame()
+host.endGpuFrame(frame)
+
+# Poll from the ordinary UI frame loop; this never waits for the GPU.
+if gpuCanvas.collectGpuCanvasFrame():
+  discard canvasView.publish()
+```
+
+The `RasterSurfaceHandle.publish()` call performs the existing Canvas revision
+and paint invalidation. Layout, clipping, transforms, opacity, stacking, hit
+testing, focus, keyboard behavior, accessibility semantics, and events remain
+owned by the surrounding CBSS component. GPU content does not introduce a
+second UI tree or a coordinate-placement API.
+
+The readback ring defaults to three slots. `queueGpuCanvasFrame()` returns
+`false` when every slot is in flight instead of blocking the UI thread. Ready
+requests are collected in submission order; if several complete together,
+only the newest pixels are staged, avoiding redundant UI invalidation while
+preserving ordered resource release. R8 expands to opaque grayscale, BGRA8 is
+swizzled, and straight, premultiplied, or opaque source alpha is normalized to
+the canonical straight-alpha surface.
+
+Closing a canvas with current pending work returns `false`; callers collect the
+work and retry. Device loss invalidates the GPU generation, permits stale
+canvas teardown without touching invalid resources, and requires recreation
+after host restoration. The bridge owns no implicit finalizer and therefore
+keeps GPU lifetime explicit under both ARC and ORC.
+
+This path copies completed GPU pixels through CPU memory. It is the portability
+and testing baseline, not the final high-throughput path for full-window video
+or motion graphics. A later shared-texture composition path may remove that
+copy while preserving the same upper Canvas, layout, and component contract.
 
 ## Optional bgfx Adapter
 

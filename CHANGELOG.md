@@ -67,6 +67,15 @@ release. Before 1.0, minor releases may contain public API changes.
   maps this contract to `bgfx_blit` and `bgfx_read_texture`; deterministic C
   fixtures cover completion and byte transfer under ARC/ORC, while adapters
   that do not advertise both capabilities fail closed.
+  `GpuCanvasSurface` now turns that transfer boundary into an ordinary retained
+  `RasterSurface`. It owns a bounded multi-frame readback ring, applies
+  non-blocking backpressure, collects frames in submission order, coalesces
+  simultaneously completed frames to the newest image, and normalizes
+  R8/RGBA8/BGRA8 plus straight, premultiplied, or opaque alpha. Existing Box
+  layout, Canvas clipping, transforms, stacking, invalidation, focus,
+  accessibility, and events remain the only UI contract; the GPU path does not
+  create a second widget tree. ARC/ORC tests cover lifecycle, budgets, rollback,
+  conversion, backpressure, publication, and device loss.
 
 - Added retained RGBA8 RasterSurface support for drawing engines, progressive
   decoders, and generated imagery. Bounds-checked stride-aware updates are
