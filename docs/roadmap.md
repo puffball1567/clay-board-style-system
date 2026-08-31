@@ -2229,9 +2229,11 @@ Mat4 Uniforms, wrap/filter Samplers, sampled textures, and compute storage
 images are resolved through the same namespace and generation checks before
 backend submission. Checked texture-region copies and bounded asynchronous
 readback now establish the portable GPU-to-`RasterSurface` transfer boundary.
-Offscreen Canvas composition, storage-buffer bindings, external targets,
-portable shader packaging, restoration, and real-GPU qualification remain open
-Version 0.7 work.
+Offscreen Canvas composition is implemented through `GpuCanvasSurface`, and
+`gpuVisualLayer` mounts it as a bounded underlay or overlay of an ordinary
+component without taking over events or accessibility. Storage-buffer
+bindings, external targets, portable shader packaging, restoration, mask and
+filter stages, and real-GPU qualification remain open Version 0.7 work.
 
 The Version 0.7 drawing baseline is intentionally usable before the complete
 Version 0.9 gesture layer. Mouse input and the existing pen metadata, pressure,

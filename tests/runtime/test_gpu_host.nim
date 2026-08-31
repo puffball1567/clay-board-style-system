@@ -1,13 +1,22 @@
-import std/[math, strutils, unittest]
+import std/[math, options, strutils, unittest]
 
-import clay_board_style_system/core/[declaration, diagnostics, geometry, node,
-    raster_surface, style_resolver, style_value]
+import clay_board_style_system/core/[computed_style, declaration, diagnostics,
+    geometry, node, raster_surface, style_resolver, style_value]
 import clay_board_style_system/generated/default_properties
+import clay_board_style_system/hit/hit_test
 import clay_board_style_system/layout/layout
+import clay_board_style_system/paint/[paint, paint_command]
+import clay_board_style_system/runtime/button
 import clay_board_style_system/runtime/gpu_canvas
 import clay_board_style_system/runtime/gpu_canvas_ui
 import clay_board_style_system/runtime/gpu_host
 import clay_board_style_system/runtime/[invalidation, ui_root]
+
+proc boxFor(layout: LayoutResult; node: NodeId): LayoutBox =
+  for item in layout.boxes:
+    if item.node == node:
+      return item
+  raise newException(ValueError, "layout box was not found")
 
 type MockGpuContext = ref object of GpuBackendContext
   openStatus: GpuBackendStatus
@@ -2909,6 +2918,179 @@ suite "GPU canvas composition bridge":
     check canvas.closeGpuCanvasSurface()
     expect ValueError:
       discard ui.gpuCanvas(canvas)
+    host.close()
+
+  test "GPU visual underlay fills a button without owning pointer semantics":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "gpu-button-underlay",
+      GpuResourceBudget(
+        persistentBytes: 8,
+        readbackBytesPerFrame: 4,
+        workUnitsPerFrame: 2,
+        maxResources: 2
+      )
+    )
+    var config = defaultGpuCanvasConfig(1, 1)
+    config.readbackSlots = 1
+    let canvas = host.newGpuCanvasSurface(namespace, config)
+    let ui = initUiRoot()
+    let button = ui.button(
+      "Render",
+      style = uiStyle([
+        decl("width", px(96)),
+        decl("height", px(36)),
+        decl("overflow", keyword("hidden"))
+      ])
+    )
+    let layer = ui.gpuVisualLayer(
+      button.container,
+      canvas,
+      code = "render-button-gpu"
+    )
+
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(
+      ui.tree, ui.styleSheets(), defaultProperties(), diagnostics
+    )
+    let layout = computeLayout(ui.tree, styles, size(160, 80))
+    let layerStyle = styles.styles[layer.nodeHandle.id.nodeIndex]
+    let ownerBox = layout.boxFor(button.container.id).rect
+    let layerBox = layout.boxFor(layer.nodeHandle.id).rect
+    let hit = hitTest(
+      buildHitRegions(ui.tree, layout, styles),
+      vec2(ownerBox.x + ownerBox.w * 0.5, ownerBox.y + ownerBox.h * 0.5)
+    )
+
+    check not diagnostics.hasErrors
+    check layer.valid
+    check layer.placement == gvlUnderlay
+    check ui.tree.nodes[layer.nodeHandle.id.nodeIndex].parent == some(button.container.id)
+    check layerStyle.layout.position == pkAbsolute
+    check layerStyle.layout.zIndex == -1
+    check layerStyle.visual.pointerEvents == peNone
+    check ui.tree.semanticInfo(layer.nodeHandle.id).hidden
+    check layerBox == ownerBox
+    check hit.isSome
+    check hit.get.node == button.container.id
+
+    ui.syncRenderSurfaces(styles, layout)
+    let commands = buildPaintCommands(
+      ui.tree, styles, layout, ui.scroll, ui.canvasPaintProvider()
+    )
+    var rasterIndex = -1
+    var textIndex = -1
+    for index, command in commands:
+      if command.kind == pcDrawRasterSurface:
+        rasterIndex = index
+      elif command.kind == pcDrawText and command.node == button.labelNode.id:
+        textIndex = index
+    check rasterIndex >= 0
+    check textIndex >= 0
+    check rasterIndex < textIndex
+
+    discard ui.consumeInvalidation()
+    let frame = host.beginGpuFrame()
+    check layer.queueGpuFrame()
+    host.endGpuFrame(frame)
+    context.readbackReady = true
+    check layer.collectGpuFrame()
+    let invalidation = ui.consumeInvalidation()
+    check invalidation.domains == {ddPaint}
+    check invalidation.roots == @[layer.nodeHandle.id]
+
+    check canvas.closeGpuCanvasSurface()
+    host.close()
+
+  test "GPU visual layer invariants override conflicting caller geometry and input":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "gpu-button-overlay",
+      GpuResourceBudget(
+        persistentBytes: 8,
+        readbackBytesPerFrame: 4,
+        workUnitsPerFrame: 2,
+        maxResources: 2
+      )
+    )
+    var config = defaultGpuCanvasConfig(1, 1)
+    config.readbackSlots = 1
+    let canvas = host.newGpuCanvasSurface(namespace, config)
+    let ui = initUiRoot()
+    let owner = ui.box(uiStyle([
+      decl("width", px(72)),
+      decl("height", px(28))
+    ]))
+    let label = ui.text(owner, "Status")
+    let layer = ui.gpuVisualLayer(
+      owner,
+      canvas,
+      placement = gvlOverlay,
+      style = uiStyle([
+        decl("position", keyword("relative")),
+        decl("width", px(5)),
+        decl("height", px(6)),
+        decl("z-index", number(99)),
+        decl("pointer-events", keyword("auto")),
+        decl("opacity", number(0.6))
+      ])
+    )
+
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(
+      ui.tree, ui.styleSheets(), defaultProperties(), diagnostics
+    )
+    let layout = computeLayout(ui.tree, styles, size(120, 60))
+    let layerStyle = styles.styles[layer.nodeHandle.id.nodeIndex]
+
+    check not diagnostics.hasErrors
+    check layer.placement == gvlOverlay
+    check layerStyle.layout.position == pkAbsolute
+    check layerStyle.layout.zIndex == 1
+    check layerStyle.visual.pointerEvents == peNone
+    check abs(layerStyle.visual.opacity - 0.6) < 0.001
+    check layout.boxFor(layer.nodeHandle.id).rect == layout.boxFor(owner.id).rect
+
+    ui.syncRenderSurfaces(styles, layout)
+    let commands = buildPaintCommands(
+      ui.tree, styles, layout, ui.scroll, ui.canvasPaintProvider()
+    )
+    var rasterIndex = -1
+    var textIndex = -1
+    for index, command in commands:
+      if command.kind == pcDrawRasterSurface:
+        rasterIndex = index
+      elif command.kind == pcDrawText and command.node == label.id:
+        textIndex = index
+    check rasterIndex >= 0
+    check textIndex >= 0
+    check rasterIndex > textIndex
+
+    check canvas.closeGpuCanvasSurface()
+    host.close()
+
+  test "GPU visual layer rejects invalid and foreign owners":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "gpu-layer-owner-validation",
+      GpuResourceBudget(persistentBytes: 8, maxResources: 2)
+    )
+    var config = defaultGpuCanvasConfig(1, 1)
+    config.readbackSlots = 1
+    let canvas = host.newGpuCanvasSurface(namespace, config)
+    let ui = initUiRoot()
+    let other = initUiRoot()
+    let foreignOwner = other.box()
+
+    expect ValueError:
+      discard ui.gpuVisualLayer(foreignOwner, canvas)
+    expect ValueError:
+      discard ui.gpuVisualLayer(NodeHandle(), canvas)
+
+    check canvas.closeGpuCanvasSurface()
     host.close()
 
   test "canvas owns a render target and bounded readback ring":

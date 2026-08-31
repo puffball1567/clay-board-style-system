@@ -69,9 +69,11 @@ games and visualization libraries may use it without CBSS. CBSS depends on
 that package only when the bgfx capability is selected. `bgfxim` is already
 available. The first CBSS adapter and ownership layer are implemented behind
 `-d:cbssGpuBgfx`; portable GPU Canvas composition through `RasterSurface` is
-implemented, while shared-texture composition, native-window presentation
-qualification, and visible real-GPU release gates remain Version 0.7 work
-rather than part of the current standard profile.
+implemented. A GPU Canvas can now be mounted as a visual-only underlay or
+overlay of an ordinary CBSS component while that component retains layout,
+input, focus, and accessibility ownership. Shared-texture composition,
+native-window presentation qualification, and visible real-GPU release gates
+remain Version 0.7 work rather than part of the current standard profile.
 
 The public `GpuHost` contract is renderer-neutral. It records an explicit
 `owned` or `borrowed` runtime, rejects incompatible adapter versions, allows
