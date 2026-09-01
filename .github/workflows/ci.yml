@@ -555,3 +555,34 @@ jobs:
           test -L vendor/sdl3/linux-x86_64/libSDL3.so
           test -L vendor/sdl3/linux-x86_64/libSDL3.so.0
           test -L vendor/sdl3/linux-x86_64/libcbss_image_bridge.so
+
+  required-gate:
+    name: CI required gate
+    if: ${{ always() }}
+    needs:
+      - nim
+      - nim-orc
+      - bgfx-contract
+      - linux-atspi
+      - portable
+      - linux-valgrind
+      - motion-address-sanitizer
+      - undefined-behavior-sanitizer
+      - leak-sanitizer
+      - thread-sanitizer
+      - rust-bridge
+      - release-hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Require every CI job to succeed
+        env:
+          CBSS_REQUIRED_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          if ! jq -e 'all(.[]; .result == "success")' <<< "$CBSS_REQUIRED_RESULTS" >/dev/null; then
+            echo "::error::One or more required CI jobs did not succeed."
+            jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' \
+              <<< "$CBSS_REQUIRED_RESULTS"
+            exit 1
+          fi
