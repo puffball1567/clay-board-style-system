@@ -430,7 +430,7 @@ collection, latest-frame coalescing, backpressure, and explicit R8/RGBA8/BGRA8
 plus alpha-mode normalization. `gpuVisualLayer` additionally attaches this
 surface as a bounded underlay or overlay of an ordinary component without
 duplicating input or semantic ownership. Public native SDL-window handoff,
-shader packaging, storage-buffer bindings, zero-copy shared textures,
+storage-buffer bindings, zero-copy shared textures,
 restoration, and visible real-GPU conformance remain release gates below.
 
 ### Typed Shader Custom Style Painting
@@ -547,7 +547,10 @@ The implemented first slice provides bounded GPU Canvas output plus
 `gpuVisualLayer` underlay/overlay attachment while the owning component
 preserves its Box hit region and accessibility semantics. The typed Shader
 Builder emits deterministic bgfx source at build time and its compiled artifact
-uses the same retained Pipeline contract as low-level GPU submission. Fully
+uses the same retained Pipeline contract as low-level GPU submission. A
+build-only wrapper now invokes the official `shaderc` without shell evaluation,
+and bounded checksummed packages retain unique target variants for runtime
+selection. Fully
 declarative `customPaint`, filter, mask, visual-shape hit testing, and arbitrary
 scene picking remain later layers on the same contract.
 

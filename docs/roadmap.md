@@ -1039,7 +1039,8 @@ an enum-only API.
 ## GPU Canvas Capability
 
 Status: `Version 0.7 in progress; typed GPU resources, submission, transfer,
-asynchronous readback, and portable RasterSurface composition implemented`
+asynchronous readback, portable RasterSurface composition, and build-only
+shader packaging implemented`
 
 CBSS will support optional GPU-backed drawing inside the standard Canvas
 element. This is a capability for game scenes, charts, visualizations, image
@@ -1080,6 +1081,13 @@ its GPU profile is selected. The binding is available; the CBSS adapter and
 its real-GPU qualification remain Version 0.7 work. A later wgpu-native adapter
 may implement the same CBSS-owned contract, but it is no longer the standard
 provider or a release prerequisite.
+
+Typed Vertex and Fragment graphs now compile through an explicitly imported
+build-only wrapper around the official bgfx `shaderc`. The runtime consumes a
+bounded deterministic package containing only selected target variants, and
+does not link or launch the compiler. The package validates version, stage,
+target uniqueness, source identity, payload size, checksums, and trailing data.
+See [GPU Shader Authoring And Packaging](gpu-shaders.md).
 
 CBSS will not claim exclusive ownership of the machine's GPU. A separate
 backend process may own an independent compute device and return bounded Blob,
