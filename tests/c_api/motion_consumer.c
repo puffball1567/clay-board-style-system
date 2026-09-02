@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <string.h>
 
-_Static_assert(CBSS_ABI_VERSION == 0x0001001Au,
+_Static_assert(CBSS_ABI_VERSION == 0x0001001Bu,
     "unexpected CBSS ABI version");
 _Static_assert(sizeof(CbssEvent) == 152, "CbssEvent ABI changed");
 _Static_assert(sizeof(CbssMotionState) == 40,

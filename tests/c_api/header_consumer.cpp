@@ -2,7 +2,7 @@
 #include <cbss/craft.hpp>
 #include <cbss/validation_ui.hpp>
 
-static_assert(CBSS_ABI_VERSION == 0x0001001Au,
+static_assert(CBSS_ABI_VERSION == 0x0001001Bu,
               "unexpected CBSS ABI version");
 static_assert(CBSS_DRIVER_CONTRACT_VERSION == 0x00010000u,
               "unexpected Craft Driver contract version");
@@ -18,6 +18,8 @@ static_assert(CBSS_CAPABILITY_VALIDATION_PATTERN == 19u,
               "unexpected validation pattern capability id");
 static_assert(CBSS_CAPABILITY_RASTER_SURFACE == 20u,
               "unexpected RasterSurface capability id");
+static_assert(CBSS_CAPABILITY_SHADER_AUTHORING == 21u,
+              "unexpected shader authoring capability id");
 static_assert(CBSS_CRAFT_STYLE_PARSE_UNKNOWN_PROPERTY == 7,
               "unexpected Craft Style parse diagnostic code");
 static_assert(CBSS_CRAFT_STYLE_REPLACEMENT_UNDECLARED_STYLE_SLOT == 1,

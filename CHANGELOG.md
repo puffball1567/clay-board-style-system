@@ -9,6 +9,16 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added bounded typed GPU shader authoring for Nim and the C ABI. The builder
+  represents portable scalar/vector expression graphs, validates stages,
+  interfaces, identifiers, types, ownership, finite values, and resource
+  limits, then emits deterministic bgfx shader source and varying definitions.
+  Build tools compile that output; ordinary runtime artifacts do not contain a
+  shader compiler. Compiled `GpuShaderArtifact` values feed the existing
+  retained Shader/Pipeline path used by both direct GPU submission and
+  component-owned `gpuVisualLayer` composition. The C ABI is now
+  `0x0001001B` and advertises `shader.authoring` capability 21.
+
 - Added the first Version 0.7 GPU-host foundation. The backend-neutral
   `GpuHost` distinguishes owned and borrowed runtimes, enforces versioned
   backend attachment, ordered frame tokens, resize and device-loss state, and

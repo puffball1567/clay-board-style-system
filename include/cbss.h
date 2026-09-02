@@ -26,7 +26,7 @@ extern "C" {
 #endif
 
 /* CBSS_GENERATED_DRIVER_CONTRACT_BEGIN */
-#define CBSS_ABI_VERSION 0x0001001Au
+#define CBSS_ABI_VERSION 0x0001001Bu
 #define CBSS_DRIVER_CONTRACT_VERSION 0x00010000u
 
 typedef enum CbssCapabilityId {
@@ -49,7 +49,8 @@ typedef enum CbssCapabilityId {
   CBSS_CAPABILITY_CRAFT_PACK = 17u,
   CBSS_CAPABILITY_SUBTREE_LIFECYCLE = 18u,
   CBSS_CAPABILITY_VALIDATION_PATTERN = 19u,
-  CBSS_CAPABILITY_RASTER_SURFACE = 20u
+  CBSS_CAPABILITY_RASTER_SURFACE = 20u,
+  CBSS_CAPABILITY_SHADER_AUTHORING = 21u
 } CbssCapabilityId;
 
 enum {
@@ -89,7 +90,9 @@ typedef struct CbssEventView CbssEventView;
 typedef struct CbssBlobStream CbssBlobStream;
 typedef struct CbssStreamProducer CbssStreamProducer;
 typedef struct CbssRasterSurface CbssRasterSurface;
+typedef struct CbssShaderBuilder CbssShaderBuilder;
 typedef uint64_t CbssEventSubscription;
+typedef uint32_t CbssShaderExpression;
 
 typedef int32_t CbssStatus;
 enum {
@@ -101,6 +104,68 @@ enum {
   CBSS_INTERNAL_ERROR = 5,
   CBSS_NOT_AVAILABLE = 6
 };
+
+typedef enum CbssShaderStage {
+  CBSS_SHADER_STAGE_VERTEX = 0,
+  CBSS_SHADER_STAGE_FRAGMENT = 1,
+  CBSS_SHADER_STAGE_COMPUTE = 2
+} CbssShaderStage;
+
+typedef enum CbssShaderValueType {
+  CBSS_SHADER_VALUE_BOOL = 0,
+  CBSS_SHADER_VALUE_FLOAT = 1,
+  CBSS_SHADER_VALUE_VEC2 = 2,
+  CBSS_SHADER_VALUE_VEC3 = 3,
+  CBSS_SHADER_VALUE_VEC4 = 4,
+  CBSS_SHADER_VALUE_MAT3 = 5,
+  CBSS_SHADER_VALUE_MAT4 = 6
+} CbssShaderValueType;
+
+typedef enum CbssShaderInterfaceSlot {
+  CBSS_SHADER_SLOT_POSITION = 0,
+  CBSS_SHADER_SLOT_NORMAL = 1,
+  CBSS_SHADER_SLOT_TANGENT = 2,
+  CBSS_SHADER_SLOT_BITANGENT = 3,
+  CBSS_SHADER_SLOT_COLOR0 = 4,
+  CBSS_SHADER_SLOT_COLOR1 = 5,
+  CBSS_SHADER_SLOT_COLOR2 = 6,
+  CBSS_SHADER_SLOT_COLOR3 = 7,
+  CBSS_SHADER_SLOT_TEXCOORD0 = 8,
+  CBSS_SHADER_SLOT_TEXCOORD1 = 9,
+  CBSS_SHADER_SLOT_TEXCOORD2 = 10,
+  CBSS_SHADER_SLOT_TEXCOORD3 = 11,
+  CBSS_SHADER_SLOT_TEXCOORD4 = 12,
+  CBSS_SHADER_SLOT_TEXCOORD5 = 13,
+  CBSS_SHADER_SLOT_TEXCOORD6 = 14,
+  CBSS_SHADER_SLOT_TEXCOORD7 = 15
+} CbssShaderInterfaceSlot;
+
+typedef enum CbssShaderUnaryOperation {
+  CBSS_SHADER_UNARY_NEGATE = 0,
+  CBSS_SHADER_UNARY_SINE = 1,
+  CBSS_SHADER_UNARY_COSINE = 2,
+  CBSS_SHADER_UNARY_ABSOLUTE = 3,
+  CBSS_SHADER_UNARY_FLOOR = 4,
+  CBSS_SHADER_UNARY_CEIL = 5,
+  CBSS_SHADER_UNARY_NORMALIZE = 6
+} CbssShaderUnaryOperation;
+
+typedef enum CbssShaderBinaryOperation {
+  CBSS_SHADER_BINARY_ADD = 0,
+  CBSS_SHADER_BINARY_SUBTRACT = 1,
+  CBSS_SHADER_BINARY_MULTIPLY = 2,
+  CBSS_SHADER_BINARY_DIVIDE = 3,
+  CBSS_SHADER_BINARY_MINIMUM = 4,
+  CBSS_SHADER_BINARY_MAXIMUM = 5,
+  CBSS_SHADER_BINARY_DOT = 6,
+  CBSS_SHADER_BINARY_POWER = 7
+} CbssShaderBinaryOperation;
+
+typedef enum CbssShaderTernaryOperation {
+  CBSS_SHADER_TERNARY_MIX = 0,
+  CBSS_SHADER_TERNARY_CLAMP = 1,
+  CBSS_SHADER_TERNARY_SMOOTHSTEP = 2
+} CbssShaderTernaryOperation;
 
 typedef enum CbssCraftDiagnosticDomain {
   CBSS_CRAFT_DIAGNOSTIC_STYLE_PARSE = 0,
@@ -914,6 +979,66 @@ CBSS_API uint32_t cbss_capability_name(
  */
 CBSS_API void cbss_thread_attach(void);
 CBSS_API void cbss_thread_detach(void);
+
+/*
+ * Build-time typed shader authoring. Expressions are builder-local ids; zero
+ * is invalid. emit validates the graph and produces deterministic bgfx shader
+ * source plus varying definitions. Applications compile those files during
+ * their build and pass the resulting bytes through the GPU Host contract.
+ * The ordinary runtime does not invoke or ship a shader compiler.
+ */
+CBSS_API CbssStatus cbss_shader_builder_create(
+    CbssShaderStage stage, const char *label, CbssShaderBuilder **output);
+CBSS_API void cbss_shader_builder_destroy(CbssShaderBuilder *builder);
+CBSS_API uint32_t cbss_shader_builder_last_error(
+    const CbssShaderBuilder *builder, char *buffer, uint32_t capacity);
+CBSS_API CbssStatus cbss_shader_builder_literal(
+    CbssShaderBuilder *builder, float value, CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_vector_literal(
+    CbssShaderBuilder *builder, const float *values, uint32_t count,
+    CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_vertex_input(
+    CbssShaderBuilder *builder, CbssShaderInterfaceSlot slot,
+    CbssShaderValueType value_type, CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_varying_input(
+    CbssShaderBuilder *builder, CbssShaderInterfaceSlot slot,
+    CbssShaderValueType value_type, CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_uniform(
+    CbssShaderBuilder *builder, const char *name,
+    CbssShaderValueType value_type, CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_construct(
+    CbssShaderBuilder *builder, CbssShaderValueType value_type,
+    const CbssShaderExpression *expressions, uint32_t count,
+    CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_swizzle(
+    CbssShaderBuilder *builder, CbssShaderExpression expression,
+    const char *components, CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_unary(
+    CbssShaderBuilder *builder, CbssShaderUnaryOperation operation,
+    CbssShaderExpression expression, CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_binary(
+    CbssShaderBuilder *builder, CbssShaderBinaryOperation operation,
+    CbssShaderExpression left, CbssShaderExpression right,
+    CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_ternary(
+    CbssShaderBuilder *builder, CbssShaderTernaryOperation operation,
+    CbssShaderExpression first, CbssShaderExpression second,
+    CbssShaderExpression third, CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_set_position_output(
+    CbssShaderBuilder *builder, CbssShaderExpression expression);
+CBSS_API CbssStatus cbss_shader_builder_set_color_output(
+    CbssShaderBuilder *builder, CbssShaderExpression expression,
+    uint32_t index);
+CBSS_API CbssStatus cbss_shader_builder_set_varying_output(
+    CbssShaderBuilder *builder, CbssShaderInterfaceSlot slot,
+    CbssShaderExpression expression);
+CBSS_API CbssStatus cbss_shader_builder_emit(CbssShaderBuilder *builder);
+CBSS_API CbssStatus cbss_shader_builder_validate_graphics(
+    CbssShaderBuilder *vertex, CbssShaderBuilder *fragment);
+CBSS_API uint32_t cbss_shader_builder_source(
+    const CbssShaderBuilder *builder, char *buffer, uint32_t capacity);
+CBSS_API uint32_t cbss_shader_builder_varying_definitions(
+    const CbssShaderBuilder *builder, char *buffer, uint32_t capacity);
 
 /*
  * Retained, UI-owned RGBA8/sRGB/straight-alpha pixels. Updates copy caller

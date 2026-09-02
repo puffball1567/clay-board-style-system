@@ -1,6 +1,6 @@
 #include "cbss.h"
 
-_Static_assert(CBSS_ABI_VERSION == 0x0001001Au, "unexpected CBSS ABI version");
+_Static_assert(CBSS_ABI_VERSION == 0x0001001Bu, "unexpected CBSS ABI version");
 _Static_assert(CBSS_ROLE_SWITCH == 22, "unexpected switch role value");
 _Static_assert(CBSS_ROLE_PASSWORD_TEXT == 23,
                "unexpected password text role value");
@@ -9,6 +9,7 @@ _Static_assert(CBSS_ROLE_PASSWORD_TEXT == 23,
 #include <stddef.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 _Static_assert(sizeof(CbssRect) == 16, "CbssRect ABI changed");
@@ -210,7 +211,7 @@ static void test_craft_loading(void) {
   static const char pack_json[] =
       "{\"format\":\"cbss-craft-pack\",\"version\":1,"
       "\"id\":\"org.example.c\",\"packVersion\":\"1.0.0\","
-      "\"compatibility\":{\"minimumAbi\":65562,"
+      "\"compatibility\":{\"minimumAbi\":65563,"
       "\"minimumDriverContract\":65536,\"capabilities\":["
       "{\"id\":16,\"minimumVersion\":1},"
       "{\"id\":17,\"minimumVersion\":1}]},"
@@ -587,13 +588,105 @@ static void test_raster_surface(void) {
   cbss_raster_surface_destroy(NULL);
 }
 
+static void test_shader_builder(void) {
+  CbssShaderBuilder *vertex = NULL;
+  CbssShaderBuilder *builder = NULL;
+  assert(cbss_shader_builder_create(
+      CBSS_SHADER_STAGE_VERTEX, "basic-vertex", &vertex) == CBSS_OK);
+  assert(cbss_shader_builder_create(
+      CBSS_SHADER_STAGE_FRAGMENT, "accent-fragment", &builder) == CBSS_OK);
+  assert(vertex != NULL && builder != NULL);
+
+  CbssShaderExpression position = 0;
+  CbssShaderExpression vertex_uv = 0;
+  CbssShaderExpression x = 0;
+  CbssShaderExpression y = 0;
+  CbssShaderExpression z = 0;
+  CbssShaderExpression one = 0;
+  CbssShaderExpression clip_position = 0;
+  assert(cbss_shader_builder_vertex_input(
+      vertex, CBSS_SHADER_SLOT_POSITION, CBSS_SHADER_VALUE_VEC3,
+      &position) == CBSS_OK);
+  assert(cbss_shader_builder_vertex_input(
+      vertex, CBSS_SHADER_SLOT_TEXCOORD0, CBSS_SHADER_VALUE_VEC2,
+      &vertex_uv) == CBSS_OK);
+  assert(cbss_shader_builder_swizzle(vertex, position, "x", &x) == CBSS_OK);
+  assert(cbss_shader_builder_swizzle(vertex, position, "y", &y) == CBSS_OK);
+  assert(cbss_shader_builder_swizzle(vertex, position, "z", &z) == CBSS_OK);
+  assert(cbss_shader_builder_literal(vertex, 1.0f, &one) == CBSS_OK);
+  const CbssShaderExpression position_components[] = {x, y, z, one};
+  assert(cbss_shader_builder_construct(
+      vertex, CBSS_SHADER_VALUE_VEC4, position_components, 4,
+      &clip_position) == CBSS_OK);
+  assert(cbss_shader_builder_set_position_output(
+      vertex, clip_position) == CBSS_OK);
+  assert(cbss_shader_builder_set_varying_output(
+      vertex, CBSS_SHADER_SLOT_TEXCOORD0, vertex_uv) == CBSS_OK);
+
+  CbssShaderExpression uv = 0;
+  CbssShaderExpression factor = 0;
+  CbssShaderExpression base = 0;
+  CbssShaderExpression accent = 0;
+  CbssShaderExpression color = 0;
+  const float base_values[] = {0.1f, 0.2f, 0.3f, 1.0f};
+  assert(cbss_shader_builder_varying_input(
+      builder, CBSS_SHADER_SLOT_TEXCOORD0, CBSS_SHADER_VALUE_VEC2,
+      &uv) == CBSS_OK);
+  assert(cbss_shader_builder_swizzle(builder, uv, "x", &factor) == CBSS_OK);
+  assert(cbss_shader_builder_vector_literal(
+      builder, base_values, 4, &base) == CBSS_OK);
+  assert(cbss_shader_builder_uniform(
+      builder, "u_accent", CBSS_SHADER_VALUE_VEC4, &accent) == CBSS_OK);
+  assert(cbss_shader_builder_ternary(
+      builder, CBSS_SHADER_TERNARY_MIX, base, accent, factor,
+      &color) == CBSS_OK);
+  assert(cbss_shader_builder_set_position_output(builder, color) ==
+         CBSS_INVALID_ARGUMENT);
+  assert(cbss_shader_builder_set_color_output(builder, color, 0) == CBSS_OK);
+  assert(cbss_shader_builder_validate_graphics(vertex, builder) == CBSS_OK);
+
+  const uint32_t source_bytes = cbss_shader_builder_source(builder, NULL, 0);
+  const uint32_t varying_bytes =
+      cbss_shader_builder_varying_definitions(builder, NULL, 0);
+  assert(source_bytes > 0);
+  assert(varying_bytes > 0);
+  char *source = malloc((size_t)source_bytes + 1);
+  char *varying = malloc((size_t)varying_bytes + 1);
+  assert(source != NULL && varying != NULL);
+  assert(cbss_shader_builder_source(
+      builder, source, source_bytes + 1) == source_bytes);
+  assert(cbss_shader_builder_varying_definitions(
+      builder, varying, varying_bytes + 1) == varying_bytes);
+  assert(strstr(source, "$input v_texcoord0") != NULL);
+  assert(strstr(source, "uniform vec4 u_accent;") != NULL);
+  assert(strstr(source, " = mix(") != NULL);
+  assert(strstr(source, "gl_FragColor = cbss_n") != NULL);
+  assert(strstr(varying, "vec2 v_texcoord0 : TEXCOORD0;") != NULL);
+  free(varying);
+  free(source);
+
+  CbssShaderExpression rejected = 0;
+  assert(cbss_shader_builder_set_color_output(builder, color, 0) ==
+         CBSS_INVALID_ARGUMENT);
+  assert(cbss_shader_builder_literal(builder, 1.0f, &rejected) ==
+         CBSS_INVALID_ARGUMENT);
+  assert(rejected == 0);
+  char error[128];
+  assert(cbss_shader_builder_last_error(builder, error, sizeof(error)) > 0);
+  assert(strstr(error, "sealed") != NULL);
+  cbss_shader_builder_destroy(vertex);
+  cbss_shader_builder_destroy(builder);
+  cbss_shader_builder_destroy(NULL);
+}
+
 int main(void) {
+  test_shader_builder();
   test_raster_surface();
   test_craft_loading();
   test_subtree_lifecycle();
   assert(cbss_abi_version() == CBSS_ABI_VERSION);
   assert(cbss_driver_contract_version() == CBSS_DRIVER_CONTRACT_VERSION);
-  assert(cbss_capability_count() == 20);
+  assert(cbss_capability_count() == 21);
   assert(cbss_has_capability(CBSS_CAPABILITY_RETAINED_TREE, 1));
   assert(!cbss_has_capability(CBSS_CAPABILITY_RETAINED_TREE, 2));
   assert(!cbss_has_capability(UINT32_MAX, 1));
@@ -619,6 +712,9 @@ int main(void) {
   assert(cbss_capability_at(19, &capability) == CBSS_OK);
   assert(capability.id == CBSS_CAPABILITY_RASTER_SURFACE);
   assert(capability.since_abi == 0x0001001Au);
+  assert(cbss_capability_at(20, &capability) == CBSS_OK);
+  assert(capability.id == CBSS_CAPABILITY_SHADER_AUTHORING);
+  assert(capability.since_abi == 0x0001001Bu);
   memset(&capability, 0xff, sizeof(capability));
   assert(cbss_capability_at(
       cbss_capability_count(), &capability) == CBSS_OUT_OF_RANGE);
