@@ -794,3 +794,39 @@ operating-system artifacts include only target-relevant GPU backends, and
 codecs remain separate capabilities. The complete boundaries, profiles, and
 release gates are defined in
 [Native Rendering And Color Capability Stack](native-rendering-stack.md).
+
+## D30 — Typed shader IR is the portable authoring contract (Adopted)
+
+**Context.** bgfx deliberately accepts precompiled renderer-specific shader
+artifacts and its build tool uses a GLSL-like source dialect. Exposing that
+dialect directly would make CBSS GPU code harder to discover through Nim LSP,
+would not provide a common authoring surface to Craft Drivers, and would make
+Style materials and low-level GPU work look like unrelated systems. Inventing a
+new `.cbshader` text language would add another parser, toolchain, editor
+integration burden, and compatibility surface without improving GPU semantics.
+Treating arbitrary Nim procedures as shaders would be incorrect because GPU
+programs support a restricted value, resource, control-flow, and execution
+model.
+
+**Decision.** CBSS owns a backend-neutral, bounded, typed Shader IR. Nim exposes
+it through an explicit Builder with ordinary typed procedures and expression
+handles. The C ABI exposes the same graph through opaque Builder ownership and
+fixed-width builder-local expression IDs so Rust, Zig, C++, and later Craft
+Drivers can provide native wrappers without copying the compiler model.
+
+The Builder validates ownership, stage interfaces, value shapes, identifiers,
+finite constants, mandatory outputs, graph size, and linked vertex/fragment
+varyings before backend work. It maps the supported subset to deterministic
+bgfx source and varying definitions. Build tools compile that output for the
+selected target; ordinary runtime artifacts contain only compiled Shader
+artifacts and do not invoke or ship shader compilers. Raw precompiled shader
+assets remain an advanced escape hatch while IR coverage expands.
+
+One compiled Shader artifact enters the existing `GpuHost` namespace, budget,
+generation, Pipeline, frame, and device-loss contract. A visualization library
+may submit that Pipeline directly. A component library may render it into a
+`GpuCanvasSurface` and attach the result as an underlay or overlay of the normal
+semantic component; later declarative `customPaint`, mask, and filter stages use
+the same artifact identity. CBSS does not create a second GPU widget hierarchy,
+allow raw backend handles in Style, or let shader output redefine layout,
+accessibility, or hit geometry implicitly.

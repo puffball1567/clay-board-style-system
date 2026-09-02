@@ -433,16 +433,17 @@ duplicating input or semantic ownership. Public native SDL-window handoff,
 shader packaging, storage-buffer bindings, zero-copy shared textures,
 restoration, and visible real-GPU conformance remain release gates below.
 
-### WGSL-Backed Custom Style Painting
+### Typed Shader Custom Style Painting
 
-Status: `Deferred adapter-specific design; not a bgfx release gate`
+Status: `Typed authoring and underlay/overlay composition implemented; fully
+declarative Style attachment, mask, and filter remain Version 0.7 work`
 
-The primary intended use of WGSL in ordinary CBSS UI is not to reimplement the
-layout engine, text stack, or every control on the GPU. CBSS first resolves
+The primary intended use of shaders in ordinary CBSS UI is not to reimplement
+the layout engine, text stack, or every control on the GPU. CBSS first resolves
 Style, layout, text, and ordinary paint through its CPU-owned pipeline. A
-selected Box or retained layer can then use WGSL to paint beneath that result,
-paint over it, or process the CPU-rendered pixels as an input texture before
-CBSS performs final composition.
+selected Box or retained layer can then use a typed, packaged shader to paint
+beneath that result, paint over it, or process the CPU-rendered pixels as an
+input texture before CBSS performs final composition.
 
 ```text
 CBSS Style / component tree
@@ -453,10 +454,10 @@ CPU style, layout, text shaping, paint generation
           v
 bounded retained element/layer texture
           |
-          +--> WGSL underlay
+          +--> typed shader underlay
           +--> CPU-rendered content
-          +--> WGSL overlay
-          `--> WGSL post-process/filter
+          +--> typed shader overlay
+          `--> typed shader post-process/filter
                          |
                          v
               CBSS clip, opacity, transform,
@@ -467,7 +468,7 @@ This makes effects such as a moving liquid surface on a Button, animated light
 over static text, refraction of a baked panel, procedural borders, generated
 backgrounds, masks, and local color processing possible without making those
 elements separate GPU-only widgets. A later GPU profile may therefore let a
-normal CBSS Style reference a typed, registered WGSL material. The Style stores
+normal CBSS Style reference a typed, registered material. The Style stores
 a stable material identifier and typed parameters, not a backend device,
 pipeline, raw native handle, or unvalidated shader string. Style resolution and
 layout remain backend-neutral; the material executes only after CBSS has
@@ -475,13 +476,14 @@ produced the element's layout and paint placement.
 
 The public authoring unit remains `UiStyle`. A "custom Style" is an ordinary,
 mergeable `UiStyle` exported by a Nim library, with one or more typed custom
-paint declarations that reference packaged WGSL resources. It is not a second
-style system and does not require application code to manage a GPU pipeline.
+paint declarations that reference packaged Shader Builder artifacts. It is not
+a second style system and does not require application code to manage a GPU
+pipeline.
 
 ```nim
 proc liquidButtonStyle*(): UiStyle =
-  let liquid = wgslPaint(
-    shader = wgslResource("liquid-button"),
+  let liquid = gpuPaint(
+    shader = shaderResource("liquid-button"),
     fallback = linearGradient(...),
     effectOutset = px(8)
   )
@@ -497,29 +499,29 @@ button.applyStyle(liquidButtonStyle())
 
 Custom paint declarations participate in the existing Style merge, component
 DI, replacement, state-style, invalidation, and ownership rules. A component
-library can therefore package a WGSL-backed visual language and consumers use
+library can therefore package a shader-backed visual language and consumers use
 it in the same way as any other imported Style. Shader identity, typed uniform
 schema, fallback, paint stage, effect bounds, frame policy, and required GPU
 capabilities are part of the declaration; backend objects are not.
 
 Provisional paint stages are:
 
-- `underlay`: run WGSL before ordinary CPU content, within the element's
+- `underlay`: run the shader before ordinary CPU content, within the element's
   background/effect bounds;
-- `overlay`: preserve the CPU-rendered content and paint WGSL output over it;
+- `overlay`: preserve the CPU-rendered content and paint shader output over it;
 - `filter`: provide the CPU-rendered element/layer as a sampled input texture
   and replace it with the shader result; and
-- `mask`: use bounded WGSL output to control the final alpha of the retained
+- `mask`: use bounded shader output to control the final alpha of the retained
   layer.
 
 The execution and caching contract is:
 
-- One presentation owner performs the final frame. When WGSL participates, CPU
-  raster output is uploaded or updated as a bounded texture; a second renderer
-  does not independently present the same window.
+- One presentation owner performs the final frame. When a shader participates,
+  CPU raster output is uploaded or updated as a bounded texture; a second
+  renderer does not independently present the same window.
 - CPU content is rerasterized and reuploaded only when its paint revision,
   logical size, pixel scale, clip source, or required color context changes.
-  Time-only WGSL animation reuses the retained CPU texture and must not rerun
+  Time-only shader animation reuses the retained CPU texture and must not rerun
   style resolution, layout, text shaping, or ordinary CPU paint each frame.
 - A static shader result is cacheable after its source texture, uniforms, size,
   and output context stop changing. An animated shader requests frames only
@@ -536,19 +538,21 @@ The execution and caching contract is:
   element state, resolved colors, and explicitly registered images or textures.
   They do not expose mutable `UiRoot`, backend ownership, arbitrary filesystem
   access, or application memory.
-- If the selected profile cannot execute WGSL, the material uses its declared
-  standard Style/CPU fallback or reports a capability error according to its
-  policy. It must not leave the element blank without a diagnostic.
+- If the selected profile cannot execute the packaged artifact, the material
+  uses its declared standard Style/CPU fallback or reports a capability error
+  according to its policy. It must not leave the element blank without a
+  diagnostic.
 
-The initial implementation should prove a bounded overlay first: bake one
-ordinary CPU-rendered Button or panel, upload it when dirty, animate a WGSL
-surface effect above it, preserve the existing Box hit region and accessibility
-semantics, and return to idle when the effect stops. Filter, mask, visual-shape
-hit testing, and arbitrary scene picking remain later layers on the same
-contract.
+The implemented first slice provides bounded GPU Canvas output plus
+`gpuVisualLayer` underlay/overlay attachment while the owning component
+preserves its Box hit region and accessibility semantics. The typed Shader
+Builder emits deterministic bgfx source at build time and its compiled artifact
+uses the same retained Pipeline contract as low-level GPU submission. Fully
+declarative `customPaint`, filter, mask, visual-shape hit testing, and arbitrary
+scene picking remain later layers on the same contract.
 
 This bounded Custom Style path is the scope of the design above. It ends at
-declaratively attaching packaged WGSL paint to an ordinary CPU-defined CBSS
+declaratively attaching packaged shader paint to an ordinary CPU-defined CBSS
 element and composing the result correctly. It does not require shader-derived
 layout, GPU-derived accessibility geometry, or visual-shape event targeting.
 

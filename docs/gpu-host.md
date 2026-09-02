@@ -189,6 +189,45 @@ front-face, vertex layout, output color format, blending, and color-write state.
 bgfx applies state that is dynamic in its API during the later submission step;
 adapters with immutable pipeline state may consume it during creation.
 
+### Typed shader authoring
+
+Applications do not need to expose bgfx's shader dialect throughout their Nim
+code. `GpuShaderBuilder` records a bounded, typed expression graph and emits
+deterministic bgfx shader source plus varying definitions for the build tool:
+
+```nim
+let builder = newGpuShaderBuilder(gssFragment, "accent-fragment")
+let uv = builder.varyingInput(gsisTexCoord0, gsvtVec2)
+let factor = builder.swizzle(uv, "x")
+let base = builder.vector([0.10'f32, 0.20'f32, 0.30'f32, 1.0'f32])
+let accent = builder.uniform("u_accent", gsvtVec4)
+let color = mix(base, accent, factor)
+builder.setColorOutput(color)
+
+let source = builder.emitGpuShaderSource()
+let artifact = gpuShaderArtifact(source, compiledBytesFromBuild)
+let shader = host.createGpuShader(resources, artifact)
+```
+
+The graph validates expression ownership, stage inputs and outputs, value
+shapes, identifiers, finite constants, graph limits, and linked vertex/fragment
+varyings before backend work. It intentionally supports a defined portable
+GPU subset rather than pretending arbitrary Nim procedures can execute on a
+GPU. Raw precompiled shaders remain an escape hatch while the mapped operation
+set expands.
+
+The C ABI exposes the same builder through opaque handles and fixed-width local
+expression IDs. It returns source text to a language-specific build wrapper;
+managed-language object layouts and callbacks do not cross the boundary. There
+is no `.cbshader` source language and no runtime shader compiler dependency.
+
+The resulting retained Shader and Pipeline handles are not UI-specific. A
+library may submit them directly for graphics or compute work, or render into a
+`GpuCanvasSurface` and mount that surface as a component underlay/overlay with
+`gpuVisualLayer`. In both cases CBSS keeps one resource, frame, budget, and
+presentation contract. Declarative `mask` and `filter` Style stages remain
+later Version 0.7 work.
+
 ## Bounded Submission
 
 Submission requires an active GPU frame. A graphics pass declares its render

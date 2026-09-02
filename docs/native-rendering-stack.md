@@ -117,6 +117,14 @@ resource, frame-scheduling, device-loss, and diagnostics contracts use
 CBSS-owned types. An additional GPU adapter may be implemented later, but it
 does not change the standard profile or require duplicate GPU runtimes.
 
+Shader authoring follows the same boundary. A bounded typed IR is authored
+through Nim procedures or the equivalent opaque C ABI Builder, then mapped to
+deterministic bgfx source and compiled by build tools for the target renderers.
+CBSS does not define a `.cbshader` text language, expose bgfx handles in Style,
+or include shader compilers in runtime artifacts. The resulting compiled
+artifact is shared by direct GPU submission and component-owned GPU visual
+layers.
+
 See [GPU Host](gpu-host.md) for the implemented lifecycle and budget contract.
 
 ## Optional Little CMS Color Management

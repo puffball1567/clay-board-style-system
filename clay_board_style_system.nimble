@@ -401,6 +401,8 @@ task testRustDriverOrc, "Exercise the Rust Craft Driver under ORC":
 
 task testCAbiOrc, "Exercise cross-thread C ABI streams under ORC":
   exec "nim c --threads:on --app:lib --mm:orc -d:release --path:src --nimcache:/tmp/clay_board_style_system_c_api_orc_shared_nimcache --out:/tmp/libcbss_orc.so src/cbss_c_api.nim"
+  exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/c_consumer.c -L/tmp -Wl,-rpath,/tmp -l:libcbss_orc.so -lm -o /tmp/clay_board_style_system_c_consumer_orc_shared"
+  exec "/tmp/clay_board_style_system_c_consumer_orc_shared"
   exec "c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include tests/drivers/cpp_reference.cpp -L/tmp -Wl,-rpath,/tmp -l:libcbss_orc.so -lm -o /tmp/clay_board_style_system_cpp_driver_orc_shared"
   exec "/tmp/clay_board_style_system_cpp_driver_orc_shared"
   exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/motion_consumer.c -L/tmp -Wl,-rpath,/tmp -l:libcbss_orc.so -lm -o /tmp/clay_board_style_system_c_motion_consumer_orc_shared"
@@ -408,6 +410,8 @@ task testCAbiOrc, "Exercise cross-thread C ABI streams under ORC":
   exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/stream_consumer.c -L/tmp -Wl,-rpath,/tmp -l:libcbss_orc.so -lm -lpthread -ldl -o /tmp/clay_board_style_system_c_stream_consumer_orc_shared"
   exec "/tmp/clay_board_style_system_c_stream_consumer_orc_shared"
   exec "nim c --threads:on --app:staticlib --mm:orc -d:release --path:src --nimcache:/tmp/clay_board_style_system_c_api_orc_static_nimcache --out:/tmp/libcbss_orc.a src/cbss_c_api.nim"
+  exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/c_consumer.c /tmp/libcbss_orc.a -lm -lpthread -ldl -o /tmp/clay_board_style_system_c_consumer_orc_static"
+  exec "/tmp/clay_board_style_system_c_consumer_orc_static"
   exec "c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include tests/drivers/cpp_reference.cpp /tmp/libcbss_orc.a -lm -lpthread -ldl -o /tmp/clay_board_style_system_cpp_driver_orc_static"
   exec "/tmp/clay_board_style_system_cpp_driver_orc_static"
   exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/motion_consumer.c /tmp/libcbss_orc.a -lm -lpthread -ldl -o /tmp/clay_board_style_system_c_motion_consumer_orc_static"

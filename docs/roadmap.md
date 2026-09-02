@@ -2231,9 +2231,15 @@ backend submission. Checked texture-region copies and bounded asynchronous
 readback now establish the portable GPU-to-`RasterSurface` transfer boundary.
 Offscreen Canvas composition is implemented through `GpuCanvasSurface`, and
 `gpuVisualLayer` mounts it as a bounded underlay or overlay of an ordinary
-component without taking over events or accessibility. Storage-buffer
-bindings, external targets, portable shader packaging, restoration, mask and
-filter stages, and real-GPU qualification remain open Version 0.7 work.
+component without taking over events or accessibility. Typed Shader Builder
+authoring now maps bounded Nim expression graphs to deterministic bgfx source,
+and the append-only C ABI exposes the same graph through opaque handles and
+fixed-width expression IDs. Generated source is compiled only by build tools;
+the resulting artifact enters the existing retained Shader/Pipeline contract
+for both direct GPU submission and component-owned GPU visual layers. Storage-
+buffer bindings, external targets, complete portable shader packaging,
+restoration, declarative mask and filter stages, and real-GPU qualification
+remain open Version 0.7 work.
 
 The Version 0.7 drawing baseline is intentionally usable before the complete
 Version 0.9 gesture layer. Mouse input and the existing pen metadata, pressure,
@@ -2246,9 +2252,10 @@ unless it depends on those higher-level touch capabilities.
 
 The complete Custom Style, shared-device, persistent-resource, interaction,
 and complex visual-scene design remains in
-[Render Surface Roadmap](render-surface-roadmap.md). A language-neutral GPU ABI
-is considered only after the Nim ownership and submission contracts are stable;
-raw backend handles are not the portable public contract.
+[Render Surface Roadmap](render-surface-roadmap.md). The language-neutral Shader
+Builder ABI is now established; language-neutral GPU device and submission APIs
+remain gated on stable Nim ownership contracts. Raw backend handles are not the
+portable public contract.
 
 ### Version 0.9 Touch And Expressive Input Scope
 
