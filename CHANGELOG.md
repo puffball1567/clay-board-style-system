@@ -69,6 +69,12 @@ release. Before 1.0, minor releases may contain public API changes.
   before pass setup or dispatch. The bgfx adapter maps wrap/filter state,
   uniform updates, texture sampling, and image read/write access, with ARC/ORC
   mock, C-fixture, and real-NOOP resource coverage.
+  Floating-point R16F/R32F, RG16F/RG32F, and RGBA16F/RGBA32F textures now use
+  exact retained-byte accounting and backend capability checks. Typed compute
+  storage buffers support signed, unsigned, and float 32-bit scalar, vec2, and
+  vec4 elements with explicit read/write access, aligned CPU updates, bounded
+  stage validation, and static/dynamic bgfx bindings. GPU-writable storage
+  buffers reject CPU updates rather than permitting backend-dependent races.
   Typed texture transfer now copies complete or bounded regions from textures
   and render targets into dedicated readback textures. Asynchronous readback
   retains host-owned destination memory until one-time collection, enforces

@@ -1,13 +1,14 @@
 import std/[algorithm, hashes, math, tables]
 
 const
-  gpuHostApiVersion* = 9'u32
+  gpuHostApiVersion* = 10'u32
   maxGpuNamespaceNameBytes* = 128
   maxGpuResourceLabelBytes* = 128
   maxGpuViewCount* = 256'u16
   maxGpuUniformBindings* = 32
   maxGpuTextureBindings* = 16
   maxGpuStorageImageBindings* = 16
+  maxGpuStorageBufferBindings* = 16
   maxGpuPendingReadbacksPerNamespace* = 8
 
 type
@@ -47,7 +48,13 @@ type
   GpuTextureFormat* = enum
     gtfR8,
     gtfRgba8,
-    gtfBgra8
+    gtfBgra8,
+    gtfR16F,
+    gtfR32F,
+    gtfRg16F,
+    gtfRg32F,
+    gtfRgba16F,
+    gtfRgba32F
 
   GpuTextureUsage* = enum
     gtuSampled,
@@ -59,7 +66,19 @@ type
 
   GpuBufferRole* = enum
     gbrVertex,
-    gbrIndex
+    gbrIndex,
+    gbrStorage
+
+  GpuStorageBufferFormat* = enum
+    gsbfInt32,
+    gsbfUint32,
+    gsbfFloat32,
+    gsbfInt32x2,
+    gsbfUint32x2,
+    gsbfFloat32x2,
+    gsbfInt32x4,
+    gsbfUint32x4,
+    gsbfFloat32x4
 
   GpuBufferAccess* = enum
     gbaStatic,
@@ -190,6 +209,8 @@ type
     access*: GpuBufferAccess
     indexFormat*: GpuIndexFormat
     vertexLayout*: seq[GpuVertexAttribute]
+    storageFormat*: GpuStorageBufferFormat
+    storageAccess*: GpuStorageAccess
     label*: string
 
   GpuRenderTargetDescriptor* = object
@@ -267,10 +288,16 @@ type
     access*: GpuStorageAccess
     mip*: uint8
 
+  GpuStorageBufferBinding* = object
+    stage*: uint8
+    buffer*: GpuResourceHandle
+    access*: GpuStorageAccess
+
   GpuBindingSet* = object
     uniforms*: seq[GpuUniformBinding]
     textures*: seq[GpuTextureBinding]
     storageImages*: seq[GpuStorageImageBinding]
+    storageBuffers*: seq[GpuStorageBufferBinding]
 
   GpuDrawCommand* = object
     pipeline*: GpuResourceHandle
@@ -324,10 +351,17 @@ type
     access*: GpuStorageAccess
     mip*: uint8
 
+  GpuBackendStorageBufferBinding* = object
+    stage*: uint8
+    buffer*: GpuBackendResourceId
+    descriptor*: GpuBufferDescriptor
+    access*: GpuStorageAccess
+
   GpuBackendBindingSet* = object
     uniforms*: seq[GpuBackendUniformBinding]
     textures*: seq[GpuBackendTextureBinding]
     storageImages*: seq[GpuBackendStorageImageBinding]
+    storageBuffers*: seq[GpuBackendStorageBufferBinding]
 
   GpuHostConfig* = object
     width*, height*: uint32
@@ -1024,6 +1058,10 @@ proc textureBytes(descriptor: GpuTextureDescriptor): uint64 =
     case descriptor.format
     of gtfR8: 1'u64
     of gtfRgba8, gtfBgra8: 4'u64
+    of gtfR16F: 2'u64
+    of gtfR32F, gtfRg16F: 4'u64
+    of gtfRg32F, gtfRgba16F: 8'u64
+    of gtfRgba32F: 16'u64
   let width = uint64(descriptor.width)
   let height = uint64(descriptor.height)
   if width != 0 and height > high(uint64) div width:
@@ -1053,6 +1091,12 @@ proc vertexStride*(descriptor: GpuBufferDescriptor): uint64 =
     result += uint64(attribute.components) *
       attribute.componentType.vertexComponentBytes()
 
+proc storageBufferElementBytes*(format: GpuStorageBufferFormat): uint64 =
+  case format
+  of gsbfInt32, gsbfUint32, gsbfFloat32: 4'u64
+  of gsbfInt32x2, gsbfUint32x2, gsbfFloat32x2: 8'u64
+  of gsbfInt32x4, gsbfUint32x4, gsbfFloat32x4: 16'u64
+
 proc validateVertexLayout(layout: seq[GpuVertexAttribute]): uint64 =
   if layout.len == 0:
     raise newException(GpuHostError, "GPU vertex layout cannot be empty")
@@ -1081,6 +1125,8 @@ proc bufferElementBytes(descriptor: GpuBufferDescriptor): uint64 =
   of gbrIndex:
     if descriptor.indexFormat == gifUint16: 2'u64
     else: 4'u64
+  of gbrStorage:
+    descriptor.storageFormat.storageBufferElementBytes()
 
 proc validateBufferDescriptor(
     descriptor: GpuBufferDescriptor;
@@ -1109,6 +1155,14 @@ proc validateBufferDescriptor(
       raise newException(GpuHostError, "index GPU buffers cannot declare a vertex layout")
     if descriptor.byteSize mod descriptor.bufferElementBytes() != 0:
       raise newException(GpuHostError, "GPU index buffer size is not aligned")
+  of gbrStorage:
+    if descriptor.vertexLayout.len != 0:
+      raise newException(
+        GpuHostError,
+        "storage GPU buffers cannot declare a vertex layout"
+      )
+    if descriptor.byteSize mod descriptor.bufferElementBytes() != 0:
+      raise newException(GpuHostError, "GPU storage buffer size is not aligned")
 
 proc validateBufferUpdate(
     descriptor: GpuBufferDescriptor;
@@ -1117,6 +1171,11 @@ proc validateBufferUpdate(
 ) =
   if descriptor.access != gbaDynamic:
     raise newException(GpuHostError, "static GPU buffers cannot be updated")
+  if descriptor.role == gbrStorage and descriptor.storageAccess != gsaRead:
+    raise newException(
+      GpuHostError,
+      "GPU-writable storage buffers cannot be updated from the CPU"
+    )
   if data.len == 0:
     raise newException(GpuHostError, "GPU buffer update cannot be empty")
   let elementBytes = descriptor.bufferElementBytes()
@@ -1209,6 +1268,8 @@ proc createGpuBuffer*(
   if namespace notin host.namespaces:
     raise newException(GpuHostError, "unknown GPU namespace")
   descriptor.validateBufferDescriptor(initialData)
+  if descriptor.role == gbrStorage and not host.infoValue.computeSupported:
+    raise newException(GpuHostError, "GPU storage buffers require compute support")
   host.namespaces[namespace].ensureResourceCapacity(descriptor.byteSize)
   if host.backend.createBuffer.isNil or host.backend.destroyResource.isNil:
     raise newException(GpuHostError, "GPU backend does not support buffers")
@@ -1795,7 +1856,7 @@ proc validateGpuBindings(
     host: GpuHost;
     namespace: GpuNamespaceId;
     bindings: GpuBindingSet;
-    allowStorageImages: bool
+    allowStorageResources: bool
 ): GpuBackendBindingSet =
   if bindings.uniforms.len > maxGpuUniformBindings:
     raise newException(GpuHostError, "GPU uniform binding count exceeded")
@@ -1803,10 +1864,13 @@ proc validateGpuBindings(
     raise newException(GpuHostError, "GPU texture binding count exceeded")
   if bindings.storageImages.len > maxGpuStorageImageBindings:
     raise newException(GpuHostError, "GPU storage image binding count exceeded")
-  if not allowStorageImages and bindings.storageImages.len != 0:
+  if bindings.storageBuffers.len > maxGpuStorageBufferBindings:
+    raise newException(GpuHostError, "GPU storage buffer binding count exceeded")
+  if not allowStorageResources and
+      (bindings.storageImages.len != 0 or bindings.storageBuffers.len != 0):
     raise newException(
       GpuHostError,
-      "GPU storage image bindings require a compute dispatch"
+      "GPU storage bindings require a compute dispatch"
     )
 
   var resolved: GpuBackendBindingSet
@@ -1901,6 +1965,44 @@ proc validateGpuBindings(
       access: binding.access,
       mip: binding.mip
     )
+
+  resolved.storageBuffers = newSeqOfCap[GpuBackendStorageBufferBinding](
+    bindings.storageBuffers.len
+  )
+  var storageBufferIds: seq[GpuResourceId]
+  for binding in bindings.storageBuffers:
+    if binding.stage >= uint8(maxGpuStorageBufferBindings) or
+        binding.stage in occupiedStages:
+      raise newException(
+        GpuHostError,
+        "GPU storage buffer binding stage is invalid or duplicated"
+      )
+    occupiedStages.incl binding.stage
+    let buffer = host.requireGpuResource(
+      namespace,
+      binding.buffer,
+      grkBuffer,
+      "GPU storage buffer is stale invalid or belongs to another namespace"
+    )
+    if buffer.bufferDescriptor.role != gbrStorage:
+      raise newException(GpuHostError, "GPU storage binding requires a storage buffer")
+    if buffer.backendResource.backendResourceIdValue() == 0:
+      raise newException(GpuHostError, "GPU storage buffer is not backend-mapped")
+    if binding.buffer.resource in storageBufferIds:
+      raise newException(GpuHostError, "GPU storage buffer is bound more than once")
+    storageBufferIds.add binding.buffer.resource
+    let declaredAccess = buffer.bufferDescriptor.storageAccess
+    if binding.access != declaredAccess and declaredAccess != gsaReadWrite:
+      raise newException(
+        GpuHostError,
+        "GPU storage buffer binding exceeds its declared access"
+      )
+    resolved.storageBuffers.add GpuBackendStorageBufferBinding(
+      stage: binding.stage,
+      buffer: buffer.backendResource,
+      descriptor: buffer.bufferDescriptor,
+      access: binding.access
+    )
   result = move(resolved)
 
 proc validateDrawCommand(
@@ -1979,7 +2081,7 @@ proc validateDrawCommand(
   var resolvedBindings = host.validateGpuBindings(
     namespace,
     command.bindings,
-    allowStorageImages = false
+    allowStorageResources = false
   )
   result = GpuResolvedDrawCommand(
     pipeline: pipeline.backendResource,
@@ -2085,7 +2187,7 @@ proc dispatchGpuCompute*(
   let bindings = host.validateGpuBindings(
     namespace,
     command.bindings,
-    allowStorageImages = true
+    allowStorageResources = true
   )
 
   host.ensureGpuViewAvailable()

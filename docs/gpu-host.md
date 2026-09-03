@@ -84,6 +84,15 @@ not have to retain that sequence. Retained resource creation, release, and
 namespace teardown are rejected while a frame is active so destruction cannot
 race submitted work.
 
+Textures support R8, RGBA8, BGRA8, R16F, R32F, RG16F, RG32F, RGBA16F, and
+RGBA32F storage. Byte accounting follows the selected format and rejects
+overflow before backend allocation. Adapter capability validation remains
+authoritative: a renderer that cannot use a requested format and usage pair
+fails closed instead of silently substituting another format. The portable
+`GpuCanvasSurface` CPU readback bridge intentionally accepts only R8, RGBA8,
+and BGRA8; floating-point textures stay in GPU compute/render workflows until
+an application performs an explicit conversion.
+
 Buffers use explicit roles and layouts instead of backend types:
 
 ```nim
@@ -118,6 +127,29 @@ buffers may be created empty or with complete initial bytes. Updates must fit
 the declared capacity and align to a whole vertex stride or index element.
 Creation, update, release, and namespace teardown currently occur between
 frames; frame submission never observes a partially changed retained buffer.
+
+Compute storage buffers add an explicit scalar/vector element format and shader
+access contract:
+
+```nim
+let particles = host.createGpuBuffer(
+  resources,
+  GpuBufferDescriptor(
+    byteSize: 4096 * 16,
+    role: gbrStorage,
+    access: gbaDynamic,
+    storageFormat: gsbfFloat32x4,
+    storageAccess: gsaReadWrite,
+    label: "particle-state"
+  )
+)
+```
+
+Storage size and CPU updates align to complete typed elements. Storage buffers
+require compute support. Buffers declared writable by the GPU cannot be updated
+from the CPU, matching the underlying GPU ownership constraint; applications
+stage replacement data before creation or use a compute-read dynamic buffer
+when CPU updates are required.
 
 An offscreen render target owns one color attachment and its framebuffer:
 
@@ -265,7 +297,8 @@ assign a smaller non-overlapping range so application-owned bgfx work and CBSS
 cannot silently reuse one another's view identifiers. The range resets each
 frame and exhaustion fails before submission.
 
-Uniform, sampled-texture, and storage-image bindings are part of each command:
+Uniform, sampled-texture, storage-image, and storage-buffer bindings are part
+of each command:
 
 ```nim
 let tint = host.createGpuUniform(
@@ -313,13 +346,35 @@ host.submitGpuDraw(
 Uniform names are portable ASCII identifiers and values must exactly match the
 declared Vec4, Mat3, or Mat4 array shape. Samplers retain backend-neutral wrap,
 filter, and border-color state. Sampled textures require `gtuSampled`; compute
-storage images require `gtuStorage`. Binding stage collisions, duplicate
+storage images require `gtuStorage`. A compute command binds typed storage
+buffers explicitly:
+
+```nim
+host.dispatchGpuCompute(
+  resources,
+  GpuComputeCommand(
+    pipeline: computePipeline,
+    groupsX: 64,
+    groupsY: 1,
+    groupsZ: 1,
+    bindings: GpuBindingSet(
+      storageBuffers: @[
+        GpuStorageBufferBinding(
+          stage: 0,
+          buffer: particles,
+          access: gsaReadWrite
+        )
+      ]
+    )
+  )
+)
+```
+
+Storage buffers are compute-only, must use a declared access mode compatible
+with their descriptor, and cannot alias the same retained buffer in multiple
+stages of one command. Binding stage collisions, duplicate
 uniforms, stale or foreign handles, non-finite values, unsupported mip levels,
 and fixed per-command binding limits fail before pass setup or dispatch.
-
-The current contract deliberately omits storage-buffer bindings. They require
-the same typed namespace, dependency, and budget checks before GPU Canvas is
-declared complete.
 
 ## Texture Transfer And Readback
 
@@ -472,8 +527,8 @@ present to the same window.
 The current adapter covers initialization or borrowed attachment, capability
 reporting, frame completion, resize, mapped Texture, Buffer, RenderTarget,
 Shader, Uniform, Sampler, Graphics/Compute Pipeline creation, bounded
-graphics/compute submission with sampled textures and storage images, and
-typed texture copies and asynchronous readback, and deterministic teardown
+graphics/compute submission with sampled textures, storage images, and storage
+buffers, typed texture copies, asynchronous readback, and deterministic teardown
 under both ARC and ORC. Its
 maintained NOOP integration also executes real bgfx static and dynamic buffers,
 aligned partial updates, textures, blit, readback, framebuffer, uniform,
@@ -495,8 +550,8 @@ CBSS_BIMG_PATH=/path/to/bimg \
 nimble runBgfxHostDemo
 ```
 
-Storage-buffer bindings, zero-copy external targets, a public native-window
-helper, real-renderer output verification, and device restoration are still
+Zero-copy external targets, a public native-window helper, real-renderer output
+verification, and device restoration are still
 required before the GPU profile is release-complete. Portable GPU Canvas
 composition and ordinary-component underlay/overlay attachment are implemented.
 

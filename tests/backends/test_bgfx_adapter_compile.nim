@@ -41,6 +41,14 @@ proc textureBindCount(): uint32 {.
   importc: "cbss_bgfx_stub_texture_bind_count", cdecl.}
 proc imageBindCount(): uint32 {.
   importc: "cbss_bgfx_stub_image_bind_count", cdecl.}
+proc computeIndexBindCount(): uint32 {.
+  importc: "cbss_bgfx_stub_compute_index_bind_count", cdecl.}
+proc computeDynamicIndexBindCount(): uint32 {.
+  importc: "cbss_bgfx_stub_compute_dynamic_index_bind_count", cdecl.}
+proc lastComputeBufferStage(): uint8 {.
+  importc: "cbss_bgfx_stub_last_compute_buffer_stage", cdecl.}
+proc lastComputeBufferAccess(): uint32 {.
+  importc: "cbss_bgfx_stub_last_compute_buffer_access", cdecl.}
 proc blitCount(): uint32 {.importc: "cbss_bgfx_stub_blit_count", cdecl.}
 proc readbackCount(): uint32 {.
   importc: "cbss_bgfx_stub_readback_count", cdecl.}
@@ -173,6 +181,34 @@ suite "optional bgfxim adapter":
     check textureFormat() == uint32(BGFX_TEXTURE_FORMAT_RGBA8)
     check textureFlags() == BGFX_TEXTURE_BLIT_DST
 
+    let scalarField = host.createGpuTexture(
+      resourceNamespace,
+      GpuTextureDescriptor(
+        width: 2,
+        height: 2,
+        format: gtfR32F,
+        usage: {gtuSampled, gtuStorage},
+        label: "adapter-r32f-field"
+      ),
+      newSeq[byte](16)
+    )
+    check textureFormat() == uint32(BGFX_TEXTURE_FORMAT_R32F)
+    check textureDataBytes() == 16
+
+    let vectorField = host.createGpuTexture(
+      resourceNamespace,
+      GpuTextureDescriptor(
+        width: 1,
+        height: 1,
+        format: gtfRgba32F,
+        usage: {gtuSampled},
+        label: "adapter-rgba32f-field"
+      ),
+      newSeq[byte](16)
+    )
+    check textureFormat() == uint32(BGFX_TEXTURE_FORMAT_RGBA32F)
+    check textureDataBytes() == 16
+
     let storageTexture = host.createGpuTexture(
       resourceNamespace,
       GpuTextureDescriptor(
@@ -280,6 +316,41 @@ suite "optional bgfxim adapter":
     check dynamicIndexBufferUpdateCount() == 1
     check lastBufferUpdateStart() == 1
     check lastBufferDataBytes() == 8
+
+    let staticStorageBuffer = host.createGpuBuffer(
+      resourceNamespace,
+      GpuBufferDescriptor(
+        byteSize: 32,
+        role: gbrStorage,
+        access: gbaStatic,
+        storageFormat: gsbfFloat32x4,
+        storageAccess: gsaRead,
+        label: "adapter-static-storage"
+      ),
+      newSeq[byte](32)
+    )
+    check indexBufferCreateCount() == 2
+    check (lastBufferFlags() and BGFX_BUFFER_INDEX32) != 0
+    check (lastBufferFlags() and BGFX_BUFFER_COMPUTE_FORMAT_32X4) != 0
+    check (lastBufferFlags() and BGFX_BUFFER_COMPUTE_TYPE_FLOAT) != 0
+    check (lastBufferFlags() and BGFX_BUFFER_COMPUTE_READ) != 0
+
+    let dynamicStorageBuffer = host.createGpuBuffer(
+      resourceNamespace,
+      GpuBufferDescriptor(
+        byteSize: 64,
+        role: gbrStorage,
+        access: gbaDynamic,
+        storageFormat: gsbfUint32x2,
+        storageAccess: gsaReadWrite,
+        label: "adapter-dynamic-storage"
+      )
+    )
+    check dynamicIndexBufferCreateCount() == 2
+    check (lastBufferFlags() and BGFX_BUFFER_INDEX32) != 0
+    check (lastBufferFlags() and BGFX_BUFFER_COMPUTE_FORMAT_32X2) != 0
+    check (lastBufferFlags() and BGFX_BUFFER_COMPUTE_TYPE_UINT) != 0
+    check (lastBufferFlags() and BGFX_BUFFER_COMPUTE_READ_WRITE) != 0
 
     let renderTarget = host.createGpuRenderTarget(
       resourceNamespace,
@@ -426,6 +497,18 @@ suite "optional bgfxim adapter":
               texture: storageTexture,
               access: gsaReadWrite
             )
+          ],
+          storageBuffers: @[
+            GpuStorageBufferBinding(
+              stage: 2,
+              buffer: staticStorageBuffer,
+              access: gsaRead
+            ),
+            GpuStorageBufferBinding(
+              stage: 3,
+              buffer: dynamicStorageBuffer,
+              access: gsaReadWrite
+            )
           ]
         )
       )
@@ -455,6 +538,10 @@ suite "optional bgfxim adapter":
     check uniformSetCount() == 2
     check textureBindCount() == 1
     check imageBindCount() == 1
+    check computeIndexBindCount() == 1
+    check computeDynamicIndexBindCount() == 1
+    check lastComputeBufferStage() == 3
+    check lastComputeBufferAccess() == uint32(BGFX_ACCESS_READWRITE)
     check blitCount() == 1
     check readbackCount() == 1
     check (lastSamplerFlags() and BGFX_SAMPLER_U_CLAMP) != 0
@@ -490,17 +577,21 @@ suite "optional bgfxim adapter":
     check host.releaseGpuResource(renderTarget)
     check frameBufferDestroyCount() == 1
     check host.releaseGpuResource(readbackTexture)
+    check host.releaseGpuResource(staticStorageBuffer)
+    check host.releaseGpuResource(dynamicStorageBuffer)
     check host.releaseGpuResource(indexBuffer)
-    check indexBufferDestroyCount() == 1
+    check indexBufferDestroyCount() == 2
     check host.releaseGpuResource(dynamicVertexBuffer)
     check dynamicVertexBufferDestroyCount() == 1
     check host.releaseGpuResource(dynamicIndexBuffer)
-    check dynamicIndexBufferDestroyCount() == 1
+    check dynamicIndexBufferDestroyCount() == 2
     check host.releaseGpuResource(vertexBuffer)
     check vertexBufferDestroyCount() == 1
     check host.releaseGpuResource(texture)
     check host.releaseGpuResource(storageTexture)
-    check textureDestroyCount() == 3
+    check host.releaseGpuResource(scalarField)
+    check host.releaseGpuResource(vectorField)
+    check textureDestroyCount() == 5
     host.close()
     check shutdownCount() == 1
 

@@ -24,6 +24,10 @@ static uint32_t cbss_uniform_destroy_count;
 static uint32_t cbss_uniform_set_count;
 static uint32_t cbss_texture_bind_count;
 static uint32_t cbss_image_bind_count;
+static uint32_t cbss_compute_index_bind_count;
+static uint32_t cbss_compute_dynamic_index_bind_count;
+static uint8_t cbss_last_compute_buffer_stage;
+static bgfx_access_t cbss_last_compute_buffer_access;
 static uint32_t cbss_blit_count;
 static uint32_t cbss_readback_count;
 static uint32_t cbss_last_sampler_flags;
@@ -216,6 +220,16 @@ bgfx_texture_handle_t bgfx_create_texture_2d(
     cbss_texture_data_bytes = NULL == memory ? 0 : memory->size;
     handle.idx = (uint16_t)(30 + cbss_texture_create_count);
     return handle;
+}
+
+bool bgfx_is_texture_valid(
+    uint16_t depth, bool cube_map, uint16_t num_layers,
+    bgfx_texture_format_t format, uint64_t flags)
+{
+    return 1 == depth && !cube_map && 1 == num_layers
+        && format < BGFX_TEXTURE_FORMAT_COUNT
+        && 0 == ((flags & BGFX_TEXTURE_RT_MASK)
+            && (flags & BGFX_TEXTURE_READ_BACK));
 }
 
 void bgfx_set_texture_name(bgfx_texture_handle_t handle, const char* name,
@@ -574,6 +588,29 @@ void bgfx_set_image(uint8_t stage, bgfx_texture_handle_t texture, uint8_t mip,
     }
 }
 
+void bgfx_set_compute_index_buffer(
+    uint8_t stage, bgfx_index_buffer_handle_t handle, bgfx_access_t access)
+{
+    if (UINT16_MAX != handle.idx)
+    {
+        ++cbss_compute_index_bind_count;
+        cbss_last_compute_buffer_stage = stage;
+        cbss_last_compute_buffer_access = access;
+    }
+}
+
+void bgfx_set_compute_dynamic_index_buffer(
+    uint8_t stage, bgfx_dynamic_index_buffer_handle_t handle,
+    bgfx_access_t access)
+{
+    if (UINT16_MAX != handle.idx)
+    {
+        ++cbss_compute_dynamic_index_bind_count;
+        cbss_last_compute_buffer_stage = stage;
+        cbss_last_compute_buffer_access = access;
+    }
+}
+
 void bgfx_set_view_rect(bgfx_view_id_t id, int16_t x, int16_t y,
                         uint16_t width, uint16_t height)
 {
@@ -760,6 +797,10 @@ void cbss_bgfx_stub_reset_counters(void)
     cbss_uniform_set_count = 0;
     cbss_texture_bind_count = 0;
     cbss_image_bind_count = 0;
+    cbss_compute_index_bind_count = 0;
+    cbss_compute_dynamic_index_bind_count = 0;
+    cbss_last_compute_buffer_stage = 0;
+    cbss_last_compute_buffer_access = BGFX_ACCESS_COUNT;
     cbss_blit_count = 0;
     cbss_readback_count = 0;
     cbss_last_sampler_flags = 0;
@@ -844,6 +885,22 @@ uint32_t cbss_bgfx_stub_texture_bind_count(void)
 uint32_t cbss_bgfx_stub_image_bind_count(void)
 {
     return cbss_image_bind_count;
+}
+uint32_t cbss_bgfx_stub_compute_index_bind_count(void)
+{
+    return cbss_compute_index_bind_count;
+}
+uint32_t cbss_bgfx_stub_compute_dynamic_index_bind_count(void)
+{
+    return cbss_compute_dynamic_index_bind_count;
+}
+uint8_t cbss_bgfx_stub_last_compute_buffer_stage(void)
+{
+    return cbss_last_compute_buffer_stage;
+}
+uint32_t cbss_bgfx_stub_last_compute_buffer_access(void)
+{
+    return (uint32_t)cbss_last_compute_buffer_access;
 }
 uint32_t cbss_bgfx_stub_blit_count(void) { return cbss_blit_count; }
 uint32_t cbss_bgfx_stub_readback_count(void) { return cbss_readback_count; }

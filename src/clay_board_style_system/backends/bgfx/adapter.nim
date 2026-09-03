@@ -165,6 +165,12 @@ proc bgfxTextureFormat(value: GpuTextureFormat): bgfx_texture_format_t =
   of gtfR8: BGFX_TEXTURE_FORMAT_R8
   of gtfRgba8: BGFX_TEXTURE_FORMAT_RGBA8
   of gtfBgra8: BGFX_TEXTURE_FORMAT_BGRA8
+  of gtfR16F: BGFX_TEXTURE_FORMAT_R16F
+  of gtfR32F: BGFX_TEXTURE_FORMAT_R32F
+  of gtfRg16F: BGFX_TEXTURE_FORMAT_RG16F
+  of gtfRg32F: BGFX_TEXTURE_FORMAT_RG32F
+  of gtfRgba16F: BGFX_TEXTURE_FORMAT_RGBA16F
+  of gtfRgba32F: BGFX_TEXTURE_FORMAT_RGBA32F
 
 proc bgfxTextureFlags(usage: set[GpuTextureUsage]): uint64 =
   result = BGFX_TEXTURE_NONE
@@ -256,6 +262,27 @@ proc bgfxIndexFlags(descriptor: GpuBufferDescriptor): uint16 =
   if descriptor.indexFormat == gifUint32: BGFX_BUFFER_INDEX32
   else: BGFX_BUFFER_NONE
 
+proc bgfxStorageBufferFlags(descriptor: GpuBufferDescriptor): uint16 =
+  result = BGFX_BUFFER_INDEX32
+  case descriptor.storageFormat
+  of gsbfInt32, gsbfUint32, gsbfFloat32:
+    result = result or BGFX_BUFFER_COMPUTE_FORMAT_32X1
+  of gsbfInt32x2, gsbfUint32x2, gsbfFloat32x2:
+    result = result or BGFX_BUFFER_COMPUTE_FORMAT_32X2
+  of gsbfInt32x4, gsbfUint32x4, gsbfFloat32x4:
+    result = result or BGFX_BUFFER_COMPUTE_FORMAT_32X4
+  case descriptor.storageFormat
+  of gsbfInt32, gsbfInt32x2, gsbfInt32x4:
+    result = result or BGFX_BUFFER_COMPUTE_TYPE_INT
+  of gsbfUint32, gsbfUint32x2, gsbfUint32x4:
+    result = result or BGFX_BUFFER_COMPUTE_TYPE_UINT
+  of gsbfFloat32, gsbfFloat32x2, gsbfFloat32x4:
+    result = result or BGFX_BUFFER_COMPUTE_TYPE_FLOAT
+  case descriptor.storageAccess
+  of gsaRead: result = result or BGFX_BUFFER_COMPUTE_READ
+  of gsaWrite: result = result or BGFX_BUFFER_COMPUTE_WRITE
+  of gsaReadWrite: result = result or BGFX_BUFFER_COMPUTE_READ_WRITE
+
 proc createTexture(
     rawContext: GpuBackendContext;
     descriptor: GpuTextureDescriptor;
@@ -274,6 +301,11 @@ proc createTexture(
        gtuStorage in descriptor.usage):
     return gbsInvalidConfiguration
 
+  let format = descriptor.format.bgfxTextureFormat()
+  let flags = descriptor.usage.bgfxTextureFlags()
+  if not BGFX.isTextureValid(1, false, 1, format, flags):
+    return gbsUnsupported
+
   var memory: ptr bgfx_memory_t
   if initialData.len > 0:
     memory = BGFX.copy(unsafeAddr initialData[0], uint32(initialData.len))
@@ -285,8 +317,8 @@ proc createTexture(
     uint16(descriptor.height),
     false,
     1,
-    descriptor.format.bgfxTextureFormat(),
-    descriptor.usage.bgfxTextureFlags(),
+    format,
+    flags,
     memory,
     0
   )
@@ -323,6 +355,9 @@ proc createBuffer(
   of gbrIndex:
     let elementBytes = if descriptor.indexFormat == gifUint16: 2'u64 else: 4'u64
     if descriptor.byteSize mod elementBytes != 0:
+      return gbsInvalidConfiguration
+  of gbrStorage:
+    if descriptor.vertexLayout.len != 0 or descriptor.byteSize mod 4'u64 != 0:
       return gbsInvalidConfiguration
 
   var memory: ptr bgfx_memory_t
@@ -389,6 +424,32 @@ proc createBuffer(
       if not BGFX_HANDLE_IS_VALID(handle):
         return gbsFailed
       resource = packBackendResource(brtDynamicIndexBuffer, handle.idx)
+  of gbrStorage:
+    let flags = descriptor.bgfxStorageBufferFlags()
+    if descriptor.access == gbaStatic:
+      let handle = BGFX.createIndexBuffer(memory, flags)
+      if not BGFX_HANDLE_IS_VALID(handle):
+        return gbsFailed
+      if descriptor.label.len > 0:
+        BGFX.setIndexBufferName(
+          handle,
+          descriptor.label.cstring,
+          int32(descriptor.label.len)
+        )
+      resource = packBackendResource(brtStaticIndexBuffer, handle.idx)
+    elif initialData.len > 0:
+      let handle = BGFX.createDynamicIndexBufferMem(memory, flags)
+      if not BGFX_HANDLE_IS_VALID(handle):
+        return gbsFailed
+      resource = packBackendResource(brtDynamicIndexBuffer, handle.idx)
+    else:
+      let handle = BGFX.createDynamicIndexBuffer(
+        uint32(descriptor.byteSize div 4'u64),
+        flags
+      )
+      if not BGFX_HANDLE_IS_VALID(handle):
+        return gbsFailed
+      resource = packBackendResource(brtDynamicIndexBuffer, handle.idx)
   gbsOk
 
 proc updateBuffer(
@@ -414,7 +475,10 @@ proc updateBuffer(
       return gbsInvalidConfiguration
     startElement = uint32(offsetBytes div stride)
   of brtDynamicIndexBuffer:
-    let elementBytes = if descriptor.indexFormat == gifUint16: 2'u64 else: 4'u64
+    let elementBytes =
+      if descriptor.role == gbrStorage: 4'u64
+      elif descriptor.indexFormat == gifUint16: 2'u64
+      else: 4'u64
     if offsetBytes mod elementBytes != 0:
       return gbsInvalidConfiguration
     startElement = uint32(offsetBytes div elementBytes)
@@ -740,6 +804,25 @@ proc applyBindings(bindings: GpuBackendBindingSet): GpuBackendStatus =
       binding.access.bgfxStorageAccess(),
       binding.format.bgfxTextureFormat()
     )
+  for binding in bindings.storageBuffers:
+    let buffer = binding.buffer.unpackBackendResource()
+    if not buffer.valid or binding.descriptor.role != gbrStorage:
+      return gbsInvalidConfiguration
+    case buffer.tag
+    of brtStaticIndexBuffer:
+      BGFX.setComputeIndexBuffer(
+        binding.stage,
+        bgfx_index_buffer_handle_t(idx: buffer.handleIndex),
+        binding.access.bgfxStorageAccess()
+      )
+    of brtDynamicIndexBuffer:
+      BGFX.setComputeDynamicIndexBuffer(
+        binding.stage,
+        bgfx_dynamic_index_buffer_handle_t(idx: buffer.handleIndex),
+        binding.access.bgfxStorageAccess()
+      )
+    else:
+      return gbsInvalidConfiguration
   gbsOk
 
 proc beginGraphicsPass(
@@ -959,6 +1042,10 @@ proc requestReadback(
     case descriptor.format
     of gtfR8: 1'u64
     of gtfRgba8, gtfBgra8: 4'u64
+    of gtfR16F: 2'u64
+    of gtfR32F, gtfRg16F: 4'u64
+    of gtfRg32F, gtfRgba16F: 8'u64
+    of gtfRgba32F: 16'u64
   let expectedBytes = uint64(descriptor.width) * uint64(descriptor.height) *
     bytesPerPixel
   if not value.attached or not resource.valid or resource.tag != brtTexture or

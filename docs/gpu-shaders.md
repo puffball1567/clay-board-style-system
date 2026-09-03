@@ -101,13 +101,11 @@ failure before a backend resource is created.
 ## Graphics And Compute Scope
 
 Version 0.7 graphics authoring emits typed Vertex and Fragment source. The
-runtime already owns bounded Compute Pipeline and dispatch operations plus
-storage-image bindings. The following are separate Version 0.7 implementation
-units rather than hidden behavior in this packaging layer:
+runtime owns bounded Compute Pipeline and dispatch operations, floating-point
+textures, and storage-image/storage-buffer bindings. Compute source authoring
+remains a separate implementation unit rather than hidden behavior in this
+packaging layer:
 
-- floating-point texture formats such as R16F, R32F, RG16F, RG32F, RGBA16F,
-  and RGBA32F;
-- storage-buffer resources and read, write, and read-write bindings; and
 - typed Compute Shader Builder load, store, invocation, and work-group
   operations.
 
