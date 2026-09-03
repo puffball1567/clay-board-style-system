@@ -875,19 +875,22 @@ proc validateGpuShaderInterface*(
         "fragment shader input has no matching vertex output"
       )
 
+proc gpuShaderSourceHash*(source: GpuShaderSource): uint64 =
+  var sourceHash = 14_695_981_039_346_656_037'u64
+  for value in source.source & "\n" & source.varyingDefinitions:
+    sourceHash = (sourceHash xor uint64(uint8(value))) * 1_099_511_628_211'u64
+  sourceHash
+
 proc gpuShaderArtifact*(
     source: GpuShaderSource;
     bytecode: sink seq[byte]
 ): GpuShaderArtifact =
   if bytecode.len == 0:
     raise newException(GpuShaderBuildError, "GPU shader bytecode cannot be empty")
-  var sourceHash = 14_695_981_039_346_656_037'u64
-  for value in source.source & "\n" & source.varyingDefinitions:
-    sourceHash = (sourceHash xor uint64(uint8(value))) * 1_099_511_628_211'u64
   GpuShaderArtifact(
     descriptor: GpuShaderDescriptor(stage: source.stage, label: source.label),
     bytecode: bytecode,
-    sourceHash: sourceHash
+    sourceHash: source.gpuShaderSourceHash()
   )
 
 proc createGpuShader*(

@@ -72,6 +72,22 @@ task checkBgfxAdapter, "Run the optional bgfxim GPU adapter contract":
     let artifact = taskRoot & "/adapter_" & memoryModel
     exec "nim c -r --mm:" & memoryModel & " -d:cbssGpuBgfx --path:src --path:\"" & bgfximPath & "\" --passC:-I\"" & bgfxInclude & "\" --passC:-I\"" & bxInclude & "\" --nimcache:\"" & nimcache & "\" --out:\"" & artifact & "\" tests/backends/test_bgfx_adapter_compile.nim"
 
+task testShaderc, "Compile typed shader sources with the official bgfx shaderc":
+  let shaderc = getEnv("CBSS_SHADERC")
+  let shaderInclude = getEnv("CBSS_BGFX_SHADER_INCLUDE")
+  if shaderc.len == 0 or not fileExists(shaderc) or
+      shaderInclude.len == 0 or not dirExists(shaderInclude):
+    raise newException(
+      ValueError,
+      "CBSS_SHADERC and CBSS_BGFX_SHADER_INCLUDE must point to the compiler and bgfx shader include directory"
+    )
+  let taskRoot = getTempDir() & "/clay_board_style_system_shaderc"
+  mkDir(taskRoot)
+  for memoryModel in ["arc", "orc"]:
+    let nimcache = taskRoot & "/" & memoryModel & "_nimcache"
+    let artifact = taskRoot & "/shaderc_" & memoryModel
+    exec "nim c -r --mm:" & memoryModel & " --path:src --nimcache:\"" & nimcache & "\" --out:\"" & artifact & "\" tests/backends/test_shaderc_integration.nim"
+
 task testBgfxNoop, "Run CBSS resource calls against a real bgfx NOOP runtime":
   when defined(windows):
     echo "The temporary NOOP source build runs on Linux and macOS."

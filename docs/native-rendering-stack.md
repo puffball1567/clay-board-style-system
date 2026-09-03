@@ -123,7 +123,10 @@ deterministic bgfx source and compiled by build tools for the target renderers.
 CBSS does not define a `.cbshader` text language, expose bgfx handles in Style,
 or include shader compilers in runtime artifacts. The resulting compiled
 artifact is shared by direct GPU submission and component-owned GPU visual
-layers.
+layers. Target-specific bytecode is stored in a bounded, checksummed,
+deterministic package; only the selected target variants enter the application
+build. See [GPU Shaders](gpu-shaders.md) for the build/runtime boundary and
+package contract.
 
 See [GPU Host](gpu-host.md) for the implemented lifecycle and budget contract.
 

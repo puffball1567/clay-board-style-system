@@ -126,7 +126,7 @@ jobs:
   bgfx-contract:
     name: Optional bgfxim contract (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -153,14 +153,14 @@ jobs:
         with:
           repository: bkaradzic/bgfx
           ref: d8db55f8123a4a0871b1290fec2e5d0caae01bbf
-          path: bgfx-upstream
+          path: bgfx
 
       - name: Check out the pinned bx headers
         uses: actions/checkout@v4
         with:
           repository: bkaradzic/bx
           ref: 9e3fadf6f11380031486be704d2ff46ca143664f
-          path: bx-upstream
+          path: bx
 
       - name: Check out the pinned bimg sources
         if: runner.os != 'Windows'
@@ -168,7 +168,7 @@ jobs:
         with:
           repository: bkaradzic/bimg
           ref: 371d90098b1fd017cd00205979d5ef74b8c3ed62
-          path: bimg-upstream
+          path: bimg
 
       - name: Install Nim
         uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
@@ -179,17 +179,30 @@ jobs:
       - name: Run the optional adapter contract against bgfxim
         env:
           CBSS_BGFXIM_PATH: ${{ github.workspace }}/bgfxim
-          CBSS_BGFX_INCLUDE: ${{ github.workspace }}/bgfx-upstream/include
-          CBSS_BX_INCLUDE: ${{ github.workspace }}/bx-upstream/include
+          CBSS_BGFX_INCLUDE: ${{ github.workspace }}/bgfx/include
+          CBSS_BX_INCLUDE: ${{ github.workspace }}/bx/include
         run: nimble checkBgfxAdapter -y
+
+      - name: Build the pinned official bgfx shader compiler
+        if: runner.os == 'Linux'
+        run: |
+          make -C bgfx -j2 shaderc
+          test -x bgfx/tools/bin/linux/shaderc
+          echo "CBSS_SHADERC=${{ github.workspace }}/bgfx/tools/bin/linux/shaderc" >> "$GITHUB_ENV"
+
+      - name: Compile typed shaders with official shaderc
+        if: runner.os == 'Linux'
+        env:
+          CBSS_BGFX_SHADER_INCLUDE: ${{ github.workspace }}/bgfx/src
+        run: nimble testShaderc -y
 
       - name: Run real bgfx NOOP resource integration
         if: runner.os != 'Windows'
         env:
           CBSS_BGFXIM_PATH: ${{ github.workspace }}/bgfxim
-          CBSS_BGFX_PATH: ${{ github.workspace }}/bgfx-upstream
-          CBSS_BX_PATH: ${{ github.workspace }}/bx-upstream
-          CBSS_BIMG_PATH: ${{ github.workspace }}/bimg-upstream
+          CBSS_BGFX_PATH: ${{ github.workspace }}/bgfx
+          CBSS_BX_PATH: ${{ github.workspace }}/bx
+          CBSS_BIMG_PATH: ${{ github.workspace }}/bimg
         run: nimble testBgfxNoop -y
 
   linux-atspi:
