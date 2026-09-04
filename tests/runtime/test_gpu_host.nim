@@ -552,6 +552,22 @@ proc indexBufferDescriptor(
     label: label
   )
 
+proc storageBufferDescriptor(
+    byteSize = 64'u64;
+    access = gbaDynamic;
+    storageFormat = gsbfFloat32x4;
+    storageAccess = gsaReadWrite;
+    label = "storage"
+): GpuBufferDescriptor =
+  GpuBufferDescriptor(
+    byteSize: byteSize,
+    role: gbrStorage,
+    access: access,
+    storageFormat: storageFormat,
+    storageAccess: storageAccess,
+    label: label
+  )
+
 proc renderTargetDescriptor(
     width = 8'u32;
     height = 8'u32;
@@ -848,9 +864,14 @@ suite "GPU texture resources":
 
   test "texture formats use their declared storage size":
     for format in GpuTextureFormat:
-      let expectedBytes =
-        if format == gtfR8: 64'u64
-        else: 256'u64
+      let bytesPerPixel =
+        case format
+        of gtfR8: 1'u64
+        of gtfR16F: 2'u64
+        of gtfRgba8, gtfBgra8, gtfR32F, gtfRg16F: 4'u64
+        of gtfRg32F, gtfRgba16F: 8'u64
+        of gtfRgba32F: 16'u64
+      let expectedBytes = 64'u64 * bytesPerPixel
       let context = newContext()
       let host = openGpuHost(context.backend, ghoOwned)
       let namespace = host.createGpuNamespace("format", standardBudget())
@@ -1034,6 +1055,73 @@ suite "GPU buffer resources":
       host.updateGpuBuffer(buffer, 12, newSeq[byte](8))
     check context.bufferUpdates == 1
     host.close()
+
+  test "storage buffers retain typed element and shader access metadata":
+    for format in GpuStorageBufferFormat:
+      let context = newContext()
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace("storage-" & $format, standardBudget())
+      let elementBytes = format.storageBufferElementBytes()
+      let descriptor = storageBufferDescriptor(
+        byteSize = elementBytes * 4,
+        storageFormat = format
+      )
+      let buffer = host.createGpuBuffer(namespace, descriptor)
+      check buffer.kind == grkBuffer
+      check context.lastBuffer == descriptor
+      check host.gpuNamespaceUsage(namespace).persistentBytes == elementBytes * 4
+      host.close()
+      check context.resourceDestroys == 1
+
+  test "CPU updates are limited to compute-read storage buffers":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("storage-updates", standardBudget())
+    let readable = host.createGpuBuffer(
+      namespace,
+      storageBufferDescriptor(
+        byteSize = 32,
+        storageFormat = gsbfFloat32x2,
+        storageAccess = gsaRead
+      )
+    )
+    host.updateGpuBuffer(readable, 8, newSeq[byte](16))
+    check context.bufferUpdates == 1
+
+    check host.releaseGpuResource(readable)
+    let writable = host.createGpuBuffer(
+      namespace,
+      storageBufferDescriptor(storageAccess = gsaReadWrite)
+    )
+    expect GpuHostError:
+      host.updateGpuBuffer(writable, 0, newSeq[byte](16))
+    check context.bufferUpdates == 1
+    host.close()
+
+  test "storage descriptors reject layout misalignment and unsupported compute":
+    block invalidDescriptors:
+      let context = newContext()
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace("invalid-storage", standardBudget())
+      var withLayout = storageBufferDescriptor()
+      withLayout.vertexLayout = positionColorLayout()
+      for descriptor in [
+        storageBufferDescriptor(byteSize = 12, storageFormat = gsbfFloat32x4),
+        withLayout
+      ]:
+        expect GpuHostError:
+          discard host.createGpuBuffer(namespace, descriptor)
+      check context.bufferCreates == 0
+      host.close()
+
+    block unsupportedCompute:
+      let context = newContext()
+      let host = openGpuHost(context.backend, ghoBorrowed)
+      let namespace = host.createGpuNamespace("no-compute-storage", standardBudget())
+      expect GpuHostError:
+        discard host.createGpuBuffer(namespace, storageBufferDescriptor())
+      check context.bufferCreates == 0
+      host.close()
 
   test "buffer descriptors reject malformed layouts and storage":
     let context = newContext()
@@ -1868,6 +1956,10 @@ suite "GPU command bindings":
       namespace,
       textureDescriptor(usage = {gtuSampled, gtuStorage})
     )
+    let storageBuffer = host.createGpuBuffer(
+      namespace,
+      storageBufferDescriptor(storageFormat = gsbfFloat32x4)
+    )
     let uniform = host.createGpuUniform(namespace, uniformDescriptor())
     let sampler = host.createGpuSampler(namespace, samplerDescriptor())
     let computeShader = host.createGpuShader(
@@ -1932,6 +2024,13 @@ suite "GPU command bindings":
               texture: storageTexture,
               access: gsaReadWrite
             )
+          ],
+          storageBuffers: @[
+            GpuStorageBufferBinding(
+              stage: 5,
+              buffer: storageBuffer,
+              access: gsaRead
+            )
           ]
         )
       )
@@ -1940,6 +2039,11 @@ suite "GPU command bindings":
     check context.lastBindings.storageImages[0].stage == 4
     check context.lastBindings.storageImages[0].format == gtfRgba8
     check context.lastBindings.storageImages[0].access == gsaReadWrite
+    check context.lastBindings.storageBuffers.len == 1
+    check context.lastBindings.storageBuffers[0].stage == 5
+    check context.lastBindings.storageBuffers[0].descriptor.storageFormat ==
+      gsbfFloat32x4
+    check context.lastBindings.storageBuffers[0].access == gsaRead
     host.endGpuFrame(token)
     host.close()
 
@@ -1965,6 +2069,18 @@ suite "GPU command bindings":
     let storage = host.createGpuTexture(
       namespace,
       textureDescriptor(usage = {gtuStorage})
+    )
+    let storageBuffer = host.createGpuBuffer(
+      namespace,
+      storageBufferDescriptor()
+    )
+    let readOnlyStorageBuffer = host.createGpuBuffer(
+      namespace,
+      storageBufferDescriptor(storageAccess = gsaRead)
+    )
+    let writeOnlyStorageBuffer = host.createGpuBuffer(
+      namespace,
+      storageBufferDescriptor(storageAccess = gsaWrite)
     )
     let uniform = host.createGpuUniform(namespace, uniformDescriptor())
     let sampler = host.createGpuSampler(namespace, samplerDescriptor())
@@ -2029,6 +2145,16 @@ suite "GPU command bindings":
     ]
     expect GpuHostError:
       host.submitGpuDraw(namespace, graphicsPass(), storageOnDraw)
+    storageOnDraw.bindings.storageImages = @[]
+    storageOnDraw.bindings.storageBuffers = @[
+      GpuStorageBufferBinding(
+        stage: 0,
+        buffer: storageBuffer,
+        access: gsaReadWrite
+      )
+    ]
+    expect GpuHostError:
+      host.submitGpuDraw(namespace, graphicsPass(), storageOnDraw)
 
     let computeBase = GpuComputeCommand(
       pipeline: computePipeline,
@@ -2047,12 +2173,54 @@ suite "GPU command bindings":
       expect GpuHostError:
         host.dispatchGpuCompute(namespace, command)
 
+    for bufferBinding in [
+      GpuStorageBufferBinding(
+        stage: 0,
+        buffer: drawing.vertexBuffer,
+        access: gsaRead
+      ),
+      GpuStorageBufferBinding(
+        stage: 0,
+        buffer: readOnlyStorageBuffer,
+        access: gsaWrite
+      ),
+      GpuStorageBufferBinding(
+        stage: 0,
+        buffer: writeOnlyStorageBuffer,
+        access: gsaRead
+      ),
+      GpuStorageBufferBinding(
+        stage: uint8(maxGpuStorageBufferBindings),
+        buffer: storageBuffer,
+        access: gsaReadWrite
+      )
+    ]:
+      var command = computeBase
+      command.bindings.storageBuffers = @[bufferBinding]
+      expect GpuHostError:
+        host.dispatchGpuCompute(namespace, command)
+
+    var duplicateStorageBuffer = computeBase
+    duplicateStorageBuffer.bindings.storageBuffers = @[
+      GpuStorageBufferBinding(stage: 0, buffer: storageBuffer, access: gsaRead),
+      GpuStorageBufferBinding(stage: 1, buffer: storageBuffer, access: gsaWrite)
+    ]
+    expect GpuHostError:
+      host.dispatchGpuCompute(namespace, duplicateStorageBuffer)
+
     var crossStage = computeBase
     crossStage.bindings.textures = @[
       GpuTextureBinding(stage: 2, sampler: sampler, texture: sampled)
     ]
     crossStage.bindings.storageImages = @[
       GpuStorageImageBinding(stage: 2, texture: storage, access: gsaReadWrite)
+    ]
+    expect GpuHostError:
+      host.dispatchGpuCompute(namespace, crossStage)
+
+    crossStage.bindings.storageImages = @[]
+    crossStage.bindings.storageBuffers = @[
+      GpuStorageBufferBinding(stage: 2, buffer: storageBuffer, access: gsaRead)
     ]
     expect GpuHostError:
       host.dispatchGpuCompute(namespace, crossStage)
@@ -2066,6 +2234,16 @@ suite "GPU command bindings":
       )
     expect GpuHostError:
       host.submitGpuDraw(namespace, graphicsPass(), tooManyUniforms)
+
+    var tooManyStorageBuffers = computeBase
+    for stage in 0 .. maxGpuStorageBufferBindings:
+      tooManyStorageBuffers.bindings.storageBuffers.add GpuStorageBufferBinding(
+        stage: uint8(stage mod maxGpuStorageBufferBindings),
+        buffer: storageBuffer,
+        access: gsaRead
+      )
+    expect GpuHostError:
+      host.dispatchGpuCompute(namespace, tooManyStorageBuffers)
 
     check context.graphicsPassBegins == 0
     check context.drawSubmits == 0
@@ -2481,6 +2659,49 @@ suite "GPU bounded submission":
     host.close()
 
 suite "GPU texture transfer and readback":
+
+  test "readback byte accounting follows every texture format":
+    for format in GpuTextureFormat:
+      let bytesPerPixel =
+        case format
+        of gtfR8: 1'u64
+        of gtfR16F: 2'u64
+        of gtfRgba8, gtfBgra8, gtfR32F, gtfRg16F: 4'u64
+        of gtfRg32F, gtfRgba16F: 8'u64
+        of gtfRgba32F: 16'u64
+      let expectedBytes = 4'u64 * bytesPerPixel
+      let context = newContext()
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace(
+        "readback-format-" & $format,
+        GpuResourceBudget(
+          persistentBytes: expectedBytes,
+          readbackBytesPerFrame: expectedBytes,
+          workUnitsPerFrame: 1,
+          maxResources: 1
+        )
+      )
+      let texture = host.createGpuTexture(
+        namespace,
+        textureDescriptor(
+          width = 2,
+          height = 2,
+          format = format,
+          usage = {gtuBlitDestination, gtuReadback}
+        )
+      )
+      let frame = host.beginGpuFrame()
+      let readback = host.requestGpuReadback(namespace, texture)
+      check context.lastReadbackBytes == expectedBytes
+      check host.gpuNamespaceUsage(namespace).readbackBytes == expectedBytes
+      host.endGpuFrame(frame)
+      context.readbackReady = true
+      var data: GpuReadbackData
+      check host.tryTakeGpuReadback(readback, data)
+      check data.format == format
+      check data.rowStride == uint32(2'u64 * bytesPerPixel)
+      check uint64(data.pixels.len) == expectedBytes
+      host.close()
 
   test "render target copies complete into retained readback data":
     let context = newContext()
@@ -3208,6 +3429,8 @@ suite "GPU canvas composition bridge":
             check canvas.rasterSurface.pixels == @[0'u8, 85, 170, 3]
           of gcamOpaque:
             check canvas.rasterSurface.pixels == @[0'u8, 1, 2, 255]
+        else:
+          check false
         check canvas.closeGpuCanvasSurface()
         host.close()
 
@@ -3227,6 +3450,14 @@ suite "GPU canvas composition bridge":
       config.label = repeat('x', maxGpuResourceLabelBytes)
       expect ValueError:
         discard host.newGpuCanvasSurface(namespace, config)
+      for format in [
+          gtfR16F, gtfR32F, gtfRg16F, gtfRg32F, gtfRgba16F, gtfRgba32F
+      ]:
+        config = defaultGpuCanvasConfig(1, 1)
+        config.format = format
+        expect ValueError:
+          discard host.newGpuCanvasSurface(namespace, config)
+      check context.renderTargetCreates == 0
       host.close()
 
     block missingCapability:

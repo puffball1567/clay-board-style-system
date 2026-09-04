@@ -57,6 +57,11 @@ proc normalized(config: GpuCanvasConfig): GpuCanvasConfig =
 
   if result.width == 0 or result.height == 0:
     raise newException(ValueError, "GPU canvas dimensions must be positive")
+  if result.format notin {gtfR8, gtfRgba8, gtfBgra8}:
+    raise newException(
+      ValueError,
+      "GPU canvas readback supports only 8-bit raster formats"
+    )
   if uint64(result.width) > uint64(high(int)) or
       uint64(result.height) > uint64(high(int)):
     raise newException(ValueError, "GPU canvas dimensions exceed addressable memory")

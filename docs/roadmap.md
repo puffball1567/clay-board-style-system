@@ -2244,10 +2244,12 @@ authoring now maps bounded Nim expression graphs to deterministic bgfx source,
 and the append-only C ABI exposes the same graph through opaque handles and
 fixed-width expression IDs. Generated source is compiled only by build tools;
 the resulting artifact enters the existing retained Shader/Pipeline contract
-for both direct GPU submission and component-owned GPU visual layers. Storage-
-buffer bindings, external targets, complete portable shader packaging,
-restoration, declarative mask and filter stages, and real-GPU qualification
-remain open Version 0.7 work.
+for both direct GPU submission and component-owned GPU visual layers. The
+resource contract additionally supports R16F/R32F, RG16F/RG32F, and
+RGBA16F/RGBA32F textures plus typed compute storage buffers with bounded,
+stage-checked read/write access. External targets, restoration, declarative
+mask and filter stages, typed compute source authoring, and real-GPU
+qualification remain open Version 0.7 work.
 
 The Version 0.7 drawing baseline is intentionally usable before the complete
 Version 0.9 gesture layer. Mouse input and the existing pen metadata, pressure,
