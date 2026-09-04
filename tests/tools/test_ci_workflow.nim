@@ -3,8 +3,15 @@ import std/[os, strutils, unittest]
 proc repoRoot(): string =
   currentSourcePath().parentDir().parentDir().parentDir()
 
+proc normalizeNewlines(value: string): string =
+  value.replace("\r\n", "\n").replace('\r', '\n')
+
 suite "CI workflow policy":
-  let workflow = readFile(repoRoot() / ".github/workflows/ci.yml")
+  let workflow = readFile(repoRoot() / ".github/workflows/ci.yml").normalizeNewlines()
+
+  test "workflow inspection is independent of checkout line endings":
+    check normalizeNewlines("first\r\nsecond\rthird") ==
+      "first\nsecond\nthird"
 
   test "expensive jobs wait for the deterministic preflight":
     check "  preflight:\n" in workflow
@@ -16,12 +23,13 @@ suite "CI workflow policy":
     ]:
       check ("  " & job & ":\n") in workflow
       let jobStart = workflow.find("  " & job & ":\n")
+      require jobStart >= 0
       let jobEnd = min(workflow.high, jobStart + 400)
       let jobText = workflow[jobStart .. jobEnd]
       check "needs: preflight" in jobText
 
     let gateStart = workflow.find("  required-gate:\n")
-    check gateStart >= 0
+    require gateStart >= 0
     check "      - preflight\n" in workflow[gateStart .. ^1]
 
   test "workflow cancels obsolete runs and avoids mutable action tags":
@@ -30,8 +38,10 @@ suite "CI workflow policy":
       let stripped = line.strip()
       if stripped.startsWith("uses:") or stripped.startsWith("- uses:"):
         let atIndex = stripped.find('@')
-        check atIndex >= 0
-        let suffix = stripped[atIndex + 1 .. ^1].splitWhitespace()[0]
+        require atIndex >= 0
+        let values = stripped[atIndex + 1 .. ^1].splitWhitespace()
+        require values.len > 0
+        let suffix = values[0]
         check suffix.len == 40
         check suffix.allCharsInSet(HexDigits)
 
