@@ -61,7 +61,7 @@ suite "Craft Pack manifest":
     check registry.craftPackAt(0).get.version == "1.2.0"
 
     let incompatible = fixtureSource().replace(
-      "\"minimumAbi\": 65563",
+      "\"minimumAbi\": 65564",
       "\"minimumAbi\": 4294967295"
     ).replace("\"packVersion\": \"1.2.0\"", "\"packVersion\": \"2.0.0\"")
     let rejected = registry.replaceCraftPack(incompatible)
@@ -181,8 +181,8 @@ suite "Craft Pack manifest":
       )
 
     let reversedAbiRange = fixtureSource().replace(
-      "\"minimumAbi\": 65563,",
-      "\"minimumAbi\": 65563, \"maximumAbi\": 65562,"
+      "\"minimumAbi\": 65564,",
+      "\"minimumAbi\": 65564, \"maximumAbi\": 65563,"
     )
     let reversedAbiParsed = parseCraftPack(reversedAbiRange)
     check not reversedAbiParsed.isOk

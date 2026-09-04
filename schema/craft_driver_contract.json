@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "engine_abi_version": 65563,
+  "engine_abi_version": 65564,
   "driver_contract_version": 65536,
   "capabilities": [
     {"id": 1, "symbol": "RETAINED_TREE", "name": "tree.retained", "version": 1, "since_abi": 65557},
@@ -23,6 +23,6 @@
     {"id": 18, "symbol": "SUBTREE_LIFECYCLE", "name": "tree.subtree-lifecycle", "version": 1, "since_abi": 65559},
     {"id": 19, "symbol": "VALIDATION_PATTERN", "name": "validation.pattern", "version": 1, "since_abi": 65561},
     {"id": 20, "symbol": "RASTER_SURFACE", "name": "raster-surface", "version": 1, "since_abi": 65562},
-    {"id": 21, "symbol": "SHADER_AUTHORING", "name": "shader.authoring", "version": 1, "since_abi": 65563}
+    {"id": 21, "symbol": "SHADER_AUTHORING", "name": "shader.authoring", "version": 2, "since_abi": 65563}
   ]
 }

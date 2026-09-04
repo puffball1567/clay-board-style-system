@@ -103,7 +103,7 @@ The exact workloads, machine-local interpretation, budgets, and regression
 gates are documented in [Performance Model](docs/performance-model.md) and can
 be run with `nimble bench`.
 
-The discovered ARC suite currently covers 142 independently compiled test
+The discovered ARC suite covers more than 140 independently compiled test
 files. The same suite and public examples also run under ORC as a compatibility
 gate, so applications may select either `--mm:arc` or `--mm:orc`. ARC remains
 the stricter ownership baseline. Separate Valgrind gates exercise the complete
@@ -417,6 +417,7 @@ Rust-native ownership and error handling.
 ## Development
 
 ```sh
+nimble ciPreflight
 nimble test
 nimble testOrc
 nimble checkExamples

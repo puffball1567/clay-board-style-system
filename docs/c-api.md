@@ -30,7 +30,7 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x0001001B` supports:
+ABI version `0x0001001C` supports:
 
 - machine-readable Craft Driver contract metadata and runtime capability
   negotiation through stable numeric identifiers before tree construction;
@@ -44,8 +44,11 @@ ABI version `0x0001001B` supports:
   Canvas composition, and append-only paint-command inspection;
 - opaque typed Shader Builder handles with builder-local expression IDs,
   bounded graph/source sizes, stage and value-type validation, and deterministic
-  bgfx source plus varying-definition output. Shader compilation remains a
-  build-tool operation and is not linked into ordinary runtime artifacts;
+  bgfx source plus varying-definition output. Compute authoring adds
+  builder-local storage-buffer IDs, typed load/store operations, invocation
+  builtins, and bounded work-group sizes without exposing backend handles.
+  Shader compilation remains a build-tool operation and is not linked into
+  ordinary runtime artifacts;
 - bounded atomic Craft Pack manifest loading, compatibility negotiation,
   active Pack queries, and structured Pack diagnostics;
 - Opaque context and style handles.

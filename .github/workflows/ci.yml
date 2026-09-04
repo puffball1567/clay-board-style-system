@@ -12,13 +12,38 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_NET_RETRY: 5
+  CARGO_HTTP_TIMEOUT: 120
+
 concurrency:
   group: cbss-ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  preflight:
+    name: Fast contract preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Nim
+        uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
+        with:
+          nim-version: '2.2.10'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Nim dependencies
+        run: nimble install --depsOnly -y
+
+      - name: Check generated contracts, public API, and discovered examples
+        run: nimble ciPreflight -y
+
   nim:
     name: Nim ARC suite
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -26,9 +51,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Nim
-        run: |
-          curl https://nim-lang.org/choosenim/init.sh -sSf | sh -s -- -y 2.2.10
-          echo "$HOME/.nimble/bin" >> "$GITHUB_PATH"
+        uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
+        with:
+          nim-version: '2.2.10'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Toolchain versions
         run: |
@@ -92,6 +118,7 @@ jobs:
 
   nim-orc:
     name: Nim ORC compatibility
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -99,9 +126,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Nim
-        run: |
-          curl https://nim-lang.org/choosenim/init.sh -sSf | sh -s -- -y 2.2.10
-          echo "$HOME/.nimble/bin" >> "$GITHUB_PATH"
+        uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
+        with:
+          nim-version: '2.2.10'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Toolchain versions
         run: |
@@ -125,6 +153,7 @@ jobs:
 
   bgfx-contract:
     name: Optional bgfxim contract (${{ matrix.platform }})
+    needs: preflight
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     strategy:
@@ -183,10 +212,23 @@ jobs:
           CBSS_BX_INCLUDE: ${{ github.workspace }}/bx/include
         run: nimble checkBgfxAdapter -y
 
-      - name: Build the pinned official bgfx shader compiler
+      - name: Cache the pinned official bgfx shader compiler
         if: runner.os == 'Linux'
+        id: shaderc-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: bgfx/tools/bin/linux/shaderc
+          key: cbss-linux-shaderc-d8db55f8-9e3fadf6-371d9009
+
+      - name: Build the pinned official bgfx shader compiler
+        if: runner.os == 'Linux' && steps.shaderc-cache.outputs.cache-hit != 'true'
         run: |
           make -C bgfx -j2 shaderc
+          test -x bgfx/tools/bin/linux/shaderc
+
+      - name: Configure the official bgfx shader compiler
+        if: runner.os == 'Linux'
+        run: |
           test -x bgfx/tools/bin/linux/shaderc
           echo "CBSS_SHADERC=${{ github.workspace }}/bgfx/tools/bin/linux/shaderc" >> "$GITHUB_ENV"
 
@@ -207,6 +249,7 @@ jobs:
 
   linux-atspi:
     name: Linux AT-SPI D-Bus integration
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -232,6 +275,7 @@ jobs:
 
   portable:
     name: Portable core (${{ matrix.platform }}, shard ${{ matrix.shard_number }}/${{ matrix.shard_count }})
+    needs: preflight
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     strategy:
@@ -350,6 +394,7 @@ jobs:
 
   linux-valgrind:
     name: Linux Valgrind lifecycle and C ABI checks
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -357,9 +402,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Nim
-        run: |
-          curl https://nim-lang.org/choosenim/init.sh -sSf | sh -s -- -y 2.2.10
-          echo "$HOME/.nimble/bin" >> "$GITHUB_PATH"
+        uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
+        with:
+          nim-version: '2.2.10'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Valgrind
         run: |
@@ -389,6 +435,7 @@ jobs:
 
   motion-address-sanitizer:
     name: Motion ASan (${{ matrix.platform }})
+    needs: preflight
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     strategy:
@@ -441,6 +488,7 @@ jobs:
 
   undefined-behavior-sanitizer:
     name: UBSan (${{ matrix.platform }})
+    needs: preflight
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     strategy:
@@ -482,6 +530,7 @@ jobs:
 
   leak-sanitizer:
     name: LSan (${{ matrix.platform }})
+    needs: preflight
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
     env:
@@ -518,6 +567,7 @@ jobs:
 
   thread-sanitizer:
     name: TSan (${{ matrix.platform }})
+    needs: preflight
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -559,11 +609,24 @@ jobs:
 
   rust-bridge:
     name: Native Rust bridges
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Cache native Rust bridge builds
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/cosmic_text_bridge/target
+            native/image_bridge/target
+          key: cbss-${{ runner.os }}-${{ runner.arch }}-native-rust-${{ hashFiles('native/**/Cargo.lock') }}
+          restore-keys: |
+            cbss-${{ runner.os }}-${{ runner.arch }}-native-rust-
 
       - name: Check Rust Craft Driver formatting and lints
         run: |
@@ -584,6 +647,7 @@ jobs:
 
   release-hygiene:
     name: Release hygiene
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -607,6 +671,7 @@ jobs:
     name: CI required gate
     if: ${{ always() }}
     needs:
+      - preflight
       - nim
       - nim-orc
       - bgfx-contract

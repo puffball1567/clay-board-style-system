@@ -29,6 +29,19 @@ proc fragmentSource(): GpuShaderSource =
   ]))
   builder.emitGpuShaderSource()
 
+proc computeSource(): GpuShaderSource =
+  let builder = newGpuShaderBuilder(gssCompute, "shaderc-compute")
+  builder.setComputeWorkGroupSize(64, 1, 1)
+  let input = builder.storageBuffer(
+    "b_input", 0, gsbfFloat32x4, gsaRead
+  )
+  let output = builder.storageBuffer(
+    "b_output", 1, gsbfFloat32x4, gsaWrite
+  )
+  let index = builder.swizzle(builder.globalInvocationId(), "x")
+  builder.storeStorage(output, index, builder.loadStorage(input, index))
+  builder.emitGpuShaderSource()
+
 let shaderc = getEnv("CBSS_SHADERC")
 let shaderIncludes = getEnv("CBSS_BGFX_SHADER_INCLUDE")
 if shaderc.len == 0 or shaderIncludes.len == 0:
@@ -66,3 +79,26 @@ suite "official bgfx shaderc integration":
     let encodedFragment = fragmentPackage.encodeGpuShaderPackage()
     check encodedVertex.decodeGpuShaderPackage().artifactFor(gsbtVulkan).bytecode.len > 0
     check encodedFragment.decodeGpuShaderPackage().artifactFor(gsbtVulkan).bytecode.len > 0
+
+  test "compiles generated compute shader and packages SPIR-V":
+    let root = createTempDir("cbss-shaderc-compute-integration-", "")
+    defer:
+      removeDir(root)
+
+    let compute = computeSource()
+    let config = gpuShaderCompilerConfig(
+      shaderc,
+      [shaderIncludes],
+      workDirectory = root
+    )
+    let target = gpuShaderCompileTarget(
+      gsbtVulkan,
+      gscpLinux,
+      "spirv"
+    )
+
+    var package = gpuShaderPackage(compute)
+    discard package.compileAndAddVariant(compute, target, config)
+    let decoded = package.encodeGpuShaderPackage().decodeGpuShaderPackage()
+    check decoded.descriptor.stage == gssCompute
+    check decoded.artifactFor(gsbtVulkan).bytecode.len > 0

@@ -1039,8 +1039,8 @@ an enum-only API.
 ## GPU Canvas Capability
 
 Status: `Version 0.7 in progress; typed GPU resources, submission, transfer,
-asynchronous readback, portable RasterSurface composition, and build-only
-shader packaging implemented`
+asynchronous readback, portable RasterSurface composition, typed graphics and
+compute authoring, and build-only shader packaging implemented`
 
 CBSS will support optional GPU-backed drawing inside the standard Canvas
 element. This is a capability for game scenes, charts, visualizations, image
@@ -1082,8 +1082,10 @@ its real-GPU qualification remain Version 0.7 work. A later wgpu-native adapter
 may implement the same CBSS-owned contract, but it is no longer the standard
 provider or a release prerequisite.
 
-Typed Vertex and Fragment graphs now compile through an explicitly imported
-build-only wrapper around the official bgfx `shaderc`. The runtime consumes a
+Typed Vertex, Fragment, and Compute graphs now compile through an explicitly
+imported build-only wrapper around the official bgfx `shaderc`. Compute graphs
+include bounded work-group sizes, invocation builtins, integer/vector values,
+and typed storage-buffer load/store operations. The runtime consumes a
 bounded deterministic package containing only selected target variants, and
 does not link or launch the compiler. The package validates version, stage,
 target uniqueness, source identity, payload size, checksums, and trailing data.
@@ -2248,8 +2250,8 @@ for both direct GPU submission and component-owned GPU visual layers. The
 resource contract additionally supports R16F/R32F, RG16F/RG32F, and
 RGBA16F/RGBA32F textures plus typed compute storage buffers with bounded,
 stage-checked read/write access. External targets, restoration, declarative
-mask and filter stages, typed compute source authoring, and real-GPU
-qualification remain open Version 0.7 work.
+mask and filter stages, and broader real-GPU qualification remain open Version
+0.7 work.
 
 The Version 0.7 drawing baseline is intentionally usable before the complete
 Version 0.9 gesture layer. Mouse input and the existing pen metadata, pressure,

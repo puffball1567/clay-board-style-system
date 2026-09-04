@@ -108,6 +108,8 @@ proc main() =
     let name = relative.artifactName()
     var arguments = @[
       "nim", "c", "-r",
+      "--hints:off",
+      "--verbosity:0",
       "--mm:" & memoryModel,
       "--path:" & (repoRoot / "src"),
     ]

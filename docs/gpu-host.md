@@ -253,6 +253,25 @@ expression IDs. It returns source text to a language-specific build wrapper;
 managed-language object layouts and callbacks do not cross the boundary. There
 is no `.cbshader` source language and no runtime shader compiler dependency.
 
+Compute authoring uses the same graph and ownership rules:
+
+```nim
+let builder = newGpuShaderBuilder(gssCompute, "particle-step")
+builder.setComputeWorkGroupSize(64, 1, 1)
+let particles = builder.storageBuffer(
+  "b_particles", 0, gsbfFloat32x4, gsaReadWrite
+)
+let index = builder.swizzle(builder.globalInvocationId(), "x")
+let value = builder.loadStorage(particles, index)
+builder.storeStorage(particles, index, value)
+let source = builder.emitGpuShaderSource()
+```
+
+The builder validates work-group bounds, binding-stage uniqueness, access
+direction, unsigned indices, exact element types, and builder-local handles
+before source generation. The C ABI publishes equivalent fixed-width storage
+and expression IDs under `shader.authoring` capability version 2.
+
 The resulting retained Shader and Pipeline handles are not UI-specific. A
 library may submit them directly for graphics or compute work, or render into a
 `GpuCanvasSurface` and mount that surface as a component underlay/overlay with

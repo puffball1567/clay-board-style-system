@@ -47,6 +47,7 @@ only work that you have the right to license under those terms.
 
 ```sh
 nimble setupBundled       # select the vendored Linux runtime
+nimble ciPreflight        # fast release/PR contract checks; run this first
 nimble test              # unit/behavior test suite
 nimble testOrc           # the same suite under ORC
 nimble checkExamples     # examples plus bundled/system/custom link checks
