@@ -26,7 +26,7 @@ extern "C" {
 #endif
 
 /* CBSS_GENERATED_DRIVER_CONTRACT_BEGIN */
-#define CBSS_ABI_VERSION 0x0001001Bu
+#define CBSS_ABI_VERSION 0x0001001Cu
 #define CBSS_DRIVER_CONTRACT_VERSION 0x00010000u
 
 typedef enum CbssCapabilityId {
@@ -93,6 +93,7 @@ typedef struct CbssRasterSurface CbssRasterSurface;
 typedef struct CbssShaderBuilder CbssShaderBuilder;
 typedef uint64_t CbssEventSubscription;
 typedef uint32_t CbssShaderExpression;
+typedef uint32_t CbssShaderStorageBuffer;
 
 typedef int32_t CbssStatus;
 enum {
@@ -118,8 +119,42 @@ typedef enum CbssShaderValueType {
   CBSS_SHADER_VALUE_VEC3 = 3,
   CBSS_SHADER_VALUE_VEC4 = 4,
   CBSS_SHADER_VALUE_MAT3 = 5,
-  CBSS_SHADER_VALUE_MAT4 = 6
+  CBSS_SHADER_VALUE_MAT4 = 6,
+  CBSS_SHADER_VALUE_INT = 7,
+  CBSS_SHADER_VALUE_UINT = 8,
+  CBSS_SHADER_VALUE_IVEC2 = 9,
+  CBSS_SHADER_VALUE_IVEC3 = 10,
+  CBSS_SHADER_VALUE_IVEC4 = 11,
+  CBSS_SHADER_VALUE_UVEC2 = 12,
+  CBSS_SHADER_VALUE_UVEC3 = 13,
+  CBSS_SHADER_VALUE_UVEC4 = 14
 } CbssShaderValueType;
+
+typedef enum CbssShaderStorageFormat {
+  CBSS_SHADER_STORAGE_INT32 = 0,
+  CBSS_SHADER_STORAGE_UINT32 = 1,
+  CBSS_SHADER_STORAGE_FLOAT32 = 2,
+  CBSS_SHADER_STORAGE_INT32X2 = 3,
+  CBSS_SHADER_STORAGE_UINT32X2 = 4,
+  CBSS_SHADER_STORAGE_FLOAT32X2 = 5,
+  CBSS_SHADER_STORAGE_INT32X4 = 6,
+  CBSS_SHADER_STORAGE_UINT32X4 = 7,
+  CBSS_SHADER_STORAGE_FLOAT32X4 = 8
+} CbssShaderStorageFormat;
+
+typedef enum CbssShaderStorageAccess {
+  CBSS_SHADER_STORAGE_READ = 0,
+  CBSS_SHADER_STORAGE_WRITE = 1,
+  CBSS_SHADER_STORAGE_READ_WRITE = 2
+} CbssShaderStorageAccess;
+
+typedef enum CbssShaderComputeBuiltin {
+  CBSS_SHADER_COMPUTE_GLOBAL_INVOCATION_ID = 0,
+  CBSS_SHADER_COMPUTE_LOCAL_INVOCATION_ID = 1,
+  CBSS_SHADER_COMPUTE_WORK_GROUP_ID = 2,
+  CBSS_SHADER_COMPUTE_LOCAL_INVOCATION_INDEX = 3,
+  CBSS_SHADER_COMPUTE_WORK_GROUP_COUNT = 4
+} CbssShaderComputeBuiltin;
 
 typedef enum CbssShaderInterfaceSlot {
   CBSS_SHADER_SLOT_POSITION = 0,
@@ -997,6 +1032,27 @@ CBSS_API CbssStatus cbss_shader_builder_literal(
 CBSS_API CbssStatus cbss_shader_builder_vector_literal(
     CbssShaderBuilder *builder, const float *values, uint32_t count,
     CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_int_literal(
+    CbssShaderBuilder *builder, int32_t value,
+    CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_uint_literal(
+    CbssShaderBuilder *builder, uint32_t value,
+    CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_set_compute_work_group_size(
+    CbssShaderBuilder *builder, uint32_t x, uint32_t y, uint32_t z);
+CBSS_API CbssStatus cbss_shader_builder_storage_buffer(
+    CbssShaderBuilder *builder, const char *name, uint32_t stage,
+    CbssShaderStorageFormat format, CbssShaderStorageAccess access,
+    CbssShaderStorageBuffer *output);
+CBSS_API CbssStatus cbss_shader_builder_compute_builtin(
+    CbssShaderBuilder *builder, CbssShaderComputeBuiltin builtin,
+    CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_storage_load(
+    CbssShaderBuilder *builder, CbssShaderStorageBuffer storage,
+    CbssShaderExpression index, CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_storage_store(
+    CbssShaderBuilder *builder, CbssShaderStorageBuffer storage,
+    CbssShaderExpression index, CbssShaderExpression value);
 CBSS_API CbssStatus cbss_shader_builder_vertex_input(
     CbssShaderBuilder *builder, CbssShaderInterfaceSlot slot,
     CbssShaderValueType value_type, CbssShaderExpression *output);

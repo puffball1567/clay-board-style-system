@@ -98,19 +98,40 @@ bytes. Decoding rejects unknown stages or targets, duplicate targets,
 truncation, trailing data, invalid reserved fields, oversized data, and checksum
 failure before a backend resource is created.
 
-## Graphics And Compute Scope
+## Compute Authoring
 
-Version 0.7 graphics authoring emits typed Vertex and Fragment source. The
-runtime owns bounded Compute Pipeline and dispatch operations, floating-point
-textures, and storage-image/storage-buffer bindings. Compute source authoring
-remains a separate implementation unit rather than hidden behavior in this
-packaging layer:
+Version 0.7 authoring emits typed Vertex, Fragment, and Compute source. Compute
+graphs declare bounded work-group dimensions and typed storage buffers, then
+use explicit invocation builtins and load/store operations:
 
-- typed Compute Shader Builder load, store, invocation, and work-group
-  operations.
+```nim
+let builder = newGpuShaderBuilder(gssCompute, "copy-compute")
+builder.setComputeWorkGroupSize(64, 1, 1)
+let input = builder.storageBuffer(
+  "b_input", 0, gsbfFloat32x4, gsaRead
+)
+let output = builder.storageBuffer(
+  "b_output", 1, gsbfFloat32x4, gsaWrite
+)
+let index = builder.swizzle(builder.globalInvocationId(), "x")
+builder.storeStorage(output, index, builder.loadStorage(input, index))
 
-Keeping those contracts separate allows package parsing to remain small and
-runtime-safe while compute capabilities evolve behind explicit backend checks.
+let source = builder.emitGpuShaderSource()
+```
+
+Storage declarations require unique binding stages, exact scalar/vector
+formats, and explicit read, write, or read-write access. Index expressions are
+unsigned, values must match the declared element type, and a compute graph must
+contain at least one output store. Work-group dimensions are non-zero and
+bounded both per axis and by their total thread count. The runtime continues to
+own Compute Pipeline creation, bindings, dispatch validation, and retained
+resource lifetime; source compilation stays in the build-only layer.
+
+The authoring layer cannot infer an application's logical element count. A
+dispatch must therefore cover only valid storage elements, or bind padded
+buffers large enough for every invocation in the final work group. This keeps
+resource bounds explicit at the host boundary instead of hiding an unchecked
+shader access.
 
 ## Verification
 
@@ -121,7 +142,7 @@ compiler launch failure, compiler failure, missing and empty output, bounded
 diagnostics, and paths containing shell metacharacters.
 
 The Linux bgfx CI lane additionally builds the pinned official `shaderc`,
-compiles generated Vertex and Fragment shaders to SPIR-V, packages both
-artifacts, and decodes them through the runtime parser. This test needs no GPU;
-real resource creation and submission remain covered by the separate bgfx host
-integration lanes.
+compiles generated Vertex, Fragment, and Compute shaders to SPIR-V, packages
+the artifacts, and decodes them through the runtime parser. This test needs no
+GPU; real resource creation and submission remain covered by the separate bgfx
+host integration lanes.

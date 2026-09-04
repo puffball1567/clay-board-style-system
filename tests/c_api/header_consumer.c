@@ -15,7 +15,7 @@ _Static_assert(CBSS_CRAFT_PACK_MISSING_CAPABILITY == 12,
                "unexpected Craft Pack diagnostic code");
 
 int main(void) {
-  return CBSS_ABI_VERSION == 0x0001001Bu &&
+  return CBSS_ABI_VERSION == 0x0001001Cu &&
                  CBSS_DRIVER_CONTRACT_VERSION == 0x00010000u &&
                  CBSS_CAPABILITY_CRAFT_PACK == 17u &&
                  CBSS_CAPABILITY_SUBTREE_LIFECYCLE == 18u &&

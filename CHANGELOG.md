@@ -10,14 +10,16 @@ release. Before 1.0, minor releases may contain public API changes.
 ### Added
 
 - Added bounded typed GPU shader authoring for Nim and the C ABI. The builder
-  represents portable scalar/vector expression graphs, validates stages,
+  represents portable scalar/vector expression graphs, including signed and
+  unsigned compute values, storage-buffer load/store operations, invocation
+  builtins, and bounded work-group sizes. It validates stages,
   interfaces, identifiers, types, ownership, finite values, and resource
   limits, then emits deterministic bgfx shader source and varying definitions.
   Build tools compile that output; ordinary runtime artifacts do not contain a
   shader compiler. Compiled `GpuShaderArtifact` values feed the existing
   retained Shader/Pipeline path used by both direct GPU submission and
   component-owned `gpuVisualLayer` composition. The C ABI is now
-  `0x0001001B` and advertises `shader.authoring` capability 21.
+  `0x0001001C` and advertises `shader.authoring` capability 21 version 2.
 
 - Added the first Version 0.7 GPU-host foundation. The backend-neutral
   `GpuHost` distinguishes owned and borrowed runtimes, enforces versioned
@@ -109,6 +111,15 @@ release. Before 1.0, minor releases may contain public API changes.
   surfaces, including authoring, computed-style, and SDL3 cursor mapping.
 
 ### Fixed
+
+- The repository test runner now suppresses compiler progress hints while
+  preserving diagnostics and test output, keeping cross-platform CI logs
+  focused on the failing file and assertion.
+
+- CI now runs a shared local/remote preflight before expensive platform and
+  sanitizer jobs. The preflight validates generated contracts, ARC/ORC public
+  imports, and every automatically discovered ordinary example; the pinned
+  official bgfx shader compiler is cached by its source revisions.
 
 - Windows portable CI now partitions the discovered test list across two
   deterministic release-blocking shards instead of approaching the job limit

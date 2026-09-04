@@ -1072,7 +1072,7 @@ fn craft_style_and_pack_loading_are_atomic_and_slot_scoped() {
             version: "1.2.0".to_owned(),
         }]
     );
-    let incompatible_pack = PACK.replace("\"minimumAbi\": 65563", "\"minimumAbi\": 4294967295");
+    let incompatible_pack = PACK.replace("\"minimumAbi\": 65564", "\"minimumAbi\": 4294967295");
     let rejected_pack = ui
         .replace_craft_pack(&incompatible_pack)
         .expect_err("incompatible Pack must fail");

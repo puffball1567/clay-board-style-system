@@ -9,7 +9,7 @@ type
   ]
 
 const
-  CbssAbiVersion* = 0x0001001B'u32
+  CbssAbiVersion* = 0x0001001C'u32
   CbssDriverContractVersion* = 0x00010000'u32
   CbssCapabilityAvailable* = 1'u32 shl 0
   CbssCapabilityRetainedTree* = 1'u32
@@ -54,5 +54,5 @@ const
     (id: 18'u32, version: 1'u32, sinceAbi: 0x00010017'u32, name: "tree.subtree-lifecycle"),
     (id: 19'u32, version: 1'u32, sinceAbi: 0x00010019'u32, name: "validation.pattern"),
     (id: 20'u32, version: 1'u32, sinceAbi: 0x0001001A'u32, name: "raster-surface"),
-    (id: 21'u32, version: 1'u32, sinceAbi: 0x0001001B'u32, name: "shader.authoring")
+    (id: 21'u32, version: 2'u32, sinceAbi: 0x0001001B'u32, name: "shader.authoring")
   ]
