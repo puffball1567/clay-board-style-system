@@ -198,10 +198,18 @@ or reduced to the documented generator input — one binding copy only
   Wayland tests, performance benchmarks, and the cosmic-text integration test
   remain explicit opt-in tasks because they require a display, release-mode
   timing, or a prebuilt native bridge.
+- The discovery runner supports deterministic index-based sharding after its
+  test paths are sorted. Shards must partition the complete list without
+  overlap or omission; sharding changes scheduling only, never test scope.
+  Windows uses two portable shards because compiling every independent Nim
+  test executable serially approaches the hosted-runner deadline.
 - CI runs `nimble check`, the discovered ARC suite, the same suite and public
   examples under ORC, ARC example checks for all three SDL3 link modes, and
   locked Cargo bridge tests/builds. Release hygiene checks verify required
   notices, SDL3 symlinks, and the absence of unrelated native binaries.
+- Native Rust bridge outputs are cached by OS, architecture, and every native
+  `Cargo.lock`. An initial cache miss remains within the job budget; a cache
+  hit is an optimization and cannot remove compilation or test steps.
 - A root `LICENSE` (Apache-2.0) is added, plus SDL3/cosmic-text third-party
   notices alongside the existing image-rs notice. The explicit contributor
   patent grant is appropriate for a shared native UI foundation intended for
@@ -215,8 +223,9 @@ or reduced to the documented generator input — one binding copy only
   `.cbss/link-mode` plus `.cbss/runtime-root` through `cbss_configure`, without
   changing application imports or API calls.
 
-**Implementation status.** Implemented. The portable runner currently
-discovers 47 test files. The development checkout keeps one versioned SDL3
+**Implementation status.** Implemented. The portable runner discovers tests
+from the repository instead of relying on a manually maintained count. The
+development checkout keeps one versioned SDL3
 shared binary plus SONAME/link-name symlinks; release packages do not include
 these native binaries. The image bridge is built from CBSS-owned Rust source,
 and the unused font binary was removed. See

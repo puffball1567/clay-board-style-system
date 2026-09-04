@@ -110,6 +110,13 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Fixed
 
+- Windows portable CI now partitions the discovered test list across two
+  deterministic release-blocking shards instead of approaching the job limit
+  with one serial compiler process. Native Rust bridge outputs are cached by
+  platform and lockfile, initial cache misses retain explicit timeout
+  headroom, and GitHub-owned checkout/cache actions are pinned to current
+  immutable revisions.
+
 - GPU draw validation now builds managed binding and descriptor results in
   exception-safe local storage before transferring ownership to the submitted
   command. Invalid binding and index paths no longer leak temporary sequences

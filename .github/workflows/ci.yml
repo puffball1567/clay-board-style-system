@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Nim
         run: |
@@ -96,7 +96,7 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Nim
         run: |
@@ -139,24 +139,24 @@ jobs:
             os: macos-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Check out the pinned bgfxim binding
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: puffball1567/bgfxim
           ref: v0.3.0
           path: bgfxim
 
       - name: Check out the pinned bgfx headers
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: bkaradzic/bgfx
           ref: d8db55f8123a4a0871b1290fec2e5d0caae01bbf
           path: bgfx
 
       - name: Check out the pinned bx headers
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: bkaradzic/bx
           ref: 9e3fadf6f11380031486be704d2ff46ca143664f
@@ -164,7 +164,7 @@ jobs:
 
       - name: Check out the pinned bimg sources
         if: runner.os != 'Windows'
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: bkaradzic/bimg
           ref: 371d90098b1fd017cd00205979d5ef74b8c3ed62
@@ -211,7 +211,7 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Nim
         uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
@@ -231,22 +231,36 @@ jobs:
         run: dbus-run-session -- nimble testLinuxAtspiValgrind -y
 
   portable:
-    name: Portable core (${{ matrix.platform }})
+    name: Portable core (${{ matrix.platform }}, shard ${{ matrix.shard_number }}/${{ matrix.shard_count }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 35
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: Linux x86_64
             os: ubuntu-latest
+            shard_index: 0
+            shard_number: 1
+            shard_count: 1
           - platform: Windows x86_64
             os: windows-latest
+            shard_index: 0
+            shard_number: 1
+            shard_count: 2
+          - platform: Windows x86_64
+            os: windows-latest
+            shard_index: 1
+            shard_number: 2
+            shard_count: 2
           - platform: macOS arm64
             os: macos-latest
+            shard_index: 0
+            shard_number: 1
+            shard_count: 1
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Nim
         uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
@@ -273,8 +287,11 @@ jobs:
           "--nimcache:${{ runner.temp }}/cbss-portable-runner-cache"
           "--out:${{ runner.temp }}/cbss-portable-runner"
           tools/run_tests.nim --portable
+          --shard-index:${{ matrix.shard_index }}
+          --shard-count:${{ matrix.shard_count }}
 
       - name: Check portable public modules and examples
+        if: matrix.shard_index == 0
         run: |
           nim check --mm:arc --path:src src/clay_board_style_system.nim
           nim check --mm:arc --path:src examples/paint_demo.nim
@@ -282,12 +299,13 @@ jobs:
           nim check --mm:arc --path:src examples/component_demo.nim
 
       - name: Build shared and static C ABI libraries
+        if: matrix.shard_index == 0
         run: |
           nim c --threads:on --app:lib --mm:arc -d:release --path:src "--nimcache:${{ runner.temp }}/cbss-c-api-shared-cache" "--outdir:${{ runner.temp }}/cbss-c-api" src/cbss_c_api.nim
           nim c --threads:on --app:staticlib --mm:arc -d:release --path:src "--nimcache:${{ runner.temp }}/cbss-c-api-static-cache" "--outdir:${{ runner.temp }}/cbss-c-api" src/cbss_c_api.nim
 
       - name: Check C and C++ public headers (Unix)
-        if: runner.os != 'Windows'
+        if: matrix.shard_index == 0 && runner.os != 'Windows'
         run: |
           cc -std=c11 -Wall -Wextra -Werror -Iinclude -fsyntax-only tests/c_api/header_consumer.c
           c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include -fsyntax-only tests/c_api/header_consumer.cpp
@@ -295,7 +313,7 @@ jobs:
           c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include -fsyntax-only tests/drivers/cpp_reference_application.cpp
 
       - name: Check C and C++ public headers (MSVC-compatible)
-        if: runner.os == 'Windows'
+        if: matrix.shard_index == 0 && runner.os == 'Windows'
         shell: cmd
         run: |
           clang-cl /nologo /W4 /WX /c /TC /Iinclude tests\c_api\header_consumer.c /Fo"${{ runner.temp }}\cbss_header_c.obj"
@@ -304,12 +322,28 @@ jobs:
           clang-cl /nologo /W4 /WX /EHsc /c /TP /std:c++14 /Iinclude /Idrivers\cpp\include tests\drivers\cpp_reference_application.cpp /Fo"${{ runner.temp }}\cbss_cpp_reference_application.obj"
 
       - name: Check portable Rust Craft Driver
+        if: matrix.shard_index == 0
         run: cargo check --locked --all-targets --manifest-path drivers/rust/Cargo.toml
 
       - name: Check Rust reference application
+        if: matrix.shard_index == 0
         run: cargo check --locked --manifest-path tests/drivers/rust_reference_application/Cargo.toml
 
+      - name: Cache native Rust bridge builds
+        if: matrix.shard_index == 0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/cosmic_text_bridge/target
+            native/image_bridge/target
+          key: cbss-${{ runner.os }}-${{ runner.arch }}-native-rust-${{ hashFiles('native/**/Cargo.lock') }}
+          restore-keys: |
+            cbss-${{ runner.os }}-${{ runner.arch }}-native-rust-
+
       - name: Test native Rust bridges
+        if: matrix.shard_index == 0
         run: |
           cargo test --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml
           cargo test --locked --release --manifest-path native/image_bridge/Cargo.toml
@@ -320,7 +354,7 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Nim
         run: |
@@ -369,7 +403,7 @@ jobs:
             os: macos-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Nim
         uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
@@ -424,7 +458,7 @@ jobs:
       CBSS_CLANG: ${{ matrix.compiler }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Nim
         uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
@@ -460,7 +494,7 @@ jobs:
             os: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Nim
         uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
@@ -501,7 +535,7 @@ jobs:
       CBSS_CLANG: ${{ matrix.compiler }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Nim
         uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
@@ -529,7 +563,7 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Check Rust Craft Driver formatting and lints
         run: |
@@ -554,7 +588,7 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Verify release metadata
         run: |
