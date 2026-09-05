@@ -402,6 +402,26 @@ type
     number*: uint64
     generation*: uint64
 
+  GpuNamespaceRestoreStatus* = enum
+    gnrsSkipped,
+    gnrsRestored,
+    gnrsFailed
+
+  GpuNamespaceRestoreResult* = object
+    namespace*: GpuNamespaceId
+    name*: string
+    status*: GpuNamespaceRestoreStatus
+
+  GpuRestoreReport* = object
+    previousGeneration*, generation*: uint64
+    namespaces*: seq[GpuNamespaceRestoreResult]
+
+  GpuNamespaceRestoreProc* = proc(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    previousGeneration, generation: uint64
+  ): GpuNamespaceRestoreStatus {.closure, raises: [].}
+
   GpuBackendContext* = ref object of RootObj
 
   GpuBackendOpenProc* = proc(
@@ -609,6 +629,7 @@ type
   GpuNamespaceEntry = object
     name: string
     budget: GpuResourceBudget
+    restore: GpuNamespaceRestoreProc
     usage: GpuResourceUsage
     nextResourceId: uint64
     nextReadbackId: uint64
@@ -627,6 +648,8 @@ type
     nextViewOffset: uint16
     nextNamespaceId: uint64
     namespaces: Table[GpuNamespaceId, GpuNamespaceEntry]
+    restorationActive: bool
+    restoringNamespace: GpuNamespaceId
 
 proc `==`*(a, b: GpuNamespaceId): bool {.borrow.}
 proc hash*(id: GpuNamespaceId): Hash {.borrow.}
@@ -778,6 +801,8 @@ proc destroyNamespaceResources(host: GpuHost; id: GpuNamespaceId) =
 proc close*(host: GpuHost) =
   if host.isNil or host.stateValue == ghsClosed:
     return
+  if host.restorationActive:
+    raise newException(GpuHostError, "GPU host cannot close during restoration")
   if host.ownershipValue == ghoBorrowed:
     for id, entry in host.namespaces.pairs:
       discard id
@@ -826,6 +851,8 @@ proc beginGpuFrame*(host: GpuHost): GpuFrameToken =
   host.requireHost()
   if host.stateValue != ghsReady:
     raise newException(GpuHostError, "GPU host is not ready")
+  if host.restorationActive:
+    raise newException(GpuHostError, "GPU frames cannot begin during restoration")
   if host.activeFrame:
     raise newException(GpuHostError, "a GPU frame is already active")
 
@@ -867,6 +894,8 @@ proc resizeGpuHost*(host: GpuHost; width, height: uint32) =
   host.requireHost()
   if host.stateValue != ghsReady:
     raise newException(GpuHostError, "GPU host is not ready")
+  if host.restorationActive:
+    raise newException(GpuHostError, "GPU host cannot resize during restoration")
   if not host.configValue.presentation:
     raise newException(GpuHostError, "compute-only GPU hosts cannot be resized")
   if width == 0 or height == 0:
@@ -890,23 +919,75 @@ proc resizeGpuHost*(host: GpuHost; width, height: uint32) =
 
 proc markGpuDeviceLost*(host: GpuHost): bool =
   host.requireHost()
+  if host.restorationActive:
+    raise newException(
+      GpuHostError,
+      "GPU device loss cannot be marked during restoration"
+    )
   if host.stateValue != ghsReady:
     return false
   host.enterDeviceLost()
   true
 
-proc restoreGpuHost*(host: GpuHost) =
+proc restoreGpuHostWithReport*(host: GpuHost): GpuRestoreReport =
   host.requireHost()
   if host.stateValue != ghsDeviceLost:
     raise newException(GpuHostError, "GPU host is not device-lost")
   if host.backend.restore.isNil:
     raise newException(GpuHostError, "GPU backend cannot restore the device")
 
+  let previousGeneration = host.generationValue - 1'u64
   var restoredInfo = host.infoValue
   let status = host.backend.restore(host.backend.context, restoredInfo)
   raiseForStatus(status)
   host.infoValue = restoredInfo
   host.stateValue = ghsReady
+
+  result = GpuRestoreReport(
+    previousGeneration: previousGeneration,
+    generation: host.generationValue
+  )
+  var namespaceIds: seq[GpuNamespaceId]
+  for id in host.namespaces.keys:
+    namespaceIds.add id
+  namespaceIds.sort(proc(a, b: GpuNamespaceId): int =
+    cmp(namespaceIdValue(a), namespaceIdValue(b)))
+
+  host.restorationActive = true
+  defer:
+    host.restoringNamespace = GpuNamespaceId(0)
+    host.restorationActive = false
+  for id in namespaceIds:
+    if host.stateValue != ghsReady:
+      raise newException(GpuHostError, "GPU device was lost during restoration")
+    if id notin host.namespaces:
+      raise newException(GpuHostError, "GPU namespace changed during restoration")
+    let name = host.namespaces[id].name
+    let restore = host.namespaces[id].restore
+    host.restoringNamespace = id
+    let restoreStatus =
+      if restore.isNil:
+        gnrsSkipped
+      else:
+        restore(host, id, previousGeneration, host.generationValue)
+    if host.stateValue != ghsReady:
+      raise newException(GpuHostError, "GPU device was lost during restoration")
+    if restoreStatus != gnrsRestored:
+      host.destroyNamespaceResources(id)
+      var entry = host.namespaces[id]
+      entry.resources.clear()
+      entry.readbacks.clear()
+      entry.usage = GpuResourceUsage()
+      host.namespaces[id] = entry
+    result.namespaces.add GpuNamespaceRestoreResult(
+      namespace: id,
+      name: name,
+      status: restoreStatus
+    )
+  host.restoringNamespace = GpuNamespaceId(0)
+
+proc restoreGpuHost*(host: GpuHost) =
+  discard host.restoreGpuHostWithReport()
 
 proc createGpuNamespace*(
     host: GpuHost;
@@ -918,6 +999,11 @@ proc createGpuNamespace*(
     raise newException(GpuHostError, "GPU host is closed")
   if host.stateValue != ghsReady:
     raise newException(GpuHostError, "GPU host is not ready")
+  if host.restorationActive:
+    raise newException(
+      GpuHostError,
+      "GPU namespaces cannot be created during restoration"
+    )
   if name.len == 0 or name.len > maxGpuNamespaceNameBytes:
     raise newException(GpuHostError, "GPU namespace name length is invalid")
   for id, entry in host.namespaces.pairs:
@@ -955,8 +1041,32 @@ proc gpuNamespaceUsage*(host: GpuHost; id: GpuNamespaceId): GpuResourceUsage =
     raise newException(GpuHostError, "unknown GPU namespace")
   host.namespaces[id].usage
 
+proc setGpuNamespaceRestoreHandler*(
+    host: GpuHost;
+    id: GpuNamespaceId;
+    restore: GpuNamespaceRestoreProc
+) =
+  host.requireHost()
+  if host.stateValue == ghsClosed:
+    raise newException(GpuHostError, "GPU host is closed")
+  if host.restorationActive:
+    raise newException(
+      GpuHostError,
+      "GPU restore handlers cannot change during restoration"
+    )
+  if id notin host.namespaces:
+    raise newException(GpuHostError, "unknown GPU namespace")
+  var entry = host.namespaces[id]
+  entry.restore = restore
+  host.namespaces[id] = entry
+
 proc closeGpuNamespace*(host: GpuHost; id: GpuNamespaceId): bool =
   host.requireHost()
+  if host.restorationActive:
+    raise newException(
+      GpuHostError,
+      "GPU namespaces cannot close during restoration"
+    )
   if id notin host.namespaces:
     return false
   if host.activeFrame:
@@ -987,6 +1097,15 @@ proc ensureResourceCapacity(
   if entry.nextResourceId == 0:
     raise newException(GpuHostError, "GPU resource identifier space exhausted")
 
+proc requireNamespaceAccess(host: GpuHost; namespace: GpuNamespaceId) =
+  if namespace notin host.namespaces:
+    raise newException(GpuHostError, "unknown GPU namespace")
+  if host.restorationActive and namespace != host.restoringNamespace:
+    raise newException(
+      GpuHostError,
+      "GPU restoration cannot access another namespace"
+    )
+
 proc insertGpuResource(
     host: GpuHost;
     namespace: GpuNamespaceId;
@@ -1004,6 +1123,7 @@ proc insertGpuResource(
     pipelineKind = gplkGraphics;
     dependencies: seq[GpuResourceId] = @[]
 ): GpuResourceHandle =
+  host.requireNamespaceAccess(namespace)
   var entry = host.namespaces[namespace]
   entry.ensureResourceCapacity(bytes)
   let resource = GpuResourceId(entry.nextResourceId)
@@ -1048,8 +1168,7 @@ proc reserveGpuResource*(
       GpuHostError,
       "retained GPU resources cannot be reserved during an active frame"
     )
-  if namespace notin host.namespaces:
-    raise newException(GpuHostError, "unknown GPU namespace")
+  host.requireNamespaceAccess(namespace)
 
   host.insertGpuResource(namespace, kind, bytes)
 
@@ -1199,8 +1318,7 @@ proc createGpuTexture*(
       GpuHostError,
       "GPU texture creation is not allowed during an active frame"
     )
-  if namespace notin host.namespaces:
-    raise newException(GpuHostError, "unknown GPU namespace")
+  host.requireNamespaceAccess(namespace)
   if descriptor.width == 0 or descriptor.height == 0:
     raise newException(GpuHostError, "GPU texture dimensions must be non-zero")
   if host.infoValue.maxTextureSize != 0 and
@@ -1265,8 +1383,7 @@ proc createGpuBuffer*(
       GpuHostError,
       "GPU buffer creation is not allowed during an active frame"
     )
-  if namespace notin host.namespaces:
-    raise newException(GpuHostError, "unknown GPU namespace")
+  host.requireNamespaceAccess(namespace)
   descriptor.validateBufferDescriptor(initialData)
   if descriptor.role == gbrStorage and not host.infoValue.computeSupported:
     raise newException(GpuHostError, "GPU storage buffers require compute support")
@@ -1307,8 +1424,7 @@ proc createGpuRenderTarget*(
       GpuHostError,
       "GPU render target creation is not allowed during an active frame"
     )
-  if namespace notin host.namespaces:
-    raise newException(GpuHostError, "unknown GPU namespace")
+  host.requireNamespaceAccess(namespace)
   if descriptor.width == 0 or descriptor.height == 0:
     raise newException(GpuHostError, "GPU render target dimensions must be non-zero")
   if host.infoValue.maxTextureSize != 0 and
@@ -1363,8 +1479,7 @@ proc createGpuShader*(
       GpuHostError,
       "GPU shader creation is not allowed during an active frame"
     )
-  if namespace notin host.namespaces:
-    raise newException(GpuHostError, "unknown GPU namespace")
+  host.requireNamespaceAccess(namespace)
   if bytecode.len == 0:
     raise newException(GpuHostError, "GPU shader bytecode cannot be empty")
   if uint64(bytecode.len) > uint64(high(uint32)):
@@ -1428,8 +1543,7 @@ proc createGpuUniform*(
       GpuHostError,
       "GPU uniform creation is not allowed during an active frame"
     )
-  if namespace notin host.namespaces:
-    raise newException(GpuHostError, "unknown GPU namespace")
+  host.requireNamespaceAccess(namespace)
   descriptor.name.validateGpuBindingName()
   if descriptor.label.len > maxGpuResourceLabelBytes:
     raise newException(GpuHostError, "GPU resource label is too long")
@@ -1473,8 +1587,7 @@ proc createGpuSampler*(
       GpuHostError,
       "GPU sampler creation is not allowed during an active frame"
     )
-  if namespace notin host.namespaces:
-    raise newException(GpuHostError, "unknown GPU namespace")
+  host.requireNamespaceAccess(namespace)
   descriptor.name.validateGpuBindingName()
   if descriptor.label.len > maxGpuResourceLabelBytes:
     raise newException(GpuHostError, "GPU resource label is too long")
@@ -1539,8 +1652,7 @@ proc validatePipelineCreation(
       GpuHostError,
       "GPU pipeline creation is not allowed during an active frame"
     )
-  if namespace notin host.namespaces:
-    raise newException(GpuHostError, "unknown GPU namespace")
+  host.requireNamespaceAccess(namespace)
   if label.len > maxGpuResourceLabelBytes:
     raise newException(GpuHostError, "GPU resource label is too long")
   host.namespaces[namespace].ensureResourceCapacity(0)
@@ -1667,6 +1779,7 @@ proc updateGpuBuffer*(
       GpuHostError,
       "GPU buffer updates are not allowed during an active frame"
     )
+  host.requireNamespaceAccess(handle.namespace)
   if not host.isGpuResourceLive(handle) or handle.kind != grkBuffer:
     raise newException(GpuHostError, "GPU buffer handle is stale or invalid")
   let resource = host.namespaces[handle.namespace].resources[handle.resource]
@@ -1697,6 +1810,8 @@ proc isGpuResourceLive*(host: GpuHost; handle: GpuResourceHandle): bool =
 
 proc releaseGpuResource*(host: GpuHost; handle: GpuResourceHandle): bool =
   host.requireHost()
+  if host.restorationActive:
+    host.requireNamespaceAccess(handle.namespace)
   if not host.isGpuResourceLive(handle):
     return false
   if host.activeFrame:

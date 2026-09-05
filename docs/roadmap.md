@@ -2249,9 +2249,11 @@ the resulting artifact enters the existing retained Shader/Pipeline contract
 for both direct GPU submission and component-owned GPU visual layers. The
 resource contract additionally supports R16F/R32F, RG16F/RG32F, and
 RGBA16F/RGBA32F textures plus typed compute storage buffers with bounded,
-stage-checked read/write access. External targets, restoration, declarative
-mask and filter stages, and broader real-GPU qualification remain open Version
-0.7 work.
+stage-checked read/write access. Device-loss recovery now includes deterministic
+per-namespace rebuild handlers, generation reporting, and rollback of partial
+resources from failed owners. External targets, production-adapter device
+recreation, declarative mask and filter stages, and broader real-GPU
+qualification remain open Version 0.7 work.
 
 The Version 0.7 drawing baseline is intentionally usable before the complete
 Version 0.9 gesture layer. Mouse input and the existing pen metadata, pressure,
