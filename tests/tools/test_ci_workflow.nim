@@ -14,7 +14,14 @@ suite "CI workflow policy":
       "first\nsecond\nthird"
 
   test "expensive jobs wait for the deterministic preflight":
+    check "  classify_flow:\n" in workflow
     check "  preflight:\n" in workflow
+    let preflightStart = workflow.find("  preflight:\n")
+    require preflightStart >= 0
+    let preflightEnd = min(workflow.high, preflightStart + 300)
+    let preflightText = workflow[preflightStart .. preflightEnd]
+    check "needs: classify_flow" in preflightText
+    check "needs.classify_flow.outputs.mode == 'full'" in preflightText
     for job in [
       "nim", "nim-orc", "bgfx-contract", "linux-atspi", "portable",
       "linux-valgrind", "motion-address-sanitizer",
@@ -30,7 +37,32 @@ suite "CI workflow policy":
 
     let gateStart = workflow.find("  required-gate:\n")
     require gateStart >= 0
+    check "      - classify_flow\n" in workflow[gateStart .. ^1]
     check "      - preflight\n" in workflow[gateStart .. ^1]
+
+  test "protected branch flows avoid duplicate release CI":
+    let pushStart = workflow.find("  push:\n")
+    let pullRequestStart = workflow.find("  pull_request:\n")
+    require pushStart >= 0
+    require pullRequestStart > pushStart
+    let pushTriggers = workflow[pushStart ..< pullRequestStart]
+    check "      - devel\n" in pushTriggers
+    check "      - main\n" notin pushTriggers
+    check "  pull_request:\n    branches:\n      - main\n      - devel\n" in workflow
+    check "CBSS_FLOW_MODE: ${{ needs.classify_flow.outputs.mode }}" in workflow
+    check "sh tools/ci/branch_flow.sh verify-promotion" in workflow
+    check "This branch flow is not allowed" in workflow
+    check "actions: read" in workflow
+
+    let branchFlow = readFile(repoRoot() / "tools/ci/branch_flow.sh").normalizeNewlines()
+    check "assert_mode promotion pull_request main devel" in branchFlow
+    check "assert_mode full pull_request main hotfix/urgent" in branchFlow
+    check "assert_mode full pull_request devel main" in branchFlow
+    check "assert_mode invalid pull_request main feature/example" in branchFlow
+    check "head_sha == $sha" in branchFlow
+    check ".head_branch == \"devel\"" in branchFlow
+    check ".event == \"push\"" in branchFlow
+    check ".conclusion == \"success\"" in branchFlow
 
   test "workflow cancels obsolete runs and avoids mutable action tags":
     check "cancel-in-progress: true" in workflow

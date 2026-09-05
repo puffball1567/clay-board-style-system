@@ -3,13 +3,16 @@ name: CI
 on:
   push:
     branches:
-      - main
       - devel
     tags:
       - "v*"
   pull_request:
+    branches:
+      - main
+      - devel
 
 permissions:
+  actions: read
   contents: read
 
 env:
@@ -21,8 +24,41 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  classify_flow:
+    name: Classify protected branch flow
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.classify.outputs.mode }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Test branch flow classification
+        run: sh tools/ci/branch_flow.sh self-test
+
+      - name: Classify this workflow run
+        id: classify
+        env:
+          CBSS_EVENT_NAME: ${{ github.event_name }}
+          CBSS_BASE_REF: ${{ github.base_ref }}
+          CBSS_HEAD_REF: ${{ github.head_ref }}
+          CBSS_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          CBSS_REPOSITORY: ${{ github.repository }}
+        run: |
+          mode=$(sh tools/ci/branch_flow.sh classify \
+            "$CBSS_EVENT_NAME" \
+            "$CBSS_BASE_REF" \
+            "$CBSS_HEAD_REF" \
+            "$CBSS_HEAD_REPOSITORY" \
+            "$CBSS_REPOSITORY")
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "CI flow: $mode"
+
   preflight:
     name: Fast contract preflight
+    needs: classify_flow
+    if: ${{ needs.classify_flow.outputs.mode == 'full' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -671,6 +707,7 @@ jobs:
     name: CI required gate
     if: ${{ always() }}
     needs:
+      - classify_flow
       - preflight
       - nim
       - nim-orc
@@ -688,13 +725,29 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - name: Require every CI job to succeed
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve the required CI result
         env:
+          GH_TOKEN: ${{ github.token }}
+          CBSS_FLOW_MODE: ${{ needs.classify_flow.outputs.mode }}
+          CBSS_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           CBSS_REQUIRED_RESULTS: ${{ toJSON(needs) }}
         run: |
-          if ! jq -e 'all(.[]; .result == "success")' <<< "$CBSS_REQUIRED_RESULTS" >/dev/null; then
-            echo "::error::One or more required CI jobs did not succeed."
-            jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' \
-              <<< "$CBSS_REQUIRED_RESULTS"
-            exit 1
-          fi
+          case "$CBSS_FLOW_MODE" in
+            full)
+              if ! jq -e 'all(.[]; .result == "success")' <<< "$CBSS_REQUIRED_RESULTS" >/dev/null; then
+                echo "::error::One or more required CI jobs did not succeed."
+                jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' \
+                  <<< "$CBSS_REQUIRED_RESULTS"
+                exit 1
+              fi
+              ;;
+            promotion)
+              sh tools/ci/branch_flow.sh verify-promotion
+              ;;
+            *)
+              echo "::error::This branch flow is not allowed."
+              exit 1
+              ;;
+          esac
