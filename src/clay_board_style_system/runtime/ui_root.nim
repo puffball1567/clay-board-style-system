@@ -2,7 +2,7 @@ import std/[algorithm, hashes, math, options, sets, tables]
 
 import ../craft/[pack, style, style_slots]
 import ../core/[color, declaration, geometry, node, raster_surface, rule,
-    selector, style_value]
+    selector, style_value, custom_paint]
 import ../core/style_resolver
 import ../input/events
 import ../layout/layout
@@ -10,6 +10,7 @@ import ../layout/presentation
 import ../layout/scroll_state
 import ../paint/paint
 import ../paint/paint_command
+import ../paint/custom_paint_registry
 import ../text/[font_registry, text_engine]
 import ./animation_clock
 import ./canvas
@@ -81,6 +82,7 @@ type
     scroll*: ScrollState
     surfaces*: RenderSurfaceRegistry
     canvases*: Table[RenderSurfaceId, Canvas2D]
+    customPaints: CustomPaintRegistry
     defaultContextMenuOpen*: bool
     defaultContextMenuPosition*: Vec2
     defaultContextMenuTarget*: Option[NodeId]
@@ -141,6 +143,7 @@ proc initUiRoot*(): UiRoot =
     scroll: initScrollState(),
     surfaces: initRenderSurfaceRegistry(),
     canvases: initTable[RenderSurfaceId, Canvas2D](),
+    customPaints: initCustomPaintRegistry(),
     defaultContextMenuPosition: vec2(0, 0),
     defaultContextMenuTarget: none(NodeId),
     defaultContextMenuNode: none(NodeId),
@@ -984,6 +987,7 @@ proc disposeSubtree*(
   let componentUnmountCallbacks = root.takeComponentUnmountCallbacks(removed)
   discard root.events.removeEventHandlers(removed)
   root.removeSubtreeStyles(removed)
+  root.customPaints.removeCustomPaintConsumers(removed)
   discard root.craftStyles.removePublicStyleSlots(root.tree, removed)
   root.scroll.clearNodes(removedIds)
 
@@ -1324,6 +1328,114 @@ proc canvasPaintProvider*(root: UiRoot): SurfacePaintProvider =
       result = owner.canvases[id].paintCommands(
         node, bounds, opacity, resolveBounds = false
       )
+
+proc invalidateCustomPaintMaterial*(
+    root: UiRoot;
+    material: string
+): int {.discardable.}
+
+proc registerCustomPaintMaterial*(
+    root: UiRoot;
+    material: string;
+    callback: CustomPaintMaterialProc;
+    stages: set[CustomPaintStage] = {cpsUnderlay, cpsOverlay};
+    replace = false
+): bool {.discardable.} =
+  if root.isNil:
+    raise newException(ValueError, "custom paint UiRoot cannot be nil")
+  result = root.customPaints.registerCustomPaintMaterial(
+    material, callback, stages, replace
+  )
+  if result:
+    discard root.invalidateCustomPaintMaterial(material)
+
+proc invalidateCustomPaintMaterial*(
+    root: UiRoot;
+    material: string
+): int {.discardable.} =
+  ## Repaints current consumers without restyling or relayout.
+  if root.isNil:
+    return
+  for owner in root.customPaints.customPaintConsumers(material):
+    if root.tree.isValid(owner):
+      root.invalidate(owner, {ddPaint})
+      inc result
+
+proc registerCustomPaintMaterialTracked*(
+    root: UiRoot;
+    material: string;
+    callback: CustomPaintMaterialProc;
+    stages: set[CustomPaintStage] = {cpsUnderlay, cpsOverlay};
+    replace = false
+): Option[CustomPaintRegistration] =
+  if root.isNil:
+    raise newException(ValueError, "custom paint UiRoot cannot be nil")
+  result = root.customPaints.registerCustomPaintMaterialTracked(
+    material, callback, stages, replace
+  )
+  if result.isSome:
+    discard root.invalidateCustomPaintMaterial(material)
+
+proc unregisterCustomPaintMaterial*(
+    root: UiRoot;
+    material: string
+): bool {.discardable.} =
+  if root.isNil:
+    return false
+  result = root.customPaints.unregisterCustomPaintMaterial(material)
+  if result:
+    discard root.invalidateCustomPaintMaterial(material)
+
+proc unregisterCustomPaintMaterial*(
+    root: UiRoot;
+    registration: CustomPaintRegistration
+): bool {.discardable.} =
+  if root.isNil:
+    return false
+  result = root.customPaints.unregisterCustomPaintMaterial(registration)
+  if result:
+    discard root.invalidateCustomPaintMaterial(registration.material)
+
+proc hasCustomPaintMaterial*(root: UiRoot; material: string): bool =
+  not root.isNil and root.customPaints.hasCustomPaintMaterial(material)
+
+proc hasCustomPaintRegistration*(
+    root: UiRoot;
+    registration: CustomPaintRegistration
+): bool =
+  not root.isNil and root.customPaints.hasCustomPaintRegistration(registration)
+
+proc customPaintProvider*(root: UiRoot): CustomPaintProvider =
+  if root.isNil:
+    return nil
+  root.customPaints.provider()
+
+proc takeCustomPaintDiagnostics*(root: UiRoot): seq[CustomPaintDiagnostic] =
+  if root.isNil:
+    return
+  root.customPaints.takeCustomPaintDiagnostics()
+
+proc clearCustomPaintDiagnostics*(root: UiRoot) =
+  if not root.isNil:
+    root.customPaints.clearCustomPaintDiagnostics()
+
+proc buildPaintCommands*(
+    root: UiRoot;
+    styles: ResolvedTree;
+    layout: LayoutResult
+): seq[PaintCommand] =
+  ## Connects every UiRoot-owned paint source through one retained paint pass.
+  if root.isNil:
+    return
+  root.customPaints.clearCustomPaintConsumers()
+  buildPaintCommands(
+    root.tree,
+    styles,
+    layout,
+    root.scroll,
+    root.canvasPaintProvider(),
+    root.customPaintProvider()
+  )
 
 proc syncRenderSurfaces*(
     root: UiRoot;

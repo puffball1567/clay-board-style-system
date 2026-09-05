@@ -1,6 +1,8 @@
 import std/options
 
-import clay_board_style_system/core/[declaration, style_value]
+import clay_board_style_system/core/[custom_paint, declaration, raster_surface,
+    style_value]
+import clay_board_style_system/paint/[custom_paint_registry, paint_command]
 import clay_board_style_system/runtime/gpu_canvas
 import clay_board_style_system/runtime/ui_root
 
@@ -23,6 +25,17 @@ type
     attachment*: GpuCanvasHandle
     placement*: GpuVisualLayerPlacement
 
+  GpuPaintMaterialState = ref object
+    canvas: GpuCanvasSurface
+    raster: RasterSurface
+    active: bool
+
+  GpuPaintMaterialHandle* = object
+    ## Backend-neutral Style attachment for one GPU-produced raster material.
+    root {.cursor.}: UiRoot
+    registration: CustomPaintRegistration
+    state: GpuPaintMaterialState
+
 proc valid*(handle: GpuCanvasHandle): bool =
   not handle.canvas.isNil and not handle.canvas.isClosed and handle.raster.valid
 
@@ -34,6 +47,14 @@ proc valid*(handle: GpuVisualLayerHandle): bool =
 
 proc nodeHandle*(handle: GpuVisualLayerHandle): NodeHandle =
   handle.attachment.nodeHandle
+
+proc valid*(handle: GpuPaintMaterialHandle): bool =
+  not handle.root.isNil and not handle.state.isNil and handle.state.active and
+    not handle.state.canvas.isNil and not handle.state.canvas.isClosed and
+    handle.root.hasCustomPaintRegistration(handle.registration)
+
+proc material*(handle: GpuPaintMaterialHandle): string =
+  handle.registration.material
 
 proc queueGpuFrame*(handle: GpuCanvasHandle): bool {.discardable.} =
   ## Queues one bounded GPU-to-raster transfer without blocking the UI thread.
@@ -52,6 +73,74 @@ proc queueGpuFrame*(handle: GpuVisualLayerHandle): bool {.discardable.} =
 
 proc collectGpuFrame*(handle: GpuVisualLayerHandle): bool {.discardable.} =
   handle.attachment.collectGpuFrame()
+
+proc queueGpuFrame*(handle: GpuPaintMaterialHandle): bool {.discardable.} =
+  ## Queues one material update regardless of how many components reference it.
+  if not handle.valid:
+    return false
+  handle.state.canvas.queueGpuCanvasFrame()
+
+proc collectGpuFrame*(handle: GpuPaintMaterialHandle): bool {.discardable.} =
+  ## Invalidates only components that actually consumed this material.
+  if not handle.valid or not handle.state.canvas.collectGpuCanvasFrame():
+    return false
+  discard handle.root.invalidateCustomPaintMaterial(
+    handle.registration.material
+  )
+  true
+
+proc unregister*(handle: var GpuPaintMaterialHandle): bool {.discardable.} =
+  if handle.root.isNil or handle.state.isNil or not handle.state.active:
+    return false
+  result = handle.root.unregisterCustomPaintMaterial(handle.registration)
+  handle.state.active = false
+
+proc registerGpuPaintMaterial*(
+    root: UiRoot;
+    material: string;
+    value: GpuCanvasSurface;
+    stages: set[CustomPaintStage] = {cpsUnderlay, cpsOverlay}
+): GpuPaintMaterialHandle =
+  ## Makes one GPU canvas available to Style without adding layout, hit-test,
+  ## focus, or accessibility nodes. Paint and collection run on the UI thread.
+  if root.isNil:
+    raise newException(ValueError, "GPU paint material UiRoot cannot be nil")
+  if value.isNil or value.isClosed:
+    raise newException(ValueError, "GPU paint material canvas must be open")
+  let state = GpuPaintMaterialState(
+    canvas: value,
+    raster: value.rasterSurface(),
+    active: true
+  )
+  let callback: CustomPaintMaterialProc = proc(
+      request: CustomPaintRequest
+  ): seq[PaintCommand] =
+    if not state.active:
+      return
+    try:
+      result = @[
+        drawRasterSurface(
+          request.owner, state.raster, request.bounds, request.opacity
+        )
+      ]
+    except ValueError:
+      result = @[]
+  let registration = root.registerCustomPaintMaterialTracked(
+    material,
+    callback,
+    stages
+  )
+  if registration.isNone:
+    state.active = false
+    raise newException(
+      ValueError,
+      "GPU paint material name is already registered"
+    )
+  GpuPaintMaterialHandle(
+    root: root,
+    registration: registration.get,
+    state: state
+  )
 
 proc gpuCanvas*(
     root: UiRoot;

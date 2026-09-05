@@ -165,6 +165,10 @@ These properties are native CBSS extensions and are excluded from the MDN-based
 
 | Property | Status | Note |
 | --- | --- | --- |
+| `-cbss-custom-paint-filter` | Computed | Retains a backend-neutral material identifier. Filter composition is a Version 0.7 release gate and currently fails closed at paint resolution. |
+| `-cbss-custom-paint-mask` | Computed | Retains a backend-neutral material identifier. Mask composition is a Version 0.7 release gate and currently fails closed at paint resolution. |
+| `-cbss-custom-paint-overlay` | Runtime | Resolves a registered bounded material after ordinary node content without adding a second input or semantic node. |
+| `-cbss-custom-paint-underlay` | Runtime | Resolves a registered bounded material behind ordinary node content without adding a second input or semantic node. |
 | `scrollbar-visibility` | Runtime | Controls whether retained scrollbars are always visible or visible only while scrolling. |
 
 ## Full Property Inventory

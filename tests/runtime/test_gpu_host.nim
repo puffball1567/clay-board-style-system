@@ -1,7 +1,7 @@
 import std/[math, options, strutils, unittest]
 
-import clay_board_style_system/core/[computed_style, declaration, diagnostics,
-    geometry, node, raster_surface, style_resolver, style_value]
+import clay_board_style_system/core/[computed_style, custom_paint, declaration,
+    diagnostics, geometry, node, raster_surface, style_resolver, style_value]
 import clay_board_style_system/generated/default_properties
 import clay_board_style_system/hit/hit_test
 import clay_board_style_system/layout/layout
@@ -3371,6 +3371,103 @@ suite "GPU canvas composition bridge":
     check not handle.valid
     check not handle.queueGpuFrame()
     check not handle.collectGpuFrame()
+    host.close()
+
+  test "GPU paint material composes through Style without an attachment node":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "gpu-style-material",
+      GpuResourceBudget(
+        persistentBytes: 8,
+        readbackBytesPerFrame: 4,
+        workUnitsPerFrame: 2,
+        maxResources: 2
+      )
+    )
+    var config = defaultGpuCanvasConfig(1, 1)
+    config.readbackSlots = 1
+    let canvas = host.newGpuCanvasSurface(namespace, config)
+    let ui = initUiRoot()
+    let button = ui.button(
+      "Render",
+      style = uiStyle([
+        decl("width", px(96)),
+        decl("height", px(36)),
+        decl("overflow", keyword("hidden")),
+        customPaint("gpu-accent", cpsUnderlay)
+      ])
+    )
+    let nodeCount = ui.tree.nodes.len
+    var material = ui.registerGpuPaintMaterial("gpu-accent", canvas)
+
+    check material.valid
+    check material.material == "gpu-accent"
+    check ui.tree.nodes.len == nodeCount
+
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(
+      ui.tree, ui.styleSheets(), defaultProperties(), diagnostics
+    )
+    let layout = computeLayout(ui.tree, styles, size(160, 80))
+    let commands = ui.buildPaintCommands(styles, layout)
+    var rasterIndex = -1
+    var textIndex = -1
+    for index, command in commands:
+      if command.kind == pcDrawRasterSurface:
+        rasterIndex = index
+        check command.owner == some(button.container.id)
+      elif command.kind == pcDrawText and command.node == button.labelNode.id:
+        textIndex = index
+
+    check not diagnostics.hasErrors
+    check rasterIndex >= 0
+    check textIndex >= 0
+    check rasterIndex < textIndex
+    check ui.takeCustomPaintDiagnostics().len == 0
+
+    discard ui.consumeInvalidation()
+    let frame = host.beginGpuFrame()
+    check material.queueGpuFrame()
+    check not material.queueGpuFrame()
+    host.endGpuFrame(frame)
+    check not material.collectGpuFrame()
+    check not ui.hasPendingInvalidation
+
+    context.readbackReady = true
+    check material.collectGpuFrame()
+    let invalidation = ui.consumeInvalidation()
+    check invalidation.domains == {ddPaint}
+    check invalidation.roots == @[button.container.id]
+
+    check material.unregister()
+    check not material.valid
+    check not material.unregister()
+    check canvas.closeGpuCanvasSurface()
+    host.close()
+
+  test "GPU paint material rejects duplicate names and unsupported stages":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "gpu-style-material-invalid",
+      GpuResourceBudget(persistentBytes: 8, maxResources: 2)
+    )
+    var config = defaultGpuCanvasConfig(1, 1)
+    config.readbackSlots = 1
+    let canvas = host.newGpuCanvasSurface(namespace, config)
+    let ui = initUiRoot()
+    var material = ui.registerGpuPaintMaterial("gpu-accent", canvas)
+
+    expect ValueError:
+      discard ui.registerGpuPaintMaterial("gpu-accent", canvas)
+    expect ValueError:
+      discard ui.registerGpuPaintMaterial(
+        "gpu-mask", canvas, {cpsMask}
+      )
+
+    check material.unregister()
+    check canvas.closeGpuCanvasSurface()
     host.close()
 
   test "UI attachment rejects nil and closed GPU canvases":
