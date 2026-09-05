@@ -740,6 +740,21 @@ suite "GPU host lifecycle":
   test "failed restoration preserves device-lost state and backend information":
     let context = newContext()
     let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("not-restored", standardBudget())
+    var handlerCalls = 0
+    host.setGpuNamespaceRestoreHandler(namespace,
+      proc(
+          restoringHost: GpuHost;
+          restoringNamespace: GpuNamespaceId;
+          previousGeneration, generation: uint64
+      ): GpuNamespaceRestoreStatus {.raises: [].} =
+        discard restoringHost
+        discard restoringNamespace
+        discard previousGeneration
+        discard generation
+        inc handlerCalls
+        gnrsRestored
+    )
     let originalInfo = host.backendInfo
     check host.markGpuDeviceLost()
     context.restoreStatus = gbsFailed
@@ -747,6 +762,242 @@ suite "GPU host lifecycle":
       host.restoreGpuHost()
     check host.state == ghsDeviceLost
     check host.backendInfo == originalInfo
+    check handlerCalls == 0
+    host.close()
+
+  test "namespace restoration runs in deterministic order and replaces stale resources":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let first = host.createGpuNamespace("first", standardBudget())
+    let second = host.createGpuNamespace("second", standardBudget())
+    let stale = host.reserveGpuResource(first, grkTexture, 128)
+    var restoreOrder: seq[uint64]
+    var firstReplacement, secondReplacement: GpuResourceHandle
+    var observedPrevious, observedCurrent: uint64
+    var crossNamespaceRejected = false
+
+    host.setGpuNamespaceRestoreHandler(first,
+      proc(
+          restoringHost: GpuHost;
+          namespace: GpuNamespaceId;
+          previousGeneration, generation: uint64
+      ): GpuNamespaceRestoreStatus {.raises: [].} =
+        restoreOrder.add namespace.namespaceIdValue()
+        observedPrevious = previousGeneration
+        observedCurrent = generation
+        try:
+          firstReplacement = restoringHost.reserveGpuResource(
+            namespace,
+            grkTexture,
+            128
+          )
+          gnrsRestored
+        except CatchableError:
+          gnrsFailed
+    )
+    host.setGpuNamespaceRestoreHandler(second,
+      proc(
+          restoringHost: GpuHost;
+          namespace: GpuNamespaceId;
+          previousGeneration, generation: uint64
+      ): GpuNamespaceRestoreStatus {.raises: [].} =
+        discard previousGeneration
+        discard generation
+        restoreOrder.add namespace.namespaceIdValue()
+        try:
+          discard restoringHost.reserveGpuResource(first, grkBuffer, 1)
+        except CatchableError:
+          crossNamespaceRejected = true
+        try:
+          secondReplacement = restoringHost.reserveGpuResource(
+            namespace,
+            grkBuffer,
+            64
+          )
+          gnrsRestored
+        except CatchableError:
+          gnrsFailed
+    )
+
+    check host.markGpuDeviceLost()
+    let report = host.restoreGpuHostWithReport()
+
+    check report.previousGeneration == 1
+    check report.generation == 2
+    check observedPrevious == report.previousGeneration
+    check observedCurrent == report.generation
+    check restoreOrder == @[
+      first.namespaceIdValue(),
+      second.namespaceIdValue()
+    ]
+    check report.namespaces.len == 2
+    check report.namespaces[0].namespace == first
+    check report.namespaces[0].status == gnrsRestored
+    check report.namespaces[1].namespace == second
+    check report.namespaces[1].status == gnrsRestored
+    check not host.isGpuResourceLive(stale)
+    check host.isGpuResourceLive(firstReplacement)
+    check host.isGpuResourceLive(secondReplacement)
+    check crossNamespaceRejected
+    check host.gpuNamespaceUsage(first).persistentBytes == 128
+    check host.gpuNamespaceUsage(second).persistentBytes == 64
+    host.close()
+
+  test "failed namespace restoration rolls back only its partial resources":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let skipped = host.createGpuNamespace("skipped", standardBudget())
+    let failed = host.createGpuNamespace("failed", standardBudget())
+    let successful = host.createGpuNamespace("successful", standardBudget())
+    var failedPartial, successfulReplacement: GpuResourceHandle
+
+    host.setGpuNamespaceRestoreHandler(failed,
+      proc(
+          restoringHost: GpuHost;
+          namespace: GpuNamespaceId;
+          previousGeneration, generation: uint64
+      ): GpuNamespaceRestoreStatus {.raises: [].} =
+        discard previousGeneration
+        discard generation
+        try:
+          failedPartial = restoringHost.createGpuTexture(
+            namespace,
+            textureDescriptor(width = 4, height = 4, label = "partial")
+          )
+        except CatchableError:
+          return gnrsFailed
+        gnrsFailed
+    )
+    host.setGpuNamespaceRestoreHandler(successful,
+      proc(
+          restoringHost: GpuHost;
+          namespace: GpuNamespaceId;
+          previousGeneration, generation: uint64
+      ): GpuNamespaceRestoreStatus {.raises: [].} =
+        discard previousGeneration
+        discard generation
+        try:
+          successfulReplacement = restoringHost.createGpuTexture(
+            namespace,
+            textureDescriptor(width = 4, height = 4, label = "restored")
+          )
+          gnrsRestored
+        except CatchableError:
+          gnrsFailed
+    )
+
+    check host.markGpuDeviceLost()
+    let report = host.restoreGpuHostWithReport()
+
+    check report.namespaces.len == 3
+    check report.namespaces[0].namespace == skipped
+    check report.namespaces[0].status == gnrsSkipped
+    check report.namespaces[1].namespace == failed
+    check report.namespaces[1].status == gnrsFailed
+    check report.namespaces[2].namespace == successful
+    check report.namespaces[2].status == gnrsRestored
+    check not host.isGpuResourceLive(failedPartial)
+    check host.gpuNamespaceUsage(failed).resourceCount == 0
+    check host.gpuNamespaceUsage(failed).persistentBytes == 0
+    check host.isGpuResourceLive(successfulReplacement)
+    check context.textureCreates == 2
+    check context.resourceDestroys == 1
+    host.close()
+
+  test "restoration callbacks cannot mutate host structure or start work":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let namespace = host.createGpuNamespace("guarded", standardBudget())
+    var rejectedOperations = 0
+
+    host.setGpuNamespaceRestoreHandler(namespace,
+      proc(
+          restoringHost: GpuHost;
+          restoringNamespace: GpuNamespaceId;
+          previousGeneration, generation: uint64
+      ): GpuNamespaceRestoreStatus {.raises: [].} =
+        discard previousGeneration
+        discard generation
+        try:
+          discard restoringHost.createGpuNamespace("nested", standardBudget())
+        except CatchableError:
+          inc rejectedOperations
+        try:
+          discard restoringHost.closeGpuNamespace(restoringNamespace)
+        except CatchableError:
+          inc rejectedOperations
+        try:
+          restoringHost.setGpuNamespaceRestoreHandler(restoringNamespace, nil)
+        except CatchableError:
+          inc rejectedOperations
+        try:
+          discard restoringHost.beginGpuFrame()
+        except CatchableError:
+          inc rejectedOperations
+        try:
+          restoringHost.resizeGpuHost(640, 480)
+        except CatchableError:
+          inc rejectedOperations
+        try:
+          discard restoringHost.markGpuDeviceLost()
+        except CatchableError:
+          inc rejectedOperations
+        try:
+          restoringHost.close()
+        except CatchableError:
+          inc rejectedOperations
+        gnrsRestored
+    )
+
+    check host.markGpuDeviceLost()
+    let report = host.restoreGpuHostWithReport()
+    check report.namespaces.len == 1
+    check report.namespaces[0].status == gnrsRestored
+    check rejectedOperations == 7
+    check host.state == ghsReady
+    check context.resizes == 0
+    check context.begins == 0
+    host.close()
+
+  test "device loss during a restoration callback can be retried cleanly":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("retry", standardBudget())
+    var replacement: GpuResourceHandle
+
+    host.setGpuNamespaceRestoreHandler(namespace,
+      proc(
+          restoringHost: GpuHost;
+          restoringNamespace: GpuNamespaceId;
+          previousGeneration, generation: uint64
+      ): GpuNamespaceRestoreStatus {.raises: [].} =
+        discard previousGeneration
+        discard generation
+        try:
+          replacement = restoringHost.createGpuTexture(
+            restoringNamespace,
+            textureDescriptor(width = 4, height = 4, label = "retry")
+          )
+          gnrsRestored
+        except CatchableError:
+          gnrsFailed
+    )
+
+    check host.markGpuDeviceLost()
+    context.createTextureStatus = gbsDeviceLost
+    expect GpuHostError:
+      discard host.restoreGpuHostWithReport()
+    check host.state == ghsDeviceLost
+    check host.generation == 3
+    check not host.isGpuResourceLive(replacement)
+
+    context.createTextureStatus = gbsOk
+    let report = host.restoreGpuHostWithReport()
+    check report.previousGeneration == 2
+    check report.generation == 3
+    check report.namespaces.len == 1
+    check report.namespaces[0].status == gnrsRestored
+    check host.isGpuResourceLive(replacement)
     host.close()
 
   test "frames are ordered and nested or stale tokens are rejected":

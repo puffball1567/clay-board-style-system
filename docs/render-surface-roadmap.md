@@ -423,6 +423,9 @@ readback texture and collected through a bounded asynchronous handle without
 exposing bgfx resources. The host retains destination memory and the source
 dependency until the caller takes the completed result; namespace closure,
 borrowed-host detach, device loss, and frame budgets have explicit behavior.
+Namespace owners can register deterministic restoration handlers. Old
+generation handles never revive, failed handlers have their partial resources
+rolled back, and successful owners remain available independently.
 This establishes the portable `GPU -> RasterSurface` transfer boundary used by
 the first GPU Canvas path. `GpuCanvasSurface` now composes that boundary into a
 normal retained surface with a bounded asynchronous readback ring, ordered
@@ -430,8 +433,10 @@ collection, latest-frame coalescing, backpressure, and explicit R8/RGBA8/BGRA8
 plus alpha-mode normalization. `gpuVisualLayer` additionally attaches this
 surface as a bounded underlay or overlay of an ordinary component without
 duplicating input or semantic ownership. Public native SDL-window handoff,
-storage-buffer bindings, zero-copy shared textures,
-restoration, and visible real-GPU conformance remain release gates below.
+zero-copy shared textures, production-adapter device recreation, and visible
+real-GPU conformance remain release gates below. The current bgfx adapter fails
+closed for in-place restoration instead of relying on an unsafe runtime restart
+sequence.
 
 ### Typed Shader Custom Style Painting
 

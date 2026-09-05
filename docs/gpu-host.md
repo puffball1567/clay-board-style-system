@@ -25,6 +25,48 @@ The host is UI-thread-owned. Lifecycle, frame, namespace, and resource-accountin
 operations run on the presentation thread. Worker threads should return
 immutable command or data buffers to that thread instead of mutating a host.
 
+### Device Loss and Namespace Restoration
+
+Device loss invalidates every retained handle immediately. Old handles never
+become live again, even when the backend restores successfully. A resource
+owner that can rebuild its state registers one restoration handler on its
+namespace:
+
+```nim
+host.setGpuNamespaceRestoreHandler(resources,
+  proc(
+      restoringHost: GpuHost;
+      namespace: GpuNamespaceId;
+      previousGeneration, generation: uint64
+  ): GpuNamespaceRestoreStatus {.raises: [].} =
+    discard previousGeneration
+    discard generation
+    try:
+      texture = restoringHost.createGpuTexture(namespace, textureDescription)
+      gnrsRestored
+    except CatchableError:
+      gnrsFailed
+)
+
+let report = host.restoreGpuHostWithReport()
+```
+
+Handlers run in ascending namespace identifier order after backend restoration.
+They may recreate retained resources in their own namespace; cross-namespace
+resource mutation is rejected while restoration is active. Host closure,
+namespace creation or closure, handler replacement, frame submission, and
+resize are rejected while restoration is active. If a handler reports
+`gnrsFailed` or `gnrsSkipped`, CBSS destroys resources created by that handler
+and resets that namespace's accounting. Other namespaces continue restoring,
+and the returned `GpuRestoreReport` records every result.
+
+Backend restoration remains an explicit capability. The current bgfx adapter
+reports it as unsupported rather than attempting an unsafe `shutdown`/`init`
+cycle. Applications using that adapter must recreate the host and its resources
+at their outer window/runtime boundary after device loss. Namespace handlers
+provide the deterministic in-place rebuild contract for adapters that support
+restoration.
+
 ## Resource Namespaces
 
 Independent Nim rendering and compute libraries register a unique, bounded
@@ -570,9 +612,11 @@ nimble runBgfxHostDemo
 ```
 
 Zero-copy external targets, a public native-window helper, real-renderer output
-verification, and device restoration are still
-required before the GPU profile is release-complete. Portable GPU Canvas
-composition and ordinary-component underlay/overlay attachment are implemented.
+verification, and in-place restoration in a production GPU adapter are still
+required before the GPU profile is release-complete. The backend-neutral host
+now provides deterministic namespace restoration and failed-owner rollback.
+Portable GPU Canvas composition and ordinary-component underlay/overlay
+attachment are implemented.
 
 The NOOP fixture validates that native resource calls coexist with host
 ownership and budget accounting. Because the NOOP renderer does not advertise
