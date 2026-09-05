@@ -2252,8 +2252,15 @@ RGBA16F/RGBA32F textures plus typed compute storage buffers with bounded,
 stage-checked read/write access. Device-loss recovery now includes deterministic
 per-namespace rebuild handlers, generation reporting, and rollback of partial
 resources from failed owners. External targets, production-adapter device
-recreation, declarative mask and filter stages, and broader real-GPU
-qualification remain open Version 0.7 work.
+recreation, declarative mask and filter composition, and broader real-GPU
+qualification remain open Version 0.7 work. Backend-neutral named Custom Paint
+materials now connect ordinary Style declarations to bounded underlay and
+overlay command streams without adding nodes. `GpuCanvasSurface` can use that
+same contract, records its actual component consumers, and invalidates only
+those owners when a completed GPU frame is collected. See
+[Custom Paint](custom-paint.md). The first provider registry is Nim-native;
+an opaque, versioned C ABI provider boundary remains required before the
+Version 0.7 release.
 
 The Version 0.7 drawing baseline is intentionally usable before the complete
 Version 0.9 gesture layer. Mouse input and the existing pen metadata, pressure,

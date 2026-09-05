@@ -192,6 +192,7 @@ task testMotionAsan, "Run retained runtime tests under AddressSanitizer":
       ("validation_controls", "tests/runtime/test_validation_controls.nim"),
       ("form", "tests/runtime/test_form.nim"),
       ("text_input", "tests/runtime/test_text_input.nim"),
+      ("custom_paint", "tests/runtime/test_custom_paint.nim"),
       ("gpu_host", "tests/runtime/test_gpu_host.nim"),
       ("raster_surface", "tests/core/test_raster_surface.nim")
     ]:
@@ -217,6 +218,7 @@ task testUbsan, "Run numeric, layout, transform, and motion tests under Undefine
       ("flex", "tests/layout/test_flex.nim"),
       ("transform_geometry", "tests/layout/test_transform_geometry.nim"),
       ("gpu_host", "tests/runtime/test_gpu_host.nim"),
+      ("custom_paint", "tests/runtime/test_custom_paint.nim"),
       ("raster_surface", "tests/core/test_raster_surface.nim"),
       ("declarative_transition", "tests/runtime/test_declarative_transition.nim"),
       ("declarative_keyframes", "tests/runtime/test_declarative_keyframes.nim"),
@@ -254,6 +256,7 @@ task testLsan, "Run retained lifecycle tests under LeakSanitizer on Linux":
         ("validation_controls", "tests/runtime/test_validation_controls.nim"),
         ("form", "tests/runtime/test_form.nim"),
         ("text_input", "tests/runtime/test_text_input.nim"),
+        ("custom_paint", "tests/runtime/test_custom_paint.nim"),
         ("gpu_host", "tests/runtime/test_gpu_host.nim"),
         ("raster_surface", "tests/core/test_raster_surface.nim")
       ]:

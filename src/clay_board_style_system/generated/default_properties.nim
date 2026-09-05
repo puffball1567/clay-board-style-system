@@ -5,6 +5,7 @@ import ../properties/[
   border,
   columns,
   color,
+  custom_paint,
   effects,
   font_size,
   image,
@@ -23,6 +24,10 @@ import ../properties/[
 
 proc defaultProperties*(): PropertyRegistry =
   result = initPropertyRegistry()
+  result.registerProperty(customPaintUnderlayPropertyImpl)
+  result.registerProperty(customPaintOverlayPropertyImpl)
+  result.registerProperty(customPaintMaskPropertyImpl)
+  result.registerProperty(customPaintFilterPropertyImpl)
   result.registerProperty(animationProperty)
   result.registerProperty(animationNameProperty)
   result.registerProperty(animationDurationProperty)

@@ -8,6 +8,7 @@ import clay_board_style_system/core/[
   color_parser,
   color_value,
   computed_style,
+  custom_paint,
   declaration,
   diagnostics,
   geometry,
@@ -32,7 +33,8 @@ import clay_board_style_system/layout/scrollbar_geometry
 import clay_board_style_system/hit/hit_test
 import clay_board_style_system/input/events
 import clay_board_style_system/input/pointer
-import clay_board_style_system/paint/[paint, paint_command, path_geometry]
+import clay_board_style_system/paint/[custom_paint_registry, paint,
+    paint_command, path_geometry]
 import clay_board_style_system/runtime/[accessibility, button, checkbox,
     animation_clock, canvas, component, declarative_keyframes,
     declarative_transition, details, dialog,
@@ -67,6 +69,7 @@ export color_mix_parser
 export color_parser
 export color_value
 export computed_style
+export custom_paint
 export declaration
 export diagnostics
 export geometry
@@ -93,6 +96,7 @@ export pointer
 export paint
 export paint_command
 export path_geometry
+export custom_paint_registry
 export accessibility
 export animation_clock
 export declarative_keyframes
