@@ -4,7 +4,7 @@ import ../../assets/asset_resolver
 import ../../core/[color, computed_style, geometry, gradient_sampling, node,
     raster_surface]
 import ../../input/events
-import ../../paint/[paint_command, path_geometry]
+import ../../paint/[gpu_direct_compositor, paint_command, path_geometry]
 import ../../text/[cosmic_text_engine, font_registry, text_engine]
 import ../../vendor/sdl3
 import ./config
@@ -97,6 +97,9 @@ type
     roundedTextureBytes*, shadowTextureBytes*: uint64
     transformTextureBytes*: uint64
     rasterFullUploads*, rasterPartialUploads*: uint64
+
+  Sdl3GpuDirectCompositionStats* = object
+    noFrame*, presented*, retry*, unsupported*, failed*: uint32
 
   Sdl3ClipRegion = object
     rect: Rect
@@ -253,6 +256,8 @@ type
     cursorCache: array[CursorKind, pointer]
     ownsCursor: array[CursorKind, bool]
     activeCursor: CursorKind
+    gpuDirectCompositor: GpuDirectCompositeProc
+    gpuDirectCompositionStats: Sdl3GpuDirectCompositionStats
 
 const DefaultWheelStepPixels* = 54.0'f32
 
@@ -270,6 +275,43 @@ proc cacheUsage*(target: Sdl3Renderer): Sdl3CacheUsage =
     rasterFullUploads: target.rasterFullUploads,
     rasterPartialUploads: target.rasterPartialUploads
   )
+
+proc setGpuDirectCompositor*(
+    target: var Sdl3Renderer;
+    compositor: GpuDirectCompositeProc
+) =
+  ## Installs the backend-specific bridge used by pcDrawGpuDirectSurface.
+  ## The callback is invoked while the command's SDL clip and layer are active.
+  target.gpuDirectCompositor = compositor
+
+proc clearGpuDirectCompositor*(target: var Sdl3Renderer) =
+  target.gpuDirectCompositor = nil
+
+proc gpuDirectCompositionStats*(
+    target: Sdl3Renderer
+): Sdl3GpuDirectCompositionStats =
+  target.gpuDirectCompositionStats
+
+proc resetGpuDirectCompositionStats(target: var Sdl3Renderer) =
+  target.gpuDirectCompositionStats = Sdl3GpuDirectCompositionStats()
+
+proc renderGpuDirectSurface(
+    target: var Sdl3Renderer;
+    command: PaintCommand
+): bool =
+  let status = command.compositeGpuDirectSurface(target.gpuDirectCompositor)
+  case status
+  of gdcsNoFrame:
+    inc target.gpuDirectCompositionStats.noFrame
+  of gdcsPresented:
+    inc target.gpuDirectCompositionStats.presented
+    result = true
+  of gdcsRetry:
+    inc target.gpuDirectCompositionStats.retry
+  of gdcsUnsupported:
+    inc target.gpuDirectCompositionStats.unsupported
+  of gdcsFailed:
+    inc target.gpuDirectCompositionStats.failed
 
 proc indexKey(index: var Table[Hash, seq[int]]; key: string; entryIndex: int) =
   index.mgetOrPut(hash(key), @[]).add entryIndex
@@ -602,6 +644,7 @@ proc cancelNativeMouseCapture(target: var Sdl3Renderer) =
   target.nativeMouseCaptured = false
 
 proc close*(target: var Sdl3Renderer) =
+  target.clearGpuDirectCompositor()
   target.cancelNativeMouseCapture()
   target.destroyCursorCache()
   target.destroyTextCache()
@@ -3389,6 +3432,7 @@ proc evictImageCacheIfNeeded(target: var Sdl3Renderer) =
 
 proc render*(target: var Sdl3Renderer; commands: openArray[PaintCommand]; clearColor = rgb(1, 1, 1)) =
   inc target.frameId
+  target.resetGpuDirectCompositionStats()
   target.updateLogicalPresentation()
   target.renderer.setColor(clearColor)
   discard SDL3.renderClear(target.renderer)
@@ -3454,7 +3498,8 @@ proc render*(target: var Sdl3Renderer; commands: openArray[PaintCommand]; clearC
       transformLayers.markTransformContent()
       target.drawRasterSurfaceTexture(command, prepared.roundedImageClipStack)
     of pcDrawGpuDirectSurface:
-      discard # Requires a compositor sharing the producer's GPU device.
+      if target.renderGpuDirectSurface(command):
+        transformLayers.markTransformContent()
 
   target.closeTransformLayers(transformLayers)
 
@@ -3596,6 +3641,7 @@ proc render*(
     clearColor = rgb(1, 1, 1)
 ) =
   inc target.frameId
+  target.resetGpuDirectCompositionStats()
   target.updateLogicalPresentation()
   target.renderer.setColor(clearColor)
   discard SDL3.renderClear(target.renderer)
@@ -3661,7 +3707,8 @@ proc render*(
       transformLayers.markTransformContent()
       target.drawRasterSurfaceTexture(command, prepared.roundedImageClipStack)
     of pcDrawGpuDirectSurface:
-      discard # Requires a compositor sharing the producer's GPU device.
+      if target.renderGpuDirectSurface(command):
+        transformLayers.markTransformContent()
 
   target.closeTransformLayers(transformLayers)
 
@@ -3755,7 +3802,8 @@ proc renderPreparedCommand(
         command, localPrepared.roundedImageClipStack
       )
   of pcDrawGpuDirectSurface:
-    discard # Requires a compositor sharing the producer's GPU device.
+    if drawCommand and target.renderGpuDirectSurface(command):
+      transformLayers.markTransformContent()
 
 proc renderCommandPass(
     target: var Sdl3Renderer;
@@ -3822,6 +3870,7 @@ proc renderLayered*(
     return
 
   inc target.frameId
+  target.resetGpuDirectCompositionStats()
   target.updateLogicalPresentation()
 
   if rebuildStatic:

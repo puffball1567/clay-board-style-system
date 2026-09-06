@@ -2,6 +2,7 @@ import std/[math, options, os, unittest]
 
 import clay_board_style_system/backends/sdl3/renderer
 import clay_board_style_system/core/[color, geometry, node, raster_surface]
+import clay_board_style_system/paint/gpu_direct_compositor
 import clay_board_style_system/paint/paint_command
 import clay_board_style_system/runtime/canvas
 import clay_board_style_system/text/[cosmic_text_engine, font_registry]
@@ -302,3 +303,58 @@ suite "SDL3 transform rendering":
     let emptyCopyFrame = renderer.capturedFrame().get
     check emptyCopyFrame.pixel(20, 15) == (0'u8, 0'u8, 0'u8)
     check emptyCopyFrame.pixel(5, 15).b > 240
+
+  test "GPU direct commands use the configured compositor on every render path":
+    let previousDriver = getEnv("SDL_VIDEODRIVER")
+    putEnv("SDL_VIDEODRIVER", "dummy")
+    defer:
+      if previousDriver.len > 0:
+        putEnv("SDL_VIDEODRIVER", previousDriver)
+      else:
+        delEnv("SDL_VIDEODRIVER")
+
+    var renderer = initSdl3Renderer("CBSS GPU compositor test", 40, 30, false)
+    defer: renderer.close()
+    let directCommand = PaintCommand(
+      kind: pcDrawGpuDirectSurface,
+      owner: some(NodeId(5)),
+      gpuDirectSurface: nil,
+      gpuSurfaceRect: rect(2, 3, 20, 10),
+      gpuSurfaceOpacity: 0.75'f32
+    )
+
+    renderer.render([directCommand], rgb(0, 0, 0))
+    check renderer.gpuDirectCompositionStats() ==
+      Sdl3GpuDirectCompositionStats(unsupported: 1)
+
+    var callbackCalls = 0
+    renderer.setGpuDirectCompositor(
+      proc(request: GpuDirectCompositeRequest): GpuDirectCompositeStatus =
+      discard request
+      inc callbackCalls
+      gdcsPresented
+    )
+    renderer.render(
+      [directCommand],
+      CosmicTextEngine(),
+      initFontRegistry(),
+      rgb(0, 0, 0)
+    )
+    check callbackCalls == 0
+    check renderer.gpuDirectCompositionStats() ==
+      Sdl3GpuDirectCompositionStats(noFrame: 1)
+
+    renderer.renderLayered(
+      [directCommand],
+      CosmicTextEngine(),
+      initFontRegistry(),
+      rgb(0, 0, 0),
+      dynamicNodes = [NodeId(5)]
+    )
+    check callbackCalls == 0
+    check renderer.gpuDirectCompositionStats() ==
+      Sdl3GpuDirectCompositionStats(noFrame: 1)
+
+    renderer.render([fillRect(rect(0, 0, 1, 1), rgb(1, 0, 0))])
+    check renderer.gpuDirectCompositionStats() ==
+      Sdl3GpuDirectCompositionStats()
