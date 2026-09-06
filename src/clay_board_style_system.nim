@@ -33,15 +33,16 @@ import clay_board_style_system/layout/scrollbar_geometry
 import clay_board_style_system/hit/hit_test
 import clay_board_style_system/input/events
 import clay_board_style_system/input/pointer
-import clay_board_style_system/paint/[custom_paint_registry, paint,
-    paint_command, path_geometry]
+import clay_board_style_system/paint/[custom_paint_registry,
+    gpu_direct_compositor, paint, paint_command, path_geometry]
 import clay_board_style_system/runtime/[accessibility, button, checkbox,
     animation_clock, canvas, component, declarative_keyframes,
     declarative_transition, details, dialog,
     fieldset, focus, form,
     file_input, frame_scheduler, gpu_host, gpu_shader_builder,
     gpu_shader_package, image,
-    gpu_canvas, gpu_canvas_ui,
+    gpu_canvas, gpu_canvas_ui, gpu_direct_surface, gpu_direct_surface_ui,
+    gpu_display_surface, gpu_display_surface_ui,
     invalidation, label, link, navigation, navigation_focus,
     navigation_transition, navigation_screen_host, platform_links, progress,
     providers, radio, render_surface, select_box, signal, slider, state_runtime,
@@ -97,6 +98,7 @@ export paint
 export paint_command
 export path_geometry
 export custom_paint_registry
+export gpu_direct_compositor
 export accessibility
 export animation_clock
 export declarative_keyframes
@@ -117,6 +119,10 @@ export gpu_shader_builder
 export gpu_shader_package
 export gpu_canvas
 export gpu_canvas_ui
+export gpu_direct_surface
+export gpu_direct_surface_ui
+export gpu_display_surface
+export gpu_display_surface_ui
 export image
 export invalidation
 export label

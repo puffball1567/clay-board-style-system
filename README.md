@@ -292,7 +292,9 @@ Version 0.6.0 is a developer preview. Public APIs may change before 1.0.
   assistive-technology validation remain incomplete.
 - Remaining property-specific percentage and intrinsic-sizing combinations,
   inline rich text, additional declarative motion values, filters, 3D
-  transforms, CPU effects, and GPU Canvas are roadmap work. Paint transitions
+  transforms, CPU effects, and production GPU direct composition are roadmap
+  work. Portable GPU Canvas readback and the backend-neutral direct-surface
+  contract are implemented. Paint transitions
   and multiple named keyframes support opacity, foreground/background colors,
   and typed 2D transforms with CSS-like longhand list cycling.
 - CBSS intentionally does not reproduce DOM selectors, browser quirks, legacy
@@ -404,6 +406,7 @@ Rust-native ownership and error handling.
 | Canvas and custom drawing | [Render Surfaces](docs/render-surfaces.md) |
 | Style-owned underlay and overlay materials | [Custom Paint](docs/custom-paint.md) |
 | Optional GPU ownership and budgets | [GPU Host](docs/gpu-host.md) |
+| Direct GPU display and readback fallback | [GPU Display Surfaces](docs/gpu-direct-surfaces.md) |
 | Typed GPU shaders and build-only packaging | [GPU Shaders](docs/gpu-shaders.md) |
 | SDL3, CPU vector, bgfx, and color management | [Native Rendering Stack](docs/native-rendering-stack.md) |
 | Optional platform primitive candidates | [Platform Primitives](docs/platform-primitives.md) |

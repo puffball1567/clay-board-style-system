@@ -1,4 +1,4 @@
-import std/[math, options, strutils, unittest]
+import std/[math, options, sequtils, strutils, unittest]
 
 import clay_board_style_system/core/[computed_style, custom_paint, declaration,
     diagnostics, geometry, node, raster_surface, style_resolver, style_value]
@@ -6,9 +6,13 @@ import clay_board_style_system/generated/default_properties
 import clay_board_style_system/hit/hit_test
 import clay_board_style_system/layout/layout
 import clay_board_style_system/paint/[paint, paint_command]
+import clay_board_style_system/paint/gpu_direct_compositor
 import clay_board_style_system/runtime/button
 import clay_board_style_system/runtime/gpu_canvas
 import clay_board_style_system/runtime/gpu_canvas_ui
+import clay_board_style_system/runtime/gpu_direct_surface
+import clay_board_style_system/runtime/gpu_display_surface
+import clay_board_style_system/runtime/gpu_display_surface_ui
 import clay_board_style_system/runtime/gpu_host
 import clay_board_style_system/runtime/[invalidation, ui_root]
 
@@ -91,6 +95,11 @@ type MockGpuContext = ref object of GpuBackendContext
   readbackSeed: int
   copySupported: bool
   readbackSupported: bool
+  directTextureSupported: bool
+  directRenderTargetSupported: bool
+  directComputeOutputSupported: bool
+  directFormats: set[GpuTextureFormat]
+  maxDirectBuffers: uint8
   lastSubmissionResources: seq[uint64]
   destroyedResources: seq[uint64]
   width, height: uint32
@@ -112,6 +121,11 @@ proc openOwned(
     computeSupported: true,
     textureCopySupported: state.copySupported,
     textureReadbackSupported: state.readbackSupported,
+    directTexturePresentationSupported: state.directTextureSupported,
+    directRenderTargetPresentationSupported: state.directRenderTargetSupported,
+    directComputeOutputPresentationSupported: state.directComputeOutputSupported,
+    directPresentationFormats: state.directFormats,
+    maxDirectPresentationBuffers: state.maxDirectBuffers,
     maxTextureSize: 8192
   )
   state.openStatus
@@ -128,7 +142,12 @@ proc attachBorrowed(
   info = GpuBackendInfo(
     rendererName: "mock-borrowed",
     textureCopySupported: state.copySupported,
-    textureReadbackSupported: state.readbackSupported
+    textureReadbackSupported: state.readbackSupported,
+    directTexturePresentationSupported: state.directTextureSupported,
+    directRenderTargetPresentationSupported: state.directRenderTargetSupported,
+    directComputeOutputPresentationSupported: state.directComputeOutputSupported,
+    directPresentationFormats: state.directFormats,
+    maxDirectPresentationBuffers: state.maxDirectBuffers
   )
   state.openStatus
 
@@ -486,6 +505,20 @@ proc newContext(): MockGpuContext =
 proc presentationConfig(): GpuHostConfig =
   GpuHostConfig(width: 1280, height: 720, resetFlags: 7, presentation: true)
 
+proc enableDirectPresentation(
+    context: MockGpuContext;
+    formats: set[GpuTextureFormat] = {gtfRgba8};
+    maxBuffers = 3'u8;
+    textures = true;
+    renderTargets = true;
+    computeOutput = true
+) =
+  context.directTextureSupported = textures
+  context.directRenderTargetSupported = renderTargets
+  context.directComputeOutputSupported = computeOutput
+  context.directFormats = formats
+  context.maxDirectBuffers = maxBuffers
+
 proc standardBudget(): GpuResourceBudget =
   GpuResourceBudget(
     persistentBytes: 1024,
@@ -736,6 +769,24 @@ suite "GPU host lifecycle":
       discard openGpuHost(context.backend, ghoOwned)
     check context.ownedOpens == 1
     check context.ownedCloses == 1
+
+  test "inconsistent direct presentation capabilities close the opened backend":
+    let owned = newContext()
+    owned.directFormats = {gtfRgba8}
+    owned.maxDirectBuffers = 2
+    expect GpuHostError:
+      discard openGpuHost(owned.backend, ghoOwned)
+    check owned.ownedOpens == 1
+    check owned.ownedCloses == 1
+
+    let borrowed = newContext()
+    borrowed.directTextureSupported = true
+    borrowed.directFormats = {gtfRgba8}
+    borrowed.maxDirectBuffers = 1
+    expect GpuHostError:
+      discard openGpuHost(borrowed.backend, ghoBorrowed)
+    check borrowed.borrowedAttaches == 1
+    check borrowed.borrowedDetaches == 1
 
   test "failed restoration preserves device-lost state and backend information":
     let context = newContext()
@@ -3958,4 +4009,498 @@ suite "GPU resource namespace budgets":
         repeat('x', maxGpuNamespaceNameBytes + 1),
         standardBudget()
       )
+    host.close()
+
+suite "GPU direct surface lifecycle":
+
+  test "capability negotiation rejects unsupported formats and buffer counts":
+    let context = newContext()
+    context.enableDirectPresentation(
+      formats = {gtfRgba8, gtfRgba16F},
+      maxBuffers = 3
+    )
+    let host = openGpuHost(context.backend, ghoOwned)
+    var config = defaultGpuDirectSurfaceConfig(64, 32)
+    check host.supportsGpuDirectSurface(config)
+    config.format = gtfRgba16F
+    check host.supportsGpuDirectSurface(config)
+    config.format = gtfBgra8
+    check not host.supportsGpuDirectSurface(config)
+    config = defaultGpuDirectSurfaceConfig(64, 32)
+    config.bufferCount = 4
+    check not host.supportsGpuDirectSurface(config)
+    config.bufferCount = 1
+    expect ValueError:
+      discard host.supportsGpuDirectSurface(config)
+    config = defaultGpuDirectSurfaceConfig(8193, 32)
+    check not host.supportsGpuDirectSurface(config)
+    host.close()
+
+  test "unsupported hosts fail before retaining resources":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "direct-unsupported",
+      GpuResourceBudget(persistentBytes: 64, maxResources: 2)
+    )
+    let config = defaultGpuDirectSurfaceConfig(2, 2)
+    check not host.supportsGpuDirectSurface(config)
+    expect GpuHostError:
+      discard host.newGpuDirectSurface(namespace, config)
+    check host.gpuNamespaceUsage(namespace).resourceCount == 0
+    host.close()
+
+  test "a completed frame is published and protected until retired":
+    let context = newContext()
+    context.enableDirectPresentation(maxBuffers = 2)
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "direct-double-buffer",
+      GpuResourceBudget(persistentBytes: 32, workUnitsPerFrame: 4, maxResources: 2)
+    )
+    var config = defaultGpuDirectSurfaceConfig(2, 2)
+    config.bufferCount = 2
+    let surface = host.newGpuDirectSurface(namespace, config)
+    let first = host.createGpuRenderTarget(
+      namespace, renderTargetDescriptor(2, 2, label = "direct-first")
+    )
+    let second = host.createGpuRenderTarget(
+      namespace, renderTargetDescriptor(2, 2, label = "direct-second")
+    )
+
+    let firstToken = host.beginGpuFrame()
+    check surface.queueGpuDirectSurfaceFrame(first, firstToken)
+    check not surface.collectGpuDirectSurfaceFrame()
+    check surface.presentedRevision == 0
+    host.endGpuFrame(firstToken)
+    check host.isGpuFrameComplete(firstToken)
+    let nextToken = host.beginGpuFrame()
+    check host.isGpuFrameComplete(firstToken)
+    host.endGpuFrame(nextToken)
+    check surface.collectGpuDirectSurfaceFrame()
+    check surface.presentedRevision == 1
+    var firstLease = surface.acquireGpuDirectSurfaceFrame().get
+    check firstLease.resource == first
+    check firstLease.provider == gpkCustom
+    check firstLease.backendResource.backendResourceIdValue() != 0
+    expect GpuHostError:
+      discard host.releaseGpuResource(first)
+    expect GpuHostError:
+      discard host.closeGpuNamespace(namespace)
+
+    let secondToken = host.beginGpuFrame()
+    check surface.queueGpuDirectSurfaceFrame(second, secondToken)
+    host.endGpuFrame(secondToken)
+    check surface.collectGpuDirectSurfaceFrame()
+    check surface.presentedRevision == 2
+    check host.isGpuResourcePresentationRetained(first)
+    check firstLease.release()
+    check not host.isGpuResourcePresentationRetained(first)
+    check host.releaseGpuResource(first)
+
+    var secondLease = surface.acquireGpuDirectSurfaceFrame().get
+    check secondLease.resource == second
+    check not surface.closeGpuDirectSurface()
+    check secondLease.release()
+    check surface.closeGpuDirectSurface()
+    check not host.isGpuResourcePresentationRetained(second)
+    check host.releaseGpuResource(second)
+    host.close()
+
+  test "triple buffering applies backpressure and coalesces completed frames":
+    let context = newContext()
+    context.enableDirectPresentation(maxBuffers = 3)
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "direct-triple-buffer",
+      GpuResourceBudget(persistentBytes: 64, maxResources: 4)
+    )
+    let surface = host.newGpuDirectSurface(
+      namespace, defaultGpuDirectSurfaceConfig(1, 1)
+    )
+    var resources: seq[GpuResourceHandle]
+    for index in 0 .. 3:
+      resources.add host.createGpuRenderTarget(
+        namespace,
+        renderTargetDescriptor(1, 1, label = "direct-" & $index)
+      )
+    let token = host.beginGpuFrame()
+    check surface.queueGpuDirectSurfaceFrame(resources[0], token)
+    check surface.queueGpuDirectSurfaceFrame(resources[1], token)
+    check surface.queueGpuDirectSurfaceFrame(resources[2], token)
+    check not surface.queueGpuDirectSurfaceFrame(resources[3], token)
+    check surface.pendingFrameCount == 3
+    host.endGpuFrame(token)
+    check surface.collectGpuDirectSurfaceFrame()
+    check surface.pendingFrameCount == 0
+    check surface.retainedFrameCount == 1
+    let current = surface.acquireGpuDirectSurfaceFrame().get
+    check current.resource == resources[2]
+    var mutableCurrent = current
+    check mutableCurrent.release()
+    for index in 0 .. 1:
+      check not host.isGpuResourcePresentationRetained(resources[index])
+      check host.releaseGpuResource(resources[index])
+    check surface.closeGpuDirectSurface()
+    for index in 2 .. 3:
+      check host.releaseGpuResource(resources[index])
+    host.close()
+
+  test "invalid resources and completion tokens fail atomically":
+    let context = newContext()
+    context.enableDirectPresentation(formats = {gtfRgba8}, maxBuffers = 2)
+    let host = openGpuHost(context.backend, ghoOwned)
+    let firstNamespace = host.createGpuNamespace(
+      "direct-validation",
+      GpuResourceBudget(persistentBytes: 128, maxResources: 4)
+    )
+    let secondNamespace = host.createGpuNamespace(
+      "direct-foreign",
+      GpuResourceBudget(persistentBytes: 64, maxResources: 2)
+    )
+    var config = defaultGpuDirectSurfaceConfig(2, 2)
+    config.bufferCount = 2
+    let surface = host.newGpuDirectSurface(firstNamespace, config)
+    let wrongSize = host.createGpuRenderTarget(
+      firstNamespace, renderTargetDescriptor(1, 2, label = "wrong-size")
+    )
+    let wrongFormat = host.createGpuRenderTarget(
+      firstNamespace,
+      renderTargetDescriptor(2, 2, gtfBgra8, label = "wrong-format")
+    )
+    let foreign = host.createGpuRenderTarget(
+      secondNamespace, renderTargetDescriptor(2, 2, label = "foreign")
+    )
+    let valid = host.createGpuRenderTarget(
+      firstNamespace, renderTargetDescriptor(2, 2, label = "valid")
+    )
+    let unsampled = host.createGpuRenderTarget(
+      firstNamespace,
+      renderTargetDescriptor(
+        2, 2, usage = {gtuRenderTarget}, label = "unsampled"
+      )
+    )
+    let token = host.beginGpuFrame()
+    expect GpuHostError:
+      discard surface.queueGpuDirectSurfaceFrame(wrongSize, token)
+    expect GpuHostError:
+      discard surface.queueGpuDirectSurfaceFrame(wrongFormat, token)
+    expect GpuHostError:
+      discard surface.queueGpuDirectSurfaceFrame(foreign, token)
+    expect GpuHostError:
+      discard surface.queueGpuDirectSurfaceFrame(unsampled, token)
+    expect GpuHostError:
+      discard surface.queueGpuDirectSurfaceFrame(
+        valid,
+        GpuFrameToken(number: token.number + 1, generation: token.generation)
+      )
+    check surface.retainedFrameCount == 0
+    host.endGpuFrame(token)
+    check surface.closeGpuDirectSurface()
+    for resource in [wrongSize, wrongFormat, valid, unsampled]:
+      check host.releaseGpuResource(resource)
+    check host.releaseGpuResource(foreign)
+    host.close()
+
+  test "compute output requires an explicit direct capability":
+    let context = newContext()
+    context.enableDirectPresentation(
+      maxBuffers = 2,
+      computeOutput = false
+    )
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "direct-compute",
+      GpuResourceBudget(persistentBytes: 32, maxResources: 2)
+    )
+    var config = defaultGpuDirectSurfaceConfig(2, 2)
+    config.bufferCount = 2
+    config.acceptComputeOutput = false
+    let surface = host.newGpuDirectSurface(namespace, config)
+    let texture = host.createGpuTexture(
+      namespace,
+      textureDescriptor(
+        2, 2, usage = {gtuSampled, gtuStorage}, label = "compute-output"
+      )
+    )
+    let token = host.beginGpuFrame()
+    expect GpuHostError:
+      discard surface.queueGpuDirectSurfaceFrame(texture, token)
+    host.endGpuFrame(token)
+    check surface.closeGpuDirectSurface()
+    check host.releaseGpuResource(texture)
+    host.close()
+
+  test "presentation retention rejects writes and device loss clears stale frames":
+    let context = newContext()
+    context.enableDirectPresentation(maxBuffers = 2)
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "direct-write-protection",
+      GpuResourceBudget(
+        persistentBytes: 64,
+        workUnitsPerFrame: 4,
+        maxResources: 3
+      )
+    )
+    var config = defaultGpuDirectSurfaceConfig(2, 2)
+    config.bufferCount = 2
+    let surface = host.newGpuDirectSurface(namespace, config)
+    let source = host.createGpuTexture(
+      namespace,
+      textureDescriptor(2, 2, usage = {gtuBlitSource}, label = "copy-source")
+    )
+    let destination = host.createGpuTexture(
+      namespace,
+      textureDescriptor(
+        2, 2,
+        usage = {gtuSampled, gtuBlitDestination},
+        label = "presented-destination"
+      )
+    )
+    let token = host.beginGpuFrame()
+    check surface.queueGpuDirectSurfaceFrame(destination, token)
+    expect GpuHostError:
+      host.copyGpuTexture(namespace, source, destination)
+    host.endGpuFrame(token)
+    check surface.collectGpuDirectSurfaceFrame()
+    check host.markGpuDeviceLost()
+    check surface.isStale
+    check not surface.acquireGpuDirectSurfaceFrame().isSome
+    check surface.closeGpuDirectSurface()
+    check not host.isGpuResourceLive(source)
+    check not host.isGpuResourceLive(destination)
+    host.close()
+
+suite "GPU display surface negotiation and UI":
+
+  test "direct surfaces participate in normal layout paint and component semantics":
+    let context = newContext()
+    context.enableDirectPresentation(maxBuffers = 2)
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "display-direct",
+      GpuResourceBudget(persistentBytes: 64, maxResources: 2)
+    )
+    var config = defaultGpuDisplaySurfaceConfig(4, 2)
+    config.bufferCount = 2
+    config.alphaMode = gcamPremultiplied
+    let display = host.newGpuDisplaySurface(namespace, config)
+    check display.path == gdspDirect
+    check display.directSurface() != nil
+    check display.readbackSurface().isNil
+
+    let target = host.createGpuRenderTarget(
+      namespace, renderTargetDescriptor(4, 2, label = "display-target")
+    )
+    let ui = initUiRoot()
+    let owner = ui.box(uiStyle([
+      decl("width", px(120)),
+      decl("height", px(48)),
+      decl("overflow", keyword("hidden")),
+      decl("border-radius", px(8))
+    ]))
+    let label = ui.text(owner, "GPU")
+    let layer = ui.gpuDisplayVisualLayer(
+      owner,
+      display,
+      placement = gdsvOverlay,
+      style = uiStyle([decl("opacity", number(0.6))])
+    )
+    check layer.valid
+    discard ui.consumeInvalidation()
+
+    let token = host.beginGpuFrame()
+    check layer.queueGpuFrame(target, token)
+    check not layer.collectGpuFrame()
+    host.endGpuFrame(token)
+    check layer.collectGpuFrame()
+    let invalidation = ui.consumeInvalidation()
+    check ddPaint in invalidation.domains
+    check layer.nodeHandle.id in invalidation.roots
+
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(
+      ui.tree, ui.styleSheets(), defaultProperties(), diagnostics
+    )
+    let layout = computeLayout(ui.tree, styles, size(180, 80))
+    let ownerBox = layout.boxFor(owner.id).rect
+    let layerBox = layout.boxFor(layer.nodeHandle.id).rect
+    check not diagnostics.hasErrors
+    check layerBox == ownerBox
+    let layerStyle = styles.styles[layer.nodeHandle.id.nodeIndex]
+    check layerStyle.layout.position == pkAbsolute
+    check layerStyle.layout.zIndex == 1
+    check layerStyle.visual.pointerEvents == peNone
+    check ui.tree.semanticInfo(layer.nodeHandle.id).hidden
+    let hit = hitTest(
+      buildHitRegions(ui.tree, layout, styles),
+      vec2(ownerBox.x + 4, ownerBox.y + 4)
+    )
+    check hit.isSome
+    check hit.get.node != layer.nodeHandle.id
+
+    ui.syncRenderSurfaces(styles, layout)
+    let commands = ui.buildPaintCommands(styles, layout)
+    var gpuIndex = -1
+    var textIndex = -1
+    for index, command in commands:
+      if command.kind == pcDrawGpuDirectSurface:
+        gpuIndex = index
+        check command.gpuSurfaceRect == ownerBox
+        check abs(command.gpuSurfaceOpacity - 0.6) < 0.001
+      elif command.kind == pcDrawText and command.node == label.id:
+        textIndex = index
+    check gpuIndex >= 0
+    check textIndex >= 0
+    check gpuIndex > textIndex
+
+    var callbackCount = 0
+    let status = commands[gpuIndex].compositeGpuDirectSurface(
+      proc(
+          request: GpuDirectCompositeRequest
+      ): GpuDirectCompositeStatus {.closure.} =
+        inc callbackCount
+        check request.frame.resource == target
+        check request.frame.backendResource.backendResourceIdValue() != 0
+        check request.frame.alphaMode == gcamPremultiplied
+        check request.frame.revision == 1
+        check request.destination == ownerBox
+        check abs(request.opacity - 0.6) < 0.001
+        check not display.closeGpuDisplaySurface()
+        gdcsPresented
+    )
+    check status == gdcsPresented
+    check callbackCount == 1
+    check display.closeGpuDisplaySurface()
+    check host.releaseGpuResource(target)
+    host.close()
+
+  test "direct compositor releases its lease on retry and exceptions":
+    let context = newContext()
+    context.enableDirectPresentation(maxBuffers = 2)
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "display-compositor-cleanup",
+      GpuResourceBudget(persistentBytes: 16, maxResources: 1)
+    )
+    var config = defaultGpuDisplaySurfaceConfig(2, 2)
+    config.bufferCount = 2
+    let display = host.newGpuDisplaySurface(namespace, config)
+    let target = host.createGpuRenderTarget(
+      namespace, renderTargetDescriptor(2, 2, label = "cleanup-target")
+    )
+    let token = host.beginGpuFrame()
+    check display.queueGpuDisplayFrame(target, token)
+    host.endGpuFrame(token)
+    check display.collectGpuDisplayFrame()
+    let command = drawGpuDirectSurface(
+      NodeId(0), display.directSurface(), rect(0, 0, 2, 2)
+    )
+
+    check command.compositeGpuDirectSurface(
+      proc(request: GpuDirectCompositeRequest): GpuDirectCompositeStatus =
+        check request.frame.backendResource.backendResourceIdValue() != 0
+        gdcsRetry
+    ) == gdcsRetry
+    expect GpuHostError:
+      host.close()
+    expect ValueError:
+      discard command.compositeGpuDirectSurface(
+        proc(request: GpuDirectCompositeRequest): GpuDirectCompositeStatus =
+          discard request
+          raise newException(ValueError, "compositor failed")
+      )
+
+    check display.closeGpuDisplaySurface()
+    check host.releaseGpuResource(target)
+    host.close()
+
+  test "readback fallback keeps the same queue collect and UI contract":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "display-fallback",
+      GpuResourceBudget(
+        persistentBytes: 64,
+        readbackBytesPerFrame: 8,
+        workUnitsPerFrame: 2,
+        maxResources: 4
+      )
+    )
+    var config = defaultGpuDisplaySurfaceConfig(2, 1)
+    config.bufferCount = 2
+    let capabilities = host.gpuDisplaySurfaceCapabilities(config)
+    check not capabilities.direct
+    check capabilities.readbackFallback
+    let display = host.newGpuDisplaySurface(namespace, config)
+    check display.path == gdspReadback
+    check display.directSurface().isNil
+    check display.readbackSurface() != nil
+    let source = host.createGpuTexture(
+      namespace,
+      textureDescriptor(
+        2, 1, usage = {gtuBlitSource}, label = "fallback-source"
+      )
+    )
+    let ui = initUiRoot()
+    let handle = ui.gpuDisplaySurface(
+      display,
+      uiStyle([decl("width", px(80)), decl("height", px(40))])
+    )
+
+    let token = host.beginGpuFrame()
+    check handle.queueGpuFrame(source, token)
+    host.endGpuFrame(token)
+    expect GpuHostError:
+      discard display.queueGpuDisplayFrame(source, token)
+    check not handle.collectGpuFrame()
+    context.readbackReady = true
+    check handle.collectGpuFrame()
+    let invalidation = ui.consumeInvalidation()
+    check ddPaint in invalidation.domains
+    check handle.nodeHandle.id in invalidation.roots
+
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(
+      ui.tree, ui.styleSheets(), defaultProperties(), diagnostics
+    )
+    let layout = computeLayout(ui.tree, styles, size(100, 60))
+    ui.syncRenderSurfaces(styles, layout)
+    let commands = ui.buildPaintCommands(styles, layout)
+    check commands.anyIt(it.kind == pcDrawRasterSurface)
+    check commands.allIt(it.kind != pcDrawGpuDirectSurface)
+    check display.readbackSurface().rasterSurface().revision == 2
+
+    check display.closeGpuDisplaySurface()
+    check host.releaseGpuResource(source)
+    host.close()
+
+  test "required direct mode and unsupported fallback formats fail closed":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "display-no-path",
+      GpuResourceBudget(persistentBytes: 64, maxResources: 4)
+    )
+    var config = defaultGpuDisplaySurfaceConfig(2, 2)
+    config.fallback = gdsfRequireDirect
+    expect GpuHostError:
+      discard host.newGpuDisplaySurface(namespace, config)
+    config.fallback = gdsfAllowReadback
+    config.format = gtfRgba32F
+    let capabilities = host.gpuDisplaySurfaceCapabilities(config)
+    check not capabilities.direct
+    check not capabilities.readbackFallback
+    expect GpuHostError:
+      discard host.newGpuDisplaySurface(namespace, config)
+
+    config = defaultGpuDisplaySurfaceConfig(2, 2)
+    config.maxRasterBytes = 15
+    check not host.gpuDisplaySurfaceCapabilities(config).readbackFallback
+    config.maxRasterBytes = 16
+    config.label = repeat(
+      'x', maxGpuResourceLabelBytes - len("-readback-8") + 1
+    )
+    check not host.gpuDisplaySurfaceCapabilities(config).readbackFallback
     host.close()

@@ -869,6 +869,7 @@ proc commandKindToC(command: PaintCommand): uint32 =
   of pcPushLayer: 11
   of pcPopLayer: 12
   of pcDrawRasterSurface: 13
+  of pcDrawGpuDirectSurface: 14
 
 proc commandRect(command: PaintCommand): Rect =
   case command.kind
@@ -901,6 +902,8 @@ proc commandRect(command: PaintCommand): Rect =
     command.imageRect
   of pcDrawRasterSurface:
     command.rasterRect
+  of pcDrawGpuDirectSurface:
+    command.gpuSurfaceRect
 
 proc commandColor(command: PaintCommand): Color =
   case command.kind
@@ -6012,6 +6015,8 @@ proc cbssContextPaintCommand(
     output.value0 = command.imageOpacity
   of pcDrawRasterSurface:
     output.value0 = command.rasterOpacity
+  of pcDrawGpuDirectSurface:
+    output.value0 = command.gpuSurfaceOpacity
   of pcPushLayer:
     output.value0 = command.layerOpacity
     output.value1 = cfloat(ord(command.layerCompositeMode))

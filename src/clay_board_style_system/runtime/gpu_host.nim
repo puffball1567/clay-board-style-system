@@ -1,7 +1,7 @@
 import std/[algorithm, hashes, math, tables]
 
 const
-  gpuHostApiVersion* = 10'u32
+  gpuHostApiVersion* = 11'u32
   maxGpuNamespaceNameBytes* = 128
   maxGpuResourceLabelBytes* = 128
   maxGpuViewCount* = 256'u16
@@ -63,6 +63,11 @@ type
     gtuBlitSource,
     gtuBlitDestination,
     gtuReadback
+
+  GpuAlphaMode* = enum
+    gcamStraight,
+    gcamPremultiplied,
+    gcamOpaque
 
   GpuBufferRole* = enum
     gbrVertex,
@@ -374,9 +379,21 @@ type
     computeSupported*: bool
     textureCopySupported*: bool
     textureReadbackSupported*: bool
+    directTexturePresentationSupported*: bool
+    directRenderTargetPresentationSupported*: bool
+    directComputeOutputPresentationSupported*: bool
+    directPresentationFormats*: set[GpuTextureFormat]
+    maxDirectPresentationBuffers*: uint8
     homogeneousDepth*: bool
     originBottomLeft*: bool
     maxTextureSize*: uint32
+
+  GpuPresentableResourceInfo* = object
+    kind*: GpuResourceKind
+    backendResource*: GpuBackendResourceId
+    width*, height*: uint32
+    format*: GpuTextureFormat
+    usage*: set[GpuTextureUsage]
 
   GpuResourceBudget* = object
     persistentBytes*: uint64
@@ -611,6 +628,7 @@ type
     pipelineKind: GpuPipelineKind
     dependencies: seq[GpuResourceId]
     dependentCount: uint32
+    presentationRetainCount: uint32
 
   GpuResolvedDrawCommand = object
     pipeline, vertexBuffer, indexBuffer: GpuBackendResourceId
@@ -644,6 +662,7 @@ type
     infoValue: GpuBackendInfo
     generationValue: uint64
     frameNumber: uint64
+    completedFrameNumber: uint64
     activeFrame: bool
     nextViewOffset: uint16
     nextNamespaceId: uint64
@@ -687,6 +706,35 @@ proc statusMessage(status: GpuBackendStatus): string =
   of gbsInvalidConfiguration: "GPU configuration is invalid"
   of gbsDeviceLost: "GPU device is lost"
   of gbsFailed: "GPU backend operation failed"
+
+proc validateBackendInfo(info: GpuBackendInfo) =
+  let directSupported =
+    info.directTexturePresentationSupported or
+    info.directRenderTargetPresentationSupported
+  if directSupported:
+    if info.directPresentationFormats == {}:
+      raise newException(
+        GpuHostError,
+        "GPU backend direct presentation requires at least one texture format"
+      )
+    if info.maxDirectPresentationBuffers < 2:
+      raise newException(
+        GpuHostError,
+        "GPU backend direct presentation requires at least two buffers"
+      )
+  elif info.directPresentationFormats != {} or
+      info.maxDirectPresentationBuffers != 0 or
+      info.directComputeOutputPresentationSupported:
+    raise newException(
+      GpuHostError,
+      "GPU backend direct presentation capabilities are inconsistent"
+    )
+  if info.directComputeOutputPresentationSupported and
+      (not info.computeSupported or not info.directTexturePresentationSupported):
+    raise newException(
+      GpuHostError,
+      "direct compute output presentation requires compute and texture presentation"
+    )
 
 proc requireHost(host: GpuHost) =
   if host.isNil:
@@ -750,6 +798,18 @@ proc openGpuHost*(
       if not backend.detachBorrowed.isNil:
         backend.detachBorrowed(backend.context)
     raiseForStatus(status)
+  try:
+    info.validateBackendInfo()
+  except GpuHostError:
+    result.stateValue = ghsClosed
+    case ownership
+    of ghoOwned:
+      if not backend.closeOwned.isNil:
+        backend.closeOwned(backend.context)
+    of ghoBorrowed:
+      if not backend.detachBorrowed.isNil:
+        backend.detachBorrowed(backend.context)
+    raise
   result.infoValue = info
   result.stateValue = ghsReady
 
@@ -803,6 +863,16 @@ proc close*(host: GpuHost) =
     return
   if host.restorationActive:
     raise newException(GpuHostError, "GPU host cannot close during restoration")
+  if host.stateValue == ghsReady:
+    for id, namespace in host.namespaces.pairs:
+      discard id
+      for resourceId, resource in namespace.resources.pairs:
+        discard resourceId
+        if resource.presentationRetainCount != 0:
+          raise newException(
+            GpuHostError,
+            "GPU host cannot close with presentation-retained resources"
+          )
   if host.ownershipValue == ghoBorrowed:
     for id, entry in host.namespaces.pairs:
       discard id
@@ -888,7 +958,28 @@ proc endGpuFrame*(host: GpuHost; token: GpuFrameToken) =
     if status == gbsDeviceLost:
       host.enterDeviceLost()
     raiseForStatus(status)
+    host.completedFrameNumber = token.number
+    return
   host.activeFrame = false
+  host.completedFrameNumber = token.number
+
+proc isGpuFrameComplete*(host: GpuHost; token: GpuFrameToken): bool =
+  ## Completion here means that the backend accepted the frame boundary. Work
+  ## submitted on the same device can be consumed by a later ordered frame
+  ## without a CPU wait; it is not a cross-device fence.
+  not host.isNil and host.stateValue == ghsReady and
+    token.generation == host.generationValue and token.number != 0 and
+    token.number <= host.completedFrameNumber
+
+proc isGpuFrameKnown*(host: GpuHost; token: GpuFrameToken): bool =
+  not host.isNil and host.stateValue == ghsReady and
+    token.generation == host.generationValue and token.number != 0 and
+    token.number <= host.frameNumber
+
+proc isGpuFrameActive*(host: GpuHost; token: GpuFrameToken): bool =
+  not host.isNil and host.stateValue == ghsReady and host.activeFrame and
+    token.generation == host.generationValue and token.number != 0 and
+    token.number == host.frameNumber
 
 proc resizeGpuHost*(host: GpuHost; width, height: uint32) =
   host.requireHost()
@@ -1079,6 +1170,13 @@ proc closeGpuNamespace*(host: GpuHost; id: GpuNamespaceId): bool =
       GpuHostError,
       "GPU namespace cannot close with retained readbacks"
     )
+  for resourceId, resource in host.namespaces[id].resources.pairs:
+    discard resourceId
+    if resource.presentationRetainCount != 0:
+      raise newException(
+        GpuHostError,
+        "GPU namespace cannot close with presentation-retained resources"
+      )
   host.destroyNamespaceResources(id)
   host.namespaces.del(id)
   true
@@ -1797,6 +1895,11 @@ proc updateGpuBuffer*(
     host.enterDeviceLost()
   raiseForStatus(status)
 
+proc textureShape(
+    entry: GpuResourceEntry
+): tuple[width, height: uint32, format: GpuTextureFormat,
+    usage: set[GpuTextureUsage]]
+
 proc isGpuResourceLive*(host: GpuHost; handle: GpuResourceHandle): bool =
   if host.isNil or host.stateValue == ghsClosed or
       handle.generation != host.generationValue or
@@ -1807,6 +1910,68 @@ proc isGpuResourceLive*(host: GpuHost; handle: GpuResourceHandle): bool =
     return false
   let resource = namespace.resources[handle.resource]
   resource.generation == handle.generation and resource.kind == handle.kind
+
+proc gpuPresentableResourceInfo*(
+    host: GpuHost;
+    handle: GpuResourceHandle
+): GpuPresentableResourceInfo =
+  host.requireHost()
+  if not host.isGpuResourceLive(handle) or
+      handle.kind notin {grkTexture, grkRenderTarget}:
+    raise newException(GpuHostError, "GPU presentation resource is stale or invalid")
+  let entry = host.namespaces[handle.namespace].resources[handle.resource]
+  let shape = entry.textureShape()
+  GpuPresentableResourceInfo(
+    kind: handle.kind,
+    backendResource: entry.backendResource,
+    width: shape.width,
+    height: shape.height,
+    format: shape.format,
+    usage: shape.usage
+  )
+
+proc retainGpuResourceForPresentation*(
+    host: GpuHost;
+    handle: GpuResourceHandle
+) =
+  host.requireHost()
+  if not host.isGpuResourceLive(handle) or
+      handle.kind notin {grkTexture, grkRenderTarget}:
+    raise newException(GpuHostError, "GPU presentation resource is stale or invalid")
+  var namespace = host.namespaces[handle.namespace]
+  if namespace.resources[handle.resource].presentationRetainCount == high(uint32):
+    raise newException(GpuHostError, "GPU presentation retain count exhausted")
+  inc namespace.resources[handle.resource].presentationRetainCount
+  host.namespaces[handle.namespace] = namespace
+
+proc releaseGpuResourceFromPresentation*(
+    host: GpuHost;
+    handle: GpuResourceHandle
+): bool =
+  host.requireHost()
+  if not host.isGpuResourceLive(handle):
+    return false
+  var namespace = host.namespaces[handle.namespace]
+  if namespace.resources[handle.resource].presentationRetainCount == 0:
+    return false
+  dec namespace.resources[handle.resource].presentationRetainCount
+  host.namespaces[handle.namespace] = namespace
+  true
+
+proc isGpuResourcePresentationRetained*(
+    host: GpuHost;
+    handle: GpuResourceHandle
+): bool =
+  host.isGpuResourceLive(handle) and
+    host.namespaces[handle.namespace].resources[handle.resource]
+      .presentationRetainCount != 0
+
+proc requireGpuResourceWritable(host: GpuHost; handle: GpuResourceHandle) =
+  if host.isGpuResourcePresentationRetained(handle):
+    raise newException(
+      GpuHostError,
+      "GPU resource cannot be modified while retained for presentation"
+    )
 
 proc releaseGpuResource*(host: GpuHost; handle: GpuResourceHandle): bool =
   host.requireHost()
@@ -1821,10 +1986,10 @@ proc releaseGpuResource*(host: GpuHost; handle: GpuResourceHandle): bool =
     )
   var namespace = host.namespaces[handle.namespace]
   let resource = namespace.resources[handle.resource]
-  if resource.dependentCount != 0:
+  if resource.dependentCount != 0 or resource.presentationRetainCount != 0:
     raise newException(
       GpuHostError,
-      "GPU resource cannot be released while another resource depends on it"
+      "GPU resource cannot be released while it is retained"
     )
   if resource.backendResource.backendResourceIdValue != 0 and
       not host.backend.destroyResource.isNil:
@@ -1949,6 +2114,7 @@ proc validateGraphicsPass(
     limitWidth = host.configValue.width
     limitHeight = host.configValue.height
   else:
+    host.requireGpuResourceWritable(pass.renderTarget)
     let target = host.requireGpuResource(
       namespace,
       pass.renderTarget,
@@ -2073,6 +2239,8 @@ proc validateGpuBindings(
       raise newException(GpuHostError, "GPU storage image is not backend-mapped")
     if gtuStorage notin texture.textureDescriptor.usage:
       raise newException(GpuHostError, "GPU storage image requires storage usage")
+    if binding.access in {gsaWrite, gsaReadWrite}:
+      host.requireGpuResourceWritable(binding.texture)
     resolved.storageImages.add GpuBackendStorageImageBinding(
       stage: binding.stage,
       texture: texture.backendResource,
@@ -2402,6 +2570,7 @@ proc copyGpuTexture*(
   let destinationEntry = host.requireCopyResource(
     namespace, destination, source = false
   )
+  host.requireGpuResourceWritable(destination)
   if destinationEntry.kind != grkTexture:
     raise newException(GpuHostError, "GPU copy destination must be a texture")
   let sourceShape = sourceEntry.textureShape()

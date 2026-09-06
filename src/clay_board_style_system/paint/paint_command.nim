@@ -1,5 +1,6 @@
 import std/[math, options, strutils, unicode]
 import ../core/[color, computed_style, geometry, node, raster_surface]
+import ../runtime/gpu_direct_surface
 import ./path_geometry
 
 type
@@ -22,7 +23,8 @@ type
     pcStrokePath,
     pcDrawText,
     pcDrawImage,
-    pcDrawRasterSurface
+    pcDrawRasterSurface,
+    pcDrawGpuDirectSurface
 
   PaintCommand* = object
     owner*: Option[NodeId]
@@ -89,6 +91,10 @@ type
       rasterSurface*: RasterSurface
       rasterRect*: Rect
       rasterOpacity*: float32
+    of pcDrawGpuDirectSurface:
+      gpuDirectSurface*: GpuDirectSurface
+      gpuSurfaceRect*: Rect
+      gpuSurfaceOpacity*: float32
 
 proc fillRect*(rect: Rect; color: Color; radius: float32 = 0; owner = none(NodeId)): PaintCommand =
   PaintCommand(kind: pcFillRect, owner: owner, rect: rect, color: color, radius: radius)
@@ -187,6 +193,8 @@ proc visualBounds(command: PaintCommand): Option[Rect] =
     some(command.imageRect)
   of pcDrawRasterSurface:
     some(command.rasterRect)
+  of pcDrawGpuDirectSurface:
+    some(command.gpuSurfaceRect)
   of pcPushLayer:
     some(command.layerBounds)
   of pcPushTransform, pcPopTransform, pcPopLayer, pcPushClip, pcPopClip:
@@ -319,4 +327,20 @@ proc drawRasterSurface*(
     rasterSurface: surface,
     rasterRect: bounds,
     rasterOpacity: clamp(opacity, 0.0'f32, 1.0'f32)
+  )
+
+proc drawGpuDirectSurface*(
+    node: NodeId;
+    surface: GpuDirectSurface;
+    bounds: Rect;
+    opacity = 1.0'f32
+): PaintCommand =
+  if surface.isNil or surface.isClosed:
+    raise newException(ValueError, "GPU direct surface cannot be nil or closed")
+  PaintCommand(
+    kind: pcDrawGpuDirectSurface,
+    owner: some(node),
+    gpuDirectSurface: surface,
+    gpuSurfaceRect: bounds,
+    gpuSurfaceOpacity: clamp(opacity, 0.0'f32, 1.0'f32)
   )

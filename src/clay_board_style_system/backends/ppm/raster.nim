@@ -632,6 +632,8 @@ proc render*(commands: openArray[PaintCommand]; width, height: int; background =
       targets[^1].drawRasterSurface(
         command, transformStack[^1], clipStack[^1]
       )
+    of pcDrawGpuDirectSurface:
+      discard # The deterministic CPU backend has no compatible GPU device.
 
   while layers.len > 0 and targets.len > 1:
     let source = targets.pop()

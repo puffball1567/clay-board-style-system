@@ -1517,6 +1517,8 @@ proc prepareRenderPlan(commands: openArray[PaintCommand]): seq[Sdl3PreparedComma
         for clip in clipStack:
           roundedClips.add clip
       result.add Sdl3PreparedCommand(command: command, roundedImageClipStack: roundedClips)
+    of pcDrawGpuDirectSurface:
+      result.add Sdl3PreparedCommand(command: command)
     else:
       result.add Sdl3PreparedCommand(command: command)
 
@@ -1559,6 +1561,8 @@ proc translated(command: PaintCommand; offset: Vec2): PaintCommand =
     result.imageRect = result.imageRect.translated(offset)
   of pcDrawRasterSurface:
     result.rasterRect = result.rasterRect.translated(offset)
+  of pcDrawGpuDirectSurface:
+    result.gpuSurfaceRect = result.gpuSurfaceRect.translated(offset)
 
 proc translated(region: Sdl3ClipRegion; offset: Vec2): Sdl3ClipRegion =
   result = region
@@ -3449,6 +3453,8 @@ proc render*(target: var Sdl3Renderer; commands: openArray[PaintCommand]; clearC
     of pcDrawRasterSurface:
       transformLayers.markTransformContent()
       target.drawRasterSurfaceTexture(command, prepared.roundedImageClipStack)
+    of pcDrawGpuDirectSurface:
+      discard # Requires a compositor sharing the producer's GPU device.
 
   target.closeTransformLayers(transformLayers)
 
@@ -3654,6 +3660,8 @@ proc render*(
     of pcDrawRasterSurface:
       transformLayers.markTransformContent()
       target.drawRasterSurfaceTexture(command, prepared.roundedImageClipStack)
+    of pcDrawGpuDirectSurface:
+      discard # Requires a compositor sharing the producer's GPU device.
 
   target.closeTransformLayers(transformLayers)
 
@@ -3746,6 +3754,8 @@ proc renderPreparedCommand(
       target.drawRasterSurfaceTexture(
         command, localPrepared.roundedImageClipStack
       )
+  of pcDrawGpuDirectSurface:
+    discard # Requires a compositor sharing the producer's GPU device.
 
 proc renderCommandPass(
     target: var Sdl3Renderer;

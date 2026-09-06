@@ -432,8 +432,10 @@ normal retained surface with a bounded asynchronous readback ring, ordered
 collection, latest-frame coalescing, backpressure, and explicit R8/RGBA8/BGRA8
 plus alpha-mode normalization. `gpuVisualLayer` additionally attaches this
 surface as a bounded underlay or overlay of an ordinary component without
-duplicating input or semantic ownership. Public native SDL-window handoff,
-zero-copy shared textures, production-adapter device recreation, and visible
+duplicating input or semantic ownership. The backend-neutral direct
+Texture/RenderTarget queue, retention, paint command, and readback fallback are
+also implemented. Public native SDL-window handoff, a production bgfx
+same-device compositor, production-adapter device recreation, and visible
 real-GPU conformance remain release gates below. The current bgfx adapter fails
 closed for in-place restoration instead of relying on an unsafe runtime restart
 sequence.

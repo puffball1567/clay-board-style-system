@@ -2,6 +2,7 @@ import std/[math, options, tables]
 
 import ../core/[color, computed_style, geometry, node, raster_surface]
 import ../paint/[paint_command, path_geometry]
+import ./gpu_direct_surface
 import ./render_surface
 
 type
@@ -19,7 +20,8 @@ type
     cckStrokePath,
     cckDrawText,
     cckDrawImage,
-    cckDrawRasterSurface
+    cckDrawRasterSurface,
+    cckDrawGpuDirectSurface
 
   CanvasCommand* = object
     case kind*: CanvasCommandKind
@@ -74,6 +76,11 @@ type
       rasterRect*: Rect
       rasterOpacity*: float32
       rasterFillContent*: bool
+    of cckDrawGpuDirectSurface:
+      gpuDirectSurface*: GpuDirectSurface
+      gpuSurfaceRect*: Rect
+      gpuSurfaceOpacity*: float32
+      gpuSurfaceFillContent*: bool
 
   Canvas2D* = ref object
     commands*: seq[CanvasCommand]
@@ -507,6 +514,45 @@ proc drawRasterSurfaceToContent*(
   )
   canvas.touch()
 
+proc drawGpuDirectSurface*(
+    canvas: Canvas2D;
+    surface: GpuDirectSurface;
+    bounds: Rect;
+    opacity = 1.0'f32
+) =
+  if canvas.isNil:
+    raise newException(ValueError, "canvas cannot be nil")
+  if surface.isNil or surface.isClosed:
+    raise newException(ValueError, "GPU direct surface cannot be nil or closed")
+  if not bounds.finite or bounds.isEmpty:
+    raise newException(ValueError, "GPU direct surface bounds must be finite and positive")
+  canvas.commands.add CanvasCommand(
+    kind: cckDrawGpuDirectSurface,
+    gpuDirectSurface: surface,
+    gpuSurfaceRect: bounds,
+    gpuSurfaceOpacity: clamp(opacity, 0.0'f32, 1.0'f32),
+    gpuSurfaceFillContent: false
+  )
+  canvas.touch()
+
+proc drawGpuDirectSurfaceToContent*(
+    canvas: Canvas2D;
+    surface: GpuDirectSurface;
+    opacity = 1.0'f32
+) =
+  if canvas.isNil:
+    raise newException(ValueError, "canvas cannot be nil")
+  if surface.isNil or surface.isClosed:
+    raise newException(ValueError, "GPU direct surface cannot be nil or closed")
+  canvas.commands.add CanvasCommand(
+    kind: cckDrawGpuDirectSurface,
+    gpuDirectSurface: surface,
+    gpuSurfaceRect: rect(0, 0, 0, 0),
+    gpuSurfaceOpacity: clamp(opacity, 0.0'f32, 1.0'f32),
+    gpuSurfaceFillContent: true
+  )
+  canvas.touch()
+
 proc containsRasterSurface*(canvas: Canvas2D; surface: RasterSurface): bool =
   if canvas.isNil or surface.isNil:
     return false
@@ -651,6 +697,18 @@ proc paintCommands*(
         command.rasterSurface,
         destination,
         command.rasterOpacity * opacity
+      )
+    of cckDrawGpuDirectSurface:
+      let destination =
+        if command.gpuSurfaceFillContent:
+          bounds
+        else:
+          command.gpuSurfaceRect.translated(offset)
+      result.add drawGpuDirectSurface(
+        owner,
+        command.gpuDirectSurface,
+        destination,
+        command.gpuSurfaceOpacity * opacity
       )
   while scopes.len > 0:
     case scopes.pop()

@@ -550,10 +550,10 @@ canvas teardown without touching invalid resources, and requires recreation
 after host restoration. The bridge owns no implicit finalizer and therefore
 keeps GPU lifetime explicit under both ARC and ORC.
 
-This path copies completed GPU pixels through CPU memory. It is the portability
-and testing baseline, not the final high-throughput path for full-window video
-or motion graphics. A later shared-texture composition path may remove that
-copy while preserving the same upper Canvas, layout, and component contract.
+This path copies completed GPU pixels through CPU memory. It remains the
+portability and testing baseline. `GpuDisplaySurface` now negotiates a direct
+same-device path and this readback path behind the same upper Canvas, layout,
+and component contract. See [GPU Display Surfaces](gpu-direct-surfaces.md).
 
 ## Optional bgfx Adapter
 
@@ -611,12 +611,13 @@ CBSS_BIMG_PATH=/path/to/bimg \
 nimble runBgfxHostDemo
 ```
 
-Zero-copy external targets, a public native-window helper, real-renderer output
-verification, and in-place restoration in a production GPU adapter are still
-required before the GPU profile is release-complete. The backend-neutral host
-now provides deterministic namespace restoration and failed-owner rollback.
-Portable GPU Canvas composition and ordinary-component underlay/overlay
-attachment are implemented.
+The backend-neutral direct Texture/RenderTarget contract, bounded frame
+retention, capability negotiation, and asynchronous readback fallback are
+implemented. The current bgfx adapter does not advertise direct presentation
+until a same-device paint compositor and visible real-renderer qualification
+are complete. A public native-window helper and in-place restoration in a
+production GPU adapter also remain release work. The host provides deterministic
+namespace restoration and failed-owner rollback.
 
 The NOOP fixture validates that native resource calls coexist with host
 ownership and budget accounting. Because the NOOP renderer does not advertise
