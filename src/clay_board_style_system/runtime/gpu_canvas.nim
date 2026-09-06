@@ -5,10 +5,7 @@ const
   DefaultGpuCanvasReadbackSlots* = 3
 
 type
-  GpuCanvasAlphaMode* = enum
-    gcamStraight,
-    gcamPremultiplied,
-    gcamOpaque
+  GpuCanvasAlphaMode* = GpuAlphaMode
 
   GpuCanvasConfig* = object
     width*, height*: uint32
@@ -198,7 +195,10 @@ proc completedFrameNumber*(canvas: GpuCanvasSurface): uint64 =
 proc isClosed*(canvas: GpuCanvasSurface): bool =
   canvas.isNil or canvas.closedValue
 
-proc queueGpuCanvasFrame*(canvas: GpuCanvasSurface): bool {.discardable.} =
+proc queueGpuCanvasFrameFrom*(
+    canvas: GpuCanvasSurface;
+    source: GpuResourceHandle
+): bool {.discardable.} =
   canvas.requireOpen()
   if canvas.queuedFrameNumber == high(uint64):
     raise newException(ValueError, "GPU canvas frame number space exhausted")
@@ -211,13 +211,16 @@ proc queueGpuCanvasFrame*(canvas: GpuCanvasSurface): bool {.discardable.} =
     return false
 
   let texture = canvas.slots[slotIndex].texture
-  canvas.host.copyGpuTexture(canvas.namespace, canvas.target, texture)
+  canvas.host.copyGpuTexture(canvas.namespace, source, texture)
   let readback = canvas.host.requestGpuReadback(canvas.namespace, texture)
   canvas.slots[slotIndex].readback = readback
   canvas.slots[slotIndex].pending = true
   canvas.pendingOrder.add slotIndex
   inc canvas.queuedFrameNumber
   true
+
+proc queueGpuCanvasFrame*(canvas: GpuCanvasSurface): bool {.discardable.} =
+  canvas.queueGpuCanvasFrameFrom(canvas.target)
 
 proc unpremultiply(channel, alpha: uint8): uint8 {.inline.} =
   if alpha == 0:

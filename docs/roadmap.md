@@ -1068,8 +1068,10 @@ retains destination storage until completion; and rejects unsupported adapters
 before submission. `GpuCanvasSurface` adds a bounded multi-frame readback ring,
 non-blocking backpressure, ordered latest-frame publication, and explicit
 format/alpha normalization before exposing the result as a normal
-`RasterSurface`. Zero-copy external textures may optimize this path later, but
-cannot replace its deterministic fallback or change the upper Canvas contract.
+`RasterSurface`. `GpuDisplaySurface` now negotiates a direct same-device
+Texture/RenderTarget path and this deterministic fallback without changing the
+upper Canvas contract. A backend may advertise the direct path only when its
+paint compositor shares the producer's device and ordered queue.
 
 The planned standard GPU adapter is bgfx, with explicit resource, swapchain,
 shader, synchronization, resize, device-loss, and presentation ownership.
@@ -2251,9 +2253,13 @@ resource contract additionally supports R16F/R32F, RG16F/RG32F, and
 RGBA16F/RGBA32F textures plus typed compute storage buffers with bounded,
 stage-checked read/write access. Device-loss recovery now includes deterministic
 per-namespace rebuild handlers, generation reporting, and rollback of partial
-resources from failed owners. External targets, production-adapter device
-recreation, declarative mask and filter composition, and broader real-GPU
-qualification remain open Version 0.7 work. Backend-neutral named Custom Paint
+resources from failed owners. A backend-neutral direct Texture/RenderTarget
+surface now adds bounded double/triple buffering, presentation retention,
+latest-ready coalescing, paint-only invalidation, capability negotiation, and
+the existing asynchronous readback fallback. The production bgfx compositor,
+production-adapter device recreation, declarative mask and filter composition,
+and broader real-GPU qualification remain open Version 0.7 work.
+Backend-neutral named Custom Paint
 materials now connect ordinary Style declarations to bounded underlay and
 overlay command streams without adding nodes. `GpuCanvasSurface` can use that
 same contract, records its actual component consumers, and invalidates only

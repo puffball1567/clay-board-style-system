@@ -83,10 +83,13 @@ named resource namespaces with separate persistent, transient-upload,
 readback, per-frame work, and resource-count budgets. The current namespace
 API establishes identity and accounting. Typed resources, graphics/compute
 submission, texture blits, and asynchronous readback are implemented without
-exposing raw bgfx handles in ordinary UI code. `GpuCanvasSurface` now owns a
-bounded asynchronous readback ring and publishes the newest ordered GPU frame
-through the existing `RasterSurface`; zero-copy external texture support
-remains an optional later optimization.
+exposing raw bgfx handles in ordinary UI code. `GpuCanvasSurface` owns a bounded
+asynchronous readback ring and publishes the newest ordered GPU frame through
+the existing `RasterSurface`. `GpuDisplaySurface` additionally negotiates a
+backend-neutral direct Texture/RenderTarget path with the same asynchronous
+readback implementation as its deterministic fallback. The current bgfx
+adapter keeps direct capability disabled until its same-device compositor is
+qualified.
 
 The bgfx adapter uses `bgfxim` directly. Owned mode initializes and shuts down
 the bgfx runtime. Borrowed mode attaches to an application-initialized runtime

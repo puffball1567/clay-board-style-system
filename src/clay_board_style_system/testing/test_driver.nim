@@ -8,7 +8,8 @@ import ../input/events
 import ../layout/layout
 import ../layout/scroll_state
 import ../paint/[paint, paint_command, path_geometry]
-import ../runtime/[focus, frame_scheduler, invalidation, text_focus, ui_root]
+import ../runtime/[focus, frame_scheduler, gpu_direct_surface, invalidation,
+  text_focus, ui_root]
 
 type
   CbssQueryKind* = enum
@@ -1031,6 +1032,11 @@ proc paintSnapshot*(driver: CbssTestDriver): string =
         " rev=" & $command.rasterSurface.revision & " " &
         rectSnapshot(command.rasterRect) & " opacity=" &
         $command.rasterOpacity
+    of pcDrawGpuDirectSurface:
+      lines.add "draw-gpu-direct rev=" &
+        $command.gpuDirectSurface.presentedRevision & " " &
+        rectSnapshot(command.gpuSurfaceRect) & " opacity=" &
+        $command.gpuSurfaceOpacity
   lines.join("\n")
 
 proc paintSnapshot*(driver: CbssTestDriver; query: CbssQuery): string =
@@ -1043,7 +1049,7 @@ proc paintSnapshot*(driver: CbssTestDriver; query: CbssQuery): string =
         command.node == target
       of pcDrawImage:
         command.imageNode == target
-      of pcDrawRasterSurface:
+      of pcDrawRasterSurface, pcDrawGpuDirectSurface:
         command.owner == some(target)
       else:
         false
@@ -1059,6 +1065,11 @@ proc paintSnapshot*(driver: CbssTestDriver; query: CbssQuery): string =
           " rev=" & $command.rasterSurface.revision & " " &
           rectSnapshot(command.rasterRect) & " opacity=" &
           $command.rasterOpacity
+      of pcDrawGpuDirectSurface:
+        lines.add "draw-gpu-direct rev=" &
+          $command.gpuDirectSurface.presentedRevision & " " &
+          rectSnapshot(command.gpuSurfaceRect) & " opacity=" &
+          $command.gpuSurfaceOpacity
       else:
         discard
   lines.join("\n")
@@ -1184,6 +1195,13 @@ proc structuredSnapshotJson*(driver: CbssTestDriver): JsonNode =
       entry["height"] = %command.rasterSurface.height
       entry["rect"] = rectJson(command.rasterRect)
       entry["opacity"] = %command.rasterOpacity
+    of pcDrawGpuDirectSurface:
+      entry["node"] = %(
+        if command.owner.isSome: command.owner.get.nodeIndex else: -1
+      )
+      entry["revision"] = %command.gpuDirectSurface.presentedRevision
+      entry["rect"] = rectJson(command.gpuSurfaceRect)
+      entry["opacity"] = %command.gpuSurfaceOpacity
     paint.add entry
   result["paint"] = paint
 

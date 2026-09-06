@@ -88,6 +88,8 @@ proc main() =
       echo &"  DrawImage node={command.imageNode.nodeIndex} source=\"{command.imageSource}\" rect=({command.imageRect.x:.1f}, {command.imageRect.y:.1f}, {command.imageRect.w:.1f}, {command.imageRect.h:.1f}) opacity={command.imageOpacity:.2f}"
     of pcDrawRasterSurface:
       echo &"  DrawRasterSurface id={command.rasterSurface.id} revision={command.rasterSurface.revision} rect=({command.rasterRect.x:.1f}, {command.rasterRect.y:.1f}, {command.rasterRect.w:.1f}, {command.rasterRect.h:.1f}) opacity={command.rasterOpacity:.2f}"
+    of pcDrawGpuDirectSurface:
+      echo &"  DrawGpuDirectSurface revision={command.gpuDirectSurface.presentedRevision} rect=({command.gpuSurfaceRect.x:.1f}, {command.gpuSurfaceRect.y:.1f}, {command.gpuSurfaceRect.w:.1f}, {command.gpuSurfaceRect.h:.1f}) opacity={command.gpuSurfaceOpacity:.2f}"
     of pcPushClip:
       echo &"  PushClip rect=({command.clipRect.x:.1f}, {command.clipRect.y:.1f}, {command.clipRect.w:.1f}, {command.clipRect.h:.1f})"
     of pcPopClip:

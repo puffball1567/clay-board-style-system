@@ -819,6 +819,7 @@ int main(void) {
   assert(CBSS_PAINT_PUSH_LAYER == 11);
   assert(CBSS_PAINT_POP_LAYER == 12);
   assert(CBSS_PAINT_DRAW_RASTER_SURFACE == 13);
+  assert(CBSS_PAINT_DRAW_GPU_DIRECT_SURFACE == 14);
   assert(CBSS_LAYER_SOURCE_OVER == 0);
   assert(CBSS_LAYER_COPY == 1);
   assert(CBSS_LAYER_ADDITIVE == 2);

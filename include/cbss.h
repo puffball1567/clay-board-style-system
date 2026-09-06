@@ -602,7 +602,8 @@ typedef enum CbssPaintKind {
   CBSS_PAINT_POP_TRANSFORM = 10,
   CBSS_PAINT_PUSH_LAYER = 11,
   CBSS_PAINT_POP_LAYER = 12,
-  CBSS_PAINT_DRAW_RASTER_SURFACE = 13
+  CBSS_PAINT_DRAW_RASTER_SURFACE = 13,
+  CBSS_PAINT_DRAW_GPU_DIRECT_SURFACE = 14
 } CbssPaintKind;
 
 typedef enum CbssLayerCompositeMode {
@@ -728,6 +729,7 @@ typedef struct CbssHitResult {
  * LINEAR_GRADIENT: angle, stop_count, interpolation_space
  * STROKE_RECT: width
  * STROKE_PATH: width, line_cap, line_join, miter_limit
+ * DRAW_GPU_DIRECT_SURFACE: opacity
  * DRAW_IMAGE: opacity
  * PUSH_LAYER: opacity, layer_composite_mode
  */
