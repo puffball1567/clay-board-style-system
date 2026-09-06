@@ -4313,6 +4313,7 @@ suite "GPU display surface negotiation and UI":
     let token = host.beginGpuFrame()
     check layer.queueGpuFrame(target, token)
     check not layer.collectGpuFrame()
+    check ui.consumeInvalidation().domains == {}
     host.endGpuFrame(token)
     check layer.collectGpuFrame()
     let invalidation = ui.consumeInvalidation()
@@ -4448,6 +4449,7 @@ suite "GPU display surface negotiation and UI":
       display,
       uiStyle([decl("width", px(80)), decl("height", px(40))])
     )
+    discard ui.consumeInvalidation()
 
     let token = host.beginGpuFrame()
     check handle.queueGpuFrame(source, token)
@@ -4455,6 +4457,7 @@ suite "GPU display surface negotiation and UI":
     expect GpuHostError:
       discard display.queueGpuDisplayFrame(source, token)
     check not handle.collectGpuFrame()
+    check ui.consumeInvalidation().domains == {}
     context.readbackReady = true
     check handle.collectGpuFrame()
     let invalidation = ui.consumeInvalidation()
@@ -4503,4 +4506,442 @@ suite "GPU display surface negotiation and UI":
       'x', maxGpuResourceLabelBytes - len("-readback-8") + 1
     )
     check not host.gpuDisplaySurfaceCapabilities(config).readbackFallback
+    host.close()
+
+suite "GPU display surface quality matrix":
+
+  test "configuration boundaries normalize valid defaults and reject invalid input":
+    let context = newContext()
+    context.enableDirectPresentation(maxBuffers = uint8(MaxGpuDirectSurfaceBuffers))
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("matrix-config", standardBudget())
+
+    var config = defaultGpuDirectSurfaceConfig(1, 1)
+    config.bufferCount = 0
+    config.label = ""
+    let defaults = host.newGpuDirectSurface(namespace, config)
+    check defaults.config().bufferCount == DefaultGpuDirectSurfaceBuffers
+    check defaults.config().label == "gpu-direct-surface"
+    check defaults.closeGpuDirectSurface()
+
+    for bufferCount in [MinGpuDirectSurfaceBuffers, MaxGpuDirectSurfaceBuffers]:
+      config = defaultGpuDirectSurfaceConfig(1, 1)
+      config.bufferCount = bufferCount
+      check host.supportsGpuDirectSurface(config)
+
+    config = defaultGpuDirectSurfaceConfig(8192, 8192)
+    config.bufferCount = 2
+    check host.supportsGpuDirectSurface(config)
+    config.width = 8193
+    check not host.supportsGpuDirectSurface(config)
+    config = defaultGpuDirectSurfaceConfig(1, 1)
+    config.label = repeat('x', maxGpuResourceLabelBytes)
+    check host.supportsGpuDirectSurface(config)
+
+    for bufferCount in [MinGpuDirectSurfaceBuffers - 1,
+                        MaxGpuDirectSurfaceBuffers + 1]:
+      config = defaultGpuDirectSurfaceConfig(1, 1)
+      config.bufferCount = bufferCount
+      expect ValueError:
+        discard host.supportsGpuDirectSurface(config)
+    for dimensions in [(0'u32, 1'u32), (1'u32, 0'u32), (0'u32, 0'u32)]:
+      config = defaultGpuDirectSurfaceConfig(dimensions[0], dimensions[1])
+      expect ValueError:
+        discard host.supportsGpuDirectSurface(config)
+    config = defaultGpuDirectSurfaceConfig(1, 1)
+    config.label = repeat('x', maxGpuResourceLabelBytes + 1)
+    expect ValueError:
+      discard host.supportsGpuDirectSurface(config)
+
+    host.close()
+
+  test "texture render-target and compute capabilities are enforced independently":
+    block textureOnly:
+      let context = newContext()
+      context.enableDirectPresentation(
+        maxBuffers = 2, textures = true, renderTargets = false,
+        computeOutput = true
+      )
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace(
+        "matrix-texture", GpuResourceBudget(persistentBytes: 64,
+            maxResources: 2)
+      )
+      var config = defaultGpuDirectSurfaceConfig(2, 2)
+      config.bufferCount = 2
+      config.acceptComputeOutput = true
+      let surface = host.newGpuDirectSurface(namespace, config)
+      let texture = host.createGpuTexture(
+        namespace,
+        textureDescriptor(2, 2, usage = {gtuSampled, gtuStorage})
+      )
+      let target = host.createGpuRenderTarget(
+        namespace, renderTargetDescriptor(2, 2)
+      )
+      let token = host.beginGpuFrame()
+      check surface.queueGpuDirectSurfaceFrame(texture, token)
+      expect GpuHostError:
+        discard surface.queueGpuDirectSurfaceFrame(target, token)
+      host.endGpuFrame(token)
+      check surface.collectGpuDirectSurfaceFrame()
+      check surface.closeGpuDirectSurface()
+      check host.releaseGpuResource(texture)
+      check host.releaseGpuResource(target)
+      host.close()
+
+    block computeNegotiation:
+      let context = newContext()
+      context.enableDirectPresentation(maxBuffers = 2, computeOutput = true)
+      let host = openGpuHost(context.backend, ghoOwned)
+      var config = defaultGpuDisplaySurfaceConfig(2, 2)
+      config.bufferCount = 2
+      check host.gpuDisplaySurfaceCapabilities(config).direct
+      check not host.gpuDisplaySurfaceCapabilities(config).computeOutputDirect
+      config.acceptComputeOutput = true
+      check host.gpuDisplaySurfaceCapabilities(config).direct
+      check host.gpuDisplaySurfaceCapabilities(config).computeOutputDirect
+      host.close()
+
+    block renderTargetOnly:
+      let context = newContext()
+      context.enableDirectPresentation(
+        maxBuffers = 2, textures = false, renderTargets = true,
+        computeOutput = false
+      )
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace(
+        "matrix-target", GpuResourceBudget(persistentBytes: 64, maxResources: 2)
+      )
+      var config = defaultGpuDirectSurfaceConfig(2, 2)
+      config.bufferCount = 2
+      let surface = host.newGpuDirectSurface(namespace, config)
+      let texture = host.createGpuTexture(
+        namespace, textureDescriptor(2, 2)
+      )
+      let target = host.createGpuRenderTarget(
+        namespace, renderTargetDescriptor(2, 2)
+      )
+      let token = host.beginGpuFrame()
+      check surface.queueGpuDirectSurfaceFrame(target, token)
+      expect GpuHostError:
+        discard surface.queueGpuDirectSurfaceFrame(texture, token)
+      host.endGpuFrame(token)
+      check surface.collectGpuDirectSurfaceFrame()
+      check surface.closeGpuDirectSurface()
+      check host.releaseGpuResource(texture)
+      check host.releaseGpuResource(target)
+      host.close()
+
+  test "duplicate queue and backpressure failures are atomic and recoverable":
+    let context = newContext()
+    context.enableDirectPresentation(maxBuffers = 2)
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "matrix-backpressure",
+      GpuResourceBudget(persistentBytes: 64, maxResources: 3)
+    )
+    var config = defaultGpuDirectSurfaceConfig(1, 1)
+    config.bufferCount = 2
+    let surface = host.newGpuDirectSurface(namespace, config)
+    var resources: seq[GpuResourceHandle]
+    for index in 0 .. 2:
+      resources.add host.createGpuRenderTarget(
+        namespace, renderTargetDescriptor(1, 1, label = "matrix-" & $index)
+      )
+
+    let token = host.beginGpuFrame()
+    check surface.queueGpuDirectSurfaceFrame(resources[0], token)
+    expect GpuHostError:
+      discard surface.queueGpuDirectSurfaceFrame(resources[0], token)
+    check surface.pendingFrameCount == 1
+    check surface.retainedFrameCount == 1
+    check surface.queueGpuDirectSurfaceFrame(resources[1], token)
+    check not surface.queueGpuDirectSurfaceFrame(resources[2], token)
+    check surface.pendingFrameCount == 2
+    check not host.isGpuResourcePresentationRetained(resources[2])
+    host.endGpuFrame(token)
+
+    check surface.collectGpuDirectSurfaceFrame()
+    check surface.pendingFrameCount == 0
+    check surface.retainedFrameCount == 1
+    let next = host.beginGpuFrame()
+    check surface.queueGpuDirectSurfaceFrame(resources[2], next)
+    host.endGpuFrame(next)
+    check surface.collectGpuDirectSurfaceFrame()
+    check surface.closeGpuDirectSurface()
+    for resource in resources:
+      check host.releaseGpuResource(resource)
+    host.close()
+
+  test "close waits for incomplete work and succeeds without an explicit collect":
+    let context = newContext()
+    context.enableDirectPresentation(maxBuffers = 2)
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "matrix-close", GpuResourceBudget(persistentBytes: 16, maxResources: 1)
+    )
+    var config = defaultGpuDirectSurfaceConfig(2, 2)
+    config.bufferCount = 2
+    let surface = host.newGpuDirectSurface(namespace, config)
+    let target = host.createGpuRenderTarget(
+      namespace, renderTargetDescriptor(2, 2)
+    )
+    let token = host.beginGpuFrame()
+    check surface.queueGpuDirectSurfaceFrame(target, token)
+    check not surface.closeGpuDirectSurface()
+    check host.isGpuResourcePresentationRetained(target)
+    host.endGpuFrame(token)
+    check surface.closeGpuDirectSurface()
+    check not host.isGpuResourcePresentationRetained(target)
+    check not surface.closeGpuDirectSurface()
+    check host.releaseGpuResource(target)
+    host.close()
+
+  test "multiple leases keep retired frames alive until the last release":
+    let context = newContext()
+    context.enableDirectPresentation(maxBuffers = 3)
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "matrix-leases", GpuResourceBudget(persistentBytes: 32, maxResources: 2)
+    )
+    let surface = host.newGpuDirectSurface(
+      namespace, defaultGpuDirectSurfaceConfig(2, 2)
+    )
+    let first = host.createGpuRenderTarget(
+      namespace, renderTargetDescriptor(2, 2, label = "lease-first")
+    )
+    let second = host.createGpuRenderTarget(
+      namespace, renderTargetDescriptor(2, 2, label = "lease-second")
+    )
+    var token = host.beginGpuFrame()
+    check surface.queueGpuDirectSurfaceFrame(first, token)
+    host.endGpuFrame(token)
+    check surface.collectGpuDirectSurfaceFrame()
+    var firstLease = surface.acquireGpuDirectSurfaceFrame().get
+    var secondLease = surface.acquireGpuDirectSurfaceFrame().get
+
+    token = host.beginGpuFrame()
+    check surface.queueGpuDirectSurfaceFrame(second, token)
+    host.endGpuFrame(token)
+    check surface.collectGpuDirectSurfaceFrame()
+    check host.isGpuResourcePresentationRetained(first)
+    check firstLease.release()
+    check host.isGpuResourcePresentationRetained(first)
+    check secondLease.release()
+    check not host.isGpuResourcePresentationRetained(first)
+    check not secondLease.release()
+    check host.releaseGpuResource(first)
+
+    check surface.closeGpuDirectSurface()
+    check host.releaseGpuResource(second)
+    host.close()
+
+  test "device loss invalidates pending frames and outstanding leases safely":
+    let context = newContext()
+    context.enableDirectPresentation(maxBuffers = 2)
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "matrix-device-loss",
+      GpuResourceBudget(persistentBytes: 32, maxResources: 2)
+    )
+    var config = defaultGpuDirectSurfaceConfig(2, 2)
+    config.bufferCount = 2
+    let surface = host.newGpuDirectSurface(namespace, config)
+    let presented = host.createGpuRenderTarget(
+      namespace, renderTargetDescriptor(2, 2, label = "loss-presented")
+    )
+    let pending = host.createGpuRenderTarget(
+      namespace, renderTargetDescriptor(2, 2, label = "loss-pending")
+    )
+    var token = host.beginGpuFrame()
+    check surface.queueGpuDirectSurfaceFrame(presented, token)
+    host.endGpuFrame(token)
+    check surface.collectGpuDirectSurfaceFrame()
+    var lease = surface.acquireGpuDirectSurfaceFrame().get
+    token = host.beginGpuFrame()
+    check surface.queueGpuDirectSurfaceFrame(pending, token)
+    host.endGpuFrame(token)
+
+    check host.markGpuDeviceLost()
+    check surface.isStale
+    check not surface.collectGpuDirectSurfaceFrame()
+    check not surface.acquireGpuDirectSurfaceFrame().isSome
+    check not lease.release()
+    check surface.pendingFrameCount == 0
+    check surface.retainedFrameCount == 0
+    check surface.closeGpuDirectSurface()
+    host.close()
+
+  test "bounded frame cycling remains stable across thousands of revisions":
+    const FrameCount = 4096
+    let context = newContext()
+    context.enableDirectPresentation(maxBuffers = 3)
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "matrix-soak", GpuResourceBudget(persistentBytes: 48, maxResources: 3)
+    )
+    let surface = host.newGpuDirectSurface(
+      namespace, defaultGpuDirectSurfaceConfig(2, 2)
+    )
+    var resources: seq[GpuResourceHandle]
+    for index in 0 .. 2:
+      resources.add host.createGpuRenderTarget(
+        namespace, renderTargetDescriptor(2, 2, label = "soak-" & $index)
+      )
+
+    for frameNumber in 1 .. FrameCount:
+      let token = host.beginGpuFrame()
+      check surface.queueGpuDirectSurfaceFrame(
+        resources[(frameNumber - 1) mod resources.len], token
+      )
+      host.endGpuFrame(token)
+      check surface.collectGpuDirectSurfaceFrame()
+      check surface.presentedRevision == uint64(frameNumber)
+      check surface.pendingFrameCount == 0
+      check surface.retainedFrameCount == 1
+      var lease = surface.acquireGpuDirectSurfaceFrame().get
+      check lease.revision == uint64(frameNumber)
+      check lease.release()
+
+    check surface.closeGpuDirectSurface()
+    for resource in resources:
+      check host.releaseGpuResource(resource)
+    check host.gpuNamespaceUsage(namespace).resourceCount == 0
+    host.close()
+
+  test "compositor result matrix never leaks a presentation lease":
+    let context = newContext()
+    context.enableDirectPresentation(maxBuffers = 2)
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "matrix-compositor", GpuResourceBudget(persistentBytes: 16,
+          maxResources: 1)
+    )
+    var config = defaultGpuDirectSurfaceConfig(2, 2)
+    config.bufferCount = 2
+    let surface = host.newGpuDirectSurface(namespace, config)
+    let target = host.createGpuRenderTarget(
+      namespace, renderTargetDescriptor(2, 2)
+    )
+    let emptyCommand = drawGpuDirectSurface(
+      NodeId(0), surface, rect(0, 0, 2, 2)
+    )
+    check emptyCommand.compositeGpuDirectSurface(
+      proc(request: GpuDirectCompositeRequest): GpuDirectCompositeStatus =
+      discard request
+      gdcsPresented
+    ) == gdcsNoFrame
+    check PaintCommand().compositeGpuDirectSurface(nil) == gdcsUnsupported
+
+    let token = host.beginGpuFrame()
+    check surface.queueGpuDirectSurfaceFrame(target, token)
+    host.endGpuFrame(token)
+    check surface.collectGpuDirectSurfaceFrame()
+    for expected in [gdcsPresented, gdcsRetry, gdcsUnsupported, gdcsFailed]:
+      check emptyCommand.compositeGpuDirectSurface(
+        proc(request: GpuDirectCompositeRequest): GpuDirectCompositeStatus =
+        check request.frame.resource == target
+        expected
+      ) == expected
+      check surface.retainedFrameCount == 1
+    check surface.closeGpuDirectSurface()
+    check host.releaseGpuResource(target)
+    host.close()
+
+  test "fallback capability matrix rejects arithmetic overflow and missing backend features":
+    block formats:
+      let context = newContext()
+      let host = openGpuHost(context.backend, ghoOwned)
+      for format in GpuTextureFormat:
+        let config = defaultGpuDisplaySurfaceConfig(2, 2, format)
+        check host.gpuDisplaySurfaceCapabilities(config).readbackFallback ==
+          (format in {gtfR8, gtfRgba8, gtfBgra8})
+
+      var overflow = defaultGpuDisplaySurfaceConfig(
+        0x80000000'u32, 0x80000000'u32
+      )
+      overflow.maxRasterBytes = high(int)
+      check not host.gpuDisplaySurfaceCapabilities(overflow).readbackFallback
+      host.close()
+
+    for missingCopy in [false, true]:
+      let context = newContext()
+      context.copySupported = not missingCopy
+      context.readbackSupported = missingCopy
+      let host = openGpuHost(context.backend, ghoOwned)
+      let config = defaultGpuDisplaySurfaceConfig(2, 2)
+      check not host.gpuDisplaySurfaceCapabilities(config).readbackFallback
+      host.close()
+
+  test "closed display surfaces and handles reject further work without mutation":
+    let context = newContext()
+    context.enableDirectPresentation(maxBuffers = 2)
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "matrix-closed", GpuResourceBudget(persistentBytes: 16, maxResources: 1)
+    )
+    var config = defaultGpuDisplaySurfaceConfig(2, 2)
+    config.bufferCount = 2
+    let display = host.newGpuDisplaySurface(namespace, config)
+    let target = host.createGpuRenderTarget(
+      namespace, renderTargetDescriptor(2, 2)
+    )
+    let ui = initUiRoot()
+    let handle = ui.gpuDisplaySurface(display)
+    check handle.valid
+    check display.closeGpuDisplaySurface()
+    check display.isClosed
+    check not handle.valid
+    check not display.closeGpuDisplaySurface()
+    check not display.collectGpuDisplayFrame()
+    let token = host.beginGpuFrame()
+    check not display.queueGpuDisplayFrame(target, token)
+    host.endGpuFrame(token)
+    check not host.isGpuResourcePresentationRetained(target)
+    check host.releaseGpuResource(target)
+    host.close()
+
+  test "UI safety styles and ownership validation hold for both layer placements":
+    let context = newContext()
+    context.enableDirectPresentation(maxBuffers = 2)
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("matrix-ui", standardBudget())
+    var config = defaultGpuDisplaySurfaceConfig(2, 2)
+    config.bufferCount = 2
+    let display = host.newGpuDisplaySurface(namespace, config)
+    let ui = initUiRoot()
+    let foreignUi = initUiRoot()
+    let owner = ui.box(uiStyle([
+      decl("width", px(40)), decl("height", px(20))
+    ]))
+    let foreignOwner = foreignUi.box()
+    expect ValueError:
+      discard ui.gpuDisplayVisualLayer(foreignOwner, display)
+    expect ValueError:
+      discard ui.gpuDisplayVisualLayer(NodeHandle(), display)
+
+    for placement in [gdsvUnderlay, gdsvOverlay]:
+      let layer = ui.gpuDisplayVisualLayer(
+        owner,
+        display,
+        placement = placement,
+        style = uiStyle([
+          decl("z-index", number(99)),
+          decl("pointer-events", keyword("auto"))
+        ])
+      )
+      var diagnostics: Diagnostics
+      let styles = resolveTreeStyles(
+        ui.tree, ui.styleSheets(), defaultProperties(), diagnostics
+      )
+      check not diagnostics.hasErrors
+      let style = styles.styles[layer.nodeHandle.id.nodeIndex]
+      check style.visual.pointerEvents == peNone
+      check style.layout.position == pkAbsolute
+      check style.layout.zIndex == (if placement == gdsvUnderlay: -1 else: 1)
+      check ui.tree.semanticInfo(layer.nodeHandle.id).hidden
+
+    check display.closeGpuDisplaySurface()
+    expect ValueError:
+      discard ui.gpuDisplaySurface(display)
     host.close()

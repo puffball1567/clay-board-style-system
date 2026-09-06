@@ -2,6 +2,9 @@
 
 Status: `Backend-neutral direct presentation and asynchronous readback fallback implemented`
 
+The normal, failure, edge-case, and pending hardware coverage is tracked in
+[GPU Surface Quality Matrix](gpu-surface-test-matrix.md).
+
 `GpuDisplaySurface` is the negotiated UI boundary for displaying a GPU Texture
 or RenderTarget. It selects one of two paths without changing the surrounding
 Box, Canvas, layout, clipping, opacity, transform, stacking, hit-test, focus,
