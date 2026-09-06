@@ -88,15 +88,21 @@ proc gpuDisplaySurfaceCapabilities*(
     return
   let resolved = config.normalized()
   let info = host.backendInfo()
-  let rasterBytes = uint64(resolved.width) * uint64(resolved.height) * 4'u64
+  let rasterPixels = uint64(resolved.width) * uint64(resolved.height)
+  let rasterSizeFits = rasterPixels <= high(uint64) div 4'u64
+  let rasterBytes =
+    if rasterSizeFits: rasterPixels * 4'u64
+    else: high(uint64)
   result.direct = host.supportsGpuDirectSurface(resolved.directConfig())
   result.readbackFallback =
+    rasterSizeFits and
     resolved.format in {gtfR8, gtfRgba8, gtfBgra8} and
     info.textureCopySupported and info.textureReadbackSupported and
     rasterBytes <= uint64(resolved.maxRasterBytes) and
     resolved.label.len + len("-readback-8") <= maxGpuResourceLabelBytes
   result.computeOutputDirect =
-    result.direct and info.directComputeOutputPresentationSupported
+    result.direct and resolved.acceptComputeOutput and
+    info.directComputeOutputPresentationSupported
   result.format = resolved.format
   result.maxDirectBuffers = int(info.maxDirectPresentationBuffers)
 
