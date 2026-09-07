@@ -445,6 +445,11 @@ the same two systems. Standalone LeakSanitizer and Valgrind run on Linux. Other
 platform combinations are omitted when their sanitizer runtime cannot be
 reliably linked and maintained with the CI toolchain.
 
+Portable CI tests are deterministically sharded per operating system. Long
+sanitizer tasks accept `CBSS_MEMORY_MODEL=arc` or `CBSS_MEMORY_MODEL=orc` so CI
+can run ownership models independently; leaving it unset runs both models for
+the normal local workflow.
+
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before changing a public boundary or hot
 path. Properties, elements, backends, and reference controls are separated so
 contributors can work without editing unrelated modules.

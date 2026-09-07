@@ -201,8 +201,15 @@ or reduced to the documented generator input — one binding copy only
 - The discovery runner supports deterministic index-based sharding after its
   test paths are sorted. Shards must partition the complete list without
   overlap or omission; sharding changes scheduling only, never test scope.
-  Windows uses two portable shards because compiling every independent Nim
-  test executable serially approaches the hosted-runner deadline.
+  CI currently uses two portable shards on Linux and macOS and three on
+  Windows because compiling every independent Nim test executable serially is
+  the dominant cross-platform cost. These counts are scheduling values and may
+  be tuned from measured runner durations without changing the contract.
+- Long sanitizer suites may select one ownership model through
+  `CBSS_MEMORY_MODEL=arc|orc`. An unset value preserves the local developer
+  contract and runs both models. CI uses separate ARC and ORC jobs where the
+  measured suite duration justifies the additional runner setup, so failures
+  remain isolated without reducing sanitizer coverage.
 - CI runs `nimble check`, the discovered ARC suite, the same suite and public
   examples under ORC, ARC example checks for all three SDL3 link modes, and
   locked Cargo bridge tests/builds. Release hygiene checks verify required

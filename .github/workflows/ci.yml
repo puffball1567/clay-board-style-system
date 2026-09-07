@@ -322,22 +322,37 @@ jobs:
             os: ubuntu-latest
             shard_index: 0
             shard_number: 1
-            shard_count: 1
+            shard_count: 2
+          - platform: Linux x86_64
+            os: ubuntu-latest
+            shard_index: 1
+            shard_number: 2
+            shard_count: 2
           - platform: Windows x86_64
             os: windows-latest
             shard_index: 0
             shard_number: 1
-            shard_count: 2
+            shard_count: 3
           - platform: Windows x86_64
             os: windows-latest
             shard_index: 1
             shard_number: 2
-            shard_count: 2
+            shard_count: 3
+          - platform: Windows x86_64
+            os: windows-latest
+            shard_index: 2
+            shard_number: 3
+            shard_count: 3
           - platform: macOS arm64
             os: macos-latest
             shard_index: 0
             shard_number: 1
-            shard_count: 1
+            shard_count: 2
+          - platform: macOS arm64
+            os: macos-latest
+            shard_index: 1
+            shard_number: 2
+            shard_count: 2
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -470,7 +485,7 @@ jobs:
         run: nimble testCAbiValgrind -y
 
   motion-address-sanitizer:
-    name: Motion ASan (${{ matrix.platform }})
+    name: Motion ASan (${{ matrix.platform }}, ${{ matrix.memory_label }})
     needs: preflight
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
@@ -480,10 +495,27 @@ jobs:
         include:
           - platform: Linux x86_64
             os: ubuntu-latest
+            memory_model: arc
+            memory_label: ARC
+          - platform: Linux x86_64
+            os: ubuntu-latest
+            memory_model: orc
+            memory_label: ORC
           - platform: Windows x86_64
             os: windows-latest
+            memory_model: ''
+            memory_label: ARC + ORC
           - platform: macOS arm64
             os: macos-latest
+            memory_model: arc
+            memory_label: ARC
+          - platform: macOS arm64
+            os: macos-latest
+            memory_model: orc
+            memory_label: ORC
+
+    env:
+      CBSS_MEMORY_MODEL: ${{ matrix.memory_model }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -499,11 +531,11 @@ jobs:
           nim --version
           nimble --version
 
-      - name: Check motion and Cue lifecycles under ARC and ORC (Unix)
+      - name: Check motion and Cue lifecycles (Unix)
         if: runner.os != 'Windows'
         run: nimble testMotionAsan -y
 
-      - name: Check motion and Cue lifecycles under ARC and ORC (Windows)
+      - name: Check motion and Cue lifecycles (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -523,7 +555,7 @@ jobs:
           nimble testMotionAsan -y
 
   undefined-behavior-sanitizer:
-    name: UBSan (${{ matrix.platform }})
+    name: UBSan (${{ matrix.platform }}, ${{ matrix.memory_label }})
     needs: preflight
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
@@ -534,12 +566,22 @@ jobs:
           - platform: Linux x86_64
             os: ubuntu-latest
             compiler: clang-18
+            memory_model: ''
+            memory_label: ARC + ORC
           - platform: macOS arm64
             os: macos-latest
             compiler: clang
+            memory_model: arc
+            memory_label: ARC
+          - platform: macOS arm64
+            os: macos-latest
+            compiler: clang
+            memory_model: orc
+            memory_label: ORC
 
     env:
       CBSS_CLANG: ${{ matrix.compiler }}
+      CBSS_MEMORY_MODEL: ${{ matrix.memory_model }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -565,18 +607,25 @@ jobs:
         run: nimble testUbsan -y
 
   leak-sanitizer:
-    name: LSan (${{ matrix.platform }})
+    name: LSan (${{ matrix.platform }}, ${{ matrix.memory_label }})
     needs: preflight
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
     env:
       CBSS_CLANG: clang-18
+      CBSS_MEMORY_MODEL: ${{ matrix.memory_model }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: Linux x86_64
             os: ubuntu-latest
+            memory_model: arc
+            memory_label: ARC
+          - platform: Linux x86_64
+            os: ubuntu-latest
+            memory_model: orc
+            memory_label: ORC
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -598,7 +647,7 @@ jobs:
           "$CBSS_CLANG" -fsanitize=address "$RUNNER_TEMP/cbss_lsan_probe.c" -o "$RUNNER_TEMP/cbss_lsan_probe"
           ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 "$RUNNER_TEMP/cbss_lsan_probe"
 
-      - name: Check retained lifecycles under ARC and ORC
+      - name: Check retained lifecycles
         run: nimble testLsan -y
 
   thread-sanitizer:

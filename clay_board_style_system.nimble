@@ -13,6 +13,19 @@ skipDirs      = @["target"]
 requires "nim >= 2.2.0"
 requires "regex >= 0.26.3"
 
+proc selectedMemoryModels(): seq[string] =
+  let requested = getEnv("CBSS_MEMORY_MODEL")
+  case requested
+  of "":
+    @["arc", "orc"]
+  of "arc", "orc":
+    @[requested]
+  else:
+    raise newException(
+      ValueError,
+      "CBSS_MEMORY_MODEL must be either 'arc' or 'orc'"
+    )
+
 before install:
   let packageRoot = thisDir()
   let stagedRoot = packageRoot & "/src"
@@ -182,7 +195,7 @@ task testMotionAsan, "Run retained runtime tests under AddressSanitizer":
       " --passC:-fno-pie --passL:-no-pie"
     else:
       ""
-  for memoryModel in ["arc", "orc"]:
+  for memoryModel in selectedMemoryModels():
     for test in [
       ("declarative_transition", "tests/runtime/test_declarative_transition.nim"),
       ("declarative_keyframes", "tests/runtime/test_declarative_keyframes.nim"),
@@ -217,7 +230,7 @@ task testMotionAsan, "Run retained runtime tests under AddressSanitizer":
 task testUbsan, "Run numeric, layout, transform, and motion tests under UndefinedBehaviorSanitizer":
   let sanitizerRoot = thisDir() & "/nimcache"
   let clangExe = getEnv("CBSS_CLANG", "clang")
-  for memoryModel in ["arc", "orc"]:
+  for memoryModel in selectedMemoryModels():
     for test in [
       ("color_conversion", "tests/core/test_color_conversion.nim"),
       ("flex", "tests/layout/test_flex.nim"),
@@ -244,7 +257,7 @@ task testLsan, "Run retained lifecycle tests under LeakSanitizer on Linux":
   when defined(linux):
     let sanitizerRoot = thisDir() & "/nimcache"
     let clangExe = getEnv("CBSS_CLANG", "clang")
-    for memoryModel in ["arc", "orc"]:
+    for memoryModel in selectedMemoryModels():
       for test in [
         ("widget_lifecycle", "tests/memory/widget_lifecycle.nim"),
         ("event_lifecycle", "tests/memory/event_lifecycle.nim"),
@@ -296,7 +309,7 @@ task testTsan, "Run worker-to-UI ownership races under ThreadSanitizer":
         "setarch \"$(uname -m)\" -R "
       else:
         ""
-    for memoryModel in ["arc", "orc"]:
+    for memoryModel in selectedMemoryModels():
       let suffix = "stream_mailbox_threaded_" & memoryModel & "_tsan"
       let nimcache = sanitizerRoot & "/clay_board_style_system_" & suffix & "_nimcache"
       let artifact = nimcache & "/clay_board_style_system_" & suffix
