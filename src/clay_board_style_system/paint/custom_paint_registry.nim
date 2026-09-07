@@ -1,6 +1,6 @@
 import std/[algorithm, options, sets, tables]
 
-import ../core/[custom_paint, geometry, node]
+import ../core/[custom_paint, custom_paint_parameter, geometry, node]
 import ./paint_command
 
 const
@@ -28,6 +28,7 @@ type
     owner*: NodeId
     bounds*: Rect
     opacity*: float32
+    parameters*: CustomPaintParameters
 
   CustomPaintResolution* = object
     status*: CustomPaintResolutionStatus

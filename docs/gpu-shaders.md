@@ -17,6 +17,13 @@ This boundary keeps `shaderc`, process-launch code, source files, and unrelated
 renderer artifacts out of application binaries. A package contains only the
 variants selected by the application build.
 
+Shader-backed Custom Paint declarations use the backend-neutral typed material
+parameters documented in [Custom Paint](custom-paint.md). Parameters are
+validated and retained during style resolution, then delivered without
+per-frame text parsing. Mapping those values to a concrete bgfx uniform or
+storage binding remains the provider's responsibility until the production
+shader-material compositor is complete.
+
 ## Build-Time Compilation
 
 The build-only compiler module must be imported explicitly. It is deliberately

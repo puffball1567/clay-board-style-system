@@ -1,6 +1,6 @@
 import std/strutils
 
-import ./[declaration, style_value]
+import ./[custom_paint_parameter, declaration, style_value]
 
 const
   maxCustomPaintMaterialBytes* = 256
@@ -39,10 +39,12 @@ proc validCustomPaintMaterial*(material: string): bool =
 proc customPaint*(
     material: string;
     stage = cpsOverlay;
-    sourceOrder = 0
+    sourceOrder = 0;
+    parameters: openArray[CustomPaintParameter] = []
 ): Declaration =
   ## Refers to a registered paint material without retaining backend objects in
   ## Style. Resolution remains backend-neutral and occurs after layout.
   if not material.validCustomPaintMaterial:
     raise newException(ValueError, "custom paint material name is invalid")
-  decl(stage.customPaintProperty, keyword(material), sourceOrder)
+  result = decl(stage.customPaintProperty, keyword(material), sourceOrder)
+  result.customPaintParameters = customPaintParameters(parameters)

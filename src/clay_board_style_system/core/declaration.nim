@@ -1,10 +1,11 @@
-import ./[color, color_mix, color_value, style_value]
+import ./[color, color_mix, color_value, custom_paint_parameter, style_value]
 
 type
   Declaration* = object
     property*: string
     operation*: StyleOperation
     sourceOrder*: int
+    customPaintParameters*: CustomPaintParameters
 
 proc decl*(property: string; value: StyleValue; sourceOrder = 0): Declaration =
   Declaration(property: property, operation: overwrite(value),

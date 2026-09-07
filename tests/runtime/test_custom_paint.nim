@@ -18,6 +18,161 @@ proc commandIndex(commands: openArray[PaintCommand]; color: Color): int =
   -1
 
 suite "declarative custom paint":
+  test "typed material parameters preserve every supported value kind":
+    let values = customPaintParameters([
+      customPaintFloat("phase", 0.25),
+      customPaintInteger("samples", 12),
+      customPaintBoolean("enabled", true),
+      customPaintVec2("origin", 3, 4),
+      customPaintVec4("weights", 1, 2, 3, 4),
+      customPaintColor("accent", rgba(0.1, 0.2, 0.3, 0.4))
+    ])
+
+    check values.len == 6
+    check values[0].kind == cppkFloat
+    check values[0].floatValue == 0.25
+    check values[1].kind == cppkInteger
+    check values[1].integerValue == 12
+    check values[2].kind == cppkBoolean
+    check values[2].booleanValue
+    check values[3].kind == cppkVec2
+    check values[3].vec2Value == [3.0'f32, 4.0'f32]
+    check values[4].kind == cppkVec4
+    check values[4].vec4Value == [1.0'f32, 2.0'f32, 3.0'f32, 4.0'f32]
+    check values[5].kind == cppkColor
+    check values[5].colorValue == rgba(0.1, 0.2, 0.3, 0.4)
+
+    var names: seq[string]
+    for parameter in values:
+      names.add parameter.name
+    check names == @["phase", "samples", "enabled", "origin", "weights",
+      "accent"]
+    check values.findCustomPaintParameter("origin").isSome
+    check values.findCustomPaintParameter("missing").isNone
+    check CustomPaintParameters(nil).len == 0
+    check CustomPaintParameters(nil).findCustomPaintParameter("x").isNone
+
+  test "parameter snapshots do not alias caller-owned names or values":
+    var callerName = "phase"
+    var callerParameter = customPaintFloat(callerName, 0.5)
+    let retained = customPaintParameters([callerParameter])
+
+    callerName[0] = 'x'
+    callerParameter.floatValue = 1.0
+    check retained[0].name == "phase"
+    check retained[0].floatValue == 0.5
+
+    let emptyDeclaration = customPaint("plain")
+    check emptyDeclaration.customPaintParameters.isNil
+
+  test "typed material parameters reach paint without per-frame parsing":
+    let ui = initUiRoot()
+    let panel = ui.box(uiStyle([
+      decl("width", px(40)),
+      decl("height", px(20)),
+      customPaint(
+        "parameterized",
+        parameters = [
+          customPaintFloat("phase", 0.75),
+          customPaintColor("tint", rgb(0.2, 0.4, 0.6))
+        ]
+      )
+    ]))
+    var callbackCount = 0
+    var captured: CustomPaintRequest
+    check ui.registerCustomPaintMaterial(
+      "parameterized",
+      proc(request: CustomPaintRequest): seq[PaintCommand] =
+        inc callbackCount
+        captured = request
+        @[]
+    )
+
+    let resolved = ui.resolvedUi()
+    let retained = resolved.styles.styles[panel.id.nodeIndex]
+      .customPaintParameters(cpsOverlay)
+    check retained.len == 2
+    discard ui.buildPaintCommands(resolved.styles, resolved.layout)
+    check callbackCount == 1
+    check captured.owner == panel.id
+    check captured.parameters.len == 2
+    check captured.parameters[0].name == "phase"
+    check captured.parameters[0].floatValue == 0.75
+    check captured.parameters[1].name == "tint"
+    check captured.parameters[1].colorValue == rgb(0.2, 0.4, 0.6)
+
+  test "material parameters remain isolated by stage and clear with none":
+    let ui = initUiRoot()
+    let panel = ui.box(uiStyle([
+      customPaint(
+        "base",
+        cpsUnderlay,
+        parameters = [customPaintFloat("depth", 1)]
+      ),
+      customPaint(
+        "shine",
+        cpsOverlay,
+        parameters = [customPaintFloat("intensity", 2)]
+      ),
+      decl(customPaintOverlayProperty, keyword("none"))
+    ]))
+    let resolved = ui.resolvedUi()
+    let style = resolved.styles.styles[panel.id.nodeIndex]
+
+    check style.customPaintParameters(cpsUnderlay).len == 1
+    check style.customPaintParameters(cpsUnderlay)[0].name == "depth"
+    check style.customPaintMaterial(cpsOverlay).isNone
+    check style.customPaintParameters(cpsOverlay).len == 0
+    check style.customPaintParameters(cpsMask).len == 0
+    check style.customPaintParameters(cpsFilter).len == 0
+
+  test "parameter names are bounded shader-compatible identifiers":
+    let valid = ["x", "_phase", "accent2", "CamelCase"]
+    for name in valid:
+      check name.validCustomPaintParameterName
+      check customPaintFloat(name, 1).name == name
+
+    let invalid = ["", "2phase", "has-dash", "has space", "accent.color",
+      "\x00bad", repeat('x', maxCustomPaintParameterNameBytes + 1), "色"]
+    for name in invalid:
+      check not name.validCustomPaintParameterName
+      expect ValueError:
+        discard customPaintFloat(name, 1)
+
+  test "parameter sets reject duplicate names and excessive cardinality":
+    expect ValueError:
+      discard customPaintParameters([
+        customPaintFloat("same", 1),
+        customPaintInteger("same", 2)
+      ])
+
+    var maximum: seq[CustomPaintParameter]
+    for index in 0 ..< maxCustomPaintParameters:
+      maximum.add customPaintInteger("p" & $index, index)
+    check customPaintParameters(maximum).len == maxCustomPaintParameters
+    maximum.add customPaintFloat("overflow", 1)
+    expect ValueError:
+      discard customPaintParameters(maximum)
+
+  test "non-finite float vector and color values fail before style storage":
+    for value in [NaN.float32, Inf.float32, NegInf.float32]:
+      expect ValueError:
+        discard customPaintFloat("value", value)
+      expect ValueError:
+        discard customPaintVec2("value", 0, value)
+      expect ValueError:
+        discard customPaintVec4("value", 0, 0, value, 0)
+      expect ValueError:
+        discard customPaintColor("value", rgba(0, value, 0, 1))
+
+  test "integer parameters preserve int64 boundaries and reject overflow":
+    check customPaintInteger("low", low(int64)).integerValue == low(int64)
+    check customPaintInteger("high", high(int64)).integerValue == high(int64)
+    check customPaintInteger("unsigned", uint64(high(int64))).integerValue ==
+      high(int64)
+    expect ValueError:
+      discard customPaintInteger("overflow", high(uint64))
+
   test "authoring validates names and maps every stage to a private property":
     check customPaint("surface").property == customPaintOverlayProperty
     check customPaint("surface", cpsUnderlay).property ==

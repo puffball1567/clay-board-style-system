@@ -2258,7 +2258,9 @@ per-namespace rebuild handlers, generation reporting, and rollback of partial
 resources from failed owners. A backend-neutral direct Texture/RenderTarget
 surface now adds bounded double/triple buffering, presentation retention,
 latest-ready coalescing, paint-only invalidation, capability negotiation, and
-the existing asynchronous readback fallback. The production bgfx compositor,
+the existing asynchronous readback fallback. Custom Paint declarations now
+retain bounded typed material parameters in cold style storage and deliver them
+to providers without per-frame string parsing. The production bgfx compositor,
 production-adapter device recreation, declarative mask and filter composition,
 and broader real-GPU qualification remain open Version 0.7 work.
 Backend-neutral named Custom Paint

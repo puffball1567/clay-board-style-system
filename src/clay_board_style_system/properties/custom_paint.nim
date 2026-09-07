@@ -3,6 +3,7 @@ import std/options
 import ../core/[
   computed_style,
   custom_paint,
+  custom_paint_parameter,
   declaration,
   diagnostics,
   property,
@@ -12,17 +13,22 @@ import ../core/[
 proc setCustomPaintMaterial(
     style: var ComputedStyle;
     stage: CustomPaintStage;
-    material: Option[string]
+    material: Option[string];
+    parameters: CustomPaintParameters = nil
 ) =
   case stage
   of cpsUnderlay:
     style.customPaintStyle().underlay = material
+    style.customPaintStyle().underlayParameters = parameters
   of cpsOverlay:
     style.customPaintStyle().overlay = material
+    style.customPaintStyle().overlayParameters = parameters
   of cpsMask:
     style.customPaintStyle().mask = material
+    style.customPaintStyle().maskParameters = parameters
   of cpsFilter:
     style.customPaintStyle().filter = material
+    style.customPaintStyle().filterParameters = parameters
 
 proc stageForProperty(property: string): CustomPaintStage =
   case property
@@ -57,7 +63,11 @@ proc applyCustomPaint(
     if material == "none":
       style.setCustomPaintMaterial(stage, none(string))
     elif material.validCustomPaintMaterial:
-      style.setCustomPaintMaterial(stage, some(material))
+      style.setCustomPaintMaterial(
+        stage,
+        some(material),
+        declaration.customPaintParameters
+      )
     else:
       diagnostics.addError(
         declaration.property,

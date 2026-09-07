@@ -284,7 +284,8 @@ proc addCustomPaint(
     stage: stage,
     owner: owner,
     bounds: bounds,
-    opacity: opacity
+    opacity: opacity,
+    parameters: style.customPaintParameters(stage)
   ))
   if resolved.status != cprsResolved or resolved.commands.len == 0:
     return

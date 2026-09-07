@@ -555,15 +555,18 @@ The implemented slices provide bounded GPU Canvas output, the existing
 overlay stages. A normal Box can now consume CPU or GPU-produced paint without
 adding a second layout, input, focus, or accessibility node. Registrations are
 generation-checked, command streams are bounded by the owner's clip, and
-missing or malformed materials fail closed with bounded diagnostics. The typed
-Shader Builder emits deterministic bgfx source at build time and its compiled
+missing or malformed materials fail closed with bounded diagnostics. Typed,
+bounded `float32`, `int64`, `bool`, `vec2`, `vec4`, and color material
+parameters now travel from immutable Style declarations to paint callbacks
+without per-frame string parsing or hot-layout growth. The typed Shader Builder
+emits deterministic bgfx source at build time and its compiled
 artifact uses the same retained Pipeline contract as low-level GPU submission.
 A build-only wrapper invokes the official `shaderc` without shell evaluation,
 and bounded checksummed packages retain unique target variants for runtime
-selection. Retained-layer filter and mask composition, typed material
-parameters, visual-shape hit testing, and arbitrary scene picking remain later
-layers on the same contract. See [Custom Paint](custom-paint.md) for the current
-public API and failure rules.
+selection. Retained-layer filter and mask composition, production mapping from
+typed parameters to backend bindings, visual-shape hit testing, and arbitrary
+scene picking remain later layers on the same contract. See
+[Custom Paint](custom-paint.md) for the current public API and failure rules.
 
 This bounded Custom Style path is the scope of the design above. It ends at
 declaratively attaching packaged shader paint to an ordinary CPU-defined CBSS
