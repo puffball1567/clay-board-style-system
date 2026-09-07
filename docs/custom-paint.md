@@ -12,16 +12,27 @@ let panel = ui.box(uiStyle([
   decl("height", px(96)),
   decl("border-radius", px(12)),
   decl("overflow", keyword("hidden")),
-  customPaint("panel-accent", cpsUnderlay)
+  customPaint(
+    "panel-accent",
+    cpsUnderlay,
+    parameters = [
+      customPaintFloat("phase", 0.25),
+      customPaintColor("accent", rgb(0.12, 0.48, 0.82))
+    ]
+  )
 ]))
 
 discard ui.registerCustomPaintMaterial(
   "panel-accent",
   proc(request: CustomPaintRequest): seq[PaintCommand] =
+    let accent = request.parameters.findCustomPaintParameter("accent")
+    let color =
+      if accent.isSome: accent.get.colorValue
+      else: rgb(0.12, 0.48, 0.82)
     @[
       fillRect(
         request.bounds,
-        rgba(0.12, 0.48, 0.82, request.opacity),
+        rgba(color.r, color.g, color.b, request.opacity),
         owner = some(request.owner)
       )
     ],
@@ -40,6 +51,30 @@ Custom Paint providers cannot be omitted accidentally:
 ```nim
 let commands = ui.buildPaintCommands(styles, layout)
 ```
+
+## Typed Material Parameters
+
+Custom Paint declarations can carry an immutable, ordered parameter snapshot.
+The supported kinds are `float32`, `int64`, `bool`, `vec2`, `vec4`, and
+`Color`. Providers receive these values directly in `CustomPaintRequest`; they
+do not parse strings during paint.
+
+Parameter names use the portable shader-identifier subset
+`[A-Za-z_][A-Za-z0-9_]*`, are limited to 64 bytes, and must be unique within a
+declaration. A declaration accepts at most 64 parameters. Floating-point,
+vector, and color components must be finite. Unsigned integers that do not fit
+in `int64` are rejected rather than wrapped.
+
+An empty declaration retains no parameter allocation. Non-empty snapshots live
+in the computed style's cold Custom Paint storage and are shared read-only with
+the paint callback. They do not enlarge the hot layout or hit-test records and
+are not copied once per frame.
+
+The parameter contract is backend-neutral. A CPU provider may consume it
+directly, while a GPU provider can map the same typed values to validated
+uniform or storage bindings. This change does not expose a bgfx handle through
+Style. The future C ABI provider boundary will expose an equivalent fixed-width
+view rather than Nim object or closure layout.
 
 ## GPU Canvas Material
 
@@ -69,6 +104,9 @@ its `bgfxim` dependency stay behind the adapter boundary.
 
 - Material names are non-empty, bounded to 256 bytes, and cannot contain
   control characters or surrounding whitespace.
+- Material parameters are immutable after authoring, bounded in name length and
+  count, unique by name, finite where applicable, and retained outside hot
+  layout data.
 - Duplicate names are rejected unless generic registry replacement is
   explicitly requested.
 - Tracked registrations carry a generation. Removing an old registration can

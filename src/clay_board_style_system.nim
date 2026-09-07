@@ -9,6 +9,7 @@ import clay_board_style_system/core/[
   color_value,
   computed_style,
   custom_paint,
+  custom_paint_parameter,
   declaration,
   diagnostics,
   geometry,
@@ -72,6 +73,7 @@ export color_parser
 export color_value
 export computed_style
 export custom_paint
+export custom_paint_parameter
 export declaration
 export diagnostics
 export geometry

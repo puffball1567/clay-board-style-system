@@ -1,5 +1,6 @@
 import std/options
-import ./[color, color_conversion, custom_paint, style_value]
+import ./[color, color_conversion, custom_paint, custom_paint_parameter,
+    style_value]
 
 type
   DisplayKind* = enum
@@ -738,6 +739,10 @@ type
     overlay*: Option[string]
     mask*: Option[string]
     filter*: Option[string]
+    underlayParameters*: CustomPaintParameters
+    overlayParameters*: CustomPaintParameters
+    maskParameters*: CustomPaintParameters
+    filterParameters*: CustomPaintParameters
 
   ComputedVectorStyle* = object
     colorInterpolationFilters*: Option[string]
@@ -887,6 +892,22 @@ proc customPaintMaterial*(
     style.customPaintCold.mask
   of cpsFilter:
     style.customPaintCold.filter
+
+proc customPaintParameters*(
+    style: ComputedStyle;
+    stage: CustomPaintStage
+): CustomPaintParameters =
+  if style.customPaintCold.isNil:
+    return nil
+  case stage
+  of cpsUnderlay:
+    style.customPaintCold.underlayParameters
+  of cpsOverlay:
+    style.customPaintCold.overlayParameters
+  of cpsMask:
+    style.customPaintCold.maskParameters
+  of cpsFilter:
+    style.customPaintCold.filterParameters
 
 proc initialComputedStyle*(): ComputedStyle =
   result.layout.display = dkFlex
