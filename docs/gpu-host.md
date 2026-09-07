@@ -613,10 +613,15 @@ nimble runBgfxHostDemo
 
 The backend-neutral direct Texture/RenderTarget contract, bounded frame
 retention, capability negotiation, and asynchronous readback fallback are
-implemented. The current bgfx adapter does not advertise direct presentation
-until a same-device paint compositor and visible real-renderer qualification
-are complete. A public native-window helper and in-place restoration in a
-production GPU adapter also remain release work. The host provides deterministic
+implemented. The bgfx adapter keeps direct presentation disabled by default.
+An already-qualified presentation owner can declare its exact Texture,
+RenderTarget, compute-output, format, and buffer capabilities through
+`newQualifiedBgfxDirectPresentationProfile()` and connect a callback-scoped
+typed texture adapter with `newBgfxDirectCompositeAdapter()`. This opt-in does
+not replace visible real-renderer qualification and does not claim that the SDL
+high-level renderer can import arbitrary bgfx resources. A built-in same-device
+paint compositor, public native-window helper, and in-place restoration in a
+production GPU adapter remain release work. The host provides deterministic
 namespace restoration and failed-owner rollback.
 
 The NOOP fixture validates that native resource calls coexist with host

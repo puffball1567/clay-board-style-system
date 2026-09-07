@@ -11,7 +11,7 @@ jobs and must not be replaced by a mock-only success.
 | Area | Normal cases | Failure cases | Edge cases | Coverage |
 | --- | --- | --- | --- | --- |
 | Configuration | defaults, 2 and 8 buffers, maximum texture size | zero dimensions, invalid buffer count, oversized label | exact label and texture limits | Automated |
-| Capability negotiation | Texture, RenderTarget, compute output, supported formats | missing feature, unsupported format, inconsistent backend declaration | independent Texture/RenderTarget support | Automated |
+| Capability negotiation | Texture, RenderTarget, compute output, supported formats; explicit qualified bgfx profile reaches retained direct submission | missing feature, unsupported format, inconsistent backend or profile declaration | independent Texture/RenderTarget support; buffer limits 2 and 8 | Automated |
 | Queueing | queue, complete, collect, acquire, release | duplicate resource, foreign namespace, wrong shape/format/usage/token | queue saturation and recovery | Automated |
 | Frame selection | ordered publication and latest-ready coalescing | incomplete frame cannot publish | thousands of monotonic revisions | Automated |
 | Lifetime | presented resources stay retained | write, destroy, namespace close, host close while retained | multiple leases and retirement after last release | Automated |

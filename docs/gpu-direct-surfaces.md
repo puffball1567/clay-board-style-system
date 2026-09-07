@@ -74,6 +74,28 @@ support separately, along with accepted formats and the maximum buffer count.
 CBSS validates the matrix when the host opens. Inconsistent declarations close
 or detach the backend and fail the open operation.
 
+The bgfx backend defaults all direct capabilities to disabled. A presentation
+owner that has passed the real-renderer release gate may opt in with an explicit
+profile:
+
+```nim
+var options = defaultBgfxHostOptions()
+options.directPresentation = newQualifiedBgfxDirectPresentationProfile(
+  {gtfRgba8, gtfBgra8},
+  maxBuffers = 3,
+  textureSupported = true,
+  renderTargetSupported = true,
+  computeOutputSupported = true
+)
+let backend = newBgfxBackend(options)
+```
+
+The constructor rejects an empty format set, a buffer count outside two through
+eight, a profile with no presentation path, and compute output without Texture
+presentation. The profile is an assertion by the presentation owner, not a
+runtime hardware probe. It must be paired with a compositor created for the
+same `backend` and must not be enabled solely because resource creation works.
+
 `gpuDisplaySurfaceCapabilities()` reports both the direct and readback paths.
 Readback capability also accounts for the requested format, bounded raster
 memory, and internal label limits. Direct resources must match the configured
@@ -125,8 +147,8 @@ This hook is an adapter boundary, not a claim that SDL's high-level renderer can
 import an arbitrary bgfx texture. A direct adapter must still share the actual
 GPU device and presentation ordering, and must draw while the callback's active
 SDL clip/layer scope is valid. Until the bgfx implementation and visible pixel
-tests satisfy that contract, the default display surface continues to select the
-readback path.
+tests satisfy that contract, the default profile continues to make display
+surfaces select the readback path.
 
 A production direct adapter must test all of the following together:
 

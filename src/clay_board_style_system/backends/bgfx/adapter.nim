@@ -5,9 +5,17 @@ import bgfx
 
 import ../../core/geometry
 import ../../paint/gpu_direct_compositor
+import ../../runtime/gpu_direct_surface
 import ../../runtime/gpu_host
 
 type
+  BgfxDirectPresentationProfile* = object
+    textureSupported: bool
+    renderTargetSupported: bool
+    computeOutputSupported: bool
+    formats: set[GpuTextureFormat]
+    maxBuffers: uint8
+
   BgfxHostOptions* = object
     rendererType*: bgfx_renderer_type_t
     vendorId*, deviceId*: uint16
@@ -17,6 +25,7 @@ type
     colorFormat*: bgfx_texture_format_t
     depthStencilFormat*: bgfx_texture_format_t
     numBackBuffers*, maxFrameLatency*, debugTextScale*: uint8
+    directPresentation*: BgfxDirectPresentationProfile
 
   BgfxAdapterContext = ref object of GpuBackendContext
     options: BgfxHostOptions
@@ -42,6 +51,41 @@ type
 
 var activeBgfxContext: BgfxAdapterContext
 
+proc validate(profile: BgfxDirectPresentationProfile) =
+  let supported = profile.textureSupported or profile.renderTargetSupported
+  if not supported:
+    if profile.computeOutputSupported or profile.formats != {} or
+        profile.maxBuffers != 0:
+      raise newException(ValueError, "disabled bgfx direct presentation profile is inconsistent")
+    return
+  if profile.formats == {}:
+    raise newException(ValueError, "bgfx direct presentation requires at least one texture format")
+  if profile.maxBuffers < uint8(MinGpuDirectSurfaceBuffers) or
+      profile.maxBuffers > uint8(MaxGpuDirectSurfaceBuffers):
+    raise newException(ValueError, "bgfx direct presentation buffer count is outside CBSS limits")
+  if profile.computeOutputSupported and not profile.textureSupported:
+    raise newException(ValueError, "bgfx direct compute output requires texture presentation")
+
+proc newQualifiedBgfxDirectPresentationProfile*(
+    formats: set[GpuTextureFormat];
+    maxBuffers = DefaultGpuDirectSurfaceBuffers;
+    textureSupported = true;
+    renderTargetSupported = true;
+    computeOutputSupported = false
+): BgfxDirectPresentationProfile =
+  ## Declares capabilities already qualified by the presentation owner against
+  ## the real GPU renderer. Constructing this value does not perform that test.
+  if maxBuffers < 0 or maxBuffers > int(high(uint8)):
+    raise newException(ValueError, "bgfx direct presentation buffer count is invalid")
+  result = BgfxDirectPresentationProfile(
+    textureSupported: textureSupported,
+    renderTargetSupported: renderTargetSupported,
+    computeOutputSupported: computeOutputSupported,
+    formats: formats,
+    maxBuffers: uint8(maxBuffers)
+  )
+  result.validate()
+
 proc defaultBgfxHostOptions*(): BgfxHostOptions =
   BgfxHostOptions(
     rendererType: BGFX_RENDERER_TYPE_COUNT,
@@ -54,7 +98,10 @@ proc defaultBgfxHostOptions*(): BgfxHostOptions =
 proc context(value: GpuBackendContext): BgfxAdapterContext {.inline.} =
   BgfxAdapterContext(value)
 
-proc fillBackendInfo(info: var GpuBackendInfo): GpuBackendStatus =
+proc fillBackendInfo(
+    value: BgfxAdapterContext;
+    info: var GpuBackendInfo
+): GpuBackendStatus =
   let caps = BGFX.getCaps()
   if caps.isNil:
     return gbsUnavailable
@@ -65,6 +112,14 @@ proc fillBackendInfo(info: var GpuBackendInfo): GpuBackendStatus =
     textureCopySupported: (caps.supported and BGFX_CAPS_TEXTURE_BLIT) != 0,
     textureReadbackSupported:
       (caps.supported and BGFX_CAPS_TEXTURE_READ_BACK) != 0,
+    directTexturePresentationSupported:
+      value.options.directPresentation.textureSupported,
+    directRenderTargetPresentationSupported:
+      value.options.directPresentation.renderTargetSupported,
+    directComputeOutputPresentationSupported:
+      value.options.directPresentation.computeOutputSupported,
+    directPresentationFormats: value.options.directPresentation.formats,
+    maxDirectPresentationBuffers: value.options.directPresentation.maxBuffers,
     homogeneousDepth: caps.homogeneousDepth,
     originBottomLeft: caps.originBottomLeft,
     maxTextureSize: caps.limits.maxTextureSize
@@ -123,7 +178,7 @@ proc openOwned(
     value.releaseContext()
     return gbsUnavailable
 
-  result = fillBackendInfo(info)
+  result = fillBackendInfo(value, info)
   if result != gbsOk:
     BGFX.shutdown()
     value.releaseContext()
@@ -137,7 +192,7 @@ proc attachBorrowed(
   let value = rawContext.context
   if value.claimContext(false) != gbsOk:
     return gbsFailed
-  result = fillBackendInfo(info)
+  result = fillBackendInfo(value, info)
   if result != gbsOk:
     value.releaseContext()
 
@@ -1199,6 +1254,7 @@ proc detachBorrowed(rawContext: GpuBackendContext) {.raises: [].} =
 proc newBgfxBackend*(
     options = defaultBgfxHostOptions()
 ): GpuBackendVTable =
+  options.directPresentation.validate()
   let value = BgfxAdapterContext(options: options)
   GpuBackendVTable(
     apiVersion: gpuHostApiVersion,

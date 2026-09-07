@@ -1079,8 +1079,10 @@ SDL3 continues to own windows, native handles, input, event integration, and
 the canonical CPU presentation path. The independent low-level bgfx Nim C99
 binding is [bgfxim](https://github.com/puffball1567/bgfxim). It is distributed
 separately, remains useful without CBSS, and enters an application only when
-its GPU profile is selected. The binding is available; the CBSS adapter and
-its real-GPU qualification remain Version 0.7 work. A later wgpu-native adapter
+its GPU profile is selected. The binding, typed resource adapter, SDL compositor
+hook, callback-scoped bgfx Texture/RenderTarget resolution, and explicit
+qualified capability profile are available; the built-in compositor and its
+real-GPU pixel qualification remain Version 0.7 work. A later wgpu-native adapter
 may implement the same CBSS-owned contract, but it is no longer the standard
 provider or a release prerequisite.
 

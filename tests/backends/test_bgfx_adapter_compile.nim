@@ -9,7 +9,9 @@ import bgfx
 
 import clay_board_style_system/backends/bgfx/adapter
 import clay_board_style_system/core/geometry
+import clay_board_style_system/core/node
 import clay_board_style_system/paint/gpu_direct_compositor
+import clay_board_style_system/paint/paint_command
 import clay_board_style_system/runtime/gpu_direct_surface
 import clay_board_style_system/runtime/gpu_host
 
@@ -168,6 +170,122 @@ proc directRequest(
   )
 
 suite "optional bgfxim adapter":
+  test "qualified presentation profile enables the retained direct path":
+    resetCounters()
+    var options = defaultBgfxHostOptions()
+    options.directPresentation = newQualifiedBgfxDirectPresentationProfile(
+      {gtfRgba8},
+      maxBuffers = 2,
+      computeOutputSupported = true
+    )
+    let backend = newBgfxBackend(options)
+    var directSubmitCount = 0
+    let compositor = newBgfxDirectCompositeAdapter(
+      backend,
+      proc(submission: BgfxDirectCompositeSubmission): GpuDirectCompositeStatus =
+        inc directSubmitCount
+        check submission.texture.idx == 31'u16
+        check submission.sourceKind == grkTexture
+        check submission.revision == 1
+        gdcsPresented
+    )
+    let host = openGpuHost(backend, ghoOwned, config())
+    let info = host.backendInfo()
+    check info.directTexturePresentationSupported
+    check info.directRenderTargetPresentationSupported
+    check info.directComputeOutputPresentationSupported
+    check info.directPresentationFormats == {gtfRgba8}
+    check info.maxDirectPresentationBuffers == 2
+
+    let resources = host.createGpuNamespace(
+      "qualified-direct",
+      GpuResourceBudget(
+        persistentBytes: 4096,
+        workUnitsPerFrame: 4,
+        maxResources: 4
+      )
+    )
+    var surfaceConfig = defaultGpuDirectSurfaceConfig(8, 4)
+    surfaceConfig.bufferCount = 2
+    surfaceConfig.acceptComputeOutput = true
+    let surface = host.newGpuDirectSurface(resources, surfaceConfig)
+    let texture = host.createGpuTexture(
+      resources,
+      GpuTextureDescriptor(
+        width: 8,
+        height: 4,
+        format: gtfRgba8,
+        usage: {gtuSampled, gtuStorage},
+        label: "qualified-output"
+      )
+    )
+    let frame = host.beginGpuFrame()
+    check surface.queueGpuDirectSurfaceFrame(texture, frame)
+    check not surface.collectGpuDirectSurfaceFrame()
+    host.endGpuFrame(frame)
+    check surface.collectGpuDirectSurfaceFrame()
+    check surface.presentedRevision() == 1
+
+    let command = drawGpuDirectSurface(
+      NodeId(0),
+      surface,
+      rect(5, 7, 80, 40),
+      0.8'f32
+    )
+    check compositeGpuDirectSurface(command, compositor) == gdcsPresented
+    check directSubmitCount == 1
+
+    check surface.closeGpuDirectSurface()
+    check host.releaseGpuResource(texture)
+    host.close()
+
+  test "presentation profile rejects inconsistent capability claims":
+    for maxBuffers in [0, 1, 9, int(high(uint8)) + 1]:
+      expect ValueError:
+        discard newQualifiedBgfxDirectPresentationProfile(
+          {gtfRgba8},
+          maxBuffers = maxBuffers
+        )
+    expect ValueError:
+      discard newQualifiedBgfxDirectPresentationProfile({})
+    expect ValueError:
+      discard newQualifiedBgfxDirectPresentationProfile(
+        {gtfRgba8},
+        textureSupported = false,
+        renderTargetSupported = false
+      )
+    expect ValueError:
+      discard newQualifiedBgfxDirectPresentationProfile(
+        {gtfRgba8},
+        textureSupported = false,
+        computeOutputSupported = true
+      )
+
+  test "presentation profile keeps capability axes independent":
+    let cases = @[
+      (texture: true, target: false, compute: false, buffers: 2),
+      (texture: false, target: true, compute: false, buffers: 8),
+      (texture: true, target: false, compute: true, buffers: 3)
+    ]
+    for item in cases:
+      resetCounters()
+      var options = defaultBgfxHostOptions()
+      options.directPresentation = newQualifiedBgfxDirectPresentationProfile(
+        {gtfRgba8, gtfBgra8},
+        maxBuffers = item.buffers,
+        textureSupported = item.texture,
+        renderTargetSupported = item.target,
+        computeOutputSupported = item.compute
+      )
+      let host = openGpuHost(newBgfxBackend(options), ghoOwned, config())
+      let info = host.backendInfo()
+      check info.directTexturePresentationSupported == item.texture
+      check info.directRenderTargetPresentationSupported == item.target
+      check info.directComputeOutputPresentationSupported == item.compute
+      check info.directPresentationFormats == {gtfRgba8, gtfBgra8}
+      check info.maxDirectPresentationBuffers == uint8(item.buffers)
+      host.close()
+
   test "direct-composite adapter resolves only scoped presentable handles":
     resetCounters()
     let backend = newBgfxBackend()
@@ -302,6 +420,11 @@ suite "optional bgfxim adapter":
     check host.backendInfo.computeSupported
     check host.backendInfo.homogeneousDepth
     check host.backendInfo.maxTextureSize == 16384
+    check not host.backendInfo.directTexturePresentationSupported
+    check not host.backendInfo.directRenderTargetPresentationSupported
+    check not host.backendInfo.directComputeOutputPresentationSupported
+    check host.backendInfo.directPresentationFormats == {}
+    check host.backendInfo.maxDirectPresentationBuffers == 0
     check stubWidth() == 640
     check stubHeight() == 480
 
