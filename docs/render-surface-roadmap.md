@@ -434,11 +434,11 @@ plus alpha-mode normalization. `gpuVisualLayer` additionally attaches this
 surface as a bounded underlay or overlay of an ordinary component without
 duplicating input or semantic ownership. The backend-neutral direct
 Texture/RenderTarget queue, retention, paint command, and readback fallback are
-also implemented. Public native SDL-window handoff, a production bgfx
-same-device compositor, production-adapter device recreation, and visible
-real-GPU conformance remain release gates below. The current bgfx adapter fails
-closed for in-place restoration instead of relying on an unsafe runtime restart
-sequence.
+also implemented, as are portable native-window conversion and SDL3 handoff. A
+production bgfx same-device compositor, production-adapter
+device recreation, and visible real-GPU conformance remain release gates below.
+The current bgfx adapter fails closed for in-place restoration instead of
+relying on an unsafe runtime restart sequence.
 
 ### Typed Shader Custom Style Painting
 

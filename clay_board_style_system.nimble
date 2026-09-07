@@ -79,10 +79,15 @@ task checkBgfxAdapter, "Run the optional bgfxim GPU adapter contract":
     )
   let taskRoot = getTempDir() & "/clay_board_style_system_bgfx_adapter"
   mkDir(taskRoot)
+  let sdl3PlatformTest =
+    when defined(linux):
+      " -d:cbssTestSdl3PlatformData"
+    else:
+      ""
   for memoryModel in ["arc", "orc"]:
     let nimcache = taskRoot & "/" & memoryModel & "_nimcache"
     let artifact = taskRoot & "/adapter_" & memoryModel
-    exec "nim c -r --mm:" & memoryModel & " -d:cbssGpuBgfx --path:src --path:\"" & bgfximPath & "\" --passC:-I\"" & bgfxInclude & "\" --passC:-I\"" & bxInclude & "\" --nimcache:\"" & nimcache & "\" --out:\"" & artifact & "\" tests/backends/test_bgfx_adapter_compile.nim"
+    exec "nim c -r --mm:" & memoryModel & " -d:cbssGpuBgfx" & sdl3PlatformTest & " --path:src --path:\"" & bgfximPath & "\" --passC:-I\"" & bgfxInclude & "\" --passC:-I\"" & bxInclude & "\" --nimcache:\"" & nimcache & "\" --out:\"" & artifact & "\" tests/backends/test_bgfx_adapter_compile.nim"
 
 task testShaderc, "Compile typed shader sources with the official bgfx shaderc":
   let shaderc = getEnv("CBSS_SHADERC")
