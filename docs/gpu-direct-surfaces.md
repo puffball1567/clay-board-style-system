@@ -107,6 +107,20 @@ unbounded diagnostic queue. With no compositor installed, direct commands are
 reported as unsupported instead of being silently ignored. Closing the renderer
 releases the callback holder.
 
+The optional bgfx backend exposes `newBgfxDirectCompositeAdapter(backend,
+submit)` for presentation-backend authors. It binds the callback to one bgfx
+backend context and resolves a CBSS Texture or a RenderTarget's color attachment
+to a typed bgfx texture only for the duration of the synchronous `submit`
+callback. The callback receives destination, opacity, alpha, revision, size,
+and format metadata, but it does not receive the `GpuDirectSurface` or the
+opaque backend resource ID. It must not retain the temporary bgfx handle.
+
+The adapter fails closed before touching bgfx when the host is detached, the
+provider is different, the packed resource kind is inconsistent, or the
+RenderTarget attachment is invalid. Construction also rejects a mismatched GPU
+host API version, non-bgfx context, or nil submit callback. These checks prevent
+an ordinary UI node from becoming a general raw-handle escape hatch.
+
 This hook is an adapter boundary, not a claim that SDL's high-level renderer can
 import an arbitrary bgfx texture. A direct adapter must still share the actual
 GPU device and presentation ordering, and must draw while the callback's active

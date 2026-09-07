@@ -63,6 +63,10 @@ static uint16_t cbss_last_vertex_stride;
 static uint32_t cbss_frame_buffer_create_count;
 static uint32_t cbss_frame_buffer_destroy_count;
 static uint32_t cbss_frame_buffer_name_count;
+static uint32_t cbss_get_texture_count;
+static uint16_t cbss_get_texture_frame_buffer;
+static uint8_t cbss_get_texture_attachment;
+static bool cbss_fail_get_texture;
 static uint16_t cbss_frame_buffer_width;
 static uint16_t cbss_frame_buffer_height;
 static uint64_t cbss_frame_buffer_flags;
@@ -462,7 +466,10 @@ bgfx_texture_handle_t bgfx_get_texture(bgfx_frame_buffer_handle_t handle,
                                        uint8_t attachment)
 {
     bgfx_texture_handle_t texture = { UINT16_MAX };
-    if (UINT16_MAX != handle.idx && 0 == attachment)
+    ++cbss_get_texture_count;
+    cbss_get_texture_frame_buffer = handle.idx;
+    cbss_get_texture_attachment = attachment;
+    if (!cbss_fail_get_texture && UINT16_MAX != handle.idx && 0 == attachment)
     {
         texture.idx = (uint16_t)(handle.idx + 1000);
     }
@@ -840,6 +847,10 @@ void cbss_bgfx_stub_reset_counters(void)
     cbss_frame_buffer_create_count = 0;
     cbss_frame_buffer_destroy_count = 0;
     cbss_frame_buffer_name_count = 0;
+    cbss_get_texture_count = 0;
+    cbss_get_texture_frame_buffer = UINT16_MAX;
+    cbss_get_texture_attachment = UINT8_MAX;
+    cbss_fail_get_texture = false;
     cbss_frame_buffer_width = 0;
     cbss_frame_buffer_height = 0;
     cbss_frame_buffer_flags = 0;
@@ -1032,6 +1043,22 @@ uint32_t cbss_bgfx_stub_frame_buffer_destroy_count(void)
 uint32_t cbss_bgfx_stub_frame_buffer_name_count(void)
 {
     return cbss_frame_buffer_name_count;
+}
+uint32_t cbss_bgfx_stub_get_texture_count(void)
+{
+    return cbss_get_texture_count;
+}
+uint16_t cbss_bgfx_stub_get_texture_frame_buffer(void)
+{
+    return cbss_get_texture_frame_buffer;
+}
+uint8_t cbss_bgfx_stub_get_texture_attachment(void)
+{
+    return cbss_get_texture_attachment;
+}
+void cbss_bgfx_stub_fail_get_texture(bool value)
+{
+    cbss_fail_get_texture = value;
 }
 uint16_t cbss_bgfx_stub_frame_buffer_width(void)
 {

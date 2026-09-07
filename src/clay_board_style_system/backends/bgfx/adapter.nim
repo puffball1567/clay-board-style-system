@@ -3,6 +3,8 @@ when not defined(cbssGpuBgfx):
 
 import bgfx
 
+import ../../core/geometry
+import ../../paint/gpu_direct_compositor
 import ../../runtime/gpu_host
 
 type
@@ -21,6 +23,22 @@ type
     attached: bool
     owned: bool
     completedFrame: uint32
+
+  BgfxDirectCompositeSubmission* = object
+    ## Backend-authoring view valid only while BgfxDirectSubmitProc is running.
+    ## Do not retain the texture handle beyond that callback.
+    texture*: bgfx_texture_handle_t
+    sourceKind*: GpuResourceKind
+    destination*: Rect
+    opacity*: float32
+    alphaMode*: GpuAlphaMode
+    revision*: uint64
+    width*, height*: uint32
+    format*: GpuTextureFormat
+
+  BgfxDirectSubmitProc* = proc(
+    submission: BgfxDirectCompositeSubmission
+  ): GpuDirectCompositeStatus {.closure.}
 
 var activeBgfxContext: BgfxAdapterContext
 
@@ -211,6 +229,60 @@ proc unpackBackendResource(
   if payload == 0 or payload > uint64(high(uint16)) + 1'u64 or tag == 0:
     return (tag, 0'u16, false)
   (tag, uint16(payload - 1'u64), true)
+
+proc newBgfxDirectCompositeAdapter*(
+    backend: GpuBackendVTable;
+    submit: BgfxDirectSubmitProc
+): GpuDirectCompositeProc =
+  ## Resolves CBSS's opaque bgfx resource ID only for one synchronous submit.
+  ## This adapter does not advertise direct-presentation capabilities by itself;
+  ## the presentation owner must first qualify the actual same-device path.
+  if backend.apiVersion != gpuHostApiVersion or backend.provider != gpkBgfx or
+      backend.context.isNil or not (backend.context of BgfxAdapterContext):
+    raise newException(ValueError, "invalid bgfx backend for direct composition")
+  if submit.isNil:
+    raise newException(ValueError, "bgfx direct-composite submit callback is required")
+
+  let value = backend.context.context()
+  result = proc(request: GpuDirectCompositeRequest): GpuDirectCompositeStatus =
+    if not value.attached:
+      return gdcsFailed
+    if request.frame.provider != gpkBgfx:
+      return gdcsUnsupported
+
+    let decoded = request.frame.backendResource.unpackBackendResource()
+    if not decoded.valid:
+      return gdcsFailed
+
+    var texture: bgfx_texture_handle_t
+    case request.frame.resource.kind
+    of grkTexture:
+      if decoded.tag != brtTexture:
+        return gdcsFailed
+      texture = bgfx_texture_handle_t(idx: decoded.handleIndex)
+    of grkRenderTarget:
+      if decoded.tag != brtFrameBuffer:
+        return gdcsFailed
+      texture = BGFX.getTexture(
+        bgfx_frame_buffer_handle_t(idx: decoded.handleIndex),
+        0
+      )
+    else:
+      return gdcsUnsupported
+
+    if not BGFX_HANDLE_IS_VALID(texture):
+      return gdcsFailed
+    submit(BgfxDirectCompositeSubmission(
+      texture: texture,
+      sourceKind: request.frame.resource.kind,
+      destination: request.destination,
+      opacity: request.opacity,
+      alphaMode: request.frame.alphaMode,
+      revision: request.frame.revision,
+      width: request.frame.width,
+      height: request.frame.height,
+      format: request.frame.format
+    ))
 
 proc bgfxVertexSemantic(value: GpuVertexSemantic): bgfx_attrib_t =
   case value
