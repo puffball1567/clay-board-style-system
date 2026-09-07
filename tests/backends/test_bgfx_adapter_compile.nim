@@ -8,6 +8,9 @@ import std/unittest
 import bgfx
 
 import clay_board_style_system/backends/bgfx/adapter
+import clay_board_style_system/core/geometry
+import clay_board_style_system/paint/gpu_direct_compositor
+import clay_board_style_system/runtime/gpu_direct_surface
 import clay_board_style_system/runtime/gpu_host
 
 proc resetCounters() {.importc: "cbss_bgfx_stub_reset_counters", cdecl.}
@@ -122,6 +125,14 @@ proc frameBufferDestroyCount(): uint32 {.
   importc: "cbss_bgfx_stub_frame_buffer_destroy_count", cdecl.}
 proc frameBufferNameCount(): uint32 {.
   importc: "cbss_bgfx_stub_frame_buffer_name_count", cdecl.}
+proc getTextureCount(): uint32 {.
+  importc: "cbss_bgfx_stub_get_texture_count", cdecl.}
+proc getTextureFrameBuffer(): uint16 {.
+  importc: "cbss_bgfx_stub_get_texture_frame_buffer", cdecl.}
+proc getTextureAttachment(): uint8 {.
+  importc: "cbss_bgfx_stub_get_texture_attachment", cdecl.}
+proc failGetTexture(value: bool) {.
+  importc: "cbss_bgfx_stub_fail_get_texture", cdecl.}
 proc frameBufferWidth(): uint16 {.
   importc: "cbss_bgfx_stub_frame_buffer_width", cdecl.}
 proc frameBufferHeight(): uint16 {.
@@ -134,7 +145,150 @@ proc frameBufferFormat(): uint32 {.
 proc config(): GpuHostConfig =
   GpuHostConfig(width: 640, height: 480, presentation: true)
 
+proc directRequest(
+    host: GpuHost;
+    resource: GpuResourceHandle;
+    provider = gpkBgfx
+): GpuDirectCompositeRequest =
+  let info = host.gpuPresentableResourceInfo(resource)
+  GpuDirectCompositeRequest(
+    frame: GpuDirectSurfaceFrame(
+      slotIndex: 0,
+      resource: resource,
+      backendResource: info.backendResource,
+      provider: provider,
+      alphaMode: gcamPremultiplied,
+      revision: 42,
+      width: info.width,
+      height: info.height,
+      format: info.format
+    ),
+    destination: rect(11, 13, 17, 19),
+    opacity: 0.75
+  )
+
 suite "optional bgfxim adapter":
+  test "direct-composite adapter resolves only scoped presentable handles":
+    resetCounters()
+    let backend = newBgfxBackend()
+    var directSubmitCount = 0
+    var lastSubmission: BgfxDirectCompositeSubmission
+    var submitStatus = gdcsPresented
+    let submit: BgfxDirectSubmitProc =
+      proc(submission: BgfxDirectCompositeSubmission): GpuDirectCompositeStatus =
+        inc directSubmitCount
+        lastSubmission = submission
+        submitStatus
+    let compositor = newBgfxDirectCompositeAdapter(backend, submit)
+
+    check compositor(GpuDirectCompositeRequest(
+      frame: GpuDirectSurfaceFrame(provider: gpkBgfx)
+    )) == gdcsFailed
+    check directSubmitCount == 0
+
+    let host = openGpuHost(backend, ghoOwned, config())
+    let resources = host.createGpuNamespace(
+      "direct-composite",
+      GpuResourceBudget(persistentBytes: 4096, maxResources: 4)
+    )
+    let texture = host.createGpuTexture(
+      resources,
+      GpuTextureDescriptor(
+        width: 8,
+        height: 4,
+        format: gtfRgba8,
+        usage: {gtuSampled},
+        label: "direct-texture"
+      )
+    )
+    let renderTarget = host.createGpuRenderTarget(
+      resources,
+      GpuRenderTargetDescriptor(
+        width: 8,
+        height: 4,
+        format: gtfRgba8,
+        usage: {gtuRenderTarget, gtuSampled},
+        label: "direct-render-target"
+      )
+    )
+
+    let textureRequest = host.directRequest(texture)
+    check compositor(textureRequest) == gdcsPresented
+    check directSubmitCount == 1
+    check lastSubmission.texture.idx == 31'u16
+    check lastSubmission.sourceKind == grkTexture
+    check lastSubmission.destination == rect(11, 13, 17, 19)
+    check lastSubmission.opacity == 0.75'f32
+    check lastSubmission.alphaMode == gcamPremultiplied
+    check lastSubmission.revision == 42
+    check lastSubmission.width == 8
+    check lastSubmission.height == 4
+    check lastSubmission.format == gtfRgba8
+
+    let renderTargetRequest = host.directRequest(renderTarget)
+    submitStatus = gdcsRetry
+    check compositor(renderTargetRequest) == gdcsRetry
+    check directSubmitCount == 2
+    check lastSubmission.texture.idx == 1181'u16
+    check lastSubmission.sourceKind == grkRenderTarget
+    check getTextureCount() == 1
+    check getTextureFrameBuffer() == 181'u16
+    check getTextureAttachment() == 0'u8
+
+    failGetTexture(true)
+    check compositor(renderTargetRequest) == gdcsFailed
+    check directSubmitCount == 2
+    check getTextureCount() == 2
+    failGetTexture(false)
+
+    var wrongProvider = textureRequest
+    wrongProvider.frame.provider = gpkCustom
+    check compositor(wrongProvider) == gdcsUnsupported
+    check directSubmitCount == 2
+
+    var wrongKind = textureRequest
+    wrongKind.frame.resource.kind = grkRenderTarget
+    check compositor(wrongKind) == gdcsFailed
+    check directSubmitCount == 2
+
+    var unsupportedKind = textureRequest
+    unsupportedKind.frame.resource.kind = grkBuffer
+    check compositor(unsupportedKind) == gdcsUnsupported
+    check directSubmitCount == 2
+
+    var missingResource = textureRequest
+    missingResource.frame.backendResource = GpuBackendResourceId(0)
+    check compositor(missingResource) == gdcsFailed
+    check directSubmitCount == 2
+
+    check host.releaseGpuResource(texture)
+    check host.releaseGpuResource(renderTarget)
+    host.close()
+    check compositor(renderTargetRequest) == gdcsFailed
+    check directSubmitCount == 2
+    check getTextureCount() == 2
+
+  test "direct-composite adapter rejects invalid construction":
+    let submit: BgfxDirectSubmitProc =
+      proc(submission: BgfxDirectCompositeSubmission): GpuDirectCompositeStatus =
+        discard submission
+        gdcsPresented
+    expect ValueError:
+      discard newBgfxDirectCompositeAdapter(GpuBackendVTable(), submit)
+    var wrongProvider = newBgfxBackend()
+    wrongProvider.provider = gpkCustom
+    expect ValueError:
+      discard newBgfxDirectCompositeAdapter(wrongProvider, submit)
+    var wrongVersion = newBgfxBackend()
+    wrongVersion.apiVersion = gpuHostApiVersion + 1
+    expect ValueError:
+      discard newBgfxDirectCompositeAdapter(wrongVersion, submit)
+    expect ValueError:
+      discard newBgfxDirectCompositeAdapter(
+        newBgfxBackend(),
+        BgfxDirectSubmitProc(nil)
+      )
+
   test "owned mode initializes frames resizes and shuts down":
     resetCounters()
     let backend = newBgfxBackend()
