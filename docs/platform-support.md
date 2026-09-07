@@ -25,11 +25,14 @@ dedicated Linux lane starts an isolated AT-SPI bus and checks the real D-Bus
 protocol under ARC, ORC, and Valgrind. Together, these lanes catch source,
 ABI-build, memory-model, native bridge, and Linux accessibility transport
 regressions without presenting compilation as real-device GUI validation.
-The Windows portable suite is split deterministically across two jobs because
+The portable suite is split deterministically across two Linux jobs, three
+Windows jobs, and two macOS jobs. Windows receives the additional shard because
 its per-test C compilation cost is substantially higher on hosted runners.
-Both shards are release-blocking, and unit tests verify that the partition has
-no overlap or missing entries. Native Cargo outputs are cached by platform and
-lockfile, but cache misses still execute within the configured timeout.
+Every shard is release-blocking, and unit tests verify that each partition has
+no overlap or missing entries. Cross-platform public-module, C ABI, header, and
+Rust checks run once on shard zero for each platform. Native Cargo outputs are
+cached by platform and lockfile, but cache misses still execute within the
+configured timeout.
 
 ## SDL3 Policy
 
