@@ -150,6 +150,11 @@ SDL clip/layer scope is valid. Until the bgfx implementation and visible pixel
 tests satisfy that contract, the default profile continues to make display
 surfaces select the readback path.
 
+For an SDL-created native window, use
+`bgfxPlatformDataFromSdl3Window()` before opening the bgfx host. This removes
+application-side native-property probing while preserving the rule that only
+one renderer owns presentation.
+
 A production direct adapter must test all of the following together:
 
 - one Device/Queue and one presentation owner;

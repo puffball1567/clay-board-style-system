@@ -56,6 +56,7 @@ when defined(linux) and defined(cbssLinuxAtspi):
   import clay_board_style_system/backends/atspi/linux_dbus
 when defined(cbssGpuBgfx):
   import clay_board_style_system/backends/bgfx/adapter as bgfx_adapter
+  import clay_board_style_system/backends/bgfx/platform_data as bgfx_platform_data
 import clay_board_style_system/craft/[pack, style, style_slots]
 
 export asset_resolver
@@ -161,6 +162,7 @@ when defined(linux) and defined(cbssLinuxAtspi):
   export linux_dbus
 when defined(cbssGpuBgfx):
   export bgfx_adapter
+  export bgfx_platform_data
 export pack
 export style
 export style_slots

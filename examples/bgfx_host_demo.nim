@@ -9,6 +9,7 @@ import std/[math, os, strutils]
 import bgfx
 
 import clay_board_style_system/backends/bgfx/adapter
+import clay_board_style_system/backends/bgfx/sdl3_platform_data
 import clay_board_style_system/backends/sdl3/config
 import clay_board_style_system/runtime/gpu_host
 
@@ -23,9 +24,6 @@ type DemoVertex = object
 proc createWindow(title: cstring; width, height: cint): pointer
   {.importc: "cbss_bgfx_demo_create_window", cdecl.}
 proc sdlError(): cstring {.importc: "cbss_bgfx_demo_sdl_error", cdecl.}
-proc platformData(window: pointer; display, nativeWindow: ptr pointer;
-    nativeWindowType: ptr cint): cint
-  {.importc: "cbss_bgfx_demo_platform_data", cdecl.}
 proc pollWindow(window: pointer; width, height: ptr cint): cint
   {.importc: "cbss_bgfx_demo_poll", cdecl.}
 proc delay(milliseconds: uint32)
@@ -107,15 +105,7 @@ var resources: seq[GpuResourceHandle]
 try:
   var options = defaultBgfxHostOptions()
   options.rendererType = BGFX_RENDERER_TYPE_OPENGL
-  var nativeWindowType: cint
-  if platformData(
-      window,
-      addr options.platformData.ndt,
-      addr options.platformData.nwh,
-      addr nativeWindowType
-  ) == 0:
-    raise newException(IOError, "native window lookup failed: " & $sdlError())
-  options.platformData.type = bgfx_native_window_handle_type_t(nativeWindowType)
+  options.platformData = bgfxPlatformDataFromSdl3Window(window)
 
   host = openGpuHost(
     newBgfxBackend(options),

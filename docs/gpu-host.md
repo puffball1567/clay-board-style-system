@@ -580,10 +580,28 @@ defer:
   host.close()
 ```
 
-For a native window, fill `BgfxHostOptions.platformData` with handles obtained
-from SDL3 before opening the host. Exactly one component owns presentation for
-that window. The SDL high-level renderer and bgfx must not independently
-present to the same window.
+For a native window, fill `BgfxHostOptions.platformData` before opening the
+host. The portable, platform-tagged `BgfxNativeWindowHandles` conversion
+validates X11, Wayland, Win32, and Cocoa handle requirements without exposing
+platform header types. The SDL3 backend additionally provides
+`bgfxPlatformDataFromSdl3Window()`; it selects the active SDL video driver and
+reads the matching native properties instead of relying on probe order.
+Exactly one component owns presentation for that window. The SDL high-level
+renderer and bgfx must not independently present to the same window.
+
+```nim
+import clay_board_style_system/backends/bgfx/adapter
+import clay_board_style_system/backends/bgfx/sdl3_platform_data
+
+var options = defaultBgfxHostOptions()
+options.platformData = bgfxPlatformDataFromSdl3Window(sdlWindow)
+let host = openGpuHost(newBgfxBackend(options), ghoOwned, config)
+```
+
+The SDL3 helper is available on platforms configured by the CBSS SDL backend;
+the current production configuration is Linux x86_64. The portable tagged-handle
+conversion is exercised by the bgfxim contract on Linux, Windows, and macOS so
+future SDL backend ports retain one platform-data contract.
 
 The current adapter covers initialization or borrowed attachment, capability
 reporting, frame completion, resize, mapped Texture, Buffer, RenderTarget,
@@ -620,9 +638,9 @@ RenderTarget, compute-output, format, and buffer capabilities through
 typed texture adapter with `newBgfxDirectCompositeAdapter()`. This opt-in does
 not replace visible real-renderer qualification and does not claim that the SDL
 high-level renderer can import arbitrary bgfx resources. A built-in same-device
-paint compositor, public native-window helper, and in-place restoration in a
-production GPU adapter remain release work. The host provides deterministic
-namespace restoration and failed-owner rollback.
+paint compositor and in-place restoration in a production GPU adapter remain
+release work. The host provides deterministic namespace restoration and
+failed-owner rollback.
 
 The NOOP fixture validates that native resource calls coexist with host
 ownership and budget accounting. Because the NOOP renderer does not advertise

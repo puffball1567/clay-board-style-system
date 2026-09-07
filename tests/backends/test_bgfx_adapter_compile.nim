@@ -2,12 +2,17 @@ when not defined(cbssGpuBgfx):
   {.error: "compile this fixture with -d:cbssGpuBgfx".}
 
 {.compile: "bgfx_host_stub.c".}
+when defined(cbssTestSdl3PlatformData):
+  {.compile: "sdl3_platform_data_stub.c".}
 
 import std/unittest
 
 import bgfx
 
 import clay_board_style_system/backends/bgfx/adapter
+import clay_board_style_system/backends/bgfx/platform_data
+when defined(cbssTestSdl3PlatformData):
+  import clay_board_style_system/backends/bgfx/sdl3_platform_data
 import clay_board_style_system/core/geometry
 import clay_board_style_system/core/node
 import clay_board_style_system/paint/gpu_direct_compositor
@@ -16,6 +21,13 @@ import clay_board_style_system/runtime/gpu_direct_surface
 import clay_board_style_system/runtime/gpu_host
 
 proc resetCounters() {.importc: "cbss_bgfx_stub_reset_counters", cdecl.}
+when defined(cbssTestSdl3PlatformData):
+  proc configureSdl3PlatformStub(
+      driver: cstring;
+      properties: uint32;
+      display, window: pointer;
+      x11Window: int64
+  ) {.importc: "cbss_sdl3_platform_stub_configure", cdecl.}
 proc shutdownCount(): uint32 {.importc: "cbss_bgfx_stub_shutdown_count", cdecl.}
 proc frameCount(): uint32 {.importc: "cbss_bgfx_stub_frame_count", cdecl.}
 proc resetCount(): uint32 {.importc: "cbss_bgfx_stub_reset_count", cdecl.}
@@ -170,6 +182,121 @@ proc directRequest(
   )
 
 suite "optional bgfxim adapter":
+  test "native window platform data maps supported systems safely":
+    let display = cast[pointer](0x1234'u)
+    let window = cast[pointer](0x5678'u)
+    for system in [bnwsX11, bnwsWayland]:
+      let data = bgfxPlatformData(BgfxNativeWindowHandles(
+        system: system,
+        display: display,
+        window: window
+      ))
+      check data.ndt == display
+      check data.nwh == window
+      check data.context.isNil
+      check data.backBuffer.isNil
+      check data.backBufferDS.isNil
+      check data.type ==
+        (if system == bnwsWayland:
+          BGFX_NATIVE_WINDOW_HANDLE_TYPE_WAYLAND
+        else:
+          BGFX_NATIVE_WINDOW_HANDLE_TYPE_DEFAULT)
+    for system in [bnwsWin32, bnwsCocoa]:
+      let data = bgfxPlatformData(BgfxNativeWindowHandles(
+        system: system,
+        window: window
+      ))
+      check data.ndt.isNil
+      check data.nwh == window
+      check data.type == BGFX_NATIVE_WINDOW_HANDLE_TYPE_DEFAULT
+
+  test "native window platform data rejects missing required handles":
+    for system in BgfxNativeWindowSystem:
+      expect BgfxPlatformDataError:
+        discard bgfxPlatformData(BgfxNativeWindowHandles(system: system))
+    for system in [bnwsX11, bnwsWayland]:
+      expect BgfxPlatformDataError:
+        discard bgfxPlatformData(BgfxNativeWindowHandles(
+          system: system,
+          window: cast[pointer](1'u)
+        ))
+    for system in [bnwsWin32, bnwsCocoa]:
+      let data = bgfxPlatformData(BgfxNativeWindowHandles(
+        system: system,
+        window: cast[pointer](1'u)
+      ))
+      check data.ndt.isNil
+      check data.nwh == cast[pointer](1'u)
+      expect BgfxPlatformDataError:
+        discard bgfxPlatformData(BgfxNativeWindowHandles(
+          system: system,
+          display: cast[pointer](2'u),
+          window: cast[pointer](1'u)
+        ))
+
+  when defined(cbssTestSdl3PlatformData):
+    test "SDL3 native window data selects the active video driver":
+      let display = cast[pointer](0x1234'u)
+      let window = cast[pointer](0x5678'u)
+      for driver in ["wayland", "windows", "cocoa"]:
+        configureSdl3PlatformStub(
+          driver.cstring, 7, display, window, 0
+        )
+        let data = bgfxPlatformDataFromSdl3Window(cast[pointer](1'u))
+        check data.nwh == window
+        check data.ndt == (if driver == "wayland": display else: nil)
+        check data.type ==
+          (if driver == "wayland":
+            BGFX_NATIVE_WINDOW_HANDLE_TYPE_WAYLAND
+          else:
+            BGFX_NATIVE_WINDOW_HANDLE_TYPE_DEFAULT)
+
+      configureSdl3PlatformStub("x11", 7, display, window, 0x7654)
+      let x11 = bgfxPlatformDataFromSdl3Window(cast[pointer](1'u))
+      check x11.ndt == display
+      check x11.nwh == cast[pointer](0x7654'u)
+      check x11.type == BGFX_NATIVE_WINDOW_HANDLE_TYPE_DEFAULT
+
+    test "SDL3 native window data fails closed for invalid state":
+      let display = cast[pointer](0x1234'u)
+      let window = cast[pointer](0x5678'u)
+      configureSdl3PlatformStub("x11", 7, display, window, 1)
+      expect BgfxPlatformDataError:
+        discard bgfxPlatformDataFromSdl3Window(nil)
+
+      configureSdl3PlatformStub("x11", 0, display, window, 1)
+      expect BgfxPlatformDataError:
+        discard bgfxPlatformDataFromSdl3Window(cast[pointer](1'u))
+
+      configureSdl3PlatformStub(nil, 7, display, window, 1)
+      expect BgfxPlatformDataError:
+        discard bgfxPlatformDataFromSdl3Window(cast[pointer](1'u))
+
+      configureSdl3PlatformStub("kmsdrm", 7, display, window, 1)
+      expect BgfxPlatformDataError:
+        discard bgfxPlatformDataFromSdl3Window(cast[pointer](1'u))
+
+      for invalidX11Window in [0'i64, -1'i64]:
+        configureSdl3PlatformStub(
+          "x11", 7, display, window, invalidX11Window
+        )
+        expect BgfxPlatformDataError:
+          discard bgfxPlatformDataFromSdl3Window(cast[pointer](1'u))
+
+      for driver in ["x11", "wayland"]:
+        configureSdl3PlatformStub(
+          cast[cstring](unsafeAddr driver[0]), 7, nil, window, 1
+        )
+        expect BgfxPlatformDataError:
+          discard bgfxPlatformDataFromSdl3Window(cast[pointer](1'u))
+
+      for driver in ["wayland", "windows", "cocoa"]:
+        configureSdl3PlatformStub(
+          cast[cstring](unsafeAddr driver[0]), 7, display, nil, 1
+        )
+        expect BgfxPlatformDataError:
+          discard bgfxPlatformDataFromSdl3Window(cast[pointer](1'u))
+
   test "qualified presentation profile enables the retained direct path":
     resetCounters()
     var options = defaultBgfxHostOptions()
