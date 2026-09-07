@@ -17,7 +17,7 @@ jobs and must not be replaced by a mock-only success.
 | Lifetime | presented resources stay retained | write, destroy, namespace close, host close while retained | multiple leases and retirement after last release | Automated |
 | Shutdown | close an idle or completed surface | incomplete work and active leases block close | completed pending work closes without collect; repeated close is harmless | Automated |
 | Device loss | stale frames disappear and resources invalidate | stale generation cannot queue or acquire | loss with pending/presented resources | Automated mock; real GPU pending |
-| Direct compositor | all compositor statuses propagate | callback exception releases lease | no frame, wrong command, nil compositor | Automated |
+| Direct compositor | all compositor statuses propagate; SDL normal, text and layered paths invoke the bridge | callback exception releases lease | no frame, wrong command, nil compositor; per-frame bounded status counters | Automated |
 | Readback fallback | R8, RGBA8 and BGRA8 paths | missing copy/readback support, unsupported float format | byte limit, label limit, dimension multiplication overflow | Automated |
 | UI integration | standalone, underlay and overlay layout/paint | foreign or invalid owner, closed surface | safety styles override injected pointer/z-index values | Automated |
 | Invalidation | completed frame invalidates paint owner | incomplete/failed collect does not invalidate | no style/layout invalidation | Automated |

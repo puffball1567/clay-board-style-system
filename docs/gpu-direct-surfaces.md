@@ -99,6 +99,21 @@ opaque backend resource ID, dimensions, format, destination rectangle, opacity,
 alpha mode, and revision. The renderer applies the active paint transform, clip, layer, and
 stacking scopes.
 
+The SDL3 renderer exposes `setGpuDirectCompositor()` and routes direct-surface
+commands through that callback in its normal, Cosmic Text, and layered render
+paths. `gpuDirectCompositionStats()` reports the last frame's `noFrame`,
+`presented`, `retry`, `unsupported`, and `failed` counts without retaining an
+unbounded diagnostic queue. With no compositor installed, direct commands are
+reported as unsupported instead of being silently ignored. Closing the renderer
+releases the callback holder.
+
+This hook is an adapter boundary, not a claim that SDL's high-level renderer can
+import an arbitrary bgfx texture. A direct adapter must still share the actual
+GPU device and presentation ordering, and must draw while the callback's active
+SDL clip/layer scope is valid. Until the bgfx implementation and visible pixel
+tests satisfy that contract, the default display surface continues to select the
+readback path.
+
 A production direct adapter must test all of the following together:
 
 - one Device/Queue and one presentation owner;
