@@ -45,6 +45,13 @@ static uint32_t cbss_texture_create_count;
 static uint32_t cbss_texture_destroy_count;
 static uint32_t cbss_texture_name_count;
 static uint32_t cbss_texture_data_bytes;
+static uint32_t cbss_texture_update_count;
+static uint32_t cbss_texture_update_data_bytes;
+static uint16_t cbss_texture_update_x;
+static uint16_t cbss_texture_update_y;
+static uint16_t cbss_texture_update_width;
+static uint16_t cbss_texture_update_height;
+static uint16_t cbss_texture_update_pitch;
 static uint32_t cbss_vertex_buffer_create_count;
 static uint32_t cbss_vertex_buffer_destroy_count;
 static uint32_t cbss_index_buffer_create_count;
@@ -251,6 +258,25 @@ void bgfx_destroy_texture(bgfx_texture_handle_t handle)
     {
         ++cbss_texture_destroy_count;
     }
+}
+
+void bgfx_update_texture_2d(
+    bgfx_texture_handle_t handle, uint16_t layer, uint8_t mip, uint16_t x,
+    uint16_t y, uint16_t width, uint16_t height, const bgfx_memory_t* memory,
+    uint16_t pitch)
+{
+    if (UINT16_MAX == handle.idx || 0 != layer || 0 != mip || 0 == width
+        || 0 == height || NULL == memory)
+    {
+        return;
+    }
+    ++cbss_texture_update_count;
+    cbss_texture_update_data_bytes = memory->size;
+    cbss_texture_update_x = x;
+    cbss_texture_update_y = y;
+    cbss_texture_update_width = width;
+    cbss_texture_update_height = height;
+    cbss_texture_update_pitch = pitch;
 }
 
 bgfx_vertex_buffer_handle_t bgfx_create_vertex_buffer(
@@ -825,6 +851,13 @@ void cbss_bgfx_stub_reset_counters(void)
     cbss_texture_destroy_count = 0;
     cbss_texture_name_count = 0;
     cbss_texture_data_bytes = 0;
+    cbss_texture_update_count = 0;
+    cbss_texture_update_data_bytes = 0;
+    cbss_texture_update_x = 0;
+    cbss_texture_update_y = 0;
+    cbss_texture_update_width = 0;
+    cbss_texture_update_height = 0;
+    cbss_texture_update_pitch = 0;
     cbss_texture_width = 0;
     cbss_texture_height = 0;
     cbss_texture_flags = 0;
@@ -968,6 +1001,28 @@ uint32_t cbss_bgfx_stub_texture_name_count(void)
 uint32_t cbss_bgfx_stub_texture_data_bytes(void)
 {
     return cbss_texture_data_bytes;
+}
+uint32_t cbss_bgfx_stub_texture_update_count(void)
+{
+    return cbss_texture_update_count;
+}
+uint32_t cbss_bgfx_stub_texture_update_data_bytes(void)
+{
+    return cbss_texture_update_data_bytes;
+}
+uint16_t cbss_bgfx_stub_texture_update_x(void) { return cbss_texture_update_x; }
+uint16_t cbss_bgfx_stub_texture_update_y(void) { return cbss_texture_update_y; }
+uint16_t cbss_bgfx_stub_texture_update_width(void)
+{
+    return cbss_texture_update_width;
+}
+uint16_t cbss_bgfx_stub_texture_update_height(void)
+{
+    return cbss_texture_update_height;
+}
+uint16_t cbss_bgfx_stub_texture_update_pitch(void)
+{
+    return cbss_texture_update_pitch;
 }
 uint16_t cbss_bgfx_stub_texture_width(void) { return cbss_texture_width; }
 uint16_t cbss_bgfx_stub_texture_height(void) { return cbss_texture_height; }

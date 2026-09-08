@@ -1,4 +1,4 @@
-import std/[algorithm, os, osproc, sequtils, strutils]
+import std/[algorithm, os, osproc, sequtils, strutils, tempfiles]
 
 const externallyConfiguredExamples = [
   "examples/bgfx_host_demo.nim"
@@ -69,8 +69,7 @@ proc main() {.used.} =
       quit(QuitFailure)
 
   let repoRoot = currentSourcePath().parentDir().parentDir()
-  let runRoot = getTempDir() / ("cbss-example-check-" & $getCurrentProcessId())
-  createDir(runRoot)
+  let runRoot = createTempDir("cbss-example-check-", "")
   defer:
     try:
       removeDir(runRoot)

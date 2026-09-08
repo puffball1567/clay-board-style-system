@@ -153,6 +153,7 @@ let mappedTextureResource = host.createGpuTexture(
     height: 2,
     format: gtfRgba8,
     usage: {gtuSampled},
+    access: gtaDynamic,
     label: "CBSS NOOP mapped texture"
   ),
   @pixels
@@ -247,6 +248,11 @@ let samplerResource = host.createGpuSampler(
 )
 
 let token = host.beginGpuFrame()
+host.updateGpuTexture(
+  mappedTextureResource,
+  GpuTextureUpdateRegion(width: 2, height: 2),
+  @replacement
+)
 host.reserveGpuFrameWork(
   resourceNamespace,
   transientBytes = uint64(sizeof(vertices) + sizeof(replacement)),

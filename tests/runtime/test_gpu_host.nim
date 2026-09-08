@@ -29,6 +29,7 @@ type MockGpuContext = ref object of GpuBackendContext
   resizeStatus: GpuBackendStatus
   restoreStatus: GpuBackendStatus
   createTextureStatus: GpuBackendStatus
+  updateTextureStatus: GpuBackendStatus
   createBufferStatus: GpuBackendStatus
   updateBufferStatus: GpuBackendStatus
   createRenderTargetStatus: GpuBackendStatus
@@ -52,6 +53,7 @@ type MockGpuContext = ref object of GpuBackendContext
   ownedCloses: int
   borrowedDetaches: int
   textureCreates: int
+  textureUpdates: int
   bufferCreates: int
   bufferUpdates: int
   renderTargetCreates: int
@@ -70,6 +72,10 @@ type MockGpuContext = ref object of GpuBackendContext
   nextBackendResource: uint64
   lastTexture: GpuTextureDescriptor
   lastTextureDataBytes: int
+  lastTextureUpdateRegion: GpuTextureUpdateRegion
+  lastTextureUpdateRowStride: uint32
+  lastTextureUpdateBytes: int
+  lastTextureUpdateData: seq[byte]
   lastBuffer: GpuBufferDescriptor
   lastBufferDataBytes: int
   lastBufferUpdateOffset: uint64
@@ -211,6 +217,24 @@ proc createTexture(
     resource = GpuBackendResourceId(state.nextBackendResource)
     inc state.nextBackendResource
   state.createTextureStatus
+
+proc updateTexture(
+    context: GpuBackendContext;
+    resource: GpuBackendResourceId;
+    descriptor: GpuTextureDescriptor;
+    region: GpuTextureUpdateRegion;
+    rowStride: uint32;
+    data: seq[byte]
+): GpuBackendStatus {.raises: [].} =
+  discard resource
+  let state = context.mock
+  inc state.textureUpdates
+  state.lastTexture = descriptor
+  state.lastTextureUpdateRegion = region
+  state.lastTextureUpdateRowStride = rowStride
+  state.lastTextureUpdateBytes = data.len
+  state.lastTextureUpdateData = data
+  state.updateTextureStatus
 
 proc createBuffer(
     context: GpuBackendContext;
@@ -455,6 +479,7 @@ proc backend(state: MockGpuContext): GpuBackendVTable =
     resize: resize,
     restore: restore,
     createTexture: createTexture,
+    updateTexture: updateTexture,
     createBuffer: createBuffer,
     updateBuffer: updateBuffer,
     createRenderTarget: createRenderTarget,
@@ -482,6 +507,7 @@ proc newContext(): MockGpuContext =
     resizeStatus: gbsOk,
     restoreStatus: gbsOk,
     createTextureStatus: gbsOk,
+    updateTextureStatus: gbsOk,
     createBufferStatus: gbsOk,
     updateBufferStatus: gbsOk,
     createRenderTargetStatus: gbsOk,
@@ -533,6 +559,7 @@ proc textureDescriptor(
     height = 8'u32;
     format = gtfRgba8;
     usage = {gtuSampled};
+    access = gtaStatic;
     label = "texture"
 ): GpuTextureDescriptor =
   GpuTextureDescriptor(
@@ -540,6 +567,7 @@ proc textureDescriptor(
     height: height,
     format: format,
     usage: usage,
+    access: access,
     label: label
   )
 
@@ -1206,6 +1234,14 @@ suite "GPU texture resources":
         textureDescriptor(width = 2, height = 2),
         newSeq[byte](15)
       )
+    expect GpuHostError:
+      discard host.createGpuTexture(
+        namespace,
+        textureDescriptor(
+          usage = {gtuBlitDestination, gtuReadback},
+          access = gtaDynamic
+        )
+      )
     check context.textureCreates == 0
     check host.gpuNamespaceUsage(namespace) == GpuResourceUsage()
     host.close()
@@ -1297,6 +1333,224 @@ suite "GPU texture resources":
     check context.resourceDestroys == 0
     host.close()
     check context.resourceDestroys == 0
+
+  test "dynamic textures accept exact full and padded partial updates":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("texture-updates", standardBudget())
+    let texture = host.createGpuTexture(
+      namespace,
+      textureDescriptor(access = gtaDynamic),
+      newSeq[byte](8 * 8 * 4)
+    )
+
+    var full = newSeq[byte](8 * 8 * 4)
+    full[0] = 17
+    full[^1] = 29
+    var frame = host.beginGpuFrame()
+    host.updateGpuTexture(texture, full)
+    check context.textureUpdates == 1
+    check host.gpuNamespaceUsage(namespace).transientBytes == uint64(full.len)
+    check host.gpuNamespaceUsage(namespace).workUnits == 1
+    check context.lastTextureUpdateRegion == GpuTextureUpdateRegion(
+      width: 8,
+      height: 8
+    )
+    check context.lastTextureUpdateRowStride == 32
+    check context.lastTextureUpdateData == full
+    host.endGpuFrame(frame)
+
+    let region = GpuTextureUpdateRegion(x: 3, y: 2, width: 2, height: 3)
+    var partial = newSeq[byte](12 * 3)
+    partial[0] = 41
+    partial[^1] = 53
+    frame = host.beginGpuFrame()
+    host.updateGpuTexture(texture, region, partial, rowStride = 12)
+    check context.textureUpdates == 2
+    check context.lastTextureUpdateRegion == region
+    check context.lastTextureUpdateRowStride == 12
+    check context.lastTextureUpdateBytes == partial.len
+    check context.lastTextureUpdateData == partial
+    check host.gpuNamespaceUsage(namespace).transientBytes == uint64(partial.len)
+    host.endGpuFrame(frame)
+    host.close()
+
+  test "texture update byte geometry covers every supported format":
+    for format in GpuTextureFormat:
+      let context = newContext()
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace("update-" & $format, standardBudget())
+      let texture = host.createGpuTexture(
+        namespace,
+        textureDescriptor(width = 2, height = 3, format = format,
+          access = gtaDynamic)
+      )
+      let rowBytes = int(format.gpuTextureBytesPerPixel()) * 2
+      let frame = host.beginGpuFrame()
+      host.updateGpuTexture(texture, newSeq[byte](rowBytes * 3))
+      check context.textureUpdates == 1
+      check context.lastTextureUpdateRowStride == uint32(rowBytes)
+      host.endGpuFrame(frame)
+      host.close()
+
+  test "texture updates reject invalid access regions strides and byte counts":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("invalid-updates", standardBudget())
+    let staticTexture = host.createGpuTexture(
+      namespace, textureDescriptor(width = 4, height = 4)
+    )
+    let dynamicTexture = host.createGpuTexture(
+      namespace,
+      textureDescriptor(width = 4, height = 4, access = gtaDynamic)
+    )
+
+    let frame = host.beginGpuFrame()
+    expect GpuHostError:
+      host.updateGpuTexture(staticTexture, newSeq[byte](64))
+    for region in [
+      GpuTextureUpdateRegion(width: 0, height: 1),
+      GpuTextureUpdateRegion(width: 1, height: 0),
+      GpuTextureUpdateRegion(x: 4, width: 1, height: 1),
+      GpuTextureUpdateRegion(y: 4, width: 1, height: 1),
+      GpuTextureUpdateRegion(x: 3, width: 2, height: 1),
+      GpuTextureUpdateRegion(y: 3, width: 1, height: 2)
+    ]:
+      expect GpuHostError:
+        host.updateGpuTexture(dynamicTexture, region, newSeq[byte](8))
+    expect GpuHostError:
+      host.updateGpuTexture(
+        dynamicTexture,
+        GpuTextureUpdateRegion(width: 2, height: 2),
+        newSeq[byte](16),
+        rowStride = 7
+      )
+    for wrongSize in [0, 15, 17, 23, 25]:
+      expect GpuHostError:
+        host.updateGpuTexture(
+          dynamicTexture,
+          GpuTextureUpdateRegion(width: 2, height: 2),
+          newSeq[byte](wrongSize),
+          rowStride = 12
+        )
+    check context.textureUpdates == 0
+    host.endGpuFrame(frame)
+    host.close()
+
+  test "texture updates reject wrong stale outside-frame and presentation-owned handles":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("guarded-updates", standardBudget())
+    let texture = host.createGpuTexture(
+      namespace,
+      textureDescriptor(width = 2, height = 2, access = gtaDynamic)
+    )
+    let buffer = host.createGpuBuffer(
+      namespace,
+      indexBufferDescriptor(byteSize = 4, access = gbaDynamic)
+    )
+
+    expect GpuHostError:
+      host.updateGpuTexture(texture, newSeq[byte](16))
+    host.retainGpuResourceForPresentation(texture)
+    var frame = host.beginGpuFrame()
+    expect GpuHostError:
+      host.updateGpuTexture(buffer, newSeq[byte](16))
+    expect GpuHostError:
+      host.updateGpuTexture(texture, newSeq[byte](16))
+    host.endGpuFrame(frame)
+    check host.releaseGpuResourceFromPresentation(texture)
+
+    check host.releaseGpuResource(texture)
+    frame = host.beginGpuFrame()
+    expect GpuHostError:
+      host.updateGpuTexture(texture, newSeq[byte](16))
+    host.endGpuFrame(frame)
+    check context.textureUpdates == 0
+    host.close()
+
+  test "texture update callback failures and device loss fail closed":
+    block missingCallback:
+      let context = newContext()
+      var value = context.backend
+      value.updateTexture = nil
+      let host = openGpuHost(value, ghoOwned)
+      let namespace = host.createGpuNamespace("missing-update", standardBudget())
+      expect GpuHostError:
+        discard host.createGpuTexture(
+          namespace,
+          textureDescriptor(width = 2, height = 2, access = gtaDynamic)
+        )
+      check context.textureCreates == 0
+      check context.textureUpdates == 0
+      host.close()
+
+    block backendFailure:
+      let context = newContext()
+      context.updateTextureStatus = gbsFailed
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace("failed-update", standardBudget())
+      let texture = host.createGpuTexture(
+        namespace,
+        textureDescriptor(width = 2, height = 2, access = gtaDynamic)
+      )
+      let frame = host.beginGpuFrame()
+      expect GpuHostError:
+        host.updateGpuTexture(texture, newSeq[byte](16))
+      check context.textureUpdates == 1
+      check host.isGpuResourceLive(texture)
+      check host.gpuNamespaceUsage(namespace).transientBytes == 0
+      host.endGpuFrame(frame)
+      host.close()
+
+    block deviceLoss:
+      let context = newContext()
+      context.updateTextureStatus = gbsDeviceLost
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace("lost-update", standardBudget())
+      let texture = host.createGpuTexture(
+        namespace,
+        textureDescriptor(width = 2, height = 2, access = gtaDynamic)
+      )
+      discard host.beginGpuFrame()
+      expect GpuHostError:
+        host.updateGpuTexture(texture, newSeq[byte](16))
+      check context.textureUpdates == 1
+      check host.state == ghsDeviceLost
+      check not host.isGpuResourceLive(texture)
+      check context.resourceDestroys == 0
+      host.close()
+
+  test "texture update budgets fail before backend work and remain atomic":
+    for limitedBudget in [
+      GpuResourceBudget(
+        persistentBytes: 64,
+        transientBytesPerFrame: 15,
+        workUnitsPerFrame: 1,
+        maxResources: 1
+      ),
+      GpuResourceBudget(
+        persistentBytes: 64,
+        transientBytesPerFrame: 16,
+        workUnitsPerFrame: 0,
+        maxResources: 1
+      )
+    ]:
+      let context = newContext()
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace("bounded-update", limitedBudget)
+      let texture = host.createGpuTexture(
+        namespace,
+        textureDescriptor(width = 2, height = 2, access = gtaDynamic)
+      )
+      let frame = host.beginGpuFrame()
+      expect GpuHostError:
+        host.updateGpuTexture(texture, newSeq[byte](16))
+      check context.textureUpdates == 0
+      check host.gpuNamespaceUsage(namespace).transientBytes == 0
+      check host.gpuNamespaceUsage(namespace).workUnits == 0
+      host.endGpuFrame(frame)
+      host.close()
 
 suite "GPU buffer resources":
   test "static vertex buffers map layout data accounting and destruction":

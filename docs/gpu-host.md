@@ -112,6 +112,7 @@ let texture = host.createGpuTexture(
     height: 256,
     format: gtfRgba8,
     usage: {gtuSampled, gtuBlitDestination},
+    access: gtaStatic,
     label: "chart-surface"
   ),
   pixels
@@ -125,6 +126,44 @@ Initial bytes are copied by the backend during `createGpuTexture`; callers do
 not have to retain that sequence. Retained resource creation, release, and
 namespace teardown are rejected while a frame is active so destruction cannot
 race submitted work.
+
+Texture mutability is explicit. A `gtaStatic` texture cannot be changed after
+creation. A `gtaDynamic` texture can receive checked whole-image or rectangular
+updates during an active frame without destroying its resource identity:
+
+```nim
+let cameraFrame = host.createGpuTexture(
+  resources,
+  GpuTextureDescriptor(
+    width: 1920,
+    height: 1080,
+    format: gtfRgba8,
+    usage: {gtuSampled, gtuStorage},
+    access: gtaDynamic,
+    label: "camera-frame"
+  )
+)
+
+let frame = host.beginGpuFrame()
+host.updateGpuTexture(
+  cameraFrame,
+  GpuTextureUpdateRegion(x: 320, y: 180, width: 640, height: 360),
+  changedPixels,
+  rowStride = changedRowStride
+)
+# Submit draws or compute work that consumes cameraFrame here.
+host.endGpuFrame(frame)
+```
+
+A zero `rowStride` selects tightly packed rows. An explicit stride may include
+row padding, but the supplied byte sequence must contain exactly `height *
+rowStride` bytes. CBSS validates the format-derived minimum stride, arithmetic,
+region bounds, handle generation, backend ownership, and active-presentation
+leases before calling the adapter. The adapter copies update bytes during the
+call; it never retains the caller's mutable sequence. Updates are rejected while
+a frame is inactive, consume the namespace's transient-byte and work-unit
+budgets, and are ordered before later draw or compute submissions in that frame.
+Readback-only textures remain non-updatable.
 
 Textures support R8, RGBA8, BGRA8, R16F, R32F, RG16F, RG32F, RGBA16F, and
 RGBA32F storage. Byte accounting follows the selected format and rejects
@@ -604,13 +643,14 @@ conversion is exercised by the bgfxim contract on Linux, Windows, and macOS so
 future SDL backend ports retain one platform-data contract.
 
 The current adapter covers initialization or borrowed attachment, capability
-reporting, frame completion, resize, mapped Texture, Buffer, RenderTarget,
+reporting, frame completion, resize, mapped static/dynamic Texture, Buffer, RenderTarget,
 Shader, Uniform, Sampler, Graphics/Compute Pipeline creation, bounded
 graphics/compute submission with sampled textures, storage images, and storage
-buffers, typed texture copies, asynchronous readback, and deterministic teardown
+buffers, checked partial Texture updates, typed texture copies, asynchronous
+readback, and deterministic teardown
 under both ARC and ORC. Its
 maintained NOOP integration also executes real bgfx static and dynamic buffers,
-aligned partial updates, textures, blit, readback, framebuffer, uniform,
+aligned partial buffer and Texture updates, blit, readback, framebuffer, uniform,
 encoder, view, frame, and destruction calls inside a CBSS-owned host. The
 portable adapter contract verifies mapped formats, vertex layouts, index width,
 initial data, labels, updates, offscreen target flags, shader bytecode copies,

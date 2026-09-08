@@ -97,6 +97,20 @@ proc textureNameCount(): uint32 {.
   importc: "cbss_bgfx_stub_texture_name_count", cdecl.}
 proc textureDataBytes(): uint32 {.
   importc: "cbss_bgfx_stub_texture_data_bytes", cdecl.}
+proc textureUpdateCount(): uint32 {.
+  importc: "cbss_bgfx_stub_texture_update_count", cdecl.}
+proc textureUpdateDataBytes(): uint32 {.
+  importc: "cbss_bgfx_stub_texture_update_data_bytes", cdecl.}
+proc textureUpdateX(): uint16 {.
+  importc: "cbss_bgfx_stub_texture_update_x", cdecl.}
+proc textureUpdateY(): uint16 {.
+  importc: "cbss_bgfx_stub_texture_update_y", cdecl.}
+proc textureUpdateWidth(): uint16 {.
+  importc: "cbss_bgfx_stub_texture_update_width", cdecl.}
+proc textureUpdateHeight(): uint16 {.
+  importc: "cbss_bgfx_stub_texture_update_height", cdecl.}
+proc textureUpdatePitch(): uint16 {.
+  importc: "cbss_bgfx_stub_texture_update_pitch", cdecl.}
 proc textureWidth(): uint16 {.
   importc: "cbss_bgfx_stub_texture_width", cdecl.}
 proc textureHeight(): uint16 {.
@@ -559,6 +573,7 @@ suite "optional bgfxim adapter":
       "adapter-textures",
       GpuResourceBudget(
         persistentBytes: 4096,
+        transientBytesPerFrame: 64,
         readbackBytesPerFrame: 512,
         workUnitsPerFrame: 8,
         maxResources: 20
@@ -612,6 +627,42 @@ suite "optional bgfxim adapter":
     )
     check textureFormat() == uint32(BGFX_TEXTURE_FORMAT_RGBA32F)
     check textureDataBytes() == 16
+
+    let dynamicTexture = host.createGpuTexture(
+      resourceNamespace,
+      GpuTextureDescriptor(
+        width: 4,
+        height: 2,
+        format: gtfRgba8,
+        usage: {gtuSampled, gtuStorage},
+        access: gtaDynamic,
+        label: "adapter-dynamic-texture"
+      ),
+      newSeq[byte](32)
+    )
+    check textureDataBytes() == 0
+    check textureUpdateCount() == 1
+    check textureUpdateDataBytes() == 32
+    check textureUpdateX() == 0
+    check textureUpdateY() == 0
+    check textureUpdateWidth() == 4
+    check textureUpdateHeight() == 2
+    check textureUpdatePitch() == high(uint16)
+    let uploadFrame = host.beginGpuFrame()
+    host.updateGpuTexture(
+      dynamicTexture,
+      GpuTextureUpdateRegion(x: 1, y: 1, width: 2, height: 1),
+      newSeq[byte](12),
+      rowStride = 12
+    )
+    host.endGpuFrame(uploadFrame)
+    check textureUpdateCount() == 2
+    check textureUpdateDataBytes() == 12
+    check textureUpdateX() == 1
+    check textureUpdateY() == 1
+    check textureUpdateWidth() == 2
+    check textureUpdateHeight() == 1
+    check textureUpdatePitch() == 12
 
     let storageTexture = host.createGpuTexture(
       resourceNamespace,
@@ -929,7 +980,7 @@ suite "optional bgfxim adapter":
     check readbackData.rowStride == 64
     check readbackData.pixels.len == 512
     check readbackData.pixels[511] == byte(511 mod 251)
-    check frameCount() == 1
+    check frameCount() == 2
     check submitCount() == 2
     check dispatchCount() == 1
     check viewRectCount() == 1
@@ -992,10 +1043,11 @@ suite "optional bgfxim adapter":
     check host.releaseGpuResource(vertexBuffer)
     check vertexBufferDestroyCount() == 1
     check host.releaseGpuResource(texture)
+    check host.releaseGpuResource(dynamicTexture)
     check host.releaseGpuResource(storageTexture)
     check host.releaseGpuResource(scalarField)
     check host.releaseGpuResource(vectorField)
-    check textureDestroyCount() == 5
+    check textureDestroyCount() == 6
     host.close()
     check shutdownCount() == 1
 
