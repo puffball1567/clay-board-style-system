@@ -652,12 +652,12 @@ suite "optional bgfxim adapter":
     host.updateGpuTexture(
       dynamicTexture,
       GpuTextureUpdateRegion(x: 1, y: 1, width: 2, height: 1),
-      newSeq[byte](12),
+      newSeq[byte](8),
       rowStride = 12
     )
     host.endGpuFrame(uploadFrame)
     check textureUpdateCount() == 2
-    check textureUpdateDataBytes() == 12
+    check textureUpdateDataBytes() == 8
     check textureUpdateX() == 1
     check textureUpdateY() == 1
     check textureUpdateWidth() == 2

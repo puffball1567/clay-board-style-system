@@ -484,7 +484,7 @@ proc updateTexture(
     descriptor: GpuTextureDescriptor;
     region: GpuTextureUpdateRegion;
     rowStride: uint32;
-    data: seq[byte]
+    data: openArray[byte]
 ): GpuBackendStatus {.raises: [].} =
   let value = rawContext.context
   let decoded = resource.unpackBackendResource()

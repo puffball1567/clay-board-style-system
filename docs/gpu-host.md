@@ -127,6 +127,12 @@ not have to retain that sequence. Retained resource creation, release, and
 namespace teardown are rejected while a frame is active so destruction cannot
 race submitted work.
 
+`validateGpuFrameWork` checks an aggregate transient-byte, readback-byte, and
+work-unit request against the active frame without consuming the budget. A
+multi-command operation can therefore fail before its first submission.
+`reserveGpuFrameWork` performs the same validation and then accounts work that
+is not already charged by a resource operation.
+
 Texture mutability is explicit. A `gtaStatic` texture cannot be changed after
 creation. A `gtaDynamic` texture can receive checked whole-image or rectangular
 updates during an active frame without destroying its resource identity:
@@ -156,14 +162,52 @@ host.endGpuFrame(frame)
 ```
 
 A zero `rowStride` selects tightly packed rows. An explicit stride may include
-row padding, but the supplied byte sequence must contain exactly `height *
-rowStride` bytes. CBSS validates the format-derived minimum stride, arithmetic,
+row padding. The supplied byte span must contain exactly the bytes read through
+the final updated pixel: `(height - 1) * rowStride + width * bytesPerPixel`.
+CBSS validates the format-derived minimum stride, arithmetic,
 region bounds, handle generation, backend ownership, and active-presentation
 leases before calling the adapter. The adapter copies update bytes during the
 call; it never retains the caller's mutable sequence. Updates are rejected while
 a frame is inactive, consume the namespace's transient-byte and work-unit
 budgets, and are ordered before later draw or compute submissions in that frame.
 Readback-only textures remain non-updatable.
+
+`GpuRasterTexture` mirrors a retained `RasterSurface` into one dynamic RGBA8
+GPU texture. It is the standard bridge for CPU image processing, camera frames,
+drawing buffers, and other producers that publish pixels before GPU sampling or
+compute work:
+
+```nim
+let pixels = newRasterSurface(1920, 1080)
+let uploaded = host.newGpuRasterTexture(resources, pixels)
+
+# On the UI thread, copy a queued worker result into RasterSurface ownership.
+pixels.updateRegion(changedRegion, changedRgba, changedStride)
+discard pixels.publish()
+
+let frame = host.beginGpuFrame()
+let upload = uploaded.syncGpuRasterTexture()
+# uploaded.texture is now available to sampled-texture or storage bindings.
+host.endGpuFrame(frame)
+```
+
+Synchronization is revision-based. A consecutive revision with no more than the
+configured dirty-region limit uploads only those rectangles. If the consumer
+missed a revision or the region count exceeds its limit, CBSS performs one
+bounded full upload so stale dirty metadata cannot produce a partially current
+texture. A returned `GpuRasterTextureSyncResult` reports the chosen path,
+revision, region count, and bytes submitted. The mirrored texture keeps one
+resource identity until explicit close or device loss; it does not recreate a
+texture for each source publication.
+
+The partial path passes borrowed row spans directly to the synchronous backend
+copy callback. CBSS does not allocate an intermediate packed image for each
+dirty rectangle. The backend must copy the span before returning and must never
+retain it. Texture updates remain frame-budgeted, bounds-checked, and rejected
+after generation loss. `RasterSurface` mutation, publication, and GPU
+synchronization are UI-thread-owned operations. Worker threads must transfer
+immutable or moved buffers through a bounded queue before the UI owner applies
+them.
 
 Textures support R8, RGBA8, BGRA8, R16F, R32F, RG16F, RG32F, RGBA16F, and
 RGBA32F storage. Byte accounting follows the selected format and rejects

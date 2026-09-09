@@ -4,7 +4,9 @@ when not defined(cbssGpuBgfx):
 import bgfx
 
 import clay_board_style_system/backends/bgfx/adapter
+import clay_board_style_system/core/raster_surface
 import clay_board_style_system/runtime/gpu_host
+import clay_board_style_system/runtime/gpu_raster_texture
 
 type Position = object
   x, y, z: cfloat
@@ -159,6 +161,27 @@ let mappedTextureResource = host.createGpuTexture(
   @pixels
 )
 doAssert host.isGpuResourceLive(mappedTextureResource)
+
+let raster = newRasterSurface(4, 4, [0x18'u8, 0x24, 0x30, 0xff])
+let rasterTexture = host.newGpuRasterTexture(
+  resourceNamespace,
+  raster,
+  GpuRasterTextureConfig(
+    usage: {gtuSampled},
+    maxPartialRegions: 4,
+    label: "CBSS NOOP raster texture"
+  )
+)
+doAssert host.isGpuResourceLive(rasterTexture.texture)
+raster.updateRegion(
+  rasterRegion(0, 0, 1, 1),
+  [0xff'u8, 0x40, 0x20, 0xff]
+)
+raster.updateRegion(
+  rasterRegion(3, 3, 1, 1),
+  [0x20'u8, 0x80, 0xff, 0xff]
+)
+doAssert raster.publish()
 let textureMemory = BGFX.copy(addr pixels[0], uint32(sizeof(pixels)))
 doAssert not textureMemory.isNil
 let textureFlags = BGFX_TEXTURE_BLIT_DST or BGFX_TEXTURE_READ_BACK
@@ -253,6 +276,11 @@ host.updateGpuTexture(
   GpuTextureUpdateRegion(width: 2, height: 2),
   @replacement
 )
+let rasterSync = rasterTexture.syncGpuRasterTexture()
+doAssert rasterSync.kind == grtskPartial
+doAssert rasterSync.regionCount == 2
+doAssert rasterSync.uploadedBytes == 8
+doAssert rasterTexture.uploadedRevision == raster.revision
 host.reserveGpuFrameWork(
   resourceNamespace,
   transientBytes = uint64(sizeof(vertices) + sizeof(replacement)),
@@ -291,6 +319,8 @@ var readback: array[16, uint8]
 let readbackFrame = BGFX.readTexture(texture, addr readback[0], 0, 0)
 doAssert readbackFrame > 0
 host.endGpuFrame(token)
+
+doAssert rasterTexture.closeGpuRasterTexture()
 
 BGFX.destroyFrameBuffer(frameBuffer)
 BGFX.destroyTexture(sourceTexture)
