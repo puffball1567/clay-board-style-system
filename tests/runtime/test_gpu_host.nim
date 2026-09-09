@@ -14,6 +14,7 @@ import clay_board_style_system/runtime/gpu_direct_surface
 import clay_board_style_system/runtime/gpu_display_surface
 import clay_board_style_system/runtime/gpu_display_surface_ui
 import clay_board_style_system/runtime/gpu_host
+import clay_board_style_system/runtime/gpu_raster_texture
 import clay_board_style_system/runtime/[invalidation, ui_root]
 
 proc boxFor(layout: LayoutResult; node: NodeId): LayoutBox =
@@ -224,7 +225,7 @@ proc updateTexture(
     descriptor: GpuTextureDescriptor;
     region: GpuTextureUpdateRegion;
     rowStride: uint32;
-    data: seq[byte]
+    data: openArray[byte]
 ): GpuBackendStatus {.raises: [].} =
   discard resource
   let state = context.mock
@@ -233,7 +234,7 @@ proc updateTexture(
   state.lastTextureUpdateRegion = region
   state.lastTextureUpdateRowStride = rowStride
   state.lastTextureUpdateBytes = data.len
-  state.lastTextureUpdateData = data
+  state.lastTextureUpdateData = @data
   state.updateTextureStatus
 
 proc createBuffer(
@@ -1361,7 +1362,7 @@ suite "GPU texture resources":
     host.endGpuFrame(frame)
 
     let region = GpuTextureUpdateRegion(x: 3, y: 2, width: 2, height: 3)
-    var partial = newSeq[byte](12 * 3)
+    var partial = newSeq[byte](12 * 2 + 8)
     partial[0] = 41
     partial[^1] = 53
     frame = host.beginGpuFrame()
@@ -1425,7 +1426,7 @@ suite "GPU texture resources":
         newSeq[byte](16),
         rowStride = 7
       )
-    for wrongSize in [0, 15, 17, 23, 25]:
+    for wrongSize in [0, 15, 17, 19, 21]:
       expect GpuHostError:
         host.updateGpuTexture(
           dynamicTexture,
@@ -1433,7 +1434,13 @@ suite "GPU texture resources":
           newSeq[byte](wrongSize),
           rowStride = 12
         )
-    check context.textureUpdates == 0
+    host.updateGpuTexture(
+      dynamicTexture,
+      GpuTextureUpdateRegion(width: 2, height: 2),
+      newSeq[byte](20),
+      rowStride = 12
+    )
+    check context.textureUpdates == 1
     host.endGpuFrame(frame)
     host.close()
 
@@ -1551,6 +1558,247 @@ suite "GPU texture resources":
       check host.gpuNamespaceUsage(namespace).workUnits == 0
       host.endGpuFrame(frame)
       host.close()
+
+suite "GPU raster texture synchronization":
+  test "creation uploads the current raster revision as a dynamic texture":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("raster-upload", standardBudget())
+    let raster = newRasterSurface(4, 3, [10'u8, 20, 30, 255])
+    let upload = host.newGpuRasterTexture(namespace, raster)
+
+    check upload.source == raster
+    check upload.uploadedRevision == raster.revision
+    check upload.config.usage == {gtuSampled}
+    check context.textureCreates == 1
+    check context.lastTexture.access == gtaDynamic
+    check context.lastTexture.format == gtfRgba8
+    check context.lastTextureDataBytes == 4 * 3 * RasterBytesPerPixel
+    check host.isGpuResourceLive(upload.texture)
+
+    check upload.closeGpuRasterTexture()
+    check upload.isClosed
+    check context.resourceDestroys == 1
+    host.close()
+
+  test "consecutive raster revisions upload only their published dirty regions":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("raster-partial", standardBudget())
+    let raster = newRasterSurface(4, 4)
+    let upload = host.newGpuRasterTexture(namespace, raster)
+
+    raster.updateRegion(
+      rasterRegion(1, 1, 2, 2),
+      @[
+        1'u8, 2, 3, 255, 4, 5, 6, 255,
+        7, 8, 9, 255, 10, 11, 12, 255
+      ]
+    )
+    check raster.publish()
+    let frame = host.beginGpuFrame()
+    let synced = upload.syncGpuRasterTexture()
+    check synced.kind == grtskPartial
+    check synced.revision == 2
+    check synced.regionCount == 1
+    check synced.uploadedBytes == 24
+    check context.textureUpdates == 1
+    check context.lastTextureUpdateRegion == GpuTextureUpdateRegion(
+      x: 1, y: 1, width: 2, height: 2
+    )
+    check context.lastTextureUpdateRowStride == 16
+    check context.lastTextureUpdateBytes == 24
+    check upload.uploadedRevision == 2
+    check upload.syncGpuRasterTexture().kind == grtskUnchanged
+    check context.textureUpdates == 1
+    host.endGpuFrame(frame)
+
+    check upload.closeGpuRasterTexture()
+    host.close()
+
+  test "skipped revisions and excessive dirty regions use one full upload":
+    block skippedRevision:
+      let context = newContext()
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace("raster-skipped", standardBudget())
+      let raster = newRasterSurface(4, 4)
+      let upload = host.newGpuRasterTexture(namespace, raster)
+      raster.updateRegion(
+        rasterRegion(0, 0, 1, 1), @[1'u8, 2, 3, 255]
+      )
+      check raster.publish()
+      raster.updateRegion(
+        rasterRegion(3, 3, 1, 1), @[4'u8, 5, 6, 255]
+      )
+      check raster.publish()
+
+      let frame = host.beginGpuFrame()
+      let synced = upload.syncGpuRasterTexture()
+      check synced.kind == grtskFull
+      check synced.regionCount == 1
+      check synced.uploadedBytes == 64
+      check context.textureUpdates == 1
+      check context.lastTextureUpdateRegion == GpuTextureUpdateRegion(
+        width: 4, height: 4
+      )
+      host.endGpuFrame(frame)
+      check upload.closeGpuRasterTexture()
+      host.close()
+
+    block partialLimit:
+      let context = newContext()
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace("raster-limit", standardBudget())
+      let raster = newRasterSurface(4, 4)
+      var config = defaultGpuRasterTextureConfig()
+      config.maxPartialRegions = 1
+      let upload = host.newGpuRasterTexture(namespace, raster, config)
+      raster.updateRegion(
+        rasterRegion(0, 0, 1, 1), @[1'u8, 2, 3, 255]
+      )
+      raster.updateRegion(
+        rasterRegion(3, 3, 1, 1), @[4'u8, 5, 6, 255]
+      )
+      check raster.publish()
+
+      let frame = host.beginGpuFrame()
+      let synced = upload.syncGpuRasterTexture()
+      check synced.kind == grtskFull
+      check synced.uploadedBytes == 64
+      check context.textureUpdates == 1
+      host.endGpuFrame(frame)
+      check upload.closeGpuRasterTexture()
+      host.close()
+
+  test "separated consecutive regions remain bounded partial uploads":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("raster-regions", standardBudget())
+    let raster = newRasterSurface(4, 4)
+    let upload = host.newGpuRasterTexture(namespace, raster)
+    raster.updateRegion(
+      rasterRegion(0, 0, 1, 1), @[1'u8, 2, 3, 255]
+    )
+    raster.updateRegion(
+      rasterRegion(3, 3, 1, 1), @[4'u8, 5, 6, 255]
+    )
+    check raster.publish()
+
+    let frame = host.beginGpuFrame()
+    let synced = upload.syncGpuRasterTexture()
+    check synced.kind == grtskPartial
+    check synced.regionCount == 2
+    check synced.uploadedBytes == 8
+    check context.textureUpdates == 2
+    check host.gpuNamespaceUsage(namespace).transientBytes == 8
+    check host.gpuNamespaceUsage(namespace).workUnits == 2
+    host.endGpuFrame(frame)
+    check upload.closeGpuRasterTexture()
+    host.close()
+
+  test "partial synchronization validates its aggregate budget before upload":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "raster-aggregate-budget",
+      GpuResourceBudget(
+        persistentBytes: 64,
+        transientBytesPerFrame: 7,
+        workUnitsPerFrame: 2,
+        maxResources: 1
+      )
+    )
+    let raster = newRasterSurface(4, 4)
+    let upload = host.newGpuRasterTexture(namespace, raster)
+    raster.updateRegion(
+      rasterRegion(0, 0, 1, 1), @[1'u8, 2, 3, 255]
+    )
+    raster.updateRegion(
+      rasterRegion(3, 3, 1, 1), @[4'u8, 5, 6, 255]
+    )
+    check raster.publish()
+
+    let frame = host.beginGpuFrame()
+    expect GpuHostError:
+      discard upload.syncGpuRasterTexture()
+    check context.textureUpdates == 0
+    check upload.uploadedRevision == 1
+    check host.gpuNamespaceUsage(namespace).transientBytes == 0
+    check host.gpuNamespaceUsage(namespace).workUnits == 0
+    host.endGpuFrame(frame)
+    check upload.closeGpuRasterTexture()
+    host.close()
+
+  test "failed synchronization keeps the last complete source revision":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("raster-retry", standardBudget())
+    let raster = newRasterSurface(2, 2)
+    let upload = host.newGpuRasterTexture(namespace, raster)
+    raster.updateRegion(
+      rasterRegion(0, 0, 1, 1), @[1'u8, 2, 3, 255]
+    )
+    check raster.publish()
+
+    expect GpuHostError:
+      discard upload.syncGpuRasterTexture()
+    check upload.uploadedRevision == 1
+    check context.textureUpdates == 0
+
+    context.updateTextureStatus = gbsFailed
+    var frame = host.beginGpuFrame()
+    expect GpuHostError:
+      discard upload.syncGpuRasterTexture()
+    check upload.uploadedRevision == 1
+    check context.textureUpdates == 1
+    check host.gpuNamespaceUsage(namespace).transientBytes == 0
+    check host.gpuNamespaceUsage(namespace).workUnits == 0
+    host.endGpuFrame(frame)
+
+    context.updateTextureStatus = gbsOk
+    frame = host.beginGpuFrame()
+    check upload.syncGpuRasterTexture().kind == grtskPartial
+    check upload.uploadedRevision == 2
+    expect GpuHostError:
+      discard upload.closeGpuRasterTexture()
+    check not upload.isClosed
+    host.endGpuFrame(frame)
+    check upload.closeGpuRasterTexture()
+    host.close()
+
+  test "invalid configuration and stale resources fail closed":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("raster-guards", standardBudget())
+    let raster = newRasterSurface(2, 2)
+
+    expect ValueError:
+      discard host.newGpuRasterTexture(
+        namespace,
+        raster,
+        GpuRasterTextureConfig(
+          usage: {gtuSampled},
+          maxPartialRegions: MaxRasterDirtyRegions + 1
+        )
+      )
+    expect ValueError:
+      discard host.newGpuRasterTexture(
+        namespace,
+        raster,
+        GpuRasterTextureConfig(usage: {gtuReadback})
+      )
+    expect ValueError:
+      discard host.newGpuRasterTexture(namespace, RasterSurface(nil))
+    check context.textureCreates == 0
+
+    let upload = host.newGpuRasterTexture(namespace, raster)
+    check host.markGpuDeviceLost()
+    check upload.isStale
+    expect GpuHostError:
+      discard upload.syncGpuRasterTexture()
+    check upload.closeGpuRasterTexture()
+    check context.resourceDestroys == 0
+    host.close()
 
 suite "GPU buffer resources":
   test "static vertex buffers map layout data accounting and destruction":

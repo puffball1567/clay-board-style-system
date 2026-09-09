@@ -1,7 +1,7 @@
 import std/[algorithm, hashes, math, tables]
 
 const
-  gpuHostApiVersion* = 12'u32
+  gpuHostApiVersion* = 13'u32
   maxGpuNamespaceNameBytes* = 128
   maxGpuResourceLabelBytes* = 128
   maxGpuViewCount* = 256'u16
@@ -489,7 +489,7 @@ type
     descriptor: GpuTextureDescriptor;
     region: GpuTextureUpdateRegion;
     rowStride: uint32;
-    data: seq[byte]
+    data: openArray[byte]
   ): GpuBackendStatus {.nimcall, raises: [].}
 
   GpuBackendCreateBufferProc* = proc(
@@ -1926,7 +1926,7 @@ proc updateGpuBuffer*(
   raiseForStatus(status)
 
 proc requireGpuResourceWritable(host: GpuHost; handle: GpuResourceHandle)
-proc validateGpuFrameWork(
+proc validateGpuFrameWork*(
     host: GpuHost;
     namespace: GpuNamespaceId;
     transientBytes = 0'u64;
@@ -1945,7 +1945,7 @@ proc validateTextureUpdate(
     descriptor: GpuTextureDescriptor;
     region: GpuTextureUpdateRegion;
     rowStride: uint32;
-    data: seq[byte]
+    data: openArray[byte]
 ): uint32 =
   if descriptor.access != gtaDynamic:
     raise newException(GpuHostError, "static GPU textures cannot be updated")
@@ -1967,9 +1967,13 @@ proc validateTextureUpdate(
     raise newException(GpuHostError, "GPU texture update row stride is too small")
   if resolvedStride > uint64(high(uint32)):
     raise newException(GpuHostError, "GPU texture update row stride is too large")
-  if uint64(region.height) > high(uint64) div resolvedStride:
+  let precedingRows = uint64(region.height - 1)
+  if precedingRows != 0 and precedingRows > high(uint64) div resolvedStride:
     raise newException(GpuHostError, "GPU texture update byte size overflows")
-  let requiredBytes = uint64(region.height) * resolvedStride
+  let precedingBytes = precedingRows * resolvedStride
+  if precedingBytes > high(uint64) - tightStride:
+    raise newException(GpuHostError, "GPU texture update byte size overflows")
+  let requiredBytes = precedingBytes + tightStride
   if requiredBytes > uint64(high(int)) or uint64(data.len) != requiredBytes:
     raise newException(GpuHostError, "GPU texture update data size is invalid")
   uint32(resolvedStride)
@@ -1978,7 +1982,7 @@ proc updateGpuTexture*(
     host: GpuHost;
     handle: GpuResourceHandle;
     region: GpuTextureUpdateRegion;
-    data: seq[byte];
+    data: openArray[byte];
     rowStride = 0'u32
 ) =
   host.requireHost()
@@ -2026,7 +2030,7 @@ proc updateGpuTexture*(
 proc updateGpuTexture*(
     host: GpuHost;
     handle: GpuResourceHandle;
-    data: seq[byte];
+    data: openArray[byte];
     rowStride = 0'u32
 ) =
   host.requireHost()
@@ -2159,7 +2163,7 @@ proc releaseGpuResource*(host: GpuHost; handle: GpuResourceHandle): bool =
   host.namespaces[handle.namespace] = namespace
   true
 
-proc validateGpuFrameWork(
+proc validateGpuFrameWork*(
     host: GpuHost;
     namespace: GpuNamespaceId;
     transientBytes: uint64;
