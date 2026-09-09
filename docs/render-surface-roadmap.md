@@ -438,7 +438,10 @@ Texture/RenderTarget queue, retention, paint command, and readback fallback are
 also implemented. `GpuRasterTexture` provides the opposite CPU-to-GPU boundary:
 it keeps one dynamic Texture mapped to a retained `RasterSurface`, uploads
 consecutive dirty revisions by region, and falls back to one full upload when a
-consumer skips revisions or exceeds its configured region bound. Portable
+consumer skips revisions or exceeds its configured region bound. Dynamic
+vertex, index, storage-buffer, and texture updates accept synchronously consumed
+borrowed byte spans, allowing staging-buffer slices to cross the host boundary
+without a second application-side allocation. Portable
 native-window conversion and SDL3 handoff are implemented as well. A
 production bgfx same-device compositor, production-adapter
 device recreation, and visible real-GPU conformance remain release gates below.

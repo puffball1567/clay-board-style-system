@@ -81,6 +81,7 @@ type MockGpuContext = ref object of GpuBackendContext
   lastBufferDataBytes: int
   lastBufferUpdateOffset: uint64
   lastBufferUpdateBytes: int
+  lastBufferUpdateData: seq[byte]
   lastRenderTarget: GpuRenderTargetDescriptor
   lastShader: GpuShaderDescriptor
   lastUniform: GpuUniformDescriptor
@@ -257,7 +258,7 @@ proc updateBuffer(
     resource: GpuBackendResourceId;
     descriptor: GpuBufferDescriptor;
     offsetBytes: uint64;
-    data: seq[byte]
+    data: openArray[byte]
 ): GpuBackendStatus {.raises: [].} =
   discard resource
   let state = context.mock
@@ -265,6 +266,7 @@ proc updateBuffer(
   state.lastBuffer = descriptor
   state.lastBufferUpdateOffset = offsetBytes
   state.lastBufferUpdateBytes = data.len
+  state.lastBufferUpdateData = @data
   state.updateBufferStatus
 
 proc createRenderTarget(
@@ -1832,10 +1834,12 @@ suite "GPU buffer resources":
     )
     let buffer = host.createGpuBuffer(namespace, descriptor)
 
-    host.updateGpuBuffer(buffer, 4, newSeq[byte](8))
+    let staging = @[90'u8, 91, 1, 2, 3, 4, 5, 6, 7, 8, 92, 93]
+    host.updateGpuBuffer(buffer, 4, staging.toOpenArray(2, 9))
     check context.bufferUpdates == 1
     check context.lastBufferUpdateOffset == 4
     check context.lastBufferUpdateBytes == 8
+    check context.lastBufferUpdateData == @[1'u8, 2, 3, 4, 5, 6, 7, 8]
     check host.gpuNamespaceUsage(namespace).persistentBytes == 16
     host.close()
     check context.resourceDestroys == 1
@@ -1889,8 +1893,14 @@ suite "GPU buffer resources":
         storageAccess = gsaRead
       )
     )
-    host.updateGpuBuffer(readable, 8, newSeq[byte](16))
+    let staging = @[99'u8, 98, 97, 96,
+      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+      12, 13, 14, 15, 95, 94, 93, 92]
+    host.updateGpuBuffer(readable, 8, staging.toOpenArray(4, 19))
     check context.bufferUpdates == 1
+    check context.lastBufferUpdateData == @[
+      0'u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
+    ]
 
     check host.releaseGpuResource(readable)
     let writable = host.createGpuBuffer(

@@ -646,7 +646,7 @@ proc updateBuffer(
     resource: GpuBackendResourceId;
     descriptor: GpuBufferDescriptor;
     offsetBytes: uint64;
-    data: seq[byte]
+    data: openArray[byte]
 ): GpuBackendStatus {.raises: [].} =
   let value = rawContext.context
   let decoded = resource.unpackBackendResource()

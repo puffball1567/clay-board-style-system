@@ -21,6 +21,12 @@ invalidates every retained resource handle from the previous generation.
 Successful restoration refreshes backend capability information before the
 host becomes ready again.
 
+Dynamic buffer and texture updates accept borrowed byte spans. CBSS validates
+the span synchronously and the backend must consume or copy it before returning;
+neither layer may retain the caller's memory. This permits a worker-produced
+staging allocation to be sliced on the UI thread without another host-side
+`seq[byte]` allocation before a vertex, index, storage-buffer, or texture upload.
+
 The host is UI-thread-owned. Lifecycle, frame, namespace, and resource-accounting
 operations run on the presentation thread. Worker threads should return
 immutable command or data buffers to that thread instead of mutating a host.
