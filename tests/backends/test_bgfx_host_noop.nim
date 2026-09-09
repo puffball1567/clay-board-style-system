@@ -66,7 +66,12 @@ let mappedIndexBuffer = host.createGpuBuffer(
     label: "CBSS NOOP mapped indices"
   )
 )
-host.updateGpuBuffer(mappedIndexBuffer, 2, newSeq[byte](4))
+let mappedIndexStaging = @[90'u8, 91, 1, 2, 3, 4, 92, 93]
+host.updateGpuBuffer(
+  mappedIndexBuffer,
+  2,
+  mappedIndexStaging.toOpenArray(2, 5)
+)
 doAssert host.isGpuResourceLive(mappedVertexBuffer)
 doAssert host.isGpuResourceLive(mappedIndexBuffer)
 

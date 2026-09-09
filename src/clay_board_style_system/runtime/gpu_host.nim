@@ -1,7 +1,7 @@
 import std/[algorithm, hashes, math, tables]
 
 const
-  gpuHostApiVersion* = 13'u32
+  gpuHostApiVersion* = 14'u32
   maxGpuNamespaceNameBytes* = 128
   maxGpuResourceLabelBytes* = 128
   maxGpuViewCount* = 256'u16
@@ -504,7 +504,7 @@ type
     resource: GpuBackendResourceId;
     descriptor: GpuBufferDescriptor;
     offsetBytes: uint64;
-    data: seq[byte]
+    data: openArray[byte]
   ): GpuBackendStatus {.nimcall, raises: [].}
 
   GpuBackendCreateRenderTargetProc* = proc(
@@ -1405,7 +1405,7 @@ proc validateBufferDescriptor(
 proc validateBufferUpdate(
     descriptor: GpuBufferDescriptor;
     offsetBytes: uint64;
-    data: seq[byte]
+    data: openArray[byte]
 ) =
   if descriptor.access != gbaDynamic:
     raise newException(GpuHostError, "static GPU buffers cannot be updated")
@@ -1897,7 +1897,7 @@ proc updateGpuBuffer*(
     host: GpuHost;
     handle: GpuResourceHandle;
     offsetBytes: uint64;
-    data: seq[byte]
+    data: openArray[byte]
 ) =
   host.requireHost()
   if host.stateValue != ghsReady:

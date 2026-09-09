@@ -46,9 +46,11 @@ release. Before 1.0, minor releases may contain public API changes.
   namespace, generation, color-write state, compute capability, and backend
   support before allocation. Live pipelines retain their shader dependencies,
   preventing early shader destruction while namespace teardown still destroys
-  programs before their stages. Buffers
-  use backend-neutral vertex layouts, 16/32-bit
-  indices, and aligned bounded updates. These resources enforce namespace
+  programs before their stages. Buffers use backend-neutral vertex layouts,
+  16/32-bit indices, and aligned bounded updates. Dynamic vertex, index, and
+  storage-buffer updates accept borrowed byte spans, so callers can upload a
+  validated slice without allocating another `seq[byte]`; adapters must consume
+  or copy the span before returning. These resources enforce namespace
   byte/count budgets before allocation, copy optional
   initial pixels, and deterministically destroy mapped resources on release,
   namespace teardown, or host teardown. Device loss invalidates mapped handles
