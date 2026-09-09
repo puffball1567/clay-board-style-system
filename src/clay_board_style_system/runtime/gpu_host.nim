@@ -1,7 +1,7 @@
 import std/[algorithm, hashes, math, tables]
 
 const
-  gpuHostApiVersion* = 11'u32
+  gpuHostApiVersion* = 12'u32
   maxGpuNamespaceNameBytes* = 128
   maxGpuResourceLabelBytes* = 128
   maxGpuViewCount* = 256'u16
@@ -63,6 +63,10 @@ type
     gtuBlitSource,
     gtuBlitDestination,
     gtuReadback
+
+  GpuTextureAccess* = enum
+    gtaStatic,
+    gtaDynamic
 
   GpuAlphaMode* = enum
     gcamStraight,
@@ -206,7 +210,12 @@ type
     width*, height*: uint32
     format*: GpuTextureFormat
     usage*: set[GpuTextureUsage]
+    access*: GpuTextureAccess
     label*: string
+
+  GpuTextureUpdateRegion* = object
+    x*, y*: uint32
+    width*, height*: uint32
 
   GpuBufferDescriptor* = object
     byteSize*: uint64
@@ -474,6 +483,15 @@ type
     resource: var GpuBackendResourceId
   ): GpuBackendStatus {.nimcall, raises: [].}
 
+  GpuBackendUpdateTextureProc* = proc(
+    context: GpuBackendContext;
+    resource: GpuBackendResourceId;
+    descriptor: GpuTextureDescriptor;
+    region: GpuTextureUpdateRegion;
+    rowStride: uint32;
+    data: seq[byte]
+  ): GpuBackendStatus {.nimcall, raises: [].}
+
   GpuBackendCreateBufferProc* = proc(
     context: GpuBackendContext;
     descriptor: GpuBufferDescriptor;
@@ -594,6 +612,7 @@ type
     resize*: GpuBackendResizeProc
     restore*: GpuBackendRestoreProc
     createTexture*: GpuBackendCreateTextureProc
+    updateTexture*: GpuBackendUpdateTextureProc
     createBuffer*: GpuBackendCreateBufferProc
     updateBuffer*: GpuBackendUpdateBufferProc
     createRenderTarget*: GpuBackendCreateRenderTargetProc
@@ -1270,15 +1289,17 @@ proc reserveGpuResource*(
 
   host.insertGpuResource(namespace, kind, bytes)
 
+proc gpuTextureBytesPerPixel*(format: GpuTextureFormat): uint64 =
+  case format
+  of gtfR8: 1'u64
+  of gtfRgba8, gtfBgra8: 4'u64
+  of gtfR16F: 2'u64
+  of gtfR32F, gtfRg16F: 4'u64
+  of gtfRg32F, gtfRgba16F: 8'u64
+  of gtfRgba32F: 16'u64
+
 proc textureBytes(descriptor: GpuTextureDescriptor): uint64 =
-  let bytesPerPixel =
-    case descriptor.format
-    of gtfR8: 1'u64
-    of gtfRgba8, gtfBgra8: 4'u64
-    of gtfR16F: 2'u64
-    of gtfR32F, gtfRg16F: 4'u64
-    of gtfRg32F, gtfRgba16F: 8'u64
-    of gtfRgba32F: 16'u64
+  let bytesPerPixel = descriptor.format.gpuTextureBytesPerPixel()
   let width = uint64(descriptor.width)
   let height = uint64(descriptor.height)
   if width != 0 and height > high(uint64) div width:
@@ -1438,14 +1459,23 @@ proc createGpuTexture*(
         GpuHostError,
         "GPU readback textures cannot have initial data"
       )
+    if descriptor.access != gtaStatic:
+      raise newException(
+        GpuHostError,
+        "GPU readback textures cannot be CPU-updatable"
+      )
   if descriptor.label.len > maxGpuResourceLabelBytes:
     raise newException(GpuHostError, "GPU resource label is too long")
   let bytes = descriptor.textureBytes()
   if initialData.len != 0 and uint64(initialData.len) != bytes:
     raise newException(GpuHostError, "GPU texture initial data size is invalid")
   host.namespaces[namespace].ensureResourceCapacity(bytes)
-  if host.backend.createTexture.isNil or host.backend.destroyResource.isNil:
-    raise newException(GpuHostError, "GPU backend does not support textures")
+  if host.backend.createTexture.isNil or host.backend.destroyResource.isNil or
+      (descriptor.access == gtaDynamic and host.backend.updateTexture.isNil):
+    raise newException(
+      GpuHostError,
+      "GPU backend does not support the requested texture lifecycle"
+    )
 
   var backendResource: GpuBackendResourceId
   let status = host.backend.createTexture(
@@ -1895,6 +1925,127 @@ proc updateGpuBuffer*(
     host.enterDeviceLost()
   raiseForStatus(status)
 
+proc requireGpuResourceWritable(host: GpuHost; handle: GpuResourceHandle)
+proc validateGpuFrameWork(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    transientBytes = 0'u64;
+    readbackBytes = 0'u64;
+    workUnits = 0'u32
+)
+proc reserveGpuFrameWork*(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    transientBytes = 0'u64;
+    readbackBytes = 0'u64;
+    workUnits = 0'u32
+)
+
+proc validateTextureUpdate(
+    descriptor: GpuTextureDescriptor;
+    region: GpuTextureUpdateRegion;
+    rowStride: uint32;
+    data: seq[byte]
+): uint32 =
+  if descriptor.access != gtaDynamic:
+    raise newException(GpuHostError, "static GPU textures cannot be updated")
+  if gtuReadback in descriptor.usage:
+    raise newException(GpuHostError, "GPU readback textures cannot be updated")
+  if region.width == 0 or region.height == 0:
+    raise newException(GpuHostError, "GPU texture update dimensions must be non-zero")
+  if region.x > descriptor.width or
+      region.width > descriptor.width - region.x or
+      region.y > descriptor.height or
+      region.height > descriptor.height - region.y:
+    raise newException(GpuHostError, "GPU texture update region is out of bounds")
+  let bytesPerPixel = descriptor.format.gpuTextureBytesPerPixel()
+  if uint64(region.width) > high(uint64) div bytesPerPixel:
+    raise newException(GpuHostError, "GPU texture update row size overflows")
+  let tightStride = uint64(region.width) * bytesPerPixel
+  let resolvedStride = if rowStride == 0: tightStride else: uint64(rowStride)
+  if resolvedStride < tightStride:
+    raise newException(GpuHostError, "GPU texture update row stride is too small")
+  if resolvedStride > uint64(high(uint32)):
+    raise newException(GpuHostError, "GPU texture update row stride is too large")
+  if uint64(region.height) > high(uint64) div resolvedStride:
+    raise newException(GpuHostError, "GPU texture update byte size overflows")
+  let requiredBytes = uint64(region.height) * resolvedStride
+  if requiredBytes > uint64(high(int)) or uint64(data.len) != requiredBytes:
+    raise newException(GpuHostError, "GPU texture update data size is invalid")
+  uint32(resolvedStride)
+
+proc updateGpuTexture*(
+    host: GpuHost;
+    handle: GpuResourceHandle;
+    region: GpuTextureUpdateRegion;
+    data: seq[byte];
+    rowStride = 0'u32
+) =
+  host.requireHost()
+  if host.stateValue != ghsReady:
+    raise newException(GpuHostError, "GPU host is not ready")
+  if not host.activeFrame:
+    raise newException(
+      GpuHostError,
+      "GPU texture updates require an active frame"
+    )
+  host.requireNamespaceAccess(handle.namespace)
+  if not host.isGpuResourceLive(handle) or handle.kind != grkTexture:
+    raise newException(GpuHostError, "GPU texture handle is stale or invalid")
+  let resource = host.namespaces[handle.namespace].resources[handle.resource]
+  let resolvedStride = resource.textureDescriptor.validateTextureUpdate(
+    region, rowStride, data
+  )
+  host.requireGpuResourceWritable(handle)
+  if host.backend.updateTexture.isNil:
+    raise newException(GpuHostError, "GPU backend does not support texture updates")
+  host.validateGpuFrameWork(
+    handle.namespace,
+    uint64(data.len),
+    0,
+    1
+  )
+  let status = host.backend.updateTexture(
+    host.backend.context,
+    resource.backendResource,
+    resource.textureDescriptor,
+    region,
+    resolvedStride,
+    data
+  )
+  if status == gbsDeviceLost:
+    host.enterDeviceLost()
+  raiseForStatus(status)
+  host.reserveGpuFrameWork(
+    handle.namespace,
+    uint64(data.len),
+    0,
+    1
+  )
+
+proc updateGpuTexture*(
+    host: GpuHost;
+    handle: GpuResourceHandle;
+    data: seq[byte];
+    rowStride = 0'u32
+) =
+  host.requireHost()
+  host.requireNamespaceAccess(handle.namespace)
+  if not host.isGpuResourceLive(handle) or handle.kind != grkTexture:
+    raise newException(GpuHostError, "GPU texture handle is stale or invalid")
+  let descriptor = host.namespaces[handle.namespace].resources[
+    handle.resource
+  ].textureDescriptor
+  host.updateGpuTexture(
+    handle,
+    GpuTextureUpdateRegion(
+      width: descriptor.width,
+      height: descriptor.height
+    ),
+    data,
+    rowStride
+  )
+
 proc textureShape(
     entry: GpuResourceEntry
 ): tuple[width, height: uint32, format: GpuTextureFormat,
@@ -2011,9 +2162,9 @@ proc releaseGpuResource*(host: GpuHost; handle: GpuResourceHandle): bool =
 proc validateGpuFrameWork(
     host: GpuHost;
     namespace: GpuNamespaceId;
-    transientBytes = 0'u64;
-    readbackBytes = 0'u64;
-    workUnits = 0'u32
+    transientBytes: uint64;
+    readbackBytes: uint64;
+    workUnits: uint32
 ) =
   host.requireHost()
   if not host.activeFrame:
@@ -2041,9 +2192,9 @@ proc validateGpuFrameWork(
 proc reserveGpuFrameWork*(
     host: GpuHost;
     namespace: GpuNamespaceId;
-    transientBytes = 0'u64;
-    readbackBytes = 0'u64;
-    workUnits = 0'u32
+    transientBytes: uint64;
+    readbackBytes: uint64;
+    workUnits: uint32
 ) =
   host.validateGpuFrameWork(
     namespace,

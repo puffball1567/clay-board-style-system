@@ -434,7 +434,7 @@ proc createTexture(
     return gbsUnsupported
 
   var memory: ptr bgfx_memory_t
-  if initialData.len > 0:
+  if initialData.len > 0 and descriptor.access == gtaStatic:
     memory = BGFX.copy(unsafeAddr initialData[0], uint32(initialData.len))
     if memory.isNil:
       return gbsFailed
@@ -451,6 +451,24 @@ proc createTexture(
   )
   if not BGFX_HANDLE_IS_VALID(handle):
     return gbsFailed
+  if initialData.len > 0 and descriptor.access == gtaDynamic:
+    let updateMemory = BGFX.copy(
+      unsafeAddr initialData[0], uint32(initialData.len)
+    )
+    if updateMemory.isNil:
+      BGFX.destroyTexture(handle)
+      return gbsFailed
+    BGFX.updateTexture2D(
+      handle,
+      0,
+      0,
+      0,
+      0,
+      uint16(descriptor.width),
+      uint16(descriptor.height),
+      updateMemory,
+      high(uint16)
+    )
   if descriptor.label.len > 0:
     BGFX.setTextureName(
       handle,
@@ -458,6 +476,50 @@ proc createTexture(
       int32(descriptor.label.len)
     )
   resource = packBackendResource(brtTexture, handle.idx)
+  gbsOk
+
+proc updateTexture(
+    rawContext: GpuBackendContext;
+    resource: GpuBackendResourceId;
+    descriptor: GpuTextureDescriptor;
+    region: GpuTextureUpdateRegion;
+    rowStride: uint32;
+    data: seq[byte]
+): GpuBackendStatus {.raises: [].} =
+  let value = rawContext.context
+  let decoded = resource.unpackBackendResource()
+  if not value.attached or not decoded.valid or decoded.tag != brtTexture or
+      descriptor.access != gtaDynamic or data.len == 0 or
+      uint64(data.len) > uint64(high(uint32)) or
+      region.x > uint32(high(uint16)) or region.y > uint32(high(uint16)) or
+      region.width > uint32(high(uint16)) or
+      region.height > uint32(high(uint16)):
+    return gbsInvalidConfiguration
+
+  let tightStride = uint64(region.width) *
+    descriptor.format.gpuTextureBytesPerPixel()
+  var pitch: uint16
+  if uint64(rowStride) == tightStride:
+    pitch = high(uint16)
+  elif rowStride >= uint32(high(uint16)):
+    return gbsUnsupported
+  else:
+    pitch = uint16(rowStride)
+
+  let memory = BGFX.copy(unsafeAddr data[0], uint32(data.len))
+  if memory.isNil:
+    return gbsFailed
+  BGFX.updateTexture2D(
+    bgfx_texture_handle_t(idx: decoded.handleIndex),
+    0,
+    0,
+    uint16(region.x),
+    uint16(region.y),
+    uint16(region.width),
+    uint16(region.height),
+    memory,
+    pitch
+  )
   gbsOk
 
 proc createBuffer(
@@ -1267,6 +1329,7 @@ proc newBgfxBackend*(
     resize: resize,
     restore: restore,
     createTexture: createTexture,
+    updateTexture: updateTexture,
     createBuffer: createBuffer,
     updateBuffer: updateBuffer,
     createRenderTarget: createRenderTarget,

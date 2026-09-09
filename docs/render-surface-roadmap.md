@@ -329,8 +329,9 @@ closure for the standard CPU/SDL 2D profile and the target's full profile.
 
 ## Phase 3: bgfx GPU Canvas Capability
 
-Status: `In progress; GpuHost ownership, budget accounting, mapped Texture,
-Buffer, owned color RenderTarget, precompiled Shader, typed Uniform and
+Status: `In progress; GpuHost ownership, budget accounting, mapped static and
+dynamic Texture with checked partial updates, Buffer, owned color RenderTarget,
+precompiled Shader, typed Uniform and
 Sampler resources, sampled-texture and compute storage-image bindings,
 dependency-safe Graphics and Compute Pipeline resources, bounded Draw/Dispatch
 submission, typed texture copy, asynchronous readback, and the optional bgfxim

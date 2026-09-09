@@ -47,11 +47,11 @@ if [ "$(uname -s)" = Darwin ]; then
   frameworks="--passL:-framework --passL:Foundation --passL:-framework --passL:CoreFoundation --passL:-lobjc"
 fi
 
-"$cxx" -std=c++20 -O2 -fPIC -pthread -DBX_CONFIG_DEBUG=0 "$@" \
+"$cxx" -std=c++20 -O2 -fPIC -pthread $simd_flag -DBX_CONFIG_DEBUG=0 "$@" \
   -I"$bx_dir/include" -I"$bx_dir/3rdparty" \
   -c "$bx_dir/src/amalgamated.cpp" -o "$build_dir/bx.o"
 
-"$cxx" -std=c++20 -O2 -fPIC -pthread \
+"$cxx" -std=c++20 -O2 -fPIC -pthread $simd_flag \
   -DBX_CONFIG_DEBUG=0 -DBGFX_CONFIG_RENDERER_VULKAN=0 "$@" \
   -I"$bgfx_dir/include" -I"$bgfx_dir/src" -I"$bgfx_dir/3rdparty" \
   -I"$bx_dir/include" -I"$bx_dir/3rdparty" -I"$bimg_dir/include" \

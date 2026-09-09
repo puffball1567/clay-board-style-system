@@ -1,4 +1,4 @@
-import std/[algorithm, os, osproc, sequtils, strutils]
+import std/[algorithm, os, osproc, sequtils, strutils, tempfiles]
 
 const excludedTests = [
   "tests/backends/test_bgfx_adapter_compile.nim",
@@ -81,10 +81,9 @@ proc main() =
 
   let repoRoot = currentSourcePath().parentDir().parentDir()
   let testsRoot = repoRoot / "tests"
-  let runRoot = getTempDir() / ("cbss-tests-" & $getCurrentProcessId())
+  let runRoot = createTempDir("cbss-tests-", "")
   var tests: seq[string]
 
-  createDir(runRoot)
   defer:
     try:
       removeDir(runRoot)

@@ -1038,9 +1038,10 @@ an enum-only API.
 
 ## GPU Canvas Capability
 
-Status: `Version 0.7 in progress; typed GPU resources, submission, transfer,
-asynchronous readback, portable RasterSurface composition, typed graphics and
-compute authoring, and build-only shader packaging implemented`
+Status: `Version 0.7 in progress; typed GPU resources, checked dynamic Texture
+updates, submission, transfer, asynchronous readback, portable RasterSurface
+composition, typed graphics and compute authoring, and build-only shader
+packaging implemented`
 
 CBSS will support optional GPU-backed drawing inside the standard Canvas
 element. This is a capability for game scenes, charts, visualizations, image
