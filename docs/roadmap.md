@@ -2273,9 +2273,12 @@ materials now connect ordinary Style declarations to bounded underlay and
 overlay command streams without adding nodes. `GpuCanvasSurface` can use that
 same contract, records its actual component consumers, and invalidates only
 those owners when a completed GPU frame is collected. See
-[Custom Paint](custom-paint.md). The first provider registry is Nim-native;
-an opaque, versioned C ABI provider boundary remains required before the
-Version 0.7 release.
+[Custom Paint](custom-paint.md). The provider registry now also has an opaque,
+versioned C ABI `0x0001001D` boundary with copied typed declarations,
+callback-scoped local-coordinate command sinks, bounded Canvas primitives,
+monotonic registration tokens, and exactly-once release semantics. This closes
+the foreign-provider release gate without exposing Nim closures or backend
+handles.
 
 The Version 0.7 drawing baseline is intentionally usable before the complete
 Version 0.9 gesture layer. Mouse input and the existing pen metadata, pressure,

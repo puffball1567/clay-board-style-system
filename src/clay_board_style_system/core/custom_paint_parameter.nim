@@ -53,38 +53,46 @@ proc validCustomPaintParameterName*(name: string): bool =
       return false
   true
 
-proc validate(parameter: CustomPaintParameter) =
-  if not parameter.parameterName.validCustomPaintParameterName:
+proc requireValidParameterName(name: string) =
+  if not name.validCustomPaintParameterName:
     raise newException(ValueError, "custom paint parameter name is invalid")
+
+proc requireFinite(value: float32; message: string) =
+  if not value.finite:
+    raise newException(ValueError, message)
+
+proc validate(parameter: CustomPaintParameter) =
+  parameter.parameterName.requireValidParameterName()
   case parameter.kind
   of cppkFloat:
-    if not parameter.floatValue.finite:
-      raise newException(ValueError, "custom paint float parameter must be finite")
+    parameter.floatValue.requireFinite(
+      "custom paint float parameter must be finite"
+    )
   of cppkVec2:
     for value in parameter.vec2Value:
-      if not value.finite:
-        raise newException(ValueError, "custom paint vec2 parameter must be finite")
+      value.requireFinite("custom paint vec2 parameter must be finite")
   of cppkVec4:
     for value in parameter.vec4Value:
-      if not value.finite:
-        raise newException(ValueError, "custom paint vec4 parameter must be finite")
+      value.requireFinite("custom paint vec4 parameter must be finite")
   of cppkColor:
     for value in [parameter.colorValue.r, parameter.colorValue.g,
         parameter.colorValue.b, parameter.colorValue.a]:
-      if not value.finite:
-        raise newException(ValueError, "custom paint color parameter must be finite")
+      value.requireFinite("custom paint color parameter must be finite")
   of cppkInteger, cppkBoolean:
     discard
 
 proc customPaintFloat*(name: string; value: SomeNumber): CustomPaintParameter =
+  name.requireValidParameterName()
+  let normalizedValue = value.float32
+  normalizedValue.requireFinite("custom paint float parameter must be finite")
   result = CustomPaintParameter(
     parameterName: name.copyParameterName,
     kind: cppkFloat,
-    floatValue: value.float32
+    floatValue: normalizedValue
   )
-  result.validate()
 
 proc customPaintInteger*(name: string; value: SomeInteger): CustomPaintParameter =
+  name.requireValidParameterName()
   when value is SomeUnsignedInt:
     if uint64(value) > uint64(high(int64)):
       raise newException(ValueError, "custom paint integer parameter exceeds int64")
@@ -93,27 +101,29 @@ proc customPaintInteger*(name: string; value: SomeInteger): CustomPaintParameter
     kind: cppkInteger,
     integerValue: value.int64
   )
-  result.validate()
 
 proc customPaintBoolean*(name: string; value: bool): CustomPaintParameter =
+  name.requireValidParameterName()
   result = CustomPaintParameter(
     parameterName: name.copyParameterName,
     kind: cppkBoolean,
     booleanValue: value
   )
-  result.validate()
 
 proc customPaintVec2*[X: SomeNumber, Y: SomeNumber](
     name: string;
     x: X;
     y: Y
 ): CustomPaintParameter =
+  name.requireValidParameterName()
+  let normalized = [x.float32, y.float32]
+  for value in normalized:
+    value.requireFinite("custom paint vec2 parameter must be finite")
   result = CustomPaintParameter(
     parameterName: name.copyParameterName,
     kind: cppkVec2,
-    vec2Value: [x.float32, y.float32]
+    vec2Value: normalized
   )
-  result.validate()
 
 proc customPaintVec4*[
     X: SomeNumber,
@@ -127,20 +137,25 @@ proc customPaintVec4*[
     z: Z;
     w: W
 ): CustomPaintParameter =
+  name.requireValidParameterName()
+  let normalized = [x.float32, y.float32, z.float32, w.float32]
+  for value in normalized:
+    value.requireFinite("custom paint vec4 parameter must be finite")
   result = CustomPaintParameter(
     parameterName: name.copyParameterName,
     kind: cppkVec4,
-    vec4Value: [x.float32, y.float32, z.float32, w.float32]
+    vec4Value: normalized
   )
-  result.validate()
 
 proc customPaintColor*(name: string; value: Color): CustomPaintParameter =
+  name.requireValidParameterName()
+  for component in [value.r, value.g, value.b, value.a]:
+    component.requireFinite("custom paint color parameter must be finite")
   result = CustomPaintParameter(
     parameterName: name.copyParameterName,
     kind: cppkColor,
     colorValue: value
   )
-  result.validate()
 
 proc customPaintParameters*(
     values: openArray[CustomPaintParameter]

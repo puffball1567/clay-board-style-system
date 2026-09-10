@@ -8,7 +8,7 @@ pub struct CapabilityDefinition {
     pub name: &'static str,
 }
 
-pub const ABI_VERSION: u32 = 0x0001001C;
+pub const ABI_VERSION: u32 = 0x0001001D;
 pub const DRIVER_CONTRACT_VERSION: u32 = 0x00010000;
 pub const CAPABILITY_RETAINED_TREE: u32 = 1;
 pub const CAPABILITY_TYPED_STYLE: u32 = 2;
@@ -31,6 +31,7 @@ pub const CAPABILITY_SUBTREE_LIFECYCLE: u32 = 18;
 pub const CAPABILITY_VALIDATION_PATTERN: u32 = 19;
 pub const CAPABILITY_RASTER_SURFACE: u32 = 20;
 pub const CAPABILITY_SHADER_AUTHORING: u32 = 21;
+pub const CAPABILITY_CUSTOM_PAINT_PROVIDER: u32 = 22;
 
 pub const CAPABILITIES: &[CapabilityDefinition] = &[
     CapabilityDefinition {
@@ -158,5 +159,11 @@ pub const CAPABILITIES: &[CapabilityDefinition] = &[
         version: 2,
         since_abi: 0x0001001B,
         name: "shader.authoring",
+    },
+    CapabilityDefinition {
+        id: 22,
+        version: 1,
+        since_abi: 0x0001001D,
+        name: "custom-paint.provider",
     },
 ];

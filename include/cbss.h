@@ -26,7 +26,7 @@ extern "C" {
 #endif
 
 /* CBSS_GENERATED_DRIVER_CONTRACT_BEGIN */
-#define CBSS_ABI_VERSION 0x0001001Cu
+#define CBSS_ABI_VERSION 0x0001001Du
 #define CBSS_DRIVER_CONTRACT_VERSION 0x00010000u
 
 typedef enum CbssCapabilityId {
@@ -50,7 +50,8 @@ typedef enum CbssCapabilityId {
   CBSS_CAPABILITY_SUBTREE_LIFECYCLE = 18u,
   CBSS_CAPABILITY_VALIDATION_PATTERN = 19u,
   CBSS_CAPABILITY_RASTER_SURFACE = 20u,
-  CBSS_CAPABILITY_SHADER_AUTHORING = 21u
+  CBSS_CAPABILITY_SHADER_AUTHORING = 21u,
+  CBSS_CAPABILITY_CUSTOM_PAINT_PROVIDER = 22u
 } CbssCapabilityId;
 
 enum {
@@ -77,6 +78,9 @@ typedef struct CbssCapabilityInfo {
 #define CBSS_MAX_VALIDATION_PATTERN_BYTES 65536u
 #define CBSS_MAX_VALIDATION_VALUE_BYTES (16u * 1024u * 1024u)
 #define CBSS_MAX_RASTER_SURFACE_BYTES (256u * 1024u * 1024u)
+#define CBSS_CUSTOM_PAINT_API_VERSION 1u
+#define CBSS_MAX_CUSTOM_PAINT_PARAMETERS 64u
+#define CBSS_MAX_CUSTOM_PAINT_COMMANDS 4096u
 
 typedef struct CbssContext CbssContext;
 typedef struct CbssStyle CbssStyle;
@@ -91,7 +95,9 @@ typedef struct CbssBlobStream CbssBlobStream;
 typedef struct CbssStreamProducer CbssStreamProducer;
 typedef struct CbssRasterSurface CbssRasterSurface;
 typedef struct CbssShaderBuilder CbssShaderBuilder;
+typedef struct CbssCustomPaintSink CbssCustomPaintSink;
 typedef uint64_t CbssEventSubscription;
+typedef uint64_t CbssCustomPaintRegistration;
 typedef uint32_t CbssShaderExpression;
 typedef uint32_t CbssShaderStorageBuffer;
 
@@ -768,6 +774,61 @@ typedef struct CbssGradientStop {
   float offset;
 } CbssGradientStop;
 
+typedef enum CbssCustomPaintStage {
+  CBSS_CUSTOM_PAINT_UNDERLAY = 0,
+  CBSS_CUSTOM_PAINT_OVERLAY = 1,
+  CBSS_CUSTOM_PAINT_MASK = 2,
+  CBSS_CUSTOM_PAINT_FILTER = 3
+} CbssCustomPaintStage;
+
+enum {
+  CBSS_CUSTOM_PAINT_STAGE_UNDERLAY = 1u << CBSS_CUSTOM_PAINT_UNDERLAY,
+  CBSS_CUSTOM_PAINT_STAGE_OVERLAY = 1u << CBSS_CUSTOM_PAINT_OVERLAY,
+  CBSS_CUSTOM_PAINT_STAGE_MASK = 1u << CBSS_CUSTOM_PAINT_MASK,
+  CBSS_CUSTOM_PAINT_STAGE_FILTER = 1u << CBSS_CUSTOM_PAINT_FILTER
+};
+
+typedef enum CbssCustomPaintParameterKind {
+  CBSS_CUSTOM_PAINT_PARAMETER_FLOAT = 0,
+  CBSS_CUSTOM_PAINT_PARAMETER_INTEGER = 1,
+  CBSS_CUSTOM_PAINT_PARAMETER_BOOLEAN = 2,
+  CBSS_CUSTOM_PAINT_PARAMETER_VEC2 = 3,
+  CBSS_CUSTOM_PAINT_PARAMETER_VEC4 = 4,
+  CBSS_CUSTOM_PAINT_PARAMETER_COLOR = 5
+} CbssCustomPaintParameterKind;
+
+/*
+ * Input names and parameter arrays are copied by cbss_style_set_custom_paint.
+ * reserved must be zero. FLOAT uses values[0], VEC2 uses values[0..1], VEC4
+ * and COLOR use values[0..3], and INTEGER/BOOLEAN use integer_value.
+ */
+typedef struct CbssCustomPaintParameterInput {
+  const char *name;
+  uint32_t kind;
+  uint32_t reserved;
+  int64_t integer_value;
+  float values[4];
+} CbssCustomPaintParameterInput;
+
+typedef struct CbssCustomPaintParameter {
+  uint32_t kind;
+  uint32_t name_bytes;
+  int64_t integer_value;
+  float values[4];
+} CbssCustomPaintParameter;
+
+typedef struct CbssCustomPaintRequest {
+  uint32_t struct_size;
+  uint32_t api_version;
+  uint32_t stage;
+  uint32_t owner;
+  CbssRect bounds;
+  CbssRect local_bounds;
+  float opacity;
+  uint32_t parameter_count;
+  uint64_t reserved;
+} CbssCustomPaintRequest;
+
 typedef struct CbssColorValueGradientStop {
   const CbssColorValue *color;
   float offset;
@@ -996,6 +1057,16 @@ typedef CbssStatus (*CbssBlobProviderReadCallback)(
     void *user_data, uint64_t offset, uint8_t *output, uint32_t capacity,
     uint32_t *output_read);
 typedef void (*CbssBlobProviderReleaseCallback)(void *user_data);
+/*
+ * The request and sink are borrowed for this synchronous callback only.
+ * Drawing coordinates are local to request.local_bounds. The callback must
+ * not retain either pointer, block, or re-enter presentation/registration on
+ * the same context. Returning a non-CBSS_OK status fails closed.
+ */
+typedef CbssStatus (*CbssCustomPaintProviderCallback)(
+    const CbssCustomPaintRequest *request, CbssCustomPaintSink *sink,
+    void *user_data);
+typedef void (*CbssCustomPaintProviderReleaseCallback)(void *user_data);
 
 CBSS_API uint32_t cbss_abi_version(void);
 /*
@@ -1123,6 +1194,71 @@ CBSS_API uint32_t cbss_raster_surface_dirty_region_count(
 CBSS_API CbssStatus cbss_raster_surface_dirty_region_at(
     const CbssRasterSurface *surface, uint32_t index,
     CbssRasterRegion *output);
+
+CBSS_API CbssStatus cbss_style_set_custom_paint(
+    CbssStyle *style, const char *material, CbssCustomPaintStage stage,
+    const CbssCustomPaintParameterInput *parameters,
+    uint32_t parameter_count);
+/*
+ * Registration takes ownership of user_data on success only. Replacement,
+ * unregister, context reset, or context destruction invokes release_callback
+ * exactly once. A release callback must not re-enter the same context.
+ * Registration tokens are context-local and never reused.
+ */
+CBSS_API CbssStatus cbss_context_register_custom_paint_provider(
+    CbssContext *context, const char *material, uint32_t stages,
+    CbssCustomPaintProviderCallback callback,
+    CbssCustomPaintProviderReleaseCallback release_callback,
+    void *user_data, uint8_t replace,
+    CbssCustomPaintRegistration *output_registration);
+CBSS_API CbssStatus cbss_context_unregister_custom_paint_provider(
+    CbssContext *context, CbssCustomPaintRegistration registration);
+CBSS_API CbssStatus cbss_context_invalidate_custom_paint_material(
+    CbssContext *context, const char *material,
+    uint32_t *output_consumer_count);
+CBSS_API CbssStatus cbss_custom_paint_parameter(
+    CbssCustomPaintSink *sink, uint32_t index,
+    CbssCustomPaintParameter *output);
+CBSS_API uint32_t cbss_custom_paint_parameter_name(
+    CbssCustomPaintSink *sink, uint32_t index,
+    char *buffer, uint32_t capacity);
+CBSS_API CbssStatus cbss_custom_paint_sink_save(CbssCustomPaintSink *sink);
+CBSS_API CbssStatus cbss_custom_paint_sink_restore(CbssCustomPaintSink *sink);
+CBSS_API CbssStatus cbss_custom_paint_sink_transform(
+    CbssCustomPaintSink *sink, CbssAffineTransform transform);
+CBSS_API CbssStatus cbss_custom_paint_sink_push_clip(
+    CbssCustomPaintSink *sink, CbssRect bounds, float radius);
+CBSS_API CbssStatus cbss_custom_paint_sink_pop_clip(
+    CbssCustomPaintSink *sink);
+CBSS_API CbssStatus cbss_custom_paint_sink_begin_layer(
+    CbssCustomPaintSink *sink, CbssRect bounds, float opacity,
+    uint32_t composite_mode);
+CBSS_API CbssStatus cbss_custom_paint_sink_end_layer(
+    CbssCustomPaintSink *sink);
+CBSS_API CbssStatus cbss_custom_paint_sink_fill_rect(
+    CbssCustomPaintSink *sink, CbssRect bounds,
+    CbssColor color, float radius);
+CBSS_API CbssStatus cbss_custom_paint_sink_fill_linear_gradient(
+    CbssCustomPaintSink *sink, CbssRect bounds, float angle,
+    uint32_t interpolation_space, const CbssGradientStop *stops,
+    uint32_t stop_count, float radius);
+CBSS_API CbssStatus cbss_custom_paint_sink_stroke_rect(
+    CbssCustomPaintSink *sink, CbssRect bounds,
+    CbssColor color, float width, float radius);
+CBSS_API CbssStatus cbss_custom_paint_sink_stroke_path(
+    CbssCustomPaintSink *sink, const CbssPathSegment *segments,
+    uint32_t segment_count, CbssColor color, float width,
+    uint32_t line_cap, uint32_t line_join, float miter_limit);
+CBSS_API CbssStatus cbss_custom_paint_sink_draw_text(
+    CbssCustomPaintSink *sink, const char *text, float x, float y,
+    CbssColor color, const CbssTextStyle *style,
+    const char *font_family, float max_width, uint8_t has_max_width);
+CBSS_API CbssStatus cbss_custom_paint_sink_draw_image(
+    CbssCustomPaintSink *sink, const char *source,
+    CbssRect bounds, float opacity);
+CBSS_API CbssStatus cbss_custom_paint_sink_draw_raster_surface(
+    CbssCustomPaintSink *sink, CbssRasterSurface *raster_surface,
+    CbssRect bounds, float opacity);
 
 CBSS_API CbssStatus cbss_blob_create(
     const uint8_t *bytes, uint64_t length, const char *mime_type,

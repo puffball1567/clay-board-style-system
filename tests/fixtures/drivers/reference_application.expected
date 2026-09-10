@@ -1,6 +1,6 @@
 cbss-driver-reference-v1
-layout.panel.width=240.000
-layout.panel.height=80.000
+layout.panel.width=260.000
+layout.panel.height=100.000
 event.order=handler,observer
 event.dispatch-count=1
 event.handled=1
