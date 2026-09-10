@@ -30,7 +30,7 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x0001001C` supports:
+ABI version `0x0001001D` supports:
 
 - machine-readable Craft Driver contract metadata and runtime capability
   negotiation through stable numeric identifiers before tree construction;
@@ -42,6 +42,15 @@ ABI version `0x0001001C` supports:
 - retained RGBA8/sRGB/straight-alpha RasterSurface handles with bounded
   copy-in updates, explicit atomic publication, merged dirty-region queries,
   Canvas composition, and append-only paint-command inspection;
+- versioned Custom Paint provider registration for foreign-language Craft
+  Drivers. A callback receives a fixed-layout request and a callback-scoped,
+  opaque command sink with local coordinates. Typed Style parameters are
+  copied at authoring time and queried without exposing Nim object layouts.
+  The sink supports retained Canvas primitives, rejects use outside the
+  callback, caps each material at 4,096 commands, and preserves the owning
+  node's layout, clip, opacity, transform, stacking, hit, focus, and
+  accessibility behavior. Registration user data is released exactly once on
+  replacement, unregister, context reset, or context destruction;
 - opaque typed Shader Builder handles with builder-local expression IDs,
   bounded graph/source sizes, stage and value-type validation, and deterministic
   bgfx source plus varying-definition output. Compute authoring adds
@@ -74,7 +83,7 @@ ABI version `0x0001001C` supports:
   and accessibility semantics, including an append-only protected-password
   text role.
 - Typed length, number, keyword, color, color-pair, border, shadow, gradient,
-  and transform declarations.
+  transform, and Custom Paint declarations.
 - Append-only `lh`, `rlh`, `ex`, `ch`, `rex`, and `rch` unit tags. The C ABI
   uses deterministic CSS fallback font metrics because concrete text engines
   remain an application-side adapter concern.

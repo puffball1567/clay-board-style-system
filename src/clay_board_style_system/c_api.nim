@@ -1,8 +1,9 @@
 import std/[algorithm, atomics, locks, math, options, sets, strutils, tables]
 
 import ./core/[color, color_conversion, color_mix, color_mix_parser,
-  color_parser, color_value, declaration, diagnostics, geometry, node, rule,
-  raster_surface, selector, style_resolver, style_value]
+  color_parser, color_value, custom_paint, custom_paint_parameter, declaration,
+  diagnostics, geometry, node, rule, raster_surface, selector, style_resolver,
+  style_value]
 import ./data/[blob, form_data, stream_bridge, stream_mailbox]
 import ./core/computed_style as computed_style_types
 import ./craft/[pack, style, style_slots]
@@ -11,7 +12,7 @@ import ./generated/default_properties
 import ./hit/hit_test
 import ./input/events
 import ./layout/[layout, presentation, scroll_state]
-import ./paint/[paint, paint_command, path_geometry]
+import ./paint/[custom_paint_registry, paint, paint_command, path_geometry]
 import ./runtime/[canvas, declarative_keyframes, declarative_transition,
   frame_scheduler, gpu_host, gpu_shader_builder, invalidation, motion_lifecycle,
   render_surface, validation]
@@ -150,6 +151,8 @@ const
   CbssMaxCraftPackSourceBytes* = uint32(maxCraftPackSourceBytes)
   CbssMaxValidationPatternBytes* = 65_536'u32
   CbssMaxValidationValueBytes* = 16'u32 * 1024'u32 * 1024'u32
+  CbssCustomPaintApiVersion* = 1'u32
+  CbssCustomPaintStageMask* = (1'u32 shl 4) - 1
 
   CbssCraftDiagnosticStyleParse* = 0'u32
   CbssCraftDiagnosticStyleReplacement* = 1'u32
@@ -172,6 +175,13 @@ const
   CbssShaderComputeBuiltinWorkGroupId* = 2'u32
   CbssShaderComputeBuiltinLocalInvocationIndex* = 3'u32
   CbssShaderComputeBuiltinWorkGroupCount* = 4'u32
+
+  CbssCustomPaintParameterFloat* = 0'u32
+  CbssCustomPaintParameterInteger* = 1'u32
+  CbssCustomPaintParameterBoolean* = 2'u32
+  CbssCustomPaintParameterVec2* = 3'u32
+  CbssCustomPaintParameterVec4* = 4'u32
+  CbssCustomPaintParameterColor* = 5'u32
 
 type
   CbssRectC* {.bycopy.} = object
@@ -316,6 +326,24 @@ type
   CbssRasterRegionC* {.bycopy.} = object
     x*, y*, width*, height*: uint32
 
+  CbssCustomPaintParameterInputC* {.bycopy.} = object
+    name*: cstring
+    kind*, reserved*: uint32
+    integerValue*: int64
+    values*: array[4, cfloat]
+
+  CbssCustomPaintParameterC* {.bycopy.} = object
+    kind*, nameBytes*: uint32
+    integerValue*: int64
+    values*: array[4, cfloat]
+
+  CbssCustomPaintRequestC* {.bycopy.} = object
+    structSize*, apiVersion*, stage*, owner*: uint32
+    bounds*, localBounds*: CbssRectC
+    opacity*: cfloat
+    parameterCount*: uint32
+    reserved*: uint64
+
   CbssCraftDiagnosticC* {.bycopy.} = object
     domain*, code*, pathBytes*, messageBytes*: uint32
 
@@ -332,6 +360,7 @@ type
   CbssStreamProducerHandle* = ptr CbssStreamProducerObj
   CbssRasterSurfaceHandle* = ptr CbssRasterSurfaceObj
   CbssShaderBuilderHandle* = ptr CbssShaderBuilderObj
+  CbssCustomPaintSinkHandle* = ptr CbssCustomPaintSinkObj
   CbssEventCallback* = proc(
     context: CbssContextHandle;
     event: ptr CbssEventC;
@@ -360,6 +389,28 @@ type
   CbssBlobProviderReleaseCallback* = proc(
     userData: pointer
   ) {.cdecl, gcsafe, raises: [].}
+  CbssCustomPaintProviderCallback* = proc(
+    request: ptr CbssCustomPaintRequestC;
+    sink: CbssCustomPaintSinkHandle;
+    userData: pointer
+  ): int32 {.cdecl, raises: [].}
+  CbssCustomPaintProviderReleaseCallback* = proc(
+    userData: pointer
+  ) {.cdecl, raises: [].}
+
+  CbssCustomPaintProviderBinding = ref object
+    token: uint64
+    registration: CustomPaintRegistration
+    callback: CbssCustomPaintProviderCallback
+    release: CbssCustomPaintProviderReleaseCallback
+    userData: pointer
+    released: bool
+
+  CbssCustomPaintSinkObj = object
+    ownerContext: CbssContextHandle
+    active: bool
+    canvas: Canvas2D
+    parameters: CustomPaintParameters
 
   CbssRenderSurfaceBinding = ref object
     context: CbssContextHandle
@@ -403,6 +454,13 @@ type
     surfaces: RenderSurfaceRegistry
     surfaceBindings: Table[RenderSurfaceId, CbssRenderSurfaceBinding]
     surfacePaintProvider: SurfacePaintProvider
+    customPaints: CustomPaintRegistry
+    customPaintProvider: CustomPaintProvider
+    customPaintBindings: Table[uint64, CbssCustomPaintProviderBinding]
+    customPaintByMaterial: Table[string, uint64]
+    customPaintSink: CbssCustomPaintSinkObj
+    nextCustomPaintToken: uint64
+    customPaintLifecycleActive: bool
     pixelScale: float32
     diagnostics: Diagnostics
     lastError: string
@@ -522,6 +580,9 @@ static:
   doAssert sizeof(CbssStreamEventC) == 48
   doAssert sizeof(CbssCraftDiagnosticC) == 16
   doAssert sizeof(CbssRasterRegionC) == 16
+  doAssert sizeof(CbssCustomPaintParameterInputC) == 40
+  doAssert sizeof(CbssCustomPaintParameterC) == 32
+  doAssert sizeof(CbssCustomPaintRequestC) == 64
 
 proc retainBlobHandle(blob: CbssBlobHandle): int32 {.raises: [].}
 proc releaseBlobHandle(blob: CbssBlobHandle) {.raises: [].}
@@ -751,6 +812,84 @@ proc checkedSurfaceCanvas(
     return (CbssOutOfRange, nil)
   (CbssOk, binding)
 
+proc checkedCustomPaintSink(
+    sink: CbssCustomPaintSinkHandle;
+    requireCapacity = false
+): tuple[status: int32, canvas: Canvas2D] {.inline.} =
+  if sink.isNil or sink.ownerContext.isNil:
+    return (CbssInvalidHandle, nil)
+  if addr(sink.ownerContext.customPaintSink) != sink:
+    return (CbssInvalidHandle, nil)
+  if not sink.active or sink.canvas.isNil:
+    return (CbssNotAvailable, nil)
+  if requireCapacity and sink.canvas.commands.len >= maxCustomPaintCommands:
+    return (CbssOutOfRange, nil)
+  (CbssOk, sink.canvas)
+
+template guardedCustomPaintMutation(
+    sink: CbssCustomPaintSinkHandle;
+    body: untyped
+): int32 =
+  let checked {.inject.} = checkedCustomPaintSink(
+    sink, requireCapacity = true
+  )
+  if checked.status != CbssOk:
+    checked.status
+  else:
+    try:
+      body
+      CbssOk
+    except CatchableError as error:
+      sink.ownerContext.setError(error.msg)
+      CbssInternalError
+
+proc customPaintStagesFromC(mask: uint32): Option[set[CustomPaintStage]] =
+  if mask == 0 or (mask and not CbssCustomPaintStageMask) != 0:
+    return none(set[CustomPaintStage])
+  var stages: set[CustomPaintStage]
+  for stage in CustomPaintStage:
+    if (mask and (1'u32 shl uint32(ord(stage)))) != 0:
+      stages.incl stage
+  some(stages)
+
+proc releaseCustomPaintBinding(
+    context: CbssContextHandle;
+    binding: CbssCustomPaintProviderBinding
+) =
+  if binding.isNil or binding.released:
+    return
+  binding.released = true
+  let callback = binding.release
+  let userData = binding.userData
+  binding.callback = nil
+  binding.release = nil
+  binding.userData = nil
+  if not callback.isNil:
+    let previous =
+      if context.isNil: false
+      else: context.customPaintLifecycleActive
+    if not context.isNil:
+      context.customPaintLifecycleActive = true
+    try:
+      callback(userData)
+    finally:
+      if not context.isNil:
+        context.customPaintLifecycleActive = previous
+
+proc releaseCustomPaintBindings(context: CbssContextHandle) =
+  if context.isNil:
+    return
+  var bindings = newSeqOfCap[CbssCustomPaintProviderBinding](
+    context.customPaintBindings.len
+  )
+  for binding in context.customPaintBindings.values:
+    bindings.add binding
+  context.customPaintBindings.clear()
+  context.customPaintByMaterial.clear()
+  context.customPaints = nil
+  for binding in bindings:
+    context.releaseCustomPaintBinding(binding)
+
 proc copyCanvasCommands(source: Canvas2D): seq[CanvasCommand] =
   ## Presentation reads only snapshots published by commit. Nested strings,
   ## gradients, and paths are immutable through the C adapter and remain
@@ -945,7 +1084,7 @@ proc refreshPresentation(context: CbssContextHandle) =
       context.presentationRefreshPending = false
       context.commands = buildPaintCommands(
         context.tree, context.resolved, context.layout, context.scroll,
-        context.surfacePaintProvider
+        context.surfacePaintProvider, context.customPaintProvider
       )
       context.hits = buildHitRegions(
         context.tree, context.layout, context.resolved, context.scroll
@@ -3297,6 +3436,21 @@ proc cEventViewHandler(
       cbssFormDataRelease(view.formData)
     outcome
 
+proc cSurfacePaintProvider(
+    owner: CbssContextHandle
+): SurfacePaintProvider =
+  result = proc(
+      surfaceValue: uint64;
+      node: NodeId;
+      bounds: Rect;
+      opacity: float32
+  ): seq[PaintCommand] =
+    let binding = owner.surfaceBinding(surfaceValue)
+    if not binding.isNil:
+      result = binding.committedCanvas.paintCommands(
+        node, bounds, opacity, resolveBounds = false
+      )
+
 proc cbssContextCreate(): CbssContextHandle {.
     exportc: "cbss_context_create", cdecl, dynlib.} =
   ensureNimRuntime()
@@ -3320,6 +3474,8 @@ proc cbssContextCreate(): CbssContextHandle {.
       eventSubscriptions: initTable[uint64, EventSubscription](),
       surfaces: initRenderSurfaceRegistry(),
       surfaceBindings: initTable[RenderSurfaceId, CbssRenderSurfaceBinding](),
+      customPaintBindings: initTable[uint64, CbssCustomPaintProviderBinding](),
+      customPaintByMaterial: initTable[string, uint64](),
       pixelScale: 1.0'f32,
       diagnostics: Diagnostics(items: @[]),
       computed: false,
@@ -3332,18 +3488,11 @@ proc cbssContextCreate(): CbssContextHandle {.
       reducedMotion: false,
       motionDirtyDomains: 0
     )
-    let owner = allocated
-    allocated.surfacePaintProvider = proc(
-        surfaceValue: uint64;
-        node: NodeId;
-        bounds: Rect;
-        opacity: float32
-    ): seq[PaintCommand] =
-      let binding = owner.surfaceBinding(surfaceValue)
-      if not binding.isNil:
-        result = binding.committedCanvas.paintCommands(
-          node, bounds, opacity, resolveBounds = false
-        )
+    allocated.surfacePaintProvider = cSurfacePaintProvider(allocated)
+    allocated.customPaintSink = CbssCustomPaintSinkObj(
+      ownerContext: allocated,
+      active: false
+    )
     result = allocated
   except CatchableError:
     if not allocated.isNil:
@@ -3362,6 +3511,11 @@ proc cbssContextDestroy(context: CbssContextHandle) {.
     discard
   context.surfaces.unmountAllSurfaces()
   context.surfacePaintProvider = nil
+  context.customPaintProvider = nil
+  context.customPaintSink.active = false
+  context.customPaintSink.parameters = nil
+  context.releaseCustomPaintBindings()
+  context.customPaintSink.ownerContext = nil
   `=destroy`(context[])
   dealloc(context)
 
@@ -3373,6 +3527,10 @@ proc cbssContextReset(context: CbssContextHandle): int32 {.
     context.computed = false
     context.cancelAllMotion()
     context.surfaces.unmountAllSurfaces()
+    context.customPaintSink.active = false
+    context.customPaintSink.parameters = nil
+    context.releaseCustomPaintBindings()
+    context.customPaintProvider = nil
     context.tree = initTree()
     context.sheets.setLen(0)
     context.appliedStyles.setLen(0)
@@ -3401,6 +3559,179 @@ proc cbssContextReset(context: CbssContextHandle): int32 {.
     context.motionTimeInitialized = false
     context.reducedMotion = false
     context.motionDirtyDomains = 0
+    CbssOk
+  except CatchableError as error:
+    context.setError(error.msg)
+    CbssInternalError
+
+proc cbssContextRegisterCustomPaintProvider(
+    context: CbssContextHandle;
+    material: cstring;
+    stages: uint32;
+    callback: CbssCustomPaintProviderCallback;
+    releaseCallback: CbssCustomPaintProviderReleaseCallback;
+    userData: pointer;
+    replace: uint8;
+    outputRegistration: ptr uint64
+): int32 {.
+    exportc: "cbss_context_register_custom_paint_provider", cdecl, dynlib.} =
+  if outputRegistration.isNil:
+    return CbssInvalidArgument
+  outputRegistration[] = 0
+  if context.isNil:
+    return CbssInvalidHandle
+  if material.isNil or callback.isNil:
+    return CbssInvalidArgument
+  if context.customPaintSink.active or context.customPaintLifecycleActive:
+    return CbssNotAvailable
+  let stageSet = customPaintStagesFromC(stages)
+  if stageSet.isNone:
+    return CbssInvalidArgument
+  if cpsMask in stageSet.get or cpsFilter in stageSet.get:
+    return CbssNotAvailable
+  let materialName = fromCString(material)
+  if not materialName.validCustomPaintMaterial:
+    return CbssInvalidArgument
+  if context.nextCustomPaintToken == high(uint64):
+    return CbssOutOfRange
+  try:
+    if context.customPaints.isNil:
+      context.customPaints = initCustomPaintRegistry()
+    let binding = CbssCustomPaintProviderBinding(
+      callback: callback,
+      release: releaseCallback,
+      userData: userData
+    )
+    let owner = context
+    let retained = binding
+    let materialCallback: CustomPaintMaterialProc = proc(
+        request: CustomPaintRequest
+    ): seq[PaintCommand] {.raises: [].} =
+      if retained.released or retained.callback.isNil or
+          owner.isNil or owner.customPaintSink.active:
+        if not owner.isNil:
+          owner.setError("custom paint provider re-entry is not available")
+        return
+      let sink = addr owner.customPaintSink
+      if sink.canvas.isNil:
+        sink.canvas = newCanvas2D()
+      sink.active = true
+      sink.canvas.clear()
+      sink.parameters = request.parameters
+      try:
+        var cRequest = CbssCustomPaintRequestC(
+          structSize: uint32(sizeof(CbssCustomPaintRequestC)),
+          apiVersion: CbssCustomPaintApiVersion,
+          stage: uint32(ord(request.stage)),
+          owner: uint32(request.owner.nodeRawValue),
+          bounds: request.bounds.toRect,
+          localBounds: CbssRectC(x: 0, y: 0, w: request.bounds.w,
+            h: request.bounds.h),
+          opacity: request.opacity,
+          parameterCount: uint32(request.parameters.len)
+        )
+        let status = retained.callback(addr cRequest, sink, retained.userData)
+        if status != CbssOk:
+          owner.setError("custom paint provider returned status " & $status)
+          return
+        result = sink.canvas.paintCommands(
+          request.owner, request.bounds, request.opacity,
+          resolveBounds = false
+        )
+      except Exception as error:
+        owner.setError("custom paint provider failed: " & error.msg)
+        result.setLen(0)
+      finally:
+        sink.parameters = nil
+        sink.active = false
+
+    let registration = context.customPaints.registerCustomPaintMaterialTracked(
+      materialName, materialCallback, stageSet.get, replace != 0
+    )
+    if registration.isNone:
+      return CbssInvalidArgument
+
+    inc context.nextCustomPaintToken
+    binding.token = context.nextCustomPaintToken
+    binding.registration = registration.get
+
+    if replace != 0 and materialName in context.customPaintByMaterial:
+      let oldToken = context.customPaintByMaterial.getOrDefault(materialName)
+      if oldToken in context.customPaintBindings:
+        let oldBinding = context.customPaintBindings.getOrDefault(oldToken)
+        context.customPaintBindings.del oldToken
+        context.releaseCustomPaintBinding(oldBinding)
+
+    context.customPaintBindings[binding.token] = binding
+    context.customPaintByMaterial[materialName] = binding.token
+    if context.customPaintProvider.isNil:
+      context.customPaintProvider = context.customPaints.provider()
+    outputRegistration[] = binding.token
+    if context.computed:
+      context.refreshPresentation()
+    CbssOk
+  except ValueError as error:
+    context.setError(error.msg)
+    CbssInvalidArgument
+  except CatchableError as error:
+    context.setError(error.msg)
+    CbssInternalError
+
+proc cbssContextUnregisterCustomPaintProvider(
+    context: CbssContextHandle;
+    registration: uint64
+): int32 {.
+    exportc: "cbss_context_unregister_custom_paint_provider", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if registration == 0:
+    return CbssInvalidArgument
+  if context.customPaintSink.active or context.customPaintLifecycleActive:
+    return CbssNotAvailable
+  if registration notin context.customPaintBindings:
+    return CbssOutOfRange
+  try:
+    let binding = context.customPaintBindings.getOrDefault(registration)
+    if binding.isNil or not context.customPaints.unregisterCustomPaintMaterial(
+        binding.registration):
+      return CbssOutOfRange
+    context.customPaintBindings.del registration
+    if context.customPaintByMaterial.getOrDefault(
+        binding.registration.material) == registration:
+      context.customPaintByMaterial.del binding.registration.material
+    context.releaseCustomPaintBinding(binding)
+    if context.computed:
+      context.refreshPresentation()
+    CbssOk
+  except CatchableError as error:
+    context.setError(error.msg)
+    CbssInternalError
+
+proc cbssContextInvalidateCustomPaintMaterial(
+    context: CbssContextHandle;
+    material: cstring;
+    outputConsumerCount: ptr uint32
+): int32 {.
+    exportc: "cbss_context_invalidate_custom_paint_material", cdecl, dynlib.} =
+  if outputConsumerCount.isNil:
+    return CbssInvalidArgument
+  outputConsumerCount[] = 0
+  if context.isNil:
+    return CbssInvalidHandle
+  if material.isNil:
+    return CbssInvalidArgument
+  if context.customPaintSink.active or context.customPaintLifecycleActive:
+    return CbssNotAvailable
+  let materialName = fromCString(material)
+  if not materialName.validCustomPaintMaterial:
+    return CbssInvalidArgument
+  if not context.customPaints.hasCustomPaintMaterial(materialName):
+    return CbssOutOfRange
+  try:
+    let consumers = context.customPaints.customPaintConsumers(materialName)
+    outputConsumerCount[] = uint32(consumers.len)
+    if context.computed and consumers.len > 0:
+      context.refreshPresentation()
     CbssOk
   except CatchableError as error:
     context.setError(error.msg)
@@ -4095,6 +4426,252 @@ proc cbssRenderSurfaceSetDeviceAvailable(
   if not changed:
     return CbssInvalidArgument
   CbssOk
+
+proc pathFromC(
+    segments: ptr CbssPathSegmentC;
+    segmentCount: uint32
+): Option[Path2D]
+
+proc textStyleFromC(
+    value: ptr CbssTextStyleC;
+    fontFamily: cstring
+): tuple[valid: bool, style: computed_style_types.ComputedTextStyle]
+
+proc cbssCustomPaintParameter(
+    sink: CbssCustomPaintSinkHandle;
+    index: uint32;
+    output: ptr CbssCustomPaintParameterC
+): int32 {.exportc: "cbss_custom_paint_parameter", cdecl, dynlib.} =
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = default(CbssCustomPaintParameterC)
+  let checked = checkedCustomPaintSink(sink)
+  if checked.status != CbssOk:
+    return checked.status
+  if index >= uint32(sink.parameters.len):
+    return CbssOutOfRange
+  let parameter = sink.parameters[int(index)]
+  output.kind = uint32(ord(parameter.kind))
+  output.nameBytes = uint32(parameter.name.len)
+  case parameter.kind
+  of cppkFloat:
+    output.values[0] = parameter.floatValue
+  of cppkInteger:
+    output.integerValue = parameter.integerValue
+  of cppkBoolean:
+    output.integerValue = int64(ord(parameter.booleanValue))
+  of cppkVec2:
+    output.values[0] = parameter.vec2Value[0]
+    output.values[1] = parameter.vec2Value[1]
+  of cppkVec4:
+    output.values = parameter.vec4Value
+  of cppkColor:
+    output.values = [parameter.colorValue.r, parameter.colorValue.g,
+      parameter.colorValue.b, parameter.colorValue.a]
+  CbssOk
+
+proc cbssCustomPaintParameterName(
+    sink: CbssCustomPaintSinkHandle;
+    index: uint32;
+    buffer: cstring;
+    capacity: uint32
+): uint32 {.exportc: "cbss_custom_paint_parameter_name", cdecl, dynlib.} =
+  let checked = checkedCustomPaintSink(sink)
+  if checked.status != CbssOk or index >= uint32(sink.parameters.len):
+    if not buffer.isNil and capacity > 0:
+      cast[ptr UncheckedArray[char]](buffer)[0] = '\0'
+    return 0
+  copyString(sink.parameters[int(index)].name, buffer, capacity)
+
+proc cbssCustomPaintSinkSave(
+    sink: CbssCustomPaintSinkHandle
+): int32 {.exportc: "cbss_custom_paint_sink_save", cdecl, dynlib.} =
+  guardedCustomPaintMutation(sink):
+    checked.canvas.save()
+
+proc cbssCustomPaintSinkRestore(
+    sink: CbssCustomPaintSinkHandle
+): int32 {.exportc: "cbss_custom_paint_sink_restore", cdecl, dynlib.} =
+  guardedCustomPaintMutation(sink):
+    checked.canvas.restore()
+
+proc cbssCustomPaintSinkTransform(
+    sink: CbssCustomPaintSinkHandle;
+    transform: CbssAffineTransformC
+): int32 {.exportc: "cbss_custom_paint_sink_transform", cdecl, dynlib.} =
+  for value in [transform.m11, transform.m12, transform.m21,
+      transform.m22, transform.tx, transform.ty]:
+    if not value.finite:
+      return CbssInvalidArgument
+  guardedCustomPaintMutation(sink):
+    checked.canvas.transform(transform.toAffine)
+
+proc cbssCustomPaintSinkPushClip(
+    sink: CbssCustomPaintSinkHandle;
+    bounds: CbssRectC;
+    radius: cfloat
+): int32 {.exportc: "cbss_custom_paint_sink_push_clip", cdecl, dynlib.} =
+  if not bounds.validRect or not radius.finite or radius < 0:
+    return CbssInvalidArgument
+  guardedCustomPaintMutation(sink):
+    checked.canvas.pushClip(bounds.toRect, radius)
+
+proc cbssCustomPaintSinkPopClip(
+    sink: CbssCustomPaintSinkHandle
+): int32 {.exportc: "cbss_custom_paint_sink_pop_clip", cdecl, dynlib.} =
+  guardedCustomPaintMutation(sink):
+    checked.canvas.popClip()
+
+proc cbssCustomPaintSinkBeginLayer(
+    sink: CbssCustomPaintSinkHandle;
+    bounds: CbssRectC;
+    opacity: cfloat;
+    compositeMode: uint32
+): int32 {.exportc: "cbss_custom_paint_sink_begin_layer", cdecl, dynlib.} =
+  let mode = compositeMode.layerCompositeModeFromC
+  if not bounds.validRect or not opacity.finite or opacity < 0 or opacity > 1 or
+      mode.isNone:
+    return CbssInvalidArgument
+  guardedCustomPaintMutation(sink):
+    checked.canvas.beginLayer(bounds.toRect, opacity, mode.get)
+
+proc cbssCustomPaintSinkEndLayer(
+    sink: CbssCustomPaintSinkHandle
+): int32 {.exportc: "cbss_custom_paint_sink_end_layer", cdecl, dynlib.} =
+  guardedCustomPaintMutation(sink):
+    checked.canvas.endLayer()
+
+proc cbssCustomPaintSinkFillRect(
+    sink: CbssCustomPaintSinkHandle;
+    bounds: CbssRectC;
+    color: CbssColorC;
+    radius: cfloat
+): int32 {.exportc: "cbss_custom_paint_sink_fill_rect", cdecl, dynlib.} =
+  if not bounds.validRect or not color.validColor or
+      not radius.finite or radius < 0:
+    return CbssInvalidArgument
+  guardedCustomPaintMutation(sink):
+    checked.canvas.fillRect(bounds.toRect, color.toColor, radius)
+
+proc cbssCustomPaintSinkFillLinearGradient(
+    sink: CbssCustomPaintSinkHandle;
+    bounds: CbssRectC;
+    angle: cfloat;
+    interpolationSpace: uint32;
+    stops: ptr CbssGradientStopC;
+    stopCount: uint32;
+    radius: cfloat
+): int32 {.
+    exportc: "cbss_custom_paint_sink_fill_linear_gradient", cdecl, dynlib.} =
+  let gradientSpace = interpolationSpace.interpolationSpaceFromC
+  if not bounds.validRect or not angle.finite or not radius.finite or
+      radius < 0 or gradientSpace.isNone or stops.isNil or stopCount == 0 or
+      stopCount > 4_096:
+    return CbssInvalidArgument
+  guardedCustomPaintMutation(sink):
+    let values = cast[ptr UncheckedArray[CbssGradientStopC]](stops)
+    var gradientStops = newSeqOfCap[color.GradientStop](int(stopCount))
+    for index in 0 ..< int(stopCount):
+      let stop = values[index]
+      if not stop.color.validColor or not stop.offset.finite:
+        return CbssInvalidArgument
+      gradientStops.add colorStop(stop.color.toColor, stop.offset)
+    checked.canvas.fillLinearGradient(
+      bounds.toRect,
+      computed_style_types.LinearGradient(
+        angle: angle,
+        interpolationSpace: gradientSpace.get,
+        stops: gradientStops
+      ),
+      radius
+    )
+
+proc cbssCustomPaintSinkStrokeRect(
+    sink: CbssCustomPaintSinkHandle;
+    bounds: CbssRectC;
+    color: CbssColorC;
+    width, radius: cfloat
+): int32 {.exportc: "cbss_custom_paint_sink_stroke_rect", cdecl, dynlib.} =
+  if not bounds.validRect or not color.validColor or not width.finite or
+      not radius.finite or width <= 0 or radius < 0:
+    return CbssInvalidArgument
+  guardedCustomPaintMutation(sink):
+    checked.canvas.strokeRect(bounds.toRect, color.toColor, width, radius)
+
+proc cbssCustomPaintSinkStrokePath(
+    sink: CbssCustomPaintSinkHandle;
+    segments: ptr CbssPathSegmentC;
+    segmentCount: uint32;
+    color: CbssColorC;
+    width: cfloat;
+    lineCap, lineJoin: uint32;
+    miterLimit: cfloat
+): int32 {.exportc: "cbss_custom_paint_sink_stroke_path", cdecl, dynlib.} =
+  if not color.validColor or not width.finite or width <= 0 or
+      not miterLimit.finite or miterLimit < 1:
+    return CbssInvalidArgument
+  let cap = lineCap.strokeLineCapFromC
+  let join = lineJoin.strokeLineJoinFromC
+  let path = pathFromC(segments, segmentCount)
+  if cap.isNone or join.isNone or path.isNone:
+    return CbssInvalidArgument
+  guardedCustomPaintMutation(sink):
+    checked.canvas.strokePath(
+      path.get, color.toColor, width, cap.get, join.get, miterLimit
+    )
+
+proc cbssCustomPaintSinkDrawText(
+    sink: CbssCustomPaintSinkHandle;
+    text: cstring;
+    x, y: cfloat;
+    color: CbssColorC;
+    style: ptr CbssTextStyleC;
+    fontFamily: cstring;
+    maxWidth: cfloat;
+    hasMaxWidth: uint8
+): int32 {.exportc: "cbss_custom_paint_sink_draw_text", cdecl, dynlib.} =
+  if text.isNil or not x.finite or not y.finite or not color.validColor or
+      (hasMaxWidth != 0 and (not maxWidth.finite or maxWidth <= 0)):
+    return CbssInvalidArgument
+  let convertedStyle = textStyleFromC(style, fontFamily)
+  if not convertedStyle.valid:
+    return CbssInvalidArgument
+  guardedCustomPaintMutation(sink):
+    checked.canvas.drawText(
+      fromCString(text), vec2(x, y), color.toColor, convertedStyle.style,
+      if hasMaxWidth != 0: some(maxWidth.float32) else: none(float32)
+    )
+
+proc cbssCustomPaintSinkDrawImage(
+    sink: CbssCustomPaintSinkHandle;
+    source: cstring;
+    bounds: CbssRectC;
+    opacity: cfloat
+): int32 {.exportc: "cbss_custom_paint_sink_draw_image", cdecl, dynlib.} =
+  if source.isNil or not bounds.validRect or not opacity.finite or
+      opacity < 0 or opacity > 1:
+    return CbssInvalidArgument
+  let sourceValue = fromCString(source)
+  if sourceValue.len == 0:
+    return CbssInvalidArgument
+  guardedCustomPaintMutation(sink):
+    checked.canvas.drawImage(sourceValue, bounds.toRect, opacity)
+
+proc cbssCustomPaintSinkDrawRasterSurface(
+    sink: CbssCustomPaintSinkHandle;
+    rasterSurface: CbssRasterSurfaceHandle;
+    bounds: CbssRectC;
+    opacity: cfloat
+): int32 {.
+    exportc: "cbss_custom_paint_sink_draw_raster_surface", cdecl, dynlib.} =
+  if rasterSurface.isNil or rasterSurface.surface.isNil:
+    return CbssInvalidHandle
+  if not bounds.validRect or not opacity.finite or opacity < 0 or opacity > 1:
+    return CbssInvalidArgument
+  guardedCustomPaintMutation(sink):
+    checked.canvas.drawRasterSurface(
+      rasterSurface.surface, bounds.toRect, opacity
+    )
 
 proc cbssRenderSurfaceCanvasClear(
     context: CbssContextHandle;
@@ -4983,6 +5560,73 @@ proc cbssStyleClear(style: CbssStyleHandle): int32 {.
     return CbssInvalidHandle
   style.declarations.setLen(0)
   CbssOk
+
+proc customPaintParameterFromC(
+    value: CbssCustomPaintParameterInputC
+): CustomPaintParameter =
+  if value.name.isNil or value.reserved != 0:
+    raise newException(ValueError, "custom paint parameter is invalid")
+  let name = fromCString(value.name)
+  case value.kind
+  of CbssCustomPaintParameterFloat:
+    customPaintFloat(name, value.values[0])
+  of CbssCustomPaintParameterInteger:
+    customPaintInteger(name, value.integerValue)
+  of CbssCustomPaintParameterBoolean:
+    if value.integerValue notin [0'i64, 1'i64]:
+      raise newException(ValueError, "custom paint boolean must be zero or one")
+    customPaintBoolean(name, value.integerValue == 1)
+  of CbssCustomPaintParameterVec2:
+    customPaintVec2(name, value.values[0], value.values[1])
+  of CbssCustomPaintParameterVec4:
+    customPaintVec4(
+      name, value.values[0], value.values[1], value.values[2], value.values[3]
+    )
+  of CbssCustomPaintParameterColor:
+    customPaintColor(name, rgba(
+      value.values[0], value.values[1], value.values[2], value.values[3]
+    ))
+  else:
+    raise newException(ValueError, "custom paint parameter kind is invalid")
+
+proc cbssStyleSetCustomPaint(
+    style: CbssStyleHandle;
+    material: cstring;
+    stage: uint32;
+    parameters: ptr CbssCustomPaintParameterInputC;
+    parameterCount: uint32
+): int32 {.exportc: "cbss_style_set_custom_paint", cdecl, dynlib.} =
+  if style.isNil:
+    return CbssInvalidHandle
+  if material.isNil or stage > uint32(ord(high(CustomPaintStage))) or
+      parameterCount > uint32(maxCustomPaintParameters) or
+      (parameterCount != 0 and parameters.isNil):
+    return CbssInvalidArgument
+  try:
+    var converted = newSeqOfCap[CustomPaintParameter](int(parameterCount))
+    if parameterCount > 0:
+      let values = cast[ptr UncheckedArray[CbssCustomPaintParameterInputC]](
+        parameters
+      )
+      for index in 0 ..< int(parameterCount):
+        converted.add customPaintParameterFromC(values[index])
+    let declaration = customPaint(
+      fromCString(material), CustomPaintStage(stage), parameters = converted
+    )
+    for index in 0 ..< style.declarations.len:
+      if style.declarations[index].property == declaration.property:
+        var replacement = declaration
+        replacement.sourceOrder = index
+        style.declarations[index] = replacement
+        return CbssOk
+    var appended = declaration
+    appended.sourceOrder = style.declarations.len
+    style.declarations.add appended
+    CbssOk
+  except ValueError:
+    CbssInvalidArgument
+  except CatchableError:
+    CbssInternalError
 
 proc cbssKeyframesCreate(
     name: cstring;

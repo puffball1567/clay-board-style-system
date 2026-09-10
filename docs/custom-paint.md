@@ -73,8 +73,32 @@ are not copied once per frame.
 The parameter contract is backend-neutral. A CPU provider may consume it
 directly, while a GPU provider can map the same typed values to validated
 uniform or storage bindings. This change does not expose a bgfx handle through
-Style. The future C ABI provider boundary will expose an equivalent fixed-width
-view rather than Nim object or closure layout.
+Style. C ABI `0x0001001D` exposes the equivalent values through a fixed-layout
+parameter view and a separate bounded name accessor rather than Nim object or
+closure layout.
+
+## Foreign Provider Boundary
+
+Foreign-language Craft Drivers can install a material with
+`cbss_context_register_custom_paint_provider`. The callback receives a
+versioned `CbssCustomPaintRequest` and an opaque `CbssCustomPaintSink` that is
+valid only until the callback returns. Sink coordinates are local to
+`request.local_bounds`; CBSS translates them into the owner's resolved bounds
+and applies the owner's opacity and clip during composition.
+
+The sink exposes the same bounded 2D primitives as the retained C Canvas:
+transform and save/restore scopes, clips, layers, rectangles, gradients,
+paths, text, images, and `RasterSurface` composition. It is a command boundary,
+not a second tree, event loop, hit-test system, or presentation owner.
+
+`cbss_style_set_custom_paint` copies the material name and up to 64 typed
+parameters. Provider registration takes ownership of callback user data only
+on success. Replacement, unregister, context reset, and context destruction
+invoke the optional release callback exactly once. Registration tokens are
+context-local, monotonically allocated, and generation-safe; stale tokens
+cannot remove a replacement. Release callbacks must not re-enter the same
+context; CBSS rejects provider lifecycle changes while a release callback is
+running.
 
 ## GPU Canvas Material
 
@@ -129,6 +153,6 @@ Changing that revision requires the optional adapter contract on Linux,
 Windows, and macOS plus the available real-runtime GPU checks; a dependency
 update does not change this public material contract.
 
-The declaration and registry contract in this first slice is a Nim API. A
-versioned C ABI for registering foreign material providers remains Version 0.7
-work; foreign callers must not depend on Nim closure layout or backend handles.
+The declaration, registry, and callback-scoped command boundary are available
+to Nim and through C ABI `0x0001001D`. Foreign callers never depend on Nim
+closure layout or backend handles.

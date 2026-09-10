@@ -1,6 +1,6 @@
 #include "cbss.h"
 
-_Static_assert(CBSS_ABI_VERSION == 0x0001001Cu, "unexpected CBSS ABI version");
+_Static_assert(CBSS_ABI_VERSION == 0x0001001Du, "unexpected CBSS ABI version");
 _Static_assert(CBSS_ROLE_SWITCH == 22, "unexpected switch role value");
 _Static_assert(CBSS_ROLE_PASSWORD_TEXT == 23,
                "unexpected password text role value");
@@ -56,6 +56,12 @@ _Static_assert(sizeof(CbssRenderSurfacePlacement) == 40,
                "CbssRenderSurfacePlacement ABI changed");
 _Static_assert(sizeof(CbssRenderSurfaceEvent) == 232,
                "CbssRenderSurfaceEvent ABI changed");
+_Static_assert(sizeof(CbssCustomPaintParameterInput) == 40,
+               "CbssCustomPaintParameterInput ABI changed");
+_Static_assert(sizeof(CbssCustomPaintParameter) == 32,
+               "CbssCustomPaintParameter ABI changed");
+_Static_assert(sizeof(CbssCustomPaintRequest) == 64,
+               "CbssCustomPaintRequest ABI changed");
 _Static_assert(offsetof(CbssPaintCommand, string_bytes) == 60,
                "CbssPaintCommand ABI changed");
 
@@ -193,6 +199,247 @@ static void require_ok(CbssContext *context, CbssStatus status) {
   cbss_context_last_error(context, message, sizeof(message));
   fprintf(stderr, "CBSS error %d: %s\n", status, message);
   assert(status == CBSS_OK);
+}
+
+typedef struct CustomPaintState {
+  int calls;
+  int releases;
+  CbssCustomPaintSink *borrowed_sink;
+  CbssRasterSurface *raster;
+  CbssColor color;
+} CustomPaintState;
+
+static CbssStatus paint_custom_material(
+    const CbssCustomPaintRequest *request, CbssCustomPaintSink *sink,
+    void *user_data) {
+  CustomPaintState *state = user_data;
+  ++state->calls;
+  state->borrowed_sink = sink;
+  assert(request != NULL);
+  assert(request->struct_size == sizeof(CbssCustomPaintRequest));
+  assert(request->api_version == CBSS_CUSTOM_PAINT_API_VERSION);
+  assert(request->stage == CBSS_CUSTOM_PAINT_OVERLAY);
+  assert(request->local_bounds.x == 0.0f);
+  assert(request->local_bounds.y == 0.0f);
+  assert(fabsf(request->local_bounds.w - 96.0f) < 0.01f);
+  assert(fabsf(request->local_bounds.h - 48.0f) < 0.01f);
+  assert(request->parameter_count == 3);
+
+  CbssCustomPaintParameter parameter = {0};
+  char name[16] = {0};
+  assert(cbss_custom_paint_parameter(sink, 0, &parameter) == CBSS_OK);
+  assert(parameter.kind == CBSS_CUSTOM_PAINT_PARAMETER_FLOAT);
+  assert(fabsf(parameter.values[0] - 0.25f) < 0.001f);
+  assert(cbss_custom_paint_parameter_name(
+      sink, 0, name, sizeof(name)) == strlen("phase"));
+  assert(strcmp(name, "phase") == 0);
+  assert(cbss_custom_paint_parameter(sink, 1, &parameter) == CBSS_OK);
+  assert(parameter.kind == CBSS_CUSTOM_PAINT_PARAMETER_BOOLEAN);
+  assert(parameter.integer_value == 1);
+  assert(cbss_custom_paint_parameter(sink, 2, &parameter) == CBSS_OK);
+  assert(parameter.kind == CBSS_CUSTOM_PAINT_PARAMETER_COLOR);
+  state->color = (CbssColor){parameter.values[0], parameter.values[1],
+                             parameter.values[2], parameter.values[3]};
+  assert(cbss_custom_paint_parameter(
+      sink, request->parameter_count, &parameter) == CBSS_OUT_OF_RANGE);
+  assert(cbss_custom_paint_parameter(sink, 0, NULL) ==
+         CBSS_INVALID_ARGUMENT);
+  assert(cbss_custom_paint_sink_fill_rect(
+      sink, (CbssRect){0.0f, 0.0f, NAN, 48.0f}, state->color, 8.0f) ==
+      CBSS_INVALID_ARGUMENT);
+  assert(cbss_custom_paint_sink_fill_rect(
+      sink, request->local_bounds, state->color, 8.0f) == CBSS_OK);
+  assert(cbss_custom_paint_sink_stroke_rect(
+      sink, (CbssRect){2.0f, 2.0f, 92.0f, 44.0f},
+      (CbssColor){1.0f, 1.0f, 1.0f, 0.5f}, 2.0f, 6.0f) == CBSS_OK);
+  CbssGradientStop stops[] = {
+      {.color = {1.0f, 0.0f, 0.0f, 1.0f}, .offset = 0.0f},
+      {.color = {0.0f, 0.0f, 1.0f, 1.0f}, .offset = 1.0f},
+  };
+  CbssPathSegment path[] = {
+      {.kind = CBSS_PATH_MOVE_TO, .endpoint_x = 4.0f, .endpoint_y = 4.0f},
+      {.kind = CBSS_PATH_LINE_TO, .endpoint_x = 20.0f, .endpoint_y = 12.0f},
+  };
+  assert(cbss_custom_paint_sink_save(sink) == CBSS_OK);
+  assert(cbss_custom_paint_sink_transform(
+      sink, (CbssAffineTransform){1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 2.0f}) ==
+      CBSS_OK);
+  assert(cbss_custom_paint_sink_push_clip(
+      sink, (CbssRect){0.0f, 0.0f, 48.0f, 24.0f}, 4.0f) == CBSS_OK);
+  assert(cbss_custom_paint_sink_begin_layer(
+      sink, request->local_bounds, 0.75f, CBSS_LAYER_SOURCE_OVER) == CBSS_OK);
+  assert(cbss_custom_paint_sink_fill_linear_gradient(
+      sink, (CbssRect){4.0f, 4.0f, 20.0f, 12.0f}, 90.0f,
+      CBSS_COLOR_INTERPOLATE_SRGB, stops, 2, 2.0f) == CBSS_OK);
+  assert(cbss_custom_paint_sink_stroke_path(
+      sink, path, 2, (CbssColor){0.0f, 0.0f, 0.0f, 1.0f}, 1.0f,
+      CBSS_STROKE_CAP_ROUND, CBSS_STROKE_JOIN_ROUND, 4.0f) == CBSS_OK);
+  assert(cbss_custom_paint_sink_draw_text(
+      sink, "C", 8.0f, 16.0f, (CbssColor){1.0f, 1.0f, 1.0f, 1.0f},
+      NULL, NULL, 0.0f, 0) == CBSS_OK);
+  assert(cbss_custom_paint_sink_draw_image(
+      sink, "asset://custom-paint", (CbssRect){24.0f, 4.0f, 8.0f, 8.0f},
+      0.5f) == CBSS_OK);
+  if (state->raster != NULL) {
+    assert(cbss_custom_paint_sink_draw_raster_surface(
+        sink, state->raster, (CbssRect){34.0f, 4.0f, 8.0f, 8.0f}, 1.0f) ==
+        CBSS_OK);
+  }
+  assert(cbss_custom_paint_sink_end_layer(sink) == CBSS_OK);
+  assert(cbss_custom_paint_sink_pop_clip(sink) == CBSS_OK);
+  assert(cbss_custom_paint_sink_restore(sink) == CBSS_OK);
+  return CBSS_OK;
+}
+
+static void release_custom_material(void *user_data) {
+  CustomPaintState *state = user_data;
+  ++state->releases;
+}
+
+static void test_custom_paint_provider(void) {
+  CbssContext *context = cbss_context_create();
+  CbssStyle *style = cbss_style_create();
+  assert(context != NULL);
+  assert(style != NULL);
+  uint8_t raster_bytes[16] = {
+      255, 0, 0, 255, 0, 255, 0, 255,
+      0, 0, 255, 255, 255, 255, 255, 255};
+  CbssRasterSurface *raster = NULL;
+  assert(cbss_raster_surface_create(2, 2, raster_bytes, &raster) == CBSS_OK);
+
+  CbssCustomPaintParameterInput parameters[] = {
+      {.name = "phase",
+       .kind = CBSS_CUSTOM_PAINT_PARAMETER_FLOAT,
+       .values = {0.25f, 0.0f, 0.0f, 0.0f}},
+      {.name = "enabled",
+       .kind = CBSS_CUSTOM_PAINT_PARAMETER_BOOLEAN,
+       .integer_value = 1},
+      {.name = "accent",
+       .kind = CBSS_CUSTOM_PAINT_PARAMETER_COLOR,
+       .values = {0.2f, 0.4f, 0.8f, 1.0f}},
+  };
+  assert(cbss_style_set_custom_paint(
+      NULL, "foreign-panel", CBSS_CUSTOM_PAINT_OVERLAY,
+      parameters, 3) == CBSS_INVALID_HANDLE);
+  assert(cbss_style_set_custom_paint(
+      style, "foreign-panel", CBSS_CUSTOM_PAINT_OVERLAY,
+      parameters, 3) == CBSS_OK);
+  CbssCustomPaintParameterInput invalid = {
+      .name = "bad-name", .kind = CBSS_CUSTOM_PAINT_PARAMETER_FLOAT};
+  assert(cbss_style_set_custom_paint(
+      style, "invalid", CBSS_CUSTOM_PAINT_OVERLAY,
+      &invalid, 1) == CBSS_INVALID_ARGUMENT);
+
+  require_ok(context, cbss_style_set_length(
+      style, "width", CBSS_UNIT_PX, 96.0f));
+  require_ok(context, cbss_style_set_length(
+      style, "height", CBSS_UNIT_PX, 48.0f));
+  uint32_t root = cbss_context_add_box(
+      context, CBSS_NODE_NONE, "custom-paint-root");
+  assert(root != CBSS_NODE_NONE);
+  require_ok(context, cbss_node_apply_style(context, root, style, 0, 0));
+
+  CustomPaintState first = {.raster = raster};
+  CbssCustomPaintRegistration first_registration = 99;
+  assert(cbss_context_register_custom_paint_provider(
+      NULL, "foreign-panel", CBSS_CUSTOM_PAINT_STAGE_OVERLAY,
+      paint_custom_material, release_custom_material, &first, 0,
+      &first_registration) == CBSS_INVALID_HANDLE);
+  assert(first_registration == 0);
+  assert(cbss_context_register_custom_paint_provider(
+      context, "foreign-panel", CBSS_CUSTOM_PAINT_STAGE_OVERLAY,
+      paint_custom_material, release_custom_material, &first, 0,
+      &first_registration) == CBSS_OK);
+  assert(first_registration != 0);
+  require_ok(context, cbss_context_compute(context, 160.0f, 80.0f));
+  assert(first.calls == 1);
+  assert(first.releases == 0);
+  assert(fabsf(first.color.b - 0.8f) < 0.001f);
+
+  assert(cbss_custom_paint_sink_fill_rect(
+      first.borrowed_sink, (CbssRect){0.0f, 0.0f, 1.0f, 1.0f},
+      first.color, 0.0f) == CBSS_NOT_AVAILABLE);
+  CbssCustomPaintParameter expired_parameter = {0};
+  assert(cbss_custom_paint_parameter(
+      first.borrowed_sink, 0, &expired_parameter) == CBSS_NOT_AVAILABLE);
+
+  int found_fill = 0;
+  int found_stroke = 0;
+  int found_gradient = 0;
+  int found_path = 0;
+  int found_text = 0;
+  int found_image = 0;
+  int found_raster = 0;
+  for (uint32_t index = 0;
+       index < cbss_context_paint_command_count(context); ++index) {
+    CbssPaintCommand command = {0};
+    require_ok(context, cbss_context_paint_command(context, index, &command));
+    if (command.kind == CBSS_PAINT_FILL_RECT && command.owner == root &&
+        fabsf(command.rect.w - 96.0f) < 0.01f &&
+        fabsf(command.color.b - 0.8f) < 0.001f) {
+      found_fill = 1;
+    }
+    if (command.kind == CBSS_PAINT_STROKE_RECT && command.owner == root) {
+      found_stroke = 1;
+    }
+    found_gradient |= command.kind == CBSS_PAINT_FILL_LINEAR_GRADIENT;
+    found_path |= command.kind == CBSS_PAINT_STROKE_PATH;
+    found_text |= command.kind == CBSS_PAINT_DRAW_TEXT;
+    found_image |= command.kind == CBSS_PAINT_DRAW_IMAGE;
+    found_raster |= command.kind == CBSS_PAINT_DRAW_RASTER_SURFACE;
+  }
+  assert(found_fill && found_stroke && found_gradient && found_path &&
+         found_text && found_image && found_raster);
+
+  uint32_t consumers = 99;
+  require_ok(context, cbss_context_invalidate_custom_paint_material(
+      context, "foreign-panel", &consumers));
+  assert(consumers == 1);
+  assert(first.calls == 2);
+
+  CustomPaintState duplicate = {.raster = raster};
+  CbssCustomPaintRegistration duplicate_registration = 99;
+  assert(cbss_context_register_custom_paint_provider(
+      context, "foreign-panel", CBSS_CUSTOM_PAINT_STAGE_OVERLAY,
+      paint_custom_material, release_custom_material, &duplicate, 0,
+      &duplicate_registration) == CBSS_INVALID_ARGUMENT);
+  assert(duplicate_registration == 0);
+  assert(duplicate.releases == 0);
+
+  CustomPaintState replacement = {.raster = raster};
+  CbssCustomPaintRegistration replacement_registration = 0;
+  require_ok(context, cbss_context_register_custom_paint_provider(
+      context, "foreign-panel", CBSS_CUSTOM_PAINT_STAGE_OVERLAY,
+      paint_custom_material, release_custom_material, &replacement, 1,
+      &replacement_registration));
+  assert(replacement_registration > first_registration);
+  assert(first.releases == 1);
+  assert(replacement.calls == 1);
+  assert(cbss_context_unregister_custom_paint_provider(
+      context, first_registration) == CBSS_OUT_OF_RANGE);
+  require_ok(context, cbss_context_unregister_custom_paint_provider(
+      context, replacement_registration));
+  assert(replacement.releases == 1);
+  assert(cbss_context_unregister_custom_paint_provider(
+      context, replacement_registration) == CBSS_OUT_OF_RANGE);
+
+  CustomPaintState reset_state = {.raster = raster};
+  CbssCustomPaintRegistration reset_registration = 0;
+  require_ok(context, cbss_context_register_custom_paint_provider(
+      context, "foreign-panel", CBSS_CUSTOM_PAINT_STAGE_OVERLAY,
+      paint_custom_material, release_custom_material, &reset_state, 0,
+      &reset_registration));
+  require_ok(context, cbss_context_reset(context));
+  assert(reset_state.releases == 1);
+  assert(cbss_context_unregister_custom_paint_provider(
+      context, reset_registration) == CBSS_OUT_OF_RANGE);
+
+  cbss_style_destroy(style);
+  cbss_context_destroy(context);
+  cbss_raster_surface_destroy(raster);
+  assert(first.releases == 1);
+  assert(replacement.releases == 1);
+  assert(reset_state.releases == 1);
 }
 
 static void test_craft_loading(void) {
@@ -753,15 +1000,18 @@ int main(void) {
   test_shader_builder();
   test_compute_shader_builder();
   test_raster_surface();
+  test_custom_paint_provider();
   test_craft_loading();
   test_subtree_lifecycle();
   assert(cbss_abi_version() == CBSS_ABI_VERSION);
   assert(cbss_driver_contract_version() == CBSS_DRIVER_CONTRACT_VERSION);
-  assert(cbss_capability_count() == 21);
+  assert(cbss_capability_count() == 22);
   assert(cbss_has_capability(CBSS_CAPABILITY_RETAINED_TREE, 1));
   assert(!cbss_has_capability(CBSS_CAPABILITY_RETAINED_TREE, 2));
   assert(cbss_has_capability(CBSS_CAPABILITY_SHADER_AUTHORING, 2));
   assert(!cbss_has_capability(CBSS_CAPABILITY_SHADER_AUTHORING, 3));
+  assert(cbss_has_capability(CBSS_CAPABILITY_CUSTOM_PAINT_PROVIDER, 1));
+  assert(!cbss_has_capability(CBSS_CAPABILITY_CUSTOM_PAINT_PROVIDER, 2));
   assert(!cbss_has_capability(UINT32_MAX, 1));
 
   CbssCapabilityInfo capability = {0};
@@ -789,6 +1039,10 @@ int main(void) {
   assert(capability.id == CBSS_CAPABILITY_SHADER_AUTHORING);
   assert(capability.version == 2);
   assert(capability.since_abi == 0x0001001Bu);
+  assert(cbss_capability_at(21, &capability) == CBSS_OK);
+  assert(capability.id == CBSS_CAPABILITY_CUSTOM_PAINT_PROVIDER);
+  assert(capability.version == 1);
+  assert(capability.since_abi == 0x0001001Du);
   memset(&capability, 0xff, sizeof(capability));
   assert(cbss_capability_at(
       cbss_capability_count(), &capability) == CBSS_OUT_OF_RANGE);

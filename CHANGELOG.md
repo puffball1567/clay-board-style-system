@@ -9,6 +9,18 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added the opaque, versioned Custom Paint provider boundary for foreign
+  Craft Drivers. C ABI `0x0001001D` advertises `custom-paint.provider`
+  capability 22 version 1, copies typed material declarations, and supplies a
+  callback-scoped local-coordinate command sink for transforms, clips, layers,
+  rectangles, gradients, paths, text, images, and RasterSurface composition.
+  The boundary caps command and parameter work, rejects expired sinks and stale
+  registrations, preserves ordinary node semantics, and releases provider user
+  data exactly once on replacement, unregister, reset, or destruction. Static
+  C ABI context construction now also creates capturing closures only after
+  Nim runtime initialization, so a minimal static consumer can safely call
+  `cbss_context_create` as its first engine operation.
+
 - Added bounded typed GPU shader authoring for Nim and the C ABI. The builder
   represents portable scalar/vector expression graphs, including signed and
   unsigned compute values, storage-buffer load/store operations, invocation
@@ -18,7 +30,7 @@ release. Before 1.0, minor releases may contain public API changes.
   Build tools compile that output; ordinary runtime artifacts do not contain a
   shader compiler. Compiled `GpuShaderArtifact` values feed the existing
   retained Shader/Pipeline path used by both direct GPU submission and
-  component-owned `gpuVisualLayer` composition. The C ABI is now
+  component-owned `gpuVisualLayer` composition. This advanced the C ABI to
   `0x0001001C` and advertises `shader.authoring` capability 21 version 2.
 
 - Added the first Version 0.7 GPU-host foundation. The backend-neutral

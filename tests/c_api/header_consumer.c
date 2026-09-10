@@ -15,13 +15,14 @@ _Static_assert(CBSS_CRAFT_PACK_MISSING_CAPABILITY == 12,
                "unexpected Craft Pack diagnostic code");
 
 int main(void) {
-  return CBSS_ABI_VERSION == 0x0001001Cu &&
+  return CBSS_ABI_VERSION == 0x0001001Du &&
                  CBSS_DRIVER_CONTRACT_VERSION == 0x00010000u &&
                  CBSS_CAPABILITY_CRAFT_PACK == 17u &&
                  CBSS_CAPABILITY_SUBTREE_LIFECYCLE == 18u &&
                  CBSS_CAPABILITY_VALIDATION_PATTERN == 19u &&
                  CBSS_CAPABILITY_RASTER_SURFACE == 20u &&
-                 CBSS_CAPABILITY_SHADER_AUTHORING == 21u
+                 CBSS_CAPABILITY_SHADER_AUTHORING == 21u &&
+                 CBSS_CAPABILITY_CUSTOM_PAINT_PROVIDER == 22u
              ? 0
              : 1;
 }
