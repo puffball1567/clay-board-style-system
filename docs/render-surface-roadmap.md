@@ -449,8 +449,9 @@ requirements, and pixel scale without exposing a backend target handle. Typed
 compositor capabilities fail closed before frame acquisition when any of these
 target constraints are unsupported, then reject unsupported source provider,
 Texture/RenderTarget kind, format, alpha mode, or dimensions before backend
-handle resolution. The bgfx helper narrows those claims to its qualified
-direct-presentation profile. A
+handle resolution. The bgfx helper requires source-kind and format coverage to
+exactly match its qualified direct-presentation profile, preventing the host
+from advertising a path the compositor cannot draw. A
 production bgfx same-device compositor that consumes this context, production-adapter
 device recreation, and visible real-GPU conformance remain release gates below.
 The current bgfx adapter fails closed for in-place restoration instead of

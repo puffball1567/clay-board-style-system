@@ -361,13 +361,15 @@ proc newBgfxDirectCompositor*(
   let supportedKinds =
     (if profile.textureSupported: {grkTexture} else: {}) +
     (if profile.renderTargetSupported: {grkRenderTarget} else: {})
-  if resolved.sourceKinds - supportedKinds != {}:
+  if resolved.sourceKinds != supportedKinds:
     raise newException(
-      ValueError, "bgfx direct compositor source kinds exceed its qualified profile"
+      ValueError,
+      "bgfx direct compositor source kinds must match its qualified profile"
     )
-  if resolved.sourceFormats - profile.formats != {}:
+  if resolved.sourceFormats != profile.formats:
     raise newException(
-      ValueError, "bgfx direct compositor formats exceed its qualified profile"
+      ValueError,
+      "bgfx direct compositor formats must match its qualified profile"
     )
   newGpuDirectCompositor(
     resolved,
