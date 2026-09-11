@@ -12,17 +12,40 @@ type
     gdcsUnsupported,
     gdcsFailed
 
+  GpuDirectCompositeTargetKind* = enum
+    gdctUnspecified,
+    gdctWindow,
+    gdctOffscreen
+
+  GpuDirectCompositeContext* = object
+    ## Describes the renderer target active for this synchronous submission.
+    ## Backend adapters must return gdcsUnsupported when they cannot preserve
+    ## these composition constraints.
+    targetKind*: GpuDirectCompositeTargetKind
+    targetBounds*: Rect
+    clipBounds*: Option[Rect]
+    requiresClipMask*: bool
+    pixelScale*: float32
+
   GpuDirectCompositeRequest* = object
     frame*: GpuDirectSurfaceFrame
     destination*: Rect
     opacity*: float32
+    context*: GpuDirectCompositeContext
 
   GpuDirectCompositeProc* = proc(
     request: GpuDirectCompositeRequest
   ): GpuDirectCompositeStatus {.closure.}
 
+proc defaultGpuDirectCompositeContext*(): GpuDirectCompositeContext =
+  GpuDirectCompositeContext(
+    targetKind: gdctUnspecified,
+    pixelScale: 1.0'f32
+  )
+
 proc compositeGpuDirectSurface*(
     command: PaintCommand;
+    context: GpuDirectCompositeContext;
     compositor: GpuDirectCompositeProc
 ): GpuDirectCompositeStatus =
   ## Acquires the published frame only for the duration of backend submission.
@@ -38,7 +61,16 @@ proc compositeGpuDirectSurface*(
     result = compositor(GpuDirectCompositeRequest(
       frame: frame,
       destination: command.gpuSurfaceRect,
-      opacity: command.gpuSurfaceOpacity
+      opacity: command.gpuSurfaceOpacity,
+      context: context
     ))
   finally:
     discard frame.release()
+
+proc compositeGpuDirectSurface*(
+    command: PaintCommand;
+    compositor: GpuDirectCompositeProc
+): GpuDirectCompositeStatus =
+  command.compositeGpuDirectSurface(
+    defaultGpuDirectCompositeContext(), compositor
+  )

@@ -118,8 +118,15 @@ already invalid and must not receive destruction calls.
 `compositeGpuDirectSurface()` is the renderer-facing bridge. It acquires the
 current frame for the duration of one callback and supplies its provider,
 opaque backend resource ID, dimensions, format, destination rectangle, opacity,
-alpha mode, and revision. The renderer applies the active paint transform, clip, layer, and
-stacking scopes.
+alpha mode, revision, and the active composition context. That context identifies
+whether the current target is the final window or an offscreen layer and carries
+the target bounds, effective rectangular clip, rounded-mask requirement, and
+pixel scale without copying the renderer's clip stack.
+
+The compositor must preserve those constraints or return `gdcsUnsupported`.
+In particular, a callback must not redirect an offscreen-layer submission to the
+window or ignore `requiresClipMask`. The surrounding CBSS paint stream remains
+responsible for ordering the command among ordinary UI content.
 
 The SDL3 renderer exposes `setGpuDirectCompositor()` and routes direct-surface
 commands through that callback in its normal, Cosmic Text, and layered render
@@ -134,7 +141,7 @@ submit)` for presentation-backend authors. It binds the callback to one bgfx
 backend context and resolves a CBSS Texture or a RenderTarget's color attachment
 to a typed bgfx texture only for the duration of the synchronous `submit`
 callback. The callback receives destination, opacity, alpha, revision, size,
-and format metadata, but it does not receive the `GpuDirectSurface` or the
+format, and composition-context metadata, but it does not receive the `GpuDirectSurface` or the
 opaque backend resource ID. It must not retain the temporary bgfx handle.
 
 The adapter fails closed before touching bgfx when the host is detached, the
@@ -145,10 +152,11 @@ an ordinary UI node from becoming a general raw-handle escape hatch.
 
 This hook is an adapter boundary, not a claim that SDL's high-level renderer can
 import an arbitrary bgfx texture. A direct adapter must still share the actual
-GPU device and presentation ordering, and must draw while the callback's active
-SDL clip/layer scope is valid. Until the bgfx implementation and visible pixel
-tests satisfy that contract, the default profile continues to make display
-surfaces select the readback path.
+GPU device and presentation ordering. SDL textures used for transform, opacity,
+and cached layers are not bgfx render targets; the context exposes these cases
+so a compositor can fail closed rather than draw into the wrong target. Until
+the bgfx implementation and visible pixel tests satisfy that contract, the
+default profile continues to make display surfaces select the readback path.
 
 For an SDL-created native window, use
 `bgfxPlatformDataFromSdl3Window()` before opening the bgfx host. This removes
