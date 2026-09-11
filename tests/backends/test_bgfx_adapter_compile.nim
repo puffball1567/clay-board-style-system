@@ -333,7 +333,7 @@ suite "optional bgfxim adapter":
       gpuDirectCompositeCapabilities(
         {gdctWindow},
         sourceProviders = {gpkBgfx},
-        sourceKinds = {grkTexture},
+        sourceKinds = {grkTexture, grkRenderTarget},
         sourceFormats = {gtfRgba8},
         alphaModes = {gcamStraight},
         maxSourceWidth = 8,
@@ -640,6 +640,64 @@ suite "optional bgfxim adapter":
           discard submission
           gdcsPresented
       )
+
+  test "typed compositor exactly covers its qualified source profile":
+    resetCounters()
+    var options = defaultBgfxHostOptions()
+    options.directPresentation = newQualifiedBgfxDirectPresentationProfile(
+      {gtfRgba8, gtfBgra8},
+      maxBuffers = 3,
+      textureSupported = true,
+      renderTargetSupported = true
+    )
+    let backend = newBgfxBackend(options)
+    let submit: BgfxDirectSubmitProc =
+      proc(submission: BgfxDirectCompositeSubmission): GpuDirectCompositeStatus =
+        discard submission
+        gdcsPresented
+
+    let exact = newBgfxDirectCompositor(
+      backend,
+      gpuDirectCompositeCapabilities(
+        {gdctWindow},
+        sourceKinds = {grkTexture, grkRenderTarget},
+        sourceFormats = {gtfRgba8, gtfBgra8}
+      ),
+      submit
+    )
+    check exact.capabilities.sourceProviders == {gpkBgfx}
+    check exact.capabilities.sourceKinds == {grkTexture, grkRenderTarget}
+    check exact.capabilities.sourceFormats == {gtfRgba8, gtfBgra8}
+
+    for sourceKinds in [
+      {grkTexture},
+      {grkRenderTarget}
+    ]:
+      expect ValueError:
+        discard newBgfxDirectCompositor(
+          backend,
+          gpuDirectCompositeCapabilities(
+            {gdctWindow},
+            sourceKinds = sourceKinds,
+            sourceFormats = {gtfRgba8, gtfBgra8}
+          ),
+          submit
+        )
+
+    for sourceFormats in [
+      {gtfRgba8},
+      {gtfRgba8, gtfBgra8, gtfRgba16F}
+    ]:
+      expect ValueError:
+        discard newBgfxDirectCompositor(
+          backend,
+          gpuDirectCompositeCapabilities(
+            {gdctWindow},
+            sourceKinds = {grkTexture, grkRenderTarget},
+            sourceFormats = sourceFormats
+          ),
+          submit
+        )
 
   test "owned mode initializes frames resizes and shuts down":
     resetCounters()

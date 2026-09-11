@@ -155,8 +155,10 @@ format, and composition-context metadata, but it does not receive the `GpuDirect
 opaque backend resource ID. It must not retain the temporary bgfx handle.
 `newBgfxDirectCompositor()` combines this scoped adapter with the capability
 preflight and is the preferred entry point for new presentation backends. It
-narrows the provider capability to bgfx and rejects source kinds or formats
-outside the backend's qualified direct-presentation profile.
+narrows the provider capability to bgfx and requires source kinds and formats
+to exactly match the backend's qualified direct-presentation profile. This
+prevents the host from selecting a direct path that the installed compositor
+cannot draw.
 
 The adapter fails closed before touching bgfx when the host is detached, the
 provider is different, the packed resource kind is inconsistent, or the
