@@ -731,7 +731,10 @@ high-level renderer can import arbitrary bgfx resources. Each callback receives
 the active target kind, bounds, clip and mask requirements, and pixel scale, so
 unsupported SDL offscreen targets fail closed rather than being redirected to
 the window. Typed compositor capabilities perform that check before acquiring a
-published frame or resolving its scoped bgfx handle. A built-in same-device paint compositor and in-place restoration in
+published frame, then validate the acquired frame's provider, resource kind,
+format, alpha mode, and dimensions before resolving its scoped bgfx handle.
+The bgfx helper also rejects capabilities broader than the qualified host
+profile. A built-in same-device paint compositor and in-place restoration in
 a production GPU adapter remain release work. The host provides deterministic
 namespace restoration and failed-owner rollback.
 

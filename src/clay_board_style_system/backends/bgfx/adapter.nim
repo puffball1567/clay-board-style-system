@@ -347,8 +347,30 @@ proc newBgfxDirectCompositor*(
     submit: BgfxDirectSubmitProc
 ): GpuDirectCompositor =
   ## Couples typed capability preflight with scoped bgfx handle resolution.
+  if backend.apiVersion != gpuHostApiVersion or backend.provider != gpkBgfx or
+      backend.context.isNil or not (backend.context of BgfxAdapterContext):
+    raise newException(ValueError, "invalid bgfx backend for direct composition")
+  var resolved = capabilities
+  if gpkBgfx notin resolved.sourceProviders:
+    raise newException(
+      ValueError, "bgfx direct compositor must accept bgfx source resources"
+    )
+  resolved.sourceProviders = {gpkBgfx}
+
+  let profile = backend.context.context().options.directPresentation
+  let supportedKinds =
+    (if profile.textureSupported: {grkTexture} else: {}) +
+    (if profile.renderTargetSupported: {grkRenderTarget} else: {})
+  if resolved.sourceKinds - supportedKinds != {}:
+    raise newException(
+      ValueError, "bgfx direct compositor source kinds exceed its qualified profile"
+    )
+  if resolved.sourceFormats - profile.formats != {}:
+    raise newException(
+      ValueError, "bgfx direct compositor formats exceed its qualified profile"
+    )
   newGpuDirectCompositor(
-    capabilities,
+    resolved,
     newBgfxDirectCompositeAdapter(backend, submit)
   )
 

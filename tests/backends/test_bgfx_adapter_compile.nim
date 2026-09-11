@@ -328,8 +328,17 @@ suite "optional bgfxim adapter":
     )
     let backend = newBgfxBackend(options)
     var directSubmitCount = 0
-    let compositor = newBgfxDirectCompositeAdapter(
+    let compositor = newBgfxDirectCompositor(
       backend,
+      gpuDirectCompositeCapabilities(
+        {gdctWindow},
+        sourceProviders = {gpkBgfx},
+        sourceKinds = {grkTexture},
+        sourceFormats = {gtfRgba8},
+        alphaModes = {gcamStraight},
+        maxSourceWidth = 8,
+        maxSourceHeight = 4
+      ),
       proc(submission: BgfxDirectCompositeSubmission): GpuDirectCompositeStatus =
         inc directSubmitCount
         check submission.texture.idx == 31'u16
@@ -380,7 +389,15 @@ suite "optional bgfxim adapter":
       rect(5, 7, 80, 40),
       0.8'f32
     )
-    check compositeGpuDirectSurface(command, compositor) == gdcsPresented
+    check compositeGpuDirectSurface(
+      command,
+      GpuDirectCompositeContext(
+        targetKind: gdctWindow,
+        targetBounds: rect(0, 0, 640, 480),
+        pixelScale: 1
+      ),
+      compositor
+    ) == gdcsPresented
     check directSubmitCount == 1
 
     check surface.closeGpuDirectSurface()
@@ -562,11 +579,20 @@ suite "optional bgfxim adapter":
 
   test "typed compositor rejects unsupported contexts before bgfx resolution":
     resetCounters()
-    let backend = newBgfxBackend()
+    var options = defaultBgfxHostOptions()
+    options.directPresentation = newQualifiedBgfxDirectPresentationProfile(
+      {gtfRgba8}, maxBuffers = 2, renderTargetSupported = false
+    )
+    let backend = newBgfxBackend(options)
     var submits = 0
     let compositor = newBgfxDirectCompositor(
       backend,
-      gpuDirectCompositeCapabilities({gdctWindow}),
+      gpuDirectCompositeCapabilities(
+        {gdctWindow},
+        sourceProviders = {gpkCustom, gpkBgfx},
+        sourceKinds = {grkTexture},
+        sourceFormats = {gtfRgba8}
+      ),
       proc(submission: BgfxDirectCompositeSubmission): GpuDirectCompositeStatus =
         discard submission
         inc submits
@@ -581,6 +607,39 @@ suite "optional bgfxim adapter":
       unsupported, compositor
     ) == gdcsUnsupported
     check submits == 0
+    check compositor.capabilities.sourceProviders == {gpkBgfx}
+
+    expect ValueError:
+      discard newBgfxDirectCompositor(
+        backend,
+        gpuDirectCompositeCapabilities(
+          {gdctWindow}, sourceProviders = {gpkCustom}
+        ),
+        proc(submission: BgfxDirectCompositeSubmission): GpuDirectCompositeStatus =
+          discard submission
+          gdcsPresented
+      )
+    expect ValueError:
+      discard newBgfxDirectCompositor(
+        backend,
+        gpuDirectCompositeCapabilities(
+          {gdctWindow}, sourceFormats = {gtfBgra8}
+        ),
+        proc(submission: BgfxDirectCompositeSubmission): GpuDirectCompositeStatus =
+          discard submission
+          gdcsPresented
+      )
+    expect ValueError:
+      discard newBgfxDirectCompositor(
+        backend,
+        gpuDirectCompositeCapabilities(
+          {gdctWindow}, sourceKinds = {grkRenderTarget},
+          sourceFormats = {gtfRgba8}
+        ),
+        proc(submission: BgfxDirectCompositeSubmission): GpuDirectCompositeStatus =
+          discard submission
+          gdcsPresented
+      )
 
   test "owned mode initializes frames resizes and shuts down":
     resetCounters()
