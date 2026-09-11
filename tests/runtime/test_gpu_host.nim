@@ -5030,6 +5030,102 @@ suite "GPU display surface negotiation and UI":
 
 suite "GPU display surface quality matrix":
 
+  test "direct compositor capabilities reject unsupported and malformed contexts":
+    let windowOnly = gpuDirectCompositeCapabilities(
+      {gdctWindow}, clipBoundsSupported = true
+    )
+    check windowOnly.supports(GpuDirectCompositeContext(
+      targetKind: gdctWindow,
+      targetBounds: rect(0, 0, 800, 600),
+      pixelScale: 1
+    ))
+    check windowOnly.supports(GpuDirectCompositeContext(
+      targetKind: gdctWindow,
+      targetBounds: rect(0, 0, 800, 600),
+      clipBounds: some(rect(10, 20, 0, 0)),
+      pixelScale: 2
+    ))
+    for targetKind in [gdctUnspecified, gdctOffscreen]:
+      check not windowOnly.supports(GpuDirectCompositeContext(
+        targetKind: targetKind,
+        targetBounds: rect(0, 0, 800, 600),
+        pixelScale: 1
+      ))
+    for scale in [0.0'f32, -1.0'f32, NaN.float32, Inf.float32]:
+      check not windowOnly.supports(GpuDirectCompositeContext(
+        targetKind: gdctWindow,
+        targetBounds: rect(0, 0, 800, 600),
+        pixelScale: scale
+      ))
+    for bounds in [
+      rect(0, 0, 0, 600),
+      rect(0, 0, -1, 600),
+      rect(NaN.float32, 0, 800, 600)
+    ]:
+      check not windowOnly.supports(GpuDirectCompositeContext(
+        targetKind: gdctWindow,
+        targetBounds: bounds,
+        pixelScale: 1
+      ))
+    check not windowOnly.supports(GpuDirectCompositeContext(
+      targetKind: gdctWindow,
+      targetBounds: rect(0, 0, 800, 600),
+      clipBounds: some(rect(0, 0, NaN.float32, 10)),
+      pixelScale: 1
+    ))
+    check not windowOnly.supports(GpuDirectCompositeContext(
+      targetKind: gdctWindow,
+      targetBounds: rect(0, 0, 800, 600),
+      clipBounds: some(rect(0, 0, 20, 10)),
+      requiresClipMask: true,
+      pixelScale: 1
+    ))
+    let noClip = gpuDirectCompositeCapabilities({gdctWindow})
+    check not noClip.supports(GpuDirectCompositeContext(
+      targetKind: gdctWindow,
+      targetBounds: rect(0, 0, 800, 600),
+      clipBounds: some(rect(0, 0, 20, 10)),
+      pixelScale: 1
+    ))
+
+    let masked = gpuDirectCompositeCapabilities(
+      {gdctWindow, gdctOffscreen},
+      clipBoundsSupported = true,
+      clipMaskSupported = true
+    )
+    check masked.supports(GpuDirectCompositeContext(
+      targetKind: gdctOffscreen,
+      targetBounds: rect(0, 0, 64, 64),
+      clipBounds: some(rect(2, 3, 40, 30)),
+      requiresClipMask: true,
+      pixelScale: 1.5
+    ))
+    check not masked.supports(GpuDirectCompositeContext(
+      targetKind: gdctWindow,
+      targetBounds: rect(0, 0, 64, 64),
+      requiresClipMask: true,
+      pixelScale: 1
+    ))
+
+    expect ValueError:
+      discard gpuDirectCompositeCapabilities({})
+    expect ValueError:
+      discard gpuDirectCompositeCapabilities(
+        {gdctWindow}, clipMaskSupported = true
+      )
+    expect ValueError:
+      discard newGpuDirectCompositor(windowOnly, GpuDirectCompositeProc(nil))
+    expect ValueError:
+      discard newGpuDirectCompositor(
+        GpuDirectCompositeCapabilities(
+          targetKinds: {gdctWindow},
+          clipMaskSupported: true
+        ),
+        proc(request: GpuDirectCompositeRequest): GpuDirectCompositeStatus =
+          discard request
+          gdcsPresented
+      )
+
   test "configuration boundaries normalize valid defaults and reject invalid input":
     let context = newContext()
     context.enableDirectPresentation(maxBuffers = uint8(MaxGpuDirectSurfaceBuffers))
@@ -5358,10 +5454,37 @@ suite "GPU display surface quality matrix":
     check defaultContext.clipBounds.isNone
     check defaultContext.pixelScale == 1.0'f32
 
+    var typedCalls = 0
+    let windowCompositor = newGpuDirectCompositor(
+      gpuDirectCompositeCapabilities({gdctWindow}),
+      proc(request: GpuDirectCompositeRequest): GpuDirectCompositeStatus =
+        discard request
+        inc typedCalls
+        gdcsPresented
+    )
+    check emptyCommand.compositeGpuDirectSurface(
+      GpuDirectCompositeContext(
+        targetKind: gdctOffscreen,
+        targetBounds: rect(0, 0, 2, 2),
+        pixelScale: 1
+      ),
+      windowCompositor
+    ) == gdcsUnsupported
+    check typedCalls == 0
+
     let token = host.beginGpuFrame()
     check surface.queueGpuDirectSurfaceFrame(target, token)
     host.endGpuFrame(token)
     check surface.collectGpuDirectSurfaceFrame()
+    check emptyCommand.compositeGpuDirectSurface(
+      GpuDirectCompositeContext(
+        targetKind: gdctWindow,
+        targetBounds: rect(0, 0, 2, 2),
+        pixelScale: 1
+      ),
+      windowCompositor
+    ) == gdcsPresented
+    check typedCalls == 1
     for expected in [gdcsPresented, gdcsRetry, gdcsUnsupported, gdcsFailed]:
       check emptyCommand.compositeGpuDirectSurface(
         proc(request: GpuDirectCompositeRequest): GpuDirectCompositeStatus =

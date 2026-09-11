@@ -256,7 +256,7 @@ type
     cursorCache: array[CursorKind, pointer]
     ownsCursor: array[CursorKind, bool]
     activeCursor: CursorKind
-    gpuDirectCompositor: GpuDirectCompositeProc
+    gpuDirectCompositor: GpuDirectCompositor
     gpuDirectCompositionStats: Sdl3GpuDirectCompositionStats
 
 const DefaultWheelStepPixels* = 54.0'f32
@@ -278,14 +278,32 @@ proc cacheUsage*(target: Sdl3Renderer): Sdl3CacheUsage =
 
 proc setGpuDirectCompositor*(
     target: var Sdl3Renderer;
-    compositor: GpuDirectCompositeProc
+    compositor: GpuDirectCompositor
 ) =
   ## Installs the backend-specific bridge used by pcDrawGpuDirectSurface.
   ## The callback is invoked while the command's SDL clip and layer are active.
   target.gpuDirectCompositor = compositor
 
+proc setGpuDirectCompositor*(
+    target: var Sdl3Renderer;
+    compositor: GpuDirectCompositeProc
+) =
+  ## Compatibility overload. Typed compositors should declare narrower
+  ## capabilities with newGpuDirectCompositor().
+  if compositor.isNil:
+    target.gpuDirectCompositor = GpuDirectCompositor()
+    return
+  target.gpuDirectCompositor = newGpuDirectCompositor(
+    gpuDirectCompositeCapabilities(
+      {gdctUnspecified, gdctWindow, gdctOffscreen},
+      clipBoundsSupported = true,
+      clipMaskSupported = true
+    ),
+    compositor
+  )
+
 proc clearGpuDirectCompositor*(target: var Sdl3Renderer) =
-  target.gpuDirectCompositor = nil
+  target.gpuDirectCompositor = GpuDirectCompositor()
 
 proc gpuDirectCompositionStats*(
     target: Sdl3Renderer

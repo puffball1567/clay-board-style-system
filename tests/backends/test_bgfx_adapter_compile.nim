@@ -560,6 +560,28 @@ suite "optional bgfxim adapter":
         BgfxDirectSubmitProc(nil)
       )
 
+  test "typed compositor rejects unsupported contexts before bgfx resolution":
+    resetCounters()
+    let backend = newBgfxBackend()
+    var submits = 0
+    let compositor = newBgfxDirectCompositor(
+      backend,
+      gpuDirectCompositeCapabilities({gdctWindow}),
+      proc(submission: BgfxDirectCompositeSubmission): GpuDirectCompositeStatus =
+        discard submission
+        inc submits
+        gdcsPresented
+    )
+    let unsupported = GpuDirectCompositeContext(
+      targetKind: gdctOffscreen,
+      targetBounds: rect(0, 0, 40, 30),
+      pixelScale: 1
+    )
+    check PaintCommand().compositeGpuDirectSurface(
+      unsupported, compositor
+    ) == gdcsUnsupported
+    check submits == 0
+
   test "owned mode initializes frames resizes and shuts down":
     resetCounters()
     let backend = newBgfxBackend()
