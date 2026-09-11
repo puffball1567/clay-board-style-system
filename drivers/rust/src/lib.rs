@@ -251,6 +251,8 @@ mod ffi {
     ) -> u8;
 
     extern "C" {
+        pub fn cbss_thread_attach();
+        pub fn cbss_thread_detach();
         pub fn cbss_abi_version() -> c_uint;
         pub fn cbss_driver_contract_version() -> c_uint;
         pub fn cbss_has_capability(capability: c_uint, minimum_version: c_uint) -> u8;
@@ -620,6 +622,29 @@ mod ffi {
     }
 }
 
+struct RuntimeThreadAttachment;
+
+impl RuntimeThreadAttachment {
+    fn new() -> Self {
+        unsafe { ffi::cbss_thread_attach() };
+        Self
+    }
+}
+
+impl Drop for RuntimeThreadAttachment {
+    fn drop(&mut self) {
+        unsafe { ffi::cbss_thread_detach() };
+    }
+}
+
+thread_local! {
+    static RUNTIME_THREAD_ATTACHMENT: RuntimeThreadAttachment = RuntimeThreadAttachment::new();
+}
+
+pub(crate) fn ensure_runtime_thread() {
+    RUNTIME_THREAD_ATTACHMENT.with(|_| {});
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ErrorKind {
     Contract,
@@ -693,14 +718,17 @@ pub struct Contract;
 
 impl Contract {
     pub fn abi_version() -> u32 {
+        ensure_runtime_thread();
         unsafe { ffi::cbss_abi_version() }
     }
 
     pub fn driver_version() -> u32 {
+        ensure_runtime_thread();
         unsafe { ffi::cbss_driver_contract_version() }
     }
 
     pub fn has(capability: u32, minimum_version: u32) -> bool {
+        ensure_runtime_thread();
         unsafe { ffi::cbss_has_capability(capability, minimum_version) != 0 }
     }
 
@@ -893,6 +921,7 @@ pub struct Style {
 
 impl Style {
     pub fn new() -> Result<Self> {
+        ensure_runtime_thread();
         let handle = NonNull::new(unsafe { ffi::cbss_style_create() })
             .ok_or_else(|| Error::status(STATUS_INTERNAL_ERROR, "unable to create Style"))?;
         Ok(Self {
