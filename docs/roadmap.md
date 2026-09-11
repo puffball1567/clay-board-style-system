@@ -1082,7 +1082,9 @@ binding is [bgfxim](https://github.com/puffball1567/bgfxim). It is distributed
 separately, remains useful without CBSS, and enters an application only when
 its GPU profile is selected. The binding, typed resource adapter, SDL compositor
 hook, callback-scoped bgfx Texture/RenderTarget resolution, and explicit
-qualified capability profile are available; the built-in compositor and its
+qualified capability profile are available. Typed compositor preflight now
+checks both renderer target constraints and source provider, resource kind,
+format, alpha mode, and dimensions before backend submission; the built-in compositor and its
 real-GPU pixel qualification remain Version 0.7 work. A later wgpu-native adapter
 may implement the same CBSS-owned contract, but it is no longer the standard
 provider or a release prerequisite.

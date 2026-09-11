@@ -131,8 +131,12 @@ responsible for ordering the command among ordinary UI content.
 New integrations should wrap their callback with `newGpuDirectCompositor()` and
 declare `GpuDirectCompositeCapabilities`. Target kinds, rectangular clipping,
 and rounded clip masks are checked before CBSS acquires a presentation lease.
-The SDL renderer retains a proc-only setter for source compatibility, but that
-overload necessarily assumes the callback can process every target context.
+After acquiring the current frame, CBSS also checks the declared source
+provider, Texture/RenderTarget kind, format, alpha mode, and optional maximum
+dimensions before invoking the backend callback. Rejection releases the lease
+in the same call. The SDL renderer retains a proc-only setter for source
+compatibility, but that overload necessarily assumes the callback can process
+every target and source context.
 
 The SDL3 renderer exposes `setGpuDirectCompositor()` and routes direct-surface
 commands through that callback in its normal, Cosmic Text, and layered render
@@ -150,7 +154,9 @@ callback. The callback receives destination, opacity, alpha, revision, size,
 format, and composition-context metadata, but it does not receive the `GpuDirectSurface` or the
 opaque backend resource ID. It must not retain the temporary bgfx handle.
 `newBgfxDirectCompositor()` combines this scoped adapter with the capability
-preflight and is the preferred entry point for new presentation backends.
+preflight and is the preferred entry point for new presentation backends. It
+narrows the provider capability to bgfx and rejects source kinds or formats
+outside the backend's qualified direct-presentation profile.
 
 The adapter fails closed before touching bgfx when the host is detached, the
 provider is different, the packed resource kind is inconsistent, or the

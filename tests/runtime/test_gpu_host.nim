@@ -4933,6 +4933,35 @@ suite "GPU display surface negotiation and UI":
           raise newException(ValueError, "compositor failed")
       )
 
+    let targetContext = GpuDirectCompositeContext(
+      targetKind: gdctWindow,
+      targetBounds: rect(0, 0, 2, 2),
+      pixelScale: 1
+    )
+    let typedRetry = newGpuDirectCompositor(
+      gpuDirectCompositeCapabilities(
+        {gdctWindow},
+        sourceProviders = {gpkCustom},
+        sourceKinds = {grkRenderTarget},
+        sourceFormats = {gtfRgba8}
+      ),
+      proc(request: GpuDirectCompositeRequest): GpuDirectCompositeStatus =
+        check request.frame.resource == target
+        gdcsRetry
+    )
+    check command.compositeGpuDirectSurface(
+      targetContext, typedRetry
+    ) == gdcsRetry
+
+    let typedFailure = newGpuDirectCompositor(
+      typedRetry.capabilities,
+      proc(request: GpuDirectCompositeRequest): GpuDirectCompositeStatus =
+        discard request
+        raise newException(ValueError, "typed compositor failed")
+    )
+    expect ValueError:
+      discard command.compositeGpuDirectSurface(targetContext, typedFailure)
+
     check display.closeGpuDisplaySurface()
     check host.releaseGpuResource(target)
     host.close()
@@ -5112,6 +5141,26 @@ suite "GPU display surface quality matrix":
     expect ValueError:
       discard gpuDirectCompositeCapabilities(
         {gdctWindow}, clipMaskSupported = true
+      )
+    expect ValueError:
+      discard gpuDirectCompositeCapabilities(
+        {gdctWindow}, sourceProviders = {}
+      )
+    expect ValueError:
+      discard gpuDirectCompositeCapabilities(
+        {gdctWindow}, sourceKinds = {}
+      )
+    expect ValueError:
+      discard gpuDirectCompositeCapabilities(
+        {gdctWindow}, sourceKinds = {grkBuffer}
+      )
+    expect ValueError:
+      discard gpuDirectCompositeCapabilities(
+        {gdctWindow}, sourceFormats = {}
+      )
+    expect ValueError:
+      discard gpuDirectCompositeCapabilities(
+        {gdctWindow}, alphaModes = {}
       )
     expect ValueError:
       discard newGpuDirectCompositor(windowOnly, GpuDirectCompositeProc(nil))
@@ -5485,6 +5534,72 @@ suite "GPU display surface quality matrix":
       windowCompositor
     ) == gdcsPresented
     check typedCalls == 1
+
+    let sourceCapabilityCases = [
+      gpuDirectCompositeCapabilities(
+        {gdctWindow}, sourceProviders = {gpkBgfx}
+      ),
+      gpuDirectCompositeCapabilities(
+        {gdctWindow}, sourceKinds = {grkTexture}
+      ),
+      gpuDirectCompositeCapabilities(
+        {gdctWindow}, sourceFormats = {gtfBgra8}
+      ),
+      gpuDirectCompositeCapabilities(
+        {gdctWindow}, alphaModes = {gcamPremultiplied}
+      ),
+      gpuDirectCompositeCapabilities(
+        {gdctWindow}, maxSourceWidth = 1
+      ),
+      gpuDirectCompositeCapabilities(
+        {gdctWindow}, maxSourceHeight = 1
+      )
+    ]
+    for capabilities in sourceCapabilityCases:
+      var rejectedCalls = 0
+      let rejectingCompositor = newGpuDirectCompositor(
+        capabilities,
+        proc(request: GpuDirectCompositeRequest): GpuDirectCompositeStatus =
+          discard request
+          inc rejectedCalls
+          gdcsPresented
+      )
+      check emptyCommand.compositeGpuDirectSurface(
+        GpuDirectCompositeContext(
+          targetKind: gdctWindow,
+          targetBounds: rect(0, 0, 2, 2),
+          pixelScale: 1
+        ),
+        rejectingCompositor
+      ) == gdcsUnsupported
+      check rejectedCalls == 0
+      check surface.retainedFrameCount == 1
+
+    var sourceAcceptedCalls = 0
+    let sourceAccepted = newGpuDirectCompositor(
+      gpuDirectCompositeCapabilities(
+        {gdctWindow},
+        sourceProviders = {gpkCustom},
+        sourceKinds = {grkRenderTarget},
+        sourceFormats = {gtfRgba8},
+        alphaModes = {gcamStraight},
+        maxSourceWidth = 2,
+        maxSourceHeight = 2
+      ),
+      proc(request: GpuDirectCompositeRequest): GpuDirectCompositeStatus =
+        check request.frame.resource == target
+        inc sourceAcceptedCalls
+        gdcsPresented
+    )
+    check emptyCommand.compositeGpuDirectSurface(
+      GpuDirectCompositeContext(
+        targetKind: gdctWindow,
+        targetBounds: rect(0, 0, 2, 2),
+        pixelScale: 1
+      ),
+      sourceAccepted
+    ) == gdcsPresented
+    check sourceAcceptedCalls == 1
     for expected in [gdcsPresented, gdcsRetry, gdcsUnsupported, gdcsFailed]:
       check emptyCommand.compositeGpuDirectSurface(
         proc(request: GpuDirectCompositeRequest): GpuDirectCompositeStatus =
