@@ -445,7 +445,9 @@ without a second application-side allocation. Portable
 native-window conversion and SDL3 handoff are implemented as well. A
 renderer-facing direct-composition context now distinguishes final-window and
 offscreen targets and carries target bounds, effective clip, rounded-mask
-requirements, and pixel scale without exposing a backend target handle. A
+requirements, and pixel scale without exposing a backend target handle. Typed
+compositor capabilities fail closed before frame acquisition when any of these
+constraints are unsupported. A
 production bgfx same-device compositor that consumes this context, production-adapter
 device recreation, and visible real-GPU conformance remain release gates below.
 The current bgfx adapter fails closed for in-place restoration instead of

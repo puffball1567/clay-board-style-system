@@ -341,6 +341,17 @@ proc newBgfxDirectCompositeAdapter*(
       context: request.context
     ))
 
+proc newBgfxDirectCompositor*(
+    backend: GpuBackendVTable;
+    capabilities: GpuDirectCompositeCapabilities;
+    submit: BgfxDirectSubmitProc
+): GpuDirectCompositor =
+  ## Couples typed capability preflight with scoped bgfx handle resolution.
+  newGpuDirectCompositor(
+    capabilities,
+    newBgfxDirectCompositeAdapter(backend, submit)
+  )
+
 proc bgfxVertexSemantic(value: GpuVertexSemantic): bgfx_attrib_t =
   case value
   of gvsPosition: BGFX_ATTRIB_POSITION

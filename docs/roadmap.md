@@ -2267,7 +2267,9 @@ the existing asynchronous readback fallback. Direct submissions now carry a
 backend-neutral composition context containing the final-window versus
 offscreen target kind, target bounds, effective rectangular clip, rounded-mask
 requirement, and pixel scale. This lets a presentation adapter reject a path it
-cannot preserve instead of drawing into the wrong target. Custom Paint declarations now
+cannot preserve instead of drawing into the wrong target. Typed compositor
+capabilities now reject unsupported target, clip, and mask combinations before
+acquiring the published GPU frame. Custom Paint declarations now
 retain bounded typed material parameters in cold style storage and deliver them
 to providers without per-frame string parsing. The production bgfx compositor
 that consumes this context,

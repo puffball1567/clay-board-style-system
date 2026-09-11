@@ -128,6 +128,12 @@ In particular, a callback must not redirect an offscreen-layer submission to the
 window or ignore `requiresClipMask`. The surrounding CBSS paint stream remains
 responsible for ordering the command among ordinary UI content.
 
+New integrations should wrap their callback with `newGpuDirectCompositor()` and
+declare `GpuDirectCompositeCapabilities`. Target kinds, rectangular clipping,
+and rounded clip masks are checked before CBSS acquires a presentation lease.
+The SDL renderer retains a proc-only setter for source compatibility, but that
+overload necessarily assumes the callback can process every target context.
+
 The SDL3 renderer exposes `setGpuDirectCompositor()` and routes direct-surface
 commands through that callback in its normal, Cosmic Text, and layered render
 paths. `gpuDirectCompositionStats()` reports the last frame's `noFrame`,
@@ -143,6 +149,8 @@ to a typed bgfx texture only for the duration of the synchronous `submit`
 callback. The callback receives destination, opacity, alpha, revision, size,
 format, and composition-context metadata, but it does not receive the `GpuDirectSurface` or the
 opaque backend resource ID. It must not retain the temporary bgfx handle.
+`newBgfxDirectCompositor()` combines this scoped adapter with the capability
+preflight and is the preferred entry point for new presentation backends.
 
 The adapter fails closed before touching bgfx when the host is detached, the
 provider is different, the packed resource kind is inconsistent, or the
