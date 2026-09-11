@@ -1,4 +1,4 @@
-use crate::{ffi, Error, Result, STATUS_INVALID_ARGUMENT};
+use crate::{ensure_runtime_thread, ffi, Error, Result, STATUS_INVALID_ARGUMENT};
 use std::cell::RefCell;
 use std::fmt;
 use std::os::raw::{c_uint, c_void};
@@ -195,6 +195,7 @@ impl fmt::Debug for ValidationPattern {
 
 impl ValidationPattern {
     pub fn compile(source: &str) -> Result<Self> {
+        ensure_runtime_thread();
         if source.is_empty() || source.len() > MAX_PATTERN_BYTES {
             return Err(Error::status(
                 STATUS_INVALID_ARGUMENT,
@@ -499,6 +500,7 @@ where
 }
 
 fn string_format(kind: c_uint, value: &str) -> bool {
+    ensure_runtime_thread();
     if value.len() > MAX_VALUE_BYTES {
         return false;
     }

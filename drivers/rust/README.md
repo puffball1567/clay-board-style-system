@@ -3,7 +3,10 @@
 This crate is the maintained high-level Rust Driver for Clay Board Style
 System. Raw `extern "C"` declarations remain private. `Ui` and `Style` own their
 CBSS resources with `Drop`, and both are intentionally confined to their UI
-thread.
+thread. The Driver also attaches Rust-created threads to the Nim runtime on
+their first CBSS call and detaches them when the thread exits; applications do
+not call the raw C thread-lifecycle functions themselves. This runtime
+attachment does not make UI handles transferable between threads.
 
 ```rust
 use cbss_craft::{
