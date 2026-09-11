@@ -4869,7 +4869,14 @@ suite "GPU display surface negotiation and UI":
     check gpuIndex > textIndex
 
     var callbackCount = 0
+    let compositeContext = GpuDirectCompositeContext(
+      targetKind: gdctWindow,
+      targetBounds: rect(0, 0, 800, 600),
+      clipBounds: some(rect(4, 5, 100, 80)),
+      pixelScale: 1.5'f32
+    )
     let status = commands[gpuIndex].compositeGpuDirectSurface(
+      compositeContext,
       proc(
           request: GpuDirectCompositeRequest
       ): GpuDirectCompositeStatus {.closure.} =
@@ -4880,6 +4887,7 @@ suite "GPU display surface negotiation and UI":
         check request.frame.revision == 1
         check request.destination == ownerBox
         check abs(request.opacity - 0.6) < 0.001
+        check request.context == compositeContext
         check not display.closeGpuDisplaySurface()
         gdcsPresented
     )
@@ -5344,6 +5352,11 @@ suite "GPU display surface quality matrix":
       gdcsPresented
     ) == gdcsNoFrame
     check PaintCommand().compositeGpuDirectSurface(nil) == gdcsUnsupported
+
+    let defaultContext = defaultGpuDirectCompositeContext()
+    check defaultContext.targetKind == gdctUnspecified
+    check defaultContext.clipBounds.isNone
+    check defaultContext.pixelScale == 1.0'f32
 
     let token = host.beginGpuFrame()
     check surface.queueGpuDirectSurfaceFrame(target, token)

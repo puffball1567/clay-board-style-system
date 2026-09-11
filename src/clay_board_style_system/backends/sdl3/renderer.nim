@@ -295,11 +295,20 @@ proc gpuDirectCompositionStats*(
 proc resetGpuDirectCompositionStats(target: var Sdl3Renderer) =
   target.gpuDirectCompositionStats = Sdl3GpuDirectCompositionStats()
 
+proc gpuDirectCompositeContext(
+    target: Sdl3Renderer;
+    layers: openArray[Sdl3TransformLayer]
+): GpuDirectCompositeContext
+
 proc renderGpuDirectSurface(
     target: var Sdl3Renderer;
-    command: PaintCommand
+    command: PaintCommand;
+    layers: openArray[Sdl3TransformLayer]
 ): bool =
-  let status = command.compositeGpuDirectSurface(target.gpuDirectCompositor)
+  let status = command.compositeGpuDirectSurface(
+    target.gpuDirectCompositeContext(layers),
+    target.gpuDirectCompositor
+  )
   case status
   of gdcsNoFrame:
     inc target.gpuDirectCompositionStats.noFrame
@@ -1574,6 +1583,53 @@ proc effectiveClipBounds(target: Sdl3Renderer): Option[SDL_Rect] =
 
 proc hasRoundedClip(target: Sdl3Renderer): bool =
   target.clipStack.hasRoundedClip()
+
+proc effectiveLogicalClip(target: Sdl3Renderer): Option[Rect] =
+  if target.clipStack.len == 0:
+    return none(Rect)
+  result = some(target.clipStack[0].rect)
+  for index in 1 ..< target.clipStack.len:
+    result = some(result.get.intersection(target.clipStack[index].rect))
+
+proc activeLayerBounds(
+    layers: openArray[Sdl3TransformLayer];
+    scale: float32
+): Option[Rect] =
+  for index in countdown(layers.high, 0):
+    if layers[index].valid:
+      return some(rect(
+        0,
+        0,
+        layers[index].pixelWidth.float32 / scale,
+        layers[index].pixelHeight.float32 / scale
+      ))
+
+proc gpuDirectCompositeContext(
+    target: Sdl3Renderer;
+    layers: openArray[Sdl3TransformLayer]
+): GpuDirectCompositeContext =
+  let scale = max(target.pixelScale(), 0.001'f32)
+  let renderTarget = SDL3.getRenderTarget(target.renderer)
+  result = GpuDirectCompositeContext(
+    targetKind:
+      if renderTarget.isNil: gdctWindow
+      else: gdctOffscreen,
+    targetBounds: rect(0, 0, target.windowSize().w, target.windowSize().h),
+    clipBounds: target.effectiveLogicalClip(),
+    requiresClipMask: target.hasRoundedClip(),
+    pixelScale: scale
+  )
+  if not renderTarget.isNil:
+    let layerBounds = layers.activeLayerBounds(scale)
+    if layerBounds.isSome:
+      result.targetBounds = layerBounds.get
+    elif renderTarget == target.staticLayerTexture:
+      result.targetBounds = rect(
+        0,
+        0,
+        target.staticLayerWidth.float32 / scale,
+        target.staticLayerHeight.float32 / scale
+      )
 
 proc translated(command: PaintCommand; offset: Vec2): PaintCommand =
   result = command
@@ -3498,7 +3554,7 @@ proc render*(target: var Sdl3Renderer; commands: openArray[PaintCommand]; clearC
       transformLayers.markTransformContent()
       target.drawRasterSurfaceTexture(command, prepared.roundedImageClipStack)
     of pcDrawGpuDirectSurface:
-      if target.renderGpuDirectSurface(command):
+      if target.renderGpuDirectSurface(command, transformLayers):
         transformLayers.markTransformContent()
 
   target.closeTransformLayers(transformLayers)
@@ -3707,7 +3763,7 @@ proc render*(
       transformLayers.markTransformContent()
       target.drawRasterSurfaceTexture(command, prepared.roundedImageClipStack)
     of pcDrawGpuDirectSurface:
-      if target.renderGpuDirectSurface(command):
+      if target.renderGpuDirectSurface(command, transformLayers):
         transformLayers.markTransformContent()
 
   target.closeTransformLayers(transformLayers)
@@ -3802,7 +3858,7 @@ proc renderPreparedCommand(
         command, localPrepared.roundedImageClipStack
       )
   of pcDrawGpuDirectSurface:
-    if drawCommand and target.renderGpuDirectSurface(command):
+    if drawCommand and target.renderGpuDirectSurface(command, transformLayers):
       transformLayers.markTransformContent()
 
 proc renderCommandPass(

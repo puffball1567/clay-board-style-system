@@ -44,6 +44,7 @@ type
     revision*: uint64
     width*, height*: uint32
     format*: GpuTextureFormat
+    context*: GpuDirectCompositeContext
 
   BgfxDirectSubmitProc* = proc(
     submission: BgfxDirectCompositeSubmission
@@ -336,7 +337,8 @@ proc newBgfxDirectCompositeAdapter*(
       revision: request.frame.revision,
       width: request.frame.width,
       height: request.frame.height,
-      format: request.frame.format
+      format: request.frame.format,
+      context: request.context
     ))
 
 proc bgfxVertexSemantic(value: GpuVertexSemantic): bgfx_attrib_t =

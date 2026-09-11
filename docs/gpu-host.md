@@ -727,10 +727,12 @@ RenderTarget, compute-output, format, and buffer capabilities through
 `newQualifiedBgfxDirectPresentationProfile()` and connect a callback-scoped
 typed texture adapter with `newBgfxDirectCompositeAdapter()`. This opt-in does
 not replace visible real-renderer qualification and does not claim that the SDL
-high-level renderer can import arbitrary bgfx resources. A built-in same-device
-paint compositor and in-place restoration in a production GPU adapter remain
-release work. The host provides deterministic namespace restoration and
-failed-owner rollback.
+high-level renderer can import arbitrary bgfx resources. Each callback receives
+the active target kind, bounds, clip and mask requirements, and pixel scale, so
+unsupported SDL offscreen targets fail closed rather than being redirected to
+the window. A built-in same-device paint compositor and in-place restoration in
+a production GPU adapter remain release work. The host provides deterministic
+namespace restoration and failed-owner rollback.
 
 The NOOP fixture validates that native resource calls coexist with host
 ownership and budget accounting. Because the NOOP renderer does not advertise

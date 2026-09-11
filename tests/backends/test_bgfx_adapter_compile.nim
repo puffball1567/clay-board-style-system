@@ -5,7 +5,7 @@ when not defined(cbssGpuBgfx):
 when defined(cbssTestSdl3PlatformData):
   {.compile: "sdl3_platform_data_stub.c".}
 
-import std/unittest
+import std/[options, unittest]
 
 import bgfx
 
@@ -192,7 +192,14 @@ proc directRequest(
       format: info.format
     ),
     destination: rect(11, 13, 17, 19),
-    opacity: 0.75
+    opacity: 0.75,
+    context: GpuDirectCompositeContext(
+      targetKind: gdctOffscreen,
+      targetBounds: rect(0, 0, 320, 240),
+      clipBounds: some(rect(7, 9, 80, 60)),
+      requiresClipMask: true,
+      pixelScale: 2.0
+    )
   )
 
 suite "optional bgfxim adapter":
@@ -483,6 +490,11 @@ suite "optional bgfxim adapter":
     check lastSubmission.width == 8
     check lastSubmission.height == 4
     check lastSubmission.format == gtfRgba8
+    check lastSubmission.context.targetKind == gdctOffscreen
+    check lastSubmission.context.targetBounds == rect(0, 0, 320, 240)
+    check lastSubmission.context.clipBounds == some(rect(7, 9, 80, 60))
+    check lastSubmission.context.requiresClipMask
+    check lastSubmission.context.pixelScale == 2.0'f32
 
     let renderTargetRequest = host.directRequest(renderTarget)
     submitStatus = gdcsRetry

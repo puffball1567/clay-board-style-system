@@ -443,7 +443,10 @@ vertex, index, storage-buffer, and texture updates accept synchronously consumed
 borrowed byte spans, allowing staging-buffer slices to cross the host boundary
 without a second application-side allocation. Portable
 native-window conversion and SDL3 handoff are implemented as well. A
-production bgfx same-device compositor, production-adapter
+renderer-facing direct-composition context now distinguishes final-window and
+offscreen targets and carries target bounds, effective clip, rounded-mask
+requirements, and pixel scale without exposing a backend target handle. A
+production bgfx same-device compositor that consumes this context, production-adapter
 device recreation, and visible real-GPU conformance remain release gates below.
 The current bgfx adapter fails closed for in-place restoration instead of
 relying on an unsafe runtime restart sequence.
