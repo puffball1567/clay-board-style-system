@@ -743,6 +743,12 @@ paint compositor and in-place restoration in
 a production GPU adapter remain release work. The host provides deterministic
 namespace restoration and failed-owner rollback.
 
+Direct Surface negotiation exposes typed limitation reasons for unavailable
+hosts, unsupported presentation paths, formats, alpha modes, buffer counts,
+width and height limits, general texture limits, and compute output. These are
+fixed enum values rather than backend diagnostic strings and are also returned
+by `gpuDisplaySurfaceCapabilities()` when readback fallback remains viable.
+
 The NOOP fixture validates that native resource calls coexist with host
 ownership and budget accounting. Because the NOOP renderer does not advertise
 portable blit or readback capabilities, public transfer calls fail closed

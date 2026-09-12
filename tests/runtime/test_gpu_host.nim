@@ -4576,14 +4576,21 @@ suite "GPU direct surface lifecycle":
     check host.supportsGpuDirectSurface(config)
     config.format = gtfBgra8
     check not host.supportsGpuDirectSurface(config)
+    check host.gpuDirectSurfaceLimitations(config) == {gdslFormatUnsupported}
     config = defaultGpuDirectSurfaceConfig(64, 32)
     config.bufferCount = 4
     check not host.supportsGpuDirectSurface(config)
+    check host.gpuDirectSurfaceLimitations(config) == {
+      gdslBufferCountUnsupported
+    }
     config.bufferCount = 1
     expect ValueError:
       discard host.supportsGpuDirectSurface(config)
     config = defaultGpuDirectSurfaceConfig(8193, 32)
     check not host.supportsGpuDirectSurface(config)
+    check host.gpuDirectSurfaceLimitations(config) == {
+      gdslTextureSizeLimitExceeded
+    }
     host.close()
 
   test "capability negotiation enforces alpha modes and direct dimensions":
@@ -4618,12 +4625,59 @@ suite "GPU direct surface lifecycle":
     displayConfig.alphaMode = gcamPremultiplied
     let capabilities = host.gpuDisplaySurfaceCapabilities(displayConfig)
     check not capabilities.direct
+    check capabilities.directLimitations == {gdslWidthLimitExceeded}
     check capabilities.readbackFallback
     check capabilities.directAlphaModes == {gcamPremultiplied, gcamOpaque}
     check capabilities.maxDirectBuffers == 2
     check capabilities.maxDirectWidth == 640
     check capabilities.maxDirectHeight == 360
     host.close()
+
+  test "capability diagnostics report every independent incompatibility":
+    let context = newContext()
+    context.enableDirectPresentation(
+      formats = {gtfRgba8},
+      maxBuffers = 2,
+      computeOutput = false,
+      alphaModes = {gcamStraight},
+      maxWidth = 640,
+      maxHeight = 360
+    )
+    let host = openGpuHost(context.backend, ghoOwned)
+    var config = defaultGpuDirectSurfaceConfig(641, 361, gtfBgra8)
+    config.bufferCount = 3
+    config.alphaMode = gcamPremultiplied
+    config.acceptComputeOutput = true
+    check host.gpuDirectSurfaceLimitations(config) == {
+      gdslFormatUnsupported,
+      gdslAlphaModeUnsupported,
+      gdslBufferCountUnsupported,
+      gdslWidthLimitExceeded,
+      gdslHeightLimitExceeded,
+      gdslComputeOutputUnsupported
+    }
+
+    config = defaultGpuDirectSurfaceConfig(8193, 8193)
+    config.bufferCount = 2
+    check host.gpuDirectSurfaceLimitations(config) == {
+      gdslWidthLimitExceeded,
+      gdslHeightLimitExceeded,
+      gdslTextureSizeLimitExceeded
+    }
+    host.close()
+    check host.gpuDirectSurfaceLimitations(
+      defaultGpuDirectSurfaceConfig(1, 1)
+    ) == {gdslHostUnavailable}
+    check GpuHost(nil).gpuDirectSurfaceLimitations(
+      defaultGpuDirectSurfaceConfig(1, 1)
+    ) == {gdslHostUnavailable}
+
+    let unsupportedContext = newContext()
+    let unsupportedHost = openGpuHost(unsupportedContext.backend, ghoOwned)
+    check unsupportedHost.gpuDirectSurfaceLimitations(
+      defaultGpuDirectSurfaceConfig(1, 1)
+    ) == {gdslPresentationPathUnsupported}
+    unsupportedHost.close()
 
   test "unsupported hosts fail before retaining resources":
     let context = newContext()

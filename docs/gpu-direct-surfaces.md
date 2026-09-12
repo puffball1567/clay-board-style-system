@@ -111,6 +111,13 @@ memory, and internal label limits. Direct resources must match the configured
 dimensions and format and must include sampled usage. Storage output additionally
 requires explicit compute-output presentation support.
 
+`gpuDirectSurfaceLimitations()` returns a bounded set of typed reasons instead
+of requiring callers to infer why direct presentation is unavailable. It
+distinguishes host state, presentation path, format, alpha mode, buffer count,
+width, height, backend texture limit, and compute-output support. The same set
+is included in `GpuDisplaySurfaceCapabilities.directLimitations`, so an
+application can choose fallback or diagnostics without parsing backend strings.
+
 Device loss invalidates the host generation and all queued or presented frames.
 Stale resources are never revived. A restored producer creates new resources
 and a new display surface. Resizing follows the same replacement rule: create
