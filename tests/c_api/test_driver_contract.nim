@@ -4,7 +4,7 @@ import clay_board_style_system/generated/craft_driver_contract
 
 suite "Craft Driver contract metadata":
   test "publishes one ordered identity for every capability":
-    check CbssAbiVersion == 0x0001_001D'u32
+    check CbssAbiVersion == 0x0001_001E'u32
     check CbssDriverContractVersion == 0x0001_0000'u32
     check CbssCapabilities.len == 22
 
@@ -27,7 +27,7 @@ suite "Craft Driver contract metadata":
     check CbssCapabilities[^2].id == CbssCapabilityShaderAuthoring
     check CbssCapabilities[^2].version == 2
     check CbssCapabilities[^1].id == CbssCapabilityCustomPaintProvider
-    check CbssCapabilities[^1].version == 1
+    check CbssCapabilities[^1].version == 2
     check CbssCapabilities[0].name == "tree.retained"
     check CbssCapabilities[^5].name == "tree.subtree-lifecycle"
     check CbssCapabilities[^4].name == "validation.pattern"

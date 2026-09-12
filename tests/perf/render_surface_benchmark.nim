@@ -1,4 +1,4 @@
-import std/[strformat, times]
+import std/[math, strformat, times]
 
 import clay_board_style_system
 
@@ -13,6 +13,8 @@ const
   layerIterations = 30
   curveSegmentCount = 1_000
   curveIterations = 30
+  fillPathPointCount = 256
+  fillPathIterations = 10
   rasterUpdateIterations = 20_000
 
 proc elapsedMilliseconds(started: float): float =
@@ -128,6 +130,38 @@ when not defined(cbssMemoryCheck):
   doAssert curveAverageMs <= 12.0,
     &"1k-curve path flatten exceeded budget: {curveAverageMs:.3f} ms"
 
+var filledPath = initPath2D()
+for index in 0 ..< fillPathPointCount:
+  let angle = index.float32 / fillPathPointCount.float32 * PI.float32 * 2
+  let radius = if index mod 2 == 0: 240.0'f32 else: 120.0'f32
+  let point = vec2(
+    256.0'f32 + cos(angle) * radius,
+    256.0'f32 + sin(angle) * radius
+  )
+  if index == 0:
+    filledPath.moveTo(point)
+  else:
+    filledPath.lineTo(point)
+filledPath.closePath()
+let filledContours = filledPath.flattened()
+var fillCoverage: seq[uint8]
+var fillScratch: PathFillScratch
+var filledSamples = 0
+let fillStarted = cpuTime()
+for _ in 0 ..< fillPathIterations:
+  for y in 0 ..< 512:
+    filledContours.fillPathCoverageRow(
+      y, 0, 512, pfrNonZero, fillCoverage, fillScratch
+    )
+    for coverage in fillCoverage:
+      filledSamples += coverage.pathCoverageCount
+let fillMs = elapsedMilliseconds(fillStarted)
+let fillAverageMs = fillMs / fillPathIterations.float
+doAssert filledSamples > 0
+when not defined(cbssMemoryCheck):
+  doAssert fillAverageMs <= 20.0,
+    &"256-edge 512px path fill exceeded budget: {fillAverageMs:.3f} ms"
+
 proc rasterUpdateMilliseconds(surface: RasterSurface): float =
   let pixel = @[32'u8, 96, 192, 255]
   let started = cpuTime()
@@ -156,4 +190,5 @@ echo &"Canvas flatten ({canvasCommandCount} commands): {canvasAverageMs:.3f} ms 
 echo &"Canvas transform flatten ({transformScopeCount} scopes): {transformAverageMs:.3f} ms average"
 echo &"Canvas layer flatten ({layerScopeCount} scopes): {layerAverageMs:.3f} ms average"
 echo &"Path flatten ({curveSegmentCount} cubic curves): {curveAverageMs:.3f} ms average"
+echo &"Path fill ({fillPathPointCount} edges at 512px): {fillAverageMs:.3f} ms average"
 echo &"RasterSurface 1px publish ({rasterUpdateIterations} updates): small={smallRasterMs:.3f} ms large={largeRasterMs:.3f} ms"

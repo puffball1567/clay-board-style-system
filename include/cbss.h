@@ -26,7 +26,7 @@ extern "C" {
 #endif
 
 /* CBSS_GENERATED_DRIVER_CONTRACT_BEGIN */
-#define CBSS_ABI_VERSION 0x0001001Du
+#define CBSS_ABI_VERSION 0x0001001Eu
 #define CBSS_DRIVER_CONTRACT_VERSION 0x00010000u
 
 typedef enum CbssCapabilityId {
@@ -609,7 +609,8 @@ typedef enum CbssPaintKind {
   CBSS_PAINT_PUSH_LAYER = 11,
   CBSS_PAINT_POP_LAYER = 12,
   CBSS_PAINT_DRAW_RASTER_SURFACE = 13,
-  CBSS_PAINT_DRAW_GPU_DIRECT_SURFACE = 14
+  CBSS_PAINT_DRAW_GPU_DIRECT_SURFACE = 14,
+  CBSS_PAINT_FILL_PATH = 15
 } CbssPaintKind;
 
 typedef enum CbssLayerCompositeMode {
@@ -625,6 +626,11 @@ typedef enum CbssPathSegmentKind {
   CBSS_PATH_CUBIC_TO = 3,
   CBSS_PATH_CLOSE = 4
 } CbssPathSegmentKind;
+
+typedef enum CbssPathFillRule {
+  CBSS_PATH_FILL_NONZERO = 0,
+  CBSS_PATH_FILL_EVENODD = 1
+} CbssPathFillRule;
 
 typedef enum CbssStrokeLineCap {
   CBSS_STROKE_CAP_BUTT = 0,
@@ -734,6 +740,7 @@ typedef struct CbssHitResult {
  * BOX_SHADOW: offset_x, offset_y, blur, spread
  * LINEAR_GRADIENT: angle, stop_count, interpolation_space
  * STROKE_RECT: width
+ * FILL_PATH: fill_rule
  * STROKE_PATH: width, line_cap, line_join, miter_limit
  * DRAW_GPU_DIRECT_SURFACE: opacity
  * DRAW_IMAGE: opacity
@@ -1249,6 +1256,9 @@ CBSS_API CbssStatus cbss_custom_paint_sink_stroke_path(
     CbssCustomPaintSink *sink, const CbssPathSegment *segments,
     uint32_t segment_count, CbssColor color, float width,
     uint32_t line_cap, uint32_t line_join, float miter_limit);
+CBSS_API CbssStatus cbss_custom_paint_sink_fill_path(
+    CbssCustomPaintSink *sink, const CbssPathSegment *segments,
+    uint32_t segment_count, CbssColor color, uint32_t fill_rule);
 CBSS_API CbssStatus cbss_custom_paint_sink_draw_text(
     CbssCustomPaintSink *sink, const char *text, float x, float y,
     CbssColor color, const CbssTextStyle *style,
@@ -1490,6 +1500,10 @@ CBSS_API CbssStatus cbss_render_surface_canvas_stroke_path(
     const CbssPathSegment *segments, uint32_t segment_count,
     CbssColor color, float width, uint32_t line_cap,
     uint32_t line_join, float miter_limit);
+CBSS_API CbssStatus cbss_render_surface_canvas_fill_path(
+    CbssContext *context, uint64_t surface,
+    const CbssPathSegment *segments, uint32_t segment_count,
+    CbssColor color, uint32_t fill_rule);
 CBSS_API CbssStatus cbss_render_surface_canvas_draw_text(
     CbssContext *context, uint64_t surface, const char *text,
     float x, float y, CbssColor color, const CbssTextStyle *style,

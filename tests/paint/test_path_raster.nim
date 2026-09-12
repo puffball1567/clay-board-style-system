@@ -81,3 +81,59 @@ suite "path raster integration":
     check image.pixel(2, 12) == (0'u8, 0'u8, 255'u8)
     check image.pixel(8, 6) == (0'u8, 0'u8, 255'u8)
     check image.pixel(22, 11) == (0'u8, 0'u8, 255'u8)
+
+  test "concave paths fill without convex triangulation artifacts":
+    let path = path2D([
+      vec2(2, 2), vec2(14, 2), vec2(14, 6), vec2(7, 6),
+      vec2(7, 14), vec2(2, 14)
+    ], closed = true)
+    let image = render([fillPath(path, rgb(1, 0, 0))], 18, 18)
+
+    check image.pixel(4, 10) == (255'u8, 0'u8, 0'u8)
+    check image.pixel(11, 10) == (255'u8, 255'u8, 255'u8)
+
+  test "evenodd fill preserves holes across multiple contours":
+    var path = path2D([
+      vec2(1, 1), vec2(15, 1), vec2(15, 15), vec2(1, 15)
+    ], closed = true)
+    path.moveTo(vec2(5, 5))
+    path.lineTo(vec2(11, 5))
+    path.lineTo(vec2(11, 11))
+    path.lineTo(vec2(5, 11))
+    path.closePath()
+    let image = render([
+      fillPath(path, rgb(0, 0, 1), pfrEvenOdd)
+    ], 18, 18)
+
+    check image.pixel(3, 3) == (0'u8, 0'u8, 255'u8)
+    check image.pixel(8, 8) == (255'u8, 255'u8, 255'u8)
+
+  test "path fill respects transforms clips and opacity":
+    let path = path2D([
+      vec2(0, 0), vec2(8, 0), vec2(8, 8), vec2(0, 8)
+    ], closed = true)
+    let image = render([
+      pushTransform(translationAffine2D(4, 2)),
+      pushClip(rect(2, 0, 4, 8)),
+      fillPath(path, rgba(1, 0, 0, 0.5)),
+      popClip(),
+      popTransform()
+    ], 16, 14)
+
+    check image.pixel(7, 5)[0] == 255'u8
+    check image.pixel(7, 5)[1] in 127'u8 .. 128'u8
+    check image.pixel(5, 5) == (255'u8, 255'u8, 255'u8)
+    check image.pixel(11, 5) == (255'u8, 255'u8, 255'u8)
+
+  test "path fill preserves rounded clip corners":
+    let path = path2D([
+      vec2(0, 0), vec2(10, 0), vec2(10, 10), vec2(0, 10)
+    ], closed = true)
+    let image = render([
+      pushClip(rect(0, 0, 10, 10), radius = 4),
+      fillPath(path, rgb(1, 0, 0)),
+      popClip()
+    ], 12, 12)
+
+    check image.pixel(0, 0) == (255'u8, 255'u8, 255'u8)
+    check image.pixel(5, 1) == (255'u8, 0'u8, 0'u8)

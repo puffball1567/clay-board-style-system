@@ -1670,6 +1670,8 @@ proc translated(command: PaintCommand; offset: Vec2): PaintCommand =
     result.gradientClipRect = result.gradientClipRect.translated(offset)
   of pcStrokeRect:
     result.strokeRect = result.strokeRect.translated(offset)
+  of pcFillPath:
+    result.fillPathValue = result.fillPathValue.translated(offset)
   of pcStrokePath:
     result.path = result.path.translated(offset)
   of pcDrawText:
@@ -2779,6 +2781,46 @@ proc renderStrokePath(target: Sdl3Renderer; command: PaintCommand) =
       command.pathMiterLimit
     )
 
+proc renderFillPath(target: Sdl3Renderer; command: PaintCommand) =
+  let tolerance = 0.25'f32 / max(1.0'f32, target.pixelScale())
+  let contours = command.fillPathValue.flattened(tolerance)
+  if contours.len == 0:
+    return
+  var bounds = command.fillPathValue.bounds(tolerance)
+  let clip = target.effectiveLogicalClip()
+  if clip.isSome:
+    bounds = bounds.intersection(clip.get)
+  let xStart = int(floor(bounds.x))
+  let xEnd = int(ceil(bounds.x + bounds.w))
+  let yStart = int(floor(bounds.y))
+  let yEnd = int(ceil(bounds.y + bounds.h))
+  var rowCoverage: seq[uint8]
+  var fillScratch: PathFillScratch
+  for y in yStart ..< yEnd:
+    contours.fillPathCoverageRow(
+      y, xStart, xEnd, command.fillPathRule, rowCoverage, fillScratch
+    )
+    var runStart = xStart
+    var runCoverage = 0
+    for x in xStart .. xEnd:
+      let coverage =
+        if x < xEnd: pathCoverageCount(rowCoverage[x - xStart])
+        else: 0
+      if coverage != runCoverage:
+        if runCoverage > 0 and x > runStart:
+          let alpha = command.fillPathColor.a * runCoverage.float32 * 0.25'f32
+          target.fillHorizontal(
+            runStart.float32, x.float32, y.float32 + 0.5'f32,
+            rgba(
+              command.fillPathColor.r,
+              command.fillPathColor.g,
+              command.fillPathColor.b,
+              alpha
+            )
+          )
+        runStart = x
+        runCoverage = coverage
+
 proc shadowRect(command: PaintCommand; grow: float32): Rect =
   Rect(
     x: command.shadowRect.x + command.shadowOffsetX - grow,
@@ -3558,6 +3600,9 @@ proc render*(target: var Sdl3Renderer; commands: openArray[PaintCommand]; clearC
     of pcStrokeRect:
       transformLayers.markTransformContent()
       target.strokeRoundedRect(command.strokeRect, command.strokeRadius, command.strokeWidth, command.strokeColor)
+    of pcFillPath:
+      transformLayers.markTransformContent()
+      target.renderFillPath(command)
     of pcStrokePath:
       transformLayers.markTransformContent()
       target.renderStrokePath(command)
@@ -3767,6 +3812,9 @@ proc render*(
     of pcStrokeRect:
       transformLayers.markTransformContent()
       target.strokeRoundedRect(command.strokeRect, command.strokeRadius, command.strokeWidth, command.strokeColor)
+    of pcFillPath:
+      transformLayers.markTransformContent()
+      target.renderFillPath(command)
     of pcStrokePath:
       transformLayers.markTransformContent()
       target.renderStrokePath(command)
@@ -3856,6 +3904,10 @@ proc renderPreparedCommand(
     if drawCommand:
       transformLayers.markTransformContent()
       target.strokeRoundedRect(command.strokeRect, command.strokeRadius, command.strokeWidth, command.strokeColor)
+  of pcFillPath:
+    if drawCommand:
+      transformLayers.markTransformContent()
+      target.renderFillPath(command)
   of pcStrokePath:
     if drawCommand:
       transformLayers.markTransformContent()

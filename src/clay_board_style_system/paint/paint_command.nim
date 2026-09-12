@@ -20,6 +20,7 @@ type
     pcFillRect,
     pcFillLinearGradient,
     pcStrokeRect,
+    pcFillPath,
     pcStrokePath,
     pcDrawText,
     pcDrawImage,
@@ -67,6 +68,10 @@ type
       strokeColor*: Color
       strokeWidth*: float32
       strokeRadius*: float32
+    of pcFillPath:
+      fillPathValue*: Path2D
+      fillPathColor*: Color
+      fillPathRule*: PathFillRule
     of pcStrokePath:
       path*: Path2D
       pathColor*: Color
@@ -162,6 +167,8 @@ proc visualBounds(command: PaintCommand): Option[Rect] =
     some(command.gradientPaintRect)
   of pcStrokeRect:
     some(command.strokeRect.expanded(max(0.0'f32, command.strokeWidth) * 0.5'f32))
+  of pcFillPath:
+    some(command.fillPathValue.bounds())
   of pcStrokePath:
     some(command.path.bounds().expanded(max(0.0'f32, command.pathWidth) * 0.5'f32))
   of pcDrawText:
@@ -291,6 +298,20 @@ proc strokePath*(
     pathLineCap: lineCap,
     pathLineJoin: lineJoin,
     pathMiterLimit: max(1.0'f32, miterLimit)
+  )
+
+proc fillPath*(
+    path: Path2D;
+    color: Color;
+    fillRule = pfrNonZero;
+    owner = none(NodeId)
+): PaintCommand =
+  PaintCommand(
+    kind: pcFillPath,
+    owner: owner,
+    fillPathValue: path,
+    fillPathColor: color,
+    fillPathRule: fillRule
   )
 
 proc strokePath*(

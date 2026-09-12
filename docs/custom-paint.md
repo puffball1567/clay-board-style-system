@@ -88,7 +88,8 @@ and applies the owner's opacity and clip during composition.
 
 The sink exposes the same bounded 2D primitives as the retained C Canvas:
 transform and save/restore scopes, clips, layers, rectangles, gradients,
-paths, text, images, and `RasterSurface` composition. It is a command boundary,
+stroked and filled paths with nonzero/evenodd rules, text, images, and
+`RasterSurface` composition. It is a command boundary,
 not a second tree, event loop, hit-test system, or presentation owner.
 
 `cbss_style_set_custom_paint` copies the material name and up to 64 typed
@@ -154,5 +155,5 @@ Windows, and macOS plus the available real-runtime GPU checks; a dependency
 update does not change this public material contract.
 
 The declaration, registry, and callback-scoped command boundary are available
-to Nim and through C ABI `0x0001001D`. Foreign callers never depend on Nim
+to Nim and through the current C ABI. Foreign callers never depend on Nim
 closure layout or backend handles.

@@ -386,6 +386,22 @@ suite "standard canvas surface":
     check commands[0].pathLineJoin == sljBevel
     check commands[0].pathMiterLimit == 3
 
+  test "filled paths retain color and fill rule":
+    let drawing = newCanvas2D()
+    let path = path2D([
+      vec2(0, 0), vec2(20, 0), vec2(20, 10), vec2(0, 10)
+    ], closed = true)
+    drawing.fillPath(path, rgba(0.2, 0.4, 0.8, 0.75), pfrEvenOdd)
+
+    let commands = drawing.paintCommands(
+      NodeId(11), rect(5, 7, 40, 20), 0.5
+    )
+    check commands.len == 1
+    check commands[0].kind == pcFillPath
+    check commands[0].fillPathRule == pfrEvenOdd
+    check commands[0].fillPathValue.bounds() == rect(5, 7, 20, 10)
+    check abs(commands[0].fillPathColor.a - 0.375) < 0.0001
+
   test "surface events preserve local coordinates and consumption":
     let ui = initUiRoot()
     let app = ui.box(uiStyle([

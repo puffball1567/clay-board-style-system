@@ -73,3 +73,69 @@ suite "retained path geometry":
     check moved.segments[1].control2 == vec2(15, 26)
     check moved.segments[1].endpoint == vec2(17, 28)
     check moved.segments[^1].kind == pskClose
+
+  test "nonzero and evenodd rules distinguish same-direction contours":
+    var path = initPath2D()
+    for points in [
+      [vec2(0, 0), vec2(12, 0), vec2(12, 12), vec2(0, 12)],
+      [vec2(3, 3), vec2(9, 3), vec2(9, 9), vec2(3, 9)]
+    ]:
+      path.moveTo(points[0])
+      for index in 1 .. points.high:
+        path.lineTo(points[index])
+      path.closePath()
+    let contours = path.flattened()
+
+    check contours.contains(vec2(1, 1), pfrNonZero)
+    check contours.contains(vec2(6, 6), pfrNonZero)
+    check contours.contains(vec2(1, 1), pfrEvenOdd)
+    check not contours.contains(vec2(6, 6), pfrEvenOdd)
+
+  test "opposite contour winding cuts a nonzero hole":
+    var path = initPath2D()
+    path.moveTo(vec2(0, 0))
+    path.lineTo(vec2(12, 0))
+    path.lineTo(vec2(12, 12))
+    path.lineTo(vec2(0, 12))
+    path.closePath()
+    path.moveTo(vec2(3, 3))
+    path.lineTo(vec2(3, 9))
+    path.lineTo(vec2(9, 9))
+    path.lineTo(vec2(9, 3))
+    path.closePath()
+
+    check not path.flattened().contains(vec2(6, 6), pfrNonZero)
+
+  test "scanline coverage encodes stable antialias samples":
+    let path = path2D([
+      vec2(1, 1), vec2(3, 1), vec2(3, 3), vec2(1, 3)
+    ], closed = true)
+    var coverage: seq[uint8]
+
+    path.flattened().fillPathCoverageRow(
+      y = 1, xStart = 0, xEnd = 4, fillRule = pfrNonZero,
+      coverage = coverage
+    )
+
+    check coverage == @[0'u8, 15'u8, 15'u8, 0'u8]
+    check coverage[1].pathCoverageCount == 4
+    check pathCoverageCount(0b0101'u8) == 2
+
+  test "scanline coverage clears reused storage for empty and outside rows":
+    let path = path2D([
+      vec2(1, 1), vec2(3, 1), vec2(3, 3), vec2(1, 3)
+    ], closed = true)
+    let contours = path.flattened()
+    var coverage = @[255'u8, 255'u8]
+
+    contours.fillPathCoverageRow(
+      y = 8, xStart = 0, xEnd = 2, fillRule = pfrNonZero,
+      coverage = coverage
+    )
+    check coverage == @[0'u8, 0'u8]
+
+    contours.fillPathCoverageRow(
+      y = 0, xStart = 2, xEnd = 2, fillRule = pfrEvenOdd,
+      coverage = coverage
+    )
+    check coverage.len == 0

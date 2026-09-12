@@ -4,6 +4,7 @@ import clay_board_style_system/backends/sdl3/renderer
 import clay_board_style_system/core/[color, geometry, node, raster_surface]
 import clay_board_style_system/paint/gpu_direct_compositor
 import clay_board_style_system/paint/paint_command
+import clay_board_style_system/paint/path_geometry
 import clay_board_style_system/runtime/canvas
 import clay_board_style_system/text/[cosmic_text_engine, font_registry]
 
@@ -176,6 +177,35 @@ suite "SDL3 transform rendering":
     let frame = renderer.capturedFrame().get
     check frame.pixel(40, 35).r > 220
     check frame.pixel(15, 35).r < 25
+
+  test "retained filled paths reach the SDL composition path":
+    let previousDriver = getEnv("SDL_VIDEODRIVER")
+    putEnv("SDL_VIDEODRIVER", "dummy")
+    defer:
+      if previousDriver.len > 0:
+        putEnv("SDL_VIDEODRIVER", previousDriver)
+      else:
+        delEnv("SDL_VIDEODRIVER")
+
+    var path = path2D([
+      vec2(5, 5), vec2(35, 5), vec2(35, 35), vec2(5, 35)
+    ], closed = true)
+    path.moveTo(vec2(15, 15))
+    path.lineTo(vec2(25, 15))
+    path.lineTo(vec2(25, 25))
+    path.lineTo(vec2(15, 25))
+    path.closePath()
+    let commands = @[fillPath(path, rgb(1, 0, 0), pfrEvenOdd)]
+
+    var renderer = initSdl3Renderer("CBSS filled path test", 40, 40, false)
+    defer: renderer.close()
+    renderer.requestFrameCapture()
+    renderer.render(commands, rgb(0, 0, 0))
+    check renderer.capturedFrame().isSome
+    let frame = renderer.capturedFrame().get
+    check frame.pixel(10, 10).r > 220
+    check frame.pixel(20, 20).r < 25
+    check frame.pixel(2, 2).r < 25
 
   test "raster surfaces use partial uploads for consecutive revisions":
     let previousDriver = getEnv("SDL_VIDEODRIVER")

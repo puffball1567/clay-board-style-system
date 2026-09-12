@@ -169,6 +169,7 @@ The release ARC benchmark on the development machine measured:
 | flatten 1,000 transformed Canvas scopes | 0.566 ms average | <= 4 ms |
 | flatten 1,000 bounded Canvas layers | 0.382 ms average | <= 4 ms |
 | flatten a retained path with 1,000 cubic curves | 0.436 ms average | <= 12 ms |
+| fill a 256-edge path across 512 scanlines | 4.625 ms average | <= 20 ms |
 
 `tests/perf/render_surface_benchmark.nim` enforces these retained-rendering
 gates. The Canvas
@@ -177,7 +178,9 @@ transform visual-bounds resolution into canonical paint commands. The layer
 measurement covers bounded scope conversion and balancing; it does not include
 backend texture allocation or composition. The path
 measurement covers adaptive curve subdivision into backend-ready contours.
-None of these measurements includes backend rasterization or text shaping.
+The path-fill measurement covers four-sample scanline coverage generation and
+reused intersection storage; it excludes final backend pixel blending. The
+other measurements do not include backend rasterization or text shaping.
 Memory instrumentation may compile the same workload with
 `-d:cbssMemoryCheck`; this keeps structural assertions and workload sizes but
 disables wall-clock gates that are not meaningful under Valgrind.
