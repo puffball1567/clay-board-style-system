@@ -82,6 +82,8 @@ proc main() =
       echo &"  StrokeRect rect=({command.strokeRect.x:.1f}, {command.strokeRect.y:.1f}, {command.strokeRect.w:.1f}, {command.strokeRect.h:.1f}) width={command.strokeWidth:.1f} radius={command.strokeRadius:.1f} color={command.strokeColor}"
     of pcStrokePath:
       echo &"  StrokePath segments={command.path.segments.len} width={command.pathWidth:.1f} color={command.pathColor}"
+    of pcFillPath:
+      echo &"  FillPath segments={command.fillPathValue.segments.len} rule={command.fillPathRule} color={command.fillPathColor}"
     of pcDrawText:
       echo &"  DrawText node={command.node.nodeIndex} text=\"{command.text}\" pos=({command.position.x:.1f}, {command.position.y:.1f}) color={command.textColor}"
     of pcDrawImage:
