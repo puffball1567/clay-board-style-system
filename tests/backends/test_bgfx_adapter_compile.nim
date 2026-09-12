@@ -1275,3 +1275,35 @@ suite "optional bgfxim adapter":
     check host.backendInfo.rendererName == "CBSS bgfx stub"
     host.close()
     check shutdownCount() == 0
+
+  test "owned mode recreates bgfx with the latest host configuration":
+    resetCounters()
+    let host = openGpuHost(newBgfxBackend(), ghoOwned, config())
+    let previousGeneration = host.generation()
+    host.resizeGpuHost(901, 507)
+
+    check host.markGpuDeviceLost()
+    let report = host.restoreGpuHostWithReport()
+
+    check report.previousGeneration == previousGeneration
+    check report.generation == previousGeneration + 1
+    check host.state() == ghsReady
+    check host.backendInfo.rendererName == "CBSS bgfx stub"
+    check stubWidth() == 901
+    check stubHeight() == 507
+    check shutdownCount() == 1
+
+    host.close()
+    check shutdownCount() == 2
+
+  test "borrowed mode requires its owner to restore and reattach bgfx":
+    resetCounters()
+    let host = openGpuHost(newBgfxBackend(), ghoBorrowed, config())
+
+    check host.markGpuDeviceLost()
+    expect GpuHostError:
+      discard host.restoreGpuHostWithReport()
+    check host.state() == ghsDeviceLost
+
+    host.close()
+    check shutdownCount() == 0

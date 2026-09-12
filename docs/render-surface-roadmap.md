@@ -454,10 +454,11 @@ same alpha-mode and dimension limits before choosing direct presentation. The
 bgfx helper requires source-kind, format, alpha-mode, and dimension coverage to
 exactly match its qualified direct-presentation profile, preventing the host
 from advertising a path the compositor cannot draw. A
-production bgfx same-device compositor that consumes this context, production-adapter
-device recreation, and visible real-GPU conformance remain release gates below.
-The current bgfx adapter fails closed for in-place restoration instead of
-relying on an unsafe runtime restart sequence.
+production bgfx same-device compositor that consumes this context and visible
+real-GPU conformance remain release gates below. An owned bgfx adapter now
+recreates its runtime from the latest validated host configuration before
+namespace restoration. A borrowed adapter continues to fail closed because
+only its external owner may recreate and reattach that runtime.
 
 Direct Surface negotiation also returns a fixed set of typed limitations for
 host availability, path, format, alpha, buffering, dimensions, texture limits,

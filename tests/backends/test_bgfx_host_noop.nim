@@ -351,6 +351,13 @@ let retirement = host.beginGpuFrame()
 host.endGpuFrame(retirement)
 doAssert host.gpuNamespaceUsage(resourceNamespace).resourceCount == 0
 doAssert host.closeGpuNamespace(resourceNamespace)
+
+let previousGeneration = host.generation()
+doAssert host.markGpuDeviceLost()
+let restoreReport = host.restoreGpuHostWithReport()
+doAssert host.state() == ghsReady
+doAssert restoreReport.previousGeneration == previousGeneration
+doAssert restoreReport.generation == previousGeneration + 1
 host.close()
 
 echo "CBSS bgfx NOOP resource integration passed"

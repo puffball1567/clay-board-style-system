@@ -33,6 +33,8 @@ type
     options: BgfxHostOptions
     attached: bool
     owned: bool
+    initialized: bool
+    config: GpuHostConfig
     completedFrame: uint32
 
   BgfxDirectCompositeSubmission* = object
@@ -156,16 +158,13 @@ proc releaseContext(value: BgfxAdapterContext) =
     activeBgfxContext = nil
   value.attached = false
   value.owned = false
+  value.initialized = false
 
-proc openOwned(
-    rawContext: GpuBackendContext;
+proc initializeOwned(
+    value: BgfxAdapterContext;
     config: GpuHostConfig;
     info: var GpuBackendInfo
 ): GpuBackendStatus {.raises: [].} =
-  let value = rawContext.context
-  if value.claimContext(true) != gbsOk:
-    return gbsFailed
-
   var init: bgfx_init_t
   BGFX.initCtor(addr init)
   init.type = value.options.rendererType
@@ -192,12 +191,25 @@ proc openOwned(
     init.resolution.debugTextScale = value.options.debugTextScale
 
   if not BGFX.init(addr init):
-    value.releaseContext()
     return gbsUnavailable
-
+  value.initialized = true
+  value.completedFrame = 0
   result = fillBackendInfo(value, info)
   if result != gbsOk:
     BGFX.shutdown()
+    value.initialized = false
+
+proc openOwned(
+    rawContext: GpuBackendContext;
+    config: GpuHostConfig;
+    info: var GpuBackendInfo
+): GpuBackendStatus {.raises: [].} =
+  let value = rawContext.context
+  if value.claimContext(true) != gbsOk:
+    return gbsFailed
+  value.config = config
+  result = value.initializeOwned(config, info)
+  if result != gbsOk:
     value.releaseContext()
 
 proc attachBorrowed(
@@ -240,15 +252,25 @@ proc resize(
   if not rawContext.context.attached:
     return gbsFailed
   BGFX.reset(width, height, resetFlags, BGFX_TEXTURE_FORMAT_COUNT)
+  if rawContext.context.owned:
+    rawContext.context.config.width = width
+    rawContext.context.config.height = height
+    rawContext.context.config.resetFlags = resetFlags
   gbsOk
 
 proc restore(
     rawContext: GpuBackendContext;
     info: var GpuBackendInfo
 ): GpuBackendStatus {.raises: [].} =
-  discard rawContext
-  discard info
-  gbsUnsupported
+  let value = rawContext.context
+  if not value.attached:
+    return gbsFailed
+  if not value.owned:
+    return gbsUnsupported
+  if value.initialized:
+    BGFX.shutdown()
+    value.initialized = false
+  value.initializeOwned(value.config, info)
 
 proc bgfxTextureFormat(value: GpuTextureFormat): bgfx_texture_format_t =
   case value
@@ -1370,7 +1392,7 @@ proc destroyResource(
 
 proc closeOwned(rawContext: GpuBackendContext) {.raises: [].} =
   let value = rawContext.context
-  if value.attached and value.owned:
+  if value.attached and value.owned and value.initialized:
     BGFX.shutdown()
   value.releaseContext()
 

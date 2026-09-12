@@ -92,16 +92,18 @@ adapter keeps direct capability disabled until its same-device compositor is
 qualified.
 
 The bgfx adapter uses `bgfxim` directly. Owned mode initializes and shuts down
-the bgfx runtime. Borrowed mode attaches to an application-initialized runtime
-and detaches without destroying it. A process cannot attach two CBSS bgfx
-hosts at once. Device restoration is deliberately reported as unsupported
-until the adapter can recreate native presentation and retained resources in
-one tested operation. In addition to the portable ABI contract, Linux and
+the bgfx runtime, retains its current host configuration, and recreates the
+runtime after device loss before namespace restoration runs. Borrowed mode
+attaches to an application-initialized runtime and detaches without destroying
+it; the external owner remains responsible for rebuilding a lost borrowed
+runtime. A process cannot attach two CBSS bgfx hosts at once. In addition to
+the portable ABI contract, Linux and
 macOS CI build the pinned real bgfx NOOP renderer and exercise resource,
-partial-update, offscreen-target, encoder, readback, frame, and teardown calls
-inside a CBSS-owned host under ARC and ORC. The portable deterministic adapter
-contract also covers shader/program creation, graphics submission, compute
-dispatch, and destruction without claiming visible renderer output.
+partial-update, offscreen-target, encoder, readback, frame, owned-runtime
+restoration, and teardown calls inside a CBSS-owned host under ARC and ORC. The
+portable deterministic adapter contract also covers shader/program creation,
+graphics submission, compute dispatch, and destruction without claiming
+visible renderer output.
 
 CBSS supplies bgfx with bounded scene data, textures, render targets, graphics
 or compute work, and composition metadata. SDL3 supplies the native window and

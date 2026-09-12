@@ -66,12 +66,13 @@ resize are rejected while restoration is active. If a handler reports
 and resets that namespace's accounting. Other namespaces continue restoring,
 and the returned `GpuRestoreReport` records every result.
 
-Backend restoration remains an explicit capability. The current bgfx adapter
-reports it as unsupported rather than attempting an unsafe `shutdown`/`init`
-cycle. Applications using that adapter must recreate the host and its resources
-at their outer window/runtime boundary after device loss. Namespace handlers
-provide the deterministic in-place rebuild contract for adapters that support
-restoration.
+Backend restoration remains an explicit capability. The bgfx adapter restores
+an owned runtime by shutting down the lost instance and recreating it from the
+latest validated host configuration. It then refreshes capabilities before
+namespace restoration begins. A borrowed bgfx runtime cannot be recreated by
+CBSS: its owner must rebuild the runtime and attach a new host at the outer
+window/runtime boundary. Namespace handlers provide the deterministic retained
+resource rebuild contract after a successful owned-host restoration.
 
 ## Resource Namespaces
 
