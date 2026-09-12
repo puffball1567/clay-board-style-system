@@ -9,9 +9,13 @@ type
     pixels*: seq[uint8]
     alpha*: seq[uint8]
 
+  PpmClipShape = object
+    transformed: TransformedRect
+    radius: float32
+
   PpmClip = object
     bounds: Rect
-    shapes: seq[TransformedRect]
+    shapes: seq[PpmClipShape]
 
   PpmLinearGradientSampler = object
     dx, dy: float32
@@ -138,6 +142,34 @@ proc intersect(a, b: Rect): Rect =
   let y1 = min(a.y + a.h, b.y + b.h)
   rect(x0, y0, max(0.0'f32, x1 - x0), max(0.0'f32, y1 - y0))
 
+proc contains(shape: PpmClipShape; point: Vec2): bool =
+  let transformed = shape.transformed
+  if not transformed.bounds.contains(point) or
+      transformed.inverseTransform.isNone:
+    return false
+  let local = transformed.inverseTransform.get.transformPoint(point)
+  let source = transformed.source
+  if not source.contains(local):
+    return false
+  let radius = min(
+    max(0.0'f32, shape.radius), min(source.w, source.h) * 0.5'f32
+  )
+  if radius <= 0 or
+      (local.x >= source.x + radius and
+       local.x < source.x + source.w - radius) or
+      (local.y >= source.y + radius and
+       local.y < source.y + source.h - radius):
+    return true
+  let centerX =
+    if local.x < source.x + radius: source.x + radius
+    else: source.x + source.w - radius
+  let centerY =
+    if local.y < source.y + radius: source.y + radius
+    else: source.y + source.h - radius
+  let dx = local.x - centerX
+  let dy = local.y - centerY
+  dx * dx + dy * dy <= radius * radius
+
 proc contains(clip: PpmClip; point: Vec2): bool =
   if not clip.bounds.contains(point):
     return false
@@ -146,12 +178,16 @@ proc contains(clip: PpmClip; point: Vec2): bool =
       return false
   true
 
-proc withShape(clip: PpmClip; shape: TransformedRect): PpmClip =
+proc withShape(
+    clip: PpmClip;
+    shape: TransformedRect;
+    radius = 0.0'f32
+): PpmClip =
   result.bounds = intersect(clip.bounds, shape.bounds)
-  result.shapes = newSeqOfCap[TransformedRect](clip.shapes.len + 1)
+  result.shapes = newSeqOfCap[PpmClipShape](clip.shapes.len + 1)
   for existing in clip.shapes:
     result.shapes.add existing
-  result.shapes.add shape
+  result.shapes.add PpmClipShape(transformed: shape, radius: radius)
 
 proc fillCircle(
     image: var RasterImage;
@@ -421,6 +457,53 @@ proc strokePath(
       clip
     )
 
+proc fillPath(
+    image: var RasterImage;
+    command: PaintCommand;
+    transform: Affine2D;
+    clip: PpmClip
+) =
+  let transformedPath = command.fillPathValue.transformed(transform)
+  let contours = transformedPath.flattened()
+  if contours.len == 0:
+    return
+  let pathBounds = transformedPath.bounds()
+  let bounds = intBounds(
+    intersect(pathBounds, clip.bounds), image.width, image.height
+  )
+  var rowCoverage: seq[uint8]
+  var fillScratch: PathFillScratch
+  for y in bounds.y0 ..< bounds.y1:
+    contours.fillPathCoverageRow(
+      y, bounds.x0, bounds.x1, command.fillPathRule, rowCoverage,
+      fillScratch
+    )
+    for localX, pathMask in rowCoverage:
+      if pathMask > 0:
+        var clipMask = 0'u8
+        const offsets = [0.25'f32, 0.75'f32]
+        for offsetYIndex, offsetY in offsets:
+          for offsetXIndex, offsetX in offsets:
+            let sample = vec2(
+              (bounds.x0 + localX).float32 + offsetX,
+              y.float32 + offsetY
+            )
+            if clip.contains(sample):
+              clipMask = clipMask or
+                (1'u8 shl (offsetYIndex * offsets.len + offsetXIndex))
+        let covered = pathCoverageCount(pathMask and clipMask)
+        if covered > 0:
+          let coverage = covered.float32 * 0.25'f32
+          image.putPixel(
+            bounds.x0 + localX, y,
+            rgba(
+              command.fillPathColor.r,
+              command.fillPathColor.g,
+              command.fillPathColor.b,
+              command.fillPathColor.a * coverage
+            )
+          )
+
 proc rasterPixelColor(surface: RasterSurface; x, y: int; opacity: float32): Color =
   let offset = (y * surface.width + x) * RasterBytesPerPixel
   let pixels = surface.pixels
@@ -581,7 +664,8 @@ proc render*(commands: openArray[PaintCommand]; width, height: int; background =
         targets[^1].compositeLayer(source, layer, clipStack[^1])
     of pcPushClip:
       clipStack.add clipStack[^1].withShape(
-        transformedRect(command.clipRect, transformStack[^1])
+        transformedRect(command.clipRect, transformStack[^1]),
+        command.clipRadius
       )
     of pcPopClip:
       if clipStack.len > 1:
@@ -619,6 +703,8 @@ proc render*(commands: openArray[PaintCommand]; width, height: int; background =
         command.strokeWidth * transformStack[^1].strokeScale,
         true, slcButt, sljMiter, 10, clipStack[^1]
       )
+    of pcFillPath:
+      targets[^1].fillPath(command, transformStack[^1], clipStack[^1])
     of pcStrokePath:
       var transformedCommand = command
       transformedCommand.path = command.path.transformed(transformStack[^1])

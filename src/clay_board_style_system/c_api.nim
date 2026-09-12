@@ -1009,6 +1009,7 @@ proc commandKindToC(command: PaintCommand): uint32 =
   of pcPopLayer: 12
   of pcDrawRasterSurface: 13
   of pcDrawGpuDirectSurface: 14
+  of pcFillPath: 15
 
 proc commandRect(command: PaintCommand): Rect =
   case command.kind
@@ -1028,6 +1029,8 @@ proc commandRect(command: PaintCommand): Rect =
     command.gradientRect
   of pcStrokeRect:
     command.strokeRect
+  of pcFillPath:
+    command.fillPathValue.bounds()
   of pcStrokePath:
     command.path.bounds()
   of pcDrawText:
@@ -1052,6 +1055,8 @@ proc commandColor(command: PaintCommand): Color =
     command.color
   of pcStrokeRect:
     command.strokeColor
+  of pcFillPath:
+    command.fillPathColor
   of pcStrokePath:
     command.pathColor
   of pcDrawText:
@@ -4620,6 +4625,23 @@ proc cbssCustomPaintSinkStrokePath(
       path.get, color.toColor, width, cap.get, join.get, miterLimit
     )
 
+proc cbssCustomPaintSinkFillPath(
+    sink: CbssCustomPaintSinkHandle;
+    segments: ptr CbssPathSegmentC;
+    segmentCount: uint32;
+    color: CbssColorC;
+    fillRule: uint32
+): int32 {.exportc: "cbss_custom_paint_sink_fill_path", cdecl, dynlib.} =
+  if not color.validColor or fillRule > uint32(ord(high(PathFillRule))):
+    return CbssInvalidArgument
+  let path = pathFromC(segments, segmentCount)
+  if path.isNone:
+    return CbssInvalidArgument
+  guardedCustomPaintMutation(sink):
+    checked.canvas.fillPath(
+      path.get, color.toColor, PathFillRule(fillRule)
+    )
+
 proc cbssCustomPaintSinkDrawText(
     sink: CbssCustomPaintSinkHandle;
     text: cstring;
@@ -4907,6 +4929,27 @@ proc cbssRenderSurfaceCanvasStrokePath(
       return CbssInvalidArgument
     checked.binding.canvas.strokePath(
       path.get, color.toColor, width, cap.get, join.get, miterLimit
+    )
+
+proc cbssRenderSurfaceCanvasFillPath(
+    context: CbssContextHandle;
+    surfaceValue: uint64;
+    segments: ptr CbssPathSegmentC;
+    segmentCount: uint32;
+    color: CbssColorC;
+    fillRule: uint32
+): int32 {.exportc: "cbss_render_surface_canvas_fill_path", cdecl, dynlib.} =
+  let checked = context.checkedSurfaceCanvas(surfaceValue)
+  if checked.status != CbssOk:
+    return checked.status
+  if not color.validColor or fillRule > uint32(ord(high(PathFillRule))):
+    return CbssInvalidArgument
+  guardedCanvasMutation(context):
+    let path = pathFromC(segments, segmentCount)
+    if path.isNone:
+      return CbssInvalidArgument
+    checked.binding.canvas.fillPath(
+      path.get, color.toColor, PathFillRule(fillRule)
     )
 
 proc textStyleFromC(
@@ -6650,6 +6693,8 @@ proc cbssContextPaintCommand(
     )
   of pcStrokeRect:
     output.value0 = command.strokeWidth
+  of pcFillPath:
+    output.value0 = cfloat(ord(command.fillPathRule))
   of pcStrokePath:
     output.value0 = command.pathWidth
     output.value1 = cfloat(ord(command.pathLineCap))
@@ -6711,9 +6756,13 @@ proc cbssPaintCommandPathSegmentCount(
       uint64(index) >= uint64(context.commands.len):
     return 0
   let command = context.commands[int(index)]
-  if command.kind != pcStrokePath:
-    return 0
-  uint32(min(command.path.segments.len, int(high(uint32))))
+  case command.kind
+  of pcStrokePath:
+    uint32(min(command.path.segments.len, int(high(uint32))))
+  of pcFillPath:
+    uint32(min(command.fillPathValue.segments.len, int(high(uint32))))
+  else:
+    0
 
 proc cbssPaintCommandPathSegment(
     context: CbssContextHandle;
@@ -6726,11 +6775,14 @@ proc cbssPaintCommandPathSegment(
       uint64(commandIndex) >= uint64(context.commands.len):
     return CbssInvalidArgument
   let command = context.commands[int(commandIndex)]
-  if command.kind != pcStrokePath:
-    return CbssInvalidArgument
-  if uint64(segmentIndex) >= uint64(command.path.segments.len):
+  let path =
+    case command.kind
+    of pcStrokePath: command.path
+    of pcFillPath: command.fillPathValue
+    else: return CbssInvalidArgument
+  if uint64(segmentIndex) >= uint64(path.segments.len):
     return CbssOutOfRange
-  let segment = command.path.segments[int(segmentIndex)]
+  let segment = path.segments[int(segmentIndex)]
   output[] = CbssPathSegmentC(
     kind: uint32(ord(segment.kind)),
     control1X: segment.control1.x,

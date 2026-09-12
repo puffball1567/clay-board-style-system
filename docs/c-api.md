@@ -30,7 +30,7 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x0001001D` supports:
+ABI version `0x0001001E` supports:
 
 - machine-readable Craft Driver contract metadata and runtime capability
   negotiation through stable numeric identifiers before tree construction;
@@ -99,9 +99,10 @@ ABI version `0x0001001D` supports:
 - Layout-box and node-rectangle queries.
 - Renderer-neutral paint-command iteration.
 - Text/image payload, basic computed text style, and gradient-stop queries.
-- Append-only paint kinds for retained paths and 2D transform scopes, including
-  path-segment/stroke metadata and affine-matrix queries. Existing paint-kind
-  values remain unchanged.
+- Append-only paint kinds for retained stroked and filled paths and 2D
+  transform scopes, including path segments, nonzero/evenodd fill rules,
+  stroke metadata, and affine-matrix queries. Existing paint-kind values remain
+  unchanged.
 - Append-only bounded layer paint scopes. `CBSS_PAINT_PUSH_LAYER` stores bounds
   in `rect`, opacity in `value0`, and `CbssLayerCompositeMode` in `value1`;
   `CBSS_PAINT_POP_LAYER` closes the scope.

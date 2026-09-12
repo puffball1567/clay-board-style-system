@@ -9,6 +9,14 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added retained filled `Path2D` drawing with nonzero and evenodd fill rules
+  across `Canvas2D`, Custom Paint providers, SDL3, the deterministic PPM
+  backend, test snapshots, and the C ABI. The scanline rasterizer preserves
+  subpixel coverage and nested clips without testing every edge for every
+  pixel. C ABI `0x0001001E` appends `CBSS_PAINT_FILL_PATH`; capability versions
+  for `paint.commands`, `canvas.retained`, and `custom-paint.provider` advance
+  to version 2 so foreign Drivers can negotiate the addition explicitly.
+
 - Added the opaque, versioned Custom Paint provider boundary for foreign
   Craft Drivers. C ABI `0x0001001D` advertises `custom-paint.provider`
   capability 22 version 1, copies typed material declarations, and supplies a

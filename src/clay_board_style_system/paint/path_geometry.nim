@@ -1,8 +1,12 @@
-import std/[math, options]
+import std/[algorithm, math, options]
 
 import ../core/geometry
 
 type
+  PathFillRule* = enum
+    pfrNonZero,
+    pfrEvenOdd
+
   StrokeLineCap* = enum
     slcButt,
     slcRound,
@@ -268,6 +272,130 @@ proc flattened*(
       else:
         current = none(Vec2)
   flush(false)
+
+proc fillable*(path: Path2D): bool =
+  for contour in path.flattened():
+    if contour.points.len >= 3:
+      return true
+  false
+
+proc contains*(
+    contours: openArray[FlattenedPathContour];
+    point: Vec2;
+    fillRule = pfrNonZero
+): bool =
+  ## Tests the implicitly closed fill area. Boundary ownership follows the
+  ## half-open scanline rule so adjacent contours do not double-count edges.
+  var winding = 0
+  var crossings = 0
+  for contour in contours:
+    if contour.points.len < 3:
+      continue
+    for index in 0 ..< contour.points.len:
+      let first = contour.points[index]
+      let second = contour.points[(index + 1) mod contour.points.len]
+      if (first.y > point.y) == (second.y > point.y):
+        continue
+      let edgeX = first.x +
+        (point.y - first.y) * (second.x - first.x) / (second.y - first.y)
+      if edgeX <= point.x:
+        continue
+      if fillRule == pfrEvenOdd:
+        inc crossings
+      elif second.y > first.y:
+        inc winding
+      else:
+        dec winding
+  if fillRule == pfrEvenOdd:
+    crossings mod 2 == 1
+  else:
+    winding != 0
+
+type
+  PathScanIntersection = object
+    x: float32
+    winding: int8
+
+  PathFillScratch* = object
+    intersections: seq[PathScanIntersection]
+
+proc fillPathCoverageRow*(
+    contours: openArray[FlattenedPathContour];
+    y, xStart, xEnd: int;
+    fillRule: PathFillRule;
+    coverage: var seq[uint8];
+    scratch: var PathFillScratch
+) =
+  ## Produces four-sample antialias coverage in linear scanline time. The
+  ## output stores one bit per sample for every pixel in `[xStart, xEnd)`.
+  let width = max(0, xEnd - xStart)
+  coverage.setLen(width)
+  for index in 0 ..< coverage.len:
+    coverage[index] = 0
+  if width == 0:
+    return
+
+  const offsets = [0.25'f32, 0.75'f32]
+  for offsetYIndex, offsetY in offsets:
+    scratch.intersections.setLen(0)
+    let sampleY = y.float32 + offsetY
+    for contour in contours:
+      if contour.points.len < 3:
+        continue
+      for index in 0 ..< contour.points.len:
+        let first = contour.points[index]
+        let second = contour.points[(index + 1) mod contour.points.len]
+        if (first.y > sampleY) == (second.y > sampleY):
+          continue
+        scratch.intersections.add PathScanIntersection(
+          x: first.x +
+            (sampleY - first.y) * (second.x - first.x) /
+              (second.y - first.y),
+          winding: (if second.y > first.y: 1'i8 else: -1'i8)
+        )
+    scratch.intersections.sort(
+      proc(a, b: PathScanIntersection): int = cmp(a.x, b.x)
+    )
+
+    for offsetXIndex, offsetX in offsets:
+      var nextIntersection = 0
+      var winding = 0
+      var crossings = 0
+      for localX in 0 ..< width:
+        let sampleX = (xStart + localX).float32 + offsetX
+        while nextIntersection < scratch.intersections.len and
+            scratch.intersections[nextIntersection].x <= sampleX:
+          if fillRule == pfrEvenOdd:
+            inc crossings
+          else:
+            winding += scratch.intersections[nextIntersection].winding.int
+          inc nextIntersection
+        if (fillRule == pfrEvenOdd and crossings mod 2 == 1) or
+            (fillRule == pfrNonZero and winding != 0):
+          coverage[localX] = coverage[localX] or
+            (1'u8 shl (offsetYIndex * offsets.len + offsetXIndex))
+
+proc fillPathCoverageRow*(
+    contours: openArray[FlattenedPathContour];
+    y, xStart, xEnd: int;
+    fillRule: PathFillRule;
+    coverage: var seq[uint8]
+) =
+  ## Convenience overload for callers that render only one scanline.
+  var scratch: PathFillScratch
+  contours.fillPathCoverageRow(
+    y, xStart, xEnd, fillRule, coverage, scratch
+  )
+
+proc pathCoverageCount*(coverageMask: uint8): int {.inline.} =
+  ## Counts the four antialias samples encoded by `fillPathCoverageRow`.
+  const sampleCounts = [
+    0'u8, 1, 1, 2,
+    1, 2, 2, 3,
+    1, 2, 2, 3,
+    2, 3, 3, 4
+  ]
+  sampleCounts[int(coverageMask and 0x0F'u8)].int
 
 proc bounds*(path: Path2D; tolerance = 0.25'f32): Rect =
   var initialized = false

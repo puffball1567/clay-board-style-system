@@ -1018,6 +1018,9 @@ proc paintSnapshot*(driver: CbssTestDriver): string =
       lines.add "linear-gradient " & rectSnapshot(command.gradientRect)
     of pcStrokeRect:
       lines.add "stroke-rect " & rectSnapshot(command.strokeRect) & " width=" & $command.strokeWidth
+    of pcFillPath:
+      lines.add "fill-path " & pathSnapshot(command.fillPathValue) &
+        " rule=" & $command.fillPathRule
     of pcStrokePath:
       lines.add "stroke-path " & pathSnapshot(command.path) &
         " width=" & $command.pathWidth & " cap=" & $command.pathLineCap &
@@ -1162,6 +1165,17 @@ proc structuredSnapshotJson*(driver: CbssTestDriver): JsonNode =
     of pcStrokeRect:
       entry["rect"] = rectJson(command.strokeRect)
       entry["width"] = %command.strokeWidth
+    of pcFillPath:
+      var segments = newJArray()
+      for segment in command.fillPathValue.segments:
+        segments.add %*{
+          "kind": $segment.kind,
+          "control1": {"x": segment.control1.x, "y": segment.control1.y},
+          "control2": {"x": segment.control2.x, "y": segment.control2.y},
+          "endpoint": {"x": segment.endpoint.x, "y": segment.endpoint.y}
+        }
+      entry["segments"] = segments
+      entry["fillRule"] = %($command.fillPathRule)
     of pcStrokePath:
       var segments = newJArray()
       for segment in command.path.segments:

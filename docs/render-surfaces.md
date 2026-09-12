@@ -1,6 +1,6 @@
 # Render Surfaces And Canvas
 
-Status: `Version 0.3 API`
+Status: `Available since Version 0.3; filled Path2D added on the Version 0.7 line`
 
 CBSS render surfaces let a retained drawing module occupy the content area of
 an ordinary styled Box. CBSS owns layout, padding, borders, clipping, opacity,
@@ -23,6 +23,12 @@ let app = ui.box(uiStyle([
 ]))
 
 let chart = newCanvas2D()
+var marker = initPath2D()
+marker.moveTo(vec2(24, 16))
+marker.lineTo(vec2(42, 52))
+marker.lineTo(vec2(6, 52))
+marker.closePath()
+chart.fillPath(marker, rgb(0.98, 0.65, 0.24), pfrNonZero)
 chart.fillLinearGradient(
   rect(0, 0, 280, 140),
   LinearGradient(
@@ -105,11 +111,13 @@ and can return to the SDL event wait path.
 ## Canvas Commands
 
 The initial retained command set includes nested clips, affine transforms,
-filled and stroked rectangles, rounded rectangles, open and closed paths,
-adaptive quadratic and cubic curves, configurable line caps and joins, linear
-gradients, text, and images. Use `strokeLine` for one segment, the point
-overload of `strokePath` for a polyline, or build a retained `Path2D` with
-`moveTo`, `lineTo`, `quadraticCurveTo`, `bezierCurveTo`, and `closePath`.
+filled and stroked rectangles, rounded rectangles, filled or stroked open and
+closed paths, adaptive quadratic and cubic curves, configurable nonzero and
+evenodd fill rules, line caps and joins, linear gradients, text, and images.
+Use `strokeLine` for one segment, the point overload of `strokePath` for a
+polyline, or build a retained `Path2D` with `moveTo`, `lineTo`,
+`quadraticCurveTo`, `bezierCurveTo`, and `closePath`. Path fills implicitly
+close each contour without mutating the retained path.
 
 `save` and `restore` delimit transform and clip state. `translate`, `rotate`,
 `scale`, and `transform` concatenate Canvas-local affine transforms for later

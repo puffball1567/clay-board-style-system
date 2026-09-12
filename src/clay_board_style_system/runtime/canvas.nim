@@ -17,6 +17,7 @@ type
     cckFillRect,
     cckFillLinearGradient,
     cckStrokeRect,
+    cckFillPath,
     cckStrokePath,
     cckDrawText,
     cckDrawImage,
@@ -53,6 +54,10 @@ type
       strokeColor*: Color
       strokeWidth*: float32
       strokeRadius*: float32
+    of cckFillPath:
+      fillPathValue*: Path2D
+      fillPathColor*: Color
+      fillPathRule*: PathFillRule
     of cckStrokePath:
       path*: Path2D
       pathColor*: Color
@@ -416,6 +421,20 @@ proc strokePath*(
   )
   canvas.touch()
 
+proc fillPath*(
+    canvas: Canvas2D;
+    path: Path2D;
+    color: Color;
+    fillRule = pfrNonZero
+) =
+  canvas.commands.add CanvasCommand(
+    kind: cckFillPath,
+    fillPathValue: path,
+    fillPathColor: color,
+    fillPathRule: fillRule
+  )
+  canvas.touch()
+
 proc strokePath*(
     canvas: Canvas2D;
     points: openArray[Vec2];
@@ -667,6 +686,14 @@ proc paintCommands*(
           command.pathLineCap,
           command.pathLineJoin,
           command.pathMiterLimit,
+          some(owner)
+        )
+    of cckFillPath:
+      if command.fillPathValue.fillable:
+        result.add fillPath(
+          command.fillPathValue.translated(offset),
+          command.fillPathColor.withOpacity(opacity),
+          command.fillPathRule,
           some(owner)
         )
     of cckDrawText:
