@@ -449,7 +449,9 @@ requirements, and pixel scale without exposing a backend target handle. Typed
 compositor capabilities fail closed before frame acquisition when any of these
 target constraints are unsupported, then reject unsupported source provider,
 Texture/RenderTarget kind, format, alpha mode, or dimensions before backend
-handle resolution. The bgfx helper requires source-kind and format coverage to
+handle resolution. Host-level Surface negotiation now exposes and checks the
+same alpha-mode and dimension limits before choosing direct presentation. The
+bgfx helper requires source-kind, format, alpha-mode, and dimension coverage to
 exactly match its qualified direct-presentation profile, preventing the host
 from advertising a path the compositor cannot draw. A
 production bgfx same-device compositor that consumes this context, production-adapter

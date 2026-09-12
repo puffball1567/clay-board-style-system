@@ -1,7 +1,7 @@
 import std/[algorithm, hashes, math, tables]
 
 const
-  gpuHostApiVersion* = 14'u32
+  gpuHostApiVersion* = 15'u32
   maxGpuNamespaceNameBytes* = 128
   maxGpuResourceLabelBytes* = 128
   maxGpuViewCount* = 256'u16
@@ -392,7 +392,9 @@ type
     directRenderTargetPresentationSupported*: bool
     directComputeOutputPresentationSupported*: bool
     directPresentationFormats*: set[GpuTextureFormat]
+    directPresentationAlphaModes*: set[GpuAlphaMode]
     maxDirectPresentationBuffers*: uint8
+    maxDirectPresentationWidth*, maxDirectPresentationHeight*: uint32
     homogeneousDepth*: bool
     originBottomLeft*: bool
     maxTextureSize*: uint32
@@ -736,13 +738,21 @@ proc validateBackendInfo(info: GpuBackendInfo) =
         GpuHostError,
         "GPU backend direct presentation requires at least one texture format"
       )
+    if info.directPresentationAlphaModes == {}:
+      raise newException(
+        GpuHostError,
+        "GPU backend direct presentation requires at least one alpha mode"
+      )
     if info.maxDirectPresentationBuffers < 2:
       raise newException(
         GpuHostError,
         "GPU backend direct presentation requires at least two buffers"
       )
   elif info.directPresentationFormats != {} or
+      info.directPresentationAlphaModes != {} or
       info.maxDirectPresentationBuffers != 0 or
+      info.maxDirectPresentationWidth != 0 or
+      info.maxDirectPresentationHeight != 0 or
       info.directComputeOutputPresentationSupported:
     raise newException(
       GpuHostError,

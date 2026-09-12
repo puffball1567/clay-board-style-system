@@ -1084,9 +1084,11 @@ its GPU profile is selected. The binding, typed resource adapter, SDL compositor
 hook, callback-scoped bgfx Texture/RenderTarget resolution, and explicit
 qualified capability profile are available. Typed compositor preflight now
 checks both renderer target constraints and source provider, resource kind,
-format, alpha mode, and dimensions before backend submission. The bgfx
-constructor requires exact source-kind and format coverage of the qualified
-profile; the built-in compositor and its
+format, alpha mode, and dimensions before backend submission. Host Surface
+negotiation applies the same alpha-mode and dimension constraints before
+resource retention, preserving readback fallback. The bgfx constructor
+requires exact source-kind, format, alpha-mode, and dimension coverage of the
+qualified profile; the built-in compositor and its
 real-GPU pixel qualification remain Version 0.7 work. A later wgpu-native adapter
 may implement the same CBSS-owned contract, but it is no longer the standard
 provider or a release prerequisite.

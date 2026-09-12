@@ -25,7 +25,9 @@ type
     readbackFallback*: bool
     computeOutputDirect*: bool
     format*: GpuTextureFormat
+    directAlphaModes*: set[GpuAlphaMode]
     maxDirectBuffers*: int
+    maxDirectWidth*, maxDirectHeight*: uint32
 
   GpuDisplaySurface* = ref object
     host: GpuHost
@@ -104,7 +106,10 @@ proc gpuDisplaySurfaceCapabilities*(
     result.direct and resolved.acceptComputeOutput and
     info.directComputeOutputPresentationSupported
   result.format = resolved.format
+  result.directAlphaModes = info.directPresentationAlphaModes
   result.maxDirectBuffers = int(info.maxDirectPresentationBuffers)
+  result.maxDirectWidth = info.maxDirectPresentationWidth
+  result.maxDirectHeight = info.maxDirectPresentationHeight
 
 proc newGpuDisplaySurface*(
     host: GpuHost;

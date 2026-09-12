@@ -14,7 +14,9 @@ type
     renderTargetSupported: bool
     computeOutputSupported: bool
     formats: set[GpuTextureFormat]
+    alphaModes: set[GpuAlphaMode]
     maxBuffers: uint8
+    maxWidth, maxHeight: uint32
 
   BgfxHostOptions* = object
     rendererType*: bgfx_renderer_type_t
@@ -56,11 +58,14 @@ proc validate(profile: BgfxDirectPresentationProfile) =
   let supported = profile.textureSupported or profile.renderTargetSupported
   if not supported:
     if profile.computeOutputSupported or profile.formats != {} or
-        profile.maxBuffers != 0:
+        profile.alphaModes != {} or profile.maxBuffers != 0 or
+        profile.maxWidth != 0 or profile.maxHeight != 0:
       raise newException(ValueError, "disabled bgfx direct presentation profile is inconsistent")
     return
   if profile.formats == {}:
     raise newException(ValueError, "bgfx direct presentation requires at least one texture format")
+  if profile.alphaModes == {}:
+    raise newException(ValueError, "bgfx direct presentation requires at least one alpha mode")
   if profile.maxBuffers < uint8(MinGpuDirectSurfaceBuffers) or
       profile.maxBuffers > uint8(MaxGpuDirectSurfaceBuffers):
     raise newException(ValueError, "bgfx direct presentation buffer count is outside CBSS limits")
@@ -72,7 +77,12 @@ proc newQualifiedBgfxDirectPresentationProfile*(
     maxBuffers = DefaultGpuDirectSurfaceBuffers;
     textureSupported = true;
     renderTargetSupported = true;
-    computeOutputSupported = false
+    computeOutputSupported = false;
+    alphaModes: set[GpuAlphaMode] = {
+      gcamStraight, gcamPremultiplied, gcamOpaque
+    };
+    maxWidth = 0'u32;
+    maxHeight = 0'u32
 ): BgfxDirectPresentationProfile =
   ## Declares capabilities already qualified by the presentation owner against
   ## the real GPU renderer. Constructing this value does not perform that test.
@@ -83,7 +93,10 @@ proc newQualifiedBgfxDirectPresentationProfile*(
     renderTargetSupported: renderTargetSupported,
     computeOutputSupported: computeOutputSupported,
     formats: formats,
-    maxBuffers: uint8(maxBuffers)
+    alphaModes: alphaModes,
+    maxBuffers: uint8(maxBuffers),
+    maxWidth: maxWidth,
+    maxHeight: maxHeight
   )
   result.validate()
 
@@ -120,7 +133,10 @@ proc fillBackendInfo(
     directComputeOutputPresentationSupported:
       value.options.directPresentation.computeOutputSupported,
     directPresentationFormats: value.options.directPresentation.formats,
+    directPresentationAlphaModes: value.options.directPresentation.alphaModes,
     maxDirectPresentationBuffers: value.options.directPresentation.maxBuffers,
+    maxDirectPresentationWidth: value.options.directPresentation.maxWidth,
+    maxDirectPresentationHeight: value.options.directPresentation.maxHeight,
     homogeneousDepth: caps.homogeneousDepth,
     originBottomLeft: caps.originBottomLeft,
     maxTextureSize: caps.limits.maxTextureSize
@@ -370,6 +386,17 @@ proc newBgfxDirectCompositor*(
     raise newException(
       ValueError,
       "bgfx direct compositor formats must match its qualified profile"
+    )
+  if resolved.alphaModes != profile.alphaModes:
+    raise newException(
+      ValueError,
+      "bgfx direct compositor alpha modes must match its qualified profile"
+    )
+  if resolved.maxSourceWidth != profile.maxWidth or
+      resolved.maxSourceHeight != profile.maxHeight:
+    raise newException(
+      ValueError,
+      "bgfx direct compositor dimensions must match its qualified profile"
     )
   newGpuDirectCompositor(
     resolved,
