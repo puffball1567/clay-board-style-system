@@ -8,6 +8,17 @@ const
   MaxGpuDirectSurfaceBuffers* = 8
 
 type
+  GpuDirectSurfaceLimitation* = enum
+    gdslHostUnavailable,
+    gdslPresentationPathUnsupported,
+    gdslFormatUnsupported,
+    gdslAlphaModeUnsupported,
+    gdslBufferCountUnsupported,
+    gdslWidthLimitExceeded,
+    gdslHeightLimitExceeded,
+    gdslTextureSizeLimitExceeded,
+    gdslComputeOutputUnsupported
+
   GpuDirectSurfaceConfig* = object
     width*, height*: uint32
     format*: GpuTextureFormat
@@ -77,29 +88,44 @@ proc normalized(config: GpuDirectSurfaceConfig): GpuDirectSurfaceConfig =
   if result.label.len > maxGpuResourceLabelBytes:
     raise newException(ValueError, "GPU direct surface label is too long")
 
-proc supportsGpuDirectSurface*(
+proc gpuDirectSurfaceLimitations*(
     host: GpuHost;
     config: GpuDirectSurfaceConfig
-): bool =
+): set[GpuDirectSurfaceLimitation] =
   if host.isNil or not host.isReady():
-    return false
+    return {gdslHostUnavailable}
   let resolved = config.normalized()
   let info = host.backendInfo()
   let pathSupported =
     info.directTexturePresentationSupported or
     info.directRenderTargetPresentationSupported
-  pathSupported and resolved.format in info.directPresentationFormats and
-    resolved.alphaMode in info.directPresentationAlphaModes and
-    resolved.bufferCount <= int(info.maxDirectPresentationBuffers) and
-    (info.maxDirectPresentationWidth == 0 or
-      resolved.width <= info.maxDirectPresentationWidth) and
-    (info.maxDirectPresentationHeight == 0 or
-      resolved.height <= info.maxDirectPresentationHeight) and
-    (info.maxTextureSize == 0 or
-      (resolved.width <= info.maxTextureSize and
-       resolved.height <= info.maxTextureSize)) and
-    (not resolved.acceptComputeOutput or
-      info.directComputeOutputPresentationSupported)
+  if not pathSupported:
+    return {gdslPresentationPathUnsupported}
+  if resolved.format notin info.directPresentationFormats:
+    result.incl gdslFormatUnsupported
+  if resolved.alphaMode notin info.directPresentationAlphaModes:
+    result.incl gdslAlphaModeUnsupported
+  if resolved.bufferCount > int(info.maxDirectPresentationBuffers):
+    result.incl gdslBufferCountUnsupported
+  if info.maxDirectPresentationWidth != 0 and
+      resolved.width > info.maxDirectPresentationWidth:
+    result.incl gdslWidthLimitExceeded
+  if info.maxDirectPresentationHeight != 0 and
+      resolved.height > info.maxDirectPresentationHeight:
+    result.incl gdslHeightLimitExceeded
+  if info.maxTextureSize != 0 and
+      (resolved.width > info.maxTextureSize or
+       resolved.height > info.maxTextureSize):
+    result.incl gdslTextureSizeLimitExceeded
+  if resolved.acceptComputeOutput and
+      not info.directComputeOutputPresentationSupported:
+    result.incl gdslComputeOutputUnsupported
+
+proc supportsGpuDirectSurface*(
+    host: GpuHost;
+    config: GpuDirectSurfaceConfig
+): bool =
+  host.gpuDirectSurfaceLimitations(config) == {}
 
 proc newGpuDirectSurface*(
     host: GpuHost;

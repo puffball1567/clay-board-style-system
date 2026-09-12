@@ -22,6 +22,7 @@ type
 
   GpuDisplaySurfaceCapabilities* = object
     direct*: bool
+    directLimitations*: set[GpuDirectSurfaceLimitation]
     readbackFallback*: bool
     computeOutputDirect*: bool
     format*: GpuTextureFormat
@@ -95,7 +96,10 @@ proc gpuDisplaySurfaceCapabilities*(
   let rasterBytes =
     if rasterSizeFits: rasterPixels * 4'u64
     else: high(uint64)
-  result.direct = host.supportsGpuDirectSurface(resolved.directConfig())
+  result.directLimitations = host.gpuDirectSurfaceLimitations(
+    resolved.directConfig()
+  )
+  result.direct = result.directLimitations == {}
   result.readbackFallback =
     rasterSizeFits and
     resolved.format in {gtfR8, gtfRgba8, gtfBgra8} and

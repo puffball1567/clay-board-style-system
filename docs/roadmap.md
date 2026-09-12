@@ -1093,6 +1093,11 @@ real-GPU pixel qualification remain Version 0.7 work. A later wgpu-native adapte
 may implement the same CBSS-owned contract, but it is no longer the standard
 provider or a release prerequisite.
 
+Direct Surface capability queries retain typed limitation reasons for every
+negotiation axis. `GpuDisplaySurface` can therefore preserve deterministic
+readback fallback while tooling reports the exact rejected direct capability,
+without parsing backend-specific strings.
+
 Typed Vertex, Fragment, and Compute graphs now compile through an explicitly
 imported build-only wrapper around the official bgfx `shaderc`. Compute graphs
 include bounded work-group sizes, invocation builtins, integer/vector values,

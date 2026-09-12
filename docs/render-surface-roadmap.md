@@ -459,6 +459,11 @@ device recreation, and visible real-GPU conformance remain release gates below.
 The current bgfx adapter fails closed for in-place restoration instead of
 relying on an unsafe runtime restart sequence.
 
+Direct Surface negotiation also returns a fixed set of typed limitations for
+host availability, path, format, alpha, buffering, dimensions, texture limits,
+and compute output. This gives adapters and applications deterministic fallback
+policy without treating human-readable backend errors as control flow.
+
 ### Typed Shader Custom Style Painting
 
 Status: `Typed authoring and underlay/overlay composition implemented; fully
