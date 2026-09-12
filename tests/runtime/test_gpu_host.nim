@@ -107,7 +107,9 @@ type MockGpuContext = ref object of GpuBackendContext
   directRenderTargetSupported: bool
   directComputeOutputSupported: bool
   directFormats: set[GpuTextureFormat]
+  directAlphaModes: set[GpuAlphaMode]
   maxDirectBuffers: uint8
+  maxDirectWidth, maxDirectHeight: uint32
   lastSubmissionResources: seq[uint64]
   destroyedResources: seq[uint64]
   width, height: uint32
@@ -133,7 +135,10 @@ proc openOwned(
     directRenderTargetPresentationSupported: state.directRenderTargetSupported,
     directComputeOutputPresentationSupported: state.directComputeOutputSupported,
     directPresentationFormats: state.directFormats,
+    directPresentationAlphaModes: state.directAlphaModes,
     maxDirectPresentationBuffers: state.maxDirectBuffers,
+    maxDirectPresentationWidth: state.maxDirectWidth,
+    maxDirectPresentationHeight: state.maxDirectHeight,
     maxTextureSize: 8192
   )
   state.openStatus
@@ -155,7 +160,10 @@ proc attachBorrowed(
     directRenderTargetPresentationSupported: state.directRenderTargetSupported,
     directComputeOutputPresentationSupported: state.directComputeOutputSupported,
     directPresentationFormats: state.directFormats,
-    maxDirectPresentationBuffers: state.maxDirectBuffers
+    directPresentationAlphaModes: state.directAlphaModes,
+    maxDirectPresentationBuffers: state.maxDirectBuffers,
+    maxDirectPresentationWidth: state.maxDirectWidth,
+    maxDirectPresentationHeight: state.maxDirectHeight
   )
   state.openStatus
 
@@ -540,13 +548,21 @@ proc enableDirectPresentation(
     maxBuffers = 3'u8;
     textures = true;
     renderTargets = true;
-    computeOutput = true
+    computeOutput = true;
+    alphaModes: set[GpuAlphaMode] = {
+      gcamStraight, gcamPremultiplied, gcamOpaque
+    };
+    maxWidth = 0'u32;
+    maxHeight = 0'u32
 ) =
   context.directTextureSupported = textures
   context.directRenderTargetSupported = renderTargets
   context.directComputeOutputSupported = computeOutput
   context.directFormats = formats
+  context.directAlphaModes = alphaModes
   context.maxDirectBuffers = maxBuffers
+  context.maxDirectWidth = maxWidth
+  context.maxDirectHeight = maxHeight
 
 proc standardBudget(): GpuResourceBudget =
   GpuResourceBudget(
@@ -818,6 +834,28 @@ suite "GPU host lifecycle":
       discard openGpuHost(borrowed.backend, ghoBorrowed)
     check borrowed.borrowedAttaches == 1
     check borrowed.borrowedDetaches == 1
+
+    for malformed in 0 .. 2:
+      let context = newContext()
+      context.enableDirectPresentation(maxBuffers = 2)
+      case malformed
+      of 0:
+        context.directAlphaModes = {}
+      of 1:
+        context.directTextureSupported = false
+        context.directRenderTargetSupported = false
+        context.directComputeOutputSupported = false
+      else:
+        context.directTextureSupported = false
+        context.directRenderTargetSupported = false
+        context.directComputeOutputSupported = false
+        context.directFormats = {}
+        context.directAlphaModes = {}
+        context.maxDirectBuffers = 0
+        context.maxDirectWidth = 64
+      expect GpuHostError:
+        discard openGpuHost(context.backend, ghoOwned)
+      check context.ownedCloses == 1
 
   test "failed restoration preserves device-lost state and backend information":
     let context = newContext()
@@ -4546,6 +4584,45 @@ suite "GPU direct surface lifecycle":
       discard host.supportsGpuDirectSurface(config)
     config = defaultGpuDirectSurfaceConfig(8193, 32)
     check not host.supportsGpuDirectSurface(config)
+    host.close()
+
+  test "capability negotiation enforces alpha modes and direct dimensions":
+    let context = newContext()
+    context.enableDirectPresentation(
+      maxBuffers = 2,
+      alphaModes = {gcamPremultiplied, gcamOpaque},
+      maxWidth = 640,
+      maxHeight = 360
+    )
+    let host = openGpuHost(context.backend, ghoOwned)
+    var config = defaultGpuDirectSurfaceConfig(640, 360)
+    config.bufferCount = 2
+
+    for alphaMode in GpuAlphaMode:
+      config.alphaMode = alphaMode
+      check host.supportsGpuDirectSurface(config) ==
+        (alphaMode in {gcamPremultiplied, gcamOpaque})
+
+    config.alphaMode = gcamPremultiplied
+    config.width = 641
+    check not host.supportsGpuDirectSurface(config)
+    config.width = 640
+    config.height = 361
+    check not host.supportsGpuDirectSurface(config)
+    config.width = 1
+    config.height = 1
+    check host.supportsGpuDirectSurface(config)
+
+    var displayConfig = defaultGpuDisplaySurfaceConfig(641, 360)
+    displayConfig.bufferCount = 2
+    displayConfig.alphaMode = gcamPremultiplied
+    let capabilities = host.gpuDisplaySurfaceCapabilities(displayConfig)
+    check not capabilities.direct
+    check capabilities.readbackFallback
+    check capabilities.directAlphaModes == {gcamPremultiplied, gcamOpaque}
+    check capabilities.maxDirectBuffers == 2
+    check capabilities.maxDirectWidth == 640
+    check capabilities.maxDirectHeight == 360
     host.close()
 
   test "unsupported hosts fail before retaining resources":

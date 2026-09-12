@@ -89,7 +89,12 @@ proc supportsGpuDirectSurface*(
     info.directTexturePresentationSupported or
     info.directRenderTargetPresentationSupported
   pathSupported and resolved.format in info.directPresentationFormats and
+    resolved.alphaMode in info.directPresentationAlphaModes and
     resolved.bufferCount <= int(info.maxDirectPresentationBuffers) and
+    (info.maxDirectPresentationWidth == 0 or
+      resolved.width <= info.maxDirectPresentationWidth) and
+    (info.maxDirectPresentationHeight == 0 or
+      resolved.height <= info.maxDirectPresentationHeight) and
     (info.maxTextureSize == 0 or
       (resolved.width <= info.maxTextureSize and
        resolved.height <= info.maxTextureSize)) and

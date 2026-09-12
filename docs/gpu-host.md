@@ -723,7 +723,8 @@ The backend-neutral direct Texture/RenderTarget contract, bounded frame
 retention, capability negotiation, and asynchronous readback fallback are
 implemented. The bgfx adapter keeps direct presentation disabled by default.
 An already-qualified presentation owner can declare its exact Texture,
-RenderTarget, compute-output, format, and buffer capabilities through
+RenderTarget, compute-output, format, alpha-mode, buffer, and dimension
+capabilities through
 `newQualifiedBgfxDirectPresentationProfile()` and connect a callback-scoped
 typed texture adapter with `newBgfxDirectCompositeAdapter()`. This opt-in does
 not replace visible real-renderer qualification and does not claim that the SDL
@@ -733,9 +734,12 @@ unsupported SDL offscreen targets fail closed rather than being redirected to
 the window. Typed compositor capabilities perform that check before acquiring a
 published frame, then validate the acquired frame's provider, resource kind,
 format, alpha mode, and dimensions before resolving its scoped bgfx handle.
-The bgfx helper requires exact source-kind and format coverage of the qualified
-host profile, so direct-path negotiation cannot over-advertise the installed
-compositor. A built-in same-device paint compositor and in-place restoration in
+The bgfx helper requires exact source-kind, format, alpha-mode, and dimension
+coverage of the qualified host profile, so direct-path negotiation cannot
+over-advertise the installed compositor. Surface construction checks those
+same axes before retaining resources and may select the asynchronous readback
+fallback when direct presentation is incompatible. A built-in same-device
+paint compositor and in-place restoration in
 a production GPU adapter remain release work. The host provides deterministic
 namespace restoration and failed-owner rollback.
 

@@ -324,7 +324,10 @@ suite "optional bgfxim adapter":
     options.directPresentation = newQualifiedBgfxDirectPresentationProfile(
       {gtfRgba8},
       maxBuffers = 2,
-      computeOutputSupported = true
+      computeOutputSupported = true,
+      alphaModes = {gcamStraight},
+      maxWidth = 8,
+      maxHeight = 4
     )
     let backend = newBgfxBackend(options)
     var directSubmitCount = 0
@@ -352,7 +355,10 @@ suite "optional bgfxim adapter":
     check info.directRenderTargetPresentationSupported
     check info.directComputeOutputPresentationSupported
     check info.directPresentationFormats == {gtfRgba8}
+    check info.directPresentationAlphaModes == {gcamStraight}
     check info.maxDirectPresentationBuffers == 2
+    check info.maxDirectPresentationWidth == 8
+    check info.maxDirectPresentationHeight == 4
 
     let resources = host.createGpuNamespace(
       "qualified-direct",
@@ -415,6 +421,10 @@ suite "optional bgfxim adapter":
       discard newQualifiedBgfxDirectPresentationProfile({})
     expect ValueError:
       discard newQualifiedBgfxDirectPresentationProfile(
+        {gtfRgba8}, alphaModes = {}
+      )
+    expect ValueError:
+      discard newQualifiedBgfxDirectPresentationProfile(
         {gtfRgba8},
         textureSupported = false,
         renderTargetSupported = false
@@ -448,7 +458,12 @@ suite "optional bgfxim adapter":
       check info.directRenderTargetPresentationSupported == item.target
       check info.directComputeOutputPresentationSupported == item.compute
       check info.directPresentationFormats == {gtfRgba8, gtfBgra8}
+      check info.directPresentationAlphaModes == {
+        gcamStraight, gcamPremultiplied, gcamOpaque
+      }
       check info.maxDirectPresentationBuffers == uint8(item.buffers)
+      check info.maxDirectPresentationWidth == 0
+      check info.maxDirectPresentationHeight == 0
       host.close()
 
   test "direct-composite adapter resolves only scoped presentable handles":
@@ -648,7 +663,10 @@ suite "optional bgfxim adapter":
       {gtfRgba8, gtfBgra8},
       maxBuffers = 3,
       textureSupported = true,
-      renderTargetSupported = true
+      renderTargetSupported = true,
+      alphaModes = {gcamStraight, gcamPremultiplied},
+      maxWidth = 1920,
+      maxHeight = 1080
     )
     let backend = newBgfxBackend(options)
     let submit: BgfxDirectSubmitProc =
@@ -661,13 +679,19 @@ suite "optional bgfxim adapter":
       gpuDirectCompositeCapabilities(
         {gdctWindow},
         sourceKinds = {grkTexture, grkRenderTarget},
-        sourceFormats = {gtfRgba8, gtfBgra8}
+        sourceFormats = {gtfRgba8, gtfBgra8},
+        alphaModes = {gcamStraight, gcamPremultiplied},
+        maxSourceWidth = 1920,
+        maxSourceHeight = 1080
       ),
       submit
     )
     check exact.capabilities.sourceProviders == {gpkBgfx}
     check exact.capabilities.sourceKinds == {grkTexture, grkRenderTarget}
     check exact.capabilities.sourceFormats == {gtfRgba8, gtfBgra8}
+    check exact.capabilities.alphaModes == {gcamStraight, gcamPremultiplied}
+    check exact.capabilities.maxSourceWidth == 1920
+    check exact.capabilities.maxSourceHeight == 1080
 
     for sourceKinds in [
       {grkTexture},
@@ -679,7 +703,10 @@ suite "optional bgfxim adapter":
           gpuDirectCompositeCapabilities(
             {gdctWindow},
             sourceKinds = sourceKinds,
-            sourceFormats = {gtfRgba8, gtfBgra8}
+            sourceFormats = {gtfRgba8, gtfBgra8},
+            alphaModes = {gcamStraight, gcamPremultiplied},
+            maxSourceWidth = 1920,
+            maxSourceHeight = 1080
           ),
           submit
         )
@@ -694,7 +721,44 @@ suite "optional bgfxim adapter":
           gpuDirectCompositeCapabilities(
             {gdctWindow},
             sourceKinds = {grkTexture, grkRenderTarget},
-            sourceFormats = sourceFormats
+            sourceFormats = sourceFormats,
+            alphaModes = {gcamStraight, gcamPremultiplied},
+            maxSourceWidth = 1920,
+            maxSourceHeight = 1080
+          ),
+          submit
+        )
+
+    for alphaModes in [
+      {gcamStraight},
+      {gcamStraight, gcamPremultiplied, gcamOpaque}
+    ]:
+      expect ValueError:
+        discard newBgfxDirectCompositor(
+          backend,
+          gpuDirectCompositeCapabilities(
+            {gdctWindow},
+            sourceKinds = {grkTexture, grkRenderTarget},
+            sourceFormats = {gtfRgba8, gtfBgra8},
+            alphaModes = alphaModes,
+            maxSourceWidth = 1920,
+            maxSourceHeight = 1080
+          ),
+          submit
+        )
+
+    for dimensions in [(0'u32, 1080'u32), (1920'u32, 0'u32),
+                       (1919'u32, 1080'u32), (1920'u32, 1081'u32)]:
+      expect ValueError:
+        discard newBgfxDirectCompositor(
+          backend,
+          gpuDirectCompositeCapabilities(
+            {gdctWindow},
+            sourceKinds = {grkTexture, grkRenderTarget},
+            sourceFormats = {gtfRgba8, gtfBgra8},
+            alphaModes = {gcamStraight, gcamPremultiplied},
+            maxSourceWidth = dimensions[0],
+            maxSourceHeight = dimensions[1]
           ),
           submit
         )
@@ -716,7 +780,10 @@ suite "optional bgfxim adapter":
     check not host.backendInfo.directRenderTargetPresentationSupported
     check not host.backendInfo.directComputeOutputPresentationSupported
     check host.backendInfo.directPresentationFormats == {}
+    check host.backendInfo.directPresentationAlphaModes == {}
     check host.backendInfo.maxDirectPresentationBuffers == 0
+    check host.backendInfo.maxDirectPresentationWidth == 0
+    check host.backendInfo.maxDirectPresentationHeight == 0
     check stubWidth() == 640
     check stubHeight() == 480
 

@@ -70,9 +70,13 @@ double and triple buffering without rebuilding layout or hit regions.
 ## Capability Contract
 
 `GpuBackendInfo` reports direct Texture, RenderTarget, and compute-output
-support separately, along with accepted formats and the maximum buffer count.
-CBSS validates the matrix when the host opens. Inconsistent declarations close
-or detach the backend and fail the open operation.
+support separately, along with accepted formats, alpha modes, maximum buffer
+count, and optional direct-display width and height limits. CBSS validates the
+matrix when the host opens. Inconsistent declarations close or detach the
+backend and fail the open operation. Surface negotiation checks every axis
+before retaining a GPU resource, allowing `GpuDisplaySurface` to select its
+readback fallback instead of discovering an incompatible compositor at paint
+time.
 
 The bgfx backend defaults all direct capabilities to disabled. A presentation
 owner that has passed the real-renderer release gate may opt in with an explicit
@@ -85,16 +89,21 @@ options.directPresentation = newQualifiedBgfxDirectPresentationProfile(
   maxBuffers = 3,
   textureSupported = true,
   renderTargetSupported = true,
-  computeOutputSupported = true
+  computeOutputSupported = true,
+  alphaModes = {gcamStraight, gcamPremultiplied},
+  maxWidth = 4096,
+  maxHeight = 4096
 )
 let backend = newBgfxBackend(options)
 ```
 
-The constructor rejects an empty format set, a buffer count outside two through
-eight, a profile with no presentation path, and compute output without Texture
-presentation. The profile is an assertion by the presentation owner, not a
-runtime hardware probe. It must be paired with a compositor created for the
-same `backend` and must not be enabled solely because resource creation works.
+The constructor rejects an empty format or alpha-mode set, a buffer count
+outside two through eight, a profile with no presentation path, and compute
+output without Texture presentation. Zero maximum dimensions mean that the
+profile adds no limit beyond the backend's general texture limit. The profile
+is an assertion by the presentation owner, not a runtime hardware probe. It
+must be paired with a compositor created for the same `backend` and must not be
+enabled solely because resource creation works.
 
 `gpuDisplaySurfaceCapabilities()` reports both the direct and readback paths.
 Readback capability also accounts for the requested format, bounded raster
@@ -137,6 +146,11 @@ dimensions before invoking the backend callback. Rejection releases the lease
 in the same call. The SDL renderer retains a proc-only setter for source
 compatibility, but that overload necessarily assumes the callback can process
 every target and source context.
+
+The bgfx helper requires exact source-kind, format, alpha-mode, and dimension
+coverage between its qualified host profile and typed compositor. A profile
+therefore cannot advertise a direct Surface that its installed compositor
+would later reject.
 
 The SDL3 renderer exposes `setGpuDirectCompositor()` and routes direct-surface
 commands through that callback in its normal, Cosmic Text, and layered render
