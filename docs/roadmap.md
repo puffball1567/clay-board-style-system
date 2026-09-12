@@ -2283,9 +2283,11 @@ capabilities now reject unsupported target, clip, and mask combinations before
 acquiring the published GPU frame. Custom Paint declarations now
 retain bounded typed material parameters in cold style storage and deliver them
 to providers without per-frame string parsing. The production bgfx compositor
-that consumes this context,
-production-adapter device recreation, declarative mask and filter composition,
-and broader real-GPU qualification remain open Version 0.7 work.
+that consumes this context, declarative mask and filter composition, and
+broader real-GPU qualification remain open Version 0.7 work. Owned bgfx hosts
+now recreate the backend from their latest validated configuration after
+device loss before deterministic namespace restoration begins; borrowed hosts
+continue to require recreation by their external owner.
 Backend-neutral named Custom Paint
 materials now connect ordinary Style declarations to bounded underlay and
 overlay command streams without adding nodes. `GpuCanvasSurface` can use that
