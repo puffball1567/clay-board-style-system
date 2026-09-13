@@ -3,8 +3,8 @@
 
 set -eu
 
-if [ "$#" -ne 4 ]; then
-  echo "usage: $0 <bgfxim-dir> <bgfx-dir> <bx-dir> <bimg-dir>" >&2
+if [ "$#" -lt 4 ] || [ "$#" -gt 5 ]; then
+  echo "usage: $0 <bgfxim-dir> <bgfx-dir> <bx-dir> <bimg-dir> [host|showcase]" >&2
   exit 2
 fi
 
@@ -12,12 +12,11 @@ bgfxim_dir=$1
 bgfx_dir=$2
 bx_dir=$3
 bimg_dir=$4
+demo_kind=${5:-host}
 
 for required in \
   "$bgfxim_dir/bgfx.nim" \
   "$bgfx_dir/src/amalgamated.cpp" \
-  "$bgfx_dir/examples/runtime/shaders/glsl/vs_cubes.bin" \
-  "$bgfx_dir/examples/runtime/shaders/glsl/fs_cubes.bin" \
   "$bx_dir/src/amalgamated.cpp" \
   "$bimg_dir/src/image.cpp" \
   "$bimg_dir/3rdparty/astc-encoder/include/astcenc.h"
@@ -27,6 +26,30 @@ do
     exit 2
   }
 done
+
+case "$demo_kind" in
+  host)
+    for required in \
+      "$bgfx_dir/examples/runtime/shaders/glsl/vs_cubes.bin" \
+      "$bgfx_dir/examples/runtime/shaders/glsl/fs_cubes.bin"
+    do
+      test -f "$required" || {
+        echo "missing bgfx demo input: $required" >&2
+        exit 2
+      }
+    done
+    ;;
+  showcase)
+    test -n "${CBSS_SHADERC:-}" && test -x "$CBSS_SHADERC" || {
+      echo "CBSS_SHADERC must point to the official bgfx shaderc executable" >&2
+      exit 2
+    }
+    ;;
+  *)
+    echo "unknown bgfx demo kind: $demo_kind" >&2
+    exit 2
+    ;;
+esac
 
 if ! pkg-config --exists sdl3; then
   echo "SDL3 development files were not found through pkg-config" >&2
@@ -76,6 +99,27 @@ done
 "$archiver" rcs "$build_dir/libbimg.a" "$build_dir/bimg.o" \
   "$build_dir"/astcenc_*.o
 
+demo_source=examples/bgfx_host_demo.nim
+shader_dir="$bgfx_dir/examples/runtime/shaders/glsl"
+if [ "$demo_kind" = showcase ]; then
+  shader_source=examples/shaders/v07_gpu_showcase
+  shader_dir="$build_dir/showcase-shaders"
+  mkdir -p "$shader_dir"
+  "$CBSS_SHADERC" \
+    -f "$shader_source/vs_showcase.sc" \
+    -o "$shader_dir/vs_showcase.bin" \
+    --platform linux --type vertex --profile 120 --Werror \
+    --varyingdef "$shader_source/varying.def.sc" \
+    -i "$bgfx_dir/src"
+  "$CBSS_SHADERC" \
+    -f "$shader_source/fs_showcase.sc" \
+    -o "$shader_dir/fs_showcase.bin" \
+    --platform linux --type fragment --profile 120 --Werror \
+    --varyingdef "$shader_source/varying.def.sc" \
+    -i "$bgfx_dir/src"
+  demo_source=examples/v07_gpu_showcase_demo.nim
+fi
+
 nim c -r --mm:arc -d:release -d:cbssGpuBgfx \
   -d:cbssSdl3LinkMode=system --path:src --path:"$bgfxim_dir" \
   --nimcache:"$build_dir/nim" --out:"$build_dir/cbss-bgfx-host-demo" \
@@ -84,5 +128,5 @@ nim c -r --mm:arc -d:release -d:cbssGpuBgfx \
   --passL:"$build_dir/bgfx.o" --passL:"$build_dir/libbimg.a" \
   --passL:"$build_dir/bx.o" --passL:-lstdc++ --passL:-pthread \
   --passL:-ldl --passL:-lm --passL:"$sdl_libs" \
-  examples/bgfx_host_demo.nim \
-  "$bgfx_dir/examples/runtime/shaders/glsl"
+  "$demo_source" \
+  "$shader_dir"

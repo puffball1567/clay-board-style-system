@@ -9,6 +9,15 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added Version 0.7 design and GPU showcase applications. The native design
+  showcase switches among five original visual systems, including a retained
+  infinite-heart ribbon, while preserving explicit frame scheduling. The
+  optional bgfx showcase runs five full-screen fragment workloads for fluid,
+  particles, mechanical surfaces, image processing, and a pointer-reactive UI
+  material. Its original shaders are compiled by the official build-only
+  `shaderc`, use one CBSS-owned GPU host and presentation path, and do not enter
+  standard package builds.
+
 - Added retained dashed path strokes across the Nim Canvas, Custom Paint, the
   deterministic PPM backend, SDL3, test snapshots, and the C ABI. Dash lists
   accept offsets and CSS-compatible odd-length repetition, reject invalid

@@ -18,3 +18,5 @@ suite "example contract discovery":
     check "examples/paint_demo.nim" in examples
     check "examples/sdl3_demo.nim" in examples
     check "examples/bgfx_host_demo.nim" notin examples
+    check "examples/v07_gpu_showcase_demo.nim" notin examples
+    check "examples/v07_design_showcase_demo.nim" in examples

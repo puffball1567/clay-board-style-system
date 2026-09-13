@@ -77,8 +77,10 @@ suite "official bgfx shaderc integration":
 
     let encodedVertex = vertexPackage.encodeGpuShaderPackage()
     let encodedFragment = fragmentPackage.encodeGpuShaderPackage()
-    check encodedVertex.decodeGpuShaderPackage().artifactFor(gsbtVulkan).bytecode.len > 0
-    check encodedFragment.decodeGpuShaderPackage().artifactFor(gsbtVulkan).bytecode.len > 0
+    check encodedVertex.decodeGpuShaderPackage().artifactFor(
+        gsbtVulkan).bytecode.len > 0
+    check encodedFragment.decodeGpuShaderPackage().artifactFor(
+        gsbtVulkan).bytecode.len > 0
 
   test "compiles generated compute shader and packages SPIR-V":
     let root = createTempDir("cbss-shaderc-compute-integration-", "")
@@ -102,3 +104,33 @@ suite "official bgfx shaderc integration":
     let decoded = package.encodeGpuShaderPackage().decodeGpuShaderPackage()
     check decoded.descriptor.stage == gssCompute
     check decoded.artifactFor(gsbtVulkan).bytecode.len > 0
+
+  test "compiles the Version 0.7 GPU showcase shaders for OpenGL":
+    let repoRoot = currentSourcePath().parentDir().parentDir().parentDir()
+    let sourceRoot = repoRoot / "examples/shaders/v07_gpu_showcase"
+    let root = createTempDir("cbss-v07-showcase-shaderc-", "")
+    defer:
+      removeDir(root)
+
+    let varying = readFile(sourceRoot / "varying.def.sc")
+    let config = gpuShaderCompilerConfig(
+      shaderc,
+      [shaderIncludes],
+      workDirectory = root
+    )
+    let target = gpuShaderCompileTarget(gsbtOpenGL, gscpLinux, "120")
+    let vertex = GpuShaderSource(
+      stage: gssVertex,
+      label: "v07-showcase-vertex",
+      source: readFile(sourceRoot / "vs_showcase.sc"),
+      varyingDefinitions: varying
+    )
+    let fragment = GpuShaderSource(
+      stage: gssFragment,
+      label: "v07-showcase-fragment",
+      source: readFile(sourceRoot / "fs_showcase.sc"),
+      varyingDefinitions: varying
+    )
+
+    check compileGpuShader(vertex, target, config).artifact.bytecode.len > 0
+    check compileGpuShader(fragment, target, config).artifact.bytecode.len > 0

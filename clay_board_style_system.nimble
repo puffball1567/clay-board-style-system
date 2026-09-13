@@ -150,6 +150,28 @@ task runBgfxHostDemo, "Build and run the optional visible bgfx GPU-host demo":
   else:
     echo "The current visible bgfx host demo runner targets Linux SDL3."
 
+task runV07GpuShowcase, "Build and run the five-scene Version 0.7 GPU showcase":
+  when defined(linux):
+    let bgfximPath = getEnv("CBSS_BGFXIM_PATH")
+    let bgfxPath = getEnv("CBSS_BGFX_PATH")
+    let bxPath = getEnv("CBSS_BX_PATH")
+    let bimgPath = getEnv("CBSS_BIMG_PATH")
+    let shaderc = getEnv("CBSS_SHADERC")
+    for path in [bgfximPath, bgfxPath, bxPath, bimgPath]:
+      if path.len == 0 or not dirExists(path):
+        raise newException(
+          ValueError,
+          "CBSS_BGFXIM_PATH, CBSS_BGFX_PATH, CBSS_BX_PATH, and CBSS_BIMG_PATH must point to compatible source checkouts"
+        )
+    if shaderc.len == 0 or not fileExists(shaderc):
+      raise newException(
+        ValueError,
+        "CBSS_SHADERC must point to the official bgfx shaderc executable"
+      )
+    exec "examples/run_bgfx_host_demo.sh \"" & bgfximPath & "\" \"" & bgfxPath & "\" \"" & bxPath & "\" \"" & bimgPath & "\" showcase"
+  else:
+    echo "The current visible Version 0.7 GPU showcase runner targets Linux SDL3."
+
 task checkExplicitEventOutcomes, "Reject implicit boolean outcomes in first-party event handlers":
   exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_public src/clay_board_style_system.nim"
   exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_paint examples/paint_demo.nim"
@@ -168,6 +190,7 @@ task checkExplicitEventOutcomes, "Reject implicit boolean outcomes in first-part
   exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_pop_infographic -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/pop_infographic_demo.nim"
   exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_kawaii_companion -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/kawaii_companion_demo.nim"
   exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_luxury_hotel -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/luxury_hotel_demo.nim"
+  exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_v07_design_showcase -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 examples/v07_design_showcase_demo.nim"
   exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_widget_lifecycle tests/memory/widget_lifecycle.nim"
 
 task testOrc, "Run the test suite under ORC":
@@ -587,6 +610,11 @@ task luxuryHotelDemo, "Run the luxury hotel concierge application demo":
   exec "cargo build --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml"
   exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
   exec "env LD_LIBRARY_PATH=native/cosmic_text_bridge/target/release:native/image_bridge/target/release nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_luxury_hotel_demo_nimcache --out:/tmp/clay_board_style_system_luxury_hotel_demo examples/luxury_hotel_demo.nim"
+
+task v07DesignShowcase, "Run the five-scene Version 0.7 design showcase":
+  exec "cargo build --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml"
+  exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
+  exec "env LD_LIBRARY_PATH=native/cosmic_text_bridge/target/release:native/image_bridge/target/release nim c -r -d:release --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_v07_design_showcase_nimcache --out:/tmp/clay_board_style_system_v07_design_showcase examples/v07_design_showcase_demo.nim"
 
 task buildCosmicTextBridge, "Build the Rust cosmic-text C ABI bridge":
   exec "cargo build --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml"
