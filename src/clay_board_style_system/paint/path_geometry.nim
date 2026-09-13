@@ -97,6 +97,110 @@ proc bezierCurveTo*(
   )
   path.currentPoint = some(endpoint)
 
+proc samePoint(a, b: Vec2; tolerance = 0.0001'f32): bool =
+  abs(a.x - b.x) <= tolerance and abs(a.y - b.y) <= tolerance
+
+proc ellipsePoint(
+    center: Vec2;
+    radiusX, radiusY, rotation, angle: float32
+): Vec2 =
+  let cosine = cos(angle)
+  let sine = sin(angle)
+  let rotationCosine = cos(rotation)
+  let rotationSine = sin(rotation)
+  vec2(
+    center.x + rotationCosine * radiusX * cosine -
+      rotationSine * radiusY * sine,
+    center.y + rotationSine * radiusX * cosine +
+      rotationCosine * radiusY * sine
+  )
+
+proc ellipseDerivative(
+    radiusX, radiusY, rotation, angle: float32
+): Vec2 =
+  let cosine = cos(angle)
+  let sine = sin(angle)
+  let rotationCosine = cos(rotation)
+  let rotationSine = sin(rotation)
+  vec2(
+    -rotationCosine * radiusX * sine - rotationSine * radiusY * cosine,
+    -rotationSine * radiusX * sine + rotationCosine * radiusY * cosine
+  )
+
+proc ellipse*(
+    path: var Path2D;
+    center: Vec2;
+    radiusX, radiusY: float32;
+    rotation, startAngle, endAngle: float32;
+    counterClockwise = false
+) =
+  ## Appends an elliptical arc in radians using bounded cubic segments. Invalid
+  ## or negative radii leave the retained path unchanged.
+  if not center.finite or not radiusX.finite or not radiusY.finite or
+      not rotation.finite or not startAngle.finite or not endAngle.finite or
+      radiusX < 0 or radiusY < 0:
+    return
+
+  const fullTurn = PI.float32 * 2.0'f32
+  var sweep = endAngle - startAngle
+  if abs(sweep) >= fullTurn:
+    sweep = if counterClockwise: -fullTurn else: fullTurn
+  elif counterClockwise:
+    while sweep > 0:
+      sweep -= fullTurn
+  else:
+    while sweep < 0:
+      sweep += fullTurn
+
+  let first = ellipsePoint(center, radiusX, radiusY, rotation, startAngle)
+  if path.currentPoint.isNone:
+    path.moveTo(first)
+  elif not path.currentPoint.get.samePoint(first):
+    path.lineTo(first)
+  if abs(sweep) <= 0.000001'f32 or radiusX == 0 or radiusY == 0:
+    return
+
+  let segmentCount = max(1, int(ceil(abs(sweep) / (PI.float32 * 0.5'f32))))
+  let segmentSweep = sweep / segmentCount.float32
+  var segmentStart = startAngle
+  var segmentStartPoint = first
+  for _ in 0 ..< segmentCount:
+    let segmentEnd = segmentStart + segmentSweep
+    let segmentEndPoint = ellipsePoint(
+      center, radiusX, radiusY, rotation, segmentEnd
+    )
+    let tangentScale = 4.0'f32 / 3.0'f32 * tan(segmentSweep * 0.25'f32)
+    let startDerivative = ellipseDerivative(
+      radiusX, radiusY, rotation, segmentStart
+    )
+    let endDerivative = ellipseDerivative(
+      radiusX, radiusY, rotation, segmentEnd
+    )
+    path.bezierCurveTo(
+      vec2(
+        segmentStartPoint.x + startDerivative.x * tangentScale,
+        segmentStartPoint.y + startDerivative.y * tangentScale
+      ),
+      vec2(
+        segmentEndPoint.x - endDerivative.x * tangentScale,
+        segmentEndPoint.y - endDerivative.y * tangentScale
+      ),
+      segmentEndPoint
+    )
+    segmentStart = segmentEnd
+    segmentStartPoint = segmentEndPoint
+
+proc arc*(
+    path: var Path2D;
+    center: Vec2;
+    radius, startAngle, endAngle: float32;
+    counterClockwise = false
+) =
+  path.ellipse(
+    center, radius, radius, 0.0'f32,
+    startAngle, endAngle, counterClockwise
+  )
+
 proc closePath*(path: var Path2D) =
   if path.currentPoint.isNone or path.subpathStart.isNone:
     return
@@ -272,6 +376,185 @@ proc flattened*(
       else:
         current = none(Vec2)
   flush(false)
+
+proc appendClosedPolygon(path: var Path2D; source: openArray[Vec2]) =
+  if source.len < 3:
+    return
+  var points = @source
+  var twiceArea = 0.0'f32
+  for index in 0 ..< points.len:
+    let current = points[index]
+    let following = points[(index + 1) mod points.len]
+    twiceArea += current.x * following.y - following.x * current.y
+  if twiceArea < 0:
+    points.reverse()
+  path.moveTo(points[0])
+  for index in 1 ..< points.len:
+    path.lineTo(points[index])
+  path.closePath()
+
+proc appendCircle(path: var Path2D; center: Vec2; radius: float32) =
+  if radius <= 0:
+    return
+  path.moveTo(vec2(center.x + radius, center.y))
+  path.arc(center, radius, 0.0'f32, PI.float32 * 2.0'f32)
+  path.closePath()
+
+proc appendStrokeJoin(
+    outline: var Path2D;
+    previous, point, following: Vec2;
+    radius: float32;
+    lineJoin: StrokeLineJoin;
+    miterLimit: float32
+) =
+  let previousDelta = vec2(point.x - previous.x, point.y - previous.y)
+  let followingDelta = vec2(following.x - point.x, following.y - point.y)
+  let previousLength = sqrt(
+    previousDelta.x * previousDelta.x + previousDelta.y * previousDelta.y
+  )
+  let followingLength = sqrt(
+    followingDelta.x * followingDelta.x + followingDelta.y * followingDelta.y
+  )
+  if previousLength <= 0.0001'f32 or followingLength <= 0.0001'f32:
+    return
+  if lineJoin == sljRound:
+    outline.appendCircle(point, radius)
+    return
+
+  let previousDirection = vec2(
+    previousDelta.x / previousLength, previousDelta.y / previousLength
+  )
+  let followingDirection = vec2(
+    followingDelta.x / followingLength, followingDelta.y / followingLength
+  )
+  let turn = previousDirection.x * followingDirection.y -
+    previousDirection.y * followingDirection.x
+  if abs(turn) <= 0.0001'f32:
+    return
+  let outerSign = if turn > 0: -1.0'f32 else: 1.0'f32
+  let previousNormal = vec2(
+    -previousDirection.y * outerSign,
+    previousDirection.x * outerSign
+  )
+  let followingNormal = vec2(
+    -followingDirection.y * outerSign,
+    followingDirection.x * outerSign
+  )
+  let previousOuter = vec2(
+    point.x + previousNormal.x * radius,
+    point.y + previousNormal.y * radius
+  )
+  let followingOuter = vec2(
+    point.x + followingNormal.x * radius,
+    point.y + followingNormal.y * radius
+  )
+  if lineJoin == sljBevel:
+    outline.appendClosedPolygon([previousOuter, point, followingOuter])
+    return
+
+  let normalSum = vec2(
+    previousNormal.x + followingNormal.x,
+    previousNormal.y + followingNormal.y
+  )
+  let normalSumLength = sqrt(
+    normalSum.x * normalSum.x + normalSum.y * normalSum.y
+  )
+  if normalSumLength <= 0.0001'f32:
+    outline.appendClosedPolygon([previousOuter, point, followingOuter])
+    return
+  let miterDirection = vec2(
+    normalSum.x / normalSumLength, normalSum.y / normalSumLength
+  )
+  let denominator = miterDirection.x * followingNormal.x +
+    miterDirection.y * followingNormal.y
+  if abs(denominator) <= 0.0001'f32:
+    outline.appendClosedPolygon([previousOuter, point, followingOuter])
+    return
+  let miterLength = radius / denominator
+  if abs(miterLength) > radius * max(1.0'f32, miterLimit):
+    outline.appendClosedPolygon([previousOuter, point, followingOuter])
+    return
+  outline.appendClosedPolygon([
+    previousOuter,
+    vec2(
+      point.x + miterDirection.x * miterLength,
+      point.y + miterDirection.y * miterLength
+    ),
+    followingOuter
+  ])
+
+proc strokeOutline*(
+    path: Path2D;
+    width = 1.0'f32;
+    lineCap = slcButt;
+    lineJoin = sljMiter;
+    miterLimit = 10.0'f32;
+    tolerance = 0.25'f32
+): Path2D =
+  ## Converts a retained centerline into fillable contours. Both CPU backends
+  ## consume this geometry so caps, joins and coverage cannot drift apart.
+  result = initPath2D()
+  if width <= 0 or not width.finite:
+    return
+  let flattenTolerance =
+    if tolerance.finite and tolerance > 0: tolerance
+    else: 0.25'f32
+  let radius = width * 0.5'f32
+  for contour in path.flattened(flattenTolerance):
+    var points = newSeqOfCap[Vec2](contour.points.len)
+    for point in contour.points:
+      if points.len == 0 or not points[^1].samePoint(point):
+        points.add point
+    if contour.closed and points.len > 1 and points[0].samePoint(points[^1]):
+      points.setLen(points.len - 1)
+    if points.len < 2:
+      continue
+
+    let segmentCount = points.len - 1 + ord(contour.closed)
+    for index in 0 ..< segmentCount:
+      var first = points[index mod points.len]
+      var second = points[(index + 1) mod points.len]
+      let delta = vec2(second.x - first.x, second.y - first.y)
+      let length = sqrt(delta.x * delta.x + delta.y * delta.y)
+      if length <= 0.0001'f32:
+        continue
+      let direction = vec2(delta.x / length, delta.y / length)
+      if not contour.closed and lineCap == slcSquare:
+        if index == 0:
+          first = vec2(
+            first.x - direction.x * radius,
+            first.y - direction.y * radius
+          )
+        if index == segmentCount - 1:
+          second = vec2(
+            second.x + direction.x * radius,
+            second.y + direction.y * radius
+          )
+      let normal = vec2(-direction.y * radius, direction.x * radius)
+      result.appendClosedPolygon([
+        vec2(first.x + normal.x, first.y + normal.y),
+        vec2(second.x + normal.x, second.y + normal.y),
+        vec2(second.x - normal.x, second.y - normal.y),
+        vec2(first.x - normal.x, first.y - normal.y)
+      ])
+
+    if contour.closed:
+      for index in 0 ..< points.len:
+        result.appendStrokeJoin(
+          points[(index - 1 + points.len) mod points.len],
+          points[index],
+          points[(index + 1) mod points.len],
+          radius, lineJoin, miterLimit
+        )
+    else:
+      for index in 1 ..< points.len - 1:
+        result.appendStrokeJoin(
+          points[index - 1], points[index], points[index + 1],
+          radius, lineJoin, miterLimit
+        )
+      if lineCap == slcRound:
+        result.appendCircle(points[0], radius)
+        result.appendCircle(points[^1], radius)
 
 proc fillable*(path: Path2D): bool =
   for contour in path.flattened():

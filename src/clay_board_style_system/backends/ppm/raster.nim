@@ -440,22 +440,30 @@ proc strokePolyline(
       image.fillCircle(normalized[0], radius, color, clip)
       image.fillCircle(normalized[^1], radius, color, clip)
 
+proc fillPath(
+    image: var RasterImage;
+    command: PaintCommand;
+    transform: Affine2D;
+    clip: PpmClip
+)
+
 proc strokePath(
     image: var RasterImage;
     command: PaintCommand;
+    transform: Affine2D;
     clip: PpmClip
 ) =
-  for contour in command.path.flattened():
-    image.strokePolyline(
-      contour.points,
-      command.pathColor,
-      command.pathWidth,
-      contour.closed,
-      command.pathLineCap,
-      command.pathLineJoin,
-      command.pathMiterLimit,
-      clip
-    )
+  image.fillPath(
+    PaintCommand(
+      kind: pcFillPath,
+      owner: command.owner,
+      fillPathValue: command.pathOutline,
+      fillPathColor: command.pathColor,
+      fillPathRule: pfrNonZero
+    ),
+    transform,
+    clip
+  )
 
 proc fillPath(
     image: var RasterImage;
@@ -706,10 +714,7 @@ proc render*(commands: openArray[PaintCommand]; width, height: int; background =
     of pcFillPath:
       targets[^1].fillPath(command, transformStack[^1], clipStack[^1])
     of pcStrokePath:
-      var transformedCommand = command
-      transformedCommand.path = command.path.transformed(transformStack[^1])
-      transformedCommand.pathWidth = command.pathWidth * transformStack[^1].strokeScale
-      targets[^1].strokePath(transformedCommand, clipStack[^1])
+      targets[^1].strokePath(command, transformStack[^1], clipStack[^1])
     of pcDrawText:
       discard
     of pcDrawImage:

@@ -74,6 +74,7 @@ type
       fillPathRule*: PathFillRule
     of pcStrokePath:
       path*: Path2D
+      pathOutline*: Path2D
       pathColor*: Color
       pathWidth*: float32
       pathLineCap*: StrokeLineCap
@@ -170,7 +171,7 @@ proc visualBounds(command: PaintCommand): Option[Rect] =
   of pcFillPath:
     some(command.fillPathValue.bounds())
   of pcStrokePath:
-    some(command.path.bounds().expanded(max(0.0'f32, command.pathWidth) * 0.5'f32))
+    some(command.pathOutline.bounds())
   of pcDrawText:
     let fontSize =
       if command.textStyle.fontSize.isSome: command.textStyle.fontSize.get
@@ -289,15 +290,24 @@ proc strokePath*(
     miterLimit = 10.0'f32;
     owner = none(NodeId)
 ): PaintCommand =
+  let normalizedWidth =
+    if width.classify in {fcNan, fcInf, fcNegInf}: 0.0'f32
+    else: max(0.0'f32, width)
+  let normalizedMiterLimit =
+    if miterLimit.classify in {fcNan, fcInf, fcNegInf}: 1.0'f32
+    else: max(1.0'f32, miterLimit)
   PaintCommand(
     kind: pcStrokePath,
     owner: owner,
     path: path,
+    pathOutline: path.strokeOutline(
+      normalizedWidth, lineCap, lineJoin, normalizedMiterLimit
+    ),
     pathColor: color,
-    pathWidth: max(0.0'f32, width),
+    pathWidth: normalizedWidth,
     pathLineCap: lineCap,
     pathLineJoin: lineJoin,
-    pathMiterLimit: max(1.0'f32, miterLimit)
+    pathMiterLimit: normalizedMiterLimit
   )
 
 proc fillPath*(

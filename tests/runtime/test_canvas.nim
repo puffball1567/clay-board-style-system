@@ -338,6 +338,7 @@ suite "standard canvas surface":
     drawing.strokePath([vec2(7, 7)], rgb(0, 0, 1), width = 2)
 
     check drawing.revision == initialRevision + 3
+    let localOutlineBounds = drawing.commands[0].pathOutline.bounds()
     let owner = NodeId(17)
     let commands = drawing.paintCommands(owner, rect(20, 30, 100, 80), 0.5)
     check commands.len == 2
@@ -346,6 +347,11 @@ suite "standard canvas surface":
     check commands[0].path.segments.len == 2
     check commands[0].path.segments[0].endpoint == vec2(21, 32)
     check commands[0].path.segments[1].endpoint == vec2(28, 39)
+    check commands[0].pathOutline.fillable
+    check abs(commands[0].pathOutline.bounds().x -
+      (localOutlineBounds.x + 20)) < 0.0001
+    check abs(commands[0].pathOutline.bounds().y -
+      (localOutlineBounds.y + 30)) < 0.0001
     check commands[0].pathWidth == 3
     check commands[0].pathLineCap == slcButt
     check commands[0].pathLineJoin == sljMiter
@@ -353,6 +359,7 @@ suite "standard canvas surface":
     check commands[1].kind == pcStrokePath
     check commands[1].path.segments.len == 4
     check commands[1].path.segments[^1].kind == pskClose
+    check commands[1].pathOutline.fillable
 
   test "non-positive path widths are retained safely but do not paint":
     let drawing = newCanvas2D()

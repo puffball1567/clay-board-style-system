@@ -1,4 +1,4 @@
-import std/[math, unittest]
+import std/[math, sequtils, unittest]
 
 import clay_board_style_system
 
@@ -31,6 +31,66 @@ suite "retained path geometry":
     check coarse[0].points[^1] == vec2(40, 0)
     check fine[0].points.len > coarse[0].points.len
     check fine[0].points[^1] == vec2(40, 0)
+
+  test "arc and ellipse append bounded cubic geometry":
+    var path = initPath2D()
+    path.arc(vec2(10, 10), 8, 0, PI.float32 * 0.5'f32)
+    check path.segments.len == 2
+    check path.segments[0].kind == pskMoveTo
+    check path.segments[1].kind == pskCubicTo
+    check abs(path.segments[0].endpoint.x - 18) < 0.001
+    check abs(path.segments[0].endpoint.y - 10) < 0.001
+    check abs(path.segments[1].endpoint.x - 10) < 0.001
+    check abs(path.segments[1].endpoint.y - 18) < 0.001
+
+    var ellipsePath = initPath2D()
+    ellipsePath.ellipse(
+      vec2(20, 20), 10, 4, PI.float32 * 0.5'f32,
+      0, PI.float32 * 2.0'f32
+    )
+    check ellipsePath.segments.len == 5
+    check ellipsePath.segments[1 .. ^1].allIt(it.kind == pskCubicTo)
+    check ellipsePath.flattened(0.1).len == 1
+
+  test "arc direction connection and invalid input are deterministic":
+    var path = path2D([vec2(0, 0), vec2(1, 0)])
+    path.arc(
+      vec2(5, 5), 3, 0, PI.float32 * 0.5'f32,
+      counterClockwise = true
+    )
+    check path.segments[2].kind == pskLineTo
+    check path.segments[3 .. ^1].len == 3
+    check path.segments[3 .. ^1].allIt(it.kind == pskCubicTo)
+
+    let retained = path.segments
+    path.arc(vec2(0, 0), -1, 0, PI.float32)
+    path.ellipse(vec2(0, 0), 1, NaN.float32, 0, 0, PI.float32)
+    check path.segments == retained
+
+  test "stroke outlines preserve caps and closed fill contours":
+    let centerline = path2D([vec2(5, 5), vec2(11, 5)])
+    let butt = centerline.strokeOutline(4, slcButt)
+    let round = centerline.strokeOutline(4, slcRound)
+    let square = centerline.strokeOutline(4, slcSquare)
+
+    check butt.fillable
+    check round.fillable
+    check square.fillable
+    check abs(butt.bounds.x - 5) < 0.001
+    check abs(butt.bounds.w - 6) < 0.001
+    check round.bounds.x < 3.01
+    check round.bounds.x + round.bounds.w > 12.99
+    check square.bounds.x < 3.01
+    check square.bounds.x + square.bounds.w > 12.99
+    for contour in round.flattened():
+      check contour.closed
+
+  test "stroke outlines reject invalid widths and normalize invalid tolerance":
+    let centerline = path2D([vec2(2, 2), vec2(8, 2)])
+    check not centerline.strokeOutline(NaN.float32).fillable
+    check not centerline.strokeOutline(Inf.float32).fillable
+    check not centerline.strokeOutline(-1).fillable
+    check centerline.strokeOutline(2, tolerance = NaN.float32).fillable
 
   test "move commands split independent contours":
     var path = initPath2D()

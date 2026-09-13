@@ -9,6 +9,14 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added retained circular and elliptical `Path2D` arcs plus one canonical CPU
+  stroke-outline path for butt, round, and square caps and miter, round, and
+  bevel joins. Stroke geometry is generated once when a paint or Canvas
+  command is retained, then shared by SDL3 and the deterministic PPM backend;
+  ordinary redraws no longer flatten and rebuild the same outline per frame.
+  Filled outline composition also keeps stroke width correct under non-uniform
+  affine transforms.
+
 - Added retained filled `Path2D` drawing with nonzero and evenodd fill rules
   across `Canvas2D`, Custom Paint providers, SDL3, the deterministic PPM
   backend, test snapshots, and the C ABI. The scanline rasterizer preserves

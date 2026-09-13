@@ -1,6 +1,6 @@
 # Render Surfaces And Canvas
 
-Status: `Available since Version 0.3; filled Path2D added on the Version 0.7 line`
+Status: `Available since Version 0.3; filled paths and canonical stroke outlines added on the Version 0.7 line`
 
 CBSS render surfaces let a retained drawing module occupy the content area of
 an ordinary styled Box. CBSS owns layout, padding, borders, clipping, opacity,
@@ -116,8 +116,12 @@ closed paths, adaptive quadratic and cubic curves, configurable nonzero and
 evenodd fill rules, line caps and joins, linear gradients, text, and images.
 Use `strokeLine` for one segment, the point overload of `strokePath` for a
 polyline, or build a retained `Path2D` with `moveTo`, `lineTo`,
-`quadraticCurveTo`, `bezierCurveTo`, and `closePath`. Path fills implicitly
-close each contour without mutating the retained path.
+`quadraticCurveTo`, `bezierCurveTo`, `arc`, `ellipse`, and `closePath`. Arc
+angles are radians and elliptical arcs accept independent radii and rotation.
+Path fills implicitly close each contour without mutating the retained path.
+Stroke outlines are retained when the command is authored and reused by every
+backend and redraw; caps, joins, and non-uniform transforms therefore share one
+geometry contract without per-frame path expansion.
 
 `save` and `restore` delimit transform and clip state. `translate`, `rotate`,
 `scale`, and `transform` concatenate Canvas-local affine transforms for later

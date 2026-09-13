@@ -60,6 +60,7 @@ type
       fillPathRule*: PathFillRule
     of cckStrokePath:
       path*: Path2D
+      pathOutline*: Path2D
       pathColor*: Color
       pathWidth*: float32
       pathLineCap*: StrokeLineCap
@@ -410,14 +411,20 @@ proc strokePath*(
 ) =
   ## Adds a retained path in Canvas-local coordinates. Empty paths are
   ## retained safely but produce no paint command.
+  let normalizedWidth = if width.finite: max(0.0'f32, width) else: 0.0'f32
+  let normalizedMiterLimit =
+    if miterLimit.finite: max(1.0'f32, miterLimit) else: 1.0'f32
   canvas.commands.add CanvasCommand(
     kind: cckStrokePath,
     path: path,
+    pathOutline: path.strokeOutline(
+      normalizedWidth, lineCap, lineJoin, normalizedMiterLimit
+    ),
     pathColor: color,
-    pathWidth: max(0.0'f32, width),
+    pathWidth: normalizedWidth,
     pathLineCap: lineCap,
     pathLineJoin: lineJoin,
-    pathMiterLimit: max(1.0'f32, miterLimit)
+    pathMiterLimit: normalizedMiterLimit
   )
   canvas.touch()
 
@@ -679,14 +686,16 @@ proc paintCommands*(
       )
     of cckStrokePath:
       if command.path.drawable and command.pathWidth > 0:
-        result.add strokePath(
-          command.path.translated(offset),
-          command.pathColor.withOpacity(opacity),
-          command.pathWidth,
-          command.pathLineCap,
-          command.pathLineJoin,
-          command.pathMiterLimit,
-          some(owner)
+        result.add PaintCommand(
+          kind: pcStrokePath,
+          owner: some(owner),
+          path: command.path.translated(offset),
+          pathOutline: command.pathOutline.translated(offset),
+          pathColor: command.pathColor.withOpacity(opacity),
+          pathWidth: command.pathWidth,
+          pathLineCap: command.pathLineCap,
+          pathLineJoin: command.pathLineJoin,
+          pathMiterLimit: command.pathMiterLimit
         )
     of cckFillPath:
       if command.fillPathValue.fillable:
