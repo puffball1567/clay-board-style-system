@@ -1,4 +1,4 @@
-import std/unittest
+import std/[math, unittest]
 
 import clay_board_style_system
 import clay_board_style_system/backends/ppm/raster
@@ -63,7 +63,9 @@ suite "path raster integration":
     ], 16, 10)
 
     check butt.pixel(3, 5) == (255'u8, 255'u8, 255'u8)
-    check round.pixel(3, 5) == (255'u8, 0'u8, 0'u8)
+    check round.pixel(3, 5).r == 255'u8
+    check round.pixel(3, 5).g in 1'u8 .. 128'u8
+    check round.pixel(5, 5) == (255'u8, 0'u8, 0'u8)
     check square.pixel(3, 5) == (255'u8, 0'u8, 0'u8)
 
   test "quadratic and cubic paths reach the shared raster backend":
@@ -78,9 +80,44 @@ suite "path raster integration":
       )
     ], 26, 18)
 
-    check image.pixel(2, 12) == (0'u8, 0'u8, 255'u8)
+    check image.pixel(2, 12).b == 255'u8
+    check image.pixel(2, 12).r < 255'u8
     check image.pixel(8, 6) == (0'u8, 0'u8, 255'u8)
     check image.pixel(22, 11) == (0'u8, 0'u8, 255'u8)
+
+  test "retained stroke outlines do not rebuild from centerlines during paint":
+    var command = strokePath(
+      [vec2(2, 5), vec2(12, 5)], rgb(1, 0, 0), width = 3
+    )
+    check command.pathOutline.fillable
+    command.path.clear()
+    let image = render([command], 16, 10)
+    check image.pixel(7, 5) == (255'u8, 0'u8, 0'u8)
+
+  test "retained arcs rasterize through the shared outline path":
+    var path = initPath2D()
+    path.arc(vec2(9, 9), 5, 0, PI.float32)
+    let image = render([
+      strokePath(path, rgb(0, 0, 1), width = 2, lineCap = slcRound)
+    ], 20, 16)
+    check image.pixel(14, 9).b == 255'u8
+    check image.pixel(9, 14).b == 255'u8
+
+  test "stroke outlines follow non-uniform transforms":
+    let image = render([
+      pushTransform(scaleAffine2D(1, 3)),
+      strokePath(
+        [vec2(2, 3), vec2(12, 3)], rgb(0, 0, 1),
+        width = 2, lineCap = slcButt
+      ),
+      popTransform()
+    ], 16, 16)
+
+    check image.pixel(6, 5) == (255'u8, 255'u8, 255'u8)
+    check image.pixel(6, 6).b == 255'u8
+    check image.pixel(6, 9) == (0'u8, 0'u8, 255'u8)
+    check image.pixel(6, 11).b == 255'u8
+    check image.pixel(6, 12) == (255'u8, 255'u8, 255'u8)
 
   test "concave paths fill without convex triangulation artifacts":
     let path = path2D([

@@ -2290,12 +2290,16 @@ device loss before deterministic namespace restoration begins; borrowed hosts
 continue to require recreation by their external owner.
 The CPU Canvas now fills retained concave and multi-contour `Path2D` geometry
 with nonzero or evenodd rules through one scanline coverage contract shared by
-SDL3 and the deterministic PPM backend. The implementation reuses bounded
-scanline scratch storage, preserves transformed rectangular and rounded clips,
-and is exposed through retained Canvas, Custom Paint, test snapshots, and the
-versioned C ABI. Complete stroke-outline rasterization, retained dirty tiles,
-CPU mask/filter composition, and the broader Motion Scene remain open Version
-0.7 work.
+SDL3 and the deterministic PPM backend. Circular and elliptical arcs feed the
+same retained path model. Butt, round, and square caps plus miter, round, and
+bevel joins are expanded once into canonical fillable stroke outlines when a
+paint or Canvas command is retained, rather than during every redraw. This
+also preserves stroke geometry under non-uniform transforms. The scanline
+implementation reuses bounded scratch storage, preserves transformed
+rectangular and rounded clips, and is exposed through retained Canvas, Custom
+Paint, test snapshots, and the versioned C ABI. Dashed strokes, retained dirty
+tiles, CPU mask/filter composition, and the broader Motion Scene remain open
+Version 0.7 work.
 Backend-neutral named Custom Paint
 materials now connect ordinary Style declarations to bounded underlay and
 overlay command streams without adding nodes. `GpuCanvasSurface` can use that
