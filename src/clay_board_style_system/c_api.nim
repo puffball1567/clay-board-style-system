@@ -4437,6 +4437,11 @@ proc pathFromC(
     segmentCount: uint32
 ): Option[Path2D]
 
+proc dashPatternFromC(
+    values: ptr cfloat;
+    valueCount: uint32
+): Option[seq[float32]]
+
 proc textStyleFromC(
     value: ptr CbssTextStyleC;
     fontFamily: cstring
@@ -4623,6 +4628,33 @@ proc cbssCustomPaintSinkStrokePath(
   guardedCustomPaintMutation(sink):
     checked.canvas.strokePath(
       path.get, color.toColor, width, cap.get, join.get, miterLimit
+    )
+
+proc cbssCustomPaintSinkStrokePathDashed(
+    sink: CbssCustomPaintSinkHandle;
+    segments: ptr CbssPathSegmentC;
+    segmentCount: uint32;
+    color: CbssColorC;
+    width: cfloat;
+    lineCap, lineJoin: uint32;
+    miterLimit: cfloat;
+    dashValues: ptr cfloat;
+    dashCount: uint32;
+    dashOffset: cfloat
+): int32 {.exportc: "cbss_custom_paint_sink_stroke_path_dashed", cdecl, dynlib.} =
+  if not color.validColor or not width.finite or width <= 0 or
+      not miterLimit.finite or miterLimit < 1 or not dashOffset.finite:
+    return CbssInvalidArgument
+  let cap = lineCap.strokeLineCapFromC
+  let join = lineJoin.strokeLineJoinFromC
+  let path = pathFromC(segments, segmentCount)
+  let dashes = dashPatternFromC(dashValues, dashCount)
+  if cap.isNone or join.isNone or path.isNone or dashes.isNone:
+    return CbssInvalidArgument
+  guardedCustomPaintMutation(sink):
+    checked.canvas.strokePath(
+      path.get, color.toColor, width, cap.get, join.get, miterLimit,
+      dashes.get, dashOffset
     )
 
 proc cbssCustomPaintSinkFillPath(
@@ -4903,6 +4935,23 @@ proc pathFromC(
       return none(Path2D)
   some(path)
 
+proc dashPatternFromC(
+    values: ptr cfloat;
+    valueCount: uint32
+): Option[seq[float32]] =
+  if valueCount == 0:
+    return some(newSeq[float32]())
+  if values.isNil or valueCount > uint32(maxStrokeDashPatternEntries):
+    return none(seq[float32])
+  let source = cast[ptr UncheckedArray[cfloat]](values)
+  var copied = newSeq[float32](int(valueCount))
+  for index in 0 ..< copied.len:
+    let value = float32(source[index])
+    if not value.finite or value < 0:
+      return none(seq[float32])
+    copied[index] = value
+  some(normalizeDashPattern(copied))
+
 proc cbssRenderSurfaceCanvasStrokePath(
     context: CbssContextHandle;
     surfaceValue: uint64;
@@ -4929,6 +4978,37 @@ proc cbssRenderSurfaceCanvasStrokePath(
       return CbssInvalidArgument
     checked.binding.canvas.strokePath(
       path.get, color.toColor, width, cap.get, join.get, miterLimit
+    )
+
+proc cbssRenderSurfaceCanvasStrokePathDashed(
+    context: CbssContextHandle;
+    surfaceValue: uint64;
+    segments: ptr CbssPathSegmentC;
+    segmentCount: uint32;
+    color: CbssColorC;
+    width: cfloat;
+    lineCap, lineJoin: uint32;
+    miterLimit: cfloat;
+    dashValues: ptr cfloat;
+    dashCount: uint32;
+    dashOffset: cfloat
+): int32 {.exportc: "cbss_render_surface_canvas_stroke_path_dashed", cdecl, dynlib.} =
+  let checked = context.checkedSurfaceCanvas(surfaceValue)
+  if checked.status != CbssOk:
+    return checked.status
+  if not color.validColor or not width.finite or width <= 0 or
+      not miterLimit.finite or miterLimit < 1 or not dashOffset.finite:
+    return CbssInvalidArgument
+  let cap = lineCap.strokeLineCapFromC
+  let join = lineJoin.strokeLineJoinFromC
+  let path = pathFromC(segments, segmentCount)
+  let dashes = dashPatternFromC(dashValues, dashCount)
+  if cap.isNone or join.isNone or path.isNone or dashes.isNone:
+    return CbssInvalidArgument
+  guardedCanvasMutation(context):
+    checked.binding.canvas.strokePath(
+      path.get, color.toColor, width, cap.get, join.get, miterLimit,
+      dashes.get, dashOffset
     )
 
 proc cbssRenderSurfaceCanvasFillPath(
@@ -6792,6 +6872,52 @@ proc cbssPaintCommandPathSegment(
     endpointX: segment.endpoint.x,
     endpointY: segment.endpoint.y
   )
+  CbssOk
+
+proc cbssPaintCommandPathDashCount(
+    context: CbssContextHandle;
+    index: uint32
+): uint32 {.exportc: "cbss_paint_command_path_dash_count", cdecl, dynlib.} =
+  if context.isNil or not context.computed or
+      uint64(index) >= uint64(context.commands.len):
+    return 0
+  let command = context.commands[int(index)]
+  if command.kind != pcStrokePath:
+    return 0
+  uint32(min(command.pathDashPattern.len, int(high(uint32))))
+
+proc cbssPaintCommandPathDash(
+    context: CbssContextHandle;
+    commandIndex, dashIndex: uint32;
+    output: ptr cfloat
+): int32 {.exportc: "cbss_paint_command_path_dash", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if output.isNil or not context.computed or
+      uint64(commandIndex) >= uint64(context.commands.len):
+    return CbssInvalidArgument
+  let command = context.commands[int(commandIndex)]
+  if command.kind != pcStrokePath:
+    return CbssInvalidArgument
+  if uint64(dashIndex) >= uint64(command.pathDashPattern.len):
+    return CbssOutOfRange
+  output[] = cfloat(command.pathDashPattern[int(dashIndex)])
+  CbssOk
+
+proc cbssPaintCommandPathDashOffset(
+    context: CbssContextHandle;
+    index: uint32;
+    output: ptr cfloat
+): int32 {.exportc: "cbss_paint_command_path_dash_offset", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if output.isNil or not context.computed or
+      uint64(index) >= uint64(context.commands.len):
+    return CbssInvalidArgument
+  let command = context.commands[int(index)]
+  if command.kind != pcStrokePath:
+    return CbssInvalidArgument
+  output[] = cfloat(command.pathDashOffset)
   CbssOk
 
 proc cbssPaintCommandTextStyle(

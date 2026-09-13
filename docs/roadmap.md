@@ -2297,9 +2297,10 @@ paint or Canvas command is retained, rather than during every redraw. This
 also preserves stroke geometry under non-uniform transforms. The scanline
 implementation reuses bounded scratch storage, preserves transformed
 rectangular and rounded clips, and is exposed through retained Canvas, Custom
-Paint, test snapshots, and the versioned C ABI. Dashed strokes, retained dirty
-tiles, CPU mask/filter composition, and the broader Motion Scene remain open
-Version 0.7 work.
+Paint, test snapshots, and the versioned C ABI. Dashed strokes and offsets now
+use that same retained outline path with bounded authoring-time expansion.
+Retained dirty tiles, CPU mask/filter composition, and the broader Motion Scene
+remain open Version 0.7 work.
 Backend-neutral named Custom Paint
 materials now connect ordinary Style declarations to bounded underlay and
 overlay command streams without adding nodes. `GpuCanvasSurface` can use that

@@ -1024,7 +1024,9 @@ proc paintSnapshot*(driver: CbssTestDriver): string =
     of pcStrokePath:
       lines.add "stroke-path " & pathSnapshot(command.path) &
         " width=" & $command.pathWidth & " cap=" & $command.pathLineCap &
-        " join=" & $command.pathLineJoin
+        " join=" & $command.pathLineJoin &
+        " dash=" & $command.pathDashPattern &
+        " offset=" & $command.pathDashOffset
     of pcDrawText:
       lines.add "draw-text " & $command.node.nodeIndex & " " & command.text & " @" & $command.position.x & "," & $command.position.y
     of pcDrawImage:
@@ -1190,6 +1192,8 @@ proc structuredSnapshotJson*(driver: CbssTestDriver): JsonNode =
       entry["lineCap"] = %($command.pathLineCap)
       entry["lineJoin"] = %($command.pathLineJoin)
       entry["miterLimit"] = %command.pathMiterLimit
+      entry["dashPattern"] = %command.pathDashPattern
+      entry["dashOffset"] = %command.pathDashOffset
     of pcDrawText:
       entry["node"] = %command.node.nodeIndex
       entry["text"] = %command.text

@@ -26,7 +26,7 @@ extern "C" {
 #endif
 
 /* CBSS_GENERATED_DRIVER_CONTRACT_BEGIN */
-#define CBSS_ABI_VERSION 0x0001001Eu
+#define CBSS_ABI_VERSION 0x0001001Fu
 #define CBSS_DRIVER_CONTRACT_VERSION 0x00010000u
 
 typedef enum CbssCapabilityId {
@@ -1256,6 +1256,11 @@ CBSS_API CbssStatus cbss_custom_paint_sink_stroke_path(
     CbssCustomPaintSink *sink, const CbssPathSegment *segments,
     uint32_t segment_count, CbssColor color, float width,
     uint32_t line_cap, uint32_t line_join, float miter_limit);
+CBSS_API CbssStatus cbss_custom_paint_sink_stroke_path_dashed(
+    CbssCustomPaintSink *sink, const CbssPathSegment *segments,
+    uint32_t segment_count, CbssColor color, float width,
+    uint32_t line_cap, uint32_t line_join, float miter_limit,
+    const float *dash_values, uint32_t dash_count, float dash_offset);
 CBSS_API CbssStatus cbss_custom_paint_sink_fill_path(
     CbssCustomPaintSink *sink, const CbssPathSegment *segments,
     uint32_t segment_count, CbssColor color, uint32_t fill_rule);
@@ -1500,6 +1505,12 @@ CBSS_API CbssStatus cbss_render_surface_canvas_stroke_path(
     const CbssPathSegment *segments, uint32_t segment_count,
     CbssColor color, float width, uint32_t line_cap,
     uint32_t line_join, float miter_limit);
+CBSS_API CbssStatus cbss_render_surface_canvas_stroke_path_dashed(
+    CbssContext *context, uint64_t surface,
+    const CbssPathSegment *segments, uint32_t segment_count,
+    CbssColor color, float width, uint32_t line_cap,
+    uint32_t line_join, float miter_limit,
+    const float *dash_values, uint32_t dash_count, float dash_offset);
 CBSS_API CbssStatus cbss_render_surface_canvas_fill_path(
     CbssContext *context, uint64_t surface,
     const CbssPathSegment *segments, uint32_t segment_count,
@@ -1717,6 +1728,13 @@ CBSS_API uint32_t cbss_paint_command_path_segment_count(
 CBSS_API CbssStatus cbss_paint_command_path_segment(
     CbssContext *context, uint32_t command_index, uint32_t segment_index,
     CbssPathSegment *output);
+CBSS_API uint32_t cbss_paint_command_path_dash_count(
+    CbssContext *context, uint32_t index);
+CBSS_API CbssStatus cbss_paint_command_path_dash(
+    CbssContext *context, uint32_t command_index, uint32_t dash_index,
+    float *output);
+CBSS_API CbssStatus cbss_paint_command_path_dash_offset(
+    CbssContext *context, uint32_t index, float *output);
 CBSS_API CbssStatus cbss_paint_command_text_style(
     CbssContext *context, uint32_t index, CbssTextStyle *output);
 CBSS_API uint32_t cbss_paint_command_font_family(

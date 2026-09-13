@@ -9,6 +9,16 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added retained dashed path strokes across the Nim Canvas, Custom Paint, the
+  deterministic PPM backend, SDL3, test snapshots, and the C ABI. Dash lists
+  accept offsets and CSS-compatible odd-length repetition, reject invalid
+  foreign input, and are expanded into the canonical stroke outline once at
+  command authoring time. Bounded pattern and fragment counts prevent
+  adversarial or accidentally tiny dashes from creating unbounded work; an
+  over-complex typed pattern falls back to a solid stroke. C ABI
+  `0x0001001F` advances `paint.commands`, `canvas.retained`, and
+  `custom-paint.provider` to version 3.
+
 - Added retained circular and elliptical `Path2D` arcs plus one canonical CPU
   stroke-outline path for butt, round, and square caps and miter, round, and
   bevel joins. Stroke geometry is generated once when a paint or Canvas

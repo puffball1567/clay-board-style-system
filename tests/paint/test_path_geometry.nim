@@ -92,6 +92,42 @@ suite "retained path geometry":
     check not centerline.strokeOutline(-1).fillable
     check centerline.strokeOutline(2, tolerance = NaN.float32).fillable
 
+  test "dash patterns normalize and split retained stroke geometry":
+    check normalizeDashPattern([3.0'f32]) == @[3.0'f32, 3.0'f32]
+    check normalizeDashPattern([3.0'f32, 2.0'f32]) == @[3.0'f32, 2.0'f32]
+    check normalizeDashPattern([3.0'f32, -1.0'f32]).len == 0
+    check normalizeDashPattern([NaN.float32, 1.0'f32]).len == 0
+    check normalizeDashPattern([0.0'f32, 0.0'f32]).len == 0
+
+    let centerline = path2D([vec2(0, 0), vec2(20, 0)])
+    let outline = centerline.strokeOutline(2, dashPattern = [4.0'f32, 2.0'f32])
+    let contours = outline.flattened()
+    check contours.contains(vec2(2, 0))
+    check not contours.contains(vec2(5, 0))
+    check contours.contains(vec2(7, 0))
+
+    let offsetOutline = centerline.strokeOutline(
+      2, dashPattern = [4.0'f32, 2.0'f32], dashOffset = 2
+    )
+    check not offsetOutline.flattened().contains(vec2(3, 0))
+
+  test "closed dashed contours join across their retained seam":
+    let square = path2D([
+      vec2(0, 0), vec2(10, 0), vec2(10, 10), vec2(0, 10)
+    ], closed = true)
+    let outline = square.strokeOutline(
+      2, lineCap = slcRound, dashPattern = [12.0'f32, 4.0'f32]
+    )
+    check outline.fillable
+    check outline.flattened().contains(vec2(0, 1))
+
+  test "pathological dash complexity falls back to a bounded solid outline":
+    let centerline = path2D([vec2(0, 0), vec2(1_000_000, 0)])
+    let outline = centerline.strokeOutline(
+      2, dashPattern = [0.01'f32, 0.01'f32]
+    )
+    check outline.flattened().contains(vec2(500_000, 0))
+
   test "move commands split independent contours":
     var path = initPath2D()
     path.moveTo(vec2(0, 0))

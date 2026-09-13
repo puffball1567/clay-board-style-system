@@ -66,6 +66,8 @@ type
       pathLineCap*: StrokeLineCap
       pathLineJoin*: StrokeLineJoin
       pathMiterLimit*: float32
+      pathDashPattern*: seq[float32]
+      pathDashOffset*: float32
     of cckDrawText:
       text*: string
       textPosition*: Vec2
@@ -407,24 +409,32 @@ proc strokePath*(
     width = 1.0'f32;
     lineCap = slcButt;
     lineJoin = sljMiter;
-    miterLimit = 10.0'f32
+    miterLimit = 10.0'f32;
+    dashPattern: openArray[float32] = [];
+    dashOffset = 0.0'f32
 ) =
   ## Adds a retained path in Canvas-local coordinates. Empty paths are
   ## retained safely but produce no paint command.
   let normalizedWidth = if width.finite: max(0.0'f32, width) else: 0.0'f32
   let normalizedMiterLimit =
     if miterLimit.finite: max(1.0'f32, miterLimit) else: 1.0'f32
+  let normalizedDashPattern = normalizeDashPattern(dashPattern)
+  let normalizedDashOffset = if dashOffset.finite: dashOffset else: 0.0'f32
   canvas.commands.add CanvasCommand(
     kind: cckStrokePath,
     path: path,
     pathOutline: path.strokeOutline(
-      normalizedWidth, lineCap, lineJoin, normalizedMiterLimit
+      normalizedWidth, lineCap, lineJoin, normalizedMiterLimit,
+      dashPattern = normalizedDashPattern,
+      dashOffset = normalizedDashOffset
     ),
     pathColor: color,
     pathWidth: normalizedWidth,
     pathLineCap: lineCap,
     pathLineJoin: lineJoin,
-    pathMiterLimit: normalizedMiterLimit
+    pathMiterLimit: normalizedMiterLimit,
+    pathDashPattern: normalizedDashPattern,
+    pathDashOffset: normalizedDashOffset
   )
   canvas.touch()
 
@@ -450,10 +460,13 @@ proc strokePath*(
     closed = false;
     lineCap = slcButt;
     lineJoin = sljMiter;
-    miterLimit = 10.0'f32
+    miterLimit = 10.0'f32;
+    dashPattern: openArray[float32] = [];
+    dashOffset = 0.0'f32
 ) =
   canvas.strokePath(
-    path2D(points, closed), color, width, lineCap, lineJoin, miterLimit
+    path2D(points, closed), color, width, lineCap, lineJoin, miterLimit,
+    dashPattern, dashOffset
   )
 
 proc strokeLine*(
@@ -695,7 +708,9 @@ proc paintCommands*(
           pathWidth: command.pathWidth,
           pathLineCap: command.pathLineCap,
           pathLineJoin: command.pathLineJoin,
-          pathMiterLimit: command.pathMiterLimit
+          pathMiterLimit: command.pathMiterLimit,
+          pathDashPattern: command.pathDashPattern,
+          pathDashOffset: command.pathDashOffset
         )
     of cckFillPath:
       if command.fillPathValue.fillable:

@@ -8,7 +8,7 @@ pub struct CapabilityDefinition {
     pub name: &'static str,
 }
 
-pub const ABI_VERSION: u32 = 0x0001001E;
+pub const ABI_VERSION: u32 = 0x0001001F;
 pub const DRIVER_CONTRACT_VERSION: u32 = 0x00010000;
 pub const CAPABILITY_RETAINED_TREE: u32 = 1;
 pub const CAPABILITY_TYPED_STYLE: u32 = 2;
@@ -54,7 +54,7 @@ pub const CAPABILITIES: &[CapabilityDefinition] = &[
     },
     CapabilityDefinition {
         id: 4,
-        version: 2,
+        version: 3,
         since_abi: 0x00010015,
         name: "paint.commands",
     },
@@ -96,7 +96,7 @@ pub const CAPABILITIES: &[CapabilityDefinition] = &[
     },
     CapabilityDefinition {
         id: 11,
-        version: 2,
+        version: 3,
         since_abi: 0x00010015,
         name: "canvas.retained",
     },
@@ -162,7 +162,7 @@ pub const CAPABILITIES: &[CapabilityDefinition] = &[
     },
     CapabilityDefinition {
         id: 22,
-        version: 2,
+        version: 3,
         since_abi: 0x0001001D,
         name: "custom-paint.provider",
     },

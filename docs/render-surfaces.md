@@ -122,6 +122,12 @@ Path fills implicitly close each contour without mutating the retained path.
 Stroke outlines are retained when the command is authored and reused by every
 backend and redraw; caps, joins, and non-uniform transforms therefore share one
 geometry contract without per-frame path expansion.
+Path strokes also accept `dashPattern` and `dashOffset`. Odd-length lists are
+repeated to form an even on/off cycle. CBSS normalizes and retains that cycle,
+then expands the dashed outline only when the command is authored. Pattern
+length and generated-fragment limits bound malformed or excessively fine
+input; typed input that exceeds the fragment budget degrades to the equivalent
+solid stroke instead of blocking a frame.
 
 `save` and `restore` delimit transform and clip state. `translate`, `rotate`,
 `scale`, and `transform` concatenate Canvas-local affine transforms for later

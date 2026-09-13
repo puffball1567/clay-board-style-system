@@ -832,6 +832,34 @@ suite "CBSS headless test driver":
         foundLayer = true
     check foundLayer
 
+  test "driver snapshots retained Canvas dash state":
+    let ui = initUiRoot()
+    let drawing = newCanvas2D()
+    drawing.strokePath(
+      [vec2(1, 2), vec2(31, 2)], rgb(1, 0, 0), width = 2,
+      dashPattern = [5.0'f32, 3.0'f32, 1.0'f32], dashOffset = 2
+    )
+    discard ui.canvas(
+      drawing,
+      uiStyle([decl("width", px(40)), decl("height", px(12))]),
+      id = "dashed-canvas"
+    )
+
+    let driver = initCbssTestDriver(ui, size(80, 40))
+    let dashSnapshot = driver.paintSnapshot()
+    check dashSnapshot.contains("stroke-path")
+    check dashSnapshot.contains("dash=@[")
+    check dashSnapshot.contains("offset=2.0")
+    let paint = driver.structuredSnapshotJson()["paint"]
+    var foundDash = false
+    for entry in paint:
+      if entry["kind"].getStr() == "pcStrokePath":
+        check entry["dashPattern"].len == 6
+        check abs(entry["dashPattern"][0].getFloat() - 5.0) < 0.0001
+        check abs(entry["dashOffset"].getFloat() - 2.0) < 0.0001
+        foundDash = true
+    check foundDash
+
   test "driver snapshots retained RasterSurface metadata without pixel payloads":
     let ui = initUiRoot()
     let surface = newRasterSurface(4, 3, [8'u8, 16'u8, 24'u8, 255'u8])

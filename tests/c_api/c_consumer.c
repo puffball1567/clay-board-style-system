@@ -1,6 +1,6 @@
 #include "cbss.h"
 
-_Static_assert(CBSS_ABI_VERSION == 0x0001001Eu, "unexpected CBSS ABI version");
+_Static_assert(CBSS_ABI_VERSION == 0x0001001Fu, "unexpected CBSS ABI version");
 _Static_assert(CBSS_ROLE_SWITCH == 22, "unexpected switch role value");
 _Static_assert(CBSS_ROLE_PASSWORD_TEXT == 23,
                "unexpected password text role value");
@@ -276,6 +276,16 @@ static CbssStatus paint_custom_material(
   assert(cbss_custom_paint_sink_stroke_path(
       sink, path, 4, (CbssColor){0.0f, 0.0f, 0.0f, 1.0f}, 1.0f,
       CBSS_STROKE_CAP_ROUND, CBSS_STROKE_JOIN_ROUND, 4.0f) == CBSS_OK);
+  const float dash_values[] = {3.0f, 2.0f, 1.0f};
+  assert(cbss_custom_paint_sink_stroke_path_dashed(
+      sink, path, 4, (CbssColor){0.1f, 0.2f, 0.3f, 1.0f}, 1.5f,
+      CBSS_STROKE_CAP_ROUND, CBSS_STROKE_JOIN_BEVEL, 4.0f,
+      dash_values, 3, 1.0f) == CBSS_OK);
+  const float invalid_dash = -1.0f;
+  assert(cbss_custom_paint_sink_stroke_path_dashed(
+      sink, path, 4, (CbssColor){0.1f, 0.2f, 0.3f, 1.0f}, 1.5f,
+      CBSS_STROKE_CAP_ROUND, CBSS_STROKE_JOIN_BEVEL, 4.0f,
+      &invalid_dash, 1, 1.0f) == CBSS_INVALID_ARGUMENT);
   assert(cbss_custom_paint_sink_fill_path(
       sink, path, 4, (CbssColor){0.2f, 0.8f, 0.4f, 0.75f},
       CBSS_PATH_FILL_EVENODD) == CBSS_OK);
@@ -375,6 +385,7 @@ static void test_custom_paint_provider(void) {
   int found_stroke = 0;
   int found_gradient = 0;
   int found_path = 0;
+  int found_dashed_path = 0;
   int found_fill_path = 0;
   int found_text = 0;
   int found_image = 0;
@@ -392,13 +403,36 @@ static void test_custom_paint_provider(void) {
       found_stroke = 1;
     }
     found_gradient |= command.kind == CBSS_PAINT_FILL_LINEAR_GRADIENT;
-    found_path |= command.kind == CBSS_PAINT_STROKE_PATH;
+    if (command.kind == CBSS_PAINT_STROKE_PATH) {
+      uint32_t dash_count = cbss_paint_command_path_dash_count(
+          context, index);
+      if (dash_count == 0) {
+        found_path = 1;
+      } else {
+        float dash = 0.0f;
+        float offset = 0.0f;
+        assert(dash_count == 6);
+        require_ok(context, cbss_paint_command_path_dash(
+            context, index, 0, &dash));
+        assert(fabsf(dash - 3.0f) < 0.001f);
+        require_ok(context, cbss_paint_command_path_dash(
+            context, index, 5, &dash));
+        assert(fabsf(dash - 1.0f) < 0.001f);
+        assert(cbss_paint_command_path_dash(
+            context, index, 6, &dash) == CBSS_OUT_OF_RANGE);
+        require_ok(context, cbss_paint_command_path_dash_offset(
+            context, index, &offset));
+        assert(fabsf(offset - 1.0f) < 0.001f);
+        found_dashed_path = 1;
+      }
+    }
     found_fill_path |= command.kind == CBSS_PAINT_FILL_PATH;
     found_text |= command.kind == CBSS_PAINT_DRAW_TEXT;
     found_image |= command.kind == CBSS_PAINT_DRAW_IMAGE;
     found_raster |= command.kind == CBSS_PAINT_DRAW_RASTER_SURFACE;
   }
   assert(found_fill && found_stroke && found_gradient && found_path &&
+         found_dashed_path &&
          found_fill_path &&
          found_text && found_image && found_raster);
 
@@ -1019,14 +1053,14 @@ int main(void) {
   assert(cbss_capability_count() == 22);
   assert(cbss_has_capability(CBSS_CAPABILITY_RETAINED_TREE, 1));
   assert(!cbss_has_capability(CBSS_CAPABILITY_RETAINED_TREE, 2));
-  assert(cbss_has_capability(CBSS_CAPABILITY_PAINT_COMMANDS, 2));
-  assert(!cbss_has_capability(CBSS_CAPABILITY_PAINT_COMMANDS, 3));
-  assert(cbss_has_capability(CBSS_CAPABILITY_RETAINED_CANVAS, 2));
-  assert(!cbss_has_capability(CBSS_CAPABILITY_RETAINED_CANVAS, 3));
+  assert(cbss_has_capability(CBSS_CAPABILITY_PAINT_COMMANDS, 3));
+  assert(!cbss_has_capability(CBSS_CAPABILITY_PAINT_COMMANDS, 4));
+  assert(cbss_has_capability(CBSS_CAPABILITY_RETAINED_CANVAS, 3));
+  assert(!cbss_has_capability(CBSS_CAPABILITY_RETAINED_CANVAS, 4));
   assert(cbss_has_capability(CBSS_CAPABILITY_SHADER_AUTHORING, 2));
   assert(!cbss_has_capability(CBSS_CAPABILITY_SHADER_AUTHORING, 3));
-  assert(cbss_has_capability(CBSS_CAPABILITY_CUSTOM_PAINT_PROVIDER, 2));
-  assert(!cbss_has_capability(CBSS_CAPABILITY_CUSTOM_PAINT_PROVIDER, 3));
+  assert(cbss_has_capability(CBSS_CAPABILITY_CUSTOM_PAINT_PROVIDER, 3));
+  assert(!cbss_has_capability(CBSS_CAPABILITY_CUSTOM_PAINT_PROVIDER, 4));
   assert(!cbss_has_capability(UINT32_MAX, 1));
 
   CbssCapabilityInfo capability = {0};
@@ -1056,7 +1090,7 @@ int main(void) {
   assert(capability.since_abi == 0x0001001Bu);
   assert(cbss_capability_at(21, &capability) == CBSS_OK);
   assert(capability.id == CBSS_CAPABILITY_CUSTOM_PAINT_PROVIDER);
-  assert(capability.version == 2);
+  assert(capability.version == 3);
   assert(capability.since_abi == 0x0001001Du);
   memset(&capability, 0xff, sizeof(capability));
   assert(cbss_capability_at(
@@ -1355,6 +1389,21 @@ int main(void) {
       (CbssColor){1.0f, 0.0f, 0.0f, 1.0f}, 1.0f,
       CBSS_STROKE_CAP_BUTT, CBSS_STROKE_JOIN_MITER, 4.0f) ==
       CBSS_INVALID_ARGUMENT);
+  const float invalid_canvas_dash = -2.0f;
+  const CbssPathSegment valid_dash_path[] = {
+      {.kind = CBSS_PATH_MOVE_TO, .endpoint_x = 1.0f, .endpoint_y = 1.0f},
+      {.kind = CBSS_PATH_LINE_TO, .endpoint_x = 8.0f, .endpoint_y = 8.0f}
+  };
+  assert(cbss_render_surface_canvas_stroke_path_dashed(
+      context, surface_state.surface, &invalid_canvas_path, 1,
+      (CbssColor){1.0f, 0.0f, 0.0f, 1.0f}, 1.0f,
+      CBSS_STROKE_CAP_BUTT, CBSS_STROKE_JOIN_MITER, 4.0f,
+      NULL, 1, 0.0f) == CBSS_INVALID_ARGUMENT);
+  assert(cbss_render_surface_canvas_stroke_path_dashed(
+      context, surface_state.surface, valid_dash_path, 2,
+      (CbssColor){1.0f, 0.0f, 0.0f, 1.0f}, 1.0f,
+      CBSS_STROKE_CAP_BUTT, CBSS_STROKE_JOIN_MITER, 4.0f,
+      &invalid_canvas_dash, 1, 0.0f) == CBSS_INVALID_ARGUMENT);
   assert(cbss_render_surface_canvas_fill_path(
       context, surface_state.surface, &invalid_canvas_path, 1,
       (CbssColor){1.0f, 0.0f, 0.0f, 1.0f}, CBSS_PATH_FILL_NONZERO) ==
@@ -1844,6 +1893,12 @@ int main(void) {
       context, surface_state.surface, surface_path, 2,
       (CbssColor){0.0f, 0.0f, 1.0f, 1.0f}, 1.0f,
       CBSS_STROKE_CAP_ROUND, CBSS_STROKE_JOIN_ROUND, 4.0f));
+  const float surface_dashes[] = {4.0f, 2.0f};
+  require_ok(context, cbss_render_surface_canvas_stroke_path_dashed(
+      context, surface_state.surface, surface_path, 2,
+      (CbssColor){0.2f, 0.4f, 0.8f, 1.0f}, 1.0f,
+      CBSS_STROKE_CAP_BUTT, CBSS_STROKE_JOIN_BEVEL, 4.0f,
+      surface_dashes, 2, 0.5f));
   CbssPathSegment surface_fill_path[] = {
       {.kind = CBSS_PATH_MOVE_TO, .endpoint_x = 14.0f, .endpoint_y = 10.0f},
       {.kind = CBSS_PATH_LINE_TO, .endpoint_x = 24.0f, .endpoint_y = 10.0f},
@@ -1992,6 +2047,7 @@ int main(void) {
   int found_surface_fill = 0;
   int found_surface_gradient = 0;
   int found_surface_path = 0;
+  int found_surface_dashed_path = 0;
   int found_surface_fill_path = 0;
   int found_surface_text = 0;
   int found_surface_image = 0;
@@ -2065,7 +2121,21 @@ int main(void) {
     } else if (command.kind == CBSS_PAINT_STROKE_PATH &&
                command.owner == surface_node) {
       assert(cbss_paint_command_path_segment_count(context, i) == 2);
-      found_surface_path = 1;
+      uint32_t dash_count = cbss_paint_command_path_dash_count(context, i);
+      if (dash_count == 0) {
+        found_surface_path = 1;
+      } else {
+        float dash = 0.0f;
+        float offset = 0.0f;
+        assert(dash_count == 2);
+        require_ok(context, cbss_paint_command_path_dash(
+            context, i, 0, &dash));
+        assert(fabsf(dash - 4.0f) < 0.001f);
+        require_ok(context, cbss_paint_command_path_dash_offset(
+            context, i, &offset));
+        assert(fabsf(offset - 0.5f) < 0.001f);
+        found_surface_dashed_path = 1;
+      }
     } else if (command.kind == CBSS_PAINT_FILL_PATH &&
                command.owner == surface_node) {
       assert(cbss_paint_command_path_segment_count(context, i) == 4);
@@ -2100,6 +2170,7 @@ int main(void) {
   assert(found_surface_fill);
   assert(found_surface_gradient);
   assert(found_surface_path);
+  assert(found_surface_dashed_path);
   assert(found_surface_fill_path);
   assert(found_surface_text);
   assert(found_surface_image);

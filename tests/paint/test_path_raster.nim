@@ -103,6 +103,26 @@ suite "path raster integration":
     check image.pixel(14, 9).b == 255'u8
     check image.pixel(9, 14).b == 255'u8
 
+  test "dashed strokes preserve visible runs gaps and offsets":
+    let normal = render([
+      strokePath(
+        [vec2(2, 5), vec2(22, 5)], rgb(1, 0, 0), width = 2,
+        dashPattern = [4.0'f32, 3.0'f32]
+      )
+    ], 26, 10)
+    check normal.pixel(3, 5) == (255'u8, 0'u8, 0'u8)
+    check normal.pixel(7, 5) == (255'u8, 255'u8, 255'u8)
+    check normal.pixel(10, 5) == (255'u8, 0'u8, 0'u8)
+
+    let offset = render([
+      strokePath(
+        [vec2(2, 5), vec2(22, 5)], rgb(0, 0, 1), width = 2,
+        dashPattern = [4.0'f32, 3.0'f32], dashOffset = 3
+      )
+    ], 26, 10)
+    check offset.pixel(2, 5).r < 255'u8
+    check offset.pixel(4, 5) == (255'u8, 255'u8, 255'u8)
+
   test "stroke outlines follow non-uniform transforms":
     let image = render([
       pushTransform(scaleAffine2D(1, 3)),

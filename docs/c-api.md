@@ -30,7 +30,7 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x0001001E` supports:
+ABI version `0x0001001F` supports:
 
 - machine-readable Craft Driver contract metadata and runtime capability
   negotiation through stable numeric identifiers before tree construction;
@@ -425,13 +425,21 @@ Calling commit again without a Canvas mutation is a no-op and returns the same
 revision.
 
 The adapter accepts save/restore, affine transforms, rectangular clips,
-bounded composition layers, rectangles, gradients, retained path strokes,
-text, and images. All pointer arrays are copied during the call. Caller-owned
+bounded composition layers, rectangles, gradients, retained solid or dashed
+path strokes, text, and images. Use
+`cbss_render_surface_canvas_stroke_path_dashed` for a copied dash array and
+offset; odd-length arrays repeat to form an even cycle. All pointer arrays are
+copied during the call. Caller-owned
 arrays and strings need remain valid only until the function returns. Invalid
 handles, unknown enums, non-finite coordinates, negative dimensions, and
 unusable widths are rejected before they enter the retained list. Scope
 balancing follows the Nim Canvas contract: unmatched closes are safe no-ops
 and dangling scopes are closed at the paint boundary.
+
+Paint-command consumers inspect retained dash data through
+`cbss_paint_command_path_dash_count`, `cbss_paint_command_path_dash`, and
+`cbss_paint_command_path_dash_offset`. The dash count is zero for a solid
+stroke. Pattern and generated-fragment limits keep foreign input bounded.
 
 This is the language-neutral path for chart, visualization, game, and other
 drawing libraries that can emit canonical CBSS Canvas commands. Shared GPU
