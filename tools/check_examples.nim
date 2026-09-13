@@ -1,7 +1,8 @@
 import std/[algorithm, os, osproc, sequtils, strutils, tempfiles]
 
 const externallyConfiguredExamples = [
-  "examples/bgfx_host_demo.nim"
+  "examples/bgfx_host_demo.nim",
+  "examples/v07_gpu_showcase_demo.nim"
 ]
 
 type

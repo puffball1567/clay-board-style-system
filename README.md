@@ -149,6 +149,7 @@ nimble cueGeometryMotionDemo
 nimble popInfographicDemo
 nimble kawaiiCompanionDemo
 nimble luxuryHotelDemo
+nimble v07DesignShowcase
 ```
 
 `cueMotionGraphicsDemo` demonstrates kinetic typography and sequenced visual
@@ -176,6 +177,13 @@ commands rather than a 3D asset.
 CBSS Image fitting and clipping, layered Style content, serif/sans typography,
 reservation details, and concierge panels. Asset provenance is recorded in
 `examples/assets/README.md`.
+
+`v07DesignShowcase` presents five original native design directions in one
+switchable application: an infinite heart parade, candy radio, sticker
+pinboard, tiny-planet monitor, and neon live-visual dashboard. The optional
+`runV07GpuShowcase` adds five real bgfx fragment workloads for fluid, particles,
+mechanical surfaces, image processing, and GPU UI materials. Setup and controls
+are documented in [Version 0.7 Showcases](docs/v07-showcases.md).
 
 [Kawaii companion screenshot](sample/ClayBoardStyleSystem_kawaii_demo.png) |
 [Luxury hotel screenshot](sample/ClayBoardStyleSystem_luxury_hotel_demo.png) |
@@ -408,6 +416,7 @@ Rust-native ownership and error handling.
 | Optional GPU ownership and budgets | [GPU Host](docs/gpu-host.md) |
 | Direct GPU display and readback fallback | [GPU Display Surfaces](docs/gpu-direct-surfaces.md) |
 | Typed GPU shaders and build-only packaging | [GPU Shaders](docs/gpu-shaders.md) |
+| Version 0.7 design and GPU examples | [Version 0.7 Showcases](docs/v07-showcases.md) |
 | SDL3, CPU vector, bgfx, and color management | [Native Rendering Stack](docs/native-rendering-stack.md) |
 | Optional platform primitive candidates | [Platform Primitives](docs/platform-primitives.md) |
 | Navigation and Link | [Navigation](docs/navigation.md) |
