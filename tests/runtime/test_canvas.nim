@@ -393,6 +393,21 @@ suite "standard canvas surface":
     check commands[0].pathLineJoin == sljBevel
     check commands[0].pathMiterLimit == 3
 
+  test "canvas retains normalized dash state and precomputed geometry":
+    let drawing = newCanvas2D()
+    drawing.strokePath(
+      [vec2(0, 0), vec2(30, 0)], rgb(1, 0, 0), width = 2,
+      dashPattern = [5.0'f32], dashOffset = 2
+    )
+    check drawing.commands.len == 1
+    check drawing.commands[0].pathDashPattern == @[5.0'f32, 5.0'f32]
+    check drawing.commands[0].pathDashOffset == 2
+    check drawing.commands[0].pathOutline.fillable
+    let commands = drawing.paintCommands(NodeId(4), rect(10, 20, 40, 10))
+    check commands.len == 1
+    check commands[0].pathDashPattern == @[5.0'f32, 5.0'f32]
+    check commands[0].pathDashOffset == 2
+
   test "filled paths retain color and fill rule":
     let drawing = newCanvas2D()
     let path = path2D([

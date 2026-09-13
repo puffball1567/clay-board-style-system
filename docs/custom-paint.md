@@ -91,6 +91,10 @@ transform and save/restore scopes, clips, layers, rectangles, gradients,
 stroked and filled paths with nonzero/evenodd rules, text, images, and
 `RasterSurface` composition. It is a command boundary,
 not a second tree, event loop, hit-test system, or presentation owner.
+The dashed-stroke entry point copies and validates its dash array during the
+callback. Odd-length arrays repeat once, offsets are retained, and bounded
+outline expansion prevents caller-controlled dash density from creating
+unbounded work.
 
 `cbss_style_set_custom_paint` copies the material name and up to 64 typed
 parameters. Provider registration takes ownership of callback user data only

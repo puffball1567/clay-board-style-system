@@ -9,7 +9,7 @@ type
   ]
 
 const
-  CbssAbiVersion* = 0x0001001E'u32
+  CbssAbiVersion* = 0x0001001F'u32
   CbssDriverContractVersion* = 0x00010000'u32
   CbssCapabilityAvailable* = 1'u32 shl 0
   CbssCapabilityRetainedTree* = 1'u32
@@ -38,14 +38,14 @@ const
     (id: 1'u32, version: 1'u32, sinceAbi: 0x00010015'u32, name: "tree.retained"),
     (id: 2'u32, version: 1'u32, sinceAbi: 0x00010015'u32, name: "style.typed"),
     (id: 3'u32, version: 1'u32, sinceAbi: 0x00010015'u32, name: "layout.flex"),
-    (id: 4'u32, version: 2'u32, sinceAbi: 0x00010015'u32, name: "paint.commands"),
+    (id: 4'u32, version: 3'u32, sinceAbi: 0x00010015'u32, name: "paint.commands"),
     (id: 5'u32, version: 1'u32, sinceAbi: 0x00010015'u32, name: "hit-test"),
     (id: 6'u32, version: 1'u32, sinceAbi: 0x00010015'u32, name: "events.standard"),
     (id: 7'u32, version: 1'u32, sinceAbi: 0x00010015'u32, name: "focus"),
     (id: 8'u32, version: 1'u32, sinceAbi: 0x00010015'u32, name: "accessibility.semantics"),
     (id: 9'u32, version: 1'u32, sinceAbi: 0x00010015'u32, name: "scroll.retained"),
     (id: 10'u32, version: 1'u32, sinceAbi: 0x00010015'u32, name: "motion.declarative"),
-    (id: 11'u32, version: 2'u32, sinceAbi: 0x00010015'u32, name: "canvas.retained"),
+    (id: 11'u32, version: 3'u32, sinceAbi: 0x00010015'u32, name: "canvas.retained"),
     (id: 12'u32, version: 1'u32, sinceAbi: 0x00010015'u32, name: "render-surface"),
     (id: 13'u32, version: 1'u32, sinceAbi: 0x00010015'u32, name: "data.blob"),
     (id: 14'u32, version: 1'u32, sinceAbi: 0x00010015'u32, name: "data.form-data"),
@@ -56,5 +56,5 @@ const
     (id: 19'u32, version: 1'u32, sinceAbi: 0x00010019'u32, name: "validation.pattern"),
     (id: 20'u32, version: 1'u32, sinceAbi: 0x0001001A'u32, name: "raster-surface"),
     (id: 21'u32, version: 2'u32, sinceAbi: 0x0001001B'u32, name: "shader.authoring"),
-    (id: 22'u32, version: 2'u32, sinceAbi: 0x0001001D'u32, name: "custom-paint.provider")
+    (id: 22'u32, version: 3'u32, sinceAbi: 0x0001001D'u32, name: "custom-paint.provider")
   ]

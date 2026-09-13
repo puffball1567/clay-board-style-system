@@ -180,6 +180,10 @@ backend texture allocation or composition. The path
 measurement covers adaptive curve subdivision into backend-ready contours.
 The path-fill measurement covers four-sample scanline coverage generation and
 reused intersection storage; it excludes final backend pixel blending. The
+stroke path retains its fillable outline, including normalized dash geometry,
+at authoring time. Dash pattern entries and generated fragments are bounded so
+untrusted C ABI input cannot turn a redraw into unbounded geometry work.
+The
 other measurements do not include backend rasterization or text shaping.
 Memory instrumentation may compile the same workload with
 `-d:cbssMemoryCheck`; this keeps structural assertions and workload sizes but

@@ -80,6 +80,8 @@ type
       pathLineCap*: StrokeLineCap
       pathLineJoin*: StrokeLineJoin
       pathMiterLimit*: float32
+      pathDashPattern*: seq[float32]
+      pathDashOffset*: float32
     of pcDrawText:
       node*: NodeId
       text*: string
@@ -288,7 +290,9 @@ proc strokePath*(
     lineCap = slcButt;
     lineJoin = sljMiter;
     miterLimit = 10.0'f32;
-    owner = none(NodeId)
+    owner = none(NodeId);
+    dashPattern: openArray[float32] = [];
+    dashOffset = 0.0'f32
 ): PaintCommand =
   let normalizedWidth =
     if width.classify in {fcNan, fcInf, fcNegInf}: 0.0'f32
@@ -296,18 +300,26 @@ proc strokePath*(
   let normalizedMiterLimit =
     if miterLimit.classify in {fcNan, fcInf, fcNegInf}: 1.0'f32
     else: max(1.0'f32, miterLimit)
+  let normalizedDashPattern = normalizeDashPattern(dashPattern)
+  let normalizedDashOffset =
+    if dashOffset.classify in {fcNan, fcInf, fcNegInf}: 0.0'f32
+    else: dashOffset
   PaintCommand(
     kind: pcStrokePath,
     owner: owner,
     path: path,
     pathOutline: path.strokeOutline(
-      normalizedWidth, lineCap, lineJoin, normalizedMiterLimit
+      normalizedWidth, lineCap, lineJoin, normalizedMiterLimit,
+      dashPattern = normalizedDashPattern,
+      dashOffset = normalizedDashOffset
     ),
     pathColor: color,
     pathWidth: normalizedWidth,
     pathLineCap: lineCap,
     pathLineJoin: lineJoin,
-    pathMiterLimit: normalizedMiterLimit
+    pathMiterLimit: normalizedMiterLimit,
+    pathDashPattern: normalizedDashPattern,
+    pathDashOffset: normalizedDashOffset
   )
 
 proc fillPath*(
@@ -332,10 +344,13 @@ proc strokePath*(
     lineCap = slcButt;
     lineJoin = sljMiter;
     miterLimit = 10.0'f32;
-    owner = none(NodeId)
+    owner = none(NodeId);
+    dashPattern: openArray[float32] = [];
+    dashOffset = 0.0'f32
 ): PaintCommand =
   strokePath(
-    path2D(points, closed), color, width, lineCap, lineJoin, miterLimit, owner
+    path2D(points, closed), color, width, lineCap, lineJoin, miterLimit,
+    owner, dashPattern, dashOffset
   )
 
 proc drawText*(node: NodeId; text: string; position: Vec2; color: Color; style: ComputedTextStyle; maxWidth = none(float32)): PaintCommand =

@@ -37,6 +37,10 @@ type
     points*: seq[Vec2]
     closed*: bool
 
+const
+  maxStrokeDashPatternEntries* = 4_096
+  maxStrokeDashPieces* = 65_536
+
 proc initPath2D*(): Path2D =
   Path2D(segments: @[])
 
@@ -483,13 +487,134 @@ proc appendStrokeJoin(
     followingOuter
   ])
 
+proc normalizeDashPattern*(source: openArray[float32]): seq[float32] =
+  ## Normalizes a CSS-like alternating dash/gap list. Invalid and all-zero
+  ## patterns resolve to a solid stroke. Odd lists repeat once.
+  if source.len > maxStrokeDashPatternEntries:
+    return @[]
+  var total = 0.0'f32
+  result = newSeqOfCap[float32](source.len * (if source.len mod 2 == 0: 1 else: 2))
+  for value in source:
+    if not value.finite or value < 0:
+      return @[]
+    result.add value
+    total += value
+  if result.len == 0 or not total.finite or total <= 0.000001'f32:
+    return @[]
+  if result.len mod 2 != 0:
+    for value in source:
+      result.add value
+
+proc contourLength(contour: FlattenedPathContour): float32 =
+  let segmentCount = contour.points.len - 1 + ord(contour.closed)
+  for index in 0 ..< segmentCount:
+    let first = contour.points[index mod contour.points.len]
+    let second = contour.points[(index + 1) mod contour.points.len]
+    let dx = second.x - first.x
+    let dy = second.y - first.y
+    result += sqrt(dx * dx + dy * dy)
+
+proc dashedContours(
+    source: openArray[FlattenedPathContour];
+    pattern: openArray[float32];
+    offset: float32
+): tuple[contours: seq[FlattenedPathContour], overflowed: bool] =
+  var patternLength = 0.0'f32
+  for value in pattern:
+    patternLength += value
+  var estimatedPieces = 0.0'f32
+  for contour in source:
+    estimatedPieces += contour.contourLength / patternLength *
+      max(1, pattern.len div 2).float32 + 1.0'f32
+  if not estimatedPieces.finite or estimatedPieces > maxStrokeDashPieces.float32:
+    return (@[], true)
+
+  var normalizedOffset =
+    if offset.finite: offset mod patternLength
+    else: 0.0'f32
+  if normalizedOffset < 0:
+    normalizedOffset += patternLength
+
+  for contour in source:
+    if contour.points.len < 2:
+      continue
+    var patternIndex = 0
+    var patternRemaining = pattern[0]
+    var phase = normalizedOffset
+    while phase > 0.000001'f32:
+      if patternRemaining <= 0.000001'f32:
+        patternIndex = (patternIndex + 1) mod pattern.len
+        patternRemaining = pattern[patternIndex]
+      elif phase >= patternRemaining:
+        phase -= patternRemaining
+        patternIndex = (patternIndex + 1) mod pattern.len
+        patternRemaining = pattern[patternIndex]
+      else:
+        patternRemaining -= phase
+        phase = 0
+
+    var fragments: seq[FlattenedPathContour]
+    var activePoints: seq[Vec2]
+    var hadGap = false
+    let segmentCount = contour.points.len - 1 + ord(contour.closed)
+    for segmentIndex in 0 ..< segmentCount:
+      let first = contour.points[segmentIndex mod contour.points.len]
+      let second = contour.points[(segmentIndex + 1) mod contour.points.len]
+      let dx = second.x - first.x
+      let dy = second.y - first.y
+      let segmentLength = sqrt(dx * dx + dy * dy)
+      if segmentLength <= 0.000001'f32:
+        continue
+      var consumed = 0.0'f32
+      while consumed < segmentLength - 0.000001'f32:
+        while patternRemaining <= 0.000001'f32:
+          let wasDash = patternIndex mod 2 == 0
+          patternIndex = (patternIndex + 1) mod pattern.len
+          patternRemaining = pattern[patternIndex]
+          if wasDash and patternIndex mod 2 != 0 and activePoints.len >= 2:
+            fragments.add FlattenedPathContour(points: activePoints)
+            activePoints = @[]
+        let step = min(segmentLength - consumed, patternRemaining)
+        let startRatio = consumed / segmentLength
+        let endRatio = (consumed + step) / segmentLength
+        let startPoint = vec2(first.x + dx * startRatio, first.y + dy * startRatio)
+        let endPoint = vec2(first.x + dx * endRatio, first.y + dy * endRatio)
+        if patternIndex mod 2 == 0:
+          if activePoints.len == 0:
+            activePoints.add startPoint
+          if not activePoints[^1].samePoint(endPoint):
+            activePoints.add endPoint
+        elif step > 0.000001'f32:
+          hadGap = true
+        consumed += step
+        patternRemaining -= step
+
+    if activePoints.len >= 2:
+      fragments.add FlattenedPathContour(points: activePoints)
+
+    if contour.closed and not hadGap:
+      result.contours.add contour
+      continue
+    if contour.closed and fragments.len >= 2 and
+        fragments[0].points.len >= 2 and fragments[^1].points.len >= 2 and
+        fragments[0].points[0].samePoint(contour.points[0]) and
+        fragments[^1].points[^1].samePoint(contour.points[0]):
+      var merged = fragments[^1].points
+      for index in 1 ..< fragments[0].points.len:
+        merged.add fragments[0].points[index]
+      fragments[0] = FlattenedPathContour(points: merged)
+      fragments.setLen(fragments.len - 1)
+    result.contours.add fragments
+
 proc strokeOutline*(
     path: Path2D;
     width = 1.0'f32;
     lineCap = slcButt;
     lineJoin = sljMiter;
     miterLimit = 10.0'f32;
-    tolerance = 0.25'f32
+    tolerance = 0.25'f32;
+    dashPattern: openArray[float32] = [];
+    dashOffset = 0.0'f32
 ): Path2D =
   ## Converts a retained centerline into fillable contours. Both CPU backends
   ## consume this geometry so caps, joins and coverage cannot drift apart.
@@ -500,7 +625,15 @@ proc strokeOutline*(
     if tolerance.finite and tolerance > 0: tolerance
     else: 0.25'f32
   let radius = width * 0.5'f32
-  for contour in path.flattened(flattenTolerance):
+  let solidContours = path.flattened(flattenTolerance)
+  let normalizedPattern = normalizeDashPattern(dashPattern)
+  let dashed =
+    if normalizedPattern.len == 0:
+      (contours: solidContours, overflowed: false)
+    else:
+      dashedContours(solidContours, normalizedPattern, dashOffset)
+  let contours = if dashed.overflowed: solidContours else: dashed.contours
+  for contour in contours:
     var points = newSeqOfCap[Vec2](contour.points.len)
     for point in contour.points:
       if points.len == 0 or not points[^1].samePoint(point):
