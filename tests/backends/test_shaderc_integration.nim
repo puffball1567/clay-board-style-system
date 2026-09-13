@@ -118,7 +118,7 @@ suite "official bgfx shaderc integration":
       [shaderIncludes],
       workDirectory = root
     )
-    let target = gpuShaderCompileTarget(gsbtOpenGL, gscpLinux, "120")
+    let target = gpuShaderCompileTarget(gsbtOpenGL, gscpLinux, "330")
     let vertex = GpuShaderSource(
       stage: gssVertex,
       label: "v07-showcase-vertex",
