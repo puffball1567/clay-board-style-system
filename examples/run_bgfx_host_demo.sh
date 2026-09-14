@@ -108,13 +108,13 @@ if [ "$demo_kind" = showcase ]; then
   "$CBSS_SHADERC" \
     -f "$shader_source/vs_showcase.sc" \
     -o "$shader_dir/vs_showcase.bin" \
-    --platform linux --type vertex --profile 120 --Werror \
+    --platform linux --type vertex --profile 330 --Werror \
     --varyingdef "$shader_source/varying.def.sc" \
     -i "$bgfx_dir/src"
   "$CBSS_SHADERC" \
     -f "$shader_source/fs_showcase.sc" \
     -o "$shader_dir/fs_showcase.bin" \
-    --platform linux --type fragment --profile 120 --Werror \
+    --platform linux --type fragment --profile 330 --Werror \
     --varyingdef "$shader_source/varying.def.sc" \
     -i "$bgfx_dir/src"
   demo_source=examples/v07_gpu_showcase_demo.nim

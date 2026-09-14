@@ -70,7 +70,7 @@ int cbss_bgfx_demo_poll(void* raw_window, int* pixel_width, int* pixel_height)
                 cbss_bgfx_demo_pointer_x =
                     event.motion.x / (float)logical_width * 2.0f - 1.0f;
                 cbss_bgfx_demo_pointer_y =
-                    1.0f - event.motion.y / (float)logical_height * 2.0f;
+                    event.motion.y / (float)logical_height * 2.0f - 1.0f;
             }
         }
         if (SDL_EVENT_MOUSE_BUTTON_UP == event.type && event.button.y <= 64.0f)
@@ -104,6 +104,14 @@ int cbss_bgfx_demo_scene(float* pointer_x, float* pointer_y)
         *pointer_y = cbss_bgfx_demo_pointer_y;
     }
     return cbss_bgfx_demo_selected_scene;
+}
+
+void cbss_bgfx_demo_select_scene(int scene)
+{
+    if (scene >= 0 && scene < 5)
+    {
+        cbss_bgfx_demo_selected_scene = scene;
+    }
 }
 
 void cbss_bgfx_demo_set_title(void* raw_window, const char* title)

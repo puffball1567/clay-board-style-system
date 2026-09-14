@@ -39,6 +39,8 @@ proc pollWindow(window: pointer; width, height: ptr cint): cint
   {.importc: "cbss_bgfx_demo_poll", cdecl.}
 proc selectedScene(pointerX, pointerY: ptr cfloat): cint
   {.importc: "cbss_bgfx_demo_scene", cdecl.}
+proc selectScene(scene: cint)
+  {.importc: "cbss_bgfx_demo_select_scene", cdecl.}
 proc setWindowTitle(window: pointer; title: cstring)
   {.importc: "cbss_bgfx_demo_set_title", cdecl.}
 proc delay(milliseconds: uint32)
@@ -81,10 +83,25 @@ let maxFrames = if paramCount() == 2: parseInt(paramStr(2)) else: 0
 if maxFrames < 0:
   raise newException(ValueError, "frame count must be non-negative")
 
-let initialTitle = sceneTitle(0)
+let initialScene = block:
+  let configured = getEnv("CBSS_GPU_SHOWCASE_SCENE")
+  if configured.len == 0:
+    0
+  else:
+    clamp(parseInt(configured) - 1, 0, sceneNames.high)
+let capturePath = getEnv("CBSS_GPU_SHOWCASE_CAPTURE")
+let captureOnly = getEnv("CBSS_GPU_SHOWCASE_CAPTURE_ONLY") == "1"
+if captureOnly and capturePath.len == 0:
+  raise newException(
+    ValueError,
+    "CBSS_GPU_SHOWCASE_CAPTURE_ONLY requires CBSS_GPU_SHOWCASE_CAPTURE"
+  )
+
+let initialTitle = sceneTitle(initialScene)
 let window = createWindow(initialTitle.cstring, initialWidth, initialHeight)
 if window.isNil:
   raise newException(IOError, "SDL3 window creation failed: " & $sdlError())
+selectScene(cint(initialScene))
 
 var host: GpuHost
 var vertexBuffer = invalidHandle(bgfx_vertex_buffer_handle_t)
@@ -169,6 +186,7 @@ try:
   var previousHeight = height
   var previousScene = -1
   var frame = 0
+  var captureRequested = false
 
   while pollWindow(window, addr width, addr height) != 0 and
       (maxFrames == 0 or frame < maxFrames):
@@ -204,9 +222,17 @@ try:
     BGFX.setIndexBuffer(indexBuffer, 0, uint32(indices.len))
     BGFX.setState(BGFX_STATE_WRITE_RGB or BGFX_STATE_WRITE_A, 0)
     BGFX.submit(0, program, 0, BGFX_DISCARD_ALL)
+    if capturePath.len > 0 and not captureRequested and frame >= 8:
+      BGFX.requestScreenShot(
+        invalidHandle(bgfx_frame_buffer_handle_t),
+        capturePath.cstring
+      )
+      captureRequested = true
     host.endGpuFrame(token)
     delay(4)
     inc frame
+    if captureOnly and captureRequested and fileExists(capturePath & ".tga"):
+      break
 finally:
   if not host.isNil:
     if BGFX_HANDLE_IS_VALID(pointerUniform): BGFX.destroyUniform(pointerUniform)

@@ -31,12 +31,18 @@ float roundedBoxMask(vec2 p, vec2 halfSize, float radius)
 float heartMask(vec2 p, float scaleValue)
 {
   p /= scaleValue;
+  p.y = -p.y;
   p.y += 0.05;
   float x = p.x;
   float y = p.y;
   float a = x * x + y * y - 0.30;
   float value = a * a * a - x * x * y * y * y;
-  return 1.0 - smoothstep(-0.004, 0.004, value);
+  vec2 gradient = vec2(
+    6.0 * x * a * a - 2.0 * x * y * y * y,
+    6.0 * y * a * a - 3.0 * x * x * y * y
+  );
+  float signedDistance = value / max(length(gradient), 0.0001);
+  return 1.0 - smoothstep(-0.015, 0.015, signedDistance);
 }
 
 vec3 fluidScene(vec2 uv)
@@ -76,8 +82,7 @@ vec3 heartScene(vec2 uv)
     vec3 heartColor = mix(vec3(1.0, 0.32, 0.57), vec3(1.0, 0.91, 0.26), hash21(vec2(fi, 9.4)));
     color = mix(color, heartColor, heart);
   }
-  float glow = 0.04 / max(0.03, length(p - vec2(0.0, 0.04)));
-  return color + glow * vec3(0.42, 0.08, 0.22);
+  return color;
 }
 
 vec3 mechanicalScene(vec2 uv)
