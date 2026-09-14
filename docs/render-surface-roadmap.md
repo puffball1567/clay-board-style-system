@@ -211,9 +211,16 @@ and new visual bounds through transforms and clips, merges adjacent tile runs,
 and replays only dirty regions into the existing raster image. Published
 `RasterSurface` source dirt is scaled into its destination rather than
 invalidating the full image placement. Scope or text-bound changes that cannot
-yet be bounded conservatively fall back to a full repaint. SDL3 will consume
-the same tile plan in its retained texture cache; that backend connection is
-still required before the Version 0.7 release gate is closed.
+yet be bounded conservatively fall back to a full repaint. SDL3 now consumes
+the same planner in its retained static texture: unchanged commands perform no
+texture update, bounded changes clear and replay only affected tiles, and
+resize, background, scope, or unbounded text changes repaint the complete
+texture. RasterSurface dirty revisions preserve their destination mapping on
+both backends. To bound command replay under sparse adversarial damage, SDL3
+uses at most eight disjoint passes and conservatively unions larger region
+sets. Command comparison still scans the retained command sequence, so this
+closes bounded backend pixel work rather than the later indexed `O(dirty)`
+authoring goal.
 
 No rasterizer-internal type or owning object crosses the C ABI. Foreign callers
 select CBSS capabilities and policies through CBSS-owned versioned API, while

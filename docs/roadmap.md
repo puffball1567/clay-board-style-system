@@ -2307,8 +2307,12 @@ use that same retained outline path with bounded authoring-time expansion.
 The backend-neutral retained dirty-tile planner and deterministic CPU reference
 cache now preserve unchanged pixels, coalesce bounded tile regions, resolve
 transform and clip scopes, and map `RasterSurface` source dirt directly into
-destination tiles. SDL3 retained-texture consumption, CPU mask/filter
-composition, and the broader Motion Scene remain open Version 0.7 work.
+destination tiles. The SDL3 layered renderer now consumes the same retained
+damage plan, skips texture updates for identical static commands, redraws only
+bounded damaged tiles, and caps sparse damage replay by conservatively merging
+more than eight regions. Initial construction, resize, background changes, and
+unbounded scope or text changes retain a full-repaint fallback. CPU mask/filter
+composition and the broader Motion Scene remain open Version 0.7 work.
 Backend-neutral named Custom Paint
 materials now connect ordinary Style declarations to bounded underlay and
 overlay command streams without adding nodes. `GpuCanvasSurface` can use that

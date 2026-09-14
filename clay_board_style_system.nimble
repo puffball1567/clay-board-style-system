@@ -236,6 +236,7 @@ task testMotionAsan, "Run retained runtime tests under AddressSanitizer":
       ("custom_paint", "tests/runtime/test_custom_paint.nim"),
       ("gpu_host", "tests/runtime/test_gpu_host.nim"),
       ("raster_surface", "tests/core/test_raster_surface.nim"),
+      ("retained_damage", "tests/paint/test_retained_damage.nim"),
       ("retained_canvas", "tests/paint/test_retained_canvas_raster.nim")
     ]:
       let testName = test[0]
@@ -262,6 +263,7 @@ task testUbsan, "Run numeric, layout, transform, and motion tests under Undefine
       ("gpu_host", "tests/runtime/test_gpu_host.nim"),
       ("custom_paint", "tests/runtime/test_custom_paint.nim"),
       ("raster_surface", "tests/core/test_raster_surface.nim"),
+      ("retained_damage", "tests/paint/test_retained_damage.nim"),
       ("retained_canvas", "tests/paint/test_retained_canvas_raster.nim"),
       ("declarative_transition", "tests/runtime/test_declarative_transition.nim"),
       ("declarative_keyframes", "tests/runtime/test_declarative_keyframes.nim"),
@@ -302,6 +304,7 @@ task testLsan, "Run retained lifecycle tests under LeakSanitizer on Linux":
         ("custom_paint", "tests/runtime/test_custom_paint.nim"),
         ("gpu_host", "tests/runtime/test_gpu_host.nim"),
         ("raster_surface", "tests/core/test_raster_surface.nim"),
+        ("retained_damage", "tests/paint/test_retained_damage.nim"),
         ("retained_canvas", "tests/paint/test_retained_canvas_raster.nim")
       ]:
         let testName = test[0]
@@ -466,6 +469,7 @@ task testRasterSurfaceValgrind, "Run ARC and ORC RasterSurface ownership checks 
   for memoryModel in ["arc", "orc"]:
     for test in [
       ("raster_surface", "tests/core/test_raster_surface.nim"),
+      ("retained_damage", "tests/paint/test_retained_damage.nim"),
       ("retained_canvas", "tests/paint/test_retained_canvas_raster.nim")
     ]:
       let artifact = "/tmp/clay_board_style_system_" & test[0] & "_" & memoryModel & "_valgrind"

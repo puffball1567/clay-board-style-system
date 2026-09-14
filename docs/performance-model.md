@@ -194,8 +194,17 @@ The retained Canvas benchmark includes command comparison, transformed damage
 resolution, tile planning, clearing, and deterministic CPU replay. It asserts
 that one bounded command change dirties one tile rather than the full raster.
 The current comparison fallback still scans the retained command sequence;
-backend raster work is tile-bounded, while indexed command mutation remains a
+resolved bounds from the previous snapshot are retained so only the current
+command sequence resolves transforms and clips again. Backend raster work is
+tile-bounded, while indexed command mutation remains a
 later optimization before claiming end-to-end `O(dirty)` authoring cost.
+The SDL3 layered renderer consumes the same plan for its retained static
+texture. An identical static command stream causes no texture update; a bounded
+change clears and replays only its damage tiles. SDL3 performs at most eight
+disjoint damage passes per update and unions larger sparse sets into one
+conservative rectangle, preventing region-count multiplication of the retained
+command scan. This is a bounded replay policy, not yet an end-to-end `O(dirty)`
+command-selection claim.
 The release ARC memory-check build completed this workload under Valgrind with
 zero bytes retained at exit and zero reported memory errors.
 

@@ -2,6 +2,7 @@ import std/[math, options, os, unittest]
 
 import clay_board_style_system/backends/sdl3/renderer
 import clay_board_style_system/core/[color, geometry, node, raster_surface]
+import clay_board_style_system/paint/dirty_tiles
 import clay_board_style_system/paint/gpu_direct_compositor
 import clay_board_style_system/paint/paint_command
 import clay_board_style_system/paint/path_geometry
@@ -388,3 +389,197 @@ suite "SDL3 transform rendering":
     renderer.render([fillRect(rect(0, 0, 1, 1), rgb(1, 0, 0))])
     check renderer.gpuDirectCompositionStats() ==
       Sdl3GpuDirectCompositionStats()
+
+  test "layered rendering updates only damaged retained tiles":
+    let previousDriver = getEnv("SDL_VIDEODRIVER")
+    putEnv("SDL_VIDEODRIVER", "dummy")
+    defer:
+      if previousDriver.len > 0:
+        putEnv("SDL_VIDEODRIVER", previousDriver)
+      else:
+        delEnv("SDL_VIDEODRIVER")
+
+    var renderer = initSdl3Renderer("CBSS retained damage test", 128, 64, false)
+    defer: renderer.close()
+    let fonts = initFontRegistry()
+    let cosmic = CosmicTextEngine()
+    let initial = @[
+      fillRect(rect(4, 4, 20, 20), rgb(1, 0, 0)),
+      fillRect(rect(100, 4, 20, 20), rgb(0, 0, 1))
+    ]
+    renderer.renderLayered(initial, cosmic, fonts, rgb(1, 1, 1))
+    let firstStats = renderer.retainedLayerStats()
+    check firstStats.fullRepaints == 1
+    check firstStats.partialRepaints == 0
+    check firstStats.lastDirtyTiles == 2
+    check firstStats.totalTiles == 2
+
+    let changed = @[
+      fillRect(rect(4, 4, 20, 20), rgb(0, 1, 0)),
+      fillRect(rect(100, 4, 20, 20), rgb(0, 0, 1))
+    ]
+    renderer.requestFrameCapture()
+    renderer.renderLayered(changed, cosmic, fonts, rgb(1, 1, 1))
+    let changedStats = renderer.retainedLayerStats()
+    check changedStats.fullRepaints == 1
+    check changedStats.partialRepaints == 1
+    check changedStats.lastDirtyTiles == 1
+    let changedFrame = renderer.capturedFrame().get
+    check changedFrame.pixel(10, 10).g > 220
+    check changedFrame.pixel(110, 10).b > 220
+
+    renderer.renderLayered(changed, cosmic, fonts, rgb(1, 1, 1))
+    let unchangedStats = renderer.retainedLayerStats()
+    check unchangedStats.skippedRepaints == 1
+    check unchangedStats.lastDirtyTiles == 0
+
+    renderer.requestFrameCapture()
+    renderer.renderLayered(changed[0 .. 0], cosmic, fonts, rgb(1, 1, 1))
+    let removedStats = renderer.retainedLayerStats()
+    check removedStats.partialRepaints == 2
+    check removedStats.lastDirtyTiles == 1
+    let removedFrame = renderer.capturedFrame().get
+    check removedFrame.pixel(10, 10).g > 220
+    check removedFrame.pixel(110, 10) == (255'u8, 255'u8, 255'u8)
+
+  test "retained damage clips transformed updates in final coordinates":
+    let previousDriver = getEnv("SDL_VIDEODRIVER")
+    putEnv("SDL_VIDEODRIVER", "dummy")
+    defer:
+      if previousDriver.len > 0:
+        putEnv("SDL_VIDEODRIVER", previousDriver)
+      else:
+        delEnv("SDL_VIDEODRIVER")
+
+    var renderer = initSdl3Renderer("CBSS transformed damage test", 128, 64, false)
+    defer: renderer.close()
+    let fonts = initFontRegistry()
+    let cosmic = CosmicTextEngine()
+    let transform = translationAffine2D(64, 0)
+    var initial = @[
+      pushTransform(transform, rect(0, 0, 32, 32)),
+      fillRect(rect(4, 4, 20, 20), rgb(1, 0, 0)),
+      popTransform(),
+      fillRect(rect(4, 4, 20, 20), rgb(0, 0, 1))
+    ]
+    initial.resolveTransformBounds()
+    renderer.renderLayered(initial, cosmic, fonts, rgb(1, 1, 1))
+
+    var changed = @[
+      pushTransform(transform, rect(0, 0, 32, 32)),
+      fillRect(rect(4, 4, 20, 20), rgb(0, 1, 0)),
+      popTransform(),
+      fillRect(rect(4, 4, 20, 20), rgb(0, 0, 1))
+    ]
+    changed.resolveTransformBounds()
+    renderer.requestFrameCapture()
+    renderer.renderLayered(changed, cosmic, fonts, rgb(1, 1, 1))
+    let stats = renderer.retainedLayerStats()
+    check stats.partialRepaints == 1
+    check stats.lastDirtyTiles == 1
+    let frame = renderer.capturedFrame().get
+    check frame.pixel(74, 10).g > 220
+    check frame.pixel(10, 10).b > 220
+
+  test "retained raster publication updates its destination tile only":
+    let previousDriver = getEnv("SDL_VIDEODRIVER")
+    putEnv("SDL_VIDEODRIVER", "dummy")
+    defer:
+      if previousDriver.len > 0:
+        putEnv("SDL_VIDEODRIVER", previousDriver)
+      else:
+        delEnv("SDL_VIDEODRIVER")
+
+    let surface = newRasterSurface(4, 4, [0'u8, 0'u8, 0'u8, 255'u8])
+    let commands = @[
+      fillRect(rect(4, 4, 20, 20), rgb(0, 0, 1)),
+      drawRasterSurface(NodeId(7), surface, rect(96, 0, 32, 32))
+    ]
+    var renderer = initSdl3Renderer("CBSS raster damage test", 128, 64, false)
+    defer: renderer.close()
+    let fonts = initFontRegistry()
+    let cosmic = CosmicTextEngine()
+    renderer.renderLayered(commands, cosmic, fonts, rgb(1, 1, 1))
+
+    surface.updateRegion(
+      rasterRegion(0, 0, 1, 1), @[255'u8, 0, 0, 255]
+    )
+    check surface.publish()
+    renderer.requestFrameCapture()
+    renderer.renderLayered(commands, cosmic, fonts, rgb(1, 1, 1))
+    let stats = renderer.retainedLayerStats()
+    check stats.partialRepaints == 1
+    check stats.lastDirtyTiles == 1
+    let frame = renderer.capturedFrame().get
+    check frame.pixel(100, 4).r > 220
+    check frame.pixel(10, 10).b > 220
+
+  test "many sparse damage regions use a bounded replay count":
+    let previousDriver = getEnv("SDL_VIDEODRIVER")
+    putEnv("SDL_VIDEODRIVER", "dummy")
+    defer:
+      if previousDriver.len > 0:
+        putEnv("SDL_VIDEODRIVER", previousDriver)
+      else:
+        delEnv("SDL_VIDEODRIVER")
+
+    var initial: seq[PaintCommand]
+    var changed: seq[PaintCommand]
+    for index in 0 ..< 9:
+      let x = (index * 2 * DefaultDirtyTileSize + 4).float32
+      initial.add fillRect(rect(x, 4, 16, 16), rgb(1, 0, 0))
+      changed.add fillRect(rect(x, 4, 16, 16), rgb(0, 1, 0))
+    var renderer = initSdl3Renderer(
+      "CBSS bounded damage passes", 18 * DefaultDirtyTileSize, 64, false
+    )
+    defer: renderer.close()
+    let fonts = initFontRegistry()
+    let cosmic = CosmicTextEngine()
+    renderer.renderLayered(initial, cosmic, fonts, rgb(1, 1, 1))
+    renderer.renderLayered(changed, cosmic, fonts, rgb(1, 1, 1))
+    let stats = renderer.retainedLayerStats()
+    check stats.partialRepaints == 1
+    check stats.lastDirtyTiles == 9
+    check stats.lastDamagePasses == 1
+    check stats.coalescedRepaints == 1
+
+  test "dynamic command changes do not invalidate the retained static texture":
+    let previousDriver = getEnv("SDL_VIDEODRIVER")
+    putEnv("SDL_VIDEODRIVER", "dummy")
+    defer:
+      if previousDriver.len > 0:
+        putEnv("SDL_VIDEODRIVER", previousDriver)
+      else:
+        delEnv("SDL_VIDEODRIVER")
+
+    let dynamicOwner = NodeId(12)
+    let initial = @[
+      fillRect(rect(4, 4, 20, 20), rgb(0, 0, 1)),
+      fillRect(
+        rect(96, 4, 20, 20), rgb(1, 0, 0), owner = some(dynamicOwner)
+      )
+    ]
+    let changed = @[
+      fillRect(rect(4, 4, 20, 20), rgb(0, 0, 1)),
+      fillRect(
+        rect(96, 4, 20, 20), rgb(0, 1, 0), owner = some(dynamicOwner)
+      )
+    ]
+    var renderer = initSdl3Renderer("CBSS dynamic retained test", 128, 64, false)
+    defer: renderer.close()
+    let fonts = initFontRegistry()
+    let cosmic = CosmicTextEngine()
+    renderer.renderLayered(
+      initial, cosmic, fonts, rgb(1, 1, 1), dynamicNodes = [dynamicOwner]
+    )
+    renderer.requestFrameCapture()
+    renderer.renderLayered(
+      changed, cosmic, fonts, rgb(1, 1, 1), dynamicNodes = [dynamicOwner]
+    )
+    let stats = renderer.retainedLayerStats()
+    check stats.fullRepaints == 1
+    check stats.partialRepaints == 0
+    check stats.skippedRepaints == 1
+    let frame = renderer.capturedFrame().get
+    check frame.pixel(10, 10).b > 220
+    check frame.pixel(106, 10).g > 220

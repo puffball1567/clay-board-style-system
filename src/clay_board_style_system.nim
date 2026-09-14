@@ -36,7 +36,7 @@ import clay_board_style_system/input/events
 import clay_board_style_system/input/pointer
 import clay_board_style_system/paint/[custom_paint_registry,
     dirty_tiles, gpu_direct_compositor, gpu_host_compositor, paint, paint_command,
-    path_geometry]
+    path_geometry, retained_damage]
 import clay_board_style_system/runtime/[accessibility, button, checkbox,
     animation_clock, canvas, component, declarative_keyframes,
     declarative_transition, details, dialog,
@@ -104,6 +104,7 @@ export paint_command
 export path_geometry
 export custom_paint_registry
 export dirty_tiles
+export retained_damage
 export gpu_direct_compositor
 export gpu_host_compositor
 export accessibility
