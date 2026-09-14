@@ -1,7 +1,7 @@
 import std/[algorithm, hashes, math, tables]
 
 const
-  gpuHostApiVersion* = 15'u32
+  gpuHostApiVersion* = 16'u32
   maxGpuNamespaceNameBytes* = 128
   maxGpuResourceLabelBytes* = 128
   maxGpuViewCount* = 256'u16
@@ -292,6 +292,14 @@ type
     values*: seq[float32]
 
   GpuTextureBinding* = object
+    stage*: uint8
+    sampler*: GpuResourceHandle
+    texture*: GpuResourceHandle
+
+  GpuPresentationTextureBinding* = object
+    ## A sampled texture retained by a presentation surface. The sampler stays
+    ## in the compositor namespace; only the immutable source texture may come
+    ## from another namespace on the same GpuHost generation.
     stage*: uint8
     sampler*: GpuResourceHandle
     texture*: GpuResourceHandle
@@ -603,6 +611,13 @@ type
     kind: GpuResourceKind
   ) {.nimcall, raises: [].}
 
+  GpuBackendResolvePresentationTextureProc* = proc(
+    context: GpuBackendContext;
+    resource: GpuBackendResourceId;
+    kind: GpuResourceKind;
+    texture: var GpuBackendResourceId
+  ): GpuBackendStatus {.nimcall, raises: [].}
+
   GpuBackendVTable* = object
     apiVersion*: uint32
     provider*: GpuProviderKind
@@ -629,6 +644,7 @@ type
     copyTexture*: GpuBackendCopyTextureProc
     requestReadback*: GpuBackendRequestReadbackProc
     pollReadback*: GpuBackendPollReadbackProc
+    resolvePresentationTexture*: GpuBackendResolvePresentationTextureProc
     destroyResource*: GpuBackendDestroyResourceProc
     closeOwned*: GpuBackendCloseProc
     detachBorrowed*: GpuBackendCloseProc
@@ -711,6 +727,18 @@ proc alphaGpuBlendState*(): GpuBlendState =
   GpuBlendState(
     enabled: true,
     sourceColor: gbfSourceAlpha,
+    destinationColor: gbfOneMinusSourceAlpha,
+    colorOperation: gboAdd,
+    sourceAlpha: gbfOne,
+    destinationAlpha: gbfOneMinusSourceAlpha,
+    alphaOperation: gboAdd,
+    writeMask: {gccRed, gccGreen, gccBlue, gccAlpha}
+  )
+
+proc premultipliedAlphaGpuBlendState*(): GpuBlendState =
+  GpuBlendState(
+    enabled: true,
+    sourceColor: gbfOne,
     destinationColor: gbfOneMinusSourceAlpha,
     colorOperation: gboAdd,
     sourceAlpha: gbfOne,
@@ -868,6 +896,9 @@ proc generation*(host: GpuHost): uint64 =
 
 proc isReady*(host: GpuHost): bool =
   not host.isNil and host.stateValue == ghsReady
+
+proc hasActiveGpuFrame*(host: GpuHost): bool =
+  not host.isNil and host.stateValue == ghsReady and host.activeFrame
 
 proc destroyNamespaceResources(host: GpuHost; id: GpuNamespaceId) =
   if id notin host.namespaces:
@@ -2076,6 +2107,32 @@ proc isGpuResourceLive*(host: GpuHost; handle: GpuResourceHandle): bool =
   let resource = namespace.resources[handle.resource]
   resource.generation == handle.generation and resource.kind == handle.kind
 
+proc gpuUniformMatches*(
+    host: GpuHost;
+    handle: GpuResourceHandle;
+    name: string;
+    uniformType: GpuUniformType;
+    arrayLength = 1'u16
+): bool =
+  if not host.isGpuResourceLive(handle) or handle.kind != grkUniform:
+    return false
+  let descriptor = host.namespaces[handle.namespace].resources[
+    handle.resource
+  ].uniformDescriptor
+  descriptor.name == name and descriptor.uniformType == uniformType and
+    descriptor.arrayLength == arrayLength
+
+proc gpuSamplerMatches*(
+    host: GpuHost;
+    handle: GpuResourceHandle;
+    name: string
+): bool =
+  if not host.isGpuResourceLive(handle) or handle.kind != grkSampler:
+    return false
+  host.namespaces[handle.namespace].resources[
+    handle.resource
+  ].samplerDescriptor.name == name
+
 proc gpuPresentableResourceInfo*(
     host: GpuHost;
     handle: GpuResourceHandle
@@ -2541,6 +2598,77 @@ proc validateDrawCommand(
     bindings: move(resolvedBindings)
   )
 
+proc appendPresentationTextureBinding(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    binding: GpuPresentationTextureBinding;
+    bindings: var GpuBackendBindingSet
+) =
+  if bindings.textures.len >= maxGpuTextureBindings:
+    raise newException(GpuHostError, "GPU texture binding count exceeded")
+  if binding.stage >= uint8(maxGpuTextureBindings):
+    raise newException(GpuHostError, "GPU presentation texture stage is invalid")
+  for existing in bindings.textures:
+    if existing.stage == binding.stage:
+      raise newException(
+        GpuHostError, "GPU presentation texture stage is already occupied"
+      )
+
+  let sampler = host.requireGpuResource(
+    namespace,
+    binding.sampler,
+    grkSampler,
+    "GPU presentation sampler is stale invalid or belongs to another namespace"
+  )
+  if not host.isGpuResourceLive(binding.texture) or
+      binding.texture.kind notin {grkTexture, grkRenderTarget}:
+    raise newException(
+      GpuHostError, "GPU presentation texture is stale or invalid"
+    )
+  if not host.isGpuResourcePresentationRetained(binding.texture):
+    raise newException(
+      GpuHostError, "GPU presentation texture must be retained by a surface"
+    )
+  let source = host.namespaces[binding.texture.namespace].resources[
+    binding.texture.resource
+  ]
+  if sampler.backendResource.backendResourceIdValue() == 0 or
+      source.backendResource.backendResourceIdValue() == 0:
+    raise newException(
+      GpuHostError, "GPU presentation texture binding is not backend-mapped"
+    )
+  let sourceShape = source.textureShape()
+  if gtuSampled notin sourceShape.usage:
+    raise newException(
+      GpuHostError, "GPU presentation texture requires sampled usage"
+    )
+  var textureResource = source.backendResource
+  if binding.texture.kind == grkRenderTarget:
+    if host.backend.resolvePresentationTexture.isNil:
+      raise newException(
+        GpuHostError,
+        "GPU backend cannot resolve a presentation RenderTarget texture"
+      )
+    let status = host.backend.resolvePresentationTexture(
+      host.backend.context,
+      source.backendResource,
+      binding.texture.kind,
+      textureResource
+    )
+    if status == gbsDeviceLost:
+      host.enterDeviceLost()
+    raiseForStatus(status)
+    if textureResource.backendResourceIdValue() == 0:
+      raise newException(
+        GpuHostError, "GPU backend returned an invalid presentation texture"
+      )
+  bindings.textures.add GpuBackendTextureBinding(
+    stage: binding.stage,
+    sampler: sampler.backendResource,
+    texture: textureResource,
+    samplerDescriptor: sampler.samplerDescriptor
+  )
+
 proc submitGpuDraws*(
     host: GpuHost;
     namespace: GpuNamespaceId;
@@ -2603,6 +2731,67 @@ proc submitGpuDraw*(
     command: GpuDrawCommand
 ) =
   host.submitGpuDraws(namespace, pass, [command])
+
+proc submitGpuPresentationDraw*(
+    host: GpuHost;
+    compositorNamespace: GpuNamespaceId;
+    pass: GpuGraphicsPassDescriptor;
+    command: GpuDrawCommand;
+    source: GpuPresentationTextureBinding
+) =
+  ## Submits one compositor draw while allowing only its presentation-retained
+  ## sampled source Texture to cross a namespace boundary. All pipelines,
+  ## buffers, uniforms, samplers, and optional target resources remain owned by
+  ## compositorNamespace and use the ordinary validation path.
+  host.requireHost()
+  if host.stateValue != ghsReady or not host.activeFrame:
+    raise newException(
+      GpuHostError, "GPU presentation draw requires an active frame"
+    )
+  if compositorNamespace notin host.namespaces:
+    raise newException(GpuHostError, "unknown GPU compositor namespace")
+  if host.backend.beginGraphicsPass.isNil or host.backend.submitDraw.isNil:
+    raise newException(
+      GpuHostError, "GPU backend does not support presentation draws"
+    )
+
+  let target = host.validateGraphicsPass(compositorNamespace, pass)
+  var resolved = host.validateDrawCommand(
+    compositorNamespace, pass, command
+  )
+  host.appendPresentationTextureBinding(
+    compositorNamespace, source, resolved.bindings
+  )
+  host.ensureGpuViewAvailable()
+  host.validateGpuFrameWork(compositorNamespace, workUnits = 1)
+  let viewId = host.configValue.viewIdBase + host.nextViewOffset
+  let passStatus = host.backend.beginGraphicsPass(
+    host.backend.context,
+    viewId,
+    pass,
+    target
+  )
+  if passStatus == gbsDeviceLost:
+    host.enterDeviceLost()
+  raiseForStatus(passStatus)
+  inc host.nextViewOffset
+  host.reserveGpuFrameWork(compositorNamespace, workUnits = 1)
+
+  let status = host.backend.submitDraw(
+    host.backend.context,
+    viewId,
+    resolved.pipeline,
+    resolved.vertexBuffer,
+    resolved.indexBuffer,
+    resolved.pipelineDescriptor,
+    resolved.vertexDescriptor,
+    resolved.indexDescriptor,
+    resolved.bindings,
+    command
+  )
+  if status == gbsDeviceLost:
+    host.enterDeviceLost()
+  raiseForStatus(status)
 
 proc dispatchGpuCompute*(
     host: GpuHost;

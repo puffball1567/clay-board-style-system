@@ -1,6 +1,7 @@
 import std/[os, tempfiles, unittest]
 
 import clay_board_style_system/build/gpu_shader_compiler
+import clay_board_style_system/paint/gpu_host_compositor
 import clay_board_style_system/runtime/[gpu_host, gpu_shader_builder,
     gpu_shader_package]
 
@@ -51,6 +52,24 @@ if shaderc.len == 0 or shaderIncludes.len == 0:
   quit(QuitFailure)
 
 suite "official bgfx shaderc integration":
+  test "compiles the standard direct compositor shaders for Vulkan":
+    let root = createTempDir("cbss-direct-compositor-shaderc-", "")
+    defer:
+      removeDir(root)
+
+    let vertex = gpuHostDirectCompositeVertexSource()
+    let fragment = gpuHostDirectCompositeFragmentSource()
+    validateGpuShaderInterface(vertex, fragment)
+    let config = gpuShaderCompilerConfig(
+      shaderc,
+      [shaderIncludes],
+      workDirectory = root
+    )
+    let target = gpuShaderCompileTarget(gsbtVulkan, gscpLinux, "spirv")
+
+    check compileGpuShader(vertex, target, config).artifact.bytecode.len > 0
+    check compileGpuShader(fragment, target, config).artifact.bytecode.len > 0
+
   test "compiles generated graphics shaders and packages SPIR-V":
     let root = createTempDir("cbss-shaderc-integration-", "")
     defer:

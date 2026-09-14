@@ -1088,8 +1088,11 @@ format, alpha mode, and dimensions before backend submission. Host Surface
 negotiation applies the same alpha-mode and dimension constraints before
 resource retention, preserving readback fallback. The bgfx constructor
 requires exact source-kind, format, alpha-mode, and dimension coverage of the
-qualified profile; the built-in compositor and its
-real-GPU pixel qualification remain Version 0.7 work. A later wgpu-native adapter
+qualified profile. The standard same-host compositor, restricted
+cross-namespace presentation binding, RenderTarget color-attachment resolution,
+rectangular clip/UV crop, and portable shader source contract are implemented;
+rounded/offscreen composition and real-GPU pixel qualification remain Version
+0.7 work. A later wgpu-native adapter
 may implement the same CBSS-owned contract, but it is no longer the standard
 provider or a release prerequisite.
 
@@ -2282,9 +2285,11 @@ cannot preserve instead of drawing into the wrong target. Typed compositor
 capabilities now reject unsupported target, clip, and mask combinations before
 acquiring the published GPU frame. Custom Paint declarations now
 retain bounded typed material parameters in cold style storage and deliver them
-to providers without per-frame string parsing. The production bgfx compositor
-that consumes this context, declarative mask and filter composition, and
-broader real-GPU qualification remain open Version 0.7 work. Owned bgfx hosts
+to providers without per-frame string parsing. A standard same-host compositor
+now consumes final-window contexts and retained Texture/RenderTarget sources in
+the active presentation frame. Rounded/offscreen composition, declarative mask
+and filter composition, and broader real-GPU qualification remain open Version
+0.7 work. Owned bgfx hosts
 now recreate the backend from their latest validated configuration after
 device loss before deterministic namespace restoration begins; borrowed hosts
 continue to require recreation by their external owner.

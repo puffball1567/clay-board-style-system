@@ -7,6 +7,7 @@ import clay_board_style_system/hit/hit_test
 import clay_board_style_system/layout/layout
 import clay_board_style_system/paint/[paint, paint_command]
 import clay_board_style_system/paint/gpu_direct_compositor
+import clay_board_style_system/paint/gpu_host_compositor
 import clay_board_style_system/runtime/button
 import clay_board_style_system/runtime/gpu_canvas
 import clay_board_style_system/runtime/gpu_canvas_ui
@@ -45,6 +46,7 @@ type MockGpuContext = ref object of GpuBackendContext
   copyTextureStatus: GpuBackendStatus
   requestReadbackStatus: GpuBackendStatus
   pollReadbackStatus: GpuBackendStatus
+  resolvePresentationTextureStatus: GpuBackendStatus
   ownedOpens: int
   borrowedAttaches: int
   begins: int
@@ -69,6 +71,7 @@ type MockGpuContext = ref object of GpuBackendContext
   textureCopies: int
   readbackRequests: int
   readbackPolls: int
+  presentationTextureResolves: int
   resourceDestroys: int
   nextBackendResource: uint64
   lastTexture: GpuTextureDescriptor
@@ -468,6 +471,22 @@ proc pollReadback(
   ready = state.readbackReady
   state.pollReadbackStatus
 
+proc resolvePresentationTexture(
+    context: GpuBackendContext;
+    resource: GpuBackendResourceId;
+    kind: GpuResourceKind;
+    texture: var GpuBackendResourceId
+): GpuBackendStatus {.raises: [].} =
+  let state = context.mock
+  inc state.presentationTextureResolves
+  if state.resolvePresentationTextureStatus == gbsOk:
+    texture =
+      if kind == grkRenderTarget:
+        GpuBackendResourceId(resource.backendResourceIdValue() + 10_000'u64)
+      else:
+        resource
+  state.resolvePresentationTextureStatus
+
 proc destroyResource(
     context: GpuBackendContext;
     resource: GpuBackendResourceId;
@@ -505,6 +524,7 @@ proc backend(state: MockGpuContext): GpuBackendVTable =
     copyTexture: copyTexture,
     requestReadback: requestReadback,
     pollReadback: pollReadback,
+    resolvePresentationTexture: resolvePresentationTexture,
     destroyResource: destroyResource,
     closeOwned: closeOwned,
     detachBorrowed: detachBorrowed
@@ -533,6 +553,7 @@ proc newContext(): MockGpuContext =
     copyTextureStatus: gbsOk,
     requestReadbackStatus: gbsOk,
     pollReadbackStatus: gbsOk,
+    resolvePresentationTextureStatus: gbsOk,
     nextCompletionToken: 1,
     copySupported: true,
     readbackSupported: true,
@@ -5839,3 +5860,419 @@ suite "GPU display surface quality matrix":
     expect ValueError:
       discard ui.gpuDisplaySurface(display)
     host.close()
+
+suite "GPU host direct compositor":
+  test "standard alpha blend states preserve straight and premultiplied inputs":
+    let straight = alphaGpuBlendState()
+    check straight.enabled
+    check straight.sourceColor == gbfSourceAlpha
+    check straight.destinationColor == gbfOneMinusSourceAlpha
+    check straight.sourceAlpha == gbfOne
+    check straight.destinationAlpha == gbfOneMinusSourceAlpha
+    check straight.writeMask == {gccRed, gccGreen, gccBlue, gccAlpha}
+
+    let premultiplied = premultipliedAlphaGpuBlendState()
+    check premultiplied.enabled
+    check premultiplied.sourceColor == gbfOne
+    check premultiplied.destinationColor == gbfOneMinusSourceAlpha
+    check premultiplied.sourceAlpha == gbfOne
+    check premultiplied.destinationAlpha == gbfOneMinusSourceAlpha
+    check premultiplied.writeMask == {gccRed, gccGreen, gccBlue, gccAlpha}
+
+    let stageTwo = gpuHostDirectCompositeFragmentSource(2)
+    check "SAMPLER2D(s_cbssSurface, 2);" in stageTwo.source
+    expect ValueError:
+      discard gpuHostDirectCompositeFragmentSource(
+        uint8(maxGpuTextureBindings)
+      )
+
+  test "standard compositor clips one retained texture without namespace leakage":
+    let context = newContext()
+    context.enableDirectPresentation(
+      renderTargets = false,
+      computeOutput = false,
+      alphaModes = {gcamStraight}
+    )
+    let host = openGpuHost(
+      context.backend,
+      ghoOwned,
+      GpuHostConfig(width: 1600, height: 900, presentation: true)
+    )
+    let compositorNamespace = host.createGpuNamespace(
+      "direct-compositor",
+      GpuResourceBudget(
+        persistentBytes: 8192,
+        workUnitsPerFrame: 8,
+        maxResources: 12
+      )
+    )
+    let sourceNamespace = host.createGpuNamespace(
+      "direct-source",
+      GpuResourceBudget(persistentBytes: 4096, maxResources: 4)
+    )
+    let drawing = host.createDrawingResources(compositorNamespace)
+    let compositeUniform = host.createGpuUniform(
+      compositorNamespace, uniformDescriptor("u_cbssComposite")
+    )
+    let uvRectUniform = host.createGpuUniform(
+      compositorNamespace, uniformDescriptor("u_cbssUvRect")
+    )
+    let sampler = host.createGpuSampler(
+      compositorNamespace, samplerDescriptor("s_cbssSurface")
+    )
+    var pipelines: array[GpuAlphaMode, GpuResourceHandle]
+    pipelines[gcamStraight] = drawing.pipeline
+    let compositor = newGpuHostDirectCompositor(
+      host,
+      GpuHostDirectCompositeMaterial(
+        namespace: compositorNamespace,
+        pipelines: pipelines,
+        vertexBuffer: drawing.vertexBuffer,
+        compositeUniform: compositeUniform,
+        uvRectUniform: uvRectUniform,
+        sampler: sampler,
+        textureStage: 2,
+        vertexCount: 2
+      )
+    )
+    check compositor.capabilities.targetKinds == {gdctWindow}
+    check compositor.capabilities.sourceKinds == {grkTexture}
+    check compositor.capabilities.alphaModes == {gcamStraight}
+
+    var surfaceConfig = defaultGpuDirectSurfaceConfig(8, 8)
+    surfaceConfig.alphaMode = gcamStraight
+    let surface = host.newGpuDirectSurface(sourceNamespace, surfaceConfig)
+    let source = host.createGpuTexture(
+      sourceNamespace,
+      textureDescriptor(width = 8, height = 8, usage = {gtuSampled})
+    )
+    var token = host.beginGpuFrame()
+    check surface.queueGpuDirectSurfaceFrame(source, token)
+    host.endGpuFrame(token)
+    check surface.collectGpuDirectSurfaceFrame()
+    let command = drawGpuDirectSurface(
+      NodeId(0), surface, rect(100, 50, 400, 200), 0.75'f32
+    )
+    let compositionContext = GpuDirectCompositeContext(
+      targetKind: gdctWindow,
+      targetBounds: rect(0, 0, 1280, 720),
+      clipBounds: some(rect(200, 75, 200, 100)),
+      pixelScale: 1.25'f32
+    )
+    check command.compositeGpuDirectSurface(
+      compositionContext, compositor
+    ) == gdcsRetry
+
+    token = host.beginGpuFrame()
+    check command.compositeGpuDirectSurface(
+      compositionContext, compositor
+    ) == gdcsPresented
+    check context.graphicsPassBegins == 1
+    check context.drawSubmits == 1
+    check context.lastGraphicsPass.viewport == GpuViewport(
+      x: 250, y: 93, width: 250, height: 126
+    )
+    check context.lastBindings.textures.len == 1
+    check context.lastBindings.textures[0].stage == 2
+    check context.lastBindings.uniforms.len == 2
+    check context.lastBindings.uniforms[0].values == @[
+      0.75'f32, float32(ord(gcamStraight)), 0.0'f32, 0.0'f32
+    ]
+    check context.lastBindings.uniforms[1].values == @[
+      0.25'f32, 0.125'f32, 0.75'f32, 0.625'f32
+    ]
+    check context.presentationTextureResolves == 0
+    host.endGpuFrame(token)
+
+    check surface.closeGpuDirectSurface()
+    host.close()
+
+  test "presentation binding rejects mutable and duplicate-stage sources":
+    let context = newContext()
+    context.enableDirectPresentation(
+      renderTargets = false,
+      computeOutput = false,
+      alphaModes = {gcamStraight}
+    )
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let compositorNamespace = host.createGpuNamespace(
+      "binding-compositor",
+      GpuResourceBudget(
+        persistentBytes: 8192,
+        workUnitsPerFrame: 8,
+        maxResources: 12
+      )
+    )
+    let sourceNamespace = host.createGpuNamespace(
+      "binding-source",
+      GpuResourceBudget(persistentBytes: 4096, maxResources: 4)
+    )
+    let drawing = host.createDrawingResources(compositorNamespace)
+    let sampler = host.createGpuSampler(
+      compositorNamespace, samplerDescriptor("s_cbssSurface")
+    )
+    let source = host.createGpuTexture(
+      sourceNamespace, textureDescriptor(usage = {gtuSampled})
+    )
+    let token = host.beginGpuFrame()
+    let pass = graphicsPass(width = 1280, height = 720)
+    let baseCommand = GpuDrawCommand(
+      pipeline: drawing.pipeline,
+      vertexBuffer: drawing.vertexBuffer,
+      vertexCount: 2
+    )
+    expect GpuHostError:
+      host.submitGpuPresentationDraw(
+        compositorNamespace,
+        pass,
+        baseCommand,
+        GpuPresentationTextureBinding(
+          stage: 0, sampler: sampler, texture: source
+        )
+      )
+    check context.graphicsPassBegins == 0
+
+    host.retainGpuResourceForPresentation(source)
+    var duplicate = baseCommand
+    duplicate.bindings.textures = @[
+      GpuTextureBinding(stage: 0, sampler: sampler, texture: source)
+    ]
+    expect GpuHostError:
+      host.submitGpuPresentationDraw(
+        compositorNamespace,
+        pass,
+        duplicate,
+        GpuPresentationTextureBinding(
+          stage: 0, sampler: sampler, texture: source
+        )
+      )
+    check context.graphicsPassBegins == 0
+    check host.releaseGpuResourceFromPresentation(source)
+    host.endGpuFrame(token)
+    host.close()
+
+  test "render targets resolve through the backend only during presentation":
+    let context = newContext()
+    context.enableDirectPresentation(
+      textures = false,
+      renderTargets = true,
+      computeOutput = false,
+      alphaModes = {gcamStraight}
+    )
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let compositorNamespace = host.createGpuNamespace(
+      "target-compositor",
+      GpuResourceBudget(
+        persistentBytes: 8192,
+        workUnitsPerFrame: 8,
+        maxResources: 12
+      )
+    )
+    let sourceNamespace = host.createGpuNamespace(
+      "target-source",
+      GpuResourceBudget(persistentBytes: 4096, maxResources: 4)
+    )
+    let drawing = host.createDrawingResources(compositorNamespace)
+    let compositeUniform = host.createGpuUniform(
+      compositorNamespace, uniformDescriptor("u_cbssComposite")
+    )
+    let uvRectUniform = host.createGpuUniform(
+      compositorNamespace, uniformDescriptor("u_cbssUvRect")
+    )
+    let sampler = host.createGpuSampler(
+      compositorNamespace, samplerDescriptor("s_cbssSurface")
+    )
+    var pipelines: array[GpuAlphaMode, GpuResourceHandle]
+    pipelines[gcamStraight] = drawing.pipeline
+    let compositor = newGpuHostDirectCompositor(
+      host,
+      GpuHostDirectCompositeMaterial(
+        namespace: compositorNamespace,
+        pipelines: pipelines,
+        vertexBuffer: drawing.vertexBuffer,
+        compositeUniform: compositeUniform,
+        uvRectUniform: uvRectUniform,
+        sampler: sampler,
+        vertexCount: 2
+      )
+    )
+    check compositor.capabilities.sourceKinds == {grkRenderTarget}
+
+    let surface = host.newGpuDirectSurface(
+      sourceNamespace, defaultGpuDirectSurfaceConfig(8, 8)
+    )
+    let source = host.createGpuRenderTarget(
+      sourceNamespace, renderTargetDescriptor(width = 8, height = 8)
+    )
+    var token = host.beginGpuFrame()
+    check surface.queueGpuDirectSurfaceFrame(source, token)
+    host.endGpuFrame(token)
+    check surface.collectGpuDirectSurfaceFrame()
+    let command = drawGpuDirectSurface(
+      NodeId(0), surface, rect(0, 0, 8, 8)
+    )
+
+    token = host.beginGpuFrame()
+    check command.compositeGpuDirectSurface(
+      GpuDirectCompositeContext(
+        targetKind: gdctWindow,
+        targetBounds: rect(0, 0, 1280, 720),
+        pixelScale: 1
+      ),
+      compositor
+    ) == gdcsPresented
+    check context.presentationTextureResolves == 1
+    check context.lastBindings.textures.len == 1
+    check context.lastBindings.textures[0].texture.backendResourceIdValue() >=
+      10_000'u64
+    host.endGpuFrame(token)
+
+    check surface.closeGpuDirectSurface()
+    host.close()
+
+  test "construction and unsupported geometry fail before backend submission":
+    block computeOnly:
+      let context = newContext()
+      context.enableDirectPresentation(
+        renderTargets = false,
+        computeOutput = false,
+        alphaModes = {gcamStraight}
+      )
+      let host = openGpuHost(context.backend, ghoOwned)
+      expect ValueError:
+        discard newGpuHostDirectCompositor(
+          host, GpuHostDirectCompositeMaterial()
+        )
+      host.close()
+
+    block incompleteMaterial:
+      let context = newContext()
+      context.enableDirectPresentation(
+        renderTargets = false,
+        computeOutput = false,
+        alphaModes = {gcamStraight}
+      )
+      let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+      expect ValueError:
+        discard newGpuHostDirectCompositor(
+          host, GpuHostDirectCompositeMaterial(vertexCount: 6)
+        )
+      host.close()
+
+    block incompatibleBindings:
+      let context = newContext()
+      context.enableDirectPresentation(
+        renderTargets = false,
+        computeOutput = false,
+        alphaModes = {gcamStraight}
+      )
+      let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+      let namespace = host.createGpuNamespace(
+        "invalid-binding-compositor",
+        GpuResourceBudget(
+          persistentBytes: 8192,
+          workUnitsPerFrame: 8,
+          maxResources: 12
+        )
+      )
+      let drawing = host.createDrawingResources(namespace)
+      let wrongCompositeUniform = host.createGpuUniform(
+        namespace, uniformDescriptor("u_wrongComposite")
+      )
+      let uvRectUniform = host.createGpuUniform(
+        namespace, uniformDescriptor("u_cbssUvRect")
+      )
+      let sampler = host.createGpuSampler(
+        namespace, samplerDescriptor("s_cbssSurface")
+      )
+      var pipelines: array[GpuAlphaMode, GpuResourceHandle]
+      pipelines[gcamStraight] = drawing.pipeline
+      expect ValueError:
+        discard newGpuHostDirectCompositor(
+          host,
+          GpuHostDirectCompositeMaterial(
+            namespace: namespace,
+            pipelines: pipelines,
+            vertexBuffer: drawing.vertexBuffer,
+            compositeUniform: wrongCompositeUniform,
+            uvRectUniform: uvRectUniform,
+            sampler: sampler,
+            vertexCount: 2
+          )
+        )
+      host.close()
+
+    block roundedClip:
+      let context = newContext()
+      context.enableDirectPresentation(
+        renderTargets = false,
+        computeOutput = false,
+        alphaModes = {gcamStraight}
+      )
+      let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+      let compositorNamespace = host.createGpuNamespace(
+        "rounded-compositor",
+        GpuResourceBudget(
+          persistentBytes: 8192,
+          workUnitsPerFrame: 8,
+          maxResources: 12
+        )
+      )
+      let sourceNamespace = host.createGpuNamespace(
+        "rounded-source",
+        GpuResourceBudget(persistentBytes: 4096, maxResources: 4)
+      )
+      let drawing = host.createDrawingResources(compositorNamespace)
+      let compositeUniform = host.createGpuUniform(
+        compositorNamespace, uniformDescriptor("u_cbssComposite")
+      )
+      let uvRectUniform = host.createGpuUniform(
+        compositorNamespace, uniformDescriptor("u_cbssUvRect")
+      )
+      let sampler = host.createGpuSampler(
+        compositorNamespace, samplerDescriptor("s_cbssSurface")
+      )
+      var pipelines: array[GpuAlphaMode, GpuResourceHandle]
+      pipelines[gcamStraight] = drawing.pipeline
+      let compositor = newGpuHostDirectCompositor(
+        host,
+        GpuHostDirectCompositeMaterial(
+          namespace: compositorNamespace,
+          pipelines: pipelines,
+          vertexBuffer: drawing.vertexBuffer,
+          compositeUniform: compositeUniform,
+          uvRectUniform: uvRectUniform,
+          sampler: sampler,
+          vertexCount: 2
+        )
+      )
+      let surface = host.newGpuDirectSurface(
+        sourceNamespace, defaultGpuDirectSurfaceConfig(8, 8)
+      )
+      let source = host.createGpuTexture(
+        sourceNamespace,
+        textureDescriptor(width = 8, height = 8, usage = {gtuSampled})
+      )
+      var token = host.beginGpuFrame()
+      check surface.queueGpuDirectSurfaceFrame(source, token)
+      host.endGpuFrame(token)
+      check surface.collectGpuDirectSurfaceFrame()
+      let command = drawGpuDirectSurface(
+        NodeId(0), surface, rect(0, 0, 8, 8)
+      )
+      token = host.beginGpuFrame()
+      check command.compositeGpuDirectSurface(
+        GpuDirectCompositeContext(
+          targetKind: gdctWindow,
+          targetBounds: rect(0, 0, 1280, 720),
+          clipBounds: some(rect(0, 0, 8, 8)),
+          requiresClipMask: true,
+          pixelScale: 1
+        ),
+        compositor
+      ) == gdcsUnsupported
+      check context.graphicsPassBegins == 0
+      check context.drawSubmits == 0
+      host.endGpuFrame(token)
+      check surface.closeGpuDirectSurface()
+      host.close()
