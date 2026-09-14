@@ -235,7 +235,8 @@ task testMotionAsan, "Run retained runtime tests under AddressSanitizer":
       ("text_input", "tests/runtime/test_text_input.nim"),
       ("custom_paint", "tests/runtime/test_custom_paint.nim"),
       ("gpu_host", "tests/runtime/test_gpu_host.nim"),
-      ("raster_surface", "tests/core/test_raster_surface.nim")
+      ("raster_surface", "tests/core/test_raster_surface.nim"),
+      ("retained_canvas", "tests/paint/test_retained_canvas_raster.nim")
     ]:
       let testName = test[0]
       let suffix = testName & "_" & memoryModel & "_asan"
@@ -261,6 +262,7 @@ task testUbsan, "Run numeric, layout, transform, and motion tests under Undefine
       ("gpu_host", "tests/runtime/test_gpu_host.nim"),
       ("custom_paint", "tests/runtime/test_custom_paint.nim"),
       ("raster_surface", "tests/core/test_raster_surface.nim"),
+      ("retained_canvas", "tests/paint/test_retained_canvas_raster.nim"),
       ("declarative_transition", "tests/runtime/test_declarative_transition.nim"),
       ("declarative_keyframes", "tests/runtime/test_declarative_keyframes.nim"),
       ("validation", "tests/runtime/test_validation.nim")
@@ -299,7 +301,8 @@ task testLsan, "Run retained lifecycle tests under LeakSanitizer on Linux":
         ("text_input", "tests/runtime/test_text_input.nim"),
         ("custom_paint", "tests/runtime/test_custom_paint.nim"),
         ("gpu_host", "tests/runtime/test_gpu_host.nim"),
-        ("raster_surface", "tests/core/test_raster_surface.nim")
+        ("raster_surface", "tests/core/test_raster_surface.nim"),
+        ("retained_canvas", "tests/paint/test_retained_canvas_raster.nim")
       ]:
         let testName = test[0]
         let testPath = test[1]
@@ -461,10 +464,14 @@ task testEventLifecycleValgrind, "Run ARC event lifecycle checks under Valgrind"
 
 task testRasterSurfaceValgrind, "Run ARC and ORC RasterSurface ownership checks under Valgrind":
   for memoryModel in ["arc", "orc"]:
-    let artifact = "/tmp/clay_board_style_system_raster_surface_" & memoryModel & "_valgrind"
-    let nimcache = artifact & "_nimcache"
-    exec "nim c --mm:" & memoryModel & " -d:release -d:useMalloc --path:src --nimcache:\"" & nimcache & "\" --out:\"" & artifact & "\" tests/core/test_raster_surface.nim"
-    exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 \"" & artifact & "\""
+    for test in [
+      ("raster_surface", "tests/core/test_raster_surface.nim"),
+      ("retained_canvas", "tests/paint/test_retained_canvas_raster.nim")
+    ]:
+      let artifact = "/tmp/clay_board_style_system_" & test[0] & "_" & memoryModel & "_valgrind"
+      let nimcache = artifact & "_nimcache"
+      exec "nim c --mm:" & memoryModel & " -d:release -d:useMalloc --path:src --nimcache:\"" & nimcache & "\" --out:\"" & artifact & "\" " & test[1]
+      exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 \"" & artifact & "\""
 
 task testGpuHostValgrind, "Run ARC and ORC GPU host lifecycle checks under Valgrind":
   for memoryModel in ["arc", "orc"]:

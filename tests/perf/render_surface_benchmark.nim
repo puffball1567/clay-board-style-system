@@ -1,6 +1,7 @@
 import std/[math, strformat, times]
 
 import clay_board_style_system
+import clay_board_style_system/backends/ppm/retained_canvas
 
 const
   surfaceCount = 10_000
@@ -16,6 +17,7 @@ const
   fillPathPointCount = 256
   fillPathIterations = 10
   rasterUpdateIterations = 20_000
+  retainedCommandCount = 2_000
 
 proc elapsedMilliseconds(started: float): float =
   (cpuTime() - started) * 1000.0
@@ -185,6 +187,29 @@ when not defined(cbssMemoryCheck):
   doAssert largeRasterMs <= smallRasterMs * 4.0 + 10.0,
     &"RasterSurface dirty update scaled with total pixels: small={smallRasterMs:.3f} ms large={largeRasterMs:.3f} ms"
 
+var retainedCommands = newSeqOfCap[PaintCommand](retainedCommandCount)
+for index in 0 ..< retainedCommandCount:
+  retainedCommands.add fillRect(
+    rect(
+      (index mod 64).float32 * 12,
+      (index div 64).float32 * 12,
+      8,
+      8
+    ),
+    rgb(0.2, 0.5, 0.8)
+  )
+let retained = newRetainedRasterCanvas(768, 384, tileSize = 64)
+discard retained.update(retainedCommands)
+retainedCommands[retainedCommandCount div 2].color = rgb(0.9, 0.2, 0.3)
+let retainedStarted = cpuTime()
+let retainedUpdate = retained.update(retainedCommands)
+let retainedMs = elapsedMilliseconds(retainedStarted)
+doAssert not retainedUpdate.fullRepaint
+doAssert retainedUpdate.dirtyTiles == 1
+when not defined(cbssMemoryCheck):
+  doAssert retainedMs <= 20.0,
+    &"retained Canvas single-tile update exceeded budget: {retainedMs:.3f} ms"
+
 echo &"render-surface idle probes ({surfaceCount} registered): {idleMs:.3f} ms / {idleProbeCount}"
 echo &"Canvas flatten ({canvasCommandCount} commands): {canvasAverageMs:.3f} ms average"
 echo &"Canvas transform flatten ({transformScopeCount} scopes): {transformAverageMs:.3f} ms average"
@@ -192,3 +217,4 @@ echo &"Canvas layer flatten ({layerScopeCount} scopes): {layerAverageMs:.3f} ms 
 echo &"Path flatten ({curveSegmentCount} cubic curves): {curveAverageMs:.3f} ms average"
 echo &"Path fill ({fillPathPointCount} edges at 512px): {fillAverageMs:.3f} ms average"
 echo &"RasterSurface 1px publish ({rasterUpdateIterations} updates): small={smallRasterMs:.3f} ms large={largeRasterMs:.3f} ms"
+echo &"Retained Canvas single-tile repaint ({retainedCommandCount} commands): {retainedMs:.3f} ms"
