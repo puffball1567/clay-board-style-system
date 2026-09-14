@@ -205,6 +205,16 @@ CPU effect work follows retained invalidation:
 - application policy may restrict quality, cache memory, or dynamic effects
   for embedded Linux deployments.
 
+The deterministic CPU reference backend now implements this contract for
+bounded retained commands. A fixed-size, allocation-bounded tile grid maps old
+and new visual bounds through transforms and clips, merges adjacent tile runs,
+and replays only dirty regions into the existing raster image. Published
+`RasterSurface` source dirt is scaled into its destination rather than
+invalidating the full image placement. Scope or text-bound changes that cannot
+yet be bounded conservatively fall back to a full repaint. SDL3 will consume
+the same tile plan in its retained texture cache; that backend connection is
+still required before the Version 0.7 release gate is closed.
+
 No rasterizer-internal type or owning object crosses the C ABI. Foreign callers
 select CBSS capabilities and policies through CBSS-owned versioned API, while
 the implementation remains private.

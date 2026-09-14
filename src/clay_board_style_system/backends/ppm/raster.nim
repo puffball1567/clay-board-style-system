@@ -638,11 +638,35 @@ proc fillLinearGradient(
       if sample.isSome:
         image.putPixel(x, y, sampler.colorAt(sample.get))
 
-proc render*(commands: openArray[PaintCommand]; width, height: int; background = rgb(1, 1, 1)): RasterImage =
-  var targets = @[initRasterImage(width, height, background)]
+proc clearRegion(image: var RasterImage; bounds: Rect; background: Color) =
+  let pixels = intBounds(bounds, image.width, image.height)
+  for y in pixels.y0 ..< pixels.y1:
+    for x in pixels.x0 ..< pixels.x1:
+      image.storePixel(x, y, background)
+
+proc renderInto*(
+    image: var RasterImage;
+    commands: openArray[PaintCommand];
+    damage: Rect;
+    background = rgb(1, 1, 1)
+) =
+  ## Replays a command list only inside `damage`, preserving every pixel
+  ## outside it. This is the deterministic reference path used by retained
+  ## dirty-tile backends.
+  if image.width <= 0 or image.height <= 0 or
+      image.pixels.len != image.width * image.height * 3 or
+      image.alpha.len != image.width * image.height:
+    raise newException(ValueError, "raster target storage is invalid")
+  let clippedDamage = damage.intersection(
+    rect(0, 0, image.width.float32, image.height.float32)
+  )
+  if clippedDamage.isEmpty:
+    return
+  image.clearRegion(clippedDamage, background)
+  var targets = @[image]
   var layers: seq[PpmLayer]
   var clipStack = @[
-    PpmClip(bounds: rect(0, 0, width.float32, height.float32))
+    PpmClip(bounds: clippedDamage)
   ]
   var transformStack = @[identityAffine2D()]
   for command in commands:
@@ -660,7 +684,9 @@ proc render*(commands: openArray[PaintCommand]; width, height: int; background =
         compositeMode: command.layerCompositeMode,
         clipDepth: clipStack.len
       )
-      targets.add initRasterImage(width, height, rgba(0, 0, 0, 0))
+      targets.add initRasterImage(
+        image.width, image.height, rgba(0, 0, 0, 0)
+      )
       clipStack.add clipStack[^1].withShape(
         transformedRect(command.layerBounds, transformStack[^1])
       )
@@ -731,7 +757,13 @@ proc render*(commands: openArray[PaintCommand]; width, height: int; background =
     let layer = layers.pop()
     clipStack.setLen(max(1, layer.clipDepth))
     targets[^1].compositeLayer(source, layer, clipStack[^1])
-  result = targets[0]
+  image = move(targets[0])
+
+proc render*(commands: openArray[PaintCommand]; width, height: int; background = rgb(1, 1, 1)): RasterImage =
+  result = initRasterImage(width, height, background)
+  result.renderInto(
+    commands, rect(0, 0, width.float32, height.float32), background
+  )
 
 proc writePpm*(image: RasterImage; path: string) =
   var content = "P6\n" & $image.width & " " & $image.height & "\n255\n"

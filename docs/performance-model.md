@@ -170,6 +170,7 @@ The release ARC benchmark on the development machine measured:
 | flatten 1,000 bounded Canvas layers | 0.382 ms average | <= 4 ms |
 | flatten a retained path with 1,000 cubic curves | 0.436 ms average | <= 12 ms |
 | fill a 256-edge path across 512 scanlines | 4.625 ms average | <= 20 ms |
+| repaint one retained 64px Canvas tile among 2,000 commands | 1.492 ms | <= 20 ms |
 
 `tests/perf/render_surface_benchmark.nim` enforces these retained-rendering
 gates. The Canvas
@@ -188,6 +189,13 @@ other measurements do not include backend rasterization or text shaping.
 Memory instrumentation may compile the same workload with
 `-d:cbssMemoryCheck`; this keeps structural assertions and workload sizes but
 disables wall-clock gates that are not meaningful under Valgrind.
+
+The retained Canvas benchmark includes command comparison, transformed damage
+resolution, tile planning, clearing, and deterministic CPU replay. It asserts
+that one bounded command change dirties one tile rather than the full raster.
+The current comparison fallback still scans the retained command sequence;
+backend raster work is tile-bounded, while indexed command mutation remains a
+later optimization before claiming end-to-end `O(dirty)` authoring cost.
 The release ARC memory-check build completed this workload under Valgrind with
 zero bytes retained at exit and zero reported memory errors.
 
