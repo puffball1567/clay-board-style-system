@@ -324,6 +324,36 @@ proc unpackBackendResource(
     return (tag, 0'u16, false)
   (tag, uint16(payload - 1'u64), true)
 
+proc resolvePresentationTexture(
+    rawContext: GpuBackendContext;
+    resource: GpuBackendResourceId;
+    kind: GpuResourceKind;
+    textureResource: var GpuBackendResourceId
+): GpuBackendStatus {.raises: [].} =
+  if not rawContext.context.attached:
+    return gbsInvalidConfiguration
+  let decoded = resource.unpackBackendResource()
+  if not decoded.valid:
+    return gbsInvalidConfiguration
+  case kind
+  of grkTexture:
+    if decoded.tag != brtTexture:
+      return gbsInvalidConfiguration
+    textureResource = resource
+  of grkRenderTarget:
+    if decoded.tag != brtFrameBuffer:
+      return gbsInvalidConfiguration
+    let texture = BGFX.getTexture(
+      bgfx_frame_buffer_handle_t(idx: decoded.handleIndex),
+      0
+    )
+    if not BGFX_HANDLE_IS_VALID(texture):
+      return gbsFailed
+    textureResource = packBackendResource(brtTexture, texture.idx)
+  else:
+    return gbsUnsupported
+  gbsOk
+
 proc newBgfxDirectCompositeAdapter*(
     backend: GpuBackendVTable;
     submit: BgfxDirectSubmitProc
@@ -348,26 +378,22 @@ proc newBgfxDirectCompositeAdapter*(
     if not decoded.valid:
       return gdcsFailed
 
-    var texture: bgfx_texture_handle_t
-    case request.frame.resource.kind
-    of grkTexture:
-      if decoded.tag != brtTexture:
-        return gdcsFailed
-      texture = bgfx_texture_handle_t(idx: decoded.handleIndex)
-    of grkRenderTarget:
-      if decoded.tag != brtFrameBuffer:
-        return gdcsFailed
-      texture = BGFX.getTexture(
-        bgfx_frame_buffer_handle_t(idx: decoded.handleIndex),
-        0
-      )
-    else:
-      return gdcsUnsupported
-
-    if not BGFX_HANDLE_IS_VALID(texture):
+    var resolvedTexture: GpuBackendResourceId
+    let resolveStatus = resolvePresentationTexture(
+      backend.context,
+      request.frame.backendResource,
+      request.frame.resource.kind,
+      resolvedTexture
+    )
+    case resolveStatus
+    of gbsOk: discard
+    of gbsUnsupported: return gdcsUnsupported
+    else: return gdcsFailed
+    let resolved = resolvedTexture.unpackBackendResource()
+    if not resolved.valid or resolved.tag != brtTexture:
       return gdcsFailed
     submit(BgfxDirectCompositeSubmission(
-      texture: texture,
+      texture: bgfx_texture_handle_t(idx: resolved.handleIndex),
       sourceKind: request.frame.resource.kind,
       destination: request.destination,
       opacity: request.opacity,
@@ -1430,6 +1456,7 @@ proc newBgfxBackend*(
     copyTexture: copyTexture,
     requestReadback: requestReadback,
     pollReadback: pollReadback,
+    resolvePresentationTexture: resolvePresentationTexture,
     destroyResource: destroyResource,
     closeOwned: closeOwned,
     detachBorrowed: detachBorrowed

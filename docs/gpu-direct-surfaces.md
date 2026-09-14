@@ -1,6 +1,7 @@
 # GPU Display Surfaces
 
-Status: `Backend-neutral direct presentation and asynchronous readback fallback implemented`
+Status: `Same-host direct draw path and asynchronous readback fallback implemented;
+visible real-GPU qualification pending`
 
 The normal, failure, edge-case, and pending hardware coverage is tracked in
 [GPU Surface Quality Matrix](gpu-surface-test-matrix.md).
@@ -167,6 +168,33 @@ unbounded diagnostic queue. With no compositor installed, direct commands are
 reported as unsupported instead of being silently ignored. Closing the renderer
 releases the callback holder.
 
+For the normal one-host path, `newGpuHostDirectCompositor()` creates a typed
+compositor over the same `GpuHost` that owns the published source. The caller
+opens one host frame around the surrounding paint stream. The compositor adds
+one draw to that frame and never calls Present independently. Its pipeline,
+vertex buffer, uniforms, and sampler remain in a compositor namespace. Only a
+sampled Texture or RenderTarget already retained by a presentation surface may
+cross from the producer namespace, so this path does not weaken ordinary
+namespace isolation.
+
+CBSS publishes the matching portable shader sources through
+`gpuHostDirectCompositeVertexSource()` and
+`gpuHostDirectCompositeFragmentSource()`. They use this interface:
+
+- a full-viewport `POSITION` and `TEXCOORD0` vertex stream;
+- sampler `s_cbssSurface` at the material's configured texture stage;
+- `u_cbssComposite = (opacity, alphaMode, 0, 0)`; and
+- `u_cbssUvRect = (u0, v0, u1, v1)`.
+
+The sources use the build-only shader pipeline described in
+[GPU Shader Authoring And Packaging](gpu-shaders.md). Straight,
+premultiplied, and opaque sources use distinct material pipelines;
+`alphaGpuBlendState()` and `premultipliedAlphaGpuBlendState()` provide the
+standard blend contracts. Rectangular clips become one physical viewport and
+a cropped UV rectangle, so clipping does not stretch the source image. Empty
+intersections produce no draw. Rounded clip masks and offscreen composition
+currently fail closed and remain part of the real-renderer release gate.
+
 The optional bgfx backend exposes `newBgfxDirectCompositeAdapter(backend,
 submit)` for presentation-backend authors. It binds the callback to one bgfx
 backend context and resolves a CBSS Texture or a RenderTarget's color attachment
@@ -187,13 +215,14 @@ RenderTarget attachment is invalid. Construction also rejects a mismatched GPU
 host API version, non-bgfx context, or nil submit callback. These checks prevent
 an ordinary UI node from becoming a general raw-handle escape hatch.
 
-This hook is an adapter boundary, not a claim that SDL's high-level renderer can
+These hooks are an adapter boundary, not a claim that SDL's high-level renderer can
 import an arbitrary bgfx texture. A direct adapter must still share the actual
 GPU device and presentation ordering. SDL textures used for transform, opacity,
 and cached layers are not bgfx render targets; the context exposes these cases
 so a compositor can fail closed rather than draw into the wrong target. Until
-the bgfx implementation and visible pixel tests satisfy that contract, the
-default profile continues to make display surfaces select the readback path.
+visible pixel tests satisfy that contract, the default profile continues to
+make display surfaces select the readback path. Constructing the same-host
+compositor does not implicitly enable or broaden a backend profile.
 
 For an SDL-created native window, use
 `bgfxPlatformDataFromSdl3Window()` before opening the bgfx host. This removes
@@ -208,6 +237,8 @@ A production direct adapter must test all of the following together:
 - double/triple-buffer backpressure and GPU memory limits; and
 - fallback selection when direct composition or a texture format is unsupported.
 
-The deterministic mock suite covers the host and UI state machine under ARC and
-ORC. Visible bgfx direct composition remains dependent on the qualified bgfxim
-adapter update; it must not be advertised before those real-renderer tests pass.
+The deterministic mock suite covers the host, cross-namespace presentation
+binding, clip/UV calculation, RenderTarget attachment resolution, and UI state
+machine under ARC and ORC. The standard shader pair is compiled with the
+official bgfx `shaderc`. Visible bgfx direct composition must still pass the
+real-renderer tests before it is advertised as a production-qualified path.

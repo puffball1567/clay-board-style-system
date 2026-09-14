@@ -453,9 +453,12 @@ handle resolution. Host-level Surface negotiation now exposes and checks the
 same alpha-mode and dimension limits before choosing direct presentation. The
 bgfx helper requires source-kind, format, alpha-mode, and dimension coverage to
 exactly match its qualified direct-presentation profile, preventing the host
-from advertising a path the compositor cannot draw. A
-production bgfx same-device compositor that consumes this context and visible
-real-GPU conformance remain release gates below. An owned bgfx adapter now
+from advertising a path the compositor cannot draw. The standard same-host
+compositor now consumes final-window contexts, resolves retained Texture and
+RenderTarget sources without readback, crops rectangular clips through viewport
+and UV coordinates, and submits inside the presentation owner's active frame.
+Rounded masks, offscreen targets, and visible real-GPU conformance remain
+release gates below. An owned bgfx adapter now
 recreates its runtime from the latest validated host configuration before
 namespace restoration. A borrowed adapter continues to fail closed because
 only its external owner may recreate and reattach that runtime.
