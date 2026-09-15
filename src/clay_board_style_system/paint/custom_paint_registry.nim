@@ -105,10 +105,10 @@ proc registerCustomPaintMaterialTracked*(
     raise newException(ValueError, "custom paint material callback cannot be nil")
   if stages == {}:
     raise newException(ValueError, "custom paint material requires a paint stage")
-  if cpsMask in stages or cpsFilter in stages:
+  if cpsFilter in stages:
     raise newException(
       ValueError,
-      "mask and filter custom paint stages are not implemented"
+      "filter custom paint composition is not implemented"
     )
   if material in registry.materials and not replace:
     return none(CustomPaintRegistration)
@@ -259,12 +259,12 @@ proc resolveCustomPaint*(
     return CustomPaintResolution(status: cprsInvalidRequest)
   if not registry.isNil:
     registry.noteConsumer(request.material, request.owner)
-  if request.stage in {cpsMask, cpsFilter}:
+  if request.stage == cpsFilter:
     if not registry.isNil:
       registry.addDiagnostic(
         request,
         cprsUnsupportedStage,
-        "custom paint mask and filter composition is not implemented"
+        "custom paint filter composition is not implemented"
       )
     return CustomPaintResolution(status: cprsUnsupportedStage)
 

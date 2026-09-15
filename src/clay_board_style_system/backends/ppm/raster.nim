@@ -107,6 +107,14 @@ proc compositePixel(
       min(1.0'f32, destinationColor.b + sourceColor.b * sourceAlpha),
       destinationColor.a
     ))
+  of lcmDestinationIn:
+    let maskAlpha = clamp(sourceColor.a, 0.0'f32, 1.0'f32)
+    destination.storePixel(x, y, rgba(
+      destinationColor.r,
+      destinationColor.g,
+      destinationColor.b,
+      destinationColor.a * maskAlpha
+    ))
 
 proc intBounds(rect: Rect; width, height: int): tuple[x0, y0, x1, y1: int]
 proc intersect(a, b: Rect): Rect

@@ -2287,8 +2287,8 @@ acquiring the published GPU frame. Custom Paint declarations now
 retain bounded typed material parameters in cold style storage and deliver them
 to providers without per-frame string parsing. A standard same-host compositor
 now consumes final-window contexts and retained Texture/RenderTarget sources in
-the active presentation frame. Rounded/offscreen composition, declarative mask
-and filter composition, and broader real-GPU qualification remain open Version
+the active presentation frame. Rounded/offscreen direct-GPU composition,
+declarative filter composition, and broader real-GPU qualification remain open Version
 0.7 work. Owned bgfx hosts
 now recreate the backend from their latest validated configuration after
 device loss before deterministic namespace restoration begins; borrowed hosts
@@ -2311,8 +2311,12 @@ destination tiles. The SDL3 layered renderer now consumes the same retained
 damage plan, skips texture updates for identical static commands, redraws only
 bounded damaged tiles, and caps sparse damage replay by conservatively merging
 more than eight regions. Initial construction, resize, background changes, and
-unbounded scope or text changes retain a full-repaint fallback. CPU mask/filter
-composition and the broader Motion Scene remain open Version 0.7 work.
+unbounded scope or text changes retain a full-repaint fallback. Custom Paint
+alpha masks now isolate the complete owner subtree and use shared
+destination-in semantics in the PPM reference and SDL3 renderer; SDL3 software
+renderers use a bounded compatibility fallback when custom blending is
+unavailable. CPU filter composition and the broader Motion Scene remain open
+Version 0.7 work.
 Backend-neutral named Custom Paint
 materials now connect ordinary Style declarations to bounded underlay and
 overlay command streams without adding nodes. `GpuCanvasSurface` can use that

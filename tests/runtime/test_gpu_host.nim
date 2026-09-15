@@ -4068,7 +4068,7 @@ suite "GPU canvas composition bridge":
     check canvas.closeGpuCanvasSurface()
     host.close()
 
-  test "GPU paint material rejects duplicate names and unsupported stages":
+  test "GPU paint material supports masks and rejects filters":
     let context = newContext()
     let host = openGpuHost(context.backend, ghoOwned)
     let namespace = host.createGpuNamespace(
@@ -4083,11 +4083,15 @@ suite "GPU canvas composition bridge":
 
     expect ValueError:
       discard ui.registerGpuPaintMaterial("gpu-accent", canvas)
+    var maskMaterial = ui.registerGpuPaintMaterial(
+      "gpu-mask", canvas, {cpsMask}
+    )
     expect ValueError:
       discard ui.registerGpuPaintMaterial(
-        "gpu-mask", canvas, {cpsMask}
+        "gpu-filter", canvas, {cpsFilter}
       )
 
+    check maskMaterial.unregister()
     check material.unregister()
     check canvas.closeGpuCanvasSurface()
     host.close()

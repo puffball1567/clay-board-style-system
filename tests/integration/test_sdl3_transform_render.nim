@@ -335,6 +335,25 @@ suite "SDL3 transform rendering":
     check emptyCopyFrame.pixel(20, 15) == (0'u8, 0'u8, 0'u8)
     check emptyCopyFrame.pixel(5, 15).b > 240
 
+    let maskCommands = @[
+      fillRect(rect(0, 0, 40, 30), rgb(0, 0, 1)),
+      pushLayer(rect(10, 5, 20, 20)),
+      fillRect(rect(10, 5, 20, 20), rgb(1, 0, 0)),
+      pushLayer(
+        rect(10, 5, 20, 20), compositeMode = lcmDestinationIn
+      ),
+      fillRect(rect(10, 5, 10, 20), rgba(1, 1, 1, 0.5)),
+      popLayer(),
+      popLayer()
+    ]
+    renderer.requestFrameCapture()
+    renderer.render(maskCommands, rgb(0, 0, 0))
+    let maskFrame = renderer.capturedFrame().get
+    check maskFrame.pixel(15, 15).r in 127'u8 .. 128'u8
+    check maskFrame.pixel(15, 15).b in 127'u8 .. 128'u8
+    check maskFrame.pixel(25, 15).r < 10
+    check maskFrame.pixel(25, 15).b > 240
+
   test "GPU direct commands use the configured compositor on every render path":
     let previousDriver = getEnv("SDL_VIDEODRIVER")
     putEnv("SDL_VIDEODRIVER", "dummy")

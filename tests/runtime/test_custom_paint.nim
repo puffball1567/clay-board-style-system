@@ -2,6 +2,7 @@ import std/[options, strutils, unittest]
 
 import clay_board_style_system
 import clay_board_style_system/generated/default_properties
+import clay_board_style_system/backends/ppm/raster
 
 proc resolvedUi(ui: UiRoot): tuple[styles: ResolvedTree, layout: LayoutResult] =
   var diagnostics: Diagnostics
@@ -16,6 +17,16 @@ proc commandIndex(commands: openArray[PaintCommand]; color: Color): int =
     if command.kind == pcFillRect and command.color == color:
       return index
   -1
+
+proc rasterPixel(image: RasterImage; x, y: int): Color =
+  let colorIndex = (y * image.width + x) * 3
+  let alphaIndex = y * image.width + x
+  rgba(
+    image.pixels[colorIndex].float32 / 255.0'f32,
+    image.pixels[colorIndex + 1].float32 / 255.0'f32,
+    image.pixels[colorIndex + 2].float32 / 255.0'f32,
+    image.alpha[alphaIndex].float32 / 255.0'f32
+  )
 
 suite "declarative custom paint":
   test "typed material parameters preserve every supported value kind":
@@ -338,19 +349,102 @@ suite "declarative custom paint":
     check registry.takeCustomPaintDiagnostics().len ==
       maxCustomPaintDiagnostics
 
-  test "mask and filter declarations report unsupported composition":
+  test "custom alpha mask clips the complete owner subtree":
+    let ui = initUiRoot()
+    let panel = ui.box(uiStyle([
+      decl("width", px(40)),
+      decl("height", px(20)),
+      decl("background-color", colorValue(rgb(1, 0, 0))),
+      customPaint("left-half", cpsMask)
+    ]))
+    discard ui.box(uiStyle([
+      decl("width", px(40)),
+      decl("height", px(20)),
+      decl("background-color", colorValue(rgb(0, 1, 0)))
+    ]), parent = some(panel))
+    var capturedOpacity = -1.0'f32
+    check ui.registerCustomPaintMaterial(
+      "left-half",
+      proc(request: CustomPaintRequest): seq[PaintCommand] =
+        capturedOpacity = request.opacity
+        @[
+          fillRect(
+            rect(request.bounds.x, request.bounds.y,
+              request.bounds.w * 0.5'f32, request.bounds.h),
+            rgb(1, 1, 1),
+            owner = some(request.owner)
+          )
+        ],
+      {cpsMask}
+    )
+
+    let resolved = ui.resolvedUi()
+    let commands = ui.buildPaintCommands(resolved.styles, resolved.layout)
+    let image = render(commands, 48, 24, rgb(0, 0, 1))
+    var destinationInCount = 0
+    for command in commands:
+      if command.kind == pcPushLayer and
+          command.layerCompositeMode == lcmDestinationIn:
+        inc destinationInCount
+
+    check capturedOpacity == 1.0'f32
+    check destinationInCount == 1
+    check image.rasterPixel(5, 5).g > 0.95'f32
+    check image.rasterPixel(30, 5).b > 0.95'f32
+    check ui.takeCustomPaintDiagnostics().len == 0
+
+  test "an empty resolved mask makes its owner transparent":
+    let ui = initUiRoot()
+    discard ui.box(uiStyle([
+      decl("width", px(20)),
+      decl("height", px(12)),
+      decl("background-color", colorValue(rgb(1, 0, 0))),
+      customPaint("empty-mask", cpsMask)
+    ]))
+    check ui.registerCustomPaintMaterial(
+      "empty-mask",
+      proc(request: CustomPaintRequest): seq[PaintCommand] = @[],
+      {cpsMask}
+    )
+
+    let resolved = ui.resolvedUi()
+    let image = render(
+      ui.buildPaintCommands(resolved.styles, resolved.layout),
+      24, 16, rgb(0, 0, 1)
+    )
+    check image.rasterPixel(5, 5).b > 0.95'f32
+
+  test "missing masks degrade to unmasked content with a diagnostic":
+    let ui = initUiRoot()
+    discard ui.box(uiStyle([
+      decl("width", px(20)),
+      decl("height", px(12)),
+      decl("background-color", colorValue(rgb(1, 0, 0))),
+      customPaint("missing-mask", cpsMask)
+    ]))
+
+    let resolved = ui.resolvedUi()
+    let image = render(
+      ui.buildPaintCommands(resolved.styles, resolved.layout),
+      24, 16, rgb(0, 0, 1)
+    )
+    let diagnostics = ui.takeCustomPaintDiagnostics()
+    check image.rasterPixel(5, 5).r > 0.95'f32
+    check diagnostics.len == 1
+    check diagnostics[0].status == cprsMissingMaterial
+
+  test "filter declarations remain explicitly unsupported":
     let ui = initUiRoot()
     discard ui.box(uiStyle([
       decl("width", px(40)),
       decl("height", px(20)),
-      customPaint("alpha-mask", cpsMask),
       customPaint("blur-pass", cpsFilter)
     ]))
     let resolved = ui.resolvedUi()
     discard ui.buildPaintCommands(resolved.styles, resolved.layout)
     let diagnostics = ui.takeCustomPaintDiagnostics()
 
-    check diagnostics.len == 2
+    check diagnostics.len == 1
     for diagnostic in diagnostics:
       check diagnostic.status == cprsUnsupportedStage
 

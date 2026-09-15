@@ -105,7 +105,9 @@ ABI version `0x0001001F` supports:
   unchanged.
 - Append-only bounded layer paint scopes. `CBSS_PAINT_PUSH_LAYER` stores bounds
   in `rect`, opacity in `value0`, and `CbssLayerCompositeMode` in `value1`;
-  `CBSS_PAINT_POP_LAYER` closes the scope.
+  `CBSS_PAINT_POP_LAYER` closes the scope. The append-only
+  `CBSS_LAYER_DESTINATION_IN` mode multiplies retained destination alpha by the
+  source layer alpha and is used by Custom Paint masks.
 - A retained Canvas drawing adapter on every registered RenderSurface. Foreign
   libraries append local drawing commands and publish the complete display-list
   update with one `cbss_render_surface_canvas_commit`.

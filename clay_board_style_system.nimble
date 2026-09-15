@@ -236,6 +236,7 @@ task testMotionAsan, "Run retained runtime tests under AddressSanitizer":
       ("custom_paint", "tests/runtime/test_custom_paint.nim"),
       ("gpu_host", "tests/runtime/test_gpu_host.nim"),
       ("raster_surface", "tests/core/test_raster_surface.nim"),
+      ("layer_raster", "tests/paint/test_layer_raster.nim"),
       ("retained_damage", "tests/paint/test_retained_damage.nim"),
       ("retained_canvas", "tests/paint/test_retained_canvas_raster.nim")
     ]:
@@ -263,6 +264,7 @@ task testUbsan, "Run numeric, layout, transform, and motion tests under Undefine
       ("gpu_host", "tests/runtime/test_gpu_host.nim"),
       ("custom_paint", "tests/runtime/test_custom_paint.nim"),
       ("raster_surface", "tests/core/test_raster_surface.nim"),
+      ("layer_raster", "tests/paint/test_layer_raster.nim"),
       ("retained_damage", "tests/paint/test_retained_damage.nim"),
       ("retained_canvas", "tests/paint/test_retained_canvas_raster.nim"),
       ("declarative_transition", "tests/runtime/test_declarative_transition.nim"),
@@ -304,6 +306,7 @@ task testLsan, "Run retained lifecycle tests under LeakSanitizer on Linux":
         ("custom_paint", "tests/runtime/test_custom_paint.nim"),
         ("gpu_host", "tests/runtime/test_gpu_host.nim"),
         ("raster_surface", "tests/core/test_raster_surface.nim"),
+        ("layer_raster", "tests/paint/test_layer_raster.nim"),
         ("retained_damage", "tests/paint/test_retained_damage.nim"),
         ("retained_canvas", "tests/paint/test_retained_canvas_raster.nim")
       ]:
