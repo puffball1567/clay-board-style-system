@@ -616,7 +616,8 @@ typedef enum CbssPaintKind {
 typedef enum CbssLayerCompositeMode {
   CBSS_LAYER_SOURCE_OVER = 0,
   CBSS_LAYER_COPY = 1,
-  CBSS_LAYER_ADDITIVE = 2
+  CBSS_LAYER_ADDITIVE = 2,
+  CBSS_LAYER_DESTINATION_IN = 3
 } CbssLayerCompositeMode;
 
 typedef enum CbssPathSegmentKind {

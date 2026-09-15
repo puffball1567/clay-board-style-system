@@ -468,6 +468,26 @@ static void test_custom_paint_provider(void) {
   assert(cbss_context_unregister_custom_paint_provider(
       context, replacement_registration) == CBSS_OUT_OF_RANGE);
 
+  CustomPaintState mask_state = {.raster = raster};
+  CbssCustomPaintRegistration mask_registration = 0;
+  require_ok(context, cbss_context_register_custom_paint_provider(
+      context, "foreign-mask", CBSS_CUSTOM_PAINT_STAGE_MASK,
+      paint_custom_material, release_custom_material, &mask_state, 0,
+      &mask_registration));
+  assert(mask_registration != 0);
+  require_ok(context, cbss_context_unregister_custom_paint_provider(
+      context, mask_registration));
+  assert(mask_state.releases == 1);
+
+  CustomPaintState filter_state = {.raster = raster};
+  CbssCustomPaintRegistration filter_registration = 99;
+  assert(cbss_context_register_custom_paint_provider(
+      context, "foreign-filter", CBSS_CUSTOM_PAINT_STAGE_FILTER,
+      paint_custom_material, release_custom_material, &filter_state, 0,
+      &filter_registration) == CBSS_NOT_AVAILABLE);
+  assert(filter_registration == 0);
+  assert(filter_state.releases == 0);
+
   CustomPaintState reset_state = {.raster = raster};
   CbssCustomPaintRegistration reset_registration = 0;
   require_ok(context, cbss_context_register_custom_paint_provider(
@@ -1126,6 +1146,7 @@ int main(void) {
   assert(CBSS_LAYER_SOURCE_OVER == 0);
   assert(CBSS_LAYER_COPY == 1);
   assert(CBSS_LAYER_ADDITIVE == 2);
+  assert(CBSS_LAYER_DESTINATION_IN == 3);
 
   CbssValidationPattern *validation_pattern = NULL;
   char validation_error[128] = {0};

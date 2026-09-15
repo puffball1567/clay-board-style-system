@@ -70,6 +70,35 @@ suite "offscreen layer raster composition":
     check sample.b == 255
     check sample.a == 255
 
+  test "destination-in preserves color and multiplies destination alpha":
+    let image = render([
+      pushLayer(rect(0, 0, 4, 2)),
+      fillRect(rect(0, 0, 4, 2), rgb(1, 0, 0)),
+      pushLayer(rect(0, 0, 4, 2), compositeMode = lcmDestinationIn),
+      fillRect(rect(0, 0, 2, 2), rgba(0, 1, 0, 0.5)),
+      popLayer(),
+      popLayer()
+    ], 4, 2, rgb(0, 0, 1))
+
+    let masked = image.pixel(1, 1)
+    check masked.r in 127'u8 .. 128'u8
+    check masked.g == 0
+    check masked.b in 127'u8 .. 128'u8
+    check masked.a == 255
+    check image.pixel(3, 1) == (0'u8, 0'u8, 255'u8, 255'u8)
+
+  test "empty destination-in source clears the bounded destination layer":
+    let image = render([
+      fillRect(rect(0, 0, 4, 2), rgb(0, 0, 1)),
+      pushLayer(rect(0, 0, 4, 2)),
+      fillRect(rect(0, 0, 4, 2), rgb(1, 0, 0)),
+      pushLayer(rect(0, 0, 4, 2), compositeMode = lcmDestinationIn),
+      popLayer(),
+      popLayer()
+    ], 4, 2, rgb(0, 0, 0))
+
+    check image.pixel(2, 1) == (0'u8, 0'u8, 255'u8, 255'u8)
+
   test "dangling nested layers close deterministically":
     let image = render([
       pushLayer(rect(0, 0, 3, 3), opacity = 0.5),

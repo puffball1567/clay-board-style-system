@@ -7,7 +7,8 @@ type
   LayerCompositeMode* = enum
     lcmSourceOver,
     lcmCopy,
-    lcmAdditive
+    lcmAdditive,
+    lcmDestinationIn
 
   PaintCommandKind* = enum
     pcPushTransform,

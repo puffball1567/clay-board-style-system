@@ -487,8 +487,8 @@ policy without treating human-readable backend errors as control flow.
 
 ### Typed Shader Custom Style Painting
 
-Status: `Typed authoring and underlay/overlay composition implemented; fully
-declarative Style attachment, mask, and filter remain Version 0.7 work`
+Status: `Typed authoring and underlay/overlay/mask composition implemented;
+filter composition remains Version 0.7 work`
 
 The primary intended use of shaders in ordinary CBSS UI is not to reimplement
 the layout engine, text stack, or every control on the GPU. CBSS first resolves
@@ -596,11 +596,12 @@ The execution and caching contract is:
   diagnostic.
 
 The implemented slices provide bounded GPU Canvas output, the existing
-`gpuVisualLayer` attachment, and declarative named `customPaint` underlay and
-overlay stages. A normal Box can now consume CPU or GPU-produced paint without
-adding a second layout, input, focus, or accessibility node. Registrations are
-generation-checked, command streams are bounded by the owner's clip, and
-missing or malformed materials fail closed with bounded diagnostics. Typed,
+`gpuVisualLayer` attachment, and declarative named `customPaint` underlay,
+overlay, and alpha-mask stages. A normal Box can now consume CPU or
+GPU-produced paint without adding a second layout, input, focus, or
+accessibility node. Registrations are generation-checked, command streams are
+bounded by the owner's clip, and missing or malformed materials fail closed
+with bounded diagnostics. Typed,
 bounded `float32`, `int64`, `bool`, `vec2`, `vec4`, and color material
 parameters now travel from immutable Style declarations to paint callbacks
 without per-frame string parsing or hot-layout growth. The typed Shader Builder
@@ -608,7 +609,7 @@ emits deterministic bgfx source at build time and its compiled
 artifact uses the same retained Pipeline contract as low-level GPU submission.
 A build-only wrapper invokes the official `shaderc` without shell evaluation,
 and bounded checksummed packages retain unique target variants for runtime
-selection. Retained-layer filter and mask composition, production mapping from
+selection. Retained-layer filter composition, production mapping from
 typed parameters to backend bindings, visual-shape hit testing, and arbitrary
 scene picking remain later layers on the same contract. See
 [Custom Paint](custom-paint.md) for the current public API and failure rules.

@@ -680,6 +680,7 @@ proc layerCompositeModeFromC(value: uint32): Option[LayerCompositeMode] =
   of 0: some(lcmSourceOver)
   of 1: some(lcmCopy)
   of 2: some(lcmAdditive)
+  of 3: some(lcmDestinationIn)
   else: none(LayerCompositeMode)
 
 proc strokeLineCapFromC(value: uint32): Option[StrokeLineCap] =
@@ -3592,7 +3593,7 @@ proc cbssContextRegisterCustomPaintProvider(
   let stageSet = customPaintStagesFromC(stages)
   if stageSet.isNone:
     return CbssInvalidArgument
-  if cpsMask in stageSet.get or cpsFilter in stageSet.get:
+  if cpsFilter in stageSet.get:
     return CbssNotAvailable
   let materialName = fromCString(material)
   if not materialName.validCustomPaintMaterial:

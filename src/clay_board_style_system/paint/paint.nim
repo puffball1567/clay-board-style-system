@@ -267,6 +267,39 @@ proc addTextDecoration(
 proc hidesContents(style: ComputedStyle): bool =
   style.visual.contentVisibility.isSome and style.visual.contentVisibility.get == "hidden"
 
+proc resolveCustomPaintStage(
+    provider: CustomPaintProvider;
+    style: ComputedStyle;
+    stage: CustomPaintStage;
+    owner: NodeId;
+    bounds: Rect;
+    opacity: float32
+): Option[CustomPaintResolution] =
+  let material = style.customPaintMaterial(stage)
+  if material.isNone or provider.isNil:
+    return none(CustomPaintResolution)
+  some(provider(CustomPaintRequest(
+    material: material.get,
+    stage: stage,
+    owner: owner,
+    bounds: bounds,
+    opacity: opacity,
+    parameters: style.customPaintParameters(stage)
+  )))
+
+proc addResolvedCustomPaint(
+    output: var seq[PaintCommand];
+    resolved: CustomPaintResolution;
+    bounds: Rect;
+    radius: float32
+) =
+  if resolved.status != cprsResolved or resolved.commands.len == 0:
+    return
+  output.add pushClip(bounds, radius)
+  for command in resolved.commands:
+    output.add command
+  output.add popClip()
+
 proc addCustomPaint(
     output: var seq[PaintCommand];
     provider: CustomPaintProvider;
@@ -276,23 +309,13 @@ proc addCustomPaint(
     bounds: Rect;
     opacity: float32
 ) =
-  let material = style.customPaintMaterial(stage)
-  if material.isNone or provider.isNil:
-    return
-  let resolved = provider(CustomPaintRequest(
-    material: material.get,
-    stage: stage,
-    owner: owner,
-    bounds: bounds,
-    opacity: opacity,
-    parameters: style.customPaintParameters(stage)
-  ))
-  if resolved.status != cprsResolved or resolved.commands.len == 0:
-    return
-  output.add pushClip(bounds, style.box.borderRadius)
-  for command in resolved.commands:
-    output.add command
-  output.add popClip()
+  let resolved = provider.resolveCustomPaintStage(
+    style, stage, owner, bounds, opacity
+  )
+  if resolved.isSome:
+    output.addResolvedCustomPaint(
+      resolved.get, bounds, style.box.borderRadius
+    )
 
 proc addScrollbars(
     output: var seq[PaintCommand];
@@ -375,6 +398,17 @@ proc paintNode(
     output.add pushClip(visualClip.get, style.box.borderRadius)
 
   let needsClip = node.kind == nkBox and style.clipsOverflow()
+  let maskResolution =
+    if node.kind == nkBox:
+      customPaintProvider.resolveCustomPaintStage(
+        style, cpsMask, id, nodeRect, 1.0'f32
+      )
+    else:
+      none(CustomPaintResolution)
+  let appliesMask = maskResolution.isSome and
+    maskResolution.get.status == cprsResolved
+  if appliesMask:
+    output.add pushLayer(nodeRect)
 
   if node.kind == nkBox and style.box.boxShadow.isSome:
     let shadow = style.box.boxShadow.get
@@ -492,9 +526,6 @@ proc paintNode(
       customPaintProvider, style, cpsUnderlay, id, nodeRect, opacity
     )
     output.addCustomPaint(
-      customPaintProvider, style, cpsMask, id, nodeRect, opacity
-    )
-    output.addCustomPaint(
       customPaintProvider, style, cpsFilter, id, nodeRect, opacity
     )
 
@@ -534,6 +565,14 @@ proc paintNode(
 
   if needsClip:
     output.add popClip()
+
+  if appliesMask:
+    output.add pushLayer(nodeRect, compositeMode = lcmDestinationIn)
+    output.addResolvedCustomPaint(
+      maskResolution.get, nodeRect, style.box.borderRadius
+    )
+    output.add popLayer()
+    output.add popLayer()
 
   if visualClip.isSome:
     output.add popClip()

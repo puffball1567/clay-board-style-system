@@ -41,9 +41,16 @@ discard ui.registerCustomPaintMaterial(
 ```
 
 `cpsUnderlay` paints after the owner's background and border but before its
-children. `cpsOverlay` paints after the children. CBSS clips each returned
-command stream to the owner's resolved bounds and border radius. The material
-does not add layout, hit-test, focus, or accessibility nodes.
+children. `cpsOverlay` paints after the children. `cpsMask` renders an alpha
+mask over the owner's complete isolated visual subtree, including its ordinary
+paint, RenderSurface content, children, overlay, and scrollbars. CBSS clips
+each returned command stream to the owner's resolved bounds and border radius.
+The material does not add layout, hit-test, focus, or accessibility nodes.
+
+Mask RGB values do not affect the result; only the rendered alpha is used.
+An empty successfully resolved mask makes the owner transparent. A missing or
+invalid mask provider leaves the owner unmasked and emits a bounded diagnostic,
+so a bad optional visual capability does not erase otherwise usable UI.
 
 The host should build commands through the `UiRoot` overload so Canvas and
 Custom Paint providers cannot be omitted accidentally:
@@ -115,7 +122,7 @@ Completed pixels invalidate only the components that consumed that material.
 var accent = ui.registerGpuPaintMaterial(
   "panel-accent",
   gpuCanvas,
-  {cpsUnderlay}
+  {cpsUnderlay, cpsMask}
 )
 
 let queued = accent.queueGpuFrame()
@@ -125,9 +132,10 @@ let published = accent.collectGpuFrame()
 discard accent.unregister()
 ```
 
-The current bridge uses the bounded GPU-to-`RasterSurface` readback path. It is
-backend-neutral above `GpuCanvasSurface`; the optional bgfx implementation and
-its `bgfxim` dependency stay behind the adapter boundary.
+The current bridge uses the bounded GPU-to-`RasterSurface` readback path, which
+also makes GPU-produced alpha masks available without exposing a GPU handle to
+Style. It is backend-neutral above `GpuCanvasSurface`; the optional bgfx
+implementation and its `bgfxim` dependency stay behind the adapter boundary.
 
 ## Failure And Ownership Rules
 
@@ -147,9 +155,12 @@ its `bgfxim` dependency stay behind the adapter boundary.
   is rejected before composition.
 - Missing materials fail closed and emit deduplicated diagnostics. Diagnostics
   are bounded so malformed content cannot grow memory without limit.
-- `cpsMask` and `cpsFilter` declarations are accepted and retained, but their
-  retained-layer composition is not implemented yet. They fail closed with an
-  explicit unsupported-stage diagnostic.
+- `cpsMask` uses retained destination-in layer composition in the deterministic
+  PPM and SDL3 backends. SDL3 renderers with custom blend support stay on the
+  accelerated one-pass path; software renderers use a bounded 64 MiB temporary
+  working set only for the affected mask region.
+- `cpsFilter` declarations are accepted and retained, but filter transformation
+  is not implemented yet. They report an explicit unsupported-stage diagnostic.
 - GPU work and readback remain application-scheduled. Custom Paint does not
   create a second frame loop or take presentation ownership.
 
