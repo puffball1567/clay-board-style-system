@@ -4,7 +4,8 @@ import ../../assets/asset_resolver
 import ../../core/[color, computed_style, geometry, gradient_sampling, node,
     raster_surface]
 import ../../input/events
-import ../../paint/[gpu_direct_compositor, paint_command, path_geometry]
+import ../../paint/[dirty_tiles, gpu_direct_compositor, paint_command,
+    path_geometry, retained_damage]
 import ../../text/[cosmic_text_engine, font_registry, text_engine]
 import ../../vendor/sdl3
 import ./config
@@ -37,6 +38,7 @@ const
   defaultShadowTextureCacheBytes = 128'u64 * 1024 * 1024
   defaultTransformTextureCacheBytes = 128'u64 * 1024 * 1024
   sdl3StreamWakeEventCode = 0x43425353'i32
+  maxRetainedDamagePasses = 8
 
 var
   sdl3StreamWakeEventType: uint32
@@ -100,6 +102,13 @@ type
 
   Sdl3GpuDirectCompositionStats* = object
     noFrame*, presented*, retry*, unsupported*, failed*: uint32
+
+  Sdl3RetainedLayerStats* = object
+    ## Cumulative retained-texture counters plus the most recent update size.
+    fullRepaints*, partialRepaints*, skippedRepaints*: uint64
+    coalescedRepaints*: uint64
+    lastDirtyTiles*, totalTiles*: int
+    lastDamagePasses*: int
 
   Sdl3ClipRegion = object
     rect: Rect
@@ -221,6 +230,11 @@ type
 
     staticLayerTexture: pointer
     staticLayerWidth, staticLayerHeight: int
+    staticLayerDamage: RetainedDamageTracker
+    staticLayerDamageClip: Option[SDL_Rect]
+    staticLayerBackground: Color
+    staticLayerBackgroundInitialized: bool
+    retainedLayerStatsValue: Sdl3RetainedLayerStats
     imageFailures: seq[string]
     imageEvents: seq[Sdl3ImageEvent]
     reportedImageEventKeys: seq[string]
@@ -309,6 +323,9 @@ proc gpuDirectCompositionStats*(
     target: Sdl3Renderer
 ): Sdl3GpuDirectCompositionStats =
   target.gpuDirectCompositionStats
+
+proc retainedLayerStats*(target: Sdl3Renderer): Sdl3RetainedLayerStats =
+  target.retainedLayerStatsValue
 
 proc resetGpuDirectCompositionStats(target: var Sdl3Renderer) =
   target.gpuDirectCompositionStats = Sdl3GpuDirectCompositionStats()
@@ -559,6 +576,9 @@ proc destroyStaticLayer(target: var Sdl3Renderer) =
     target.staticLayerTexture = nil
   target.staticLayerWidth = 0
   target.staticLayerHeight = 0
+  target.staticLayerDamage = RetainedDamageTracker()
+  target.staticLayerDamageClip = none(SDL_Rect)
+  target.staticLayerBackgroundInitialized = false
 
 proc destroyCursorCache(target: var Sdl3Renderer) =
   for cursor in CursorKind:
@@ -1593,11 +1613,16 @@ proc prepareRenderPlan(commands: openArray[PaintCommand]): seq[Sdl3PreparedComma
       result.add Sdl3PreparedCommand(command: command)
 
 proc effectiveClipBounds(target: Sdl3Renderer): Option[SDL_Rect] =
-  if target.clipStack.len == 0:
-    return none(SDL_Rect)
-  result = some(target.clipStack[0].bounds)
-  for index in 1 ..< target.clipStack.len:
-    result = some(intersect(result.get, target.clipStack[index].bounds))
+  if target.clipStack.len > 0:
+    result = some(target.clipStack[0].bounds)
+    for index in 1 ..< target.clipStack.len:
+      result = some(intersect(result.get, target.clipStack[index].bounds))
+  if target.staticLayerDamageClip.isSome and
+      SDL3.getRenderTarget(target.renderer) == target.staticLayerTexture:
+    if result.isSome:
+      result = some(intersect(result.get, target.staticLayerDamageClip.get))
+    else:
+      result = target.staticLayerDamageClip
 
 proc hasRoundedClip(target: Sdl3Renderer): bool =
   target.clipStack.hasRoundedClip()
@@ -3763,7 +3788,7 @@ proc renderCommandPass(
     dynamicNodes: openArray[NodeId] = []
 ) =
   target.clipStack.setLen(0)
-  target.renderer.setClip(none(SDL_Rect))
+  target.renderer.setClip(target.effectiveClipBounds())
   var highestDynamicNode = -1
   for node in dynamicNodes:
     highestDynamicNode = max(highestDynamicNode, node.nodeIndex)
@@ -3801,7 +3826,118 @@ proc ensureStaticLayer(target: var Sdl3Renderer): bool =
   discard SDL3.setTextureBlendMode(target.staticLayerTexture, sdlBlendModeBlend)
   target.staticLayerWidth = width
   target.staticLayerHeight = height
+  target.staticLayerDamage = initRetainedDamageTracker(
+    width, height, DefaultDirtyTileSize
+  )
+  target.staticLayerBackgroundInitialized = false
   true
+
+proc staticPaintCommands(
+    commands: openArray[PaintCommand];
+    dynamicNodes: openArray[NodeId]
+): seq[PaintCommand] =
+  var highestDynamicNode = -1
+  for node in dynamicNodes:
+    highestDynamicNode = max(highestDynamicNode, node.nodeIndex)
+  var dynamicNodeMask = newSeq[bool](highestDynamicNode + 1)
+  for node in dynamicNodes:
+    if node.nodeIndex >= 0:
+      dynamicNodeMask[node.nodeIndex] = true
+  for command in commands:
+    let isDynamic =
+      command.owner.isSome and
+        command.owner.get.nodeIndex >= 0 and
+        command.owner.get.nodeIndex < dynamicNodeMask.len and
+        dynamicNodeMask[command.owner.get.nodeIndex]
+    if command.isPaintScopeCommand or not isDynamic:
+      result.add command
+
+proc clearStaticDamageRegion(
+    target: var Sdl3Renderer;
+    region: Rect;
+    clearColor: Color
+) =
+  target.staticLayerDamageClip = some(region.toSdlClip)
+  target.renderer.setClip(target.effectiveClipBounds())
+  var previousBlendMode = sdlBlendModeBlend
+  discard SDL3.getRenderDrawBlendMode(
+    target.renderer, addr previousBlendMode
+  )
+  discard SDL3.setRenderDrawBlendMode(target.renderer, sdlBlendModeNone)
+  target.renderer.setColor(clearColor)
+  var destination = region.toSdl
+  discard SDL3.renderFillRect(target.renderer, addr destination)
+  discard SDL3.setRenderDrawBlendMode(target.renderer, previousBlendMode)
+
+proc boundedDamageRegions(
+    regions: openArray[Rect]
+): seq[Rect] =
+  ## SDL has one active clip rectangle. Bound full command replays when sparse
+  ## invalidation would otherwise multiply traversal by an arbitrary count.
+  if regions.len <= maxRetainedDamagePasses:
+    return @regions
+  var left = regions[0].x
+  var top = regions[0].y
+  var right = regions[0].x + regions[0].w
+  var bottom = regions[0].y + regions[0].h
+  for index in 1 ..< regions.len:
+    left = min(left, regions[index].x)
+    top = min(top, regions[index].y)
+    right = max(right, regions[index].x + regions[index].w)
+    bottom = max(bottom, regions[index].y + regions[index].h)
+  @[rect(left, top, right - left, bottom - top)]
+
+proc updateStaticLayer(
+    target: var Sdl3Renderer;
+    commands: openArray[PaintCommand];
+    cosmic: CosmicTextEngine;
+    fonts: FontRegistry;
+    clearColor: Color;
+    dynamicNodes: openArray[NodeId]
+) =
+  let retainedCommands = staticPaintCommands(commands, dynamicNodes)
+  let backgroundChanged =
+    target.staticLayerBackgroundInitialized and
+      target.staticLayerBackground != clearColor
+  let damage = target.staticLayerDamage.plan(
+    retainedCommands,
+    forceFullRepaint = backgroundChanged
+  )
+  target.retainedLayerStatsValue.lastDirtyTiles = damage.dirtyTiles
+  target.retainedLayerStatsValue.totalTiles = damage.totalTiles
+  if damage.regions.len == 0:
+    target.retainedLayerStatsValue.lastDamagePasses = 0
+    inc target.retainedLayerStatsValue.skippedRepaints
+    return
+  if damage.fullRepaint:
+    inc target.retainedLayerStatsValue.fullRepaints
+  else:
+    inc target.retainedLayerStatsValue.partialRepaints
+
+  let regions = boundedDamageRegions(damage.regions)
+  target.retainedLayerStatsValue.lastDamagePasses = regions.len
+  if regions.len < damage.regions.len:
+    inc target.retainedLayerStatsValue.coalescedRepaints
+
+  let previousTarget = SDL3.getRenderTarget(target.renderer)
+  discard SDL3.setRenderTarget(target.renderer, target.staticLayerTexture)
+  defer:
+    target.staticLayerDamageClip = none(SDL_Rect)
+    target.renderer.setClip(none(SDL_Rect))
+    discard SDL3.setRenderTarget(target.renderer, previousTarget)
+
+  for region in regions:
+    target.clearStaticDamageRegion(region, clearColor)
+    target.renderCommandPass(
+      commands,
+      cosmic,
+      fonts,
+      dynamicOnly = false,
+      skipDynamic = true,
+      dynamicNodes = dynamicNodes
+    )
+  target.staticLayerBackground = clearColor
+  target.staticLayerBackgroundInitialized = true
 
 proc renderLayered*(
     target: var Sdl3Renderer;
@@ -3821,20 +3957,15 @@ proc renderLayered*(
   target.resetGpuDirectCompositionStats()
   target.updateLogicalPresentation()
 
-  if rebuildStatic:
-    let previousTarget = SDL3.getRenderTarget(target.renderer)
-    discard SDL3.setRenderTarget(target.renderer, target.staticLayerTexture)
-    target.renderer.setColor(clearColor)
-    discard SDL3.renderClear(target.renderer)
-    target.renderCommandPass(
-      commands,
-      cosmic,
-      fonts,
-      dynamicOnly = false,
-      skipDynamic = true,
-      dynamicNodes = dynamicNodes
+  if rebuildStatic or not target.staticLayerDamage.isInitialized or
+      not target.staticLayerBackgroundInitialized or
+      target.staticLayerBackground != clearColor:
+    target.updateStaticLayer(
+      commands, cosmic, fonts, clearColor, dynamicNodes
     )
-    discard SDL3.setRenderTarget(target.renderer, previousTarget)
+  else:
+    target.retainedLayerStatsValue.lastDirtyTiles = 0
+    target.retainedLayerStatsValue.lastDamagePasses = 0
 
   target.renderer.setColor(clearColor)
   discard SDL3.renderClear(target.renderer)
