@@ -73,7 +73,22 @@ type
     gsbMinimum,
     gsbMaximum,
     gsbDot,
-    gsbPower
+    gsbPower,
+    gsbModulo
+
+  GpuShaderComparisonOperation* = enum
+    gscEqual,
+    gscNotEqual,
+    gscLessThan,
+    gscLessThanOrEqual,
+    gscGreaterThan,
+    gscGreaterThanOrEqual
+
+  GpuShaderLogicalOperation* = enum
+    gslNot,
+    gslAnd,
+    gslOr,
+    gslExclusiveOr
 
   GpuShaderTernaryOperation* = enum
     gstMix,
@@ -89,10 +104,17 @@ type
     gsnSwizzle,
     gsnUnary,
     gsnBinary,
+    gsnComparison,
+    gsnLogical,
+    gsnSelect,
     gsnTernary,
     gsnComputeBuiltin,
     gsnStorageLoad,
-    gsnStorageStore
+    gsnStorageStore,
+    gsnIfBegin,
+    gsnElse,
+    gsnIfEnd,
+    gsnReturn
 
   GpuShaderNode = object
     kind: GpuShaderNodeKind
@@ -108,8 +130,15 @@ type
     swizzle: string
     unary: GpuShaderUnaryOperation
     binary: GpuShaderBinaryOperation
+    comparison: GpuShaderComparisonOperation
+    logical: GpuShaderLogicalOperation
     ternary: GpuShaderTernaryOperation
     computeBuiltin: GpuShaderComputeBuiltin
+    scopeId: int
+
+  GpuShaderConditionalScope = object
+    parentScope: int
+    hasElse: bool
 
   GpuShaderVaryingOutput = object
     slot: GpuShaderInterfaceSlot
@@ -130,6 +159,9 @@ type
     varyingOutputs: seq[GpuShaderVaryingOutput]
     storageBuffers: seq[GpuShaderStorageEntry]
     computeWorkGroupSize: array[3, uint32]
+    scopeParents: seq[int]
+    currentScope: int
+    conditionalScopes: seq[GpuShaderConditionalScope]
     hasComputeWorkGroupSize: bool
     sealed: bool
 
@@ -270,7 +302,8 @@ proc newGpuShaderBuilder*(
     stageValue: stage,
     labelValue: label,
     positionOutput: -1,
-    colorOutputs: [-1, -1, -1, -1]
+    colorOutputs: [-1, -1, -1, -1],
+    scopeParents: @[-1]
   )
 
 proc stage*(builder: GpuShaderBuilder): GpuShaderStage =
@@ -294,15 +327,27 @@ proc requireMutable(builder: GpuShaderBuilder) =
 
 proc addNode(
     builder: GpuShaderBuilder;
-    node: sink GpuShaderNode
+    input: sink GpuShaderNode
 ): GpuShaderExpression =
   builder.requireMutable()
+  var node = input
+  node.scopeId = builder.currentScope
   builder.nodes.add(node)
   GpuShaderExpression(owner: builder, nodeIndex: builder.nodes.high)
 
-proc addStatement(builder: GpuShaderBuilder; node: sink GpuShaderNode) =
+proc addStatement(builder: GpuShaderBuilder; input: sink GpuShaderNode) =
   builder.requireMutable()
+  var node = input
+  node.scopeId = builder.currentScope
   builder.nodes.add(node)
+
+proc isScopeVisible(builder: GpuShaderBuilder; definingScope: int): bool =
+  var current = builder.currentScope
+  while current >= 0:
+    if current == definingScope:
+      return true
+    current = builder.scopeParents[current]
+  false
 
 proc requireExpression(
     builder: GpuShaderBuilder;
@@ -314,7 +359,12 @@ proc requireExpression(
       GpuShaderBuildError,
       "GPU shader expression belongs to another builder or is invalid"
     )
-  builder.nodes[expression.nodeIndex]
+  result = builder.nodes[expression.nodeIndex]
+  if not builder.isScopeVisible(result.scopeId):
+    raise newException(
+      GpuShaderBuildError,
+      "GPU shader expression is outside its control-flow scope"
+    )
 
 proc valueType*(expression: GpuShaderExpression): GpuShaderValueType =
   if expression.owner.isNil or expression.nodeIndex < 0 or
@@ -752,6 +802,14 @@ proc binaryResultType(
     if left != right or not left.isFloating:
       raise newException(GpuShaderBuildError, "pow requires equal floating values")
     left
+  of gsbModulo:
+    if left != right or not left.isScalarOrVector or
+        left.scalarType notin {gsvtInt, gsvtUint}:
+      raise newException(
+        GpuShaderBuildError,
+        "modulo requires equal signed or unsigned integer values"
+      )
+    left
   of gsbMinimum, gsbMaximum:
     if left != right or not left.isScalarOrVector:
       raise newException(
@@ -802,6 +860,152 @@ proc binary*(
     operandCount: 2,
     binary: operation
   ))
+
+proc compare*(
+    builder: GpuShaderBuilder;
+    operation: GpuShaderComparisonOperation;
+    left, right: GpuShaderExpression
+): GpuShaderExpression =
+  let leftType = builder.requireExpression(left).valueType
+  let rightType = builder.requireExpression(right).valueType
+  if leftType != rightType or not leftType.isNumeric or
+      leftType notin {gsvtFloat, gsvtInt, gsvtUint}:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU comparison requires equal numeric scalar types"
+    )
+  builder.addNode(GpuShaderNode(
+    kind: gsnComparison,
+    valueType: gsvtBool,
+    operands: [left.nodeIndex, right.nodeIndex, 0, 0],
+    operandCount: 2,
+    comparison: operation
+  ))
+
+proc logical*(
+    builder: GpuShaderBuilder;
+    operation: GpuShaderLogicalOperation;
+    left: GpuShaderExpression;
+    right = GpuShaderExpression()
+): GpuShaderExpression =
+  if builder.requireExpression(left).valueType != gsvtBool:
+    raise newException(GpuShaderBuildError, "GPU logical operation requires bool")
+  var operandCount = 1'u8
+  var rightIndex = 0
+  if operation != gslNot:
+    if builder.requireExpression(right).valueType != gsvtBool:
+      raise newException(GpuShaderBuildError, "GPU logical operation requires bool")
+    operandCount = 2
+    rightIndex = right.nodeIndex
+  elif right.owner != nil:
+    raise newException(GpuShaderBuildError, "GPU logical not accepts one operand")
+  builder.addNode(GpuShaderNode(
+    kind: gsnLogical,
+    valueType: gsvtBool,
+    operands: [left.nodeIndex, rightIndex, 0, 0],
+    operandCount: operandCount,
+    logical: operation
+  ))
+
+proc selectValue*(
+    builder: GpuShaderBuilder;
+    condition, whenTrue, whenFalse: GpuShaderExpression
+): GpuShaderExpression =
+  if builder.requireExpression(condition).valueType != gsvtBool:
+    raise newException(GpuShaderBuildError, "GPU selection condition must be bool")
+  let trueType = builder.requireExpression(whenTrue).valueType
+  let falseType = builder.requireExpression(whenFalse).valueType
+  if trueType != falseType or not trueType.isScalarOrVector:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU selection values require equal scalar or vector types"
+    )
+  builder.addNode(GpuShaderNode(
+    kind: gsnSelect,
+    valueType: trueType,
+    operands: [condition.nodeIndex, whenTrue.nodeIndex, whenFalse.nodeIndex, 0],
+    operandCount: 3
+  ))
+
+proc beginIf*(builder: GpuShaderBuilder; condition: GpuShaderExpression) =
+  builder.requireOpen()
+  if builder.stageValue != gssCompute:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU shader control flow is currently compute-only"
+    )
+  if builder.requireExpression(condition).valueType != gsvtBool:
+    raise newException(GpuShaderBuildError, "GPU if condition must be bool")
+  let parentScope = builder.currentScope
+  builder.addStatement(GpuShaderNode(
+    kind: gsnIfBegin,
+    operands: [condition.nodeIndex, 0, 0, 0],
+    operandCount: 1
+  ))
+  builder.scopeParents.add(parentScope)
+  builder.conditionalScopes.add GpuShaderConditionalScope(parentScope: parentScope)
+  builder.currentScope = builder.scopeParents.high
+
+proc beginElse*(builder: GpuShaderBuilder) =
+  builder.requireOpen()
+  if builder.conditionalScopes.len == 0:
+    raise newException(GpuShaderBuildError, "GPU else has no matching if")
+  if builder.conditionalScopes[^1].hasElse:
+    raise newException(GpuShaderBuildError, "GPU if already has an else branch")
+  builder.requireMutable()
+  let parentScope = builder.conditionalScopes[^1].parentScope
+  builder.currentScope = parentScope
+  builder.addStatement(GpuShaderNode(kind: gsnElse))
+  builder.conditionalScopes[^1].hasElse = true
+  builder.scopeParents.add(parentScope)
+  builder.currentScope = builder.scopeParents.high
+
+proc endIf*(builder: GpuShaderBuilder) =
+  builder.requireOpen()
+  if builder.conditionalScopes.len == 0:
+    raise newException(GpuShaderBuildError, "GPU endIf has no matching if")
+  builder.requireMutable()
+  builder.currentScope = builder.conditionalScopes[^1].parentScope
+  builder.addStatement(GpuShaderNode(kind: gsnIfEnd))
+  builder.conditionalScopes.setLen(builder.conditionalScopes.len - 1)
+
+proc returnFromCompute*(builder: GpuShaderBuilder) =
+  builder.requireOpen()
+  if builder.stageValue != gssCompute:
+    raise newException(GpuShaderBuildError, "GPU early return is compute-only")
+  builder.addStatement(GpuShaderNode(kind: gsnReturn))
+
+proc expressionBuilder(value: GpuShaderExpression): GpuShaderBuilder
+
+proc equalTo*(left, right: GpuShaderExpression): GpuShaderExpression =
+  left.expressionBuilder.compare(gscEqual, left, right)
+
+proc notEqualTo*(left, right: GpuShaderExpression): GpuShaderExpression =
+  left.expressionBuilder.compare(gscNotEqual, left, right)
+
+proc lessThan*(left, right: GpuShaderExpression): GpuShaderExpression =
+  left.expressionBuilder.compare(gscLessThan, left, right)
+
+proc lessThanOrEqual*(left, right: GpuShaderExpression): GpuShaderExpression =
+  left.expressionBuilder.compare(gscLessThanOrEqual, left, right)
+
+proc greaterThan*(left, right: GpuShaderExpression): GpuShaderExpression =
+  left.expressionBuilder.compare(gscGreaterThan, left, right)
+
+proc greaterThanOrEqual*(left, right: GpuShaderExpression): GpuShaderExpression =
+  left.expressionBuilder.compare(gscGreaterThanOrEqual, left, right)
+
+proc logicalNot*(value: GpuShaderExpression): GpuShaderExpression =
+  value.expressionBuilder.logical(gslNot, value)
+
+proc logicalAnd*(left, right: GpuShaderExpression): GpuShaderExpression =
+  left.expressionBuilder.logical(gslAnd, left, right)
+
+proc logicalOr*(left, right: GpuShaderExpression): GpuShaderExpression =
+  left.expressionBuilder.logical(gslOr, left, right)
+
+proc logicalExclusiveOr*(left, right: GpuShaderExpression): GpuShaderExpression =
+  left.expressionBuilder.logical(gslExclusiveOr, left, right)
 
 proc ternary*(
     builder: GpuShaderBuilder;
@@ -1048,10 +1252,39 @@ proc nodeExpression(builder: GpuShaderBuilder; index: int): string =
     of gsbSubtract: result = "((" & left & ") - (" & right & "))"
     of gsbMultiply: result = "((" & left & ") * (" & right & "))"
     of gsbDivide: result = "((" & left & ") / (" & right & "))"
+    of gsbModulo: result = "((" & left & ") % (" & right & "))"
     of gsbMinimum: result = "min(" & left & ", " & right & ")"
     of gsbMaximum: result = "max(" & left & ", " & right & ")"
     of gsbDot: result = "dot(" & left & ", " & right & ")"
     of gsbPower: result = "pow(" & left & ", " & right & ")"
+  of gsnComparison:
+    let left = builder.nodeReference(node.operands[0])
+    let right = builder.nodeReference(node.operands[1])
+    let operation = case node.comparison
+      of gscEqual: "=="
+      of gscNotEqual: "!="
+      of gscLessThan: "<"
+      of gscLessThanOrEqual: "<="
+      of gscGreaterThan: ">"
+      of gscGreaterThanOrEqual: ">="
+    result = "((" & left & ") " & operation & " (" & right & "))"
+  of gsnLogical:
+    let left = builder.nodeReference(node.operands[0])
+    case node.logical
+    of gslNot:
+      result = "!(" & left & ")"
+    of gslAnd, gslOr, gslExclusiveOr:
+      let right = builder.nodeReference(node.operands[1])
+      let operation = case node.logical
+        of gslAnd: "&&"
+        of gslOr: "||"
+        of gslExclusiveOr: "!="
+        of gslNot: ""
+      result = "((" & left & ") " & operation & " (" & right & "))"
+  of gsnSelect:
+    result = "((" & builder.nodeReference(node.operands[0]) & ") ? (" &
+      builder.nodeReference(node.operands[1]) & ") : (" &
+      builder.nodeReference(node.operands[2]) & "))"
   of gsnTernary:
     let first = builder.nodeReference(node.operands[0])
     let second = builder.nodeReference(node.operands[1])
@@ -1065,6 +1298,8 @@ proc nodeExpression(builder: GpuShaderBuilder; index: int): string =
     let storage = builder.storageBuffers[node.storageBufferIndex]
     result = storage.name & "[" & builder.nodeReference(node.operands[0]) & "]"
   of gsnStorageStore:
+    result = ""
+  of gsnIfBegin, gsnElse, gsnIfEnd, gsnReturn:
     result = ""
 
 proc addUnique(
@@ -1089,6 +1324,8 @@ proc emitGpuShaderSource*(builder: GpuShaderBuilder): GpuShaderSource =
   if builder.stageValue == gssFragment and builder.colorOutputs[0] < 0:
     raise newException(GpuShaderBuildError, "fragment shader has no color output")
   if builder.stageValue == gssCompute:
+    if builder.conditionalScopes.len != 0:
+      raise newException(GpuShaderBuildError, "GPU shader has an unclosed if block")
     if not builder.hasComputeWorkGroupSize:
       raise newException(GpuShaderBuildError, "compute shader has no work-group size")
     var hasStore = false
@@ -1160,17 +1397,32 @@ proc emitGpuShaderSource*(builder: GpuShaderBuilder): GpuShaderSource =
       $builder.computeWorkGroupSize[1] & ", " &
       $builder.computeWorkGroupSize[2] & ")\n"
   result.source.add "void main()\n{\n"
+  var indentation = 1
   for index, node in builder.nodes:
+    if node.kind in {gsnElse, gsnIfEnd}:
+      dec indentation
+    let prefix = repeat("  ", indentation)
     if node.kind == gsnStorageStore:
       let storage = builder.storageBuffers[node.storageBufferIndex]
-      result.source.add "  " & storage.name & "[" &
+      result.source.add prefix & storage.name & "[" &
         builder.nodeReference(node.operands[0]) & "] = " &
         builder.nodeReference(node.operands[1]) & ";\n"
+    elif node.kind == gsnIfBegin:
+      result.source.add prefix & "if (" &
+        builder.nodeReference(node.operands[0]) & ")\n" & prefix & "{\n"
+      inc indentation
+    elif node.kind == gsnElse:
+      result.source.add prefix & "}\n" & prefix & "else\n" & prefix & "{\n"
+      inc indentation
+    elif node.kind == gsnIfEnd:
+      result.source.add prefix & "}\n"
+    elif node.kind == gsnReturn:
+      result.source.add prefix & "return;\n"
     elif node.kind notin {
         gsnLiteral, gsnVertexInput, gsnVaryingInput, gsnUniform,
         gsnComputeBuiltin
     }:
-      result.source.add "  " & node.valueType.valueTypeName & " cbss_n" &
+      result.source.add prefix & node.valueType.valueTypeName & " cbss_n" &
         $index & " = " & builder.nodeExpression(index) & ";\n"
   case builder.stageValue
   of gssVertex:

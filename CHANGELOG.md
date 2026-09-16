@@ -9,6 +9,13 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Extended typed Compute shader authoring with scalar comparisons, boolean
+  composition, typed conditional selection, integer modulo, nested
+  `if`/`else`, guarded early return, and lexical scope validation. The same
+  additive operations are available through the C ABI, which advances to
+  `0x00010020`; `shader.authoring` capability version 3 lets foreign drivers
+  negotiate the control-flow surface explicitly.
+
 - Added Version 0.7 design and GPU showcase applications. The native design
   showcase switches among five original visual systems, including a retained
   infinite-heart ribbon, while preserving explicit frame scheduling. The

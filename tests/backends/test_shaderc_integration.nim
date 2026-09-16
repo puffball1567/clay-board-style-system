@@ -40,7 +40,18 @@ proc computeSource(): GpuShaderSource =
     "b_output", 1, gsbfFloat32x4, gsaWrite
   )
   let index = builder.swizzle(builder.globalInvocationId(), "x")
-  builder.storeStorage(output, index, builder.loadStorage(input, index))
+  let count = builder.unsignedInteger(1_000)
+  let outside = greaterThanOrEqual(index, count)
+  builder.beginIf(outside)
+  builder.returnFromCompute()
+  builder.endIf()
+  let wrapped = builder.binary(gsbModulo, index, count)
+  let value = builder.loadStorage(input, wrapped)
+  builder.storeStorage(
+    output,
+    index,
+    builder.selectValue(logicalNot(outside), value, value)
+  )
   builder.emitGpuShaderSource()
 
 let shaderc = getEnv("CBSS_SHADERC")
