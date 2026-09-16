@@ -400,9 +400,17 @@ let source = builder.emitGpuShaderSource()
 ```
 
 The builder validates work-group bounds, binding-stage uniqueness, access
-direction, unsigned indices, exact element types, and builder-local handles
-before source generation. The C ABI publishes equivalent fixed-width storage
-and expression IDs under `shader.authoring` capability version 2.
+direction, unsigned indices, exact element types, control-flow scope, and
+builder-local handles before source generation. Compute graphs support scalar
+comparisons, boolean composition, typed conditional selection, integer modulo,
+structured `if`/`else` blocks, and guarded early return. This is sufficient to
+express bounded dispatches and to unroll fixed neighbourhood kernels in Nim
+without emitting unchecked out-of-range loads. Expressions created inside a
+branch cannot escape that branch's lexical scope.
+
+The C ABI publishes equivalent fixed-width storage and expression IDs under
+`shader.authoring` capability version 3. Existing arithmetic operation values
+remain stable; modulo and the control-flow operations are additive.
 
 The resulting retained Shader and Pipeline handles are not UI-specific. A
 library may submit them directly for graphics or compute work, or render into a

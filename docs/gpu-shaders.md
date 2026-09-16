@@ -121,6 +121,10 @@ let output = builder.storageBuffer(
   "b_output", 1, gsbfFloat32x4, gsaWrite
 )
 let index = builder.swizzle(builder.globalInvocationId(), "x")
+let count = builder.unsignedInteger(1_000)
+builder.beginIf(greaterThanOrEqual(index, count))
+builder.returnFromCompute()
+builder.endIf()
 builder.storeStorage(output, index, builder.loadStorage(input, index))
 
 let source = builder.emitGpuShaderSource()
@@ -129,16 +133,19 @@ let source = builder.emitGpuShaderSource()
 Storage declarations require unique binding stages, exact scalar/vector
 formats, and explicit read, write, or read-write access. Index expressions are
 unsigned, values must match the declared element type, and a compute graph must
-contain at least one output store. Work-group dimensions are non-zero and
-bounded both per axis and by their total thread count. The runtime continues to
-own Compute Pipeline creation, bindings, dispatch validation, and retained
-resource lifetime; source compilation stays in the build-only layer.
+contain at least one output store. Scalar comparisons, boolean operations,
+typed selection, integer modulo, nested `if`/`else`, and early return permit
+bounded dispatches and fixed-neighbourhood kernels. Branch-local expressions
+cannot be referenced after their branch closes. Work-group dimensions are
+non-zero and bounded both per axis and by their total thread count. The runtime
+continues to own Compute Pipeline creation, bindings, dispatch validation, and
+retained resource lifetime; source compilation stays in the build-only layer.
 
 The authoring layer cannot infer an application's logical element count. A
-dispatch must therefore cover only valid storage elements, or bind padded
-buffers large enough for every invocation in the final work group. This keeps
-resource bounds explicit at the host boundary instead of hiding an unchecked
-shader access.
+dispatch must therefore add an explicit bounds guard as above, cover only valid
+storage elements, or bind padded buffers large enough for every invocation in
+the final work group. This keeps resource bounds explicit at the host boundary
+instead of hiding an unchecked shader access.
 
 ## Verification
 

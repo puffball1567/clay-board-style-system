@@ -2250,6 +2250,143 @@ proc cbssShaderBuilderBinary(
   except CatchableError as error:
     handle.shaderBuilderError(error.msg, CbssInternalError)
 
+proc cbssShaderBuilderCompare(
+    handle: CbssShaderBuilderHandle;
+    operation, left, right: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_compare", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil or operation > uint32(ord(high(GpuShaderComparisonOperation))):
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    storeShaderExpression(
+      output,
+      handle.builder.compare(
+        GpuShaderComparisonOperation(operation),
+        handle.shaderExpression(left),
+        handle.shaderExpression(right)
+      )
+    )
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderLogical(
+    handle: CbssShaderBuilderHandle;
+    operation, left, right: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_logical", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil or operation > uint32(ord(high(GpuShaderLogicalOperation))):
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    let rightExpression =
+      if GpuShaderLogicalOperation(operation) == gslNot:
+        GpuShaderExpression()
+      else:
+        handle.shaderExpression(right)
+    storeShaderExpression(
+      output,
+      handle.builder.logical(
+        GpuShaderLogicalOperation(operation),
+        handle.shaderExpression(left),
+        rightExpression
+      )
+    )
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderSelect(
+    handle: CbssShaderBuilderHandle;
+    condition, whenTrue, whenFalse: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_select", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    storeShaderExpression(
+      output,
+      handle.builder.selectValue(
+        handle.shaderExpression(condition),
+        handle.shaderExpression(whenTrue),
+        handle.shaderExpression(whenFalse)
+      )
+    )
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderBeginIf(
+    handle: CbssShaderBuilderHandle;
+    condition: uint32
+): int32 {.exportc: "cbss_shader_builder_begin_if", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  try:
+    handle.lastError.setLen(0)
+    handle.builder.beginIf(handle.shaderExpression(condition))
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderBeginElse(
+    handle: CbssShaderBuilderHandle
+): int32 {.exportc: "cbss_shader_builder_begin_else", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  try:
+    handle.lastError.setLen(0)
+    handle.builder.beginElse()
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderEndIf(
+    handle: CbssShaderBuilderHandle
+): int32 {.exportc: "cbss_shader_builder_end_if", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  try:
+    handle.lastError.setLen(0)
+    handle.builder.endIf()
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderReturnFromCompute(
+    handle: CbssShaderBuilderHandle
+): int32 {.exportc: "cbss_shader_builder_return_from_compute", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  try:
+    handle.lastError.setLen(0)
+    handle.builder.returnFromCompute()
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
 proc cbssShaderBuilderTernary(
     handle: CbssShaderBuilderHandle;
     operation, first, second, third: uint32;

@@ -26,7 +26,7 @@ extern "C" {
 #endif
 
 /* CBSS_GENERATED_DRIVER_CONTRACT_BEGIN */
-#define CBSS_ABI_VERSION 0x0001001Fu
+#define CBSS_ABI_VERSION 0x00010020u
 #define CBSS_DRIVER_CONTRACT_VERSION 0x00010000u
 
 typedef enum CbssCapabilityId {
@@ -199,8 +199,25 @@ typedef enum CbssShaderBinaryOperation {
   CBSS_SHADER_BINARY_MINIMUM = 4,
   CBSS_SHADER_BINARY_MAXIMUM = 5,
   CBSS_SHADER_BINARY_DOT = 6,
-  CBSS_SHADER_BINARY_POWER = 7
+  CBSS_SHADER_BINARY_POWER = 7,
+  CBSS_SHADER_BINARY_MODULO = 8
 } CbssShaderBinaryOperation;
+
+typedef enum CbssShaderComparisonOperation {
+  CBSS_SHADER_COMPARISON_EQUAL = 0,
+  CBSS_SHADER_COMPARISON_NOT_EQUAL = 1,
+  CBSS_SHADER_COMPARISON_LESS_THAN = 2,
+  CBSS_SHADER_COMPARISON_LESS_THAN_OR_EQUAL = 3,
+  CBSS_SHADER_COMPARISON_GREATER_THAN = 4,
+  CBSS_SHADER_COMPARISON_GREATER_THAN_OR_EQUAL = 5
+} CbssShaderComparisonOperation;
+
+typedef enum CbssShaderLogicalOperation {
+  CBSS_SHADER_LOGICAL_NOT = 0,
+  CBSS_SHADER_LOGICAL_AND = 1,
+  CBSS_SHADER_LOGICAL_OR = 2,
+  CBSS_SHADER_LOGICAL_EXCLUSIVE_OR = 3
+} CbssShaderLogicalOperation;
 
 typedef enum CbssShaderTernaryOperation {
   CBSS_SHADER_TERNARY_MIX = 0,
@@ -1157,6 +1174,24 @@ CBSS_API CbssStatus cbss_shader_builder_binary(
     CbssShaderBuilder *builder, CbssShaderBinaryOperation operation,
     CbssShaderExpression left, CbssShaderExpression right,
     CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_compare(
+    CbssShaderBuilder *builder, CbssShaderComparisonOperation operation,
+    CbssShaderExpression left, CbssShaderExpression right,
+    CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_logical(
+    CbssShaderBuilder *builder, CbssShaderLogicalOperation operation,
+    CbssShaderExpression left, CbssShaderExpression right,
+    CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_select(
+    CbssShaderBuilder *builder, CbssShaderExpression condition,
+    CbssShaderExpression when_true, CbssShaderExpression when_false,
+    CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_begin_if(
+    CbssShaderBuilder *builder, CbssShaderExpression condition);
+CBSS_API CbssStatus cbss_shader_builder_begin_else(CbssShaderBuilder *builder);
+CBSS_API CbssStatus cbss_shader_builder_end_if(CbssShaderBuilder *builder);
+CBSS_API CbssStatus cbss_shader_builder_return_from_compute(
+    CbssShaderBuilder *builder);
 CBSS_API CbssStatus cbss_shader_builder_ternary(
     CbssShaderBuilder *builder, CbssShaderTernaryOperation operation,
     CbssShaderExpression first, CbssShaderExpression second,

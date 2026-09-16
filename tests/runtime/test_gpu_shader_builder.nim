@@ -39,6 +39,54 @@ proc buildComputeShader(): GpuShaderSource =
   builder.storeStorage(destination, index, value)
   builder.emitGpuShaderSource()
 
+proc buildBoundedAbsorptionShader(): GpuShaderSource =
+  let builder = newGpuShaderBuilder(gssCompute, "bounded-absorption")
+  builder.setComputeWorkGroupSize(64, 1, 1)
+  let liquid = builder.storageBuffer(
+    "b_liquid", 0, gsbfFloat32x4, gsaRead
+  )
+  let material = builder.storageBuffer(
+    "b_material", 1, gsbfFloat32x4, gsaRead
+  )
+  let cellCount = builder.storageBuffer(
+    "b_cell_count", 2, gsbfUint32, gsaRead
+  )
+  let deltaTime = builder.storageBuffer(
+    "b_delta_time", 3, gsbfFloat32, gsaRead
+  )
+  let transfers = builder.storageBuffer(
+    "b_transfers", 4, gsbfFloat32, gsaWrite
+  )
+  let zeroIndex = builder.unsignedInteger(0)
+  let index = builder.swizzle(builder.globalInvocationId(), "x")
+  let count = builder.loadStorage(cellCount, zeroIndex)
+  builder.beginIf(greaterThanOrEqual(index, count))
+  builder.returnFromCompute()
+  builder.endIf()
+
+  let liquidCell = builder.loadStorage(liquid, index)
+  let materialCell = builder.loadStorage(material, index)
+  let available = builder.swizzle(liquidCell, "x")
+  let absorbed = builder.swizzle(liquidCell, "y")
+  let capacity = builder.swizzle(liquidCell, "z")
+  let rate = builder.swizzle(liquidCell, "w")
+  let porosity = builder.swizzle(materialCell, "x")
+  let sizing = builder.swizzle(materialCell, "y")
+  let fiberDensity = builder.swizzle(materialCell, "z")
+  let zero = builder.scalar(0)
+  let one = builder.scalar(1)
+  let half = builder.scalar(0.5)
+  let remaining = maximum(capacity - absorbed, zero)
+  let fiberTransport = half + half * fiberDensity
+  let potential = rate * porosity * (one - sizing) * fiberTransport *
+    builder.loadStorage(deltaTime, zeroIndex)
+  builder.storeStorage(
+    transfers,
+    index,
+    minimum(available, minimum(remaining, potential))
+  )
+  builder.emitGpuShaderSource()
+
 suite "typed GPU shader authoring":
   test "emits deterministic vertex and fragment source":
     let vertex = buildVertexShader()
@@ -275,6 +323,123 @@ suite "typed GPU compute shader authoring":
       discard -builder.unsignedInteger(1)
     expect GpuShaderBuildError:
       discard sine(builder.signedInteger(1))
+
+  test "emits bounds guards comparisons and early returns":
+    let builder = newGpuShaderBuilder(gssCompute, "bounded-copy")
+    builder.setComputeWorkGroupSize(64, 1, 1)
+    let parameters = builder.storageBuffer(
+      "b_parameters", 0, gsbfUint32, gsaRead
+    )
+    let output = builder.storageBuffer(
+      "b_output", 1, gsbfUint32, gsaWrite
+    )
+    let index = builder.swizzle(builder.globalInvocationId(), "x")
+    let zero = builder.unsignedInteger(0)
+    let count = builder.loadStorage(parameters, zero)
+    let outside = greaterThanOrEqual(index, count)
+    builder.beginIf(outside)
+    builder.returnFromCompute()
+    builder.endIf()
+    let width = builder.unsignedInteger(8)
+    builder.storeStorage(output, index, builder.binary(gsbModulo, index, width))
+
+    let source = builder.emitGpuShaderSource().source
+    check "bool cbss_n" in source
+    check " >= " in source
+    check "if (cbss_n" in source
+    check "    return;" in source
+    check "  uint cbss_n" in source
+    check " % " in source
+
+  test "authors a bounded packed-field absorption kernel":
+    let source = buildBoundedAbsorptionShader()
+    check source.storageBuffers.len == 5
+    check "BUFFER_RO(b_liquid, vec4, 0);" in source.source
+    check "BUFFER_RO(b_material, vec4, 1);" in source.source
+    check "BUFFER_WO(b_transfers, float, 4);" in source.source
+    check "if (cbss_n" in source.source
+    check "return;" in source.source
+    check "max(" in source.source
+    check source.source.count("min(") == 2
+    check "b_transfers[cbss_n" in source.source
+
+  test "emits nested boolean conditions else branches and typed selection":
+    let builder = newGpuShaderBuilder(gssCompute, "conditional-store")
+    builder.setComputeWorkGroupSize(1, 1, 1)
+    let output = builder.storageBuffer("b_output", 0, gsbfFloat32, gsaWrite)
+    let index = builder.unsignedInteger(0)
+    let low = builder.scalar(0.25)
+    let high = builder.scalar(0.75)
+    let lower = lessThan(low, high)
+    let differs = notEqualTo(low, high)
+    let condition = logicalAnd(lower, logicalNot(logicalNot(differs)))
+    builder.beginIf(condition)
+    let selected = builder.selectValue(condition, high, low)
+    builder.storeStorage(output, index, selected)
+    builder.beginElse()
+    builder.storeStorage(output, index, low)
+    builder.endIf()
+
+    let source = builder.emitGpuShaderSource().source
+    check " < " in source
+    check " != " in source
+    check "&&" in source
+    check source.count("!(") == 2
+    check " ? " in source
+    check "else" in source
+
+  test "rejects invalid control flow and scoped expression leaks":
+    let fragment = newGpuShaderBuilder(gssFragment)
+    let color = fragment.vector([1'f32, 0'f32, 0'f32, 1'f32])
+    expect GpuShaderBuildError:
+      fragment.beginIf(fragment.scalar(1))
+    expect GpuShaderBuildError:
+      fragment.returnFromCompute()
+    fragment.setColorOutput(color)
+
+    let builder = newGpuShaderBuilder(gssCompute)
+    builder.setComputeWorkGroupSize(1, 1, 1)
+    let output = builder.storageBuffer("b_output", 0, gsbfUint32, gsaWrite)
+    let index = builder.unsignedInteger(0)
+    let condition = equalTo(index, index)
+    expect GpuShaderBuildError:
+      builder.beginIf(index)
+    expect GpuShaderBuildError:
+      builder.beginElse()
+    expect GpuShaderBuildError:
+      builder.endIf()
+    builder.beginIf(condition)
+    let local = builder.unsignedInteger(7)
+    builder.beginElse()
+    expect GpuShaderBuildError:
+      builder.beginElse()
+    builder.storeStorage(output, index, index)
+    builder.endIf()
+    expect GpuShaderBuildError:
+      builder.storeStorage(output, index, local)
+
+  test "rejects malformed comparisons logical values and unclosed blocks":
+    let builder = newGpuShaderBuilder(gssCompute)
+    builder.setComputeWorkGroupSize(1, 1, 1)
+    let output = builder.storageBuffer("b_output", 0, gsbfUint32, gsaWrite)
+    let index = builder.unsignedInteger(0)
+    let one = builder.unsignedInteger(1)
+    let floating = builder.scalar(1)
+    let vector = builder.unsignedVector([1'u32, 2'u32])
+    expect GpuShaderBuildError:
+      discard lessThan(index, floating)
+    expect GpuShaderBuildError:
+      discard equalTo(vector, vector)
+    expect GpuShaderBuildError:
+      discard logicalAnd(equalTo(index, one), index)
+    expect GpuShaderBuildError:
+      discard builder.selectValue(equalTo(index, one), index, floating)
+    expect GpuShaderBuildError:
+      discard builder.binary(gsbModulo, floating, floating)
+    builder.storeStorage(output, index, one)
+    builder.beginIf(equalTo(index, one))
+    expect GpuShaderBuildError:
+      discard builder.emitGpuShaderSource()
 
   test "rejects missing and unsafe work-group sizes":
     let missing = newGpuShaderBuilder(gssCompute)
