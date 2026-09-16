@@ -30,7 +30,7 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x00010020` supports:
+ABI version `0x00010021` supports:
 
 - machine-readable Craft Driver contract metadata and runtime capability
   negotiation through stable numeric identifiers before tree construction;
@@ -54,10 +54,11 @@ ABI version `0x00010020` supports:
 - opaque typed Shader Builder handles with builder-local expression IDs,
   bounded graph/source sizes, stage and value-type validation, and deterministic
   bgfx source plus varying-definition output. Compute authoring adds
-  builder-local storage-buffer IDs, typed load/store operations, invocation
-  builtins, bounded work-group sizes, scalar comparisons, boolean composition,
-  typed selection, integer modulo, scoped `if`/`else`, and guarded early return
-  without exposing backend handles.
+  builder-local storage-buffer and storage-image IDs, typed load/store
+  operations, numeric scalar/vector conversion, invocation builtins, bounded
+  work-group sizes, scalar comparisons, boolean composition, typed selection,
+  integer modulo, scoped `if`/`else`, and guarded early return without exposing
+  backend handles.
   Shader compilation remains a build-tool operation and is not linked into
   ordinary runtime artifacts;
 - bounded atomic Craft Pack manifest loading, compatibility negotiation,

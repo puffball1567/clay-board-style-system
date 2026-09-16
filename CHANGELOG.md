@@ -9,6 +9,13 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added typed Compute storage-image authoring for portable `R8`, `RGBA8`,
+  `R16F`, `R32F`, `RG16F`, `RGBA16F`, and `RGBA32F` images. Builders now
+  validate image access, `ivec2` coordinates, buffer/image binding collisions,
+  and numeric scalar/vector conversions before emitting bgfx `IMAGE2D_*`,
+  `imageLoad`, and `imageStore` operations. The matching C ABI advances to
+  `0x00010021` and `shader.authoring` capability version 4.
+
 - Extended typed Compute shader authoring with scalar comparisons, boolean
   composition, typed conditional selection, integer modulo, nested
   `if`/`else`, guarded early return, and lexical scope validation. The same

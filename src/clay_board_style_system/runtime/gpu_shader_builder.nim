@@ -101,6 +101,7 @@ type
     gsnVaryingInput,
     gsnUniform,
     gsnConstruct,
+    gsnConvert,
     gsnSwizzle,
     gsnUnary,
     gsnBinary,
@@ -111,6 +112,8 @@ type
     gsnComputeBuiltin,
     gsnStorageLoad,
     gsnStorageStore,
+    gsnStorageImageLoad,
+    gsnStorageImageStore,
     gsnIfBegin,
     gsnElse,
     gsnIfEnd,
@@ -127,6 +130,7 @@ type
     operands: array[4, int]
     operandCount: uint8
     storageBufferIndex: int
+    storageImageIndex: int
     swizzle: string
     unary: GpuShaderUnaryOperation
     binary: GpuShaderBinaryOperation
@@ -150,6 +154,12 @@ type
     format*: GpuStorageBufferFormat
     access*: GpuStorageAccess
 
+  GpuShaderStorageImageEntry* = object
+    name*: string
+    stage*: uint8
+    format*: GpuTextureFormat
+    access*: GpuStorageAccess
+
   GpuShaderBuilder* = ref object
     stageValue: GpuShaderStage
     labelValue: string
@@ -158,6 +168,7 @@ type
     colorOutputs: array[4, int]
     varyingOutputs: seq[GpuShaderVaryingOutput]
     storageBuffers: seq[GpuShaderStorageEntry]
+    storageImages: seq[GpuShaderStorageImageEntry]
     computeWorkGroupSize: array[3, uint32]
     scopeParents: seq[int]
     currentScope: int
@@ -173,6 +184,10 @@ type
     owner: GpuShaderBuilder
     storageIndex: int
 
+  GpuShaderStorageImage* = object
+    owner: GpuShaderBuilder
+    storageImageIndex: int
+
   GpuShaderInterfaceEntry* = object
     slot*: GpuShaderInterfaceSlot
     valueType*: GpuShaderValueType
@@ -185,6 +200,7 @@ type
     inputs*: seq[GpuShaderInterfaceEntry]
     outputs*: seq[GpuShaderInterfaceEntry]
     storageBuffers*: seq[GpuShaderStorageEntry]
+    storageImages*: seq[GpuShaderStorageImageEntry]
     computeWorkGroupSize*: array[3, uint32]
 
   GpuShaderArtifact* = object
@@ -276,6 +292,21 @@ proc storageValueType(format: GpuStorageBufferFormat): GpuShaderValueType =
   of gsbfInt32x4: gsvtIVec4
   of gsbfUint32x4: gsvtUVec4
   of gsbfFloat32x4: gsvtVec4
+
+proc storageImageFormatName(format: GpuTextureFormat): string =
+  case format
+  of gtfR8: "r8"
+  of gtfRgba8: "rgba8"
+  of gtfR16F: "r16f"
+  of gtfR32F: "r32f"
+  of gtfRg16F: "rg16f"
+  of gtfRgba16F: "rgba16f"
+  of gtfRgba32F: "rgba32f"
+  of gtfBgra8, gtfRg32F:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU storage image format is not portable across bgfx shader targets"
+    )
 
 proc validateIdentifier(value, description: string) =
   if value.len == 0 or value.len > maxGpuResourceLabelBytes:
@@ -411,6 +442,32 @@ proc storageBufferId*(storage: GpuShaderStorageBuffer): uint32 =
       storage.storageIndex >= storage.owner.storageBuffers.len:
     raise newException(GpuShaderBuildError, "GPU shader storage buffer is invalid")
   uint32(storage.storageIndex + 1)
+
+proc requireStorageImage(
+    builder: GpuShaderBuilder;
+    storage: GpuShaderStorageImage
+): GpuShaderStorageImageEntry =
+  if storage.owner != builder or storage.storageImageIndex < 0 or
+      storage.storageImageIndex >= builder.storageImages.len:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU shader storage image belongs to another builder or is invalid"
+    )
+  builder.storageImages[storage.storageImageIndex]
+
+proc storageImageAt*(
+    builder: GpuShaderBuilder;
+    id: uint32
+): GpuShaderStorageImage =
+  if builder.isNil or id == 0 or uint64(id) > uint64(builder.storageImages.len):
+    raise newException(GpuShaderBuildError, "GPU shader storage image id is invalid")
+  GpuShaderStorageImage(owner: builder, storageImageIndex: int(id) - 1)
+
+proc storageImageId*(storage: GpuShaderStorageImage): uint32 =
+  if storage.owner.isNil or storage.storageImageIndex < 0 or
+      storage.storageImageIndex >= storage.owner.storageImages.len:
+    raise newException(GpuShaderBuildError, "GPU shader storage image is invalid")
+  uint32(storage.storageImageIndex + 1)
 
 proc scalar*(builder: GpuShaderBuilder; value: float32): GpuShaderExpression =
   if value.classify in {fcNan, fcInf, fcNegInf}:
@@ -620,6 +677,12 @@ proc storageBuffer*(
       raise newException(GpuShaderBuildError, "GPU storage buffer name is duplicated")
     if storage.stage == stage:
       raise newException(GpuShaderBuildError, "GPU storage buffer stage is duplicated")
+  for image in builder.storageImages:
+    if image.stage == stage:
+      raise newException(
+        GpuShaderBuildError,
+        "GPU storage binding stage is shared by a buffer and image"
+      )
   builder.storageBuffers.add GpuShaderStorageEntry(
     name: name,
     stage: stage,
@@ -629,6 +692,49 @@ proc storageBuffer*(
   GpuShaderStorageBuffer(
     owner: builder,
     storageIndex: builder.storageBuffers.high
+  )
+
+proc storageImage*(
+    builder: GpuShaderBuilder;
+    name: string;
+    stage: uint8;
+    format: GpuTextureFormat;
+    access: GpuStorageAccess
+): GpuShaderStorageImage =
+  builder.requireOpen()
+  if builder.stageValue != gssCompute:
+    raise newException(GpuShaderBuildError, "storage images require a compute shader")
+  name.validateIdentifier("GPU shader storage image name")
+  if not name.startsWith("i_"):
+    raise newException(
+      GpuShaderBuildError,
+      "portable GPU storage image names must use an i_ prefix"
+    )
+  if stage >= uint8(maxGpuStorageImageBindings):
+    raise newException(GpuShaderBuildError, "GPU storage image stage is invalid")
+  if builder.storageImages.len >= maxGpuStorageImageBindings:
+    raise newException(GpuShaderBuildError, "GPU storage image limit exceeded")
+  discard format.storageImageFormatName
+  for image in builder.storageImages:
+    if image.name == name:
+      raise newException(GpuShaderBuildError, "GPU storage image name is duplicated")
+    if image.stage == stage:
+      raise newException(GpuShaderBuildError, "GPU storage image stage is duplicated")
+  for storage in builder.storageBuffers:
+    if storage.stage == stage:
+      raise newException(
+        GpuShaderBuildError,
+        "GPU storage binding stage is shared by a buffer and image"
+      )
+  builder.storageImages.add GpuShaderStorageImageEntry(
+    name: name,
+    stage: stage,
+    format: format,
+    access: access
+  )
+  GpuShaderStorageImage(
+    owner: builder,
+    storageImageIndex: builder.storageImages.high
   )
 
 proc computeBuiltin*(
@@ -661,6 +767,29 @@ proc localInvocationIndex*(builder: GpuShaderBuilder): GpuShaderExpression =
 
 proc workGroupCount*(builder: GpuShaderBuilder): GpuShaderExpression =
   builder.computeBuiltin(gscbWorkGroupCount)
+
+proc convertValue*(
+    builder: GpuShaderBuilder;
+    valueType: GpuShaderValueType;
+    value: GpuShaderExpression
+): GpuShaderExpression =
+  let source = builder.requireExpression(value)
+  if valueType == source.valueType:
+    return value
+  if not valueType.isScalarOrVector or not source.valueType.isScalarOrVector or
+      valueType.componentCount != source.valueType.componentCount:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU numeric conversion requires matching scalar or vector widths"
+    )
+  if valueType == gsvtBool or source.valueType == gsvtBool:
+    raise newException(GpuShaderBuildError, "GPU boolean conversion is not portable")
+  builder.addNode(GpuShaderNode(
+    kind: gsnConvert,
+    valueType: valueType,
+    operands: [value.nodeIndex, 0, 0, 0],
+    operandCount: 1
+  ))
 
 proc loadStorage*(
     builder: GpuShaderBuilder;
@@ -699,6 +828,45 @@ proc storeStorage*(
     operands: [index.nodeIndex, value.nodeIndex, 0, 0],
     operandCount: 2,
     storageBufferIndex: storage.storageIndex
+  ))
+
+proc loadStorageImage*(
+    builder: GpuShaderBuilder;
+    storage: GpuShaderStorageImage;
+    coordinates: GpuShaderExpression
+): GpuShaderExpression =
+  builder.requireOpen()
+  let declaration = builder.requireStorageImage(storage)
+  if declaration.access == gsaWrite:
+    raise newException(GpuShaderBuildError, "write-only GPU storage image cannot be read")
+  if builder.requireExpression(coordinates).valueType != gsvtIVec2:
+    raise newException(GpuShaderBuildError, "GPU storage image coordinates must be ivec2")
+  builder.addNode(GpuShaderNode(
+    kind: gsnStorageImageLoad,
+    valueType: gsvtVec4,
+    operands: [coordinates.nodeIndex, 0, 0, 0],
+    operandCount: 1,
+    storageImageIndex: storage.storageImageIndex
+  ))
+
+proc storeStorageImage*(
+    builder: GpuShaderBuilder;
+    storage: GpuShaderStorageImage;
+    coordinates, value: GpuShaderExpression
+) =
+  builder.requireOpen()
+  let declaration = builder.requireStorageImage(storage)
+  if declaration.access == gsaRead:
+    raise newException(GpuShaderBuildError, "read-only GPU storage image cannot be written")
+  if builder.requireExpression(coordinates).valueType != gsvtIVec2:
+    raise newException(GpuShaderBuildError, "GPU storage image coordinates must be ivec2")
+  if builder.requireExpression(value).valueType != gsvtVec4:
+    raise newException(GpuShaderBuildError, "GPU storage image value must be vec4")
+  builder.addStatement(GpuShaderNode(
+    kind: gsnStorageImageStore,
+    operands: [coordinates.nodeIndex, value.nodeIndex, 0, 0],
+    operandCount: 2,
+    storageImageIndex: storage.storageImageIndex
   ))
 
 proc construct*(
@@ -1194,6 +1362,12 @@ proc storageMacro(value: GpuStorageAccess): string =
   of gsaWrite: "BUFFER_WO"
   of gsaReadWrite: "BUFFER_RW"
 
+proc storageImageMacro(value: GpuStorageAccess): string =
+  case value
+  of gsaRead: "IMAGE2D_RO"
+  of gsaWrite: "IMAGE2D_WO"
+  of gsaReadWrite: "IMAGE2D_RW"
+
 proc nodeReference(builder: GpuShaderBuilder; index: int): string =
   let node = builder.nodes[index]
   case node.kind
@@ -1231,6 +1405,9 @@ proc nodeExpression(builder: GpuShaderBuilder; index: int): string =
     for operand in 0 ..< int(node.operandCount):
       values.add builder.nodeReference(node.operands[operand])
     result = node.valueType.valueTypeName & "(" & values.join(", ") & ")"
+  of gsnConvert:
+    result = node.valueType.valueTypeName & "(" &
+      builder.nodeReference(node.operands[0]) & ")"
   of gsnSwizzle:
     result = "(" & builder.nodeReference(node.operands[0]) & ")." &
       node.swizzle
@@ -1297,7 +1474,11 @@ proc nodeExpression(builder: GpuShaderBuilder; index: int): string =
   of gsnStorageLoad:
     let storage = builder.storageBuffers[node.storageBufferIndex]
     result = storage.name & "[" & builder.nodeReference(node.operands[0]) & "]"
-  of gsnStorageStore:
+  of gsnStorageImageLoad:
+    let storage = builder.storageImages[node.storageImageIndex]
+    result = "imageLoad(" & storage.name & ", " &
+      builder.nodeReference(node.operands[0]) & ")"
+  of gsnStorageStore, gsnStorageImageStore:
     result = ""
   of gsnIfBegin, gsnElse, gsnIfEnd, gsnReturn:
     result = ""
@@ -1330,7 +1511,7 @@ proc emitGpuShaderSource*(builder: GpuShaderBuilder): GpuShaderSource =
       raise newException(GpuShaderBuildError, "compute shader has no work-group size")
     var hasStore = false
     for node in builder.nodes:
-      if node.kind == gsnStorageStore:
+      if node.kind in {gsnStorageStore, gsnStorageImageStore}:
         hasStore = true
         break
     if not hasStore:
@@ -1339,6 +1520,7 @@ proc emitGpuShaderSource*(builder: GpuShaderBuilder): GpuShaderSource =
   result.stage = builder.stageValue
   result.label = builder.labelValue
   result.storageBuffers = builder.storageBuffers
+  result.storageImages = builder.storageImages
   result.computeWorkGroupSize = builder.computeWorkGroupSize
   var uniforms = initOrderedTable[string, GpuShaderValueType]()
   var inputNames: seq[string]
@@ -1384,7 +1566,10 @@ proc emitGpuShaderSource*(builder: GpuShaderBuilder): GpuShaderSource =
     for storage in builder.storageBuffers:
       result.source.add storage.access.storageMacro & "(" & storage.name & ", " &
         storage.format.storageValueType.valueTypeName & ", " & $storage.stage & ");\n"
-    if builder.storageBuffers.len > 0:
+    for image in builder.storageImages:
+      result.source.add image.access.storageImageMacro & "(" & image.name & ", " &
+        image.format.storageImageFormatName & ", " & $image.stage & ");\n"
+    if builder.storageBuffers.len > 0 or builder.storageImages.len > 0:
       result.source.add "\n"
   else:
     result.source.add "#include <bgfx_shader.sh>\n\n"
@@ -1407,6 +1592,11 @@ proc emitGpuShaderSource*(builder: GpuShaderBuilder): GpuShaderSource =
       result.source.add prefix & storage.name & "[" &
         builder.nodeReference(node.operands[0]) & "] = " &
         builder.nodeReference(node.operands[1]) & ";\n"
+    elif node.kind == gsnStorageImageStore:
+      let storage = builder.storageImages[node.storageImageIndex]
+      result.source.add prefix & "imageStore(" & storage.name & ", " &
+        builder.nodeReference(node.operands[0]) & ", " &
+        builder.nodeReference(node.operands[1]) & ");\n"
     elif node.kind == gsnIfBegin:
       result.source.add prefix & "if (" &
         builder.nodeReference(node.operands[0]) & ")\n" & prefix & "{\n"
@@ -1420,7 +1610,8 @@ proc emitGpuShaderSource*(builder: GpuShaderBuilder): GpuShaderSource =
       result.source.add prefix & "return;\n"
     elif node.kind notin {
         gsnLiteral, gsnVertexInput, gsnVaryingInput, gsnUniform,
-        gsnComputeBuiltin
+        gsnComputeBuiltin, gsnStorageStore, gsnStorageImageStore,
+        gsnIfBegin, gsnElse, gsnIfEnd, gsnReturn
     }:
       result.source.add prefix & node.valueType.valueTypeName & " cbss_n" &
         $index & " = " & builder.nodeExpression(index) & ";\n"

@@ -1809,6 +1809,14 @@ proc shaderStorageBuffer(
     raise newException(GpuShaderBuildError, "GPU shader builder handle is invalid")
   handle.builder.storageBufferAt(id)
 
+proc shaderStorageImage(
+    handle: CbssShaderBuilderHandle;
+    id: uint32
+): GpuShaderStorageImage =
+  if handle.isNil or handle.builder.isNil:
+    raise newException(GpuShaderBuildError, "GPU shader builder handle is invalid")
+  handle.builder.storageImageAt(id)
+
 proc storeShaderExpression(
     output: ptr uint32;
     expression: GpuShaderExpression
@@ -1961,6 +1969,18 @@ proc shaderStorageFormat(value: uint32): GpuStorageBufferFormat =
     raise newException(GpuShaderBuildError, "GPU storage buffer format is invalid")
   GpuStorageBufferFormat(value)
 
+proc shaderStorageImageFormat(value: uint32): GpuTextureFormat =
+  case value
+  of 0: gtfR8
+  of 1: gtfRgba8
+  of 2: gtfR16F
+  of 3: gtfR32F
+  of 4: gtfRg16F
+  of 5: gtfRgba16F
+  of 6: gtfRgba32F
+  else:
+    raise newException(GpuShaderBuildError, "GPU storage image format is invalid")
+
 proc shaderStorageAccess(value: uint32): GpuStorageAccess =
   if value > uint32(ord(high(GpuStorageAccess))):
     raise newException(GpuShaderBuildError, "GPU storage access is invalid")
@@ -2009,6 +2029,34 @@ proc cbssShaderBuilderStorageBuffer(
       format.shaderStorageFormat,
       access.shaderStorageAccess
     ).storageBufferId
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderStorageImage(
+    handle: CbssShaderBuilderHandle;
+    name: cstring;
+    stage, format, access: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_storage_image", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil or name.isNil or stage > uint32(high(uint8)):
+    return CbssInvalidArgument
+  output[] = 0
+  let nameLength = boundedCStringLength(name, maxGpuResourceLabelBytes)
+  if nameLength <= 0 or nameLength > maxGpuResourceLabelBytes:
+    return CbssInvalidArgument
+  try:
+    handle.lastError.setLen(0)
+    output[] = handle.builder.storageImage(
+      ($name)[0 ..< nameLength],
+      uint8(stage),
+      format.shaderStorageImageFormat,
+      access.shaderStorageAccess
+    ).storageImageId
     CbssOk
   except GpuShaderBuildError as error:
     handle.shaderBuilderError(error.msg)
@@ -2071,6 +2119,73 @@ proc cbssShaderBuilderStorageStore(
     handle.builder.storeStorage(
       handle.shaderStorageBuffer(storage),
       handle.shaderExpression(index),
+      handle.shaderExpression(value)
+    )
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderConvert(
+    handle: CbssShaderBuilderHandle;
+    valueType, expression: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_convert", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    storeShaderExpression(
+      output,
+      handle.builder.convertValue(
+        valueType.shaderValueType,
+        handle.shaderExpression(expression)
+      )
+    )
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderStorageImageLoad(
+    handle: CbssShaderBuilderHandle;
+    storage, coordinates: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_storage_image_load", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    storeShaderExpression(
+      output,
+      handle.builder.loadStorageImage(
+        handle.shaderStorageImage(storage),
+        handle.shaderExpression(coordinates)
+      )
+    )
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderStorageImageStore(
+    handle: CbssShaderBuilderHandle;
+    storage, coordinates, value: uint32
+): int32 {.exportc: "cbss_shader_builder_storage_image_store", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  try:
+    handle.lastError.setLen(0)
+    handle.builder.storeStorageImage(
+      handle.shaderStorageImage(storage),
+      handle.shaderExpression(coordinates),
       handle.shaderExpression(value)
     )
     CbssOk

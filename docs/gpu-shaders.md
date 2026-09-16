@@ -108,8 +108,9 @@ failure before a backend resource is created.
 ## Compute Authoring
 
 Version 0.7 authoring emits typed Vertex, Fragment, and Compute source. Compute
-graphs declare bounded work-group dimensions and typed storage buffers, then
-use explicit invocation builtins and load/store operations:
+graphs declare bounded work-group dimensions, typed storage buffers, and typed
+2D storage images, then use explicit invocation builtins and load/store
+operations:
 
 ```nim
 let builder = newGpuShaderBuilder(gssCompute, "copy-compute")
@@ -130,6 +131,27 @@ builder.storeStorage(output, index, builder.loadStorage(input, index))
 let source = builder.emitGpuShaderSource()
 ```
 
+A compute kernel can write floating-point pixels without exposing a bgfx
+handle or handwritten shader source:
+
+```nim
+let builder = newGpuShaderBuilder(gssCompute, "paint-surface")
+builder.setComputeWorkGroupSize(8, 8, 1)
+let output = builder.storageImage(
+  "i_output", 0, gtfRgba32F, gsaWrite
+)
+let coordinates = builder.convertValue(
+  gsvtIVec2,
+  builder.swizzle(builder.globalInvocationId(), "xy")
+)
+builder.storeStorageImage(
+  output,
+  coordinates,
+  builder.vector([0.25'f32, 0.5'f32, 0.75'f32, 1'f32])
+)
+let source = builder.emitGpuShaderSource()
+```
+
 Storage declarations require unique binding stages, exact scalar/vector
 formats, and explicit read, write, or read-write access. Index expressions are
 unsigned, values must match the declared element type, and a compute graph must
@@ -140,6 +162,14 @@ cannot be referenced after their branch closes. Work-group dimensions are
 non-zero and bounded both per axis and by their total thread count. The runtime
 continues to own Compute Pipeline creation, bindings, dispatch validation, and
 retained resource lifetime; source compilation stays in the build-only layer.
+
+Storage images share the compute binding-stage namespace with storage buffers.
+Coordinates are explicitly converted to `ivec2`; reads return `vec4`, and
+writes accept `vec4`. The portable authoring subset supports `R8`, `RGBA8`,
+`R16F`, `R32F`, `RG16F`, `RGBA16F`, and `RGBA32F`. It rejects `BGRA8` and
+`RG32F` because the official bgfx shader helper does not expose those image
+format tokens consistently across its shader targets. This restriction applies
+to typed authoring, not to general GPU Host texture creation.
 
 The authoring layer cannot infer an application's logical element count. A
 dispatch must therefore add an explicit bounds guard as above, cover only valid
@@ -156,7 +186,7 @@ compiler launch failure, compiler failure, missing and empty output, bounded
 diagnostics, and paths containing shell metacharacters.
 
 The Linux bgfx CI lane additionally builds the pinned official `shaderc`,
-compiles generated Vertex, Fragment, and Compute shaders to SPIR-V, packages
-the artifacts, and decodes them through the runtime parser. This test needs no
-GPU; real resource creation and submission remain covered by the separate bgfx
-host integration lanes.
+compiles generated Vertex, Fragment, storage-buffer Compute, and storage-image
+Compute shaders to SPIR-V, packages the artifacts, and decodes them through the
+runtime parser. This test needs no GPU; real resource creation and submission
+remain covered by the separate bgfx host integration lanes.
