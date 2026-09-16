@@ -9,6 +9,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added typed unsigned-integer bitwise shader operations for packed compute
+  metadata: not, and, or, xor, left shift, and right shift. The matching C ABI
+  advances to `0x00010022` and `shader.authoring` capability version 5.
+
 - Added typed Compute storage-image authoring for portable `R8`, `RGBA8`,
   `R16F`, `R32F`, `RG16F`, `RGBA16F`, and `RGBA32F` images. Builders now
   validate image access, `ivec2` coordinates, buffer/image binding collisions,

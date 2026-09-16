@@ -409,8 +409,9 @@ without emitting unchecked out-of-range loads. Expressions created inside a
 branch cannot escape that branch's lexical scope.
 
 The C ABI publishes equivalent fixed-width storage and expression IDs under
-`shader.authoring` capability version 4. It includes typed 2D storage-image
-declarations, `imageLoad`/`imageStore`, and numeric scalar/vector conversion.
+`shader.authoring` capability version 5. It includes typed 2D storage-image
+declarations, `imageLoad`/`imageStore`, numeric scalar/vector conversion, and
+unsigned integer not, and, or, xor, left-shift, and right-shift operations.
 Storage buffers and images cannot claim the same compute binding stage. The
 portable image subset is `R8`, `RGBA8`, `R16F`, `R32F`, `RG16F`, `RGBA16F`,
 and `RGBA32F`; general GPU Host texture support remains broader.
