@@ -87,6 +87,22 @@ proc buildBoundedAbsorptionShader(): GpuShaderSource =
   )
   builder.emitGpuShaderSource()
 
+proc buildStorageImageShader(
+    format = gtfRgba32F;
+    access = gsaWrite
+): GpuShaderSource =
+  let builder = newGpuShaderBuilder(gssCompute, "storage-image-compute")
+  builder.setComputeWorkGroupSize(8, 8, 1)
+  let output = builder.storageImage("i_output", 0, format, access)
+  let invocation = builder.globalInvocationId()
+  let coordinates = builder.convertValue(
+    gsvtIVec2,
+    builder.swizzle(invocation, "xy")
+  )
+  let color = builder.vector([0.25'f32, 0.5'f32, 0.75'f32, 1'f32])
+  builder.storeStorageImage(output, coordinates, color)
+  builder.emitGpuShaderSource()
+
 suite "typed GPU shader authoring":
   test "emits deterministic vertex and fragment source":
     let vertex = buildVertexShader()
@@ -300,6 +316,137 @@ suite "typed GPU compute shader authoring":
       let source = builder.emitGpuShaderSource().source
       check "BUFFER_RO(b_input, " & item[2] & ", 0);" in source
       check "BUFFER_WO(b_output, " & item[2] & ", 1);" in source
+
+  test "emits portable storage-image declarations loads and stores":
+    let source = buildStorageImageShader()
+    check source.storageImages == @[
+      GpuShaderStorageImageEntry(
+        name: "i_output", stage: 0, format: gtfRgba32F, access: gsaWrite
+      )
+    ]
+    check "IMAGE2D_WO(i_output, rgba32f, 0);" in source.source
+    check "ivec2 cbss_n" in source.source
+    check "imageStore(i_output, cbss_n" in source.source
+
+    let readWrite = newGpuShaderBuilder(gssCompute, "image-round-trip")
+    readWrite.setComputeWorkGroupSize(1, 1, 1)
+    let image = readWrite.storageImage(
+      "i_surface", 0, gtfRgba32F, gsaReadWrite
+    )
+    let coordinates = readWrite.signedVector([0'i32, 0'i32])
+    let value = readWrite.loadStorageImage(image, coordinates)
+    check value.valueType == gsvtVec4
+    readWrite.storeStorageImage(image, coordinates, value)
+    let roundTrip = readWrite.emitGpuShaderSource()
+    check "IMAGE2D_RW(i_surface, rgba32f, 0);" in roundTrip.source
+    check "imageLoad(i_surface, ivec2(0, 0))" in roundTrip.source
+    check "imageStore(i_surface, ivec2(0, 0), cbss_n" in roundTrip.source
+
+  test "maps every portable storage-image format to bgfx syntax":
+    let formats = [
+      (gtfR8, "r8"),
+      (gtfRgba8, "rgba8"),
+      (gtfR16F, "r16f"),
+      (gtfR32F, "r32f"),
+      (gtfRg16F, "rg16f"),
+      (gtfRgba16F, "rgba16f"),
+      (gtfRgba32F, "rgba32f")
+    ]
+    for format in formats:
+      let source = buildStorageImageShader(format[0])
+      check "IMAGE2D_WO(i_output, " & format[1] & ", 0);" in source.source
+
+  test "converts numeric scalar and vector values without changing width":
+    let builder = newGpuShaderBuilder(gssCompute)
+    let unsignedCoordinates = builder.unsignedVector([3'u32, 7'u32])
+    let signedCoordinates = builder.convertValue(gsvtIVec2, unsignedCoordinates)
+    check signedCoordinates.valueType == gsvtIVec2
+    check builder.convertValue(gsvtUVec2, unsignedCoordinates).valueType == gsvtUVec2
+    let floating = builder.convertValue(gsvtVec2, signedCoordinates)
+    check floating.valueType == gsvtVec2
+
+    builder.setComputeWorkGroupSize(1, 1, 1)
+    let output = builder.storageImage("i_output", 0, gtfRgba32F, gsaWrite)
+    builder.storeStorageImage(
+      output,
+      signedCoordinates,
+      builder.vector([1'f32, 0'f32, 0'f32, 1'f32])
+    )
+    let source = builder.emitGpuShaderSource().source
+    check "ivec2(uvec2(3u, 7u))" in source
+    check "vec2(cbss_n" in source
+
+    let invalid = newGpuShaderBuilder(gssCompute)
+    expect GpuShaderBuildError:
+      discard invalid.convertValue(gsvtIVec3, invalid.unsignedVector([1'u32, 2'u32]))
+    expect GpuShaderBuildError:
+      discard invalid.convertValue(gsvtMat3, invalid.vector([1'f32, 2'f32, 3'f32]))
+    expect GpuShaderBuildError:
+      discard invalid.convertValue(gsvtVec2, builder.unsignedVector([1'u32, 2'u32]))
+
+  test "rejects non-portable storage-image formats and invalid declarations":
+    let fragment = newGpuShaderBuilder(gssFragment)
+    expect GpuShaderBuildError:
+      discard fragment.storageImage("i_output", 0, gtfRgba32F, gsaWrite)
+
+    let builder = newGpuShaderBuilder(gssCompute)
+    expect GpuShaderBuildError:
+      discard builder.storageImage("output", 0, gtfRgba32F, gsaWrite)
+    expect GpuShaderBuildError:
+      discard builder.storageImage("i_bgra", 0, gtfBgra8, gsaWrite)
+    expect GpuShaderBuildError:
+      discard builder.storageImage("i_rg", 0, gtfRg32F, gsaWrite)
+    expect GpuShaderBuildError:
+      discard builder.storageImage(
+        "i_out_of_range", uint8(maxGpuStorageImageBindings),
+        gtfRgba32F, gsaWrite
+      )
+    discard builder.storageBuffer("b_data", 0, gsbfFloat32, gsaRead)
+    expect GpuShaderBuildError:
+      discard builder.storageImage("i_collision", 0, gtfR32F, gsaWrite)
+
+    let reverse = newGpuShaderBuilder(gssCompute)
+    discard reverse.storageImage("i_surface", 1, gtfR32F, gsaRead)
+    expect GpuShaderBuildError:
+      discard reverse.storageImage("i_surface", 2, gtfR32F, gsaRead)
+    expect GpuShaderBuildError:
+      discard reverse.storageImage("i_other", 1, gtfR32F, gsaRead)
+    expect GpuShaderBuildError:
+      discard reverse.storageBuffer("b_collision", 1, gsbfFloat32, gsaRead)
+
+  test "enforces storage-image access types coordinates and ownership":
+    let builder = newGpuShaderBuilder(gssCompute)
+    builder.setComputeWorkGroupSize(1, 1, 1)
+    let readOnly = builder.storageImage("i_read", 0, gtfR32F, gsaRead)
+    let writeOnly = builder.storageImage("i_write", 1, gtfRgba32F, gsaWrite)
+    let coordinates = builder.signedVector([0'i32, 0'i32])
+    let color = builder.vector([1'f32, 1'f32, 1'f32, 1'f32])
+    expect GpuShaderBuildError:
+      discard builder.loadStorageImage(writeOnly, coordinates)
+    expect GpuShaderBuildError:
+      builder.storeStorageImage(readOnly, coordinates, color)
+    expect GpuShaderBuildError:
+      discard builder.loadStorageImage(
+        readOnly, builder.unsignedVector([0'u32, 0'u32])
+      )
+    expect GpuShaderBuildError:
+      builder.storeStorageImage(writeOnly, coordinates, builder.scalar(1))
+
+    let foreign = newGpuShaderBuilder(gssCompute)
+    let foreignImage = foreign.storageImage(
+      "i_foreign", 0, gtfRgba32F, gsaReadWrite
+    )
+    expect GpuShaderBuildError:
+      discard builder.loadStorageImage(foreignImage, coordinates)
+    expect GpuShaderBuildError:
+      foreign.storeStorageImage(
+        foreignImage,
+        foreign.signedVector([0'i32, 0'i32]),
+        color
+      )
+
+    builder.storeStorageImage(writeOnly, coordinates, color)
+    discard builder.emitGpuShaderSource()
 
   test "exposes all portable compute invocation builtins":
     let builder = newGpuShaderBuilder(gssCompute)

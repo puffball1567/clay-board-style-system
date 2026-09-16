@@ -1,6 +1,6 @@
 #include "cbss.h"
 
-_Static_assert(CBSS_ABI_VERSION == 0x00010020u, "unexpected CBSS ABI version");
+_Static_assert(CBSS_ABI_VERSION == 0x00010021u, "unexpected CBSS ABI version");
 _Static_assert(CBSS_ROLE_SWITCH == 22, "unexpected switch role value");
 _Static_assert(CBSS_ROLE_PASSWORD_TEXT == 23,
                "unexpected password text role value");
@@ -1084,6 +1084,60 @@ static void test_compute_shader_builder(void) {
       invalid, UINT32_MAX, 1, &rejected) == CBSS_INVALID_ARGUMENT);
   assert(rejected == 0);
   cbss_shader_builder_destroy(invalid);
+
+  CbssShaderBuilder *image_compute = NULL;
+  assert(cbss_shader_builder_create(
+      CBSS_SHADER_STAGE_COMPUTE, "c-storage-image", &image_compute) == CBSS_OK);
+  assert(cbss_shader_builder_set_compute_work_group_size(
+      image_compute, 8, 8, 1) == CBSS_OK);
+  CbssShaderStorageImage image = 0;
+  assert(cbss_shader_builder_storage_image(
+      image_compute, "i_output", 0, CBSS_SHADER_IMAGE_RGBA32F,
+      CBSS_SHADER_STORAGE_WRITE, &image) == CBSS_OK);
+  CbssShaderExpression image_invocation = 0;
+  CbssShaderExpression unsigned_coordinates = 0;
+  CbssShaderExpression signed_coordinates = 0;
+  CbssShaderExpression color = 0;
+  const float rgba[] = {0.25f, 0.5f, 0.75f, 1.0f};
+  assert(cbss_shader_builder_compute_builtin(
+      image_compute, CBSS_SHADER_COMPUTE_GLOBAL_INVOCATION_ID,
+      &image_invocation) == CBSS_OK);
+  assert(cbss_shader_builder_swizzle(
+      image_compute, image_invocation, "xy", &unsigned_coordinates) == CBSS_OK);
+  assert(cbss_shader_builder_convert(
+      image_compute, CBSS_SHADER_VALUE_IVEC2, unsigned_coordinates,
+      &signed_coordinates) == CBSS_OK);
+  assert(cbss_shader_builder_vector_literal(
+      image_compute, rgba, 4, &color) == CBSS_OK);
+  assert(cbss_shader_builder_storage_image_store(
+      image_compute, image, signed_coordinates, color) == CBSS_OK);
+  assert(cbss_shader_builder_emit(image_compute) == CBSS_OK);
+
+  const uint32_t image_source_bytes =
+      cbss_shader_builder_source(image_compute, NULL, 0);
+  assert(image_source_bytes > 0);
+  char *image_source = malloc((size_t)image_source_bytes + 1);
+  assert(image_source != NULL);
+  assert(cbss_shader_builder_source(
+      image_compute, image_source, image_source_bytes + 1) ==
+      image_source_bytes);
+  assert(strstr(image_source,
+                "IMAGE2D_WO(i_output, rgba32f, 0);") != NULL);
+  assert(strstr(image_source, "ivec2(") != NULL);
+  assert(strstr(image_source, "imageStore(i_output,") != NULL);
+  free(image_source);
+  cbss_shader_builder_destroy(image_compute);
+
+  CbssShaderBuilder *invalid_image = NULL;
+  assert(cbss_shader_builder_create(
+      CBSS_SHADER_STAGE_COMPUTE, "invalid-image", &invalid_image) == CBSS_OK);
+  image = 99;
+  assert(cbss_shader_builder_storage_image(
+      invalid_image, "i_output", 0,
+      (CbssShaderStorageImageFormat)UINT32_MAX,
+      CBSS_SHADER_STORAGE_WRITE, &image) == CBSS_INVALID_ARGUMENT);
+  assert(image == 0);
+  cbss_shader_builder_destroy(invalid_image);
 }
 
 int main(void) {
@@ -1102,8 +1156,8 @@ int main(void) {
   assert(!cbss_has_capability(CBSS_CAPABILITY_PAINT_COMMANDS, 4));
   assert(cbss_has_capability(CBSS_CAPABILITY_RETAINED_CANVAS, 3));
   assert(!cbss_has_capability(CBSS_CAPABILITY_RETAINED_CANVAS, 4));
-  assert(cbss_has_capability(CBSS_CAPABILITY_SHADER_AUTHORING, 3));
-  assert(!cbss_has_capability(CBSS_CAPABILITY_SHADER_AUTHORING, 4));
+  assert(cbss_has_capability(CBSS_CAPABILITY_SHADER_AUTHORING, 4));
+  assert(!cbss_has_capability(CBSS_CAPABILITY_SHADER_AUTHORING, 5));
   assert(cbss_has_capability(CBSS_CAPABILITY_CUSTOM_PAINT_PROVIDER, 3));
   assert(!cbss_has_capability(CBSS_CAPABILITY_CUSTOM_PAINT_PROVIDER, 4));
   assert(!cbss_has_capability(UINT32_MAX, 1));
@@ -1131,7 +1185,7 @@ int main(void) {
   assert(capability.since_abi == 0x0001001Au);
   assert(cbss_capability_at(20, &capability) == CBSS_OK);
   assert(capability.id == CBSS_CAPABILITY_SHADER_AUTHORING);
-  assert(capability.version == 3);
+  assert(capability.version == 4);
   assert(capability.since_abi == 0x0001001Bu);
   assert(cbss_capability_at(21, &capability) == CBSS_OK);
   assert(capability.id == CBSS_CAPABILITY_CUSTOM_PAINT_PROVIDER);

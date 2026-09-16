@@ -26,7 +26,7 @@ extern "C" {
 #endif
 
 /* CBSS_GENERATED_DRIVER_CONTRACT_BEGIN */
-#define CBSS_ABI_VERSION 0x00010020u
+#define CBSS_ABI_VERSION 0x00010021u
 #define CBSS_DRIVER_CONTRACT_VERSION 0x00010000u
 
 typedef enum CbssCapabilityId {
@@ -100,6 +100,7 @@ typedef uint64_t CbssEventSubscription;
 typedef uint64_t CbssCustomPaintRegistration;
 typedef uint32_t CbssShaderExpression;
 typedef uint32_t CbssShaderStorageBuffer;
+typedef uint32_t CbssShaderStorageImage;
 
 typedef int32_t CbssStatus;
 enum {
@@ -153,6 +154,16 @@ typedef enum CbssShaderStorageAccess {
   CBSS_SHADER_STORAGE_WRITE = 1,
   CBSS_SHADER_STORAGE_READ_WRITE = 2
 } CbssShaderStorageAccess;
+
+typedef enum CbssShaderStorageImageFormat {
+  CBSS_SHADER_IMAGE_R8 = 0,
+  CBSS_SHADER_IMAGE_RGBA8 = 1,
+  CBSS_SHADER_IMAGE_R16F = 2,
+  CBSS_SHADER_IMAGE_R32F = 3,
+  CBSS_SHADER_IMAGE_RG16F = 4,
+  CBSS_SHADER_IMAGE_RGBA16F = 5,
+  CBSS_SHADER_IMAGE_RGBA32F = 6
+} CbssShaderStorageImageFormat;
 
 typedef enum CbssShaderComputeBuiltin {
   CBSS_SHADER_COMPUTE_GLOBAL_INVOCATION_ID = 0,
@@ -1142,6 +1153,10 @@ CBSS_API CbssStatus cbss_shader_builder_storage_buffer(
     CbssShaderBuilder *builder, const char *name, uint32_t stage,
     CbssShaderStorageFormat format, CbssShaderStorageAccess access,
     CbssShaderStorageBuffer *output);
+CBSS_API CbssStatus cbss_shader_builder_storage_image(
+    CbssShaderBuilder *builder, const char *name, uint32_t stage,
+    CbssShaderStorageImageFormat format, CbssShaderStorageAccess access,
+    CbssShaderStorageImage *output);
 CBSS_API CbssStatus cbss_shader_builder_compute_builtin(
     CbssShaderBuilder *builder, CbssShaderComputeBuiltin builtin,
     CbssShaderExpression *output);
@@ -1151,6 +1166,15 @@ CBSS_API CbssStatus cbss_shader_builder_storage_load(
 CBSS_API CbssStatus cbss_shader_builder_storage_store(
     CbssShaderBuilder *builder, CbssShaderStorageBuffer storage,
     CbssShaderExpression index, CbssShaderExpression value);
+CBSS_API CbssStatus cbss_shader_builder_convert(
+    CbssShaderBuilder *builder, CbssShaderValueType value_type,
+    CbssShaderExpression expression, CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_storage_image_load(
+    CbssShaderBuilder *builder, CbssShaderStorageImage storage,
+    CbssShaderExpression coordinates, CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_storage_image_store(
+    CbssShaderBuilder *builder, CbssShaderStorageImage storage,
+    CbssShaderExpression coordinates, CbssShaderExpression value);
 CBSS_API CbssStatus cbss_shader_builder_vertex_input(
     CbssShaderBuilder *builder, CbssShaderInterfaceSlot slot,
     CbssShaderValueType value_type, CbssShaderExpression *output);

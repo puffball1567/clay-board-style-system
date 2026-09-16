@@ -54,6 +54,23 @@ proc computeSource(): GpuShaderSource =
   )
   builder.emitGpuShaderSource()
 
+proc storageImageSource(): GpuShaderSource =
+  let builder = newGpuShaderBuilder(gssCompute, "shaderc-storage-image")
+  builder.setComputeWorkGroupSize(8, 8, 1)
+  let output = builder.storageImage(
+    "i_output", 0, gtfRgba32F, gsaWrite
+  )
+  let coordinates = builder.convertValue(
+    gsvtIVec2,
+    builder.swizzle(builder.globalInvocationId(), "xy")
+  )
+  builder.storeStorageImage(
+    output,
+    coordinates,
+    builder.vector([0.125'f32, 0.25'f32, 0.5'f32, 1'f32])
+  )
+  builder.emitGpuShaderSource()
+
 let shaderc = getEnv("CBSS_SHADERC")
 let shaderIncludes = getEnv("CBSS_BGFX_SHADER_INCLUDE")
 if shaderc.len == 0 or shaderIncludes.len == 0:
@@ -134,6 +151,26 @@ suite "official bgfx shaderc integration":
     let decoded = package.encodeGpuShaderPackage().decodeGpuShaderPackage()
     check decoded.descriptor.stage == gssCompute
     check decoded.artifactFor(gsbtVulkan).bytecode.len > 0
+
+  test "compiles typed storage-image compute output to SPIR-V":
+    let root = createTempDir("cbss-shaderc-storage-image-", "")
+    defer:
+      removeDir(root)
+
+    let compute = storageImageSource()
+    let config = gpuShaderCompilerConfig(
+      shaderc,
+      [shaderIncludes],
+      workDirectory = root
+    )
+    let target = gpuShaderCompileTarget(
+      gsbtVulkan,
+      gscpLinux,
+      "spirv"
+    )
+
+    let compiled = compileGpuShader(compute, target, config)
+    check compiled.artifact.bytecode.len > 0
 
   test "compiles the Version 0.7 GPU showcase shaders for OpenGL":
     let repoRoot = currentSourcePath().parentDir().parentDir().parentDir()

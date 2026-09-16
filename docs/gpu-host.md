@@ -409,8 +409,11 @@ without emitting unchecked out-of-range loads. Expressions created inside a
 branch cannot escape that branch's lexical scope.
 
 The C ABI publishes equivalent fixed-width storage and expression IDs under
-`shader.authoring` capability version 3. Existing arithmetic operation values
-remain stable; modulo and the control-flow operations are additive.
+`shader.authoring` capability version 4. It includes typed 2D storage-image
+declarations, `imageLoad`/`imageStore`, and numeric scalar/vector conversion.
+Storage buffers and images cannot claim the same compute binding stage. The
+portable image subset is `R8`, `RGBA8`, `R16F`, `R32F`, `RG16F`, `RGBA16F`,
+and `RGBA32F`; general GPU Host texture support remains broader.
 
 The resulting retained Shader and Pipeline handles are not UI-specific. A
 library may submit them directly for graphics or compute work, or render into a
