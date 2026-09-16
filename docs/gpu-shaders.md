@@ -171,6 +171,20 @@ writes accept `vec4`. The portable authoring subset supports `R8`, `RGBA8`,
 format tokens consistently across its shader targets. This restriction applies
 to typed authoring, not to general GPU Host texture creation.
 
+Packed compute metadata can use typed unsigned integer bitwise operations:
+
+```nim
+let active = builder.unsignedInteger(1)
+let pinned = builder.unsignedInteger(2)
+let metadata = active.bitwiseOr(pinned)
+let activeSet = metadata.bitwiseAnd(active)
+```
+
+`bitwiseNot`, `bitwiseAnd`, `bitwiseOr`, `bitwiseXor`, `shiftLeft`, and
+`shiftRight` accept matching `uint` or `uvec` values. Signed integers, floating
+values, and mixed vector widths fail while authoring rather than reaching the
+backend compiler.
+
 The authoring layer cannot infer an application's logical element count. A
 dispatch must therefore add an explicit bounds guard as above, cover only valid
 storage elements, or bind padded buffers large enough for every invocation in

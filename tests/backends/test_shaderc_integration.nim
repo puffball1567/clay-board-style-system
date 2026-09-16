@@ -39,6 +39,9 @@ proc computeSource(): GpuShaderSource =
   let output = builder.storageBuffer(
     "b_output", 1, gsbfFloat32x4, gsaWrite
   )
+  let flags = builder.storageBuffer(
+    "b_flags", 2, gsbfUint32, gsaWrite
+  )
   let index = builder.swizzle(builder.globalInvocationId(), "x")
   let count = builder.unsignedInteger(1_000)
   let outside = greaterThanOrEqual(index, count)
@@ -51,6 +54,17 @@ proc computeSource(): GpuShaderSource =
     output,
     index,
     builder.selectValue(logicalNot(outside), value, value)
+  )
+  let active = builder.unsignedInteger(1)
+  let pinned = builder.unsignedInteger(2)
+  let packed = active.bitwiseOr(pinned).shiftLeft(builder.unsignedInteger(1))
+  let restored = packed.shiftRight(builder.unsignedInteger(1))
+  builder.storeStorage(
+    flags,
+    index,
+    restored.bitwiseAnd(builder.unsignedInteger(3)).bitwiseXor(
+      active.bitwiseNot()
+    )
   )
   builder.emitGpuShaderSource()
 

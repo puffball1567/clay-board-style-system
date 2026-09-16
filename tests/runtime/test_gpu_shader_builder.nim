@@ -384,6 +384,56 @@ suite "typed GPU compute shader authoring":
     expect GpuShaderBuildError:
       discard invalid.convertValue(gsvtVec2, builder.unsignedVector([1'u32, 2'u32]))
 
+  test "emits typed unsigned bitwise flag operations":
+    let builder = newGpuShaderBuilder(gssCompute, "packed-flags")
+    builder.setComputeWorkGroupSize(1, 1, 1)
+    let output = builder.storageBuffer(
+      "b_output", 0, gsbfUint32, gsaWrite
+    )
+    let active = builder.unsignedInteger(1)
+    let pinned = builder.unsignedInteger(2)
+    let sourceSecond = builder.unsignedInteger(4)
+    let shift = builder.unsignedInteger(1)
+    let combined = active.bitwiseOr(pinned).bitwiseOr(sourceSecond)
+    let shifted = combined.shiftLeft(shift).shiftRight(shift)
+    let masked = shifted.bitwiseAnd(builder.unsignedInteger(7))
+    let toggled = masked.bitwiseXor(pinned)
+    let inverted = toggled.bitwiseNot()
+    let vectorFlags = builder.unsignedVector([1'u32, 2'u32])
+      .bitwiseOr(builder.unsignedVector([4'u32, 8'u32]))
+      .shiftRight(builder.unsignedVector([1'u32, 1'u32]))
+      .bitwiseNot()
+    check vectorFlags.valueType == gsvtUVec2
+    builder.storeStorage(output, builder.unsignedInteger(0), inverted)
+
+    let source = builder.emitGpuShaderSource().source
+    check " | " in source
+    check " & " in source
+    check " ^ " in source
+    check " << " in source
+    check " >> " in source
+    check "~(" in source
+
+  test "rejects non-unsigned and mismatched bitwise operands":
+    let builder = newGpuShaderBuilder(gssCompute)
+    let unsignedValue = builder.unsignedInteger(1)
+    let unsignedVector = builder.unsignedVector([1'u32, 2'u32])
+    let signedValue = builder.signedInteger(1)
+    let floatingValue = builder.scalar(1)
+
+    expect GpuShaderBuildError:
+      discard signedValue.bitwiseNot()
+    expect GpuShaderBuildError:
+      discard floatingValue.bitwiseOr(floatingValue)
+    expect GpuShaderBuildError:
+      discard unsignedValue.bitwiseAnd(unsignedVector)
+    expect GpuShaderBuildError:
+      discard unsignedValue.shiftLeft(signedValue)
+
+    let foreign = newGpuShaderBuilder(gssCompute)
+    expect GpuShaderBuildError:
+      discard unsignedValue.bitwiseXor(foreign.unsignedInteger(1))
+
   test "rejects non-portable storage-image formats and invalid declarations":
     let fragment = newGpuShaderBuilder(gssFragment)
     expect GpuShaderBuildError:

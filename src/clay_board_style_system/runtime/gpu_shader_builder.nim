@@ -63,7 +63,8 @@ type
     gsuAbsolute,
     gsuFloor,
     gsuCeil,
-    gsuNormalize
+    gsuNormalize,
+    gsuBitwiseNot
 
   GpuShaderBinaryOperation* = enum
     gsbAdd,
@@ -74,7 +75,12 @@ type
     gsbMaximum,
     gsbDot,
     gsbPower,
-    gsbModulo
+    gsbModulo,
+    gsbBitwiseAnd,
+    gsbBitwiseOr,
+    gsbBitwiseXor,
+    gsbShiftLeft,
+    gsbShiftRight
 
   GpuShaderComparisonOperation* = enum
     gscEqual,
@@ -947,6 +953,12 @@ proc unary*(
   of gsuNormalize:
     if not node.valueType.isFloating or not node.valueType.isVector:
       raise newException(GpuShaderBuildError, "normalize requires a floating vector")
+  of gsuBitwiseNot:
+    if node.valueType.scalarType != gsvtUint:
+      raise newException(
+        GpuShaderBuildError,
+        "bitwise not requires an unsigned integer scalar or vector"
+      )
   builder.addNode(GpuShaderNode(
     kind: gsnUnary,
     valueType: node.valueType,
@@ -976,6 +988,15 @@ proc binaryResultType(
       raise newException(
         GpuShaderBuildError,
         "modulo requires equal signed or unsigned integer values"
+      )
+    left
+  of gsbBitwiseAnd, gsbBitwiseOr, gsbBitwiseXor,
+      gsbShiftLeft, gsbShiftRight:
+    if left != right or not left.isScalarOrVector or
+        left.scalarType != gsvtUint:
+      raise newException(
+        GpuShaderBuildError,
+        "bitwise operations require equal unsigned integer scalar or vector types"
       )
     left
   of gsbMinimum, gsbMaximum:
@@ -1174,6 +1195,24 @@ proc logicalOr*(left, right: GpuShaderExpression): GpuShaderExpression =
 
 proc logicalExclusiveOr*(left, right: GpuShaderExpression): GpuShaderExpression =
   left.expressionBuilder.logical(gslExclusiveOr, left, right)
+
+proc bitwiseNot*(value: GpuShaderExpression): GpuShaderExpression =
+  value.expressionBuilder.unary(gsuBitwiseNot, value)
+
+proc bitwiseAnd*(left, right: GpuShaderExpression): GpuShaderExpression =
+  left.expressionBuilder.binary(gsbBitwiseAnd, left, right)
+
+proc bitwiseOr*(left, right: GpuShaderExpression): GpuShaderExpression =
+  left.expressionBuilder.binary(gsbBitwiseOr, left, right)
+
+proc bitwiseXor*(left, right: GpuShaderExpression): GpuShaderExpression =
+  left.expressionBuilder.binary(gsbBitwiseXor, left, right)
+
+proc shiftLeft*(left, right: GpuShaderExpression): GpuShaderExpression =
+  left.expressionBuilder.binary(gsbShiftLeft, left, right)
+
+proc shiftRight*(left, right: GpuShaderExpression): GpuShaderExpression =
+  left.expressionBuilder.binary(gsbShiftRight, left, right)
 
 proc ternary*(
     builder: GpuShaderBuilder;
@@ -1421,6 +1460,7 @@ proc nodeExpression(builder: GpuShaderBuilder; index: int): string =
     of gsuFloor: result = "floor(" & value & ")"
     of gsuCeil: result = "ceil(" & value & ")"
     of gsuNormalize: result = "normalize(" & value & ")"
+    of gsuBitwiseNot: result = "~(" & value & ")"
   of gsnBinary:
     let left = builder.nodeReference(node.operands[0])
     let right = builder.nodeReference(node.operands[1])
@@ -1434,6 +1474,11 @@ proc nodeExpression(builder: GpuShaderBuilder; index: int): string =
     of gsbMaximum: result = "max(" & left & ", " & right & ")"
     of gsbDot: result = "dot(" & left & ", " & right & ")"
     of gsbPower: result = "pow(" & left & ", " & right & ")"
+    of gsbBitwiseAnd: result = "((" & left & ") & (" & right & "))"
+    of gsbBitwiseOr: result = "((" & left & ") | (" & right & "))"
+    of gsbBitwiseXor: result = "((" & left & ") ^ (" & right & "))"
+    of gsbShiftLeft: result = "((" & left & ") << (" & right & "))"
+    of gsbShiftRight: result = "((" & left & ") >> (" & right & "))"
   of gsnComparison:
     let left = builder.nodeReference(node.operands[0])
     let right = builder.nodeReference(node.operands[1])
