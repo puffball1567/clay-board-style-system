@@ -549,12 +549,14 @@ partially submitting a physical or image-processing step. Backend failures and
 device loss can still interrupt an accepted batch, so applications must retain
 their ordinary generation and stale-result checks.
 
-Shaders created from a typed `GpuShaderArtifact` carry a known storage binding
-layout into their Compute Pipeline. Dispatch validates the exact storage count,
-stage, buffer/image format, and access direction before reserving frame work or
-calling the backend. Raw precompiled bytecode has an explicitly unknown layout
-and retains the low-level permissive path; a typed shader with no storage
-declarations instead rejects every accidental storage binding.
+Shaders created from a typed `GpuShaderArtifact` carry a known Uniform and
+storage binding layout into their Compute Pipeline. Dispatch validates Uniform
+name identity, type, and array length, plus the exact storage count, stage,
+buffer/image format, and access direction before reserving frame work or calling
+the backend. Runtime lookup uses precomputed numeric identities rather than
+per-frame string comparison. Raw precompiled bytecode has an explicitly unknown
+layout and retains the low-level permissive path; a typed shader with no
+declarations instead rejects every accidental binding.
 
 Storage buffers are compute-only, must use a declared access mode compatible
 with their descriptor, and cannot alias the same retained buffer in multiple

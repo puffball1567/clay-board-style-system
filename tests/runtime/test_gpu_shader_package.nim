@@ -15,6 +15,8 @@ proc computeSource(): GpuShaderSource =
     "b_cells", 1, gsbfFloat32x4, gsaReadWrite
   )
   let image = builder.storageImage("i_output", 3, gtfRgba32F, gsaWrite)
+  discard builder.uniform("u_material", gsvtVec4)
+  discard builder.uniform("u_timing", gsvtMat4)
   let index = builder.unsignedInteger(0)
   builder.storeStorage(buffer, index, builder.loadStorage(buffer, index))
   builder.storeStorageImage(
@@ -53,6 +55,18 @@ suite "GPU shader packages":
     let decoded = package.encodeGpuShaderPackage().decodeGpuShaderPackage()
     check decoded.bindingLayout == GpuShaderBindingLayout(
       known: true,
+      uniforms: @[
+        GpuShaderUniformLayout(
+          nameId: gpuBindingNameId("u_material"),
+          uniformType: gutVec4,
+          arrayLength: 1
+        ),
+        GpuShaderUniformLayout(
+          nameId: gpuBindingNameId("u_timing"),
+          uniformType: gutMat4,
+          arrayLength: 1
+        )
+      ],
       storageBuffers: @[
         GpuShaderStorageBufferLayout(
           stage: 1, format: gsbfFloat32x4, access: gsaReadWrite
@@ -112,7 +126,7 @@ suite "GPU shader packages":
       discard wrongMagic.decodeGpuShaderPackage()
 
     var wrongVersion = valid
-    wrongVersion[8] = 3
+    wrongVersion[8] = 4
     expect GpuShaderPackageError:
       discard wrongVersion.decodeGpuShaderPackage()
 
@@ -127,10 +141,10 @@ suite "GPU shader packages":
     expect GpuShaderPackageError:
       discard invalidLayoutFlags.decodeGpuShaderPackage()
 
-    var reservedLayout = valid
-    reservedLayout[layoutOffset + 3] = 1
+    var invalidUniformCount = valid
+    invalidUniformCount[layoutOffset + 3] = 255
     expect GpuShaderPackageError:
-      discard reservedLayout.decodeGpuShaderPackage()
+      discard invalidUniformCount.decodeGpuShaderPackage()
 
     let variantOffset = layoutOffset + 4
     var unknownTarget = valid
@@ -170,6 +184,17 @@ suite "GPU shader packages":
     check decoded.bindingLayout == GpuShaderBindingLayout()
     check decoded.artifactFor(gsbtVulkan).bytecode == @[1'u8, 2, 3]
 
+  test "decodes version two packages without uniform metadata":
+    let source = fragmentSource()
+    var package = gpuShaderPackage(source)
+    package.addVariant(gsbtVulkan, gpuShaderArtifact(source, @[1'u8, 2, 3]))
+    var legacy = package.encodeGpuShaderPackage()
+    legacy[8] = 2
+    legacy[9] = 0
+    let decoded = legacy.decodeGpuShaderPackage()
+    check decoded.bindingLayout == GpuShaderBindingLayout(known: true)
+    check decoded.artifactFor(gsbtVulkan).bytecode == @[1'u8, 2, 3]
+
   test "rejects malformed serialized binding layout entries":
     let source = computeSource()
     var package = gpuShaderPackage(source)
@@ -178,6 +203,7 @@ suite "GPU shader packages":
     let layoutOffset = 24 + source.label.len
     let bufferOffset = layoutOffset + 4
     let imageOffset = bufferOffset + 4
+    let uniformOffset = imageOffset + 4
 
     var invalidBufferFormat = valid
     invalidBufferFormat[bufferOffset + 1] = 255
@@ -198,6 +224,30 @@ suite "GPU shader packages":
     sharedStage[imageOffset] = sharedStage[bufferOffset]
     expect GpuShaderPackageError:
       discard sharedStage.decodeGpuShaderPackage()
+
+    var invalidUniformType = valid
+    invalidUniformType[uniformOffset + 8] = 255
+    expect GpuShaderPackageError:
+      discard invalidUniformType.decodeGpuShaderPackage()
+
+    var reservedUniform = valid
+    reservedUniform[uniformOffset + 9] = 1
+    expect GpuShaderPackageError:
+      discard reservedUniform.decodeGpuShaderPackage()
+
+    var zeroUniformLength = valid
+    zeroUniformLength[uniformOffset + 10] = 0
+    zeroUniformLength[uniformOffset + 11] = 0
+    expect GpuShaderPackageError:
+      discard zeroUniformLength.decodeGpuShaderPackage()
+
+    var duplicateUniformName = valid
+    let secondUniformOffset = uniformOffset + 12
+    for index in 0 ..< 8:
+      duplicateUniformName[secondUniformOffset + index] =
+        duplicateUniformName[uniformOffset + index]
+    expect GpuShaderPackageError:
+      discard duplicateUniformName.decodeGpuShaderPackage()
 
   test "rejects malformed in-memory package construction":
     let source = fragmentSource()
@@ -220,6 +270,38 @@ suite "GPU shader packages":
     )
     expect GpuShaderPackageError:
       discard unknownWithEntries.encodeGpuShaderPackage()
+
+    var duplicateUniforms = empty
+    duplicateUniforms.bindingLayout = GpuShaderBindingLayout(
+      known: true,
+      uniforms: @[
+        GpuShaderUniformLayout(
+          nameId: gpuBindingNameId("u_first"),
+          uniformType: gutVec4,
+          arrayLength: 1
+        ),
+        GpuShaderUniformLayout(
+          nameId: gpuBindingNameId("u_first"),
+          uniformType: gutMat4,
+          arrayLength: 1
+        )
+      ]
+    )
+    expect GpuShaderPackageError:
+      discard duplicateUniforms.encodeGpuShaderPackage()
+
+    var zeroUniformLength = empty
+    zeroUniformLength.bindingLayout = GpuShaderBindingLayout(
+      known: true,
+      uniforms: @[
+        GpuShaderUniformLayout(
+          nameId: gpuBindingNameId("u_invalid"),
+          uniformType: gutVec4
+        )
+      ]
+    )
+    expect GpuShaderPackageError:
+      discard zeroUniformLength.encodeGpuShaderPackage()
 
     let artifact = gpuShaderArtifact(source, @[1'u8])
     var duplicate = gpuShaderPackage(source)

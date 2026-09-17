@@ -1,7 +1,7 @@
 import std/[algorithm, hashes, math, tables]
 
 const
-  gpuHostApiVersion* = 16'u32
+  gpuHostApiVersion* = 17'u32
   maxGpuNamespaceNameBytes* = 128
   maxGpuResourceLabelBytes* = 128
   maxGpuViewCount* = 256'u16
@@ -247,10 +247,18 @@ type
     format*: GpuTextureFormat
     access*: GpuStorageAccess
 
+  GpuBindingNameId* = distinct uint64
+
+  GpuShaderUniformLayout* = object
+    nameId*: GpuBindingNameId
+    uniformType*: GpuUniformType
+    arrayLength*: uint16
+
   GpuShaderBindingLayout* = object
-    ## `known` distinguishes a typed shader with no storage resources from raw
-    ## bytecode whose resource contract cannot be inspected by CBSS.
+    ## `known` distinguishes a typed shader with no declared resources from
+    ## raw bytecode whose resource contract cannot be inspected by CBSS.
     known*: bool
+    uniforms*: seq[GpuShaderUniformLayout]
     storageBuffers*: seq[GpuShaderStorageBufferLayout]
     storageImages*: seq[GpuShaderStorageImageLayout]
 
@@ -375,6 +383,7 @@ type
 
   GpuBackendUniformBinding* = object
     resource*: GpuBackendResourceId
+    nameId*: GpuBindingNameId
     descriptor*: GpuUniformDescriptor
     values*: seq[float32]
 
@@ -677,6 +686,7 @@ type
     shaderDescriptor: GpuShaderDescriptor
     shaderBindingLayout: GpuShaderBindingLayout
     uniformDescriptor: GpuUniformDescriptor
+    uniformNameId: GpuBindingNameId
     samplerDescriptor: GpuSamplerDescriptor
     graphicsPipelineDescriptor: GpuGraphicsPipelineDescriptor
     computePipelineDescriptor: GpuComputePipelineDescriptor
@@ -735,12 +745,23 @@ proc `==`*(a, b: GpuResourceId): bool {.borrow.}
 proc hash*(id: GpuResourceId): Hash {.borrow.}
 proc `==`*(a, b: GpuReadbackId): bool {.borrow.}
 proc hash*(id: GpuReadbackId): Hash {.borrow.}
+proc `==`*(a, b: GpuBindingNameId): bool {.borrow.}
+proc hash*(id: GpuBindingNameId): Hash {.borrow.}
 
 proc namespaceIdValue*(id: GpuNamespaceId): uint64 {.inline.} = uint64(id)
 proc resourceIdValue*(id: GpuResourceId): uint64 {.inline.} = uint64(id)
 proc readbackIdValue*(id: GpuReadbackId): uint64 {.inline.} = uint64(id)
+proc bindingNameIdValue*(id: GpuBindingNameId): uint64 {.inline.} = uint64(id)
 proc backendResourceIdValue*(id: GpuBackendResourceId): uint64 {.inline.} =
   uint64(id)
+
+proc gpuBindingNameId*(name: string): GpuBindingNameId =
+  ## Stable FNV-1a identity is derived at the authoring/resource boundary so
+  ## frame-time binding validation never depends on string comparison.
+  var value = 14_695_981_039_346_656_037'u64
+  for character in name:
+    value = (value xor uint64(uint8(character))) * 1_099_511_628_211'u64
+  GpuBindingNameId(value)
 
 proc opaqueGpuBlendState*(): GpuBlendState =
   GpuBlendState(writeMask: {gccRed, gccGreen, gccBlue, gccAlpha})
@@ -1298,6 +1319,7 @@ proc insertGpuResource(
     shaderDescriptor = GpuShaderDescriptor();
     shaderBindingLayout = GpuShaderBindingLayout();
     uniformDescriptor = GpuUniformDescriptor();
+    uniformNameId = GpuBindingNameId(0);
     samplerDescriptor = GpuSamplerDescriptor();
     graphicsPipelineDescriptor = GpuGraphicsPipelineDescriptor();
     computePipelineDescriptor = GpuComputePipelineDescriptor();
@@ -1320,6 +1342,7 @@ proc insertGpuResource(
     shaderDescriptor: shaderDescriptor,
     shaderBindingLayout: shaderBindingLayout,
     uniformDescriptor: uniformDescriptor,
+    uniformNameId: uniformNameId,
     samplerDescriptor: samplerDescriptor,
     graphicsPipelineDescriptor: graphicsPipelineDescriptor,
     computePipelineDescriptor: computePipelineDescriptor,
@@ -1683,7 +1706,8 @@ proc createGpuShader*(
   if descriptor.stage == gssCompute and not host.infoValue.computeSupported:
     raise newException(GpuHostError, "GPU compute shaders are not supported")
   if not bindingLayout.known and
-      (bindingLayout.storageBuffers.len != 0 or
+      (bindingLayout.uniforms.len != 0 or
+      bindingLayout.storageBuffers.len != 0 or
       bindingLayout.storageImages.len != 0):
     raise newException(
       GpuHostError,
@@ -1691,6 +1715,20 @@ proc createGpuShader*(
     )
   if bindingLayout.known:
     var occupiedStages: set[uint8]
+    if bindingLayout.uniforms.len > maxGpuUniformBindings:
+      raise newException(GpuHostError, "GPU shader uniform layout limit exceeded")
+    for index, uniform in bindingLayout.uniforms:
+      if uniform.arrayLength == 0:
+        raise newException(
+          GpuHostError,
+          "GPU shader uniform layout array length must be non-zero"
+        )
+      for prior in 0 ..< index:
+        if bindingLayout.uniforms[prior].nameId == uniform.nameId:
+          raise newException(
+            GpuHostError,
+            "GPU shader uniform layout name is duplicated"
+          )
     if descriptor.stage != gssCompute and
         (bindingLayout.storageBuffers.len != 0 or
         bindingLayout.storageImages.len != 0):
@@ -1801,7 +1839,8 @@ proc createGpuUniform*(
     grkUniform,
     bytes,
     backendResource,
-    uniformDescriptor = descriptor
+    uniformDescriptor = descriptor,
+    uniformNameId = descriptor.name.gpuBindingNameId()
   )
 
 proc createGpuSampler*(
@@ -2467,6 +2506,7 @@ proc validateGpuBindings(
         raise newException(GpuHostError, "GPU uniform values must be finite")
     resolved.uniforms.add GpuBackendUniformBinding(
       resource: entry.backendResource,
+      nameId: entry.uniformNameId,
       descriptor: entry.uniformDescriptor,
       values: binding.values
     )
@@ -2583,6 +2623,11 @@ proc validateGpuBindingsAgainstLayout(
 ) =
   if not layout.known:
     return
+  if bindings.uniforms.len != layout.uniforms.len:
+    raise newException(
+      GpuHostError,
+      "GPU uniform bindings do not match the typed shader layout"
+    )
   if bindings.storageBuffers.len != layout.storageBuffers.len:
     raise newException(
       GpuHostError,
@@ -2593,6 +2638,41 @@ proc validateGpuBindingsAgainstLayout(
       GpuHostError,
       "GPU storage image bindings do not match the typed shader layout"
     )
+
+  const uniformLookupSize = maxGpuUniformBindings * 2
+  var uniformByName: array[uniformLookupSize, uint8]
+  for index, actual in bindings.uniforms:
+    var slot = int(actual.nameId.bindingNameIdValue() mod uint64(uniformLookupSize))
+    while uniformByName[slot] != 0:
+      let occupied = bindings.uniforms[int(uniformByName[slot]) - 1]
+      if occupied.nameId == actual.nameId:
+        raise newException(GpuHostError, "GPU uniform binding name is duplicated")
+      slot = (slot + 1) mod uniformLookupSize
+    uniformByName[slot] = uint8(index + 1)
+
+  for expected in layout.uniforms:
+    var slot = int(expected.nameId.bindingNameIdValue() mod uint64(uniformLookupSize))
+    var encodedIndex = uniformByName[slot]
+    while encodedIndex != 0 and
+        bindings.uniforms[int(encodedIndex) - 1].nameId != expected.nameId:
+      slot = (slot + 1) mod uniformLookupSize
+      encodedIndex = uniformByName[slot]
+    if encodedIndex == 0:
+      raise newException(
+        GpuHostError,
+        "GPU uniform name does not match the typed shader layout"
+      )
+    let actual = bindings.uniforms[int(encodedIndex) - 1]
+    if actual.descriptor.uniformType != expected.uniformType:
+      raise newException(
+        GpuHostError,
+        "GPU uniform type does not match the typed shader layout"
+      )
+    if actual.descriptor.arrayLength != expected.arrayLength:
+      raise newException(
+        GpuHostError,
+        "GPU uniform array length does not match the typed shader layout"
+      )
 
   var bufferByStage: array[maxGpuStorageBufferBindings, uint8]
   for index, actual in bindings.storageBuffers:
