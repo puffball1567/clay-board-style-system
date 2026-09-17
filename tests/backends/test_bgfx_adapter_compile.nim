@@ -1150,41 +1150,49 @@ suite "optional bgfxim adapter":
         )
       ]
     )
-    host.dispatchGpuCompute(
+    host.dispatchGpuComputes(
       resourceNamespace,
-      GpuComputeCommand(
-        pipeline: mappedComputePipeline,
-        groupsX: 2,
-        groupsY: 3,
-        groupsZ: 4,
-        bindings: GpuBindingSet(
-          uniforms: @[
-            GpuUniformBinding(
-              uniform: colorUniform,
-              values: @[1'f32, 0.75'f32, 0.5'f32, 0.25'f32]
-            )
-          ],
-          storageImages: @[
-            GpuStorageImageBinding(
-              stage: 1,
-              texture: storageTexture,
-              access: gsaReadWrite
-            )
-          ],
-          storageBuffers: @[
-            GpuStorageBufferBinding(
-              stage: 2,
-              buffer: staticStorageBuffer,
-              access: gsaRead
-            ),
-            GpuStorageBufferBinding(
-              stage: 3,
-              buffer: dynamicStorageBuffer,
-              access: gsaReadWrite
-            )
-          ]
+      [
+        GpuComputeCommand(
+          pipeline: mappedComputePipeline,
+          groupsX: 2,
+          groupsY: 3,
+          groupsZ: 4,
+          bindings: GpuBindingSet(
+            uniforms: @[
+              GpuUniformBinding(
+                uniform: colorUniform,
+                values: @[1'f32, 0.75'f32, 0.5'f32, 0.25'f32]
+              )
+            ],
+            storageImages: @[
+              GpuStorageImageBinding(
+                stage: 1,
+                texture: storageTexture,
+                access: gsaReadWrite
+              )
+            ],
+            storageBuffers: @[
+              GpuStorageBufferBinding(
+                stage: 2,
+                buffer: staticStorageBuffer,
+                access: gsaRead
+              ),
+              GpuStorageBufferBinding(
+                stage: 3,
+                buffer: dynamicStorageBuffer,
+                access: gsaReadWrite
+              )
+            ]
+          )
+        ),
+        GpuComputeCommand(
+          pipeline: mappedComputePipeline,
+          groupsX: 1,
+          groupsY: 1,
+          groupsZ: 1
         )
-      )
+      ]
     )
     host.copyGpuTexture(resourceNamespace, renderTarget, readbackTexture)
     let readback = host.requestGpuReadback(resourceNamespace, readbackTexture)
@@ -1200,7 +1208,7 @@ suite "optional bgfxim adapter":
     check readbackData.pixels[511] == byte(511 mod 251)
     check frameCount() == 2
     check submitCount() == 2
-    check dispatchCount() == 1
+    check dispatchCount() == 2
     check viewRectCount() == 1
     check viewScissorCount() == 1
     check viewClearCount() == 1
