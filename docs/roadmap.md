@@ -1041,7 +1041,7 @@ an enum-only API.
 Status: `Version 0.7 in progress; typed GPU resources, checked dynamic Texture
 updates, submission, transfer, asynchronous readback, portable RasterSurface
 composition, typed graphics and compute authoring, and build-only shader
-packaging implemented`
+packaging with runtime binding-layout validation implemented`
 
 CBSS will support optional GPU-backed drawing inside the standard Canvas
 element. This is a capability for game scenes, charts, visualizations, image
@@ -1107,7 +1107,10 @@ include bounded work-group sizes, invocation builtins, integer/vector values,
 and typed storage-buffer load/store operations. The runtime consumes a
 bounded deterministic package containing only selected target variants, and
 does not link or launch the compiler. The package validates version, stage,
-target uniqueness, source identity, payload size, checksums, and trailing data.
+target uniqueness, source identity, typed storage binding layout, payload size,
+checksums, and trailing data. Compute dispatch matches that retained layout
+against the actual storage resource stages, formats, and access directions
+before backend work.
 See [GPU Shader Authoring And Packaging](gpu-shaders.md).
 
 CBSS will not claim exclusive ownership of the machine's GPU. A separate

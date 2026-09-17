@@ -211,6 +211,7 @@ type
 
   GpuShaderArtifact* = object
     descriptor*: GpuShaderDescriptor
+    bindingLayout*: GpuShaderBindingLayout
     bytecode*: seq[byte]
     sourceHash*: uint64
 
@@ -1738,6 +1739,27 @@ proc gpuShaderSourceHash*(source: GpuShaderSource): uint64 =
     sourceHash = (sourceHash xor uint64(uint8(value))) * 1_099_511_628_211'u64
   sourceHash
 
+proc gpuShaderBindingLayout*(source: GpuShaderSource): GpuShaderBindingLayout =
+  result.known = true
+  result.storageBuffers = newSeqOfCap[GpuShaderStorageBufferLayout](
+    source.storageBuffers.len
+  )
+  for storage in source.storageBuffers:
+    result.storageBuffers.add GpuShaderStorageBufferLayout(
+      stage: storage.stage,
+      format: storage.format,
+      access: storage.access
+    )
+  result.storageImages = newSeqOfCap[GpuShaderStorageImageLayout](
+    source.storageImages.len
+  )
+  for image in source.storageImages:
+    result.storageImages.add GpuShaderStorageImageLayout(
+      stage: image.stage,
+      format: image.format,
+      access: image.access
+    )
+
 proc gpuShaderArtifact*(
     source: GpuShaderSource;
     bytecode: sink seq[byte]
@@ -1746,6 +1768,7 @@ proc gpuShaderArtifact*(
     raise newException(GpuShaderBuildError, "GPU shader bytecode cannot be empty")
   GpuShaderArtifact(
     descriptor: GpuShaderDescriptor(stage: source.stage, label: source.label),
+    bindingLayout: source.gpuShaderBindingLayout(),
     bytecode: bytecode,
     sourceHash: source.gpuShaderSourceHash()
   )
@@ -1755,4 +1778,9 @@ proc createGpuShader*(
     namespace: GpuNamespaceId;
     artifact: GpuShaderArtifact
 ): GpuResourceHandle =
-  host.createGpuShader(namespace, artifact.descriptor, artifact.bytecode)
+  host.createGpuShader(
+    namespace,
+    artifact.descriptor,
+    artifact.bytecode,
+    artifact.bindingLayout
+  )

@@ -237,6 +237,23 @@ type
     stage*: GpuShaderStage
     label*: string
 
+  GpuShaderStorageBufferLayout* = object
+    stage*: uint8
+    format*: GpuStorageBufferFormat
+    access*: GpuStorageAccess
+
+  GpuShaderStorageImageLayout* = object
+    stage*: uint8
+    format*: GpuTextureFormat
+    access*: GpuStorageAccess
+
+  GpuShaderBindingLayout* = object
+    ## `known` distinguishes a typed shader with no storage resources from raw
+    ## bytecode whose resource contract cannot be inspected by CBSS.
+    known*: bool
+    storageBuffers*: seq[GpuShaderStorageBufferLayout]
+    storageImages*: seq[GpuShaderStorageImageLayout]
+
   GpuUniformDescriptor* = object
     name*: string
     uniformType*: GpuUniformType
@@ -658,6 +675,7 @@ type
     textureDescriptor: GpuTextureDescriptor
     renderTargetDescriptor: GpuRenderTargetDescriptor
     shaderDescriptor: GpuShaderDescriptor
+    shaderBindingLayout: GpuShaderBindingLayout
     uniformDescriptor: GpuUniformDescriptor
     samplerDescriptor: GpuSamplerDescriptor
     graphicsPipelineDescriptor: GpuGraphicsPipelineDescriptor
@@ -1274,6 +1292,7 @@ proc insertGpuResource(
     textureDescriptor = GpuTextureDescriptor();
     renderTargetDescriptor = GpuRenderTargetDescriptor();
     shaderDescriptor = GpuShaderDescriptor();
+    shaderBindingLayout = GpuShaderBindingLayout();
     uniformDescriptor = GpuUniformDescriptor();
     samplerDescriptor = GpuSamplerDescriptor();
     graphicsPipelineDescriptor = GpuGraphicsPipelineDescriptor();
@@ -1295,6 +1314,7 @@ proc insertGpuResource(
     textureDescriptor: textureDescriptor,
     renderTargetDescriptor: renderTargetDescriptor,
     shaderDescriptor: shaderDescriptor,
+    shaderBindingLayout: shaderBindingLayout,
     uniformDescriptor: uniformDescriptor,
     samplerDescriptor: samplerDescriptor,
     graphicsPipelineDescriptor: graphicsPipelineDescriptor,
@@ -1638,7 +1658,8 @@ proc createGpuShader*(
     host: GpuHost;
     namespace: GpuNamespaceId;
     descriptor: GpuShaderDescriptor;
-    bytecode: seq[byte]
+    bytecode: seq[byte];
+    bindingLayout = GpuShaderBindingLayout()
 ): GpuResourceHandle =
   host.requireHost()
   if host.stateValue != ghsReady:
@@ -1657,6 +1678,41 @@ proc createGpuShader*(
     raise newException(GpuHostError, "GPU resource label is too long")
   if descriptor.stage == gssCompute and not host.infoValue.computeSupported:
     raise newException(GpuHostError, "GPU compute shaders are not supported")
+  if not bindingLayout.known and
+      (bindingLayout.storageBuffers.len != 0 or
+      bindingLayout.storageImages.len != 0):
+    raise newException(
+      GpuHostError,
+      "unknown GPU shader binding layouts cannot contain entries"
+    )
+  if bindingLayout.known:
+    var occupiedStages: set[uint8]
+    if descriptor.stage != gssCompute and
+        (bindingLayout.storageBuffers.len != 0 or
+        bindingLayout.storageImages.len != 0):
+      raise newException(
+        GpuHostError,
+        "GPU storage binding layouts require a compute shader"
+      )
+    if bindingLayout.storageBuffers.len > maxGpuStorageBufferBindings or
+        bindingLayout.storageImages.len > maxGpuStorageImageBindings:
+      raise newException(GpuHostError, "GPU shader binding layout limit exceeded")
+    for storage in bindingLayout.storageBuffers:
+      if storage.stage >= uint8(maxGpuStorageBufferBindings) or
+          storage.stage in occupiedStages:
+        raise newException(
+          GpuHostError,
+          "GPU shader storage buffer layout stage is invalid or duplicated"
+        )
+      occupiedStages.incl storage.stage
+    for image in bindingLayout.storageImages:
+      if image.stage >= uint8(maxGpuStorageImageBindings) or
+          image.stage in occupiedStages:
+        raise newException(
+          GpuHostError,
+          "GPU shader storage image layout stage is invalid or duplicated"
+        )
+      occupiedStages.incl image.stage
   let bytes = uint64(bytecode.len)
   host.namespaces[namespace].ensureResourceCapacity(bytes)
   if host.backend.createShader.isNil or host.backend.destroyResource.isNil:
@@ -1679,7 +1735,8 @@ proc createGpuShader*(
     grkShader,
     bytes,
     backendResource,
-    shaderDescriptor = descriptor
+    shaderDescriptor = descriptor,
+    shaderBindingLayout = bindingLayout
   )
 
 proc validateGpuBindingName(name: string) =
@@ -1929,6 +1986,7 @@ proc createGpuComputePipeline*(
     0,
     backendResource,
     computePipelineDescriptor = descriptor,
+    shaderBindingLayout = compute.shaderBindingLayout,
     pipelineKind = gplkCompute,
     dependencies = dependencies
   )
@@ -2510,6 +2568,67 @@ proc validateGpuBindings(
     )
   result = move(resolved)
 
+proc validateGpuBindingsAgainstLayout(
+    layout: GpuShaderBindingLayout;
+    bindings: GpuBackendBindingSet
+) =
+  if not layout.known:
+    return
+  if bindings.storageBuffers.len != layout.storageBuffers.len:
+    raise newException(
+      GpuHostError,
+      "GPU storage buffer bindings do not match the typed shader layout"
+    )
+  if bindings.storageImages.len != layout.storageImages.len:
+    raise newException(
+      GpuHostError,
+      "GPU storage image bindings do not match the typed shader layout"
+    )
+
+  var bufferByStage: array[maxGpuStorageBufferBindings, uint8]
+  for index, actual in bindings.storageBuffers:
+    bufferByStage[actual.stage] = uint8(index + 1)
+  for expected in layout.storageBuffers:
+    let encodedIndex = bufferByStage[expected.stage]
+    if encodedIndex == 0:
+      raise newException(
+        GpuHostError,
+        "GPU storage buffer stage does not match the typed shader layout"
+      )
+    let actual = bindings.storageBuffers[int(encodedIndex) - 1]
+    if actual.descriptor.storageFormat != expected.format:
+      raise newException(
+        GpuHostError,
+        "GPU storage buffer format does not match the typed shader layout"
+      )
+    if actual.access != expected.access:
+      raise newException(
+        GpuHostError,
+        "GPU storage buffer access does not match the typed shader layout"
+      )
+
+  var imageByStage: array[maxGpuStorageImageBindings, uint8]
+  for index, actual in bindings.storageImages:
+    imageByStage[actual.stage] = uint8(index + 1)
+  for expected in layout.storageImages:
+    let encodedIndex = imageByStage[expected.stage]
+    if encodedIndex == 0:
+      raise newException(
+        GpuHostError,
+        "GPU storage image stage does not match the typed shader layout"
+      )
+    let actual = bindings.storageImages[int(encodedIndex) - 1]
+    if actual.format != expected.format:
+      raise newException(
+        GpuHostError,
+        "GPU storage image format does not match the typed shader layout"
+      )
+    if actual.access != expected.access:
+      raise newException(
+        GpuHostError,
+        "GPU storage image access does not match the typed shader layout"
+      )
+
 proc validateDrawCommand(
     host: GpuHost;
     namespace: GpuNamespaceId;
@@ -2826,6 +2945,7 @@ proc dispatchGpuCompute*(
     command.bindings,
     allowStorageResources = true
   )
+  pipeline.shaderBindingLayout.validateGpuBindingsAgainstLayout(bindings)
 
   host.ensureGpuViewAvailable()
   host.reserveGpuFrameWork(namespace, workUnits = 1)

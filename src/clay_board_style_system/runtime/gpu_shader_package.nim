@@ -3,7 +3,7 @@ import std/algorithm
 import clay_board_style_system/runtime/[gpu_host, gpu_shader_builder]
 
 const
-  gpuShaderPackageVersion* = 1'u16
+  gpuShaderPackageVersion* = 2'u16
   maxGpuShaderPackageVariants* = 16
   maxGpuShaderBinaryBytes* = 16 * 1024 * 1024
   maxGpuShaderPackageBytes* = 128 * 1024 * 1024
@@ -31,8 +31,47 @@ type
 
   GpuShaderPackage* = object
     descriptor*: GpuShaderDescriptor
+    bindingLayout*: GpuShaderBindingLayout
     sourceHash*: uint64
     variants*: seq[GpuShaderBinaryVariant]
+
+proc validatePackageBindingLayout(
+    layout: GpuShaderBindingLayout;
+    stage: GpuShaderStage
+) =
+  if not layout.known:
+    if layout.storageBuffers.len != 0 or layout.storageImages.len != 0:
+      raise newException(
+        GpuShaderPackageError,
+        "unknown GPU shader binding layouts cannot contain entries"
+      )
+    return
+  if stage != gssCompute and
+      (layout.storageBuffers.len != 0 or layout.storageImages.len != 0):
+    raise newException(
+      GpuShaderPackageError,
+      "GPU storage binding layouts require a compute shader"
+    )
+  if layout.storageBuffers.len > maxGpuStorageBufferBindings or
+      layout.storageImages.len > maxGpuStorageImageBindings:
+    raise newException(GpuShaderPackageError, "GPU shader binding layout limit exceeded")
+  var occupiedStages: set[uint8]
+  for storage in layout.storageBuffers:
+    if storage.stage >= uint8(maxGpuStorageBufferBindings) or
+        storage.stage in occupiedStages:
+      raise newException(
+        GpuShaderPackageError,
+        "GPU shader storage buffer layout stage is invalid or duplicated"
+      )
+    occupiedStages.incl storage.stage
+  for image in layout.storageImages:
+    if image.stage >= uint8(maxGpuStorageImageBindings) or
+        image.stage in occupiedStages:
+      raise newException(
+        GpuShaderPackageError,
+        "GPU shader storage image layout stage is invalid or duplicated"
+      )
+    occupiedStages.incl image.stage
 
 proc hashGpuShaderBytes*(bytes: openArray[byte]): uint64 =
   result = 14_695_981_039_346_656_037'u64
@@ -44,6 +83,7 @@ proc gpuShaderPackage*(source: GpuShaderSource): GpuShaderPackage =
     raise newException(GpuShaderPackageError, "GPU shader label is too long")
   GpuShaderPackage(
     descriptor: GpuShaderDescriptor(stage: source.stage, label: source.label),
+    bindingLayout: source.gpuShaderBindingLayout(),
     sourceHash: source.gpuShaderSourceHash()
   )
 
@@ -56,6 +96,8 @@ proc addVariant*(
     raise newException(GpuShaderPackageError, "GPU shader descriptors do not match")
   if artifact.sourceHash != package.sourceHash:
     raise newException(GpuShaderPackageError, "GPU shader source hashes do not match")
+  if artifact.bindingLayout != package.bindingLayout:
+    raise newException(GpuShaderPackageError, "GPU shader binding layouts do not match")
   if artifact.bytecode.len == 0:
     raise newException(GpuShaderPackageError, "GPU shader bytecode cannot be empty")
   if artifact.bytecode.len > maxGpuShaderBinaryBytes:
@@ -83,6 +125,7 @@ proc artifactFor*(
         raise newException(GpuShaderPackageError, "GPU shader variant is corrupted")
       return GpuShaderArtifact(
         descriptor: package.descriptor,
+        bindingLayout: package.bindingLayout,
         bytecode: variant.bytecode,
         sourceHash: package.sourceHash
       )
@@ -121,6 +164,7 @@ proc readU64(bytes: openArray[byte]; offset: var int): uint64 =
 proc encodeGpuShaderPackage*(package: GpuShaderPackage): seq[byte] =
   if package.descriptor.label.len > maxGpuResourceLabelBytes:
     raise newException(GpuShaderPackageError, "GPU shader label is too long")
+  package.bindingLayout.validatePackageBindingLayout(package.descriptor.stage)
   if package.variants.len == 0 or
       package.variants.len > maxGpuShaderPackageVariants:
     raise newException(GpuShaderPackageError, "GPU shader package variant count is invalid")
@@ -130,7 +174,9 @@ proc encodeGpuShaderPackage*(package: GpuShaderPackage): seq[byte] =
     cmp(ord(left.target), ord(right.target))
   )
   var previousTarget = -1
-  var encodedSize = gpuShaderPackageMagic.len + 16 + package.descriptor.label.len
+  var encodedSize = gpuShaderPackageMagic.len + 20 + package.descriptor.label.len +
+    4 * (package.bindingLayout.storageBuffers.len +
+      package.bindingLayout.storageImages.len)
   for variant in variants:
     if ord(variant.target) == previousTarget:
       raise newException(GpuShaderPackageError, "duplicate GPU shader target")
@@ -154,6 +200,20 @@ proc encodeGpuShaderPackage*(package: GpuShaderPackage): seq[byte] =
   result.appendU64(package.sourceHash)
   for value in package.descriptor.label:
     result.add byte(value)
+  result.add byte(if package.bindingLayout.known: 1 else: 0)
+  result.add byte(package.bindingLayout.storageBuffers.len)
+  result.add byte(package.bindingLayout.storageImages.len)
+  result.add 0'u8
+  for storage in package.bindingLayout.storageBuffers:
+    result.add storage.stage
+    result.add byte(ord(storage.format))
+    result.add byte(ord(storage.access))
+    result.add 0'u8
+  for image in package.bindingLayout.storageImages:
+    result.add image.stage
+    result.add byte(ord(image.format))
+    result.add byte(ord(image.access))
+    result.add 0'u8
   for variant in variants:
     result.add byte(ord(variant.target))
     result.add [0'u8, 0'u8, 0'u8]
@@ -176,7 +236,8 @@ proc decodeGpuShaderPackage*(bytes: openArray[byte]): GpuShaderPackage =
   for expected in gpuShaderPackageMagic:
     if bytes.readU8(offset) != uint8(expected):
       raise newException(GpuShaderPackageError, "invalid GPU shader package magic")
-  if bytes.readU16(offset) != gpuShaderPackageVersion:
+  let packageVersion = bytes.readU16(offset)
+  if packageVersion notin {1'u16, gpuShaderPackageVersion}:
     raise newException(GpuShaderPackageError, "unsupported GPU shader package version")
   let rawStage = bytes.readU8(offset)
   if bytes.readU8(offset) != 0:
@@ -198,6 +259,46 @@ proc decodeGpuShaderPackage*(bytes: openArray[byte]): GpuShaderPackage =
     descriptor: GpuShaderDescriptor(stage: GpuShaderStage(rawStage), label: label),
     sourceHash: sourceHash
   )
+
+  if packageVersion >= 2:
+    let layoutFlags = bytes.readU8(offset)
+    let storageBufferCount = int(bytes.readU8(offset))
+    let storageImageCount = int(bytes.readU8(offset))
+    if bytes.readU8(offset) != 0 or layoutFlags > 1 or
+        storageBufferCount > maxGpuStorageBufferBindings or
+        storageImageCount > maxGpuStorageImageBindings:
+      raise newException(GpuShaderPackageError, "invalid GPU shader binding layout header")
+    result.bindingLayout.known = layoutFlags == 1
+    if not result.bindingLayout.known and
+        (storageBufferCount != 0 or storageImageCount != 0):
+      raise newException(GpuShaderPackageError, "invalid unknown GPU shader binding layout")
+    for _ in 0 ..< storageBufferCount:
+      let bindingStage = bytes.readU8(offset)
+      let rawFormat = bytes.readU8(offset)
+      let rawAccess = bytes.readU8(offset)
+      if bytes.readU8(offset) != 0 or
+          rawFormat > uint8(ord(high(GpuStorageBufferFormat))) or
+          rawAccess > uint8(ord(high(GpuStorageAccess))):
+        raise newException(GpuShaderPackageError, "invalid GPU storage buffer layout")
+      result.bindingLayout.storageBuffers.add GpuShaderStorageBufferLayout(
+        stage: bindingStage,
+        format: GpuStorageBufferFormat(rawFormat),
+        access: GpuStorageAccess(rawAccess)
+      )
+    for _ in 0 ..< storageImageCount:
+      let bindingStage = bytes.readU8(offset)
+      let rawFormat = bytes.readU8(offset)
+      let rawAccess = bytes.readU8(offset)
+      if bytes.readU8(offset) != 0 or
+          rawFormat > uint8(ord(high(GpuTextureFormat))) or
+          rawAccess > uint8(ord(high(GpuStorageAccess))):
+        raise newException(GpuShaderPackageError, "invalid GPU storage image layout")
+      result.bindingLayout.storageImages.add GpuShaderStorageImageLayout(
+        stage: bindingStage,
+        format: GpuTextureFormat(rawFormat),
+        access: GpuStorageAccess(rawAccess)
+      )
+    result.bindingLayout.validatePackageBindingLayout(result.descriptor.stage)
 
   var seenTargets: set[GpuShaderBinaryTarget]
   for _ in 0 ..< variantCount:

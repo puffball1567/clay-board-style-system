@@ -252,6 +252,7 @@ suite "typed GPU shader authoring":
     let second = gpuShaderArtifact(source, @[9'u8])
     check first.descriptor.stage == gssFragment
     check first.descriptor.label == "accent-fragment"
+    check first.bindingLayout == GpuShaderBindingLayout(known: true)
     check first.bytecode == @[1'u8, 2'u8, 3'u8]
     check first.sourceHash == second.sourceHash
     expect GpuShaderBuildError:
@@ -267,6 +268,7 @@ suite "typed GPU shader authoring":
 suite "typed GPU compute shader authoring":
   test "emits deterministic compute source with ordered storage operations":
     let source = buildComputeShader()
+    let artifact = gpuShaderArtifact(source, @[1'u8])
     check source.stage == gssCompute
     check source.label == "copy-compute"
     check source.computeWorkGroupSize == [64'u32, 1'u32, 1'u32]
@@ -279,6 +281,17 @@ suite "typed GPU compute shader authoring":
         access: gsaReadWrite
       )
     ]
+    check artifact.bindingLayout == GpuShaderBindingLayout(
+      known: true,
+      storageBuffers: @[
+        GpuShaderStorageBufferLayout(
+          stage: 0, format: gsbfFloat32x4, access: gsaRead
+        ),
+        GpuShaderStorageBufferLayout(
+          stage: 1, format: gsbfFloat32x4, access: gsaReadWrite
+        )
+      ]
+    )
     check source.varyingDefinitions.len == 0
     check source.source.startsWith("#include <bgfx_compute.sh>\n\n")
     check "BUFFER_RO(b_source, vec4, 0);" in source.source
@@ -319,11 +332,20 @@ suite "typed GPU compute shader authoring":
 
   test "emits portable storage-image declarations loads and stores":
     let source = buildStorageImageShader()
+    let artifact = gpuShaderArtifact(source, @[1'u8])
     check source.storageImages == @[
       GpuShaderStorageImageEntry(
         name: "i_output", stage: 0, format: gtfRgba32F, access: gsaWrite
       )
     ]
+    check artifact.bindingLayout == GpuShaderBindingLayout(
+      known: true,
+      storageImages: @[
+        GpuShaderStorageImageLayout(
+          stage: 0, format: gtfRgba32F, access: gsaWrite
+        )
+      ]
+    )
     check "IMAGE2D_WO(i_output, rgba32f, 0);" in source.source
     check "ivec2 cbss_n" in source.source
     check "imageStore(i_output, cbss_n" in source.source
