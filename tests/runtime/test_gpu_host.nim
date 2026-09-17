@@ -2317,6 +2317,77 @@ suite "GPU shader mapping":
         shaderDescriptor(label = repeat('x', maxGpuResourceLabelBytes + 1)),
         @[1'u8]
       )
+    let validBuffer = GpuShaderStorageBufferLayout(
+      stage: 0, format: gsbfFloat32, access: gsaRead
+    )
+    let validImage = GpuShaderStorageImageLayout(
+      stage: 1, format: gtfRgba32F, access: gsaWrite
+    )
+    expect GpuHostError:
+      discard host.createGpuShader(
+        namespace,
+        shaderDescriptor(gssCompute),
+        @[1'u8],
+        GpuShaderBindingLayout(storageBuffers: @[validBuffer])
+      )
+    expect GpuHostError:
+      discard host.createGpuShader(
+        namespace,
+        shaderDescriptor(gssFragment),
+        @[1'u8],
+        GpuShaderBindingLayout(known: true, storageImages: @[validImage])
+      )
+    for layout in [
+      GpuShaderBindingLayout(
+        known: true,
+        storageBuffers: @[
+          validBuffer,
+          GpuShaderStorageBufferLayout(
+            stage: 0, format: gsbfUint32, access: gsaWrite
+          )
+        ]
+      ),
+      GpuShaderBindingLayout(
+        known: true,
+        storageBuffers: @[validBuffer],
+        storageImages: @[
+          GpuShaderStorageImageLayout(
+            stage: 0, format: gtfRgba32F, access: gsaWrite
+          )
+        ]
+      ),
+      GpuShaderBindingLayout(
+        known: true,
+        storageImages: @[
+          GpuShaderStorageImageLayout(
+            stage: uint8(maxGpuStorageImageBindings),
+            format: gtfRgba32F,
+            access: gsaWrite
+          )
+        ]
+      )
+    ]:
+      expect GpuHostError:
+        discard host.createGpuShader(
+          namespace,
+          shaderDescriptor(gssCompute),
+          @[1'u8],
+          layout
+        )
+    var tooManyBuffers = GpuShaderBindingLayout(known: true)
+    for stage in 0 .. maxGpuStorageBufferBindings:
+      tooManyBuffers.storageBuffers.add GpuShaderStorageBufferLayout(
+        stage: uint8(stage mod maxGpuStorageBufferBindings),
+        format: gsbfFloat32,
+        access: gsaRead
+      )
+    expect GpuHostError:
+      discard host.createGpuShader(
+        namespace,
+        shaderDescriptor(gssCompute),
+        @[1'u8],
+        tooManyBuffers
+      )
     check context.shaderCreates == 0
     check host.gpuNamespaceUsage(namespace) == GpuResourceUsage()
     host.close()
@@ -3122,6 +3193,181 @@ suite "GPU command bindings":
     check context.drawSubmits == 0
     check context.computeDispatches == 0
     check host.gpuNamespaceUsage(namespace).workUnits == 0
+    host.endGpuFrame(token)
+    host.close()
+
+  test "typed compute layouts reject mismatched runtime storage bindings":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let namespace = host.createGpuNamespace(
+      "typed-compute-layout",
+      GpuResourceBudget(
+        persistentBytes: 32768,
+        workUnitsPerFrame: 32,
+        maxResources: 16
+      )
+    )
+    let layout = GpuShaderBindingLayout(
+      known: true,
+      storageBuffers: @[
+        GpuShaderStorageBufferLayout(
+          stage: 1, format: gsbfFloat32x4, access: gsaReadWrite
+        )
+      ],
+      storageImages: @[
+        GpuShaderStorageImageLayout(
+          stage: 3, format: gtfRgba32F, access: gsaWrite
+        )
+      ]
+    )
+    let shader = host.createGpuShader(
+      namespace,
+      shaderDescriptor(gssCompute, "typed-compute"),
+      @[1'u8],
+      layout
+    )
+    let pipeline = host.createGpuComputePipeline(
+      namespace,
+      computePipelineDescriptor(shader)
+    )
+    let matchingBuffer = host.createGpuBuffer(
+      namespace,
+      storageBufferDescriptor(storageFormat = gsbfFloat32x4)
+    )
+    let wrongFormatBuffer = host.createGpuBuffer(
+      namespace,
+      storageBufferDescriptor(storageFormat = gsbfUint32x4)
+    )
+    let matchingImage = host.createGpuTexture(
+      namespace,
+      textureDescriptor(format = gtfRgba32F, usage = {gtuStorage})
+    )
+    let wrongFormatImage = host.createGpuTexture(
+      namespace,
+      textureDescriptor(format = gtfRgba16F, usage = {gtuStorage})
+    )
+
+    proc command(
+        buffer = matchingBuffer;
+        image = matchingImage;
+        bufferStage = 1'u8;
+        imageStage = 3'u8;
+        bufferAccess = gsaReadWrite;
+        imageAccess = gsaWrite
+    ): GpuComputeCommand =
+      GpuComputeCommand(
+        pipeline: pipeline,
+        groupsX: 1,
+        groupsY: 1,
+        groupsZ: 1,
+        bindings: GpuBindingSet(
+          storageBuffers: @[
+            GpuStorageBufferBinding(
+              stage: bufferStage,
+              buffer: buffer,
+              access: bufferAccess
+            )
+          ],
+          storageImages: @[
+            GpuStorageImageBinding(
+              stage: imageStage,
+              texture: image,
+              access: imageAccess
+            )
+          ]
+        )
+      )
+
+    let token = host.beginGpuFrame()
+    host.dispatchGpuCompute(namespace, command())
+    check context.computeDispatches == 1
+
+    var invalidCommands = @[
+      command(buffer = wrongFormatBuffer),
+      command(image = wrongFormatImage),
+      command(bufferStage = 2),
+      command(imageStage = 4),
+      command(bufferAccess = gsaRead),
+      command(imageAccess = gsaReadWrite)
+    ]
+    var missingBuffer = command()
+    missingBuffer.bindings.storageBuffers.setLen(0)
+    invalidCommands.add missingBuffer
+    var missingImage = command()
+    missingImage.bindings.storageImages.setLen(0)
+    invalidCommands.add missingImage
+    for invalid in invalidCommands:
+      expect GpuHostError:
+        host.dispatchGpuCompute(namespace, invalid)
+
+    check context.computeDispatches == 1
+    check host.gpuNamespaceUsage(namespace).workUnits == 1
+    host.endGpuFrame(token)
+    host.close()
+
+  test "typed empty layouts reject storage while raw shaders remain permissive":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let namespace = host.createGpuNamespace(
+      "known-and-raw-layouts",
+      GpuResourceBudget(
+        persistentBytes: 4096,
+        workUnitsPerFrame: 4,
+        maxResources: 8
+      )
+    )
+    let storage = host.createGpuBuffer(namespace, storageBufferDescriptor())
+    let typedShader = host.createGpuShader(
+      namespace,
+      shaderDescriptor(gssCompute, "typed-empty"),
+      @[1'u8],
+      GpuShaderBindingLayout(known: true)
+    )
+    let rawShader = host.createGpuShader(
+      namespace,
+      shaderDescriptor(gssCompute, "raw"),
+      @[2'u8]
+    )
+    let typedPipeline = host.createGpuComputePipeline(
+      namespace,
+      computePipelineDescriptor(typedShader)
+    )
+    let rawPipeline = host.createGpuComputePipeline(
+      namespace,
+      computePipelineDescriptor(rawShader)
+    )
+    let bindings = GpuBindingSet(
+      storageBuffers: @[
+        GpuStorageBufferBinding(
+          stage: 0,
+          buffer: storage,
+          access: gsaReadWrite
+        )
+      ]
+    )
+    let token = host.beginGpuFrame()
+    expect GpuHostError:
+      host.dispatchGpuCompute(
+        namespace,
+        GpuComputeCommand(
+          pipeline: typedPipeline,
+          groupsX: 1,
+          groupsY: 1,
+          groupsZ: 1,
+          bindings: bindings
+        )
+      )
+    host.dispatchGpuCompute(
+      namespace,
+      GpuComputeCommand(
+        pipeline: rawPipeline,
+        groupsX: 1,
+        groupsY: 1,
+        groupsZ: 1,
+        bindings: bindings
+      )
+    )
+    check context.computeDispatches == 1
     host.endGpuFrame(token)
     host.close()
 

@@ -533,6 +533,13 @@ host.dispatchGpuCompute(
 )
 ```
 
+Shaders created from a typed `GpuShaderArtifact` carry a known storage binding
+layout into their Compute Pipeline. Dispatch validates the exact storage count,
+stage, buffer/image format, and access direction before reserving frame work or
+calling the backend. Raw precompiled bytecode has an explicitly unknown layout
+and retains the low-level permissive path; a typed shader with no storage
+declarations instead rejects every accidental storage binding.
+
 Storage buffers are compute-only, must use a declared access mode compatible
 with their descriptor, and cannot alias the same retained buffer in multiple
 stages of one command. Binding stage collisions, duplicate
