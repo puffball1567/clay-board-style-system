@@ -691,6 +691,10 @@ type
     vertexDescriptor, indexDescriptor: GpuBufferDescriptor
     bindings: GpuBackendBindingSet
 
+  GpuResolvedComputeCommand = object
+    pipeline: GpuBackendResourceId
+    bindings: GpuBackendBindingSet
+
   GpuReadbackEntry = object
     generation: uint64
     texture: GpuResourceId
@@ -2379,6 +2383,11 @@ proc ensureGpuViewAvailable(host: GpuHost) =
   if host.nextViewOffset >= host.configValue.viewIdCount:
     raise newException(GpuHostError, "GPU frame view identifier range exhausted")
 
+proc ensureGpuViewsAvailable(host: GpuHost; count: int) =
+  if count < 0 or uint64(count) >
+      uint64(host.configValue.viewIdCount - host.nextViewOffset):
+    raise newException(GpuHostError, "GPU frame view identifier range exhausted")
+
 proc validateGraphicsPass(
     host: GpuHost;
     namespace: GpuNamespaceId;
@@ -2912,20 +2921,11 @@ proc submitGpuPresentationDraw*(
     host.enterDeviceLost()
   raiseForStatus(status)
 
-proc dispatchGpuCompute*(
+proc validateComputeCommand(
     host: GpuHost;
     namespace: GpuNamespaceId;
     command: GpuComputeCommand
-) =
-  host.requireHost()
-  if host.stateValue != ghsReady or not host.activeFrame:
-    raise newException(GpuHostError, "GPU compute dispatch requires an active frame")
-  if namespace notin host.namespaces:
-    raise newException(GpuHostError, "unknown GPU namespace")
-  if not host.infoValue.computeSupported:
-    raise newException(GpuHostError, "GPU compute dispatch is not supported")
-  if host.backend.dispatch.isNil:
-    raise newException(GpuHostError, "GPU backend does not support compute dispatch")
+): GpuResolvedComputeCommand =
   if command.groupsX == 0 or command.groupsY == 0 or command.groupsZ == 0 or
       command.groupsX > uint32(high(uint16)) or
       command.groupsY > uint32(high(uint16)) or
@@ -2946,19 +2946,77 @@ proc dispatchGpuCompute*(
     allowStorageResources = true
   )
   pipeline.shaderBindingLayout.validateGpuBindingsAgainstLayout(bindings)
+  GpuResolvedComputeCommand(
+    pipeline: pipeline.backendResource,
+    bindings: bindings
+  )
+
+proc requireComputeSubmission(host: GpuHost; namespace: GpuNamespaceId) =
+  host.requireHost()
+  if host.stateValue != ghsReady or not host.activeFrame:
+    raise newException(GpuHostError, "GPU compute dispatch requires an active frame")
+  if namespace notin host.namespaces:
+    raise newException(GpuHostError, "unknown GPU namespace")
+  if not host.infoValue.computeSupported:
+    raise newException(GpuHostError, "GPU compute dispatch is not supported")
+  if host.backend.dispatch.isNil:
+    raise newException(GpuHostError, "GPU backend does not support compute dispatch")
+
+proc dispatchGpuCompute*(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    command: GpuComputeCommand
+) =
+  host.requireComputeSubmission(namespace)
+  let resolved = host.validateComputeCommand(namespace, command)
 
   host.ensureGpuViewAvailable()
   host.reserveGpuFrameWork(namespace, workUnits = 1)
   let status = host.backend.dispatch(
     host.backend.context,
     host.nextGpuViewId(),
-    pipeline.backendResource,
-    bindings,
+    resolved.pipeline,
+    resolved.bindings,
     command
   )
   if status == gbsDeviceLost:
     host.enterDeviceLost()
   raiseForStatus(status)
+
+proc dispatchGpuComputes*(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    commands: openArray[GpuComputeCommand]
+) =
+  ## Validates the complete ordered compute sequence before its first backend
+  ## dispatch. A backend or device failure may still interrupt submission, but
+  ## malformed later commands and insufficient host budgets cannot create a
+  ## partially submitted sequence.
+  host.requireComputeSubmission(namespace)
+  if commands.len == 0:
+    raise newException(GpuHostError, "GPU compute batch cannot be empty")
+  if uint64(commands.len) > uint64(high(uint32)):
+    raise newException(GpuHostError, "GPU compute batch has too many commands")
+
+  var resolvedCommands = newSeqOfCap[GpuResolvedComputeCommand](commands.len)
+  for command in commands:
+    resolvedCommands.add host.validateComputeCommand(namespace, command)
+  host.ensureGpuViewsAvailable(commands.len)
+  host.validateGpuFrameWork(namespace, workUnits = uint32(commands.len))
+  host.reserveGpuFrameWork(namespace, workUnits = uint32(commands.len))
+
+  for index, command in commands:
+    let resolved = resolvedCommands[index]
+    let status = host.backend.dispatch(
+      host.backend.context,
+      host.nextGpuViewId(),
+      resolved.pipeline,
+      resolved.bindings,
+      command
+    )
+    if status == gbsDeviceLost:
+      host.enterDeviceLost()
+    raiseForStatus(status)
 
 proc textureShape(
     entry: GpuResourceEntry

@@ -3371,6 +3371,109 @@ suite "GPU command bindings":
     host.endGpuFrame(token)
     host.close()
 
+  test "compute batches validate complete ordered sequences before dispatch":
+    let context = newContext()
+    var config = presentationConfig()
+    config.viewIdBase = 40
+    config.viewIdCount = 3
+    let host = openGpuHost(context.backend, ghoOwned, config)
+    let namespace = host.createGpuNamespace(
+      "compute-batch",
+      GpuResourceBudget(
+        persistentBytes: 4096,
+        workUnitsPerFrame: 3,
+        maxResources: 4
+      )
+    )
+    let shader = host.createGpuShader(
+      namespace,
+      shaderDescriptor(gssCompute, "compute-batch"),
+      @[1'u8]
+    )
+    let pipeline = host.createGpuComputePipeline(
+      namespace,
+      computePipelineDescriptor(shader)
+    )
+
+    proc command(groupsX: uint32): GpuComputeCommand =
+      GpuComputeCommand(
+        pipeline: pipeline,
+        groupsX: groupsX,
+        groupsY: 1,
+        groupsZ: 1
+      )
+
+    let firstFrame = host.beginGpuFrame()
+    host.dispatchGpuComputes(
+      namespace,
+      [command(1), command(2), command(3)]
+    )
+    check context.computeDispatches == 3
+    check context.lastViewId == 42
+    check context.lastComputeCommand.groupsX == 3
+    check host.gpuNamespaceUsage(namespace).workUnits == 3
+    host.endGpuFrame(firstFrame)
+
+    let invalidFrame = host.beginGpuFrame()
+    expect GpuHostError:
+      host.dispatchGpuComputes(namespace, [command(1), command(0), command(3)])
+    expect GpuHostError:
+      host.dispatchGpuComputes(namespace, newSeq[GpuComputeCommand]())
+    check context.computeDispatches == 3
+    check host.gpuNamespaceUsage(namespace).workUnits == 0
+    host.endGpuFrame(invalidFrame)
+
+    let exhaustedViews = host.beginGpuFrame()
+    host.dispatchGpuCompute(namespace, command(1))
+    expect GpuHostError:
+      host.dispatchGpuComputes(
+        namespace,
+        [command(1), command(2), command(3)]
+      )
+    check context.computeDispatches == 4
+    check context.lastViewId == 40
+    check host.gpuNamespaceUsage(namespace).workUnits == 1
+    host.endGpuFrame(exhaustedViews)
+    host.close()
+
+  test "compute batch budgets reject the whole sequence atomically":
+    let context = newContext()
+    var config = presentationConfig()
+    config.viewIdBase = 70
+    config.viewIdCount = 8
+    let host = openGpuHost(context.backend, ghoOwned, config)
+    let namespace = host.createGpuNamespace(
+      "compute-batch-budget",
+      GpuResourceBudget(
+        persistentBytes: 4096,
+        workUnitsPerFrame: 2,
+        maxResources: 4
+      )
+    )
+    let shader = host.createGpuShader(
+      namespace,
+      shaderDescriptor(gssCompute, "compute-batch-budget"),
+      @[1'u8]
+    )
+    let pipeline = host.createGpuComputePipeline(
+      namespace,
+      computePipelineDescriptor(shader)
+    )
+    let command = GpuComputeCommand(
+      pipeline: pipeline,
+      groupsX: 1,
+      groupsY: 1,
+      groupsZ: 1
+    )
+
+    let token = host.beginGpuFrame()
+    expect GpuHostError:
+      host.dispatchGpuComputes(namespace, [command, command, command])
+    check context.computeDispatches == 0
+    check host.gpuNamespaceUsage(namespace).workUnits == 0
+    host.endGpuFrame(token)
+    host.close()
+
 suite "GPU bounded submission":
   test "draw and compute commands map resources onto reserved view identifiers":
     let context = newContext()

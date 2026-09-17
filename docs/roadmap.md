@@ -2256,7 +2256,10 @@ optional `cbssGpuBgfx` adapter consumes `bgfxim` for the bgfx lifecycle while
 remaining absent from standard builds. Bounded graphics and compute submission
 now validates retained resources, pass bounds, work budgets, and a reserved
 backend view range without exposing backend handles. Batched draws initialize
-their shared view once per pass before issuing draw commands. Typed Vec4/Mat3/
+their shared view once per pass before issuing draw commands. Ordered compute
+batches validate every command plus their aggregate view and work budgets
+before the first dispatch, allowing multi-stage simulation graphs to fail
+before partial submission on host-contract errors. Typed Vec4/Mat3/
 Mat4 Uniforms, wrap/filter Samplers, sampled textures, and compute storage
 images are resolved through the same namespace and generation checks before
 backend submission. Checked texture-region copies and bounded asynchronous

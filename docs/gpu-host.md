@@ -533,6 +533,22 @@ host.dispatchGpuCompute(
 )
 ```
 
+Ordered multi-pass compute graphs use `dispatchGpuComputes`. CBSS resolves
+every pipeline and binding, validates every typed shader layout, and checks the
+complete view-ID and work-unit budget before the first backend dispatch:
+
+```nim
+host.dispatchGpuComputes(
+  resources,
+  [absorptionPass, capillaryScalePass, capillaryApplyPass]
+)
+```
+
+This prevents a malformed later command or an insufficient host budget from
+partially submitting a physical or image-processing step. Backend failures and
+device loss can still interrupt an accepted batch, so applications must retain
+their ordinary generation and stale-result checks.
+
 Shaders created from a typed `GpuShaderArtifact` carry a known storage binding
 layout into their Compute Pipeline. Dispatch validates the exact storage count,
 stage, buffer/image format, and access direction before reserving frame work or
