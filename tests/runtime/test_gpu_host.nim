@@ -1940,35 +1940,59 @@ suite "GPU buffer resources":
       host.close()
       check context.resourceDestroys == 1
 
-  test "CPU updates are limited to compute-read storage buffers":
+  test "dynamic storage buffers accept aligned uploads for every shader access":
     let context = newContext()
     let host = openGpuHost(context.backend, ghoOwned)
     let namespace = host.createGpuNamespace("storage-updates", standardBudget())
-    let readable = host.createGpuBuffer(
-      namespace,
-      storageBufferDescriptor(
-        byteSize = 32,
-        storageFormat = gsbfFloat32x2,
-        storageAccess = gsaRead
-      )
-    )
     let staging = @[99'u8, 98, 97, 96,
       0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
       12, 13, 14, 15, 95, 94, 93, 92]
-    host.updateGpuBuffer(readable, 8, staging.toOpenArray(4, 19))
-    check context.bufferUpdates == 1
-    check context.lastBufferUpdateData == @[
-      0'u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
-    ]
+    for access in GpuStorageAccess:
+      let buffer = host.createGpuBuffer(
+        namespace,
+        storageBufferDescriptor(
+          byteSize = 32,
+          storageFormat = gsbfFloat32x2,
+          storageAccess = access,
+          label = "storage-update-" & $access
+        )
+      )
+      host.updateGpuBuffer(buffer, 8, staging.toOpenArray(4, 19))
+      check context.lastBufferUpdateOffset == 8
+      check context.lastBufferUpdateData == @[
+        0'u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
+      ]
+      check host.releaseGpuResource(buffer)
+    check context.bufferUpdates == 3
+    host.close()
 
-    check host.releaseGpuResource(readable)
-    let writable = host.createGpuBuffer(
+  test "storage uploads remain outside frames and preserve element bounds":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("storage-upload-safety", standardBudget())
+    let buffer = host.createGpuBuffer(
       namespace,
-      storageBufferDescriptor(storageAccess = gsaReadWrite)
+      storageBufferDescriptor(
+        byteSize = 64,
+        storageFormat = gsbfFloat32x4,
+        storageAccess = gsaReadWrite
+      )
     )
+
     expect GpuHostError:
-      host.updateGpuBuffer(writable, 0, newSeq[byte](16))
+      host.updateGpuBuffer(buffer, 4, newSeq[byte](16))
+    expect GpuHostError:
+      host.updateGpuBuffer(buffer, 48, newSeq[byte](32))
+
+    let frame = host.beginGpuFrame()
+    expect GpuHostError:
+      host.updateGpuBuffer(buffer, 0, newSeq[byte](16))
+    host.endGpuFrame(frame)
+
+    host.updateGpuBuffer(buffer, 16, newSeq[byte](32))
     check context.bufferUpdates == 1
+    check context.lastBufferUpdateOffset == 16
+    check context.lastBufferUpdateBytes == 32
     host.close()
 
   test "storage descriptors reject layout misalignment and unsupported compute":

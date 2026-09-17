@@ -2275,7 +2275,10 @@ the resulting artifact enters the existing retained Shader/Pipeline contract
 for both direct GPU submission and component-owned GPU visual layers. The
 resource contract additionally supports R16F/R32F, RG16F/RG32F, and
 RGBA16F/RGBA32F textures plus typed compute storage buffers with bounded,
-stage-checked read/write access. Dynamic textures accept frame-budgeted full and
+stage-checked read/write access. Dynamic storage buffers accept element-aligned
+partial host uploads for every shader access direction between frames, allowing
+persistent simulation fields to be restored or patched without rebuilding their
+resource namespace. Dynamic textures accept frame-budgeted full and
 rectangular updates, and `GpuRasterTexture` synchronizes retained
 `RasterSurface` revisions through borrowed dirty row spans with a bounded
 full-upload fallback when revisions are skipped. Device-loss recovery now

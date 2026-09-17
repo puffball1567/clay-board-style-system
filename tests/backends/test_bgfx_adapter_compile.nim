@@ -1024,6 +1024,10 @@ suite "optional bgfxim adapter":
     check (lastBufferFlags() and BGFX_BUFFER_COMPUTE_FORMAT_32X2) != 0
     check (lastBufferFlags() and BGFX_BUFFER_COMPUTE_TYPE_UINT) != 0
     check (lastBufferFlags() and BGFX_BUFFER_COMPUTE_READ_WRITE) != 0
+    host.updateGpuBuffer(dynamicStorageBuffer, 16, newSeq[byte](16))
+    check dynamicIndexBufferUpdateCount() == 2
+    check lastBufferUpdateStart() == 4
+    check lastBufferDataBytes() == 16
 
     let renderTarget = host.createGpuRenderTarget(
       resourceNamespace,
