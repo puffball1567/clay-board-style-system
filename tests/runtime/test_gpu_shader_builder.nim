@@ -252,7 +252,19 @@ suite "typed GPU shader authoring":
     let second = gpuShaderArtifact(source, @[9'u8])
     check first.descriptor.stage == gssFragment
     check first.descriptor.label == "accent-fragment"
-    check first.bindingLayout == GpuShaderBindingLayout(known: true)
+    check source.uniforms == @[
+      GpuShaderUniformEntry(name: "u_accent", valueType: gsvtVec4)
+    ]
+    check first.bindingLayout == GpuShaderBindingLayout(
+      known: true,
+      uniforms: @[
+        GpuShaderUniformLayout(
+          nameId: gpuBindingNameId("u_accent"),
+          uniformType: gutVec4,
+          arrayLength: 1
+        )
+      ]
+    )
     check first.bytecode == @[1'u8, 2'u8, 3'u8]
     check first.sourceHash == second.sourceHash
     expect GpuShaderBuildError:

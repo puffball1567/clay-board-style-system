@@ -2323,6 +2323,11 @@ suite "GPU shader mapping":
     let validImage = GpuShaderStorageImageLayout(
       stage: 1, format: gtfRgba32F, access: gsaWrite
     )
+    let validUniform = GpuShaderUniformLayout(
+      nameId: gpuBindingNameId("u_material"),
+      uniformType: gutVec4,
+      arrayLength: 1
+    )
     expect GpuHostError:
       discard host.createGpuShader(
         namespace,
@@ -2365,6 +2370,26 @@ suite "GPU shader mapping":
             access: gsaWrite
           )
         ]
+      ),
+      GpuShaderBindingLayout(
+        known: true,
+        uniforms: @[
+          validUniform,
+          GpuShaderUniformLayout(
+            nameId: validUniform.nameId,
+            uniformType: gutMat4,
+            arrayLength: 1
+          )
+        ]
+      ),
+      GpuShaderBindingLayout(
+        known: true,
+        uniforms: @[
+          GpuShaderUniformLayout(
+            nameId: gpuBindingNameId("u_invalid"),
+            uniformType: gutVec4
+          )
+        ]
       )
     ]:
       expect GpuHostError:
@@ -2387,6 +2412,20 @@ suite "GPU shader mapping":
         shaderDescriptor(gssCompute),
         @[1'u8],
         tooManyBuffers
+      )
+    var tooManyUniforms = GpuShaderBindingLayout(known: true)
+    for index in 0 .. maxGpuUniformBindings:
+      tooManyUniforms.uniforms.add GpuShaderUniformLayout(
+        nameId: gpuBindingNameId("u_value_" & $index),
+        uniformType: gutVec4,
+        arrayLength: 1
+      )
+    expect GpuHostError:
+      discard host.createGpuShader(
+        namespace,
+        shaderDescriptor(gssCompute),
+        @[1'u8],
+        tooManyUniforms
       )
     check context.shaderCreates == 0
     check host.gpuNamespaceUsage(namespace) == GpuResourceUsage()
@@ -3300,6 +3339,106 @@ suite "GPU command bindings":
       expect GpuHostError:
         host.dispatchGpuCompute(namespace, invalid)
 
+    check context.computeDispatches == 1
+    check host.gpuNamespaceUsage(namespace).workUnits == 1
+    host.endGpuFrame(token)
+    host.close()
+
+  test "typed compute layouts validate uniform identity type and array length":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let namespace = host.createGpuNamespace(
+      "typed-compute-uniforms",
+      GpuResourceBudget(
+        persistentBytes: 32768,
+        workUnitsPerFrame: 32,
+        maxResources: 16
+      )
+    )
+    let shader = host.createGpuShader(
+      namespace,
+      shaderDescriptor(gssCompute, "typed-uniform-compute"),
+      @[1'u8],
+      GpuShaderBindingLayout(
+        known: true,
+        uniforms: @[
+          GpuShaderUniformLayout(
+            nameId: gpuBindingNameId("u_material"),
+            uniformType: gutVec4,
+            arrayLength: 1
+          )
+        ]
+      )
+    )
+    let pipeline = host.createGpuComputePipeline(
+      namespace,
+      computePipelineDescriptor(shader)
+    )
+    let matching = host.createGpuUniform(
+      namespace,
+      uniformDescriptor(name = "u_material")
+    )
+    let wrongName = host.createGpuUniform(
+      namespace,
+      uniformDescriptor(name = "u_other")
+    )
+    let wrongType = host.createGpuUniform(
+      namespace,
+      uniformDescriptor(name = "u_material", uniformType = gutMat4)
+    )
+    let wrongLength = host.createGpuUniform(
+      namespace,
+      uniformDescriptor(name = "u_material", arrayLength = 2)
+    )
+    let duplicateName = host.createGpuUniform(
+      namespace,
+      uniformDescriptor(name = "u_material", label = "duplicate")
+    )
+
+    proc command(
+        uniform = matching;
+        values: seq[float32] = @[1'f32, 2'f32, 3'f32, 4'f32]
+    ): GpuComputeCommand =
+      GpuComputeCommand(
+        pipeline: pipeline,
+        groupsX: 1,
+        groupsY: 1,
+        groupsZ: 1,
+        bindings: GpuBindingSet(
+          uniforms: @[GpuUniformBinding(uniform: uniform, values: values)]
+        )
+      )
+
+    let token = host.beginGpuFrame()
+    host.dispatchGpuCompute(namespace, command())
+    check context.computeDispatches == 1
+    check context.lastBindings.uniforms[0].nameId ==
+      gpuBindingNameId("u_material")
+
+    var invalidCommands = @[
+      command(uniform = wrongName),
+      command(uniform = wrongType, values = newSeq[float32](16)),
+      command(uniform = wrongLength, values = newSeq[float32](8))
+    ]
+    var missing = command()
+    missing.bindings.uniforms.setLen(0)
+    invalidCommands.add missing
+    var extra = command()
+    extra.bindings.uniforms.add GpuUniformBinding(
+      uniform: wrongName,
+      values: @[1'f32, 2'f32, 3'f32, 4'f32]
+    )
+    invalidCommands.add extra
+    var duplicate = command()
+    duplicate.bindings.uniforms.add GpuUniformBinding(
+      uniform: duplicateName,
+      values: @[4'f32, 3'f32, 2'f32, 1'f32]
+    )
+    invalidCommands.add duplicate
+
+    for invalid in invalidCommands:
+      expect GpuHostError:
+        host.dispatchGpuCompute(namespace, invalid)
     check context.computeDispatches == 1
     check host.gpuNamespaceUsage(namespace).workUnits == 1
     host.endGpuFrame(token)

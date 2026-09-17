@@ -1107,7 +1107,8 @@ include bounded work-group sizes, invocation builtins, integer/vector values,
 and typed storage-buffer load/store operations. The runtime consumes a
 bounded deterministic package containing only selected target variants, and
 does not link or launch the compiler. The package validates version, stage,
-target uniqueness, source identity, typed storage binding layout, payload size,
+target uniqueness, source identity, typed Uniform and storage binding layouts,
+payload size,
 checksums, and trailing data. Compute dispatch matches that retained layout
 against the actual storage resource stages, formats, and access directions
 before backend work.

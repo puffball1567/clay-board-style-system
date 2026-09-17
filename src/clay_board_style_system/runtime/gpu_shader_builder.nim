@@ -166,6 +166,10 @@ type
     format*: GpuTextureFormat
     access*: GpuStorageAccess
 
+  GpuShaderUniformEntry* = object
+    name*: string
+    valueType*: GpuShaderValueType
+
   GpuShaderBuilder* = ref object
     stageValue: GpuShaderStage
     labelValue: string
@@ -205,6 +209,7 @@ type
     varyingDefinitions*: string
     inputs*: seq[GpuShaderInterfaceEntry]
     outputs*: seq[GpuShaderInterfaceEntry]
+    uniforms*: seq[GpuShaderUniformEntry]
     storageBuffers*: seq[GpuShaderStorageEntry]
     storageImages*: seq[GpuShaderStorageImageEntry]
     computeWorkGroupSize*: array[3, uint32]
@@ -1620,6 +1625,10 @@ proc emitGpuShaderSource*(builder: GpuShaderBuilder): GpuShaderSource =
   else:
     result.source.add "#include <bgfx_shader.sh>\n\n"
   for name, valueType in uniforms.pairs:
+    result.uniforms.add GpuShaderUniformEntry(
+      name: name,
+      valueType: valueType
+    )
     result.source.add "uniform " & valueType.valueTypeName & " " & name & ";\n"
   if uniforms.len > 0:
     result.source.add "\n"
@@ -1741,6 +1750,22 @@ proc gpuShaderSourceHash*(source: GpuShaderSource): uint64 =
 
 proc gpuShaderBindingLayout*(source: GpuShaderSource): GpuShaderBindingLayout =
   result.known = true
+  result.uniforms = newSeqOfCap[GpuShaderUniformLayout](source.uniforms.len)
+  for uniform in source.uniforms:
+    let uniformType = case uniform.valueType
+      of gsvtVec4: gutVec4
+      of gsvtMat3: gutMat3
+      of gsvtMat4: gutMat4
+      else:
+        raise newException(
+          GpuShaderBuildError,
+          "GPU shader source contains a non-portable uniform type"
+        )
+    result.uniforms.add GpuShaderUniformLayout(
+      nameId: uniform.name.gpuBindingNameId(),
+      uniformType: uniformType,
+      arrayLength: 1
+    )
   result.storageBuffers = newSeqOfCap[GpuShaderStorageBufferLayout](
     source.storageBuffers.len
   )

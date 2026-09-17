@@ -95,8 +95,8 @@ The package format contains:
 
 - a versioned magic header;
 - shader stage and bounded diagnostic label;
-- a typed storage-buffer and storage-image binding layout when the shader was
-  produced by `GpuShaderBuilder`;
+- typed Uniform, storage-buffer, and storage-image binding layouts when the
+  shader was produced by `GpuShaderBuilder`;
 - a deterministic source hash;
 - at most 16 unique renderer targets;
 - at most 16 MiB of bytecode per target and 128 MiB per package; and
@@ -107,12 +107,14 @@ bytes. Decoding rejects unknown stages or targets, duplicate targets,
 truncation, trailing data, invalid reserved fields, oversized data, and checksum
 failure before a backend resource is created.
 
-Package version 2 preserves each typed storage binding's stage, format, and
-access direction. Version 1 packages remain readable and are treated as raw
-bytecode with an unknown binding layout. Encoding always writes version 2.
-This distinction also represents a typed shader that intentionally declares no
-storage resources: it rejects accidental storage bindings, while raw bytecode
-continues to use the explicit low-level escape hatch.
+Package version 3 preserves Uniform name identity, type, and array length in
+addition to each storage binding's stage, format, and access direction. Version
+2 packages remain readable with their storage-only layouts. Version 1 packages
+remain readable and are treated as raw bytecode with an unknown binding layout.
+Encoding always writes version 3. This distinction also represents a typed
+shader that intentionally declares no resources: it rejects accidental
+bindings, while raw bytecode continues to use the explicit low-level escape
+hatch.
 
 ## Compute Authoring
 
@@ -174,10 +176,13 @@ retained resource lifetime; source compilation stays in the build-only layer.
 
 The emitted binding layout travels with the compiled artifact and package into
 the retained Compute Pipeline. Before a dispatch consumes frame budget or
-calls the backend, CBSS requires the bound storage buffers and images to match
-the typed shader's declared count, stage, format, and access direction. Missing,
-extra, cross-stage, wrongly typed, or overly permissive bindings therefore fail
-at the host boundary instead of becoming driver-dependent GPU behavior.
+calls the backend, CBSS requires Uniforms to match their declared name, type,
+and array length, and storage buffers and images to match their declared count,
+stage, format, and access direction. Names become stable numeric identities at
+the authoring and resource boundaries, so per-frame validation does not compare
+strings. Missing, extra, duplicated, cross-stage, wrongly typed, or overly
+permissive bindings fail at the host boundary instead of becoming
+driver-dependent GPU behavior.
 
 Storage images share the compute binding-stage namespace with storage buffers.
 Coordinates are explicitly converted to `ivec2`; reads return `vec4`, and
