@@ -1497,11 +1497,6 @@ proc validateBufferUpdate(
 ) =
   if descriptor.access != gbaDynamic:
     raise newException(GpuHostError, "static GPU buffers cannot be updated")
-  if descriptor.role == gbrStorage and descriptor.storageAccess != gsaRead:
-    raise newException(
-      GpuHostError,
-      "GPU-writable storage buffers cannot be updated from the CPU"
-    )
   if data.len == 0:
     raise newException(GpuHostError, "GPU buffer update cannot be empty")
   let elementBytes = descriptor.bufferElementBytes()

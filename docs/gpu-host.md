@@ -277,11 +277,21 @@ let particles = host.createGpuBuffer(
 )
 ```
 
-Storage size and CPU updates align to complete typed elements. Storage buffers
-require compute support. Buffers declared writable by the GPU cannot be updated
-from the CPU, matching the underlying GPU ownership constraint; applications
-stage replacement data before creation or use a compute-read dynamic buffer
-when CPU updates are required.
+Storage size and CPU uploads align to complete typed elements. Storage buffers
+require compute support. `storageAccess` describes shader access; it does not
+forbid host uploads. Every dynamic storage buffer may receive bounded partial
+updates between frames, including read-write simulation fields. The selected
+backend orders that upload with later work on the same host queue. Static
+buffers and updates during an active frame remain invalid, so a dispatch never
+observes a partially submitted host update.
+
+Portable storage elements are homogeneous scalars or two-/four-component
+vectors. A logical record containing many or mixed fields should use a small
+set of packed homogeneous buffers. For example, a simulation cell can store
+four groups of `float4` in one buffer and integer identity data in a separate
+`uint` buffer; the shader derives `cellIndex * 4 + fieldGroup` explicitly.
+This structure-of-packed-arrays contract avoids backend-specific struct layout
+and padding while keeping a whole cell resident across ordered compute passes.
 
 An offscreen render target owns one color attachment and its framebuffer:
 
