@@ -2283,7 +2283,13 @@ stride packed physical records now map mixed float and unsigned fields onto
 portable `uint32` storage with exact bit reinterpretation and explicit offsets.
 This avoids backend-specific structure padding while simulation and image-
 processing packages move resident field arrays into CBSS compute graphs; the
-matching primitive is append-only in the C ABI. The
+matching primitive is append-only in the C ABI. Typed mutable locals and
+literal-bounded signed or unsigned ranges now provide lexically checked nested
+neighbourhood traversal, `break`, and `continue` through both Nim and the C
+ABI. This supplies the bounded nested-loop portion of wet-pressure, capillary,
+and wet-supply kernels needed by drawing engines without accepting arbitrary
+shader text or unbounded data-dependent loops. Helper functions and local
+fixed-size arrays remain subsequent authoring work. The
 resource contract additionally supports R16F/R32F, RG16F/RG32F, and
 RGBA16F/RGBA32F textures plus typed compute storage buffers with bounded,
 stage-checked read/write access. Dynamic storage buffers accept element-aligned

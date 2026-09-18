@@ -174,6 +174,40 @@ non-zero and bounded both per axis and by their total thread count. The runtime
 continues to own Compute Pipeline creation, bindings, dispatch validation, and
 retained resource lifetime; source compilation stays in the build-only layer.
 
+### Bounded local control flow
+
+Simulation and image-processing kernels can retain typed mutable scalar or
+vector values and iterate literal signed or unsigned ranges:
+
+```nim
+let accumulated = builder.localValue(builder.scalar(0))
+let row = builder.beginForRange(-1'i32, 2'i32, 1'i32)
+let column = builder.beginForRange(-1'i32, 2'i32, 1'i32)
+
+builder.beginIf(equalTo(column.loadLocal(), builder.signedInteger(0)))
+builder.continueLoop()
+builder.endIf()
+
+accumulated.storeLocal(
+  accumulated.loadLocal() + builder.convertValue(gsvtFloat, row.loadLocal())
+)
+builder.endForRange()
+builder.endForRange()
+```
+
+`loadLocal()` captures the value at that graph position; a later store does
+not retroactively change an earlier expression. A local is visible only in its
+declaring scope and descendants. Loop variables cease to be visible after
+`endForRange()`, while a root local may accumulate across nested loops.
+
+Ranges are half-open. Signed steps may be positive or negative except for the
+non-portable minimum `int32` magnitude; unsigned steps must be positive. A zero
+step or more than 1,024 iterations is rejected before source generation, and
+bounds are literal rather than data-dependent. This keeps authoring and
+generated work bounded. Helper functions, local fixed-size arrays, and
+data-dependent loops remain outside this increment and must not be assumed by
+consumers.
+
 The emitted binding layout travels with the compiled artifact and package into
 the retained Compute Pipeline. Before a dispatch consumes frame budget or
 calls the backend, CBSS requires Uniforms to match their declared name, type,
@@ -262,7 +296,8 @@ compiler launch failure, compiler failure, missing and empty output, bounded
 diagnostics, and paths containing shell metacharacters.
 
 The Linux bgfx CI lane additionally builds the pinned official `shaderc`,
-compiles generated Vertex, Fragment, storage-buffer Compute, and storage-image
-Compute shaders to SPIR-V, packages the artifacts, and decodes them through the
-runtime parser. This test needs no GPU; real resource creation and submission
-remain covered by the separate bgfx host integration lanes.
+compiles generated Vertex, Fragment, storage-buffer Compute, storage-image
+Compute, packed-record Compute, and bounded local-control-flow Compute shaders
+to SPIR-V, packages the artifacts, and decodes them through the runtime parser.
+This test needs no GPU; real resource creation and submission remain covered by
+the separate bgfx host integration lanes.

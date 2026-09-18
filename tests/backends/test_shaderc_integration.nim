@@ -107,6 +107,33 @@ proc packedRecordSource(): GpuShaderSource =
   )
   builder.emitGpuShaderSource()
 
+proc boundedLoopSource(): GpuShaderSource =
+  let builder = newGpuShaderBuilder(gssCompute, "shaderc-bounded-loops")
+  builder.setComputeWorkGroupSize(8, 1, 1)
+  let output = builder.storageBuffer(
+    "b_output", 0, gsbfInt32, gsaWrite
+  )
+  let accumulator = builder.localValue(builder.signedInteger(0))
+  let row = builder.beginForRange(-1'i32, 2'i32, 1'i32)
+  let column = builder.beginForRange(-1'i32, 2'i32, 1'i32)
+  builder.beginIf(equalTo(column.loadLocal(), builder.signedInteger(0)))
+  builder.continueLoop()
+  builder.endIf()
+  accumulator.storeLocal(
+    accumulator.loadLocal() + row.loadLocal() + column.loadLocal()
+  )
+  builder.beginIf(equalTo(accumulator.loadLocal(), builder.signedInteger(4)))
+  builder.breakLoop()
+  builder.endIf()
+  builder.endForRange()
+  builder.endForRange()
+  builder.storeStorage(
+    output,
+    builder.swizzle(builder.globalInvocationId(), "x"),
+    accumulator.loadLocal()
+  )
+  builder.emitGpuShaderSource()
+
 let shaderc = getEnv("CBSS_SHADERC")
 let shaderIncludes = getEnv("CBSS_BGFX_SHADER_INCLUDE")
 if shaderc.len == 0 or shaderIncludes.len == 0:
@@ -214,6 +241,26 @@ suite "official bgfx shaderc integration":
       removeDir(root)
 
     let compute = packedRecordSource()
+    let config = gpuShaderCompilerConfig(
+      shaderc,
+      [shaderIncludes],
+      workDirectory = root
+    )
+    let target = gpuShaderCompileTarget(
+      gsbtVulkan,
+      gscpLinux,
+      "spirv"
+    )
+
+    let compiled = compileGpuShader(compute, target, config)
+    check compiled.artifact.bytecode.len > 0
+
+  test "compiles bounded local control flow to SPIR-V":
+    let root = createTempDir("cbss-shaderc-bounded-loops-", "")
+    defer:
+      removeDir(root)
+
+    let compute = boundedLoopSource()
     let config = gpuShaderCompilerConfig(
       shaderc,
       [shaderIncludes],
