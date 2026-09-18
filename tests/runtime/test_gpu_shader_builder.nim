@@ -818,6 +818,132 @@ suite "typed GPU compute shader authoring":
     check snapshotPosition >= 0
     check mutationPosition > snapshotPosition
 
+  test "emits initialized fixed local arrays with dynamic access":
+    let builder = newGpuShaderBuilder(gssCompute, "local-array")
+    builder.setComputeWorkGroupSize(8, 1, 1)
+    let output = builder.storageBuffer("b_output", 0, gsbfUint32, gsaWrite)
+    let candidates = builder.localArray(builder.unsignedInteger(0), 8)
+    let index = builder.beginForRange(0'u32, 8'u32, 1'u32)
+    let indexValue = index.loadLocal()
+    candidates.storeLocalArray(
+      indexValue,
+      indexValue + builder.unsignedInteger(10)
+    )
+    builder.endForRange()
+    let first = candidates.loadLocalArray(builder.unsignedInteger(0))
+    candidates.storeLocalArray(
+      builder.unsignedInteger(0),
+      builder.unsignedInteger(99)
+    )
+    builder.storeStorage(output, builder.unsignedInteger(0), first)
+
+    let source = builder.emitGpuShaderSource().source
+    check "uint cbss_a0[8];" in source
+    check source.count("cbss_a0[") == 12
+    check "cbss_a0[7] = 0u;" in source
+    check "cbss_a0[cbss_n" in source
+    let snapshotPosition = source.find(" = cbss_a0[0u];")
+    let mutationPosition = source.find("cbss_a0[0u] = 99u;")
+    check snapshotPosition >= 0
+    check mutationPosition > snapshotPosition
+
+  test "validates local array ownership scope indices and values":
+    let fragment = newGpuShaderBuilder(gssFragment)
+    expect GpuShaderBuildError:
+      discard fragment.localArray(fragment.scalar(0), 1)
+
+    let builder = newGpuShaderBuilder(gssCompute)
+    builder.setComputeWorkGroupSize(1, 1, 1)
+    let output = builder.storageBuffer("b_output", 0, gsbfUint32, gsaWrite)
+    expect GpuShaderBuildError:
+      discard builder.localArray(builder.unsignedInteger(0), 0)
+    expect GpuShaderBuildError:
+      discard builder.localArray(
+        builder.unsignedInteger(0), maxGpuShaderLocalArrayLength + 1
+      )
+    expect GpuShaderBuildError:
+      discard builder.localArray(builder.unsignedVector([0'u32, 1'u32]), 2)
+
+    let values = builder.localArray(builder.unsignedInteger(0), 8)
+    expect GpuShaderBuildError:
+      discard values.loadLocalArray(builder.signedInteger(0))
+    expect GpuShaderBuildError:
+      discard values.loadLocalArray(builder.unsignedInteger(8))
+    expect GpuShaderBuildError:
+      values.storeLocalArray(builder.unsignedInteger(0), builder.scalar(1))
+    expect GpuShaderBuildError:
+      discard builder.localArrayAt(0)
+    expect GpuShaderBuildError:
+      discard builder.localArrayAt(high(uint32))
+    check builder.localArrayAt(values.localArrayId()).localArrayId() ==
+      values.localArrayId()
+
+    let foreign = newGpuShaderBuilder(gssCompute)
+    let foreignValues = foreign.localArray(foreign.unsignedInteger(0), 8)
+    expect GpuShaderBuildError:
+      discard values.loadLocalArray(foreign.unsignedInteger(0))
+    expect GpuShaderBuildError:
+      discard foreignValues.loadLocalArray(builder.unsignedInteger(0))
+
+    builder.beginIf(equalTo(
+      builder.unsignedInteger(0),
+      builder.unsignedInteger(0)
+    ))
+    let scoped = builder.localArray(builder.unsignedInteger(0), 2)
+    builder.endIf()
+    expect GpuShaderBuildError:
+      discard scoped.loadLocalArray(builder.unsignedInteger(0))
+
+    builder.storeStorage(
+      output,
+      builder.unsignedInteger(0),
+      values.loadLocalArray(builder.unsignedInteger(0))
+    )
+    discard builder.emitGpuShaderSource()
+    expect GpuShaderBuildError:
+      discard builder.localArray(builder.unsignedInteger(0), 1)
+
+  test "enforces local array count and total element limits":
+    let countBuilder = newGpuShaderBuilder(gssCompute)
+    countBuilder.setComputeWorkGroupSize(1, 1, 1)
+    let countOutput = countBuilder.storageBuffer(
+      "b_output", 0, gsbfUint32, gsaWrite
+    )
+    var last: GpuShaderLocalArray
+    for index in 0 ..< maxGpuShaderLocalArrays:
+      last = countBuilder.localArray(
+        countBuilder.unsignedInteger(uint32(index)),
+        1
+      )
+    expect GpuShaderBuildError:
+      discard countBuilder.localArray(countBuilder.unsignedInteger(0), 1)
+    countBuilder.storeStorage(
+      countOutput,
+      countBuilder.unsignedInteger(0),
+      last.loadLocalArray(countBuilder.unsignedInteger(0))
+    )
+    discard countBuilder.emitGpuShaderSource()
+
+    let totalBuilder = newGpuShaderBuilder(gssCompute)
+    totalBuilder.setComputeWorkGroupSize(1, 1, 1)
+    let totalOutput = totalBuilder.storageBuffer(
+      "b_output", 0, gsbfUint32, gsaWrite
+    )
+    for _ in 0 ..< int(
+        maxGpuShaderLocalArrayElements div maxGpuShaderLocalArrayLength
+    ):
+      last = totalBuilder.localArray(
+        totalBuilder.unsignedInteger(0), maxGpuShaderLocalArrayLength
+      )
+    expect GpuShaderBuildError:
+      discard totalBuilder.localArray(totalBuilder.unsignedInteger(0), 1)
+    totalBuilder.storeStorage(
+      totalOutput,
+      totalBuilder.unsignedInteger(0),
+      last.loadLocalArray(totalBuilder.unsignedInteger(0))
+    )
+    discard totalBuilder.emitGpuShaderSource()
+
   test "emits descending signed loops":
     let builder = newGpuShaderBuilder(gssCompute, "descending-loop")
     builder.setComputeWorkGroupSize(1, 1, 1)

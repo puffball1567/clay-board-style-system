@@ -441,12 +441,15 @@ builder-local handles before source generation. Compute graphs support scalar
 comparisons, boolean composition, typed conditional selection, integer modulo,
 structured `if`/`else` blocks, guarded early return, typed mutable locals, and
 literal-bounded signed or unsigned `for` ranges with `break` and `continue`.
+Initialized fixed-size local arrays support typed numeric-scalar dynamic
+load/store operations for bounded neighbourhood candidate sets without exposing
+backend source.
 This is sufficient to express bounded dispatches and neighbourhood kernels in
 Nim without emitting unchecked out-of-range loads. Expressions and locals
 created inside a control-flow scope cannot escape that scope.
 
 The C ABI publishes equivalent fixed-width storage and expression IDs under
-`shader.authoring` capability version 7. It includes typed 2D storage-image
+`shader.authoring` capability version 8. It includes typed 2D storage-image
 declarations, `imageLoad`/`imageStore`, numeric scalar/vector conversion, and
 unsigned integer not, and, or, xor, left-shift, and right-shift operations.
 Storage buffers and images cannot claim the same compute binding stage. The

@@ -6,6 +6,9 @@ const
   maxGpuShaderNodes* = 4096
   maxGpuShaderOutputs* = 32
   maxGpuShaderLocals* = 512
+  maxGpuShaderLocalArrays* = 64
+  maxGpuShaderLocalArrayLength* = 256'u32
+  maxGpuShaderLocalArrayElements* = 1024'u32
   maxGpuShaderLoopIterations* = 1024'u32
   maxGpuShaderSourceBytes* = 1024 * 1024
   maxGpuComputeThreadsPerGroup* = 1024'u32
@@ -126,6 +129,9 @@ type
     gsnLocalDeclare,
     gsnLocalLoad,
     gsnLocalStore,
+    gsnLocalArrayDeclare,
+    gsnLocalArrayLoad,
+    gsnLocalArrayStore,
     gsnIfBegin,
     gsnElse,
     gsnIfEnd,
@@ -155,6 +161,7 @@ type
     ternary: GpuShaderTernaryOperation
     computeBuiltin: GpuShaderComputeBuiltin
     localIndex: int
+    localArrayIndex: int
     scopeId: int
 
   GpuShaderControlKind = enum
@@ -168,6 +175,11 @@ type
 
   GpuShaderLocalEntry = object
     valueType: GpuShaderValueType
+    definingScope: int
+
+  GpuShaderLocalArrayEntry = object
+    valueType: GpuShaderValueType
+    length: uint32
     definingScope: int
 
   GpuShaderVaryingOutput = object
@@ -204,6 +216,8 @@ type
     currentScope: int
     controlScopes: seq[GpuShaderControlScope]
     locals: seq[GpuShaderLocalEntry]
+    localArrays: seq[GpuShaderLocalArrayEntry]
+    localArrayElements: uint32
     hasComputeWorkGroupSize: bool
     sealed: bool
 
@@ -222,6 +236,10 @@ type
   GpuShaderLocal* = object
     owner: GpuShaderBuilder
     localIndex: int
+
+  GpuShaderLocalArray* = object
+    owner: GpuShaderBuilder
+    localArrayIndex: int
 
   GpuShaderInterfaceEntry* = object
     slot*: GpuShaderInterfaceSlot
@@ -481,6 +499,34 @@ proc localId*(local: GpuShaderLocal): uint32 =
       local.localIndex >= local.owner.locals.len:
     raise newException(GpuShaderBuildError, "GPU shader local is invalid")
   uint32(local.localIndex + 1)
+
+proc requireLocalArray(
+    builder: GpuShaderBuilder;
+    localArray: GpuShaderLocalArray
+): GpuShaderLocalArrayEntry =
+  if localArray.owner != builder or localArray.localArrayIndex < 0 or
+      localArray.localArrayIndex >= builder.localArrays.len:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU shader local array belongs to another builder or is invalid"
+    )
+  result = builder.localArrays[localArray.localArrayIndex]
+  if not builder.isScopeVisible(result.definingScope):
+    raise newException(
+      GpuShaderBuildError,
+      "GPU shader local array is outside its control-flow scope"
+    )
+
+proc localArrayAt*(builder: GpuShaderBuilder; id: uint32): GpuShaderLocalArray =
+  if builder.isNil or id == 0 or uint64(id) > uint64(builder.localArrays.len):
+    raise newException(GpuShaderBuildError, "GPU shader local array id is invalid")
+  GpuShaderLocalArray(owner: builder, localArrayIndex: int(id) - 1)
+
+proc localArrayId*(localArray: GpuShaderLocalArray): uint32 =
+  if localArray.owner.isNil or localArray.localArrayIndex < 0 or
+      localArray.localArrayIndex >= localArray.owner.localArrays.len:
+    raise newException(GpuShaderBuildError, "GPU shader local array is invalid")
+  uint32(localArray.localArrayIndex + 1)
 
 proc requireStorageBuffer(
     builder: GpuShaderBuilder;
@@ -1255,6 +1301,108 @@ proc storeLocal*(local: GpuShaderLocal; value: GpuShaderExpression) =
     localIndex: local.localIndex
   ))
 
+proc localArray*(
+    builder: GpuShaderBuilder;
+    initialValue: GpuShaderExpression;
+    length: uint32
+): GpuShaderLocalArray =
+  builder.requireOpen()
+  if builder.stageValue != gssCompute:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU shader local arrays are compute-only"
+    )
+  if length == 0 or length > maxGpuShaderLocalArrayLength:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU shader local array length must be between 1 and " &
+        $maxGpuShaderLocalArrayLength
+    )
+  if builder.localArrays.len >= maxGpuShaderLocalArrays:
+    raise newException(GpuShaderBuildError, "GPU shader local array limit exceeded")
+  if builder.localArrayElements > maxGpuShaderLocalArrayElements - length:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU shader local array element limit exceeded"
+    )
+  let initial = builder.requireExpression(initialValue)
+  if initial.valueType notin {gsvtFloat, gsvtInt, gsvtUint}:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU shader local arrays require a numeric scalar value"
+    )
+  builder.requireMutable()
+  let localArrayIndex = builder.localArrays.len
+  builder.localArrays.add GpuShaderLocalArrayEntry(
+    valueType: initial.valueType,
+    length: length,
+    definingScope: builder.currentScope
+  )
+  builder.localArrayElements += length
+  builder.addStatement(GpuShaderNode(
+    kind: gsnLocalArrayDeclare,
+    valueType: initial.valueType,
+    operands: [initialValue.nodeIndex, 0, 0, 0],
+    operandCount: 1,
+    localArrayIndex: localArrayIndex
+  ))
+  GpuShaderLocalArray(owner: builder, localArrayIndex: localArrayIndex)
+
+proc requireLocalArrayIndex(
+    builder: GpuShaderBuilder;
+    entry: GpuShaderLocalArrayEntry;
+    index: GpuShaderExpression
+): GpuShaderNode =
+  result = builder.requireExpression(index)
+  if result.valueType != gsvtUint:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU shader local array index must be uint"
+    )
+  if result.kind == gsnLiteral and result.unsignedValues[0] >= entry.length:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU shader local array literal index is out of range"
+    )
+
+proc loadLocalArray*(
+    localArray: GpuShaderLocalArray;
+    index: GpuShaderExpression
+): GpuShaderExpression =
+  if localArray.owner.isNil:
+    raise newException(GpuShaderBuildError, "GPU shader local array is invalid")
+  let builder = localArray.owner
+  let entry = builder.requireLocalArray(localArray)
+  discard builder.requireLocalArrayIndex(entry, index)
+  builder.addNode(GpuShaderNode(
+    kind: gsnLocalArrayLoad,
+    valueType: entry.valueType,
+    operands: [index.nodeIndex, 0, 0, 0],
+    operandCount: 1,
+    localArrayIndex: localArray.localArrayIndex
+  ))
+
+proc storeLocalArray*(
+    localArray: GpuShaderLocalArray;
+    index, value: GpuShaderExpression
+) =
+  if localArray.owner.isNil:
+    raise newException(GpuShaderBuildError, "GPU shader local array is invalid")
+  let builder = localArray.owner
+  let entry = builder.requireLocalArray(localArray)
+  discard builder.requireLocalArrayIndex(entry, index)
+  if builder.requireExpression(value).valueType != entry.valueType:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU shader local array value type does not match"
+    )
+  builder.addStatement(GpuShaderNode(
+    kind: gsnLocalArrayStore,
+    operands: [index.nodeIndex, value.nodeIndex, 0, 0],
+    operandCount: 2,
+    localArrayIndex: localArray.localArrayIndex
+  ))
+
 proc signedLoopIterations(start, stopExclusive, step: int32): uint32 =
   if step == 0:
     raise newException(GpuShaderBuildError, "GPU shader loop step cannot be zero")
@@ -1668,6 +1816,9 @@ proc storageImageMacro(value: GpuStorageAccess): string =
 proc localName(index: int): string =
   "cbss_l" & $index
 
+proc localArrayName(index: int): string =
+  "cbss_a" & $index
+
 proc nodeReference(builder: GpuShaderBuilder; index: int): string =
   let node = builder.nodes[index]
   case node.kind
@@ -1702,6 +1853,9 @@ proc nodeExpression(builder: GpuShaderBuilder; index: int): string =
     result = builder.nodeReference(index)
   of gsnLocalLoad:
     result = node.localIndex.localName
+  of gsnLocalArrayLoad:
+    result = node.localArrayIndex.localArrayName & "[" &
+      builder.nodeReference(node.operands[0]) & "]"
   of gsnConstruct:
     var values: seq[string]
     for operand in 0 ..< int(node.operandCount):
@@ -1806,7 +1960,8 @@ proc nodeExpression(builder: GpuShaderBuilder; index: int): string =
     let storage = builder.storageImages[node.storageImageIndex]
     result = "imageLoad(" & storage.name & ", " &
       builder.nodeReference(node.operands[0]) & ")"
-  of gsnStorageStore, gsnStorageImageStore, gsnLocalDeclare, gsnLocalStore:
+  of gsnStorageStore, gsnStorageImageStore, gsnLocalDeclare, gsnLocalStore,
+      gsnLocalArrayDeclare, gsnLocalArrayStore:
     result = ""
   of gsnIfBegin, gsnElse, gsnIfEnd, gsnForBegin, gsnForEnd, gsnBreak,
       gsnContinue, gsnReturn:
@@ -1940,6 +2095,18 @@ proc emitGpuShaderSource*(builder: GpuShaderBuilder): GpuShaderSource =
     elif node.kind == gsnLocalStore:
       result.source.add prefix & node.localIndex.localName & " = " &
         builder.nodeReference(node.operands[0]) & ";\n"
+    elif node.kind == gsnLocalArrayDeclare:
+      let entry = builder.localArrays[node.localArrayIndex]
+      let name = node.localArrayIndex.localArrayName
+      result.source.add prefix & node.valueType.valueTypeName & " " & name &
+        "[" & $entry.length & "];\n"
+      for elementIndex in 0'u32 ..< entry.length:
+        result.source.add prefix & name & "[" & $elementIndex & "] = " &
+          builder.nodeReference(node.operands[0]) & ";\n"
+    elif node.kind == gsnLocalArrayStore:
+      result.source.add prefix & node.localArrayIndex.localArrayName & "[" &
+        builder.nodeReference(node.operands[0]) & "] = " &
+        builder.nodeReference(node.operands[1]) & ";\n"
     elif node.kind == gsnIfBegin:
       result.source.add prefix & "if (" &
         builder.nodeReference(node.operands[0]) & ")\n" & prefix & "{\n"
@@ -1982,7 +2149,8 @@ proc emitGpuShaderSource*(builder: GpuShaderBuilder): GpuShaderSource =
     elif node.kind notin {
         gsnLiteral, gsnVertexInput, gsnVaryingInput, gsnUniform,
         gsnComputeBuiltin, gsnStorageStore, gsnStorageImageStore,
-        gsnLocalDeclare, gsnLocalStore, gsnIfBegin, gsnElse, gsnIfEnd,
+        gsnLocalDeclare, gsnLocalStore, gsnLocalArrayDeclare,
+        gsnLocalArrayStore, gsnIfBegin, gsnElse, gsnIfEnd,
         gsnForBegin, gsnForEnd, gsnBreak, gsnContinue, gsnReturn
     }:
       result.source.add prefix & node.valueType.valueTypeName & " cbss_n" &
