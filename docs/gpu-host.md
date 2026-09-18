@@ -293,6 +293,32 @@ four groups of `float4` in one buffer and integer identity data in a separate
 This structure-of-packed-arrays contract avoids backend-specific struct layout
 and padding while keeping a whole cell resident across ordered compute passes.
 
+GPU-generated storage can move between retained buffers without a CPU round
+trip. Source and destination buffers must be distinct, use the same storage
+format, and expose compatible shader access. Offsets and byte counts must align
+to complete storage elements:
+
+```nim
+let frame = host.beginGpuFrame()
+host.copyGpuBuffer(
+  resources,
+  simulationOutput,
+  nextSimulationInput,
+  GpuBufferCopyRegion(
+    sourceOffsetBytes: 0,
+    destinationOffsetBytes: 1024,
+    byteCount: 4096
+  )
+)
+host.endGpuFrame(frame)
+```
+
+The overload without a region copies the complete source capacity. A retained
+zero-filled source buffer can therefore clear another compatible storage range
+through the same ordered copy contract without adding an application-specific
+compute kernel. Copies consume one reserved view and one work unit only after
+all host validation and the backend call succeed.
+
 An offscreen render target owns one color attachment and its framebuffer:
 
 ```nim
@@ -574,6 +600,41 @@ stages of one command. Binding stage collisions, duplicate
 uniforms, stale or foreign handles, non-finite values, unsupported mip levels,
 and fixed per-command binding limits fail before pass setup or dispatch.
 
+## Buffer Readback
+
+Shader-written storage can return a complete buffer or one element-aligned
+range asynchronously:
+
+```nim
+let frame = host.beginGpuFrame()
+let pending = host.requestGpuBufferReadback(
+  resources,
+  simulationOutput,
+  offsetBytes = 256,
+  byteCount = 1024
+)
+host.endGpuFrame(frame)
+
+var result: GpuBufferReadbackData
+if host.tryTakeGpuBufferReadback(pending, result):
+  discard result.bytes
+```
+
+`requestGpuBufferReadback(resources, simulationOutput)` reads the complete
+buffer. Readback requires storage declared shader-writable because this path is
+for GPU-produced results rather than a replacement for retained CPU data. CBSS
+owns the destination memory until `tryTakeGpuBufferReadback` transfers it once.
+The source resource and namespace remain retained while work is pending.
+Readback bytes, work units, pending-request count, device generation, and
+borrowed-host teardown use the same bounded lifecycle as texture readback.
+Texture and buffer results are distinct types, and taking a ready request with
+the wrong result type fails without discarding that request.
+
+This is the portable compute-result boundary used by drawing, image-processing,
+and simulation packages. Large persistent fields remain on the GPU across
+passes; only the final bounded result or requested diagnostic range crosses to
+CPU memory.
+
 ## Texture Transfer And Readback
 
 GPU output can cross the portable CPU composition boundary without exposing a
@@ -744,13 +805,16 @@ The current adapter covers initialization or borrowed attachment, capability
 reporting, frame completion, resize, mapped static/dynamic Texture, Buffer, RenderTarget,
 Shader, Uniform, Sampler, Graphics/Compute Pipeline creation, bounded
 graphics/compute submission with sampled textures, storage images, and storage
-buffers, checked partial Texture updates, typed texture copies, asynchronous
-readback, and deterministic teardown
+buffers, checked partial Texture updates, typed texture and storage-buffer
+copies, asynchronous texture and storage-buffer readback, and deterministic teardown
 under both ARC and ORC. Its
 maintained NOOP integration also executes real bgfx static and dynamic buffers,
-aligned partial buffer and Texture updates, blit, readback, framebuffer, uniform,
+aligned partial buffer and Texture updates, texture blit/readback, framebuffer,
+uniform,
 encoder, view, frame, and destruction calls inside a CBSS-owned host. The
-portable adapter contract verifies mapped formats, vertex layouts, index width,
+portable API-159 adapter contract additionally executes storage-buffer copy and
+readback calls against the pinned headers and verifies their exact ranges. It
+also verifies mapped formats, vertex layouts, index width,
 initial data, labels, updates, offscreen target flags, shader bytecode copies,
 program creation, dependency-safe destruction, graphics submission, compute
 dispatch, and ordered teardown through deterministic C fixtures.

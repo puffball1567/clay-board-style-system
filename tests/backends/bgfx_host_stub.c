@@ -30,6 +30,13 @@ static uint8_t cbss_last_compute_buffer_stage;
 static bgfx_access_t cbss_last_compute_buffer_access;
 static uint32_t cbss_blit_count;
 static uint32_t cbss_readback_count;
+static uint32_t cbss_buffer_blit_count;
+static uint32_t cbss_buffer_readback_count;
+static uint32_t cbss_last_buffer_blit_source_offset;
+static uint32_t cbss_last_buffer_blit_destination_offset;
+static uint32_t cbss_last_buffer_blit_bytes;
+static uint32_t cbss_last_buffer_readback_offset;
+static uint32_t cbss_last_buffer_readback_bytes;
 static uint32_t cbss_last_sampler_flags;
 static bgfx_access_t cbss_last_image_access;
 static bgfx_view_id_t cbss_last_view_id;
@@ -92,24 +99,25 @@ void bgfx_init_ctor(bgfx_init_t* init)
     memset(init, 0, sizeof(*init));
     init->type = BGFX_RENDERER_TYPE_COUNT;
     init->vendorId = BGFX_PCI_ID_NONE;
-    init->resolution.formatColor = BGFX_TEXTURE_FORMAT_BGRA8;
-    init->resolution.formatDepthStencil = BGFX_TEXTURE_FORMAT_D24S8;
-    init->resolution.numBackBuffers = 2;
+    init->swapChain.formatColor = BGFX_TEXTURE_FORMAT_BGRA8;
+    init->swapChain.formatDepthStencil = BGFX_TEXTURE_FORMAT_D24S8;
+    init->swapChain.depth.idx = UINT16_MAX;
+    init->swapChain.numBackBuffers = 2;
 }
 
 bool bgfx_init(const bgfx_init_t* init)
 {
-    if (NULL == init || cbss_initialized || 0 == init->resolution.width
-        || 0 == init->resolution.height
-        || BGFX_TEXTURE_FORMAT_BGRA8 != init->resolution.formatColor
-        || BGFX_TEXTURE_FORMAT_D24S8 != init->resolution.formatDepthStencil
-        || 2 != init->resolution.numBackBuffers)
+    if (NULL == init || cbss_initialized || 0 == init->swapChain.width
+        || 0 == init->swapChain.height
+        || BGFX_TEXTURE_FORMAT_BGRA8 != init->swapChain.formatColor
+        || BGFX_TEXTURE_FORMAT_D24S8 != init->swapChain.formatDepthStencil
+        || 2 != init->swapChain.numBackBuffers)
     {
         return false;
     }
     cbss_initialized = true;
-    cbss_width = init->resolution.width;
-    cbss_height = init->resolution.height;
+    cbss_width = init->swapChain.width;
+    cbss_height = init->swapChain.height;
     return true;
 }
 
@@ -135,9 +143,9 @@ const bgfx_caps_t* bgfx_get_caps(void)
     static bgfx_caps_t caps;
     memset(&caps, 0, sizeof(caps));
     caps.rendererType = BGFX_RENDERER_TYPE_NOOP;
-    caps.supported = BGFX_CAPS_COMPUTE | BGFX_CAPS_TEXTURE_BLIT
-        | BGFX_CAPS_TEXTURE_READ_BACK;
+    caps.supported = BGFX_CAPS_COMPUTE;
     caps.homogeneousDepth = true;
+    caps.limits.maxBlits = 1024;
     caps.limits.maxTextureSize = 16384;
     return &caps;
 }
@@ -148,14 +156,23 @@ uint32_t bgfx_frame(uint8_t flags)
     return ++cbss_frame_count;
 }
 
-void bgfx_reset(uint32_t width, uint32_t height, uint32_t flags,
-                bgfx_texture_format_t format)
+void bgfx_reset(uint32_t flags, const bgfx_swap_chain_t* swap_chain)
 {
     (void)flags;
-    (void)format;
     ++cbss_reset_count;
-    cbss_width = width;
-    cbss_height = height;
+    if (NULL != swap_chain)
+    {
+        cbss_width = swap_chain->width;
+        cbss_height = swap_chain->height;
+    }
+}
+
+void bgfx_set_debug(uint32_t debug, bgfx_frame_buffer_handle_t handle,
+                    uint8_t scale)
+{
+    (void)debug;
+    (void)handle;
+    (void)scale;
 }
 
 bgfx_vertex_layout_t* bgfx_vertex_layout_begin(
@@ -768,34 +785,65 @@ void bgfx_dispatch(bgfx_view_id_t id, bgfx_program_handle_t program,
     }
 }
 
-void bgfx_blit(bgfx_view_id_t id, bgfx_texture_handle_t dst,
-               uint8_t dst_mip, uint16_t dst_x, uint16_t dst_y,
-               uint16_t dst_z, bgfx_texture_handle_t src, uint8_t src_mip,
-               uint16_t src_x, uint16_t src_y, uint16_t src_z,
-               uint16_t width, uint16_t height, uint16_t depth)
+void bgfx_texture_region_init(bgfx_texture_region_t* region,
+                              bgfx_texture_handle_t handle, uint16_t x,
+                              uint16_t y, uint16_t width, uint16_t height)
 {
-    (void)dst_mip;
-    (void)dst_x;
-    (void)dst_y;
-    (void)dst_z;
-    (void)src_mip;
-    (void)src_x;
-    (void)src_y;
-    (void)src_z;
-    if (UINT16_MAX != dst.idx && UINT16_MAX != src.idx && 0 != width
-        && 0 != height && 1 == depth)
+    if (NULL == region)
+    {
+        return;
+    }
+    memset(region, 0, sizeof(*region));
+    region->handle = handle;
+    region->x = x;
+    region->y = y;
+    region->width = width;
+    region->height = height;
+}
+
+void bgfx_buffer_region_init_buffer(bgfx_buffer_region_t* region,
+                                    bgfx_buffer_handle_t handle,
+                                    uint32_t offset, uint32_t size)
+{
+    if (NULL == region)
+    {
+        return;
+    }
+    memset(region, 0, sizeof(*region));
+    region->handle = handle;
+    region->offset = offset;
+    region->size = size;
+}
+
+void bgfx_blit(bgfx_view_id_t id, const bgfx_texture_region_t* dst,
+               const bgfx_texture_region_t* src)
+{
+    if (NULL != dst && NULL != src && UINT16_MAX != dst->handle.idx
+        && UINT16_MAX != src->handle.idx && 0 != src->width
+        && 0 != src->height)
     {
         cbss_last_view_id = id;
         ++cbss_blit_count;
     }
 }
 
-uint32_t bgfx_read_texture(bgfx_texture_handle_t handle, void* data,
-                           uint16_t layer, uint8_t mip)
+void bgfx_blit_buffer(bgfx_view_id_t id, const bgfx_buffer_region_t* dst,
+                      const bgfx_buffer_region_t* src)
 {
-    (void)layer;
-    (void)mip;
-    if (UINT16_MAX == handle.idx || NULL == data)
+    if (NULL != dst && NULL != src && UINT16_MAX != dst->handle.idx
+        && UINT16_MAX != src->handle.idx && 0 != src->size)
+    {
+        cbss_last_view_id = id;
+        cbss_last_buffer_blit_source_offset = src->offset;
+        cbss_last_buffer_blit_destination_offset = dst->offset;
+        cbss_last_buffer_blit_bytes = src->size;
+        ++cbss_buffer_blit_count;
+    }
+}
+
+uint32_t bgfx_read_texture(const bgfx_texture_region_t* src, void* data)
+{
+    if (NULL == src || UINT16_MAX == src->handle.idx || NULL == data)
     {
         return 0;
     }
@@ -808,6 +856,24 @@ uint32_t bgfx_read_texture(bgfx_texture_handle_t handle, void* data,
         output[index] = (uint8_t)(index % 251);
     }
     ++cbss_readback_count;
+    return cbss_frame_count + 1;
+}
+
+uint32_t bgfx_read_buffer(const bgfx_buffer_region_t* src, void* data)
+{
+    if (NULL == src || UINT16_MAX == src->handle.idx || NULL == data
+        || 0 == src->size)
+    {
+        return 0;
+    }
+    uint8_t* output = (uint8_t*)data;
+    for (uint32_t index = 0; index < src->size; ++index)
+    {
+        output[index] = (uint8_t)((src->offset + index) % 251);
+    }
+    cbss_last_buffer_readback_offset = src->offset;
+    cbss_last_buffer_readback_bytes = src->size;
+    ++cbss_buffer_readback_count;
     return cbss_frame_count + 1;
 }
 
@@ -836,6 +902,13 @@ void cbss_bgfx_stub_reset_counters(void)
     cbss_last_compute_buffer_access = BGFX_ACCESS_COUNT;
     cbss_blit_count = 0;
     cbss_readback_count = 0;
+    cbss_buffer_blit_count = 0;
+    cbss_buffer_readback_count = 0;
+    cbss_last_buffer_blit_source_offset = 0;
+    cbss_last_buffer_blit_destination_offset = 0;
+    cbss_last_buffer_blit_bytes = 0;
+    cbss_last_buffer_readback_offset = 0;
+    cbss_last_buffer_readback_bytes = 0;
     cbss_last_sampler_flags = 0;
     cbss_last_image_access = BGFX_ACCESS_COUNT;
     cbss_last_view_id = 0;
@@ -948,6 +1021,34 @@ uint32_t cbss_bgfx_stub_last_compute_buffer_access(void)
 }
 uint32_t cbss_bgfx_stub_blit_count(void) { return cbss_blit_count; }
 uint32_t cbss_bgfx_stub_readback_count(void) { return cbss_readback_count; }
+uint32_t cbss_bgfx_stub_buffer_blit_count(void)
+{
+    return cbss_buffer_blit_count;
+}
+uint32_t cbss_bgfx_stub_buffer_readback_count(void)
+{
+    return cbss_buffer_readback_count;
+}
+uint32_t cbss_bgfx_stub_last_buffer_blit_source_offset(void)
+{
+    return cbss_last_buffer_blit_source_offset;
+}
+uint32_t cbss_bgfx_stub_last_buffer_blit_destination_offset(void)
+{
+    return cbss_last_buffer_blit_destination_offset;
+}
+uint32_t cbss_bgfx_stub_last_buffer_blit_bytes(void)
+{
+    return cbss_last_buffer_blit_bytes;
+}
+uint32_t cbss_bgfx_stub_last_buffer_readback_offset(void)
+{
+    return cbss_last_buffer_readback_offset;
+}
+uint32_t cbss_bgfx_stub_last_buffer_readback_bytes(void)
+{
+    return cbss_last_buffer_readback_bytes;
+}
 uint32_t cbss_bgfx_stub_last_sampler_flags(void)
 {
     return cbss_last_sampler_flags;

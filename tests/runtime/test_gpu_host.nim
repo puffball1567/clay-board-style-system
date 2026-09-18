@@ -44,7 +44,9 @@ type MockGpuContext = ref object of GpuBackendContext
   submitDrawStatus: GpuBackendStatus
   dispatchStatus: GpuBackendStatus
   copyTextureStatus: GpuBackendStatus
+  copyBufferStatus: GpuBackendStatus
   requestReadbackStatus: GpuBackendStatus
+  requestBufferReadbackStatus: GpuBackendStatus
   pollReadbackStatus: GpuBackendStatus
   resolvePresentationTextureStatus: GpuBackendStatus
   ownedOpens: int
@@ -69,7 +71,9 @@ type MockGpuContext = ref object of GpuBackendContext
   drawSubmits: int
   computeDispatches: int
   textureCopies: int
+  bufferCopies: int
   readbackRequests: int
+  bufferReadbackRequests: int
   readbackPolls: int
   presentationTextureResolves: int
   resourceDestroys: int
@@ -99,13 +103,17 @@ type MockGpuContext = ref object of GpuBackendContext
   lastComputeCommand: GpuComputeCommand
   lastBindings: GpuBackendBindingSet
   lastCopyRegion: GpuTextureCopyRegion
+  lastBufferCopyRegion: GpuBufferCopyRegion
   lastCopySourceKind: GpuResourceKind
   lastReadbackBytes: uint64
+  lastBufferReadbackOffset: uint64
   readbackReady: bool
   nextCompletionToken: uint64
   readbackSeed: int
   copySupported: bool
   readbackSupported: bool
+  bufferCopySupported: bool
+  bufferReadbackSupported: bool
   directTextureSupported: bool
   directRenderTargetSupported: bool
   directComputeOutputSupported: bool
@@ -134,6 +142,8 @@ proc openOwned(
     computeSupported: true,
     textureCopySupported: state.copySupported,
     textureReadbackSupported: state.readbackSupported,
+    bufferCopySupported: state.bufferCopySupported,
+    bufferReadbackSupported: state.bufferReadbackSupported,
     directTexturePresentationSupported: state.directTextureSupported,
     directRenderTargetPresentationSupported: state.directRenderTargetSupported,
     directComputeOutputPresentationSupported: state.directComputeOutputSupported,
@@ -159,6 +169,8 @@ proc attachBorrowed(
     rendererName: "mock-borrowed",
     textureCopySupported: state.copySupported,
     textureReadbackSupported: state.readbackSupported,
+    bufferCopySupported: state.bufferCopySupported,
+    bufferReadbackSupported: state.bufferReadbackSupported,
     directTexturePresentationSupported: state.directTextureSupported,
     directRenderTargetPresentationSupported: state.directRenderTargetSupported,
     directComputeOutputPresentationSupported: state.directComputeOutputSupported,
@@ -460,6 +472,46 @@ proc requestReadback(
     inc state.nextCompletionToken
   state.requestReadbackStatus
 
+proc copyBuffer(
+    context: GpuBackendContext;
+    viewId: uint16;
+    source, destination: GpuBackendResourceId;
+    region: GpuBufferCopyRegion
+): GpuBackendStatus {.raises: [].} =
+  let state = context.mock
+  inc state.bufferCopies
+  state.lastViewId = viewId
+  state.lastBufferCopyRegion = region
+  state.lastSubmissionResources = @[
+    source.backendResourceIdValue(),
+    destination.backendResourceIdValue()
+  ]
+  state.copyBufferStatus
+
+proc requestBufferReadback(
+    context: GpuBackendContext;
+    buffer: GpuBackendResourceId;
+    descriptor: GpuBufferDescriptor;
+    offsetBytes: uint64;
+    destination: pointer;
+    destinationBytes: uint64;
+    completionToken: var uint64
+): GpuBackendStatus {.raises: [].} =
+  discard descriptor
+  let state = context.mock
+  inc state.bufferReadbackRequests
+  state.lastSubmissionResources = @[buffer.backendResourceIdValue()]
+  state.lastBufferReadbackOffset = offsetBytes
+  state.lastReadbackBytes = destinationBytes
+  if state.requestBufferReadbackStatus == gbsOk:
+    let bytes = cast[ptr UncheckedArray[byte]](destination)
+    for index in 0 ..< int(destinationBytes):
+      bytes[index] = byte((int(offsetBytes) + index + state.readbackSeed) mod 251)
+    inc state.readbackSeed
+    completionToken = state.nextCompletionToken
+    inc state.nextCompletionToken
+  state.requestBufferReadbackStatus
+
 proc pollReadback(
     context: GpuBackendContext;
     completionToken: uint64;
@@ -522,7 +574,9 @@ proc backend(state: MockGpuContext): GpuBackendVTable =
     submitDraw: submitDraw,
     dispatch: dispatch,
     copyTexture: copyTexture,
+    copyBuffer: copyBuffer,
     requestReadback: requestReadback,
+    requestBufferReadback: requestBufferReadback,
     pollReadback: pollReadback,
     resolvePresentationTexture: resolvePresentationTexture,
     destroyResource: destroyResource,
@@ -551,12 +605,16 @@ proc newContext(): MockGpuContext =
     submitDrawStatus: gbsOk,
     dispatchStatus: gbsOk,
     copyTextureStatus: gbsOk,
+    copyBufferStatus: gbsOk,
     requestReadbackStatus: gbsOk,
+    requestBufferReadbackStatus: gbsOk,
     pollReadbackStatus: gbsOk,
     resolvePresentationTextureStatus: gbsOk,
     nextCompletionToken: 1,
     copySupported: true,
     readbackSupported: true,
+    bufferCopySupported: true,
+    bufferReadbackSupported: true,
     nextBackendResource: 1
   )
 
@@ -4441,6 +4499,253 @@ suite "GPU texture transfer and readback":
     check host.tryTakeGpuReadback(readback, data)
     host.close()
     check context.borrowedDetaches == 1
+
+suite "GPU storage buffer transfer and readback":
+
+  test "partial copies and asynchronous readback preserve byte ranges":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "buffer-transfer",
+      GpuResourceBudget(
+        persistentBytes: 128,
+        readbackBytesPerFrame: 32,
+        workUnitsPerFrame: 2,
+        maxResources: 2
+      )
+    )
+    let source = host.createGpuBuffer(
+      namespace,
+      storageBufferDescriptor(access = gbaStatic, storageAccess = gsaRead),
+      newSeq[byte](64)
+    )
+    let destination = host.createGpuBuffer(
+      namespace,
+      storageBufferDescriptor(storageAccess = gsaReadWrite)
+    )
+    let region = GpuBufferCopyRegion(
+      sourceOffsetBytes: 16,
+      destinationOffsetBytes: 32,
+      byteCount: 16
+    )
+
+    let frame = host.beginGpuFrame()
+    host.copyGpuBuffer(namespace, source, destination, region)
+    let readback = host.requestGpuBufferReadback(
+      namespace, destination, offsetBytes = 16, byteCount = 32
+    )
+    check context.bufferCopies == 1
+    check context.lastBufferCopyRegion == region
+    check context.bufferReadbackRequests == 1
+    check context.lastReadbackBytes == 32
+    check host.gpuNamespaceUsage(namespace).readbackBytes == 32
+    check host.gpuNamespaceUsage(namespace).workUnits == 2
+    check host.pendingGpuReadbackCount(namespace) == 1
+    expect GpuHostError:
+      discard host.releaseGpuResource(destination)
+    host.endGpuFrame(frame)
+
+    context.readbackReady = true
+    var textureData: GpuReadbackData
+    expect GpuHostError:
+      discard host.tryTakeGpuReadback(readback, textureData)
+    var data: GpuBufferReadbackData
+    check host.tryTakeGpuBufferReadback(readback, data)
+    check data.offsetBytes == 16
+    check data.bytes.len == 32
+    check data.bytes[0] == 16
+    check data.bytes[31] == 47
+    check host.gpuReadbackState(readback) == grsInvalid
+    check host.releaseGpuResource(destination)
+    check host.releaseGpuResource(source)
+    host.close()
+
+  test "whole buffer copy uses the source capacity":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "whole-buffer-transfer",
+      GpuResourceBudget(
+        persistentBytes: 128,
+        workUnitsPerFrame: 1,
+        maxResources: 2
+      )
+    )
+    let source = host.createGpuBuffer(
+      namespace,
+      storageBufferDescriptor(access = gbaStatic, storageAccess = gsaRead),
+      newSeq[byte](64)
+    )
+    let destination = host.createGpuBuffer(namespace, storageBufferDescriptor())
+    let frame = host.beginGpuFrame()
+    host.copyGpuBuffer(namespace, source, destination)
+    check context.lastBufferCopyRegion == GpuBufferCopyRegion(byteCount: 64)
+    host.endGpuFrame(frame)
+    host.close()
+
+  test "whole buffer readback uses the retained buffer capacity":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "whole-buffer-readback",
+      GpuResourceBudget(
+        persistentBytes: 64,
+        readbackBytesPerFrame: 64,
+        workUnitsPerFrame: 1,
+        maxResources: 1
+      )
+    )
+    let buffer = host.createGpuBuffer(namespace, storageBufferDescriptor())
+    let frame = host.beginGpuFrame()
+    let readback = host.requestGpuBufferReadback(namespace, buffer)
+    check context.lastBufferReadbackOffset == 0
+    check context.lastReadbackBytes == 64
+    host.endGpuFrame(frame)
+
+    context.readbackReady = true
+    var data: GpuBufferReadbackData
+    check host.tryTakeGpuBufferReadback(readback, data)
+    check data.offsetBytes == 0
+    check data.bytes.len == 64
+    host.close()
+
+  test "buffer transfer rejects incompatible access format range and ownership":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let budget = GpuResourceBudget(
+      persistentBytes: 1024,
+      readbackBytesPerFrame: 128,
+      workUnitsPerFrame: 8,
+      maxResources: 12
+    )
+    let namespace = host.createGpuNamespace("invalid-buffer-transfer", budget)
+    let foreign = host.createGpuNamespace("foreign-buffer-transfer", budget)
+    let source = host.createGpuBuffer(
+      namespace,
+      storageBufferDescriptor(access = gbaStatic, storageAccess = gsaRead),
+      newSeq[byte](64)
+    )
+    let destination = host.createGpuBuffer(namespace, storageBufferDescriptor())
+    let writeOnly = host.createGpuBuffer(
+      namespace, storageBufferDescriptor(storageAccess = gsaWrite)
+    )
+    let readOnly = host.createGpuBuffer(
+      namespace, storageBufferDescriptor(storageAccess = gsaRead)
+    )
+    let mismatched = host.createGpuBuffer(
+      namespace, storageBufferDescriptor(storageFormat = gsbfUint32x4)
+    )
+    let vertex = host.createGpuBuffer(
+      namespace,
+      vertexBufferDescriptor(access = gbaDynamic),
+      newSeq[byte](24)
+    )
+    let foreignSource = host.createGpuBuffer(
+      foreign,
+      storageBufferDescriptor(access = gbaStatic, storageAccess = gsaRead),
+      newSeq[byte](64)
+    )
+
+    let frame = host.beginGpuFrame()
+    for invalid in [
+      GpuBufferCopyRegion(),
+      GpuBufferCopyRegion(sourceOffsetBytes: 1, byteCount: 16),
+      GpuBufferCopyRegion(destinationOffsetBytes: 16, byteCount: 60),
+      GpuBufferCopyRegion(sourceOffsetBytes: 64, byteCount: 16)
+    ]:
+      expect GpuHostError:
+        host.copyGpuBuffer(namespace, source, destination, invalid)
+    for pair in [
+      (writeOnly, destination),
+      (source, readOnly),
+      (source, mismatched),
+      (source, vertex),
+      (foreignSource, destination),
+      (source, source)
+    ]:
+      expect GpuHostError:
+        host.copyGpuBuffer(
+          namespace, pair[0], pair[1], GpuBufferCopyRegion(byteCount: 16)
+        )
+    for request in [
+      (source, 0'u64, 16'u64),
+      (destination, 1'u64, 16'u64),
+      (destination, 0'u64, 0'u64),
+      (destination, 48'u64, 32'u64),
+      (foreignSource, 0'u64, 16'u64)
+    ]:
+      expect GpuHostError:
+        discard host.requestGpuBufferReadback(
+          namespace, request[0], request[1], request[2]
+        )
+    check context.bufferCopies == 0
+    check context.bufferReadbackRequests == 0
+    check host.gpuNamespaceUsage(namespace).readbackBytes == 0
+    check host.gpuNamespaceUsage(namespace).workUnits == 0
+    host.endGpuFrame(frame)
+    host.close()
+
+  test "buffer transfer capability and backend failures remain atomic":
+    block missingCapabilities:
+      let context = newContext()
+      context.bufferCopySupported = false
+      context.bufferReadbackSupported = false
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace(
+        "unsupported-buffer-transfer",
+        GpuResourceBudget(
+          persistentBytes: 128,
+          readbackBytesPerFrame: 16,
+          workUnitsPerFrame: 2,
+          maxResources: 2
+        )
+      )
+      let source = host.createGpuBuffer(
+        namespace,
+        storageBufferDescriptor(access = gbaStatic, storageAccess = gsaRead),
+        newSeq[byte](64)
+      )
+      let destination = host.createGpuBuffer(namespace, storageBufferDescriptor())
+      let frame = host.beginGpuFrame()
+      expect GpuHostError:
+        host.copyGpuBuffer(namespace, source, destination)
+      expect GpuHostError:
+        discard host.requestGpuBufferReadback(namespace, destination, 0, 16)
+      check context.bufferCopies == 0
+      check context.bufferReadbackRequests == 0
+      host.endGpuFrame(frame)
+      host.close()
+
+    block backendFailures:
+      let context = newContext()
+      context.copyBufferStatus = gbsFailed
+      context.requestBufferReadbackStatus = gbsFailed
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace(
+        "failed-buffer-transfer",
+        GpuResourceBudget(
+          persistentBytes: 128,
+          readbackBytesPerFrame: 16,
+          workUnitsPerFrame: 2,
+          maxResources: 2
+        )
+      )
+      let source = host.createGpuBuffer(
+        namespace,
+        storageBufferDescriptor(access = gbaStatic, storageAccess = gsaRead),
+        newSeq[byte](64)
+      )
+      let destination = host.createGpuBuffer(namespace, storageBufferDescriptor())
+      let frame = host.beginGpuFrame()
+      expect GpuHostError:
+        host.copyGpuBuffer(namespace, source, destination)
+      expect GpuHostError:
+        discard host.requestGpuBufferReadback(namespace, destination, 0, 16)
+      check host.pendingGpuReadbackCount(namespace) == 0
+      check host.gpuNamespaceUsage(namespace).readbackBytes == 0
+      check host.gpuNamespaceUsage(namespace).workUnits == 0
+      host.endGpuFrame(frame)
+      host.close()
 
 suite "GPU canvas composition bridge":
 

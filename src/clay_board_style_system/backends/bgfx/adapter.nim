@@ -7,6 +7,7 @@ import ../../core/geometry
 import ../../paint/gpu_direct_compositor
 import ../../runtime/gpu_direct_surface
 import ../../runtime/gpu_host
+import ./platform_data
 
 type
   BgfxDirectPresentationProfile* = object
@@ -23,7 +24,7 @@ type
     vendorId*, deviceId*: uint16
     capabilities*: uint64
     debug*, profile*, fallback*, videoDecode*: bool
-    platformData*: bgfx_platform_data_t
+    platformData*: BgfxPlatformData
     colorFormat*: bgfx_texture_format_t
     depthStencilFormat*: bgfx_texture_format_t
     numBackBuffers*, maxFrameLatency*, debugTextScale*: uint8
@@ -35,6 +36,7 @@ type
     owned: bool
     initialized: bool
     config: GpuHostConfig
+    swapChain: bgfx_swap_chain_t
     completedFrame: uint32
 
   BgfxDirectCompositeSubmission* = object
@@ -125,9 +127,10 @@ proc fillBackendInfo(
   info = GpuBackendInfo(
     rendererName: (if name.isNil: "bgfx" else: $name),
     computeSupported: (caps.supported and BGFX_CAPS_COMPUTE) != 0,
-    textureCopySupported: (caps.supported and BGFX_CAPS_TEXTURE_BLIT) != 0,
-    textureReadbackSupported:
-      (caps.supported and BGFX_CAPS_TEXTURE_READ_BACK) != 0,
+    textureCopySupported: caps.limits.maxBlits != 0,
+    textureReadbackSupported: true,
+    bufferCopySupported: (caps.supported and BGFX_CAPS_COMPUTE) != 0,
+    bufferReadbackSupported: (caps.supported and BGFX_CAPS_COMPUTE) != 0,
     directTexturePresentationSupported:
       value.options.directPresentation.textureSupported,
     directRenderTargetPresentationSupported:
@@ -175,25 +178,36 @@ proc initializeOwned(
   init.profile = value.options.profile
   init.fallback = value.options.fallback
   init.videoDecode = value.options.videoDecode
-  init.platformData = value.options.platformData
-  init.resolution.width = config.width
-  init.resolution.height = config.height
-  init.resolution.reset = config.resetFlags
+  init.platformData = value.options.platformData.platform
+  # Preserve the API-version-specific defaults established by bgfx_init_ctor.
+  # Platform data contributes native handles; host options own presentation
+  # formats and scheduling parameters.
+  value.swapChain = init.swapChain
+  value.swapChain.nwh = value.options.platformData.swapChain.nwh
+  value.swapChain.ndt = value.options.platformData.swapChain.ndt
+  value.swapChain.width = config.width
+  value.swapChain.height = config.height
+  init.reset = config.resetFlags
   if value.options.colorFormat != BGFX_TEXTURE_FORMAT_COUNT:
-    init.resolution.formatColor = value.options.colorFormat
+    value.swapChain.formatColor = value.options.colorFormat
   if value.options.depthStencilFormat != BGFX_TEXTURE_FORMAT_COUNT:
-    init.resolution.formatDepthStencil = value.options.depthStencilFormat
+    value.swapChain.formatDepthStencil = value.options.depthStencilFormat
   if value.options.numBackBuffers != 0:
-    init.resolution.numBackBuffers = value.options.numBackBuffers
+    value.swapChain.numBackBuffers = value.options.numBackBuffers
   if value.options.maxFrameLatency != 0:
-    init.resolution.maxFrameLatency = value.options.maxFrameLatency
-  if value.options.debugTextScale != 0:
-    init.resolution.debugTextScale = value.options.debugTextScale
+    value.swapChain.maxFrameLatency = value.options.maxFrameLatency
+  init.swapChain = value.swapChain
 
   if not BGFX.init(addr init):
     return gbsUnavailable
   value.initialized = true
   value.completedFrame = 0
+  if value.options.debugTextScale != 0:
+    BGFX.setDebug(
+      BGFX_DEBUG_NONE,
+      invalidHandle(bgfx_frame_buffer_handle_t),
+      value.options.debugTextScale
+    )
   result = fillBackendInfo(value, info)
   if result != gbsOk:
     BGFX.shutdown()
@@ -251,7 +265,10 @@ proc resize(
 ): GpuBackendStatus {.raises: [].} =
   if not rawContext.context.attached:
     return gbsFailed
-  BGFX.reset(width, height, resetFlags, BGFX_TEXTURE_FORMAT_COUNT)
+  let value = rawContext.context
+  value.swapChain.width = width
+  value.swapChain.height = height
+  BGFX.reset(resetFlags, addr value.swapChain)
   if rawContext.context.owned:
     rawContext.context.config.width = width
     rawContext.context.config.height = height
@@ -323,6 +340,19 @@ proc unpackBackendResource(
   if payload == 0 or payload > uint64(high(uint16)) + 1'u64 or tag == 0:
     return (tag, 0'u16, false)
   (tag, uint16(payload - 1'u64), true)
+
+proc bgfxBufferHandle(
+    resource: tuple[tag: uint64, handleIndex: uint16, valid: bool]
+): bgfx_buffer_handle_t =
+  result.idx = resource.handleIndex
+  result.type = uint16(
+    case resource.tag
+    of brtStaticIndexBuffer: BGFX_BUFFER_HANDLE_TYPE_INDEX_BUFFER
+    of brtDynamicIndexBuffer: BGFX_BUFFER_HANDLE_TYPE_DYNAMIC_INDEX_BUFFER
+    of brtStaticVertexBuffer: BGFX_BUFFER_HANDLE_TYPE_VERTEX_BUFFER
+    of brtDynamicVertexBuffer: BGFX_BUFFER_HANDLE_TYPE_DYNAMIC_VERTEX_BUFFER
+    else: BGFX_BUFFER_HANDLE_TYPE_COUNT
+  )
 
 proc resolvePresentationTexture(
     rawContext: GpuBackendContext;
@@ -503,20 +533,6 @@ proc bgfxIndexFlags(descriptor: GpuBufferDescriptor): uint16 =
 
 proc bgfxStorageBufferFlags(descriptor: GpuBufferDescriptor): uint16 =
   result = BGFX_BUFFER_INDEX32
-  case descriptor.storageFormat
-  of gsbfInt32, gsbfUint32, gsbfFloat32:
-    result = result or BGFX_BUFFER_COMPUTE_FORMAT_32X1
-  of gsbfInt32x2, gsbfUint32x2, gsbfFloat32x2:
-    result = result or BGFX_BUFFER_COMPUTE_FORMAT_32X2
-  of gsbfInt32x4, gsbfUint32x4, gsbfFloat32x4:
-    result = result or BGFX_BUFFER_COMPUTE_FORMAT_32X4
-  case descriptor.storageFormat
-  of gsbfInt32, gsbfInt32x2, gsbfInt32x4:
-    result = result or BGFX_BUFFER_COMPUTE_TYPE_INT
-  of gsbfUint32, gsbfUint32x2, gsbfUint32x4:
-    result = result or BGFX_BUFFER_COMPUTE_TYPE_UINT
-  of gsbfFloat32, gsbfFloat32x2, gsbfFloat32x4:
-    result = result or BGFX_BUFFER_COMPUTE_TYPE_FLOAT
   case descriptor.storageAccess
   of gsaRead: result = result or BGFX_BUFFER_COMPUTE_READ
   of gsaWrite: result = result or BGFX_BUFFER_COMPUTE_WRITE
@@ -1290,7 +1306,7 @@ proc copyTexture(
       not destinationResource.valid or destinationResource.tag != brtTexture:
     return gbsInvalidConfiguration
   let caps = BGFX.getCaps()
-  if caps.isNil or (caps.supported and BGFX_CAPS_TEXTURE_BLIT) == 0:
+  if caps.isNil or caps.limits.maxBlits == 0:
     return gbsUnsupported
 
   var sourceTexture: bgfx_texture_handle_t
@@ -1311,22 +1327,59 @@ proc copyTexture(
   else:
     return gbsInvalidConfiguration
 
-  BGFX.blit(
-    viewId,
-    bgfx_texture_handle_t(idx: destinationResource.handleIndex),
-    0,
-    uint16(region.destinationX),
-    uint16(region.destinationY),
-    0,
+  var sourceRegion, destinationRegion: bgfx_texture_region_t
+  BGFX.textureRegionInit(
+    addr sourceRegion,
     sourceTexture,
-    0,
     uint16(region.sourceX),
     uint16(region.sourceY),
-    0,
     uint16(region.width),
-    uint16(region.height),
-    1
+    uint16(region.height)
   )
+  BGFX.textureRegionInit(
+    addr destinationRegion,
+    bgfx_texture_handle_t(idx: destinationResource.handleIndex),
+    uint16(region.destinationX),
+    uint16(region.destinationY),
+    uint16(region.width),
+    uint16(region.height)
+  )
+  BGFX.blit(viewId, addr destinationRegion, addr sourceRegion)
+  gbsOk
+
+proc copyBuffer(
+    rawContext: GpuBackendContext;
+    viewId: uint16;
+    source, destination: GpuBackendResourceId;
+    region: GpuBufferCopyRegion
+): GpuBackendStatus {.raises: [].} =
+  let value = rawContext.context
+  let sourceResource = source.unpackBackendResource()
+  let destinationResource = destination.unpackBackendResource()
+  if not value.attached or not sourceResource.valid or
+      not destinationResource.valid or
+      (sourceResource.tag != brtStaticIndexBuffer and
+       sourceResource.tag != brtDynamicIndexBuffer) or
+      destinationResource.tag != brtDynamicIndexBuffer or
+      region.sourceOffsetBytes > uint64(high(uint32)) or
+      region.destinationOffsetBytes > uint64(high(uint32)) or
+      region.byteCount == 0 or region.byteCount > uint64(high(uint32)):
+    return gbsInvalidConfiguration
+
+  var sourceRegion, destinationRegion: bgfx_buffer_region_t
+  BGFX.bufferRegionInitBuffer(
+    addr sourceRegion,
+    sourceResource.bgfxBufferHandle(),
+    uint32(region.sourceOffsetBytes),
+    uint32(region.byteCount)
+  )
+  BGFX.bufferRegionInitBuffer(
+    addr destinationRegion,
+    destinationResource.bgfxBufferHandle(),
+    uint32(region.destinationOffsetBytes),
+    0
+  )
+  BGFX.blitBuffer(viewId, addr destinationRegion, addr sourceRegion)
   gbsOk
 
 proc requestReadback(
@@ -1354,15 +1407,46 @@ proc requestReadback(
       descriptor.width == 0 or descriptor.height == 0 or
       destinationBytes != expectedBytes:
     return gbsInvalidConfiguration
-  let caps = BGFX.getCaps()
-  if caps.isNil or (caps.supported and BGFX_CAPS_TEXTURE_READ_BACK) == 0:
-    return gbsUnsupported
-  completionToken = uint64(BGFX.readTexture(
+  var sourceRegion: bgfx_texture_region_t
+  BGFX.textureRegionInit(
+    addr sourceRegion,
     bgfx_texture_handle_t(idx: resource.handleIndex),
-    destination,
     0,
-    0
-  ))
+    0,
+    uint16(descriptor.width),
+    uint16(descriptor.height)
+  )
+  completionToken = uint64(BGFX.readTexture(addr sourceRegion, destination))
+  gbsOk
+
+proc requestBufferReadback(
+    rawContext: GpuBackendContext;
+    buffer: GpuBackendResourceId;
+    descriptor: GpuBufferDescriptor;
+    offsetBytes: uint64;
+    destination: pointer;
+    destinationBytes: uint64;
+    completionToken: var uint64
+): GpuBackendStatus {.raises: [].} =
+  let value = rawContext.context
+  let resource = buffer.unpackBackendResource()
+  if not value.attached or not resource.valid or
+      (resource.tag != brtStaticIndexBuffer and
+       resource.tag != brtDynamicIndexBuffer) or
+      descriptor.role != gbrStorage or
+      descriptor.storageAccess notin {gsaWrite, gsaReadWrite} or
+      destination.isNil or destinationBytes == 0 or
+      offsetBytes > uint64(high(uint32)) or
+      destinationBytes > uint64(high(uint32)):
+    return gbsInvalidConfiguration
+  var sourceRegion: bgfx_buffer_region_t
+  BGFX.bufferRegionInitBuffer(
+    addr sourceRegion,
+    resource.bgfxBufferHandle(),
+    uint32(offsetBytes),
+    uint32(destinationBytes)
+  )
+  completionToken = uint64(BGFX.readBuffer(addr sourceRegion, destination))
   gbsOk
 
 proc pollReadback(
@@ -1454,7 +1538,9 @@ proc newBgfxBackend*(
     submitDraw: submitDraw,
     dispatch: dispatch,
     copyTexture: copyTexture,
+    copyBuffer: copyBuffer,
     requestReadback: requestReadback,
+    requestBufferReadback: requestBufferReadback,
     pollReadback: pollReadback,
     resolvePresentationTexture: resolvePresentationTexture,
     destroyResource: destroyResource,

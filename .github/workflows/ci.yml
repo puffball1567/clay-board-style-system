@@ -210,21 +210,21 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: puffball1567/bgfxim
-          ref: v0.3.0
+          ref: v0.4.0
           path: bgfxim
 
       - name: Check out the pinned bgfx headers
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: bkaradzic/bgfx
-          ref: d8db55f8123a4a0871b1290fec2e5d0caae01bbf
+          ref: 8c8b6b5692be5054e89d2a59640c50b9319c9425
           path: bgfx
 
       - name: Check out the pinned bx headers
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: bkaradzic/bx
-          ref: 9e3fadf6f11380031486be704d2ff46ca143664f
+          ref: 98ad3bec2a7ee1a5cbabdcabc25252572dcb1d88
           path: bx
 
       - name: Check out the pinned bimg sources
@@ -232,7 +232,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: bkaradzic/bimg
-          ref: 371d90098b1fd017cd00205979d5ef74b8c3ed62
+          ref: ddbeeae05779f84f97694553eb41605a60f86f0a
           path: bimg
 
       - name: Install Nim
@@ -254,7 +254,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: bgfx/tools/bin/linux/shaderc
-          key: cbss-linux-shaderc-d8db55f8-9e3fadf6-371d9009
+          key: cbss-linux-shaderc-8c8b6b56-98ad3bec-ddbeeae0
 
       - name: Build the pinned official bgfx shader compiler
         if: runner.os == 'Linux' && steps.shaderc-cache.outputs.cache-hit != 'true'

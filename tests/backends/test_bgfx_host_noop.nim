@@ -303,25 +303,13 @@ discard BGFX.encoderSetScissor(encoder, 0, 0, 64, 64)
 BGFX.encoderTouch(encoder, 0)
 BGFX.encoderEnd(encoder)
 
-BGFX.blit(
-  0,
-  texture,
-  0,
-  0,
-  0,
-  0,
-  sourceTexture,
-  0,
-  0,
-  0,
-  0,
-  2,
-  2,
-  1
-)
+var sourceRegion, destinationRegion: bgfx_texture_region_t
+BGFX.textureRegionInit(addr sourceRegion, sourceTexture, 0, 0, 2, 2)
+BGFX.textureRegionInit(addr destinationRegion, texture, 0, 0, 2, 2)
+BGFX.blit(0, addr destinationRegion, addr sourceRegion)
 
 var readback: array[16, uint8]
-let readbackFrame = BGFX.readTexture(texture, addr readback[0], 0, 0)
+let readbackFrame = BGFX.readTexture(addr destinationRegion, addr readback[0])
 doAssert readbackFrame > 0
 host.endGpuFrame(token)
 
