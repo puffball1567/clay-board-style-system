@@ -9,6 +9,12 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added typed mutable Compute locals and literal-bounded signed and unsigned
+  `for` ranges with lexical scope validation, `break`, and `continue`. Loops
+  are rejected before source generation when their step is zero or their
+  iteration count exceeds 1,024. The matching append-only C API advances the
+  ABI to `0x00010024` and `shader.authoring` capability version 7.
+
 - Added fixed-stride packed GPU records for mixed float and unsigned physical
   fields. Typed shaders address portable `uint32` storage words, preserve
   floating bits exactly, validate explicit offsets, overlap, stride, access,

@@ -770,6 +770,149 @@ suite "typed GPU compute shader authoring":
     check " ? " in source
     check "else" in source
 
+  test "emits typed mutable locals and bounded nested loops":
+    let builder = newGpuShaderBuilder(gssCompute, "bounded-local-loops")
+    builder.setComputeWorkGroupSize(1, 1, 1)
+    let output = builder.storageBuffer("b_output", 0, gsbfInt32, gsaWrite)
+    let accumulator = builder.localValue(builder.signedInteger(0))
+    let outer = builder.beginForRange(-1'i32, 2'i32, 1'i32)
+    let inner = builder.beginForRange(0'u32, 8'u32, 2'u32)
+    let innerValue = inner.loadLocal()
+    builder.beginIf(equalTo(innerValue, builder.unsignedInteger(2)))
+    builder.continueLoop()
+    builder.endIf()
+    let next = accumulator.loadLocal() + outer.loadLocal()
+    accumulator.storeLocal(next)
+    builder.beginIf(equalTo(inner.loadLocal(), builder.unsignedInteger(6)))
+    builder.breakLoop()
+    builder.endIf()
+    builder.endForRange()
+    builder.endForRange()
+    builder.storeStorage(
+      output,
+      builder.unsignedInteger(0),
+      accumulator.loadLocal()
+    )
+
+    let source = builder.emitGpuShaderSource().source
+    check "int cbss_l0 = 0;" in source
+    check "for (int cbss_l1 = -1; cbss_l1 < 2; cbss_l1 += 1)" in source
+    check "for (uint cbss_l2 = 0u; cbss_l2 < 8u; cbss_l2 += 2u)" in source
+    check "continue;" in source
+    check "break;" in source
+    check "cbss_l0 = cbss_n" in source
+    check "b_output[" in source
+
+  test "loads mutable locals as expression snapshots":
+    let builder = newGpuShaderBuilder(gssCompute, "local-snapshot")
+    builder.setComputeWorkGroupSize(1, 1, 1)
+    let output = builder.storageBuffer("b_output", 0, gsbfInt32, gsaWrite)
+    let value = builder.localValue(builder.signedInteger(1))
+    let before = value.loadLocal()
+    value.storeLocal(builder.signedInteger(2))
+    builder.storeStorage(output, builder.unsignedInteger(0), before)
+
+    let source = builder.emitGpuShaderSource().source
+    let snapshotPosition = source.find(" = cbss_l0;")
+    let mutationPosition = source.find("cbss_l0 = 2;")
+    check snapshotPosition >= 0
+    check mutationPosition > snapshotPosition
+
+  test "emits descending signed loops":
+    let builder = newGpuShaderBuilder(gssCompute, "descending-loop")
+    builder.setComputeWorkGroupSize(1, 1, 1)
+    let output = builder.storageBuffer("b_output", 0, gsbfInt32, gsaWrite)
+    let value = builder.localValue(builder.signedInteger(0))
+    let index = builder.beginForRange(2'i32, -2'i32, -1'i32)
+    value.storeLocal(value.loadLocal() + index.loadLocal())
+    builder.endForRange()
+    builder.storeStorage(output, builder.unsignedInteger(0), value.loadLocal())
+
+    let source = builder.emitGpuShaderSource().source
+    check "for (int cbss_l1 = 2; cbss_l1 > -2; cbss_l1 -= 1)" in source
+
+  test "rejects unsafe loops locals and crossed control scopes":
+    let fragment = newGpuShaderBuilder(gssFragment)
+    expect GpuShaderBuildError:
+      discard fragment.localValue(fragment.scalar(0))
+    expect GpuShaderBuildError:
+      discard fragment.beginForRange(0'i32, 1'i32, 1'i32)
+
+    let builder = newGpuShaderBuilder(gssCompute)
+    builder.setComputeWorkGroupSize(1, 1, 1)
+    let output = builder.storageBuffer("b_output", 0, gsbfInt32, gsaWrite)
+    expect GpuShaderBuildError:
+      discard builder.beginForRange(0'i32, 1'i32, 0'i32)
+    expect GpuShaderBuildError:
+      discard builder.beginForRange(0'i32, -1'i32, low(int32))
+    expect GpuShaderBuildError:
+      discard builder.beginForRange(0'u32, 1'u32, 0'u32)
+    expect GpuShaderBuildError:
+      discard builder.beginForRange(0'i32, 1025'i32, 1'i32)
+    expect GpuShaderBuildError:
+      discard builder.beginForRange(0'u32, 2048'u32, 1'u32)
+    expect GpuShaderBuildError:
+      builder.breakLoop()
+    expect GpuShaderBuildError:
+      builder.continueLoop()
+    expect GpuShaderBuildError:
+      builder.endForRange()
+
+    let loopIndex = builder.beginForRange(0'i32, 1'i32, 1'i32)
+    builder.beginIf(equalTo(loopIndex.loadLocal(), builder.signedInteger(0)))
+    expect GpuShaderBuildError:
+      builder.endForRange()
+    let scoped = builder.localValue(builder.signedInteger(1))
+    builder.endIf()
+    expect GpuShaderBuildError:
+      discard scoped.loadLocal()
+    builder.endForRange()
+    expect GpuShaderBuildError:
+      discard loopIndex.loadLocal()
+
+    let condition = equalTo(builder.signedInteger(0), builder.signedInteger(0))
+    builder.beginIf(condition)
+    expect GpuShaderBuildError:
+      builder.endForRange()
+    builder.endIf()
+
+    let rootLocal = builder.localValue(builder.signedInteger(0))
+    expect GpuShaderBuildError:
+      rootLocal.storeLocal(builder.scalar(1))
+    let foreign = newGpuShaderBuilder(gssCompute)
+    let foreignLocal = foreign.localValue(foreign.signedInteger(0))
+    expect GpuShaderBuildError:
+      rootLocal.storeLocal(foreignLocal.loadLocal())
+    expect GpuShaderBuildError:
+      discard builder.localAt(0)
+    expect GpuShaderBuildError:
+      discard builder.localAt(high(uint32))
+    check builder.localAt(rootLocal.localId()).localId() == rootLocal.localId()
+    builder.storeStorage(output, builder.unsignedInteger(0), rootLocal.loadLocal())
+    discard builder.emitGpuShaderSource()
+
+  test "rejects unclosed bounded loops":
+    let builder = newGpuShaderBuilder(gssCompute)
+    builder.setComputeWorkGroupSize(1, 1, 1)
+    let output = builder.storageBuffer("b_output", 0, gsbfInt32, gsaWrite)
+    let loopIndex = builder.beginForRange(0'i32, 1'i32, 1'i32)
+    builder.storeStorage(output, builder.unsignedInteger(0), loopIndex.loadLocal())
+    expect GpuShaderBuildError:
+      discard builder.emitGpuShaderSource()
+
+  test "enforces the bounded mutable-local count":
+    let builder = newGpuShaderBuilder(gssCompute)
+    builder.setComputeWorkGroupSize(1, 1, 1)
+    let output = builder.storageBuffer("b_output", 0, gsbfInt32, gsaWrite)
+    var last: GpuShaderLocal
+    for index in 0 ..< maxGpuShaderLocals:
+      last = builder.localValue(builder.signedInteger(int32(index)))
+    expect GpuShaderBuildError:
+      discard builder.localValue(builder.signedInteger(0))
+    builder.storeStorage(output, builder.unsignedInteger(0), last.loadLocal())
+    check builder.emitGpuShaderSource().source.count("int cbss_l") ==
+      maxGpuShaderLocals
+
   test "rejects invalid control flow and scoped expression leaks":
     let fragment = newGpuShaderBuilder(gssFragment)
     let color = fragment.vector([1'f32, 0'f32, 0'f32, 1'f32])

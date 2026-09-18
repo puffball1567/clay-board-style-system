@@ -439,13 +439,14 @@ The builder validates work-group bounds, binding-stage uniqueness, access
 direction, unsigned indices, exact element types, control-flow scope, and
 builder-local handles before source generation. Compute graphs support scalar
 comparisons, boolean composition, typed conditional selection, integer modulo,
-structured `if`/`else` blocks, and guarded early return. This is sufficient to
-express bounded dispatches and to unroll fixed neighbourhood kernels in Nim
-without emitting unchecked out-of-range loads. Expressions created inside a
-branch cannot escape that branch's lexical scope.
+structured `if`/`else` blocks, guarded early return, typed mutable locals, and
+literal-bounded signed or unsigned `for` ranges with `break` and `continue`.
+This is sufficient to express bounded dispatches and neighbourhood kernels in
+Nim without emitting unchecked out-of-range loads. Expressions and locals
+created inside a control-flow scope cannot escape that scope.
 
 The C ABI publishes equivalent fixed-width storage and expression IDs under
-`shader.authoring` capability version 6. It includes typed 2D storage-image
+`shader.authoring` capability version 7. It includes typed 2D storage-image
 declarations, `imageLoad`/`imageStore`, numeric scalar/vector conversion, and
 unsigned integer not, and, or, xor, left-shift, and right-shift operations.
 Storage buffers and images cannot claim the same compute binding stage. The
