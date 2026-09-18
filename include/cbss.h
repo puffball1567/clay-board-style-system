@@ -26,7 +26,7 @@ extern "C" {
 #endif
 
 /* CBSS_GENERATED_DRIVER_CONTRACT_BEGIN */
-#define CBSS_ABI_VERSION 0x00010022u
+#define CBSS_ABI_VERSION 0x00010023u
 #define CBSS_DRIVER_CONTRACT_VERSION 0x00010000u
 
 typedef enum CbssCapabilityId {
@@ -1173,6 +1173,9 @@ CBSS_API CbssStatus cbss_shader_builder_storage_store(
     CbssShaderBuilder *builder, CbssShaderStorageBuffer storage,
     CbssShaderExpression index, CbssShaderExpression value);
 CBSS_API CbssStatus cbss_shader_builder_convert(
+    CbssShaderBuilder *builder, CbssShaderValueType value_type,
+    CbssShaderExpression expression, CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_bitcast(
     CbssShaderBuilder *builder, CbssShaderValueType value_type,
     CbssShaderExpression expression, CbssShaderExpression *output);
 CBSS_API CbssStatus cbss_shader_builder_storage_image_load(

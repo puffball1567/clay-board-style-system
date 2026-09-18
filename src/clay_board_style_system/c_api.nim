@@ -2151,6 +2151,30 @@ proc cbssShaderBuilderConvert(
   except CatchableError as error:
     handle.shaderBuilderError(error.msg, CbssInternalError)
 
+proc cbssShaderBuilderBitcast(
+    handle: CbssShaderBuilderHandle;
+    valueType, expression: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_bitcast", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    storeShaderExpression(
+      output,
+      handle.builder.reinterpretValue(
+        valueType.shaderValueType,
+        handle.shaderExpression(expression)
+      )
+    )
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
 proc cbssShaderBuilderStorageImageLoad(
     handle: CbssShaderBuilderHandle;
     storage, coordinates: uint32;
