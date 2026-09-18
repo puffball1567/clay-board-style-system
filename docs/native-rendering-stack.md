@@ -82,8 +82,10 @@ after device loss. Independent visualization and compute packages receive
 named resource namespaces with separate persistent, transient-upload,
 readback, per-frame work, and resource-count budgets. The current namespace
 API establishes identity and accounting. Typed resources, graphics/compute
-submission, texture blits, and asynchronous readback are implemented without
-exposing raw bgfx handles in ordinary UI code. `GpuCanvasSurface` owns a bounded
+submission, texture and storage-buffer blits, and asynchronous typed readback
+are implemented without exposing raw bgfx handles in ordinary UI code. Storage
+results may remain GPU-resident across ordered passes, move between compatible
+buffers, and return only a bounded final range to CPU memory. `GpuCanvasSurface` owns a bounded
 asynchronous readback ring and publishes the newest ordered GPU frame through
 the existing `RasterSurface`. `GpuDisplaySurface` additionally negotiates a
 backend-neutral direct Texture/RenderTarget path with the same asynchronous
@@ -100,7 +102,9 @@ runtime. A process cannot attach two CBSS bgfx hosts at once. In addition to
 the portable ABI contract, Linux and
 macOS CI build the pinned real bgfx NOOP renderer and exercise resource,
 partial-update, offscreen-target, encoder, readback, frame, owned-runtime
-restoration, and teardown calls inside a CBSS-owned host under ARC and ORC. The
+restoration, and teardown calls inside a CBSS-owned host under ARC and ORC. A
+separate portable API-159 contract links the buffer-transfer adapter to the
+pinned headers and verifies exact copy/readback ranges under ARC and ORC. The
 portable deterministic adapter contract also covers shader/program creation,
 graphics submission, compute dispatch, and destruction without claiming
 visible renderer output.

@@ -69,6 +69,20 @@ proc lastComputeBufferAccess(): uint32 {.
 proc blitCount(): uint32 {.importc: "cbss_bgfx_stub_blit_count", cdecl.}
 proc readbackCount(): uint32 {.
   importc: "cbss_bgfx_stub_readback_count", cdecl.}
+proc bufferBlitCount(): uint32 {.
+  importc: "cbss_bgfx_stub_buffer_blit_count", cdecl.}
+proc bufferReadbackCount(): uint32 {.
+  importc: "cbss_bgfx_stub_buffer_readback_count", cdecl.}
+proc lastBufferBlitSourceOffset(): uint32 {.
+  importc: "cbss_bgfx_stub_last_buffer_blit_source_offset", cdecl.}
+proc lastBufferBlitDestinationOffset(): uint32 {.
+  importc: "cbss_bgfx_stub_last_buffer_blit_destination_offset", cdecl.}
+proc lastBufferBlitBytes(): uint32 {.
+  importc: "cbss_bgfx_stub_last_buffer_blit_bytes", cdecl.}
+proc lastBufferReadbackOffset(): uint32 {.
+  importc: "cbss_bgfx_stub_last_buffer_readback_offset", cdecl.}
+proc lastBufferReadbackBytes(): uint32 {.
+  importc: "cbss_bgfx_stub_last_buffer_readback_bytes", cdecl.}
 proc lastSamplerFlags(): uint32 {.
   importc: "cbss_bgfx_stub_last_sampler_flags", cdecl.}
 proc lastImageAccess(): uint32 {.
@@ -212,12 +226,11 @@ suite "optional bgfxim adapter":
         display: display,
         window: window
       ))
-      check data.ndt == display
-      check data.nwh == window
-      check data.context.isNil
-      check data.backBuffer.isNil
-      check data.backBufferDS.isNil
-      check data.type ==
+      check data.swapChain.ndt == display
+      check data.swapChain.nwh == window
+      check data.platform.context.isNil
+      check data.platform.queue.isNil
+      check data.platform.type ==
         (if system == bnwsWayland:
           BGFX_NATIVE_WINDOW_HANDLE_TYPE_WAYLAND
         else:
@@ -227,9 +240,9 @@ suite "optional bgfxim adapter":
         system: system,
         window: window
       ))
-      check data.ndt.isNil
-      check data.nwh == window
-      check data.type == BGFX_NATIVE_WINDOW_HANDLE_TYPE_DEFAULT
+      check data.swapChain.ndt.isNil
+      check data.swapChain.nwh == window
+      check data.platform.type == BGFX_NATIVE_WINDOW_HANDLE_TYPE_DEFAULT
 
   test "native window platform data rejects missing required handles":
     for system in BgfxNativeWindowSystem:
@@ -246,8 +259,8 @@ suite "optional bgfxim adapter":
         system: system,
         window: cast[pointer](1'u)
       ))
-      check data.ndt.isNil
-      check data.nwh == cast[pointer](1'u)
+      check data.swapChain.ndt.isNil
+      check data.swapChain.nwh == cast[pointer](1'u)
       expect BgfxPlatformDataError:
         discard bgfxPlatformData(BgfxNativeWindowHandles(
           system: system,
@@ -264,9 +277,9 @@ suite "optional bgfxim adapter":
           driver.cstring, 7, display, window, 0
         )
         let data = bgfxPlatformDataFromSdl3Window(cast[pointer](1'u))
-        check data.nwh == window
-        check data.ndt == (if driver == "wayland": display else: nil)
-        check data.type ==
+        check data.swapChain.nwh == window
+        check data.swapChain.ndt == (if driver == "wayland": display else: nil)
+        check data.platform.type ==
           (if driver == "wayland":
             BGFX_NATIVE_WINDOW_HANDLE_TYPE_WAYLAND
           else:
@@ -274,9 +287,9 @@ suite "optional bgfxim adapter":
 
       configureSdl3PlatformStub("x11", 7, display, window, 0x7654)
       let x11 = bgfxPlatformDataFromSdl3Window(cast[pointer](1'u))
-      check x11.ndt == display
-      check x11.nwh == cast[pointer](0x7654'u)
-      check x11.type == BGFX_NATIVE_WINDOW_HANDLE_TYPE_DEFAULT
+      check x11.swapChain.ndt == display
+      check x11.swapChain.nwh == cast[pointer](0x7654'u)
+      check x11.platform.type == BGFX_NATIVE_WINDOW_HANDLE_TYPE_DEFAULT
 
     test "SDL3 native window data fails closed for invalid state":
       let display = cast[pointer](0x1234'u)
@@ -774,6 +787,10 @@ suite "optional bgfxim adapter":
     let host = openGpuHost(backend, ghoOwned, config())
     check host.backendInfo.rendererName == "CBSS bgfx stub"
     check host.backendInfo.computeSupported
+    check host.backendInfo.textureCopySupported
+    check host.backendInfo.textureReadbackSupported
+    check host.backendInfo.bufferCopySupported
+    check host.backendInfo.bufferReadbackSupported
     check host.backendInfo.homogeneousDepth
     check host.backendInfo.maxTextureSize == 16384
     check not host.backendInfo.directTexturePresentationSupported
@@ -792,9 +809,9 @@ suite "optional bgfxim adapter":
       GpuResourceBudget(
         persistentBytes: 4096,
         transientBytesPerFrame: 64,
-        readbackBytesPerFrame: 512,
-        workUnitsPerFrame: 8,
-        maxResources: 20
+        readbackBytesPerFrame: 1024,
+        workUnitsPerFrame: 12,
+        maxResources: 24
       )
     )
     let pixels = newSeq[byte](4 * 2 * 4)
@@ -1004,8 +1021,6 @@ suite "optional bgfxim adapter":
     )
     check indexBufferCreateCount() == 2
     check (lastBufferFlags() and BGFX_BUFFER_INDEX32) != 0
-    check (lastBufferFlags() and BGFX_BUFFER_COMPUTE_FORMAT_32X4) != 0
-    check (lastBufferFlags() and BGFX_BUFFER_COMPUTE_TYPE_FLOAT) != 0
     check (lastBufferFlags() and BGFX_BUFFER_COMPUTE_READ) != 0
 
     let dynamicStorageBuffer = host.createGpuBuffer(
@@ -1021,13 +1036,25 @@ suite "optional bgfxim adapter":
     )
     check dynamicIndexBufferCreateCount() == 2
     check (lastBufferFlags() and BGFX_BUFFER_INDEX32) != 0
-    check (lastBufferFlags() and BGFX_BUFFER_COMPUTE_FORMAT_32X2) != 0
-    check (lastBufferFlags() and BGFX_BUFFER_COMPUTE_TYPE_UINT) != 0
     check (lastBufferFlags() and BGFX_BUFFER_COMPUTE_READ_WRITE) != 0
     host.updateGpuBuffer(dynamicStorageBuffer, 16, newSeq[byte](16))
     check dynamicIndexBufferUpdateCount() == 2
     check lastBufferUpdateStart() == 4
     check lastBufferDataBytes() == 16
+
+    let transferSourceBuffer = host.createGpuBuffer(
+      resourceNamespace,
+      GpuBufferDescriptor(
+        byteSize: 64,
+        role: gbrStorage,
+        access: gbaStatic,
+        storageFormat: gsbfUint32x2,
+        storageAccess: gsaRead,
+        label: "adapter-transfer-source"
+      ),
+      newSeq[byte](64)
+    )
+    check host.isGpuResourceLive(transferSourceBuffer)
 
     let renderTarget = host.createGpuRenderTarget(
       resourceNamespace,
@@ -1200,9 +1227,27 @@ suite "optional bgfxim adapter":
     )
     host.copyGpuTexture(resourceNamespace, renderTarget, readbackTexture)
     let readback = host.requestGpuReadback(resourceNamespace, readbackTexture)
+    host.copyGpuBuffer(
+      resourceNamespace,
+      transferSourceBuffer,
+      dynamicStorageBuffer,
+      GpuBufferCopyRegion(
+        sourceOffsetBytes: 16,
+        destinationOffsetBytes: 32,
+        byteCount: 16
+      )
+    )
+    let bufferReadback = host.requestGpuBufferReadback(
+      resourceNamespace,
+      dynamicStorageBuffer,
+      offsetBytes = 16,
+      byteCount = 16
+    )
     check host.gpuReadbackState(readback) == grsPending
+    check host.gpuReadbackState(bufferReadback) == grsPending
     host.endGpuFrame(token)
     check host.gpuReadbackState(readback) == grsReady
+    check host.gpuReadbackState(bufferReadback) == grsReady
     var readbackData: GpuReadbackData
     check host.tryTakeGpuReadback(readback, readbackData)
     check readbackData.width == 16
@@ -1210,6 +1255,12 @@ suite "optional bgfxim adapter":
     check readbackData.rowStride == 64
     check readbackData.pixels.len == 512
     check readbackData.pixels[511] == byte(511 mod 251)
+    var bufferReadbackData: GpuBufferReadbackData
+    check host.tryTakeGpuBufferReadback(bufferReadback, bufferReadbackData)
+    check bufferReadbackData.offsetBytes == 16
+    check bufferReadbackData.bytes.len == 16
+    check bufferReadbackData.bytes[0] == byte(16 mod 251)
+    check bufferReadbackData.bytes[15] == byte(31 mod 251)
     check frameCount() == 2
     check submitCount() == 2
     check dispatchCount() == 2
@@ -1229,13 +1280,20 @@ suite "optional bgfxim adapter":
     check lastComputeBufferAccess() == uint32(BGFX_ACCESS_READWRITE)
     check blitCount() == 1
     check readbackCount() == 1
+    check bufferBlitCount() == 1
+    check bufferReadbackCount() == 1
+    check lastBufferBlitSourceOffset() == 16
+    check lastBufferBlitDestinationOffset() == 32
+    check lastBufferBlitBytes() == 16
+    check lastBufferReadbackOffset() == 16
+    check lastBufferReadbackBytes() == 16
     check (lastSamplerFlags() and BGFX_SAMPLER_U_CLAMP) != 0
     check (lastSamplerFlags() and BGFX_SAMPLER_V_MIRROR) != 0
     check (lastSamplerFlags() and BGFX_SAMPLER_MIN_POINT) != 0
     check (lastSamplerFlags() and BGFX_SAMPLER_MAG_ANISOTROPIC) != 0
     check (lastSamplerFlags() and BGFX_SAMPLER_MIP_POINT) != 0
     check lastImageAccess() == uint32(BGFX_ACCESS_READWRITE)
-    check lastViewId() == 2
+    check lastViewId() == 4
     check (lastState() and BGFX_STATE_WRITE_RGB) == BGFX_STATE_WRITE_RGB
     check (lastState() and BGFX_STATE_WRITE_A) == BGFX_STATE_WRITE_A
     check (lastState() and BGFX_STATE_CULL_CW) == BGFX_STATE_CULL_CW
@@ -1263,9 +1321,10 @@ suite "optional bgfxim adapter":
     check frameBufferDestroyCount() == 1
     check host.releaseGpuResource(readbackTexture)
     check host.releaseGpuResource(staticStorageBuffer)
+    check host.releaseGpuResource(transferSourceBuffer)
     check host.releaseGpuResource(dynamicStorageBuffer)
     check host.releaseGpuResource(indexBuffer)
-    check indexBufferDestroyCount() == 2
+    check indexBufferDestroyCount() == 3
     check host.releaseGpuResource(dynamicVertexBuffer)
     check dynamicVertexBufferDestroyCount() == 1
     check host.releaseGpuResource(dynamicIndexBuffer)

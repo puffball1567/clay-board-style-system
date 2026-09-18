@@ -4,6 +4,10 @@ when not defined(cbssGpuBgfx):
 import bgfx
 
 type
+  BgfxPlatformData* = object
+    platform*: bgfx_platform_data_t
+    swapChain*: bgfx_swap_chain_t
+
   BgfxNativeWindowSystem* = enum
     bnwsX11,
     bnwsWayland,
@@ -17,7 +21,7 @@ type
 
   BgfxPlatformDataError* = object of CatchableError
 
-proc bgfxPlatformData*(handles: BgfxNativeWindowHandles): bgfx_platform_data_t =
+proc bgfxPlatformData*(handles: BgfxNativeWindowHandles): BgfxPlatformData =
   if handles.window.isNil:
     raise newException(BgfxPlatformDataError, "native window handle is missing")
   if handles.system in {bnwsX11, bnwsWayland} and handles.display.isNil:
@@ -25,9 +29,9 @@ proc bgfxPlatformData*(handles: BgfxNativeWindowHandles): bgfx_platform_data_t =
   if handles.system in {bnwsWin32, bnwsCocoa} and not handles.display.isNil:
     raise newException(BgfxPlatformDataError, "native display handle is not valid for this window system")
 
-  result.ndt = handles.display
-  result.nwh = handles.window
-  result.type =
+  result.swapChain.ndt = handles.display
+  result.swapChain.nwh = handles.window
+  result.platform.type =
     if handles.system == bnwsWayland:
       BGFX_NATIVE_WINDOW_HANDLE_TYPE_WAYLAND
     else:

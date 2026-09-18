@@ -1039,7 +1039,7 @@ an enum-only API.
 ## GPU Canvas Capability
 
 Status: `Version 0.7 in progress; typed GPU resources, checked dynamic Texture
-updates, submission, transfer, asynchronous readback, portable RasterSurface
+and storage-buffer updates, submission, transfer, asynchronous typed readback, portable RasterSurface
 composition, typed graphics and compute authoring, and build-only shader
 packaging with runtime binding-layout validation implemented`
 
@@ -2265,6 +2265,12 @@ Mat4 Uniforms, wrap/filter Samplers, sampled textures, and compute storage
 images are resolved through the same namespace and generation checks before
 backend submission. Checked texture-region copies and bounded asynchronous
 readback now establish the portable GPU-to-`RasterSurface` transfer boundary.
+Compatible typed storage buffers can now copy complete or element-aligned byte
+ranges on the ordered GPU queue, and shader-written buffers can return a whole
+buffer or bounded range through the same asynchronous lifetime and budget
+model. This lets drawing and image-processing packages keep working fields on
+the GPU, clear ranges from retained zero buffers, chain compute passes without
+CPU staging, and retrieve only final output or diagnostics.
 Offscreen Canvas composition is implemented through `GpuCanvasSurface`, and
 `gpuVisualLayer` mounts it as a bounded underlay or overlay of an ordinary
 component without taking over events or accessibility. Typed Shader Builder

@@ -1,8 +1,6 @@
 when not defined(cbssGpuBgfx):
   {.error: "SDL3 bgfx platform data requires -d:cbssGpuBgfx and the optional bgfxim package".}
 
-import bgfx
-
 import ../../vendor/sdl3
 import ./platform_data
 
@@ -26,7 +24,7 @@ proc requiredPointer(properties: SDL_PropertiesID; name: string): pointer =
   if result.isNil:
     raise newException(BgfxPlatformDataError, "SDL3 window property is missing: " & name)
 
-proc bgfxPlatformDataFromSdl3Window*(window: pointer): bgfx_platform_data_t =
+proc bgfxPlatformDataFromSdl3Window*(window: pointer): BgfxPlatformData =
   if window.isNil:
     raise newException(BgfxPlatformDataError, "SDL3 window is nil")
   let properties = SDL3.getWindowProperties(window)
