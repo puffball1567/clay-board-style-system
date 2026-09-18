@@ -9,6 +9,13 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added fixed-stride packed GPU records for mixed float and unsigned physical
+  fields. Typed shaders address portable `uint32` storage words, preserve
+  floating bits exactly, validate explicit offsets, overlap, stride, access,
+  ownership, and host-size limits, and derive matching GPU buffer descriptors.
+  The additive `cbss_shader_builder_bitcast` C API advances the ABI to
+  `0x00010023` and `shader.authoring` capability version 6.
+
 - Added typed unsigned-integer bitwise shader operations for packed compute
   metadata: not, and, or, xor, left shift, and right shift. The matching C ABI
   advances to `0x00010022` and `shader.authoring` capability version 5.

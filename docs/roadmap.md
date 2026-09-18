@@ -2278,7 +2278,12 @@ authoring now maps bounded Nim expression graphs to deterministic bgfx source,
 and the append-only C ABI exposes the same graph through opaque handles and
 fixed-width expression IDs. Generated source is compiled only by build tools;
 the resulting artifact enters the existing retained Shader/Pipeline contract
-for both direct GPU submission and component-owned GPU visual layers. The
+for both direct GPU submission and component-owned GPU visual layers. Fixed-
+stride packed physical records now map mixed float and unsigned fields onto
+portable `uint32` storage with exact bit reinterpretation and explicit offsets.
+This avoids backend-specific structure padding while simulation and image-
+processing packages move resident field arrays into CBSS compute graphs; the
+matching primitive is append-only in the C ABI. The
 resource contract additionally supports R16F/R32F, RG16F/RG32F, and
 RGBA16F/RGBA32F textures plus typed compute storage buffers with bounded,
 stage-checked read/write access. Dynamic storage buffers accept element-aligned

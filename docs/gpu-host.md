@@ -445,7 +445,7 @@ without emitting unchecked out-of-range loads. Expressions created inside a
 branch cannot escape that branch's lexical scope.
 
 The C ABI publishes equivalent fixed-width storage and expression IDs under
-`shader.authoring` capability version 5. It includes typed 2D storage-image
+`shader.authoring` capability version 6. It includes typed 2D storage-image
 declarations, `imageLoad`/`imageStore`, numeric scalar/vector conversion, and
 unsigned integer not, and, or, xor, left-shift, and right-shift operations.
 Storage buffers and images cannot claim the same compute binding stage. The

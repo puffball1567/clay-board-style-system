@@ -1,6 +1,7 @@
 import std/[math, strutils, unittest]
 
-import clay_board_style_system/runtime/[gpu_host, gpu_shader_builder]
+import clay_board_style_system/runtime/[gpu_host, gpu_shader_builder,
+    gpu_shader_records]
 
 proc buildVertexShader(): GpuShaderSource =
   let builder = newGpuShaderBuilder(gssVertex, "basic-vertex")
@@ -278,6 +279,156 @@ suite "typed GPU shader authoring":
       discard builder.scalar(0'f32)
 
 suite "typed GPU compute shader authoring":
+  test "maps mixed physical records through portable uint storage words":
+    let cellLayout = gpuPackedRecordLayout([
+      gpuPackedField("availableLiquid", gsvtFloat),
+      gpuPackedField("absorbedLiquid", gsvtFloat),
+      gpuPackedField("liquidCapacity", gsvtFloat),
+      gpuPackedField("absorptionRate", gsvtFloat),
+      gpuPackedFieldAt("domainId", gsvtUint, 7)
+    ], wordStride = 8)
+    check cellLayout.wordStride == 8
+    check cellLayout.recordStrideBytes == 32
+    check cellLayout.fields[4].fieldOffsetBytes == 28
+    check cellLayout.packedRecordBufferBytes(16) == 512
+    check cellLayout.packedRecordBufferDescriptor(
+      16, gsaReadWrite, label = "physical-cells"
+    ) == GpuBufferDescriptor(
+      byteSize: 512,
+      role: gbrStorage,
+      access: gbaDynamic,
+      storageFormat: gsbfUint32,
+      storageAccess: gsaReadWrite,
+      label: "physical-cells"
+    )
+
+    let builder = newGpuShaderBuilder(gssCompute, "packed-physical-cells")
+    builder.setComputeWorkGroupSize(64, 1, 1)
+    let cells = builder.packedRecordBuffer(
+      "b_cells", 0, cellLayout, gsaReadWrite
+    )
+    check cells.layout == cellLayout
+    check cells.storageBuffer.storageBufferId == 1
+    let index = builder.swizzle(builder.globalInvocationId(), "x")
+    let available = cells.loadPackedField(index, "availableLiquid")
+    let domain = cells.loadPackedField(index, "domainId")
+    check available.valueType == gsvtFloat
+    check domain.valueType == gsvtUint
+    cells.storePackedField(
+      index,
+      "absorbedLiquid",
+      available + builder.scalar(0.25)
+    )
+    cells.storePackedField(index, "domainId", domain)
+
+    let source = builder.emitGpuShaderSource()
+    check source.storageBuffers == @[
+      GpuShaderStorageEntry(
+        name: "b_cells", stage: 0, format: gsbfUint32,
+        access: gsaReadWrite
+      )
+    ]
+    check "BUFFER_RW(b_cells, uint, 0);" in source.source
+    check "uintBitsToFloat(" in source.source
+    check "floatBitsToUint(" in source.source
+    check "b_cells[" in source.source
+
+  test "round-trips packed vector fields without backend struct layouts":
+    let layout = gpuPackedRecordLayout([
+      gpuPackedField("rgba", gsvtVec4),
+      gpuPackedField("flags", gsvtUVec2)
+    ])
+    check layout.wordStride == 6
+
+    let builder = newGpuShaderBuilder(gssCompute, "packed-vectors")
+    builder.setComputeWorkGroupSize(1, 1, 1)
+    let records = builder.packedRecordBuffer(
+      "b_records", 0, layout, gsaReadWrite
+    )
+    let index = builder.unsignedInteger(0)
+    let rgba = records.loadPackedField(index, "rgba")
+    let flags = records.loadPackedField(index, "flags")
+    check rgba.valueType == gsvtVec4
+    check flags.valueType == gsvtUVec2
+    records.storePackedField(index, "rgba", rgba)
+    records.storePackedField(index, "flags", flags)
+    let source = builder.emitGpuShaderSource().source
+    check source.count("uintBitsToFloat(") == 4
+    check source.count("floatBitsToUint(") == 4
+
+  test "rejects malformed packed record schemas and cross-builder access":
+    expect GpuShaderBuildError:
+      discard gpuPackedRecordLayout([])
+    expect GpuShaderBuildError:
+      discard gpuPackedRecordLayout([gpuPackedField("bad-name", gsvtFloat)])
+    expect GpuShaderBuildError:
+      discard gpuPackedRecordLayout([
+        gpuPackedField("value", gsvtFloat),
+        gpuPackedField("value", gsvtUint)
+      ])
+    expect GpuShaderBuildError:
+      discard gpuPackedRecordLayout([gpuPackedField("matrix", gsvtMat4)])
+    expect GpuShaderBuildError:
+      discard gpuPackedRecordLayout([gpuPackedField("signed", gsvtInt)])
+    expect GpuShaderBuildError:
+      discard gpuPackedRecordLayout([
+        gpuPackedFieldAt("first", gsvtVec2, 0),
+        gpuPackedFieldAt("second", gsvtUint, 1)
+      ])
+    expect GpuShaderBuildError:
+      discard gpuPackedRecordLayout([
+        gpuPackedFieldAt("value", gsvtFloat, maxGpuPackedRecordWords)
+      ])
+    expect GpuShaderBuildError:
+      discard gpuPackedRecordLayout([
+        gpuPackedFieldAt("value", gsvtVec4, 4)
+      ], wordStride = 7)
+
+    let layout = gpuPackedRecordLayout([gpuPackedField("value", gsvtFloat)])
+    expect GpuShaderBuildError:
+      discard layout.packedRecordBufferBytes(0)
+    expect GpuShaderBuildError:
+      discard layout.packedRecordBufferBytes(high(uint32))
+
+    let first = newGpuShaderBuilder(gssCompute)
+    let second = newGpuShaderBuilder(gssCompute)
+    let records = first.packedRecordBuffer("b_records", 0, layout, gsaReadWrite)
+    let localIndex = first.unsignedInteger(0)
+    expect GpuShaderBuildError:
+      discard records.loadPackedField(localIndex, "missing")
+    expect GpuShaderBuildError:
+      discard records.loadPackedField(first.signedInteger(0), "value")
+    expect GpuShaderBuildError:
+      discard records.loadPackedField(second.unsignedInteger(0), "value")
+    expect GpuShaderBuildError:
+      records.storePackedField(
+        localIndex, "value", first.unsignedInteger(1)
+      )
+
+    let readOnly = first.packedRecordBuffer("b_read_only", 1, layout, gsaRead)
+    let writeOnly = first.packedRecordBuffer("b_write_only", 2, layout, gsaWrite)
+    expect GpuShaderBuildError:
+      readOnly.storePackedField(localIndex, "value", first.scalar(1))
+    expect GpuShaderBuildError:
+      discard writeOnly.loadPackedField(localIndex, "value")
+
+  test "rejects unsafe bit reinterpretation pairs and widths":
+    let builder = newGpuShaderBuilder(gssCompute)
+    let scalar = builder.scalar(1)
+    let unsigned = builder.unsignedInteger(1)
+    let vector = builder.vector([1'f32, 2'f32])
+    check builder.reinterpretValue(gsvtFloat, scalar) == scalar
+    expect GpuShaderBuildError:
+      discard builder.reinterpretValue(gsvtUVec2, scalar)
+    expect GpuShaderBuildError:
+      discard builder.reinterpretValue(gsvtInt, unsigned)
+    expect GpuShaderBuildError:
+      discard builder.reinterpretValue(gsvtUint, vector)
+
+    let foreign = newGpuShaderBuilder(gssCompute)
+    expect GpuShaderBuildError:
+      discard builder.reinterpretValue(gsvtUint, foreign.scalar(1))
+
   test "emits deterministic compute source with ordered storage operations":
     let source = buildComputeShader()
     let artifact = gpuShaderArtifact(source, @[1'u8])

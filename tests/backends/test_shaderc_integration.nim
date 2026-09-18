@@ -3,7 +3,7 @@ import std/[os, tempfiles, unittest]
 import clay_board_style_system/build/gpu_shader_compiler
 import clay_board_style_system/paint/gpu_host_compositor
 import clay_board_style_system/runtime/[gpu_host, gpu_shader_builder,
-    gpu_shader_package]
+    gpu_shader_package, gpu_shader_records]
 
 proc vertexSource(): GpuShaderSource =
   let builder = newGpuShaderBuilder(gssVertex, "shaderc-vertex")
@@ -82,6 +82,28 @@ proc storageImageSource(): GpuShaderSource =
     output,
     coordinates,
     builder.vector([0.125'f32, 0.25'f32, 0.5'f32, 1'f32])
+  )
+  builder.emitGpuShaderSource()
+
+proc packedRecordSource(): GpuShaderSource =
+  let layout = gpuPackedRecordLayout([
+    gpuPackedField("liquid", gsvtVec4),
+    gpuPackedField("material", gsvtVec4),
+    gpuPackedField("domainId", gsvtUint)
+  ], wordStride = 12)
+  let builder = newGpuShaderBuilder(gssCompute, "shaderc-packed-record")
+  builder.setComputeWorkGroupSize(64, 1, 1)
+  let cells = builder.packedRecordBuffer(
+    "b_cells", 0, layout, gsaReadWrite
+  )
+  let index = builder.swizzle(builder.globalInvocationId(), "x")
+  let liquid = cells.loadPackedField(index, "liquid")
+  let material = cells.loadPackedField(index, "material")
+  cells.storePackedField(index, "liquid", liquid + material)
+  cells.storePackedField(
+    index,
+    "domainId",
+    cells.loadPackedField(index, "domainId")
   )
   builder.emitGpuShaderSource()
 
@@ -172,6 +194,26 @@ suite "official bgfx shaderc integration":
       removeDir(root)
 
     let compute = storageImageSource()
+    let config = gpuShaderCompilerConfig(
+      shaderc,
+      [shaderIncludes],
+      workDirectory = root
+    )
+    let target = gpuShaderCompileTarget(
+      gsbtVulkan,
+      gscpLinux,
+      "spirv"
+    )
+
+    let compiled = compileGpuShader(compute, target, config)
+    check compiled.artifact.bytecode.len > 0
+
+  test "compiles packed mixed-field records to SPIR-V":
+    let root = createTempDir("cbss-shaderc-packed-record-", "")
+    defer:
+      removeDir(root)
+
+    let compute = packedRecordSource()
     let config = gpuShaderCompilerConfig(
       shaderc,
       [shaderIncludes],

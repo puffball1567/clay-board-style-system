@@ -1,6 +1,6 @@
 #include "cbss.h"
 
-_Static_assert(CBSS_ABI_VERSION == 0x00010022u, "unexpected CBSS ABI version");
+_Static_assert(CBSS_ABI_VERSION == 0x00010023u, "unexpected CBSS ABI version");
 _Static_assert(CBSS_ROLE_SWITCH == 22, "unexpected switch role value");
 _Static_assert(CBSS_ROLE_PASSWORD_TEXT == 23,
                "unexpected password text role value");
@@ -1030,6 +1030,10 @@ static void test_compute_shader_builder(void) {
   CbssShaderExpression masked = 0;
   CbssShaderExpression toggled = 0;
   CbssShaderExpression inverted = 0;
+  CbssShaderExpression one_float = 0;
+  CbssShaderExpression one_bits = 0;
+  CbssShaderExpression restored_float = 0;
+  CbssShaderExpression rejected = 123;
   assert(cbss_shader_builder_compute_builtin(
       compute, CBSS_SHADER_COMPUTE_GLOBAL_INVOCATION_ID,
       &invocation) == CBSS_OK);
@@ -1076,6 +1080,15 @@ static void test_compute_shader_builder(void) {
       toggled, &inverted) == CBSS_OK);
   assert(cbss_shader_builder_storage_store(
       compute, flags, index, inverted) == CBSS_OK);
+  assert(cbss_shader_builder_literal(compute, 1.0f, &one_float) == CBSS_OK);
+  assert(cbss_shader_builder_bitcast(
+      compute, CBSS_SHADER_VALUE_UINT, one_float, &one_bits) == CBSS_OK);
+  assert(cbss_shader_builder_bitcast(
+      compute, CBSS_SHADER_VALUE_FLOAT, one_bits, &restored_float) == CBSS_OK);
+  assert(cbss_shader_builder_bitcast(
+      compute, CBSS_SHADER_VALUE_VEC2, one_float, &rejected) ==
+      CBSS_INVALID_ARGUMENT);
+  assert(rejected == 0);
   assert(cbss_shader_builder_end_if(compute) == CBSS_OK);
   assert(cbss_shader_builder_emit(compute) == CBSS_OK);
 
@@ -1101,11 +1114,13 @@ static void test_compute_shader_builder(void) {
   assert(strstr(source, " << ") != NULL);
   assert(strstr(source, " >> ") != NULL);
   assert(strstr(source, "~(") != NULL);
+  assert(strstr(source, "floatBitsToUint(") != NULL);
+  assert(strstr(source, "uintBitsToFloat(") != NULL);
   assert(strstr(source, " ? ") != NULL);
   assert(strstr(source, "b_output[") != NULL);
   free(source);
 
-  CbssShaderExpression rejected = 123;
+  rejected = 123;
   assert(cbss_shader_builder_uint_literal(compute, 1, &rejected) ==
          CBSS_INVALID_ARGUMENT);
   assert(rejected == 0);
@@ -1199,8 +1214,8 @@ int main(void) {
   assert(!cbss_has_capability(CBSS_CAPABILITY_PAINT_COMMANDS, 4));
   assert(cbss_has_capability(CBSS_CAPABILITY_RETAINED_CANVAS, 3));
   assert(!cbss_has_capability(CBSS_CAPABILITY_RETAINED_CANVAS, 4));
-  assert(cbss_has_capability(CBSS_CAPABILITY_SHADER_AUTHORING, 5));
-  assert(!cbss_has_capability(CBSS_CAPABILITY_SHADER_AUTHORING, 6));
+  assert(cbss_has_capability(CBSS_CAPABILITY_SHADER_AUTHORING, 6));
+  assert(!cbss_has_capability(CBSS_CAPABILITY_SHADER_AUTHORING, 7));
   assert(cbss_has_capability(CBSS_CAPABILITY_CUSTOM_PAINT_PROVIDER, 3));
   assert(!cbss_has_capability(CBSS_CAPABILITY_CUSTOM_PAINT_PROVIDER, 4));
   assert(!cbss_has_capability(UINT32_MAX, 1));
@@ -1228,7 +1243,7 @@ int main(void) {
   assert(capability.since_abi == 0x0001001Au);
   assert(cbss_capability_at(20, &capability) == CBSS_OK);
   assert(capability.id == CBSS_CAPABILITY_SHADER_AUTHORING);
-  assert(capability.version == 5);
+  assert(capability.version == 6);
   assert(capability.since_abi == 0x0001001Bu);
   assert(cbss_capability_at(21, &capability) == CBSS_OK);
   assert(capability.id == CBSS_CAPABILITY_CUSTOM_PAINT_PROVIDER);

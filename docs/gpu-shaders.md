@@ -206,6 +206,46 @@ let activeSet = metadata.bitwiseAnd(active)
 values, and mixed vector widths fail while authoring rather than reaching the
 backend compiler.
 
+### Packed physical records
+
+Large simulation and image-processing cells often mix floating fields with
+integer identity or flag fields. CBSS maps these records onto a portable
+`uint32` storage buffer instead of relying on backend-specific shader-structure
+padding. Each field has a fixed word offset, float values preserve their exact
+bits, and an optional explicit stride can reserve padding for an existing host
+layout:
+
+```nim
+let cellLayout = gpuPackedRecordLayout([
+  gpuPackedField("liquid", gsvtVec4),
+  gpuPackedField("material", gsvtVec4),
+  gpuPackedFieldAt("domainId", gsvtUint, 11)
+], wordStride = 12)
+
+let builder = newGpuShaderBuilder(gssCompute, "physical-cells")
+builder.setComputeWorkGroupSize(64, 1, 1)
+let cells = builder.packedRecordBuffer(
+  "b_cells", 0, cellLayout, gsaReadWrite
+)
+let index = builder.swizzle(builder.globalInvocationId(), "x")
+let liquid = cells.loadPackedField(index, "liquid")
+let material = cells.loadPackedField(index, "material")
+cells.storePackedField(index, "liquid", liquid + material)
+```
+
+`packedRecordBufferDescriptor()` derives the matching dynamic storage-buffer
+size and format for a record count. Schemas reject duplicate or overlapping
+fields, invalid identifiers, unsupported value types, undersized strides,
+oversized buffers, foreign expressions, and access-direction violations before
+source generation. The initial portable subset supports float and unsigned
+integer scalars and vectors. It is sufficient for mixed physical fields while
+keeping signed-offset loop variables in ordinary shader expressions.
+
+`reinterpretValue()` emits only official shader-language bit intrinsics. The C
+ABI exposes the same primitive as `cbss_shader_builder_bitcast`, so another
+Craft Driver can generate the identical word layout without reproducing Nim
+object memory or receiving a backend handle.
+
 The authoring layer cannot infer an application's logical element count. A
 dispatch must therefore add an explicit bounds guard as above, cover only valid
 storage elements, or bind padded buffers large enough for every invocation in

@@ -41,7 +41,7 @@ import clay_board_style_system/runtime/[accessibility, button, checkbox,
     animation_clock, canvas, component, declarative_keyframes,
     declarative_transition, details, dialog,
     fieldset, focus, form,
-    file_input, frame_scheduler, gpu_host, gpu_shader_builder,
+    file_input, frame_scheduler, gpu_host, gpu_shader_builder, gpu_shader_records,
     gpu_shader_package, image,
     gpu_canvas, gpu_canvas_ui, gpu_direct_surface, gpu_direct_surface_ui,
     gpu_display_surface, gpu_display_surface_ui,
@@ -124,6 +124,7 @@ export form
 export frame_scheduler
 export gpu_host
 export gpu_shader_builder
+export gpu_shader_records
 export gpu_shader_package
 export gpu_canvas
 export gpu_canvas_ui

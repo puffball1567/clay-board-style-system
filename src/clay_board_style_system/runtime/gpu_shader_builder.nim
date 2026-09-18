@@ -108,6 +108,7 @@ type
     gsnUniform,
     gsnConstruct,
     gsnConvert,
+    gsnBitCast,
     gsnSwizzle,
     gsnUnary,
     gsnBinary,
@@ -803,6 +804,37 @@ proc convertValue*(
     operandCount: 1
   ))
 
+proc reinterpretValue*(
+    builder: GpuShaderBuilder;
+    valueType: GpuShaderValueType;
+    value: GpuShaderExpression
+): GpuShaderExpression =
+  let source = builder.requireExpression(value)
+  if valueType == source.valueType:
+    return value
+  if not valueType.isScalarOrVector or not source.valueType.isScalarOrVector or
+      valueType.componentCount != source.valueType.componentCount:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU bit reinterpretation requires matching scalar or vector widths"
+    )
+  let sourceScalar = source.valueType.scalarType
+  let targetScalar = valueType.scalarType
+  let supported =
+    (sourceScalar == gsvtFloat and targetScalar in {gsvtUint, gsvtInt}) or
+    (targetScalar == gsvtFloat and sourceScalar in {gsvtUint, gsvtInt})
+  if not supported:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU bit reinterpretation supports float/uint and float/int pairs"
+    )
+  builder.addNode(GpuShaderNode(
+    kind: gsnBitCast,
+    valueType: valueType,
+    operands: [value.nodeIndex, 0, 0, 0],
+    operandCount: 1
+  ))
+
 proc loadStorage*(
     builder: GpuShaderBuilder;
     storage: GpuShaderStorageBuffer;
@@ -1452,6 +1484,26 @@ proc nodeExpression(builder: GpuShaderBuilder; index: int): string =
     result = node.valueType.valueTypeName & "(" & values.join(", ") & ")"
   of gsnConvert:
     result = node.valueType.valueTypeName & "(" &
+      builder.nodeReference(node.operands[0]) & ")"
+  of gsnBitCast:
+    let source = builder.nodes[node.operands[0]]
+    let sourceScalar = source.valueType.scalarType
+    let targetScalar = node.valueType.scalarType
+    var functionName: string
+    if sourceScalar == gsvtFloat and targetScalar == gsvtUint:
+      functionName = "floatBitsToUint"
+    elif sourceScalar == gsvtUint and targetScalar == gsvtFloat:
+      functionName = "uintBitsToFloat"
+    elif sourceScalar == gsvtFloat and targetScalar == gsvtInt:
+      functionName = "floatBitsToInt"
+    elif sourceScalar == gsvtInt and targetScalar == gsvtFloat:
+      functionName = "intBitsToFloat"
+    else:
+      raise newException(
+        GpuShaderBuildError,
+        "GPU shader contains an invalid bit reinterpretation"
+      )
+    result = functionName & "(" &
       builder.nodeReference(node.operands[0]) & ")"
   of gsnSwizzle:
     result = "(" & builder.nodeReference(node.operands[0]) & ")." &
