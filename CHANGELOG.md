@@ -7,6 +7,8 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-19
+
 ### Added
 
 - Added typed pure helper functions to Compute shader authoring. Generated

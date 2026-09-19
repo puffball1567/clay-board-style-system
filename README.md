@@ -218,7 +218,7 @@ cbss_configure system
 The selection is written to the application's ignored `.cbss/` directory.
 CBSS does not ship native runtime binaries inside its Nimble package.
 
-## What Version 0.6.0 Contains
+## What Version 0.7.0 Contains
 
 - Language-neutral Craft Style and Craft Pack contracts with atomic loading,
   replacement, bounded validation, public Style Slots, and versioned C ABI
@@ -271,6 +271,21 @@ CBSS does not ship native runtime binaries inside its Nimble package.
 - Retained RGBA8 `RasterSurface` drawing with bounded stride-aware copy-in,
   atomic dirty-region publication, SDL3 partial texture uploads, Canvas/Box
   composition, and deterministic headless output.
+- An optional backend-neutral GPU host with retained textures, buffers, render
+  targets, shaders, graphics/compute pipelines, bounded resource namespaces,
+  device-loss recovery, and an independently distributed bgfx adapter through
+  [bgfxim](https://github.com/puffball1567/bgfxim).
+- Typed GPU drawing and compute submission with floating-point textures,
+  storage images and buffers, partial uploads, GPU transfers, asynchronous
+  readback, and direct or portable-fallback composition through ordinary CBSS
+  layout, clipping, opacity, transforms, input, focus, and accessibility.
+- Bounded typed shader authoring for graphics and Compute workloads, including
+  packed records, bitwise operations, lexical control flow, fixed local arrays,
+  and reusable pure helper functions. Official bgfx `shaderc` compilation stays
+  in build tooling rather than runtime artifacts.
+- A versioned Custom Paint provider boundary, retained path fills and strokes,
+  arcs, cap/join styles, dashed strokes, subpixel coverage, and shared SDL3 and
+  deterministic reference rendering.
 - Typed navigation with `Link`, retained screen roots, history, focus
   restoration, external URLs, and application deep links.
 - Mouse, touch, pen, keyboard, focus, form, clipboard, IME, drag, scroll, and
@@ -290,7 +305,7 @@ Accepting a value as metadata does not mean that layout or paint consumes it.
 
 ## Current Boundaries
 
-Version 0.6.0 is a developer preview. Public APIs may change before 1.0.
+Version 0.7.0 is a developer preview. Public APIs may change before 1.0.
 
 - Linux x86_64 with SDL3 is the only Tier 1 runtime target.
 - Windows and macOS native runtime validation is incomplete.
@@ -300,9 +315,10 @@ Version 0.6.0 is a developer preview. Public APIs may change before 1.0.
   assistive-technology validation remain incomplete.
 - Remaining property-specific percentage and intrinsic-sizing combinations,
   inline rich text, additional declarative motion values, filters, 3D
-  transforms, CPU effects, and production GPU direct composition are roadmap
-  work. Portable GPU Canvas readback and the backend-neutral direct-surface
-  contract are implemented. Paint transitions
+  transforms, rounded/offscreen direct GPU composition, broader real-GPU
+  qualification, and CPU effects are roadmap work. Portable GPU Canvas
+  readback, a backend-neutral direct-surface contract, and final-window
+  same-host composition are implemented. Paint transitions
   and multiple named keyframes support opacity, foreground/background colors,
   and typed 2D transforms with CSS-like longhand list cycling.
 - CBSS intentionally does not reproduce DOM selectors, browser quirks, legacy
