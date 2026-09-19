@@ -863,9 +863,10 @@ fallback when direct presentation is incompatible. The standard compositor
 submits a retained source Texture or RenderTarget color attachment from its
 producer namespace through a compositor-owned sampler and pipeline in the
 active host frame. It provides portable shader source, opacity/alpha uniforms,
-and rectangular viewport/UV clipping without a CPU readback. Rounded masks,
-offscreen composition, visible real-GPU conformance, and in-place restoration
-in a production GPU adapter remain release work. The host provides deterministic
+rectangular viewport/UV clipping, and a separate bounded antialiased pipeline
+for nested rounded clips without a CPU readback. Offscreen composition, visible
+real-GPU conformance, and in-place restoration in a production GPU adapter
+remain release work. The host provides deterministic
 namespace restoration and failed-owner rollback.
 
 Direct Surface negotiation exposes typed limitation reasons for unavailable

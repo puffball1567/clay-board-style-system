@@ -1660,9 +1660,14 @@ proc gpuDirectCompositeContext(
       else: gdctOffscreen,
     targetBounds: rect(0, 0, target.windowSize().w, target.windowSize().h),
     clipBounds: target.effectiveLogicalClip(),
-    requiresClipMask: target.hasRoundedClip(),
     pixelScale: scale
   )
+  for clip in target.clipStack:
+    if clip.radius > 0.001'f32:
+      discard result.addGpuDirectClipMask(GpuDirectClipMask(
+        bounds: clip.rect,
+        radius: clip.radius
+      ))
   if not renderTarget.isNil:
     let layerBounds = layers.activeLayerBounds(scale)
     if layerBounds.isSome:

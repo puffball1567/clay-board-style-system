@@ -137,8 +137,10 @@ current frame for the duration of one callback and supplies its provider,
 opaque backend resource ID, dimensions, format, destination rectangle, opacity,
 alpha mode, revision, and the active composition context. That context identifies
 whether the current target is the final window or an offscreen layer and carries
-the target bounds, effective rectangular clip, rounded-mask requirement, and
-pixel scale without copying the renderer's clip stack.
+the target bounds, effective rectangular clip, a bounded copy of the active
+rounded-mask stack, and pixel scale. The fixed-capacity stack avoids renderer
+hot-path allocation and fails closed when more than eight rounded clips are
+active.
 
 The compositor must preserve those constraints or return `gdcsUnsupported`.
 In particular, a callback must not redirect an offscreen-layer submission to the
@@ -179,12 +181,21 @@ namespace isolation.
 
 CBSS publishes the matching portable shader sources through
 `gpuHostDirectCompositeVertexSource()` and
-`gpuHostDirectCompositeFragmentSource()`. They use this interface:
+`gpuHostDirectCompositeFragmentSource()`. Rounded composition uses the separate
+`gpuHostDirectCompositeMaskedFragmentSource()` variant, so an unmasked draw does
+not pay the rounded-mask branch cost. They use this interface:
 
 - a full-viewport `POSITION` and `TEXCOORD0` vertex stream;
 - sampler `s_cbssSurface` at the material's configured texture stage;
 - `u_cbssComposite = (opacity, alphaMode, 0, 0)`; and
 - `u_cbssUvRect = (u0, v0, u1, v1)`.
+
+The masked variant additionally consumes the fixed `u_cbssClipMasks[17]`
+array. Its header is `(maskCount, visibleWidth, visibleHeight, pixelScale)`;
+each of the eight bounded entries uses one local-bounds `vec4` and one radius
+`vec4`. Every active nested rounded clip participates in fragment coverage with
+a one-physical-pixel antialiased edge. Materials opt in by providing the typed
+array uniform and one masked pipeline per advertised alpha mode.
 
 The sources use the build-only shader pipeline described in
 [GPU Shader Authoring And Packaging](gpu-shaders.md). Straight,
@@ -192,8 +203,9 @@ premultiplied, and opaque sources use distinct material pipelines;
 `alphaGpuBlendState()` and `premultipliedAlphaGpuBlendState()` provide the
 standard blend contracts. Rectangular clips become one physical viewport and
 a cropped UV rectangle, so clipping does not stretch the source image. Empty
-intersections produce no draw. Rounded clip masks and offscreen composition
-currently fail closed and remain part of the real-renderer release gate.
+intersections produce no draw. Bounded rounded masks are implemented for the
+final-window path; overflow and offscreen composition still fail closed.
+Offscreen composition remains part of the real-renderer release gate.
 
 The optional bgfx backend exposes `newBgfxDirectCompositeAdapter(backend,
 submit)` for presentation-backend authors. It binds the callback to one bgfx

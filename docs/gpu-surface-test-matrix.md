@@ -17,7 +17,7 @@ jobs and must not be replaced by a mock-only success.
 | Lifetime | presented resources stay retained | write, destroy, namespace close, host close while retained | multiple leases and retirement after last release | Automated |
 | Shutdown | close an idle or completed surface | incomplete work and active leases block close | completed pending work closes without collect; repeated close is harmless | Automated |
 | Device loss | stale frames disappear and resources invalidate | stale generation cannot queue or acquire | loss with pending/presented resources | Automated mock; real GPU pending |
-| Direct compositor | all compositor statuses propagate; SDL normal, text and layered paths invoke the bridge; standard same-host draw accepts retained Texture and RenderTarget sources across producer/compositor namespaces; bgfx resolves both to sampled textures | callback exception releases lease; unretained source, duplicate stage, detached host, wrong provider, mismatched resource tag and invalid attachment fail closed | no active frame returns retry; rectangular clipping crops viewport and UV; nil compositor or submit, mismatched backend API; per-frame bounded status counters | Automated |
+| Direct compositor | all compositor statuses propagate; SDL normal, text and layered paths invoke the bridge; standard same-host draw accepts retained Texture and RenderTarget sources across producer/compositor namespaces; bgfx resolves both to sampled textures; nested rounded clips use the masked pipeline | callback exception releases lease; unretained source, duplicate stage, detached host, wrong provider, mismatched resource tag, invalid attachment, malformed masks, and incomplete masked materials fail closed | no active frame returns retry; rectangular clipping crops viewport and UV; exactly eight rounded masks are accepted and the ninth fails closed; nil compositor or submit, mismatched backend API; per-frame bounded status counters | Automated |
 | Native-window data | X11, Wayland, Win32 and Cocoa map to typed bgfx platform data | missing window or required display fails before bgfx initialization | display is optional only for Win32 and Cocoa; non-Wayland systems use the default bgfx handle type | Automated portable mapping on Linux, Windows and macOS; SDL3 acquisition compiled on configured Linux backend |
 | Readback fallback | R8, RGBA8 and BGRA8 paths | missing copy/readback support, unsupported float format | byte limit, label limit, dimension multiplication overflow | Automated |
 | UI integration | standalone, underlay and overlay layout/paint | foreign or invalid owner, closed surface | safety styles override injected pointer/z-index values | Automated |
@@ -41,7 +41,7 @@ not complete until a qualified Linux GPU fixture proves all of the following:
 
 - one SDL window, one GPU device/queue, and one presentation owner;
 - direct Texture and RenderTarget output without CPU readback;
-- deterministic pixels for clip, opacity, transform, stacking, alpha mode,
+- deterministic pixels for rectangular and rounded clip, opacity, transform, stacking, alpha mode,
   resize, and DPI changes;
 - bounded double/triple buffering under producer pressure;
 - safe device loss, cancellation, namespace teardown, and shutdown ordering;
