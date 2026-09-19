@@ -30,7 +30,7 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x00010024` supports:
+ABI version `0x00010025` supports:
 
 - machine-readable Craft Driver contract metadata and runtime capability
   negotiation through stable numeric identifiers before tree construction;
@@ -62,8 +62,10 @@ ABI version `0x00010024` supports:
   bit reinterpretation lets foreign drivers address mixed packed records over
   the same portable `uint32` storage-buffer contract used by Nim. Typed
   mutable locals and signed or unsigned literal-bounded `for` ranges add
-  lexically checked `break` and `continue` without accepting arbitrary shader
-  source through the runtime boundary;
+  lexically checked `break` and `continue`. Initialized fixed-size local arrays
+  add typed numeric-scalar dynamic load/store operations under bounded array,
+  length, and total-element limits, without accepting arbitrary shader source
+  through the runtime boundary;
   Shader compilation remains a build-tool operation and is not linked into
   ordinary runtime artifacts;
 - bounded atomic Craft Pack manifest loading, compatibility negotiation,

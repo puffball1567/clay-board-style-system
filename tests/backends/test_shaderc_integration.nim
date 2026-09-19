@@ -134,6 +134,27 @@ proc boundedLoopSource(): GpuShaderSource =
   )
   builder.emitGpuShaderSource()
 
+proc localArraySource(): GpuShaderSource =
+  let builder = newGpuShaderBuilder(gssCompute, "shaderc-local-array")
+  builder.setComputeWorkGroupSize(8, 1, 1)
+  let output = builder.storageBuffer(
+    "b_output", 0, gsbfUint32, gsaWrite
+  )
+  let candidates = builder.localArray(builder.unsignedInteger(0), 8)
+  let index = builder.beginForRange(0'u32, 8'u32, 1'u32)
+  let indexValue = index.loadLocal()
+  candidates.storeLocalArray(
+    indexValue,
+    indexValue + builder.unsignedInteger(1)
+  )
+  builder.endForRange()
+  builder.storeStorage(
+    output,
+    builder.swizzle(builder.globalInvocationId(), "x"),
+    candidates.loadLocalArray(builder.unsignedInteger(7))
+  )
+  builder.emitGpuShaderSource()
+
 let shaderc = getEnv("CBSS_SHADERC")
 let shaderIncludes = getEnv("CBSS_BGFX_SHADER_INCLUDE")
 if shaderc.len == 0 or shaderIncludes.len == 0:
@@ -261,6 +282,26 @@ suite "official bgfx shaderc integration":
       removeDir(root)
 
     let compute = boundedLoopSource()
+    let config = gpuShaderCompilerConfig(
+      shaderc,
+      [shaderIncludes],
+      workDirectory = root
+    )
+    let target = gpuShaderCompileTarget(
+      gsbtVulkan,
+      gscpLinux,
+      "spirv"
+    )
+
+    let compiled = compileGpuShader(compute, target, config)
+    check compiled.artifact.bytecode.len > 0
+
+  test "compiles initialized fixed local arrays to SPIR-V":
+    let root = createTempDir("cbss-shaderc-local-array-", "")
+    defer:
+      removeDir(root)
+
+    let compute = localArraySource()
     let config = gpuShaderCompilerConfig(
       shaderc,
       [shaderIncludes],

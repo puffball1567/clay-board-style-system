@@ -1825,6 +1825,14 @@ proc shaderLocal(
     raise newException(GpuShaderBuildError, "GPU shader builder handle is invalid")
   handle.builder.localAt(id)
 
+proc shaderLocalArray(
+    handle: CbssShaderBuilderHandle;
+    id: uint32
+): GpuShaderLocalArray =
+  if handle.isNil or handle.builder.isNil:
+    raise newException(GpuShaderBuildError, "GPU shader builder handle is invalid")
+  handle.builder.localArrayAt(id)
+
 proc storeShaderExpression(
     output: ptr uint32;
     expression: GpuShaderExpression
@@ -2582,6 +2590,68 @@ proc cbssShaderBuilderLocalStore(
   try:
     handle.lastError.setLen(0)
     handle.shaderLocal(local).storeLocal(handle.shaderExpression(value))
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderLocalArray(
+    handle: CbssShaderBuilderHandle;
+    initialValue, length: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_local_array", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    output[] = handle.builder.localArray(
+      handle.shaderExpression(initialValue), length
+    ).localArrayId
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderLocalArrayLoad(
+    handle: CbssShaderBuilderHandle;
+    localArray, index: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_local_array_load", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    storeShaderExpression(
+      output,
+      handle.shaderLocalArray(localArray).loadLocalArray(
+        handle.shaderExpression(index)
+      )
+    )
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderLocalArrayStore(
+    handle: CbssShaderBuilderHandle;
+    localArray, index, value: uint32
+): int32 {.exportc: "cbss_shader_builder_local_array_store", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  try:
+    handle.lastError.setLen(0)
+    handle.shaderLocalArray(localArray).storeLocalArray(
+      handle.shaderExpression(index),
+      handle.shaderExpression(value)
+    )
     CbssOk
   except GpuShaderBuildError as error:
     handle.shaderBuilderError(error.msg)

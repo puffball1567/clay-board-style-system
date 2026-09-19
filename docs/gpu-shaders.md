@@ -280,6 +280,30 @@ ABI exposes the same primitive as `cbss_shader_builder_bitcast`, so another
 Craft Driver can generate the identical word layout without reproducing Nim
 object memory or receiving a backend handle.
 
+### Fixed local arrays
+
+Compute builders can retain a bounded candidate set in an initialized local
+array. Creation supplies one typed initial value for every element; reads are
+captured as expression snapshots and later writes do not alter an earlier
+expression:
+
+```nim
+let candidates = builder.localArray(builder.unsignedInteger(0), 8)
+let slot = builder.beginForRange(0'u32, 8'u32, 1'u32)
+let index = slot.loadLocal()
+candidates.storeLocalArray(index, index + builder.unsignedInteger(1))
+builder.endForRange()
+let selected = candidates.loadLocalArray(builder.unsignedInteger(7))
+```
+
+Arrays contain numeric scalar values, are Compute-only, and are lexically
+scoped. A builder accepts at most 64 arrays, 256 elements per array, and 1,024
+total local-array elements. It rejects foreign handles and expressions, zero
+lengths, mismatched value/index types, and statically known out-of-range literal
+indices. Dynamic indices remain an explicit shader responsibility, matching
+storage-buffer indexing; bounded ranges and guards should establish their valid
+domain.
+
 The authoring layer cannot infer an application's logical element count. A
 dispatch must therefore add an explicit bounds guard as above, cover only valid
 storage elements, or bind padded buffers large enough for every invocation in
@@ -297,7 +321,8 @@ diagnostics, and paths containing shell metacharacters.
 
 The Linux bgfx CI lane additionally builds the pinned official `shaderc`,
 compiles generated Vertex, Fragment, storage-buffer Compute, storage-image
-Compute, packed-record Compute, and bounded local-control-flow Compute shaders
-to SPIR-V, packages the artifacts, and decodes them through the runtime parser.
+Compute, packed-record Compute, bounded local-control-flow Compute, and fixed
+local-array Compute shaders to SPIR-V, packages the artifacts, and decodes them
+through the runtime parser.
 This test needs no GPU; real resource creation and submission remain covered by
 the separate bgfx host integration lanes.

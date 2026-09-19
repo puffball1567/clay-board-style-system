@@ -26,7 +26,7 @@ extern "C" {
 #endif
 
 /* CBSS_GENERATED_DRIVER_CONTRACT_BEGIN */
-#define CBSS_ABI_VERSION 0x00010024u
+#define CBSS_ABI_VERSION 0x00010025u
 #define CBSS_DRIVER_CONTRACT_VERSION 0x00010000u
 
 typedef enum CbssCapabilityId {
@@ -102,6 +102,7 @@ typedef uint32_t CbssShaderExpression;
 typedef uint32_t CbssShaderStorageBuffer;
 typedef uint32_t CbssShaderStorageImage;
 typedef uint32_t CbssShaderLocal;
+typedef uint32_t CbssShaderLocalArray;
 
 typedef int32_t CbssStatus;
 enum {
@@ -1235,6 +1236,15 @@ CBSS_API CbssStatus cbss_shader_builder_local_load(
 CBSS_API CbssStatus cbss_shader_builder_local_store(
     CbssShaderBuilder *builder, CbssShaderLocal local,
     CbssShaderExpression value);
+CBSS_API CbssStatus cbss_shader_builder_local_array(
+    CbssShaderBuilder *builder, CbssShaderExpression initial_value,
+    uint32_t length, CbssShaderLocalArray *output);
+CBSS_API CbssStatus cbss_shader_builder_local_array_load(
+    CbssShaderBuilder *builder, CbssShaderLocalArray local_array,
+    CbssShaderExpression index, CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_local_array_store(
+    CbssShaderBuilder *builder, CbssShaderLocalArray local_array,
+    CbssShaderExpression index, CbssShaderExpression value);
 CBSS_API CbssStatus cbss_shader_builder_begin_for_int(
     CbssShaderBuilder *builder, int32_t start, int32_t stop_exclusive,
     int32_t step, CbssShaderLocal *output);

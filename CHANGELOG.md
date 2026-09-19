@@ -9,6 +9,13 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added initialized fixed-size local arrays to typed Compute shader authoring.
+  Arrays support typed numeric-scalar dynamic load/store operations, expression
+  snapshots, lexical scope checks, literal index validation, and bounded array,
+  length, and total-element budgets without exposing arbitrary shader text. The
+  matching append-only C API advances the ABI to `0x00010025` and
+  `shader.authoring` capability version 8.
+
 - Added typed mutable Compute locals and literal-bounded signed and unsigned
   `for` ranges with lexical scope validation, `break`, and `continue`. Loops
   are rejected before source generation when their step is zero or their
