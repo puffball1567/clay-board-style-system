@@ -2295,7 +2295,11 @@ An ARC/ORC fixture now composes the public primitives into a wet-supply-style
 kernel with exact packed cell, edge, parameter, and output layouts, two bounded
 candidate passes, flow limiting, pigment and binder transfer, and metadata
 packing; the Linux GPU lane compiles that same generated source with official
-bgfx `shaderc`. Helper functions remain subsequent authoring work. The
+bgfx `shaderc`. Typed pure compute helpers now factor repeated physical formulas
+without duplicating graph nodes or exposing backend source. Generated names,
+typed parameters and returns, sealed-definition calls, and bounded function
+counts keep package output deterministic; resource access, recursion, forward
+calls, and unbounded control flow are rejected. The
 resource contract additionally supports R16F/R32F, RG16F/RG32F, and
 RGBA16F/RGBA32F textures plus typed compute storage buffers with bounded,
 stage-checked read/write access. Dynamic storage buffers accept element-aligned

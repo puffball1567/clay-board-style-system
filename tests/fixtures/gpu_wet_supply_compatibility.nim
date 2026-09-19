@@ -64,6 +64,21 @@ proc buildWetSupplyCompatibilityShader*(): GpuShaderSource =
     "b_packed_edges", 3, packedEdgeLayout, gsaWrite
   )
 
+  let flowScale = builder.beginFunction(
+    gsvtFloat,
+    [gsvtFloat, gsvtFloat]
+  )
+  let availableLiquid = flowScale.parameter(0)
+  let requestedLiquid = flowScale.parameter(1)
+  builder.beginIf(greaterThan(requestedLiquid, builder.scalar(0)))
+  flowScale.returnValue(minimum(
+    availableLiquid / requestedLiquid,
+    builder.scalar(1)
+  ))
+  builder.endIf()
+  flowScale.returnValue(builder.scalar(1))
+  flowScale.endFunction()
+
   let zeroIndex = builder.unsignedInteger(0)
   let zeroUint = builder.unsignedInteger(0)
   let oneUint = builder.unsignedInteger(1)
@@ -156,13 +171,10 @@ proc buildWetSupplyCompatibilityShader*(): GpuShaderSource =
   builder.endIf()
   builder.endForRange()
 
-  let scale = builder.localValue(builder.scalar(1))
-  builder.beginIf(greaterThan(outgoing.loadLocal(), builder.scalar(0)))
-  scale.storeLocal(minimum(
-    cells.loadPackedField(source, "liquidVolume") / outgoing.loadLocal(),
-    builder.scalar(1)
-  ))
-  builder.endIf()
+  let scale = flowScale.callFunction([
+    cells.loadPackedField(source, "liquidVolume"),
+    outgoing.loadLocal()
+  ])
 
   let transferCandidate = builder.beginForRange(0'u32, 8'u32, 1'u32)
   let slot = candidates.loadLocalArray(transferCandidate.loadLocal())
@@ -171,7 +183,7 @@ proc buildWetSupplyCompatibilityShader*(): GpuShaderSource =
     equalTo(edges.loadPackedField(slot, "source"), source)
   ))
   let transferredLiquid = edges.loadPackedField(slot, "requestedLiquid") *
-    scale.loadLocal()
+    scale
   edges.storePackedField(slot, "transferredLiquid", transferredLiquid)
 
   let liquidVolume = cells.loadPackedField(source, "liquidVolume")

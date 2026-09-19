@@ -448,10 +448,13 @@ This is sufficient to express bounded dispatches and neighbourhood kernels in
 Nim without emitting unchecked out-of-range loads. Expressions and locals
 created inside a control-flow scope cannot escape that scope.
 
-The C ABI publishes equivalent fixed-width storage and expression IDs under
-`shader.authoring` capability version 8. It includes typed 2D storage-image
+The C ABI publishes equivalent fixed-width storage, function, and expression
+IDs under `shader.authoring` capability version 9. It includes typed pure
+compute helper functions, typed 2D storage-image
 declarations, `imageLoad`/`imageStore`, numeric scalar/vector conversion, and
 unsigned integer not, and, or, xor, left-shift, and right-shift operations.
+Helpers use generated backend names, validate parameter and return types, and
+reject resource access, recursion, forward calls, and unbounded control flow.
 Storage buffers and images cannot claim the same compute binding stage. The
 portable image subset is `R8`, `RGBA8`, `R16F`, `R32F`, `RG16F`, `RGBA16F`,
 and `RGBA32F`; general GPU Host texture support remains broader.

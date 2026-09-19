@@ -9,6 +9,8 @@ const
   maxGpuShaderLocalArrays* = 64
   maxGpuShaderLocalArrayLength* = 256'u32
   maxGpuShaderLocalArrayElements* = 1024'u32
+  maxGpuShaderFunctions* = 64
+  maxGpuShaderFunctionParameters* = 16
   maxGpuShaderLoopIterations* = 1024'u32
   maxGpuShaderSourceBytes* = 1024 * 1024
   maxGpuComputeThreadsPerGroup* = 1024'u32
@@ -132,6 +134,9 @@ type
     gsnLocalArrayDeclare,
     gsnLocalArrayLoad,
     gsnLocalArrayStore,
+    gsnFunctionParameter,
+    gsnFunctionCall,
+    gsnFunctionReturn,
     gsnIfBegin,
     gsnElse,
     gsnIfEnd,
@@ -162,6 +167,9 @@ type
     computeBuiltin: GpuShaderComputeBuiltin
     localIndex: int
     localArrayIndex: int
+    functionIndex: int
+    functionCallIndex: int
+    parameterIndex: int
     scopeId: int
 
   GpuShaderControlKind = enum
@@ -181,6 +189,18 @@ type
     valueType: GpuShaderValueType
     length: uint32
     definingScope: int
+
+  GpuShaderFunctionEntry = object
+    returnType: GpuShaderValueType
+    parameterTypes: seq[GpuShaderValueType]
+    parameterNodes: seq[int]
+    rootScope: int
+    sealed: bool
+    hasReturn: bool
+
+  GpuShaderFunctionCallEntry = object
+    functionIndex: int
+    arguments: seq[int]
 
   GpuShaderVaryingOutput = object
     slot: GpuShaderInterfaceSlot
@@ -217,7 +237,10 @@ type
     controlScopes: seq[GpuShaderControlScope]
     locals: seq[GpuShaderLocalEntry]
     localArrays: seq[GpuShaderLocalArrayEntry]
+    functions: seq[GpuShaderFunctionEntry]
+    functionCalls: seq[GpuShaderFunctionCallEntry]
     localArrayElements: uint32
+    currentFunction: int
     hasComputeWorkGroupSize: bool
     sealed: bool
 
@@ -240,6 +263,10 @@ type
   GpuShaderLocalArray* = object
     owner: GpuShaderBuilder
     localArrayIndex: int
+
+  GpuShaderFunction* = object
+    owner: GpuShaderBuilder
+    functionIndex: int
 
   GpuShaderInterfaceEntry* = object
     slot*: GpuShaderInterfaceSlot
@@ -389,7 +416,8 @@ proc newGpuShaderBuilder*(
     labelValue: label,
     positionOutput: -1,
     colorOutputs: [-1, -1, -1, -1],
-    scopeParents: @[-1]
+    scopeParents: @[-1],
+    currentFunction: -1
   )
 
 proc stage*(builder: GpuShaderBuilder): GpuShaderStage =
@@ -418,6 +446,7 @@ proc addNode(
   builder.requireMutable()
   var node = input
   node.scopeId = builder.currentScope
+  node.functionIndex = builder.currentFunction
   builder.nodes.add(node)
   GpuShaderExpression(owner: builder, nodeIndex: builder.nodes.high)
 
@@ -425,6 +454,18 @@ proc addStatement(builder: GpuShaderBuilder; input: sink GpuShaderNode) =
   builder.requireMutable()
   var node = input
   node.scopeId = builder.currentScope
+  node.functionIndex = builder.currentFunction
+  builder.nodes.add(node)
+
+proc addStatementAtScope(
+    builder: GpuShaderBuilder;
+    input: sink GpuShaderNode;
+    scopeId: int
+) =
+  builder.requireMutable()
+  var node = input
+  node.scopeId = scopeId
+  node.functionIndex = builder.currentFunction
   builder.nodes.add(node)
 
 proc isScopeVisible(builder: GpuShaderBuilder; definingScope: int): bool =
@@ -446,10 +487,22 @@ proc requireExpression(
       "GPU shader expression belongs to another builder or is invalid"
     )
   result = builder.nodes[expression.nodeIndex]
+  if result.functionIndex != builder.currentFunction:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU shader expression belongs to another function body"
+    )
   if not builder.isScopeVisible(result.scopeId):
     raise newException(
       GpuShaderBuildError,
       "GPU shader expression is outside its control-flow scope"
+    )
+
+proc requireMainBody(builder: GpuShaderBuilder; description: string) =
+  if builder.currentFunction >= 0:
+    raise newException(
+      GpuShaderBuildError,
+      description & " is not available inside a pure GPU shader function"
     )
 
 proc valueType*(expression: GpuShaderExpression): GpuShaderValueType =
@@ -527,6 +580,29 @@ proc localArrayId*(localArray: GpuShaderLocalArray): uint32 =
       localArray.localArrayIndex >= localArray.owner.localArrays.len:
     raise newException(GpuShaderBuildError, "GPU shader local array is invalid")
   uint32(localArray.localArrayIndex + 1)
+
+proc requireFunction(
+    builder: GpuShaderBuilder;
+    function: GpuShaderFunction
+): GpuShaderFunctionEntry =
+  if function.owner != builder or function.functionIndex < 0 or
+      function.functionIndex >= builder.functions.len:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU shader function belongs to another builder or is invalid"
+    )
+  builder.functions[function.functionIndex]
+
+proc functionAt*(builder: GpuShaderBuilder; id: uint32): GpuShaderFunction =
+  if builder.isNil or id == 0 or uint64(id) > uint64(builder.functions.len):
+    raise newException(GpuShaderBuildError, "GPU shader function id is invalid")
+  GpuShaderFunction(owner: builder, functionIndex: int(id) - 1)
+
+proc functionId*(function: GpuShaderFunction): uint32 =
+  if function.owner.isNil or function.functionIndex < 0 or
+      function.functionIndex >= function.owner.functions.len:
+    raise newException(GpuShaderBuildError, "GPU shader function is invalid")
+  uint32(function.functionIndex + 1)
 
 proc requireStorageBuffer(
     builder: GpuShaderBuilder;
@@ -688,6 +764,7 @@ proc vertexInput*(
     valueType: GpuShaderValueType
 ): GpuShaderExpression =
   builder.requireOpen()
+  builder.requireMainBody("GPU vertex input")
   if builder.stageValue != gssVertex:
     raise newException(GpuShaderBuildError, "vertex inputs require a vertex shader")
   if not valueType.isScalarOrVector:
@@ -705,6 +782,7 @@ proc varyingInput*(
     valueType: GpuShaderValueType
 ): GpuShaderExpression =
   builder.requireOpen()
+  builder.requireMainBody("GPU varying input")
   if builder.stageValue != gssFragment:
     raise newException(GpuShaderBuildError, "varying inputs require a fragment shader")
   if not valueType.isScalarOrVector:
@@ -722,6 +800,7 @@ proc uniform*(
     valueType: GpuShaderValueType
 ): GpuShaderExpression =
   builder.requireOpen()
+  builder.requireMainBody("GPU uniform declaration")
   name.validateIdentifier("GPU shader uniform name")
   if not name.startsWith("u_") or name in ["u_viewRect", "u_viewTexel",
       "u_view", "u_invView", "u_proj", "u_invProj", "u_viewProj",
@@ -754,6 +833,7 @@ proc setComputeWorkGroupSize*(
     x, y, z: uint32
 ) =
   builder.requireOpen()
+  builder.requireMainBody("GPU compute work-group declaration")
   if builder.stageValue != gssCompute:
     raise newException(GpuShaderBuildError, "work-group size requires a compute shader")
   if x == 0 or y == 0 or z == 0 or x > maxGpuComputeWorkGroupX or
@@ -771,6 +851,7 @@ proc storageBuffer*(
     access: GpuStorageAccess
 ): GpuShaderStorageBuffer =
   builder.requireOpen()
+  builder.requireMainBody("GPU storage-buffer declaration")
   if builder.stageValue != gssCompute:
     raise newException(GpuShaderBuildError, "storage buffers require a compute shader")
   name.validateIdentifier("GPU shader storage buffer name")
@@ -813,6 +894,7 @@ proc storageImage*(
     access: GpuStorageAccess
 ): GpuShaderStorageImage =
   builder.requireOpen()
+  builder.requireMainBody("GPU storage-image declaration")
   if builder.stageValue != gssCompute:
     raise newException(GpuShaderBuildError, "storage images require a compute shader")
   name.validateIdentifier("GPU shader storage image name")
@@ -853,6 +935,7 @@ proc computeBuiltin*(
     builtin: GpuShaderComputeBuiltin
 ): GpuShaderExpression =
   builder.requireOpen()
+  builder.requireMainBody("GPU compute builtin")
   if builder.stageValue != gssCompute:
     raise newException(GpuShaderBuildError, "compute builtins require a compute shader")
   let valueType = case builtin
@@ -938,6 +1021,7 @@ proc loadStorage*(
     storage: GpuShaderStorageBuffer;
     index: GpuShaderExpression
 ): GpuShaderExpression =
+  builder.requireMainBody("GPU storage-buffer load")
   builder.requireOpen()
   let declaration = builder.requireStorageBuffer(storage)
   if declaration.access == gsaWrite:
@@ -957,6 +1041,7 @@ proc storeStorage*(
     storage: GpuShaderStorageBuffer;
     index, value: GpuShaderExpression
 ) =
+  builder.requireMainBody("GPU storage-buffer store")
   builder.requireOpen()
   let declaration = builder.requireStorageBuffer(storage)
   if declaration.access == gsaRead:
@@ -977,6 +1062,7 @@ proc loadStorageImage*(
     storage: GpuShaderStorageImage;
     coordinates: GpuShaderExpression
 ): GpuShaderExpression =
+  builder.requireMainBody("GPU storage-image load")
   builder.requireOpen()
   let declaration = builder.requireStorageImage(storage)
   if declaration.access == gsaWrite:
@@ -996,6 +1082,7 @@ proc storeStorageImage*(
     storage: GpuShaderStorageImage;
     coordinates, value: GpuShaderExpression
 ) =
+  builder.requireMainBody("GPU storage-image store")
   builder.requireOpen()
   let declaration = builder.requireStorageImage(storage)
   if declaration.access == gsaRead:
@@ -1403,6 +1490,165 @@ proc storeLocalArray*(
     localArrayIndex: localArray.localArrayIndex
   ))
 
+proc beginFunction*(
+    builder: GpuShaderBuilder;
+    returnType: GpuShaderValueType;
+    parameterTypes: openArray[GpuShaderValueType]
+): GpuShaderFunction =
+  builder.requireOpen()
+  if builder.stageValue != gssCompute:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU shader helper functions are currently compute-only"
+    )
+  if builder.currentFunction >= 0 or builder.controlScopes.len != 0:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU shader helper functions cannot be nested in another body"
+    )
+  if builder.functions.len >= maxGpuShaderFunctions:
+    raise newException(GpuShaderBuildError, "GPU shader function limit exceeded")
+  if parameterTypes.len > maxGpuShaderFunctionParameters:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU shader function parameter limit exceeded"
+    )
+  if builder.nodes.len + parameterTypes.len + 1 > maxGpuShaderNodes:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU shader function exceeds the remaining node budget"
+    )
+
+  let functionIndex = builder.functions.len
+  let rootScope = builder.scopeParents.len
+  builder.scopeParents.add(-1)
+  builder.functions.add GpuShaderFunctionEntry(
+    returnType: returnType,
+    parameterTypes: @parameterTypes,
+    rootScope: rootScope
+  )
+  builder.currentFunction = functionIndex
+  builder.currentScope = rootScope
+  for parameterIndex, valueType in parameterTypes:
+    let parameter = builder.addNode(GpuShaderNode(
+      kind: gsnFunctionParameter,
+      valueType: valueType,
+      parameterIndex: parameterIndex
+    ))
+    builder.functions[functionIndex].parameterNodes.add(parameter.nodeIndex)
+  GpuShaderFunction(owner: builder, functionIndex: functionIndex)
+
+proc parameter*(
+    function: GpuShaderFunction;
+    index: uint32
+): GpuShaderExpression =
+  if function.owner.isNil:
+    raise newException(GpuShaderBuildError, "GPU shader function is invalid")
+  let builder = function.owner
+  let entry = builder.requireFunction(function)
+  if builder.currentFunction != function.functionIndex or entry.sealed:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU shader function parameters are available only while defining it"
+    )
+  if uint64(index) >= uint64(entry.parameterNodes.len):
+    raise newException(
+      GpuShaderBuildError,
+      "GPU shader function parameter index is out of range"
+    )
+  GpuShaderExpression(
+    owner: builder,
+    nodeIndex: entry.parameterNodes[int(index)]
+  )
+
+proc returnValue*(
+    function: GpuShaderFunction;
+    value: GpuShaderExpression
+) =
+  if function.owner.isNil:
+    raise newException(GpuShaderBuildError, "GPU shader function is invalid")
+  let builder = function.owner
+  let entry = builder.requireFunction(function)
+  if builder.currentFunction != function.functionIndex or entry.sealed:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU shader function return is outside its definition"
+    )
+  if builder.requireExpression(value).valueType != entry.returnType:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU shader function return type does not match"
+    )
+  builder.addStatement(GpuShaderNode(
+    kind: gsnFunctionReturn,
+    operands: [value.nodeIndex, 0, 0, 0],
+    operandCount: 1
+  ))
+  builder.functions[function.functionIndex].hasReturn = true
+
+proc endFunction*(function: GpuShaderFunction) =
+  if function.owner.isNil:
+    raise newException(GpuShaderBuildError, "GPU shader function is invalid")
+  let builder = function.owner
+  let entry = builder.requireFunction(function)
+  if builder.currentFunction != function.functionIndex or entry.sealed:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU shader function definition is not active"
+    )
+  if builder.controlScopes.len != 0 or builder.currentScope != entry.rootScope:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU shader function has an unclosed control-flow block"
+    )
+  if not entry.hasReturn or builder.nodes.len == 0 or
+      builder.nodes[^1].functionIndex != function.functionIndex or
+      builder.nodes[^1].kind != gsnFunctionReturn or
+      builder.nodes[^1].scopeId != entry.rootScope:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU shader function requires a final top-level return"
+    )
+  builder.functions[function.functionIndex].sealed = true
+  builder.currentFunction = -1
+  builder.currentScope = 0
+
+proc callFunction*(
+    function: GpuShaderFunction;
+    arguments: openArray[GpuShaderExpression]
+): GpuShaderExpression =
+  if function.owner.isNil:
+    raise newException(GpuShaderBuildError, "GPU shader function is invalid")
+  let builder = function.owner
+  let entry = builder.requireFunction(function)
+  if not entry.sealed:
+    raise newException(GpuShaderBuildError, "GPU shader function is not sealed")
+  if arguments.len != entry.parameterTypes.len:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU shader function argument count does not match"
+    )
+  var argumentNodes = newSeqOfCap[int](arguments.len)
+  for index, argument in arguments:
+    let node = builder.requireExpression(argument)
+    if node.valueType != entry.parameterTypes[index]:
+      raise newException(
+        GpuShaderBuildError,
+        "GPU shader function argument type does not match"
+      )
+    argumentNodes.add(argument.nodeIndex)
+  builder.requireMutable()
+  let callIndex = builder.functionCalls.len
+  builder.functionCalls.add GpuShaderFunctionCallEntry(
+    functionIndex: function.functionIndex,
+    arguments: argumentNodes
+  )
+  builder.addNode(GpuShaderNode(
+    kind: gsnFunctionCall,
+    valueType: entry.returnType,
+    functionCallIndex: callIndex
+  ))
+
 proc signedLoopIterations(start, stopExclusive, step: int32): uint32 =
   if step == 0:
     raise newException(GpuShaderBuildError, "GPU shader loop step cannot be zero")
@@ -1454,14 +1700,14 @@ proc beginForRange(
     valueType: valueType,
     definingScope: childScope
   )
-  builder.nodes.add GpuShaderNode(
+  builder.addStatementAtScope(GpuShaderNode(
     kind: gsnForBegin,
     valueType: valueType,
     signedValues: signedValues,
     unsignedValues: unsignedValues,
     localIndex: localIndex,
     scopeId: parentScope
-  )
+  ), parentScope)
   builder.controlScopes.add GpuShaderControlScope(
     kind: gsckFor,
     parentScope: parentScope
@@ -1519,7 +1765,7 @@ proc beginElse*(builder: GpuShaderBuilder) =
     raise newException(GpuShaderBuildError, "GPU else has no matching if")
   builder.requireMutable()
   let parentScope = builder.controlScopes[^1].parentScope
-  builder.nodes.add GpuShaderNode(kind: gsnElse, scopeId: parentScope)
+  builder.addStatementAtScope(GpuShaderNode(kind: gsnElse), parentScope)
   builder.controlScopes[^1].kind = gsckElse
   builder.scopeParents.add(parentScope)
   builder.currentScope = builder.scopeParents.high
@@ -1531,7 +1777,7 @@ proc endIf*(builder: GpuShaderBuilder) =
     raise newException(GpuShaderBuildError, "GPU endIf has no matching if")
   builder.requireMutable()
   let parentScope = builder.controlScopes[^1].parentScope
-  builder.nodes.add GpuShaderNode(kind: gsnIfEnd, scopeId: parentScope)
+  builder.addStatementAtScope(GpuShaderNode(kind: gsnIfEnd), parentScope)
   builder.currentScope = parentScope
   builder.controlScopes.setLen(builder.controlScopes.len - 1)
 
@@ -1560,12 +1806,13 @@ proc endForRange*(builder: GpuShaderBuilder) =
     raise newException(GpuShaderBuildError, "GPU endForRange has no matching loop")
   builder.requireMutable()
   let parentScope = builder.controlScopes[^1].parentScope
-  builder.nodes.add GpuShaderNode(kind: gsnForEnd, scopeId: parentScope)
+  builder.addStatementAtScope(GpuShaderNode(kind: gsnForEnd), parentScope)
   builder.currentScope = parentScope
   builder.controlScopes.setLen(builder.controlScopes.len - 1)
 
 proc returnFromCompute*(builder: GpuShaderBuilder) =
   builder.requireOpen()
+  builder.requireMainBody("GPU compute return")
   if builder.stageValue != gssCompute:
     raise newException(GpuShaderBuildError, "GPU early return is compute-only")
   builder.addStatement(GpuShaderNode(kind: gsnReturn))
@@ -1743,6 +1990,7 @@ proc setPositionOutput*(
     value: GpuShaderExpression
 ) =
   builder.requireOpen()
+  builder.requireMainBody("GPU position output")
   if builder.stageValue != gssVertex:
     raise newException(GpuShaderBuildError, "position output requires a vertex shader")
   if builder.requireExpression(value).valueType != gsvtVec4:
@@ -1755,6 +2003,7 @@ proc setColorOutput*(
     index = 0
 ) =
   builder.requireOpen()
+  builder.requireMainBody("GPU color output")
   if builder.stageValue != gssFragment:
     raise newException(GpuShaderBuildError, "color output requires a fragment shader")
   if index < 0 or index >= builder.colorOutputs.len:
@@ -1769,6 +2018,7 @@ proc setVaryingOutput*(
     value: GpuShaderExpression
 ) =
   builder.requireOpen()
+  builder.requireMainBody("GPU varying output")
   if builder.stageValue != gssVertex:
     raise newException(GpuShaderBuildError, "varying output requires a vertex shader")
   let node = builder.requireExpression(value)
@@ -1819,6 +2069,12 @@ proc localName(index: int): string =
 proc localArrayName(index: int): string =
   "cbss_a" & $index
 
+proc functionName(index: int): string =
+  "cbss_f" & $index
+
+proc parameterName(index: int): string =
+  "cbss_p" & $index
+
 proc nodeReference(builder: GpuShaderBuilder; index: int): string =
   let node = builder.nodes[index]
   case node.kind
@@ -1841,6 +2097,8 @@ proc nodeReference(builder: GpuShaderBuilder; index: int): string =
       result = node.valueType.valueTypeName & "(" & values.join(", ") & ")"
   of gsnVertexInput, gsnVaryingInput, gsnUniform:
     result = node.name
+  of gsnFunctionParameter:
+    result = node.parameterIndex.parameterName
   of gsnComputeBuiltin:
     result = node.computeBuiltin.computeBuiltinName
   else:
@@ -1849,13 +2107,20 @@ proc nodeReference(builder: GpuShaderBuilder; index: int): string =
 proc nodeExpression(builder: GpuShaderBuilder; index: int): string =
   let node = builder.nodes[index]
   case node.kind
-  of gsnLiteral, gsnVertexInput, gsnVaryingInput, gsnUniform, gsnComputeBuiltin:
+  of gsnLiteral, gsnVertexInput, gsnVaryingInput, gsnUniform,
+      gsnComputeBuiltin, gsnFunctionParameter:
     result = builder.nodeReference(index)
   of gsnLocalLoad:
     result = node.localIndex.localName
   of gsnLocalArrayLoad:
     result = node.localArrayIndex.localArrayName & "[" &
       builder.nodeReference(node.operands[0]) & "]"
+  of gsnFunctionCall:
+    let call = builder.functionCalls[node.functionCallIndex]
+    var arguments: seq[string]
+    for argument in call.arguments:
+      arguments.add builder.nodeReference(argument)
+    result = call.functionIndex.functionName & "(" & arguments.join(", ") & ")"
   of gsnConstruct:
     var values: seq[string]
     for operand in 0 ..< int(node.operandCount):
@@ -1961,7 +2226,7 @@ proc nodeExpression(builder: GpuShaderBuilder; index: int): string =
     result = "imageLoad(" & storage.name & ", " &
       builder.nodeReference(node.operands[0]) & ")"
   of gsnStorageStore, gsnStorageImageStore, gsnLocalDeclare, gsnLocalStore,
-      gsnLocalArrayDeclare, gsnLocalArrayStore:
+      gsnLocalArrayDeclare, gsnLocalArrayStore, gsnFunctionReturn:
     result = ""
   of gsnIfBegin, gsnElse, gsnIfEnd, gsnForBegin, gsnForEnd, gsnBreak,
       gsnContinue, gsnReturn:
@@ -1981,9 +2246,114 @@ proc addUnique(
       return
   values.add entry
 
+proc emitNodeBlock(
+    builder: GpuShaderBuilder;
+    functionIndex: int;
+    initialIndentation: int
+): string =
+  var indentation = initialIndentation
+  for index, node in builder.nodes:
+    if node.functionIndex != functionIndex:
+      continue
+    if node.kind in {gsnElse, gsnIfEnd, gsnForEnd}:
+      dec indentation
+    let prefix = repeat("  ", indentation)
+    if node.kind == gsnStorageStore:
+      let storage = builder.storageBuffers[node.storageBufferIndex]
+      result.add prefix & storage.name & "[" &
+        builder.nodeReference(node.operands[0]) & "] = " &
+        builder.nodeReference(node.operands[1]) & ";\n"
+    elif node.kind == gsnStorageImageStore:
+      let storage = builder.storageImages[node.storageImageIndex]
+      result.add prefix & "imageStore(" & storage.name & ", " &
+        builder.nodeReference(node.operands[0]) & ", " &
+        builder.nodeReference(node.operands[1]) & ");\n"
+    elif node.kind == gsnLocalDeclare:
+      result.add prefix & node.valueType.valueTypeName & " " &
+        node.localIndex.localName & " = " &
+        builder.nodeReference(node.operands[0]) & ";\n"
+    elif node.kind == gsnLocalStore:
+      result.add prefix & node.localIndex.localName & " = " &
+        builder.nodeReference(node.operands[0]) & ";\n"
+    elif node.kind == gsnLocalArrayDeclare:
+      let entry = builder.localArrays[node.localArrayIndex]
+      let name = node.localArrayIndex.localArrayName
+      result.add prefix & node.valueType.valueTypeName & " " & name &
+        "[" & $entry.length & "];\n"
+      for elementIndex in 0'u32 ..< entry.length:
+        result.add prefix & name & "[" & $elementIndex & "] = " &
+          builder.nodeReference(node.operands[0]) & ";\n"
+    elif node.kind == gsnLocalArrayStore:
+      result.add prefix & node.localArrayIndex.localArrayName & "[" &
+        builder.nodeReference(node.operands[0]) & "] = " &
+        builder.nodeReference(node.operands[1]) & ";\n"
+    elif node.kind == gsnFunctionReturn:
+      result.add prefix & "return " &
+        builder.nodeReference(node.operands[0]) & ";\n"
+    elif node.kind == gsnIfBegin:
+      result.add prefix & "if (" &
+        builder.nodeReference(node.operands[0]) & ")\n" & prefix & "{\n"
+      inc indentation
+    elif node.kind == gsnElse:
+      result.add prefix & "}\n" & prefix & "else\n" & prefix & "{\n"
+      inc indentation
+    elif node.kind == gsnIfEnd:
+      result.add prefix & "}\n"
+    elif node.kind == gsnForBegin:
+      let name = node.localIndex.localName
+      if node.valueType == gsvtInt:
+        let start = $node.signedValues[0]
+        let stop = $node.signedValues[1]
+        let step = node.signedValues[2]
+        let comparison = if step > 0: "<" else: ">"
+        let update = if step > 0:
+          name & " += " & $step
+        else:
+          name & " -= " & $(-int64(step))
+        result.add prefix & "for (int " & name & " = " & start & "; " &
+          name & " " & comparison & " " & stop & "; " & update & ")\n" &
+          prefix & "{\n"
+      else:
+        let start = node.unsignedValues[0].formatUnsigned
+        let stop = node.unsignedValues[1].formatUnsigned
+        let step = node.unsignedValues[2].formatUnsigned
+        result.add prefix & "for (uint " & name & " = " & start & "; " &
+          name & " < " & stop & "; " & name & " += " & step & ")\n" &
+          prefix & "{\n"
+      inc indentation
+    elif node.kind == gsnForEnd:
+      result.add prefix & "}\n"
+    elif node.kind == gsnBreak:
+      result.add prefix & "break;\n"
+    elif node.kind == gsnContinue:
+      result.add prefix & "continue;\n"
+    elif node.kind == gsnReturn:
+      result.add prefix & "return;\n"
+    elif node.kind notin {
+        gsnLiteral, gsnVertexInput, gsnVaryingInput, gsnUniform,
+        gsnComputeBuiltin, gsnFunctionParameter, gsnStorageStore,
+        gsnStorageImageStore, gsnLocalDeclare, gsnLocalStore,
+        gsnLocalArrayDeclare, gsnLocalArrayStore, gsnFunctionReturn,
+        gsnIfBegin, gsnElse, gsnIfEnd, gsnForBegin, gsnForEnd, gsnBreak,
+        gsnContinue, gsnReturn
+    }:
+      result.add prefix & node.valueType.valueTypeName & " cbss_n" &
+        $index & " = " & builder.nodeExpression(index) & ";\n"
+
 proc emitGpuShaderSource*(builder: GpuShaderBuilder): GpuShaderSource =
   if builder.isNil:
     raise newException(GpuShaderBuildError, "GPU shader builder cannot be nil")
+  if builder.currentFunction >= 0:
+    raise newException(
+      GpuShaderBuildError,
+      "GPU shader has an unclosed helper function"
+    )
+  for function in builder.functions:
+    if not function.sealed:
+      raise newException(
+        GpuShaderBuildError,
+        "GPU shader has an unsealed helper function"
+      )
   if builder.stageValue == gssVertex and builder.positionOutput < 0:
     raise newException(GpuShaderBuildError, "vertex shader has no position output")
   if builder.stageValue == gssFragment and builder.colorOutputs[0] < 0:
@@ -1998,7 +2368,8 @@ proc emitGpuShaderSource*(builder: GpuShaderBuilder): GpuShaderSource =
       raise newException(GpuShaderBuildError, "compute shader has no work-group size")
     var hasStore = false
     for node in builder.nodes:
-      if node.kind in {gsnStorageStore, gsnStorageImageStore}:
+      if node.functionIndex == -1 and
+          node.kind in {gsnStorageStore, gsnStorageImageStore}:
         hasStore = true
         break
     if not hasStore:
@@ -2068,93 +2439,20 @@ proc emitGpuShaderSource*(builder: GpuShaderBuilder): GpuShaderSource =
     result.source.add "uniform " & valueType.valueTypeName & " " & name & ";\n"
   if uniforms.len > 0:
     result.source.add "\n"
+  for functionIndex, function in builder.functions:
+    var parameters: seq[string]
+    for parameterIndex, valueType in function.parameterTypes:
+      parameters.add valueType.valueTypeName & " " & parameterIndex.parameterName
+    result.source.add function.returnType.valueTypeName & " " &
+      functionIndex.functionName & "(" & parameters.join(", ") & ")\n{\n"
+    result.source.add builder.emitNodeBlock(functionIndex, 1)
+    result.source.add "}\n\n"
   if builder.stageValue == gssCompute:
     result.source.add "NUM_THREADS(" & $builder.computeWorkGroupSize[0] & ", " &
       $builder.computeWorkGroupSize[1] & ", " &
       $builder.computeWorkGroupSize[2] & ")\n"
   result.source.add "void main()\n{\n"
-  var indentation = 1
-  for index, node in builder.nodes:
-    if node.kind in {gsnElse, gsnIfEnd, gsnForEnd}:
-      dec indentation
-    let prefix = repeat("  ", indentation)
-    if node.kind == gsnStorageStore:
-      let storage = builder.storageBuffers[node.storageBufferIndex]
-      result.source.add prefix & storage.name & "[" &
-        builder.nodeReference(node.operands[0]) & "] = " &
-        builder.nodeReference(node.operands[1]) & ";\n"
-    elif node.kind == gsnStorageImageStore:
-      let storage = builder.storageImages[node.storageImageIndex]
-      result.source.add prefix & "imageStore(" & storage.name & ", " &
-        builder.nodeReference(node.operands[0]) & ", " &
-        builder.nodeReference(node.operands[1]) & ");\n"
-    elif node.kind == gsnLocalDeclare:
-      result.source.add prefix & node.valueType.valueTypeName & " " &
-        node.localIndex.localName & " = " &
-        builder.nodeReference(node.operands[0]) & ";\n"
-    elif node.kind == gsnLocalStore:
-      result.source.add prefix & node.localIndex.localName & " = " &
-        builder.nodeReference(node.operands[0]) & ";\n"
-    elif node.kind == gsnLocalArrayDeclare:
-      let entry = builder.localArrays[node.localArrayIndex]
-      let name = node.localArrayIndex.localArrayName
-      result.source.add prefix & node.valueType.valueTypeName & " " & name &
-        "[" & $entry.length & "];\n"
-      for elementIndex in 0'u32 ..< entry.length:
-        result.source.add prefix & name & "[" & $elementIndex & "] = " &
-          builder.nodeReference(node.operands[0]) & ";\n"
-    elif node.kind == gsnLocalArrayStore:
-      result.source.add prefix & node.localArrayIndex.localArrayName & "[" &
-        builder.nodeReference(node.operands[0]) & "] = " &
-        builder.nodeReference(node.operands[1]) & ";\n"
-    elif node.kind == gsnIfBegin:
-      result.source.add prefix & "if (" &
-        builder.nodeReference(node.operands[0]) & ")\n" & prefix & "{\n"
-      inc indentation
-    elif node.kind == gsnElse:
-      result.source.add prefix & "}\n" & prefix & "else\n" & prefix & "{\n"
-      inc indentation
-    elif node.kind == gsnIfEnd:
-      result.source.add prefix & "}\n"
-    elif node.kind == gsnForBegin:
-      let name = node.localIndex.localName
-      if node.valueType == gsvtInt:
-        let start = $node.signedValues[0]
-        let stop = $node.signedValues[1]
-        let step = node.signedValues[2]
-        let comparison = if step > 0: "<" else: ">"
-        let update = if step > 0:
-          name & " += " & $step
-        else:
-          name & " -= " & $(-int64(step))
-        result.source.add prefix & "for (int " & name & " = " & start & "; " &
-          name & " " & comparison & " " & stop & "; " & update & ")\n" &
-          prefix & "{\n"
-      else:
-        let start = node.unsignedValues[0].formatUnsigned
-        let stop = node.unsignedValues[1].formatUnsigned
-        let step = node.unsignedValues[2].formatUnsigned
-        result.source.add prefix & "for (uint " & name & " = " & start & "; " &
-          name & " < " & stop & "; " & name & " += " & step & ")\n" &
-          prefix & "{\n"
-      inc indentation
-    elif node.kind == gsnForEnd:
-      result.source.add prefix & "}\n"
-    elif node.kind == gsnBreak:
-      result.source.add prefix & "break;\n"
-    elif node.kind == gsnContinue:
-      result.source.add prefix & "continue;\n"
-    elif node.kind == gsnReturn:
-      result.source.add prefix & "return;\n"
-    elif node.kind notin {
-        gsnLiteral, gsnVertexInput, gsnVaryingInput, gsnUniform,
-        gsnComputeBuiltin, gsnStorageStore, gsnStorageImageStore,
-        gsnLocalDeclare, gsnLocalStore, gsnLocalArrayDeclare,
-        gsnLocalArrayStore, gsnIfBegin, gsnElse, gsnIfEnd,
-        gsnForBegin, gsnForEnd, gsnBreak, gsnContinue, gsnReturn
-    }:
-      result.source.add prefix & node.valueType.valueTypeName & " cbss_n" &
-        $index & " = " & builder.nodeExpression(index) & ";\n"
+  result.source.add builder.emitNodeBlock(-1, 1)
   case builder.stageValue
   of gssVertex:
     for item in builder.varyingOutputs:
