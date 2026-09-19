@@ -7,6 +7,8 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-09-20
+
 ### Fixed
 
 - Fixed asynchronous texture and storage-buffer readback destinations being

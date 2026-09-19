@@ -1,6 +1,6 @@
 import std/os
 
-version       = "0.7.0"
+version       = "0.7.1"
 author        = "Clay Board Style System contributors"
 description   = "A CSS-inspired primitive engine for native GUI toolkits"
 license       = "Apache-2.0"
