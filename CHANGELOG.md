@@ -9,6 +9,13 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added a drawing-engine compatibility qualification for typed Compute shader
+  authoring. One public-API-only fixture now combines exact packed physical
+  record layouts, an eight-entry local candidate array, bounded neighbourhood
+  passes, flow limiting, pigment and binder transfer, and packed metadata. ARC,
+  ORC, and official bgfx `shaderc` CI compile the same fixture so these
+  primitives remain usable together rather than only as isolated operations.
+
 - Added initialized fixed-size local arrays to typed Compute shader authoring.
   Arrays support typed numeric-scalar dynamic load/store operations, expression
   snapshots, lexical scope checks, literal index validation, and bounded array,

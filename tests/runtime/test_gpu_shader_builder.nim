@@ -2,6 +2,7 @@ import std/[math, strutils, unittest]
 
 import clay_board_style_system/runtime/[gpu_host, gpu_shader_builder,
     gpu_shader_records]
+import ../fixtures/gpu_wet_supply_compatibility
 
 proc buildVertexShader(): GpuShaderSource =
   let builder = newGpuShaderBuilder(gssVertex, "basic-vertex")
@@ -846,6 +847,27 @@ suite "typed GPU compute shader authoring":
     let mutationPosition = source.find("cbss_a0[0u] = 99u;")
     check snapshotPosition >= 0
     check mutationPosition > snapshotPosition
+
+  test "builds a wet-supply compatibility kernel from public primitives":
+    let first = buildWetSupplyCompatibilityShader()
+    let second = buildWetSupplyCompatibilityShader()
+
+    check first.stage == gssCompute
+    check first.label == "wet-supply-compatibility"
+    check first.source == second.source
+    check first.source.len < maxGpuShaderSourceBytes
+    check "NUM_THREADS(64, 1, 1)" in first.source
+    check "uint cbss_a0[8];" in first.source
+    check first.source.count("for (uint") == 2
+    check "BUFFER_RO(b_cells, uint, 0);" in first.source
+    check "BUFFER_RW(b_edges, uint, 1);" in first.source
+    check "BUFFER_RO(b_parameters, uint, 2);" in first.source
+    check "BUFFER_WO(b_packed_edges, uint, 3);" in first.source
+    check "uintBitsToFloat(" in first.source
+    check "floatBitsToUint(" in first.source
+    check "return;" in first.source
+    check " | " in first.source
+    check first.storageBuffers.len == 4
 
   test "validates local array ownership scope indices and values":
     let fragment = newGpuShaderBuilder(gssFragment)

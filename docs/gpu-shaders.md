@@ -310,6 +310,21 @@ storage elements, or bind padded buffers large enough for every invocation in
 the final work group. This keeps resource bounds explicit at the host boundary
 instead of hiding an unchecked shader access.
 
+### Drawing-engine compatibility fixture
+
+The test suite builds one wet-supply-style Compute kernel entirely through the
+public authoring API. It uses exact fixed-stride cell, edge, parameter, and
+packed-output layouts; an initialized eight-entry candidate array; two bounded
+neighbour passes; guarded flow scaling; pigment and binder transfer; and
+unsigned metadata packing. The fixture deliberately contains no backend shader
+source and no application-private hooks.
+
+This is a compatibility floor, not a bundled paint simulation. It verifies that
+the independently useful primitives compose into a realistic drawing-engine
+workload under ARC and ORC, then sends the same generated source through the
+official bgfx `shaderc` integration lane. Applications retain ownership of the
+physical model, resource contents, dispatch schedule, and calibration.
+
 ## Verification
 
 Portable unit tests run under ARC and ORC. They cover deterministic encoding,
@@ -322,7 +337,8 @@ diagnostics, and paths containing shell metacharacters.
 The Linux bgfx CI lane additionally builds the pinned official `shaderc`,
 compiles generated Vertex, Fragment, storage-buffer Compute, storage-image
 Compute, packed-record Compute, bounded local-control-flow Compute, and fixed
-local-array Compute shaders to SPIR-V, packages the artifacts, and decodes them
-through the runtime parser.
+local-array Compute shaders to SPIR-V. It also compiles the combined drawing-
+engine compatibility fixture described above, packages the artifacts, and
+decodes them through the runtime parser.
 This test needs no GPU; real resource creation and submission remain covered by
 the separate bgfx host integration lanes.
