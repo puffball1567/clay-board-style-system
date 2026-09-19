@@ -2291,7 +2291,11 @@ candidate-set load/store operations with lexical scope and bounded resource
 limits. Together, these supply the bounded nested-loop and local-array portions
 of wet-pressure, capillary, and wet-supply kernels needed by drawing engines
 without accepting arbitrary shader text or unbounded data-dependent loops.
-Helper functions remain subsequent authoring work. The
+An ARC/ORC fixture now composes the public primitives into a wet-supply-style
+kernel with exact packed cell, edge, parameter, and output layouts, two bounded
+candidate passes, flow limiting, pigment and binder transfer, and metadata
+packing; the Linux GPU lane compiles that same generated source with official
+bgfx `shaderc`. Helper functions remain subsequent authoring work. The
 resource contract additionally supports R16F/R32F, RG16F/RG32F, and
 RGBA16F/RGBA32F textures plus typed compute storage buffers with bounded,
 stage-checked read/write access. Dynamic storage buffers accept element-aligned

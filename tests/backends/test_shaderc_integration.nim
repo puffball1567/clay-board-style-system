@@ -4,6 +4,7 @@ import clay_board_style_system/build/gpu_shader_compiler
 import clay_board_style_system/paint/gpu_host_compositor
 import clay_board_style_system/runtime/[gpu_host, gpu_shader_builder,
     gpu_shader_package, gpu_shader_records]
+import ../fixtures/gpu_wet_supply_compatibility
 
 proc vertexSource(): GpuShaderSource =
   let builder = newGpuShaderBuilder(gssVertex, "shaderc-vertex")
@@ -302,6 +303,26 @@ suite "official bgfx shaderc integration":
       removeDir(root)
 
     let compute = localArraySource()
+    let config = gpuShaderCompilerConfig(
+      shaderc,
+      [shaderIncludes],
+      workDirectory = root
+    )
+    let target = gpuShaderCompileTarget(
+      gsbtVulkan,
+      gscpLinux,
+      "spirv"
+    )
+
+    let compiled = compileGpuShader(compute, target, config)
+    check compiled.artifact.bytecode.len > 0
+
+  test "compiles the wet-supply compatibility kernel to SPIR-V":
+    let root = createTempDir("cbss-shaderc-wet-supply-", "")
+    defer:
+      removeDir(root)
+
+    let compute = buildWetSupplyCompatibilityShader()
     let config = gpuShaderCompilerConfig(
       shaderc,
       [shaderIncludes],
