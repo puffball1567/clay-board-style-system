@@ -91,6 +91,7 @@ static uint64_t cbss_texture_flags;
 static bgfx_texture_format_t cbss_texture_format;
 static uint32_t cbss_width;
 static uint32_t cbss_height;
+static uint64_t cbss_init_capabilities;
 static bgfx_memory_t cbss_texture_memory;
 static uint8_t cbss_texture_memory_data[4096];
 
@@ -118,6 +119,7 @@ bool bgfx_init(const bgfx_init_t* init)
     cbss_initialized = true;
     cbss_width = init->swapChain.width;
     cbss_height = init->swapChain.height;
+    cbss_init_capabilities = init->capabilities;
     return true;
 }
 
@@ -882,6 +884,7 @@ void cbss_bgfx_stub_reset_counters(void)
     cbss_shutdown_count = 0;
     cbss_frame_count = 0;
     cbss_reset_count = 0;
+    cbss_init_capabilities = 0;
     cbss_submit_count = 0;
     cbss_dispatch_count = 0;
     cbss_view_rect_count = 0;
@@ -1231,4 +1234,9 @@ uint64_t cbss_bgfx_stub_frame_buffer_flags(void)
 uint32_t cbss_bgfx_stub_frame_buffer_format(void)
 {
     return (uint32_t)cbss_frame_buffer_format;
+}
+
+uint64_t cbss_bgfx_stub_init_capabilities(void)
+{
+    return cbss_init_capabilities;
 }

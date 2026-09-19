@@ -633,6 +633,9 @@ type
     region: GpuBufferCopyRegion
   ): GpuBackendStatus {.nimcall, raises: [].}
 
+  ## A successful backend request may retain destination until polling reports
+  ## ready, device loss is reported, or the backend close callback returns.
+  ## Failed requests must not retain destination.
   GpuBackendRequestReadbackProc* = proc(
     context: GpuBackendContext;
     texture: GpuBackendResourceId;
@@ -642,6 +645,7 @@ type
     completionToken: var uint64
   ): GpuBackendStatus {.nimcall, raises: [].}
 
+  ## Uses the same retained-destination lifetime as texture readback.
   GpuBackendRequestBufferReadbackProc* = proc(
     context: GpuBackendContext;
     buffer: GpuBackendResourceId;
@@ -734,7 +738,9 @@ type
     pipeline: GpuBackendResourceId
     bindings: GpuBackendBindingSet
 
-  GpuReadbackEntry = object
+  # Backends retain data addresses until polling completes, so table and
+  # namespace value copies must retain one stable allocation.
+  GpuReadbackEntry = ref object
     generation: uint64
     resource: GpuResourceId
     kind: GpuResourceKind
@@ -3406,15 +3412,20 @@ proc requestGpuReadback*(
   if host.namespaces[namespace].nextReadbackId == 0:
     raise newException(GpuHostError, "GPU readback identifier space exhausted")
 
-  var pixels = newSeq[byte](int(bytes))
-  var completionToken: uint64
+  let readback = GpuReadbackEntry(
+    generation: host.generationValue,
+    resource: texture.resource,
+    kind: grkTexture,
+    textureDescriptor: entry.textureDescriptor,
+    data: newSeq[byte](int(bytes))
+  )
   let status = host.backend.requestReadback(
     host.backend.context,
     entry.backendResource,
     entry.textureDescriptor,
-    addr pixels[0],
+    addr readback.data[0],
     bytes,
-    completionToken
+    readback.completionToken
   )
   if status == gbsDeviceLost:
     host.enterDeviceLost()
@@ -3423,14 +3434,7 @@ proc requestGpuReadback*(
   var namespaceEntry = host.namespaces[namespace]
   let id = GpuReadbackId(namespaceEntry.nextReadbackId)
   inc namespaceEntry.nextReadbackId
-  namespaceEntry.readbacks[id] = GpuReadbackEntry(
-    generation: host.generationValue,
-    resource: texture.resource,
-    kind: grkTexture,
-    textureDescriptor: entry.textureDescriptor,
-    completionToken: completionToken,
-    data: move(pixels)
-  )
+  namespaceEntry.readbacks[id] = readback
   inc namespaceEntry.resources[texture.resource].dependentCount
   host.namespaces[namespace] = namespaceEntry
   host.reserveGpuFrameWork(namespace, readbackBytes = bytes, workUnits = 1)
@@ -3474,16 +3478,21 @@ proc requestGpuBufferReadback*(
   if host.namespaces[namespace].nextReadbackId == 0:
     raise newException(GpuHostError, "GPU readback identifier space exhausted")
 
-  var bytes = newSeq[byte](int(byteCount))
-  var completionToken: uint64
+  let readback = GpuReadbackEntry(
+    generation: host.generationValue,
+    resource: buffer.resource,
+    kind: grkBuffer,
+    bufferOffsetBytes: offsetBytes,
+    data: newSeq[byte](int(byteCount))
+  )
   let status = host.backend.requestBufferReadback(
     host.backend.context,
     entry.backendResource,
     entry.bufferDescriptor,
     offsetBytes,
-    addr bytes[0],
+    addr readback.data[0],
     byteCount,
-    completionToken
+    readback.completionToken
   )
   if status == gbsDeviceLost:
     host.enterDeviceLost()
@@ -3492,14 +3501,7 @@ proc requestGpuBufferReadback*(
   var namespaceEntry = host.namespaces[namespace]
   let id = GpuReadbackId(namespaceEntry.nextReadbackId)
   inc namespaceEntry.nextReadbackId
-  namespaceEntry.readbacks[id] = GpuReadbackEntry(
-    generation: host.generationValue,
-    resource: buffer.resource,
-    kind: grkBuffer,
-    bufferOffsetBytes: offsetBytes,
-    completionToken: completionToken,
-    data: move(bytes)
-  )
+  namespaceEntry.readbacks[id] = readback
   inc namespaceEntry.resources[buffer.resource].dependentCount
   host.namespaces[namespace] = namespaceEntry
   host.reserveGpuFrameWork(namespace, readbackBytes = byteCount, workUnits = 1)

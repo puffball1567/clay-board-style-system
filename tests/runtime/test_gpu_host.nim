@@ -24,6 +24,12 @@ proc boxFor(layout: LayoutResult; node: NodeId): LayoutBox =
       return item
   raise newException(ValueError, "layout box was not found")
 
+type MockPendingReadbackWrite = object
+  token: uint64
+  destination: pointer
+  destinationBytes: uint64
+  firstByte: int
+
 type MockGpuContext = ref object of GpuBackendContext
   openStatus: GpuBackendStatus
   beginStatus: GpuBackendStatus
@@ -110,6 +116,9 @@ type MockGpuContext = ref object of GpuBackendContext
   readbackReady: bool
   nextCompletionToken: uint64
   readbackSeed: int
+  deferReadbackWrites: bool
+  flushDeferredReadbacksOnClose: bool
+  pendingReadbackWrites: seq[MockPendingReadbackWrite]
   copySupported: bool
   readbackSupported: bool
   bufferCopySupported: bool
@@ -127,6 +136,41 @@ type MockGpuContext = ref object of GpuBackendContext
 
 proc mock(context: GpuBackendContext): MockGpuContext {.inline.} =
   MockGpuContext(context)
+
+proc writePendingReadback(pending: MockPendingReadbackWrite) =
+  let bytes = cast[ptr UncheckedArray[byte]](pending.destination)
+  for index in 0 ..< int(pending.destinationBytes):
+    bytes[index] = byte((pending.firstByte + index) mod 251)
+
+proc retainOrWriteReadback(
+    state: MockGpuContext;
+    destination: pointer;
+    destinationBytes, token: uint64;
+    firstByte: int
+) =
+  let pending = MockPendingReadbackWrite(
+    token: token,
+    destination: destination,
+    destinationBytes: destinationBytes,
+    firstByte: firstByte
+  )
+  if state.deferReadbackWrites:
+    state.pendingReadbackWrites.add pending
+  else:
+    pending.writePendingReadback()
+
+proc completePendingReadback(state: MockGpuContext; token: uint64) =
+  for index, pending in state.pendingReadbackWrites:
+    if pending.token == token:
+      pending.writePendingReadback()
+      state.pendingReadbackWrites.delete(index)
+      return
+
+proc discardPendingReadbacks(state: MockGpuContext; writeBeforeDiscard: bool) =
+  if writeBeforeDiscard:
+    for pending in state.pendingReadbackWrites:
+      pending.writePendingReadback()
+  state.pendingReadbackWrites.setLen(0)
 
 proc openOwned(
     context: GpuBackendContext;
@@ -223,10 +267,14 @@ proc restore(
   state.restoreStatus
 
 proc closeOwned(context: GpuBackendContext) {.raises: [].} =
-  inc context.mock.ownedCloses
+  let state = context.mock
+  state.discardPendingReadbacks(state.flushDeferredReadbacksOnClose)
+  inc state.ownedCloses
 
 proc detachBorrowed(context: GpuBackendContext) {.raises: [].} =
-  inc context.mock.borrowedDetaches
+  let state = context.mock
+  state.discardPendingReadbacks(state.flushDeferredReadbacksOnClose)
+  inc state.borrowedDetaches
 
 proc createTexture(
     context: GpuBackendContext;
@@ -464,12 +512,15 @@ proc requestReadback(
   state.lastSubmissionResources = @[texture.backendResourceIdValue()]
   state.lastReadbackBytes = destinationBytes
   if state.requestReadbackStatus == gbsOk:
-    let bytes = cast[ptr UncheckedArray[byte]](destination)
-    for index in 0 ..< int(destinationBytes):
-      bytes[index] = byte((index + state.readbackSeed) mod 251)
-    inc state.readbackSeed
     completionToken = state.nextCompletionToken
     inc state.nextCompletionToken
+    state.retainOrWriteReadback(
+      destination,
+      destinationBytes,
+      completionToken,
+      state.readbackSeed
+    )
+    inc state.readbackSeed
   state.requestReadbackStatus
 
 proc copyBuffer(
@@ -504,12 +555,15 @@ proc requestBufferReadback(
   state.lastBufferReadbackOffset = offsetBytes
   state.lastReadbackBytes = destinationBytes
   if state.requestBufferReadbackStatus == gbsOk:
-    let bytes = cast[ptr UncheckedArray[byte]](destination)
-    for index in 0 ..< int(destinationBytes):
-      bytes[index] = byte((int(offsetBytes) + index + state.readbackSeed) mod 251)
-    inc state.readbackSeed
     completionToken = state.nextCompletionToken
     inc state.nextCompletionToken
+    state.retainOrWriteReadback(
+      destination,
+      destinationBytes,
+      completionToken,
+      int(offsetBytes) + state.readbackSeed
+    )
+    inc state.readbackSeed
   state.requestBufferReadbackStatus
 
 proc pollReadback(
@@ -521,6 +575,11 @@ proc pollReadback(
   let state = context.mock
   inc state.readbackPolls
   ready = state.readbackReady
+  if state.pollReadbackStatus == gbsDeviceLost:
+    state.discardPendingReadbacks(writeBeforeDiscard = false)
+  elif state.pollReadbackStatus == gbsOk and ready and
+      state.deferReadbackWrites:
+    state.completePendingReadback(completionToken)
   state.pollReadbackStatus
 
 proc resolvePresentationTexture(
@@ -4209,6 +4268,51 @@ suite "GPU texture transfer and readback":
     check host.releaseGpuResource(target)
     host.close()
 
+  test "deferred texture destinations survive namespace copies and frames":
+    let context = newContext()
+    context.deferReadbackWrites = true
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "deferred-texture-readback",
+      GpuResourceBudget(
+        persistentBytes: 4,
+        transientBytesPerFrame: 1,
+        readbackBytesPerFrame: 8,
+        workUnitsPerFrame: 3,
+        maxResources: 1
+      )
+    )
+    let texture = host.createGpuTexture(
+      namespace,
+      textureDescriptor(
+        width = 1,
+        height = 1,
+        usage = {gtuBlitDestination, gtuReadback}
+      )
+    )
+
+    let frame = host.beginGpuFrame()
+    let first = host.requestGpuReadback(namespace, texture)
+    let second = host.requestGpuReadback(namespace, texture)
+    host.reserveGpuFrameWork(
+      namespace,
+      transientBytes = 1,
+      workUnits = 1
+    )
+    host.endGpuFrame(frame)
+
+    let nextFrame = host.beginGpuFrame()
+    host.endGpuFrame(nextFrame)
+    context.readbackReady = true
+    var firstData, secondData: GpuReadbackData
+    check host.tryTakeGpuReadback(first, firstData)
+    check host.tryTakeGpuReadback(second, secondData)
+    check firstData.pixels == @[0'u8, 1, 2, 3]
+    check secondData.pixels == @[1'u8, 2, 3, 4]
+    check context.pendingReadbackWrites.len == 0
+    check host.releaseGpuResource(texture)
+    host.close()
+
   test "partial texture copies preserve the typed region":
     let context = newContext()
     let host = openGpuHost(context.backend, ghoOwned)
@@ -4440,6 +4544,7 @@ suite "GPU texture transfer and readback":
 
   test "device loss invalidates pending readback handles":
     let context = newContext()
+    context.deferReadbackWrites = true
     context.pollReadbackStatus = gbsDeviceLost
     let host = openGpuHost(context.backend, ghoOwned)
     let namespace = host.createGpuNamespace(
@@ -4466,6 +4571,7 @@ suite "GPU texture transfer and readback":
       discard host.gpuReadbackState(readback)
     check host.state == ghsDeviceLost
     check host.gpuReadbackState(readback) == grsInvalid
+    check context.pendingReadbackWrites.len == 0
     host.close()
 
   test "borrowed hosts must drain readbacks before detaching":
@@ -4499,6 +4605,44 @@ suite "GPU texture transfer and readback":
     check host.tryTakeGpuReadback(readback, data)
     host.close()
     check context.borrowedDetaches == 1
+
+  test "owned shutdown retains deferred destinations until backend close":
+    let context = newContext()
+    context.deferReadbackWrites = true
+    context.flushDeferredReadbacksOnClose = true
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "shutdown-readbacks",
+      GpuResourceBudget(
+        persistentBytes: 68,
+        readbackBytesPerFrame: 8,
+        workUnitsPerFrame: 2,
+        maxResources: 2
+      )
+    )
+    let texture = host.createGpuTexture(
+      namespace,
+      textureDescriptor(
+        width = 1,
+        height = 1,
+        usage = {gtuBlitDestination, gtuReadback}
+      )
+    )
+    let buffer = host.createGpuBuffer(
+      namespace,
+      storageBufferDescriptor(
+        storageFormat = gsbfUint32,
+        storageAccess = gsaReadWrite
+      )
+    )
+    let frame = host.beginGpuFrame()
+    discard host.requestGpuReadback(namespace, texture)
+    discard host.requestGpuBufferReadback(namespace, buffer, 0, 4)
+    host.endGpuFrame(frame)
+
+    host.close()
+    check context.ownedCloses == 1
+    check context.pendingReadbackWrites.len == 0
 
 suite "GPU storage buffer transfer and readback":
 
@@ -4558,6 +4702,50 @@ suite "GPU storage buffer transfer and readback":
     check host.gpuReadbackState(readback) == grsInvalid
     check host.releaseGpuResource(destination)
     check host.releaseGpuResource(source)
+    host.close()
+
+  test "deferred buffer destinations survive namespace copies and frames":
+    let context = newContext()
+    context.deferReadbackWrites = true
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "deferred-buffer-readback",
+      GpuResourceBudget(
+        persistentBytes: 64,
+        transientBytesPerFrame: 1,
+        readbackBytesPerFrame: 8,
+        workUnitsPerFrame: 3,
+        maxResources: 1
+      )
+    )
+    let buffer = host.createGpuBuffer(
+      namespace,
+      storageBufferDescriptor(
+        storageFormat = gsbfUint32,
+        storageAccess = gsaReadWrite
+      )
+    )
+
+    let frame = host.beginGpuFrame()
+    let first = host.requestGpuBufferReadback(namespace, buffer, 0, 4)
+    let second = host.requestGpuBufferReadback(namespace, buffer, 4, 4)
+    host.reserveGpuFrameWork(
+      namespace,
+      transientBytes = 1,
+      workUnits = 1
+    )
+    host.endGpuFrame(frame)
+
+    let nextFrame = host.beginGpuFrame()
+    host.endGpuFrame(nextFrame)
+    context.readbackReady = true
+    var firstData, secondData: GpuBufferReadbackData
+    check host.tryTakeGpuBufferReadback(first, firstData)
+    check host.tryTakeGpuBufferReadback(second, secondData)
+    check firstData.bytes == @[0'u8, 1, 2, 3]
+    check secondData.bytes == @[5'u8, 6, 7, 8]
+    check context.pendingReadbackWrites.len == 0
+    check host.releaseGpuResource(buffer)
     host.close()
 
   test "whole buffer copy uses the source capacity":

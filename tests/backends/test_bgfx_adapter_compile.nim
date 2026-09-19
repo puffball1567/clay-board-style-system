@@ -30,6 +30,8 @@ when defined(cbssTestSdl3PlatformData):
   ) {.importc: "cbss_sdl3_platform_stub_configure", cdecl.}
 proc shutdownCount(): uint32 {.importc: "cbss_bgfx_stub_shutdown_count", cdecl.}
 proc frameCount(): uint32 {.importc: "cbss_bgfx_stub_frame_count", cdecl.}
+proc initCapabilities(): uint64 {.
+  importc: "cbss_bgfx_stub_init_capabilities", cdecl.}
 proc resetCount(): uint32 {.importc: "cbss_bgfx_stub_reset_count", cdecl.}
 proc stubWidth(): uint32 {.importc: "cbss_bgfx_stub_width", cdecl.}
 proc stubHeight(): uint32 {.importc: "cbss_bgfx_stub_height", cdecl.}
@@ -217,6 +219,27 @@ proc directRequest(
   )
 
 suite "optional bgfxim adapter":
+  test "host options preserve bgfx capability defaults and explicit limits":
+    resetCounters()
+    let defaultHost = openGpuHost(
+      newBgfxBackend(defaultBgfxHostOptions()),
+      ghoOwned,
+      config()
+    )
+    check initCapabilities() == high(uint64)
+    defaultHost.close()
+
+    resetCounters()
+    var restricted = defaultBgfxHostOptions()
+    restricted.capabilities = 0x1234'u64
+    let restrictedHost = openGpuHost(
+      newBgfxBackend(restricted),
+      ghoOwned,
+      config()
+    )
+    check initCapabilities() == 0x1234'u64
+    restrictedHost.close()
+
   test "native window platform data maps supported systems safely":
     let display = cast[pointer](0x1234'u)
     let window = cast[pointer](0x5678'u)
