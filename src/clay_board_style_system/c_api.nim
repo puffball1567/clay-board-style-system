@@ -1,8 +1,9 @@
 import std/[algorithm, atomics, locks, math, options, sets, strutils, tables]
 
 import ./core/[color, color_conversion, color_mix, color_mix_parser,
-  color_parser, color_value, declaration, diagnostics, geometry, node, rule,
-  selector, style_resolver, style_value]
+  color_parser, color_value, custom_paint, custom_paint_parameter, declaration,
+  diagnostics, geometry, node, rule, raster_surface, selector, style_resolver,
+  style_value]
 import ./data/[blob, form_data, stream_bridge, stream_mailbox]
 import ./core/computed_style as computed_style_types
 import ./craft/[pack, style, style_slots]
@@ -11,9 +12,10 @@ import ./generated/default_properties
 import ./hit/hit_test
 import ./input/events
 import ./layout/[layout, presentation, scroll_state]
-import ./paint/[paint, paint_command, path_geometry]
+import ./paint/[custom_paint_registry, paint, paint_command, path_geometry]
 import ./runtime/[canvas, declarative_keyframes, declarative_transition,
-  frame_scheduler, invalidation, motion_lifecycle, render_surface, validation]
+  frame_scheduler, gpu_host, gpu_shader_builder, invalidation, motion_lifecycle,
+  render_surface, validation]
 
 when defined(cbssReferenceTestSupport):
   import ./backends/ppm/raster
@@ -149,6 +151,8 @@ const
   CbssMaxCraftPackSourceBytes* = uint32(maxCraftPackSourceBytes)
   CbssMaxValidationPatternBytes* = 65_536'u32
   CbssMaxValidationValueBytes* = 16'u32 * 1024'u32 * 1024'u32
+  CbssCustomPaintApiVersion* = 1'u32
+  CbssCustomPaintStageMask* = (1'u32 shl 4) - 1
 
   CbssCraftDiagnosticStyleParse* = 0'u32
   CbssCraftDiagnosticStyleReplacement* = 1'u32
@@ -161,6 +165,23 @@ const
   CbssValidationFormatDate* = 4'u32
   CbssValidationFormatTime* = 5'u32
   CbssValidationFormatDateTime* = 6'u32
+
+  CbssShaderStageVertex* = 0'u32
+  CbssShaderStageFragment* = 1'u32
+  CbssShaderStageCompute* = 2'u32
+
+  CbssShaderComputeBuiltinGlobalInvocationId* = 0'u32
+  CbssShaderComputeBuiltinLocalInvocationId* = 1'u32
+  CbssShaderComputeBuiltinWorkGroupId* = 2'u32
+  CbssShaderComputeBuiltinLocalInvocationIndex* = 3'u32
+  CbssShaderComputeBuiltinWorkGroupCount* = 4'u32
+
+  CbssCustomPaintParameterFloat* = 0'u32
+  CbssCustomPaintParameterInteger* = 1'u32
+  CbssCustomPaintParameterBoolean* = 2'u32
+  CbssCustomPaintParameterVec2* = 3'u32
+  CbssCustomPaintParameterVec4* = 4'u32
+  CbssCustomPaintParameterColor* = 5'u32
 
 type
   CbssRectC* {.bycopy.} = object
@@ -302,6 +323,27 @@ type
     completed*, total*: uint64
     messageBytes*: uint32
 
+  CbssRasterRegionC* {.bycopy.} = object
+    x*, y*, width*, height*: uint32
+
+  CbssCustomPaintParameterInputC* {.bycopy.} = object
+    name*: cstring
+    kind*, reserved*: uint32
+    integerValue*: int64
+    values*: array[4, cfloat]
+
+  CbssCustomPaintParameterC* {.bycopy.} = object
+    kind*, nameBytes*: uint32
+    integerValue*: int64
+    values*: array[4, cfloat]
+
+  CbssCustomPaintRequestC* {.bycopy.} = object
+    structSize*, apiVersion*, stage*, owner*: uint32
+    bounds*, localBounds*: CbssRectC
+    opacity*: cfloat
+    parameterCount*: uint32
+    reserved*: uint64
+
   CbssCraftDiagnosticC* {.bycopy.} = object
     domain*, code*, pathBytes*, messageBytes*: uint32
 
@@ -316,6 +358,9 @@ type
   CbssEventViewHandle* = ptr CbssEventViewObj
   CbssBlobStreamHandle* = ptr CbssBlobStreamObj
   CbssStreamProducerHandle* = ptr CbssStreamProducerObj
+  CbssRasterSurfaceHandle* = ptr CbssRasterSurfaceObj
+  CbssShaderBuilderHandle* = ptr CbssShaderBuilderObj
+  CbssCustomPaintSinkHandle* = ptr CbssCustomPaintSinkObj
   CbssEventCallback* = proc(
     context: CbssContextHandle;
     event: ptr CbssEventC;
@@ -344,6 +389,28 @@ type
   CbssBlobProviderReleaseCallback* = proc(
     userData: pointer
   ) {.cdecl, gcsafe, raises: [].}
+  CbssCustomPaintProviderCallback* = proc(
+    request: ptr CbssCustomPaintRequestC;
+    sink: CbssCustomPaintSinkHandle;
+    userData: pointer
+  ): int32 {.cdecl, raises: [].}
+  CbssCustomPaintProviderReleaseCallback* = proc(
+    userData: pointer
+  ) {.cdecl, raises: [].}
+
+  CbssCustomPaintProviderBinding = ref object
+    token: uint64
+    registration: CustomPaintRegistration
+    callback: CbssCustomPaintProviderCallback
+    release: CbssCustomPaintProviderReleaseCallback
+    userData: pointer
+    released: bool
+
+  CbssCustomPaintSinkObj = object
+    ownerContext: CbssContextHandle
+    active: bool
+    canvas: Canvas2D
+    parameters: CustomPaintParameters
 
   CbssRenderSurfaceBinding = ref object
     context: CbssContextHandle
@@ -387,6 +454,13 @@ type
     surfaces: RenderSurfaceRegistry
     surfaceBindings: Table[RenderSurfaceId, CbssRenderSurfaceBinding]
     surfacePaintProvider: SurfacePaintProvider
+    customPaints: CustomPaintRegistry
+    customPaintProvider: CustomPaintProvider
+    customPaintBindings: Table[uint64, CbssCustomPaintProviderBinding]
+    customPaintByMaterial: Table[string, uint64]
+    customPaintSink: CbssCustomPaintSinkObj
+    nextCustomPaintToken: uint64
+    customPaintLifecycleActive: bool
     pixelScale: float32
     diagnostics: Diagnostics
     lastError: string
@@ -472,6 +546,15 @@ type
     producer: StreamProducer[CbssStreamBlobPayload]
     references: Atomic[uint32]
 
+  CbssRasterSurfaceObj = object
+    surface: RasterSurface
+
+  CbssShaderBuilderObj = object
+    builder: GpuShaderBuilder
+    emitted: GpuShaderSource
+    hasEmitted: bool
+    lastError: string
+
 static:
   doAssert sizeof(CbssRectC) == 16
   doAssert sizeof(CbssColorC) == 16
@@ -496,6 +579,10 @@ static:
   doAssert sizeof(CbssStreamPumpResultC) == 12
   doAssert sizeof(CbssStreamEventC) == 48
   doAssert sizeof(CbssCraftDiagnosticC) == 16
+  doAssert sizeof(CbssRasterRegionC) == 16
+  doAssert sizeof(CbssCustomPaintParameterInputC) == 40
+  doAssert sizeof(CbssCustomPaintParameterC) == 32
+  doAssert sizeof(CbssCustomPaintRequestC) == 64
 
 proc retainBlobHandle(blob: CbssBlobHandle): int32 {.raises: [].}
 proc releaseBlobHandle(blob: CbssBlobHandle) {.raises: [].}
@@ -593,6 +680,7 @@ proc layerCompositeModeFromC(value: uint32): Option[LayerCompositeMode] =
   of 0: some(lcmSourceOver)
   of 1: some(lcmCopy)
   of 2: some(lcmAdditive)
+  of 3: some(lcmDestinationIn)
   else: none(LayerCompositeMode)
 
 proc strokeLineCapFromC(value: uint32): Option[StrokeLineCap] =
@@ -725,6 +813,84 @@ proc checkedSurfaceCanvas(
     return (CbssOutOfRange, nil)
   (CbssOk, binding)
 
+proc checkedCustomPaintSink(
+    sink: CbssCustomPaintSinkHandle;
+    requireCapacity = false
+): tuple[status: int32, canvas: Canvas2D] {.inline.} =
+  if sink.isNil or sink.ownerContext.isNil:
+    return (CbssInvalidHandle, nil)
+  if addr(sink.ownerContext.customPaintSink) != sink:
+    return (CbssInvalidHandle, nil)
+  if not sink.active or sink.canvas.isNil:
+    return (CbssNotAvailable, nil)
+  if requireCapacity and sink.canvas.commands.len >= maxCustomPaintCommands:
+    return (CbssOutOfRange, nil)
+  (CbssOk, sink.canvas)
+
+template guardedCustomPaintMutation(
+    sink: CbssCustomPaintSinkHandle;
+    body: untyped
+): int32 =
+  let checked {.inject.} = checkedCustomPaintSink(
+    sink, requireCapacity = true
+  )
+  if checked.status != CbssOk:
+    checked.status
+  else:
+    try:
+      body
+      CbssOk
+    except CatchableError as error:
+      sink.ownerContext.setError(error.msg)
+      CbssInternalError
+
+proc customPaintStagesFromC(mask: uint32): Option[set[CustomPaintStage]] =
+  if mask == 0 or (mask and not CbssCustomPaintStageMask) != 0:
+    return none(set[CustomPaintStage])
+  var stages: set[CustomPaintStage]
+  for stage in CustomPaintStage:
+    if (mask and (1'u32 shl uint32(ord(stage)))) != 0:
+      stages.incl stage
+  some(stages)
+
+proc releaseCustomPaintBinding(
+    context: CbssContextHandle;
+    binding: CbssCustomPaintProviderBinding
+) =
+  if binding.isNil or binding.released:
+    return
+  binding.released = true
+  let callback = binding.release
+  let userData = binding.userData
+  binding.callback = nil
+  binding.release = nil
+  binding.userData = nil
+  if not callback.isNil:
+    let previous =
+      if context.isNil: false
+      else: context.customPaintLifecycleActive
+    if not context.isNil:
+      context.customPaintLifecycleActive = true
+    try:
+      callback(userData)
+    finally:
+      if not context.isNil:
+        context.customPaintLifecycleActive = previous
+
+proc releaseCustomPaintBindings(context: CbssContextHandle) =
+  if context.isNil:
+    return
+  var bindings = newSeqOfCap[CbssCustomPaintProviderBinding](
+    context.customPaintBindings.len
+  )
+  for binding in context.customPaintBindings.values:
+    bindings.add binding
+  context.customPaintBindings.clear()
+  context.customPaintByMaterial.clear()
+  context.customPaints = nil
+  for binding in bindings:
+    context.releaseCustomPaintBinding(binding)
+
 proc copyCanvasCommands(source: Canvas2D): seq[CanvasCommand] =
   ## Presentation reads only snapshots published by commit. Nested strings,
   ## gradients, and paths are immutable through the C adapter and remain
@@ -842,6 +1008,9 @@ proc commandKindToC(command: PaintCommand): uint32 =
   of pcPopTransform: 10
   of pcPushLayer: 11
   of pcPopLayer: 12
+  of pcDrawRasterSurface: 13
+  of pcDrawGpuDirectSurface: 14
+  of pcFillPath: 15
 
 proc commandRect(command: PaintCommand): Rect =
   case command.kind
@@ -861,6 +1030,8 @@ proc commandRect(command: PaintCommand): Rect =
     command.gradientRect
   of pcStrokeRect:
     command.strokeRect
+  of pcFillPath:
+    command.fillPathValue.bounds()
   of pcStrokePath:
     command.path.bounds()
   of pcDrawText:
@@ -872,6 +1043,10 @@ proc commandRect(command: PaintCommand): Rect =
     )
   of pcDrawImage:
     command.imageRect
+  of pcDrawRasterSurface:
+    command.rasterRect
+  of pcDrawGpuDirectSurface:
+    command.gpuSurfaceRect
 
 proc commandColor(command: PaintCommand): Color =
   case command.kind
@@ -881,6 +1056,8 @@ proc commandColor(command: PaintCommand): Color =
     command.color
   of pcStrokeRect:
     command.strokeColor
+  of pcFillPath:
+    command.fillPathColor
   of pcStrokePath:
     command.pathColor
   of pcDrawText:
@@ -913,7 +1090,7 @@ proc refreshPresentation(context: CbssContextHandle) =
       context.presentationRefreshPending = false
       context.commands = buildPaintCommands(
         context.tree, context.resolved, context.layout, context.scroll,
-        context.surfacePaintProvider
+        context.surfacePaintProvider, context.customPaintProvider
       )
       context.hits = buildHitRegions(
         context.tree, context.layout, context.resolved, context.scroll
@@ -1606,6 +1783,1360 @@ proc cbssThreadAttach() {.
 proc cbssThreadDetach() {.
     exportc: "cbss_thread_detach", cdecl, dynlib, raises: [].} =
   tearDownForeignThreadGc()
+
+proc shaderBuilderError(
+    handle: CbssShaderBuilderHandle;
+    message: string;
+    status = CbssInvalidArgument
+): int32 =
+  if not handle.isNil:
+    handle.lastError = message
+  status
+
+proc shaderExpression(
+    handle: CbssShaderBuilderHandle;
+    id: uint32
+): GpuShaderExpression =
+  if handle.isNil or handle.builder.isNil:
+    raise newException(GpuShaderBuildError, "GPU shader builder handle is invalid")
+  handle.builder.expressionAt(id)
+
+proc shaderStorageBuffer(
+    handle: CbssShaderBuilderHandle;
+    id: uint32
+): GpuShaderStorageBuffer =
+  if handle.isNil or handle.builder.isNil:
+    raise newException(GpuShaderBuildError, "GPU shader builder handle is invalid")
+  handle.builder.storageBufferAt(id)
+
+proc shaderStorageImage(
+    handle: CbssShaderBuilderHandle;
+    id: uint32
+): GpuShaderStorageImage =
+  if handle.isNil or handle.builder.isNil:
+    raise newException(GpuShaderBuildError, "GPU shader builder handle is invalid")
+  handle.builder.storageImageAt(id)
+
+proc shaderLocal(
+    handle: CbssShaderBuilderHandle;
+    id: uint32
+): GpuShaderLocal =
+  if handle.isNil or handle.builder.isNil:
+    raise newException(GpuShaderBuildError, "GPU shader builder handle is invalid")
+  handle.builder.localAt(id)
+
+proc shaderLocalArray(
+    handle: CbssShaderBuilderHandle;
+    id: uint32
+): GpuShaderLocalArray =
+  if handle.isNil or handle.builder.isNil:
+    raise newException(GpuShaderBuildError, "GPU shader builder handle is invalid")
+  handle.builder.localArrayAt(id)
+
+proc shaderFunction(
+    handle: CbssShaderBuilderHandle;
+    id: uint32
+): GpuShaderFunction =
+  if handle.isNil or handle.builder.isNil:
+    raise newException(GpuShaderBuildError, "GPU shader builder handle is invalid")
+  handle.builder.functionAt(id)
+
+proc storeShaderExpression(
+    output: ptr uint32;
+    expression: GpuShaderExpression
+): int32 =
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = expression.expressionId
+  CbssOk
+
+proc cbssShaderBuilderCreate(
+    stage: uint32;
+    label: cstring;
+    output: ptr CbssShaderBuilderHandle
+): int32 {.exportc: "cbss_shader_builder_create", cdecl, dynlib.} =
+  ensureNimRuntime()
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  if stage > CbssShaderStageCompute:
+    return CbssInvalidArgument
+  let labelLength = if label.isNil: 0 else:
+    boundedCStringLength(label, maxGpuResourceLabelBytes)
+  if labelLength > maxGpuResourceLabelBytes:
+    return CbssInvalidArgument
+  try:
+    let handle = create(CbssShaderBuilderObj)
+    try:
+      handle.builder = newGpuShaderBuilder(
+        GpuShaderStage(stage),
+        if label.isNil: "" else: ($label)[0 ..< labelLength]
+      )
+      output[] = handle
+      CbssOk
+    except CatchableError:
+      `=destroy`(handle[])
+      dealloc(handle)
+      raise
+  except GpuShaderBuildError:
+    CbssInvalidArgument
+  except CatchableError:
+    CbssInternalError
+
+proc cbssShaderBuilderDestroy(handle: CbssShaderBuilderHandle) {.
+    exportc: "cbss_shader_builder_destroy", cdecl, dynlib.} =
+  if handle.isNil:
+    return
+  `=destroy`(handle[])
+  dealloc(handle)
+
+proc cbssShaderBuilderLastError(
+    handle: CbssShaderBuilderHandle;
+    buffer: cstring;
+    capacity: uint32
+): uint32 {.exportc: "cbss_shader_builder_last_error", cdecl, dynlib.} =
+  if handle.isNil:
+    if not buffer.isNil and capacity > 0:
+      cast[ptr UncheckedArray[char]](buffer)[0] = '\0'
+    return 0
+  copyString(handle.lastError, buffer, capacity)
+
+proc cbssShaderBuilderLiteral(
+    handle: CbssShaderBuilderHandle;
+    value: cfloat;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_literal", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    storeShaderExpression(output, handle.builder.scalar(float32(value)))
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderVectorLiteral(
+    handle: CbssShaderBuilderHandle;
+    values: ptr cfloat;
+    count: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_vector_literal", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil or values.isNil or count < 2 or count > 4:
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    var copied = newSeq[float32](int(count))
+    let source = cast[ptr UncheckedArray[cfloat]](values)
+    for index in 0 ..< copied.len:
+      copied[index] = float32(source[index])
+    handle.lastError.setLen(0)
+    storeShaderExpression(output, handle.builder.vector(copied))
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderIntLiteral(
+    handle: CbssShaderBuilderHandle;
+    value: int32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_int_literal", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    storeShaderExpression(output, handle.builder.signedInteger(value))
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderUintLiteral(
+    handle: CbssShaderBuilderHandle;
+    value: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_uint_literal", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    storeShaderExpression(output, handle.builder.unsignedInteger(value))
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc shaderValueType(value: uint32): GpuShaderValueType =
+  if value > uint32(ord(high(GpuShaderValueType))):
+    raise newException(GpuShaderBuildError, "GPU shader value type is invalid")
+  GpuShaderValueType(value)
+
+proc shaderInterfaceSlot(value: uint32): GpuShaderInterfaceSlot =
+  if value > uint32(ord(high(GpuShaderInterfaceSlot))):
+    raise newException(GpuShaderBuildError, "GPU shader interface slot is invalid")
+  GpuShaderInterfaceSlot(value)
+
+proc shaderStorageFormat(value: uint32): GpuStorageBufferFormat =
+  if value > uint32(ord(high(GpuStorageBufferFormat))):
+    raise newException(GpuShaderBuildError, "GPU storage buffer format is invalid")
+  GpuStorageBufferFormat(value)
+
+proc shaderStorageImageFormat(value: uint32): GpuTextureFormat =
+  case value
+  of 0: gtfR8
+  of 1: gtfRgba8
+  of 2: gtfR16F
+  of 3: gtfR32F
+  of 4: gtfRg16F
+  of 5: gtfRgba16F
+  of 6: gtfRgba32F
+  else:
+    raise newException(GpuShaderBuildError, "GPU storage image format is invalid")
+
+proc shaderStorageAccess(value: uint32): GpuStorageAccess =
+  if value > uint32(ord(high(GpuStorageAccess))):
+    raise newException(GpuShaderBuildError, "GPU storage access is invalid")
+  GpuStorageAccess(value)
+
+proc shaderComputeBuiltin(value: uint32): GpuShaderComputeBuiltin =
+  if value > uint32(ord(high(GpuShaderComputeBuiltin))):
+    raise newException(GpuShaderBuildError, "GPU compute builtin is invalid")
+  GpuShaderComputeBuiltin(value)
+
+proc cbssShaderBuilderSetComputeWorkGroupSize(
+    handle: CbssShaderBuilderHandle;
+    x, y, z: uint32
+): int32 {.
+    exportc: "cbss_shader_builder_set_compute_work_group_size", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  try:
+    handle.lastError.setLen(0)
+    handle.builder.setComputeWorkGroupSize(x, y, z)
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderStorageBuffer(
+    handle: CbssShaderBuilderHandle;
+    name: cstring;
+    stage, format, access: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_storage_buffer", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil or name.isNil or stage > uint32(high(uint8)):
+    return CbssInvalidArgument
+  output[] = 0
+  let nameLength = boundedCStringLength(name, maxGpuResourceLabelBytes)
+  if nameLength <= 0 or nameLength > maxGpuResourceLabelBytes:
+    return CbssInvalidArgument
+  try:
+    handle.lastError.setLen(0)
+    output[] = handle.builder.storageBuffer(
+      ($name)[0 ..< nameLength],
+      uint8(stage),
+      format.shaderStorageFormat,
+      access.shaderStorageAccess
+    ).storageBufferId
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderStorageImage(
+    handle: CbssShaderBuilderHandle;
+    name: cstring;
+    stage, format, access: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_storage_image", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil or name.isNil or stage > uint32(high(uint8)):
+    return CbssInvalidArgument
+  output[] = 0
+  let nameLength = boundedCStringLength(name, maxGpuResourceLabelBytes)
+  if nameLength <= 0 or nameLength > maxGpuResourceLabelBytes:
+    return CbssInvalidArgument
+  try:
+    handle.lastError.setLen(0)
+    output[] = handle.builder.storageImage(
+      ($name)[0 ..< nameLength],
+      uint8(stage),
+      format.shaderStorageImageFormat,
+      access.shaderStorageAccess
+    ).storageImageId
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderComputeBuiltin(
+    handle: CbssShaderBuilderHandle;
+    builtin: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_compute_builtin", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    storeShaderExpression(
+      output,
+      handle.builder.computeBuiltin(builtin.shaderComputeBuiltin)
+    )
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderStorageLoad(
+    handle: CbssShaderBuilderHandle;
+    storage, index: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_storage_load", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    storeShaderExpression(
+      output,
+      handle.builder.loadStorage(
+        handle.shaderStorageBuffer(storage),
+        handle.shaderExpression(index)
+      )
+    )
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderStorageStore(
+    handle: CbssShaderBuilderHandle;
+    storage, index, value: uint32
+): int32 {.exportc: "cbss_shader_builder_storage_store", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  try:
+    handle.lastError.setLen(0)
+    handle.builder.storeStorage(
+      handle.shaderStorageBuffer(storage),
+      handle.shaderExpression(index),
+      handle.shaderExpression(value)
+    )
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderConvert(
+    handle: CbssShaderBuilderHandle;
+    valueType, expression: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_convert", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    storeShaderExpression(
+      output,
+      handle.builder.convertValue(
+        valueType.shaderValueType,
+        handle.shaderExpression(expression)
+      )
+    )
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderBitcast(
+    handle: CbssShaderBuilderHandle;
+    valueType, expression: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_bitcast", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    storeShaderExpression(
+      output,
+      handle.builder.reinterpretValue(
+        valueType.shaderValueType,
+        handle.shaderExpression(expression)
+      )
+    )
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderStorageImageLoad(
+    handle: CbssShaderBuilderHandle;
+    storage, coordinates: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_storage_image_load", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    storeShaderExpression(
+      output,
+      handle.builder.loadStorageImage(
+        handle.shaderStorageImage(storage),
+        handle.shaderExpression(coordinates)
+      )
+    )
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderStorageImageStore(
+    handle: CbssShaderBuilderHandle;
+    storage, coordinates, value: uint32
+): int32 {.exportc: "cbss_shader_builder_storage_image_store", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  try:
+    handle.lastError.setLen(0)
+    handle.builder.storeStorageImage(
+      handle.shaderStorageImage(storage),
+      handle.shaderExpression(coordinates),
+      handle.shaderExpression(value)
+    )
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderVertexInput(
+    handle: CbssShaderBuilderHandle;
+    slot, valueType: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_vertex_input", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    storeShaderExpression(
+      output,
+      handle.builder.vertexInput(slot.shaderInterfaceSlot, valueType.shaderValueType)
+    )
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderVaryingInput(
+    handle: CbssShaderBuilderHandle;
+    slot, valueType: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_varying_input", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    storeShaderExpression(
+      output,
+      handle.builder.varyingInput(slot.shaderInterfaceSlot, valueType.shaderValueType)
+    )
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderUniform(
+    handle: CbssShaderBuilderHandle;
+    name: cstring;
+    valueType: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_uniform", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil or name.isNil:
+    return CbssInvalidArgument
+  output[] = 0
+  let nameLength = boundedCStringLength(name, maxGpuResourceLabelBytes)
+  if nameLength <= 0 or nameLength > maxGpuResourceLabelBytes:
+    return CbssInvalidArgument
+  try:
+    handle.lastError.setLen(0)
+    storeShaderExpression(
+      output,
+      handle.builder.uniform(($name)[0 ..< nameLength], valueType.shaderValueType)
+    )
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderConstruct(
+    handle: CbssShaderBuilderHandle;
+    valueType: uint32;
+    expressions: ptr uint32;
+    count: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_construct", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil or expressions.isNil or count == 0 or count > 4:
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    var values = newSeq[GpuShaderExpression](int(count))
+    let ids = cast[ptr UncheckedArray[uint32]](expressions)
+    for index in 0 ..< values.len:
+      values[index] = handle.shaderExpression(ids[index])
+    handle.lastError.setLen(0)
+    storeShaderExpression(
+      output,
+      handle.builder.construct(valueType.shaderValueType, values)
+    )
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderSwizzle(
+    handle: CbssShaderBuilderHandle;
+    expression: uint32;
+    components: cstring;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_swizzle", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil or components.isNil:
+    return CbssInvalidArgument
+  output[] = 0
+  let componentLength = boundedCStringLength(components, 4)
+  if componentLength <= 0 or componentLength > 4:
+    return CbssInvalidArgument
+  try:
+    handle.lastError.setLen(0)
+    storeShaderExpression(
+      output,
+      handle.builder.swizzle(
+        handle.shaderExpression(expression),
+        ($components)[0 ..< componentLength]
+      )
+    )
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderUnary(
+    handle: CbssShaderBuilderHandle;
+    operation, expression: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_unary", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil or operation > uint32(ord(high(GpuShaderUnaryOperation))):
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    storeShaderExpression(
+      output,
+      handle.builder.unary(
+        GpuShaderUnaryOperation(operation),
+        handle.shaderExpression(expression)
+      )
+    )
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderBinary(
+    handle: CbssShaderBuilderHandle;
+    operation, left, right: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_binary", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil or operation > uint32(ord(high(GpuShaderBinaryOperation))):
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    storeShaderExpression(
+      output,
+      handle.builder.binary(
+        GpuShaderBinaryOperation(operation),
+        handle.shaderExpression(left),
+        handle.shaderExpression(right)
+      )
+    )
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderCompare(
+    handle: CbssShaderBuilderHandle;
+    operation, left, right: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_compare", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil or operation > uint32(ord(high(GpuShaderComparisonOperation))):
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    storeShaderExpression(
+      output,
+      handle.builder.compare(
+        GpuShaderComparisonOperation(operation),
+        handle.shaderExpression(left),
+        handle.shaderExpression(right)
+      )
+    )
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderLogical(
+    handle: CbssShaderBuilderHandle;
+    operation, left, right: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_logical", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil or operation > uint32(ord(high(GpuShaderLogicalOperation))):
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    let rightExpression =
+      if GpuShaderLogicalOperation(operation) == gslNot:
+        GpuShaderExpression()
+      else:
+        handle.shaderExpression(right)
+    storeShaderExpression(
+      output,
+      handle.builder.logical(
+        GpuShaderLogicalOperation(operation),
+        handle.shaderExpression(left),
+        rightExpression
+      )
+    )
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderSelect(
+    handle: CbssShaderBuilderHandle;
+    condition, whenTrue, whenFalse: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_select", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    storeShaderExpression(
+      output,
+      handle.builder.selectValue(
+        handle.shaderExpression(condition),
+        handle.shaderExpression(whenTrue),
+        handle.shaderExpression(whenFalse)
+      )
+    )
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderBeginIf(
+    handle: CbssShaderBuilderHandle;
+    condition: uint32
+): int32 {.exportc: "cbss_shader_builder_begin_if", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  try:
+    handle.lastError.setLen(0)
+    handle.builder.beginIf(handle.shaderExpression(condition))
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderBeginElse(
+    handle: CbssShaderBuilderHandle
+): int32 {.exportc: "cbss_shader_builder_begin_else", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  try:
+    handle.lastError.setLen(0)
+    handle.builder.beginElse()
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderEndIf(
+    handle: CbssShaderBuilderHandle
+): int32 {.exportc: "cbss_shader_builder_end_if", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  try:
+    handle.lastError.setLen(0)
+    handle.builder.endIf()
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderReturnFromCompute(
+    handle: CbssShaderBuilderHandle
+): int32 {.exportc: "cbss_shader_builder_return_from_compute", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  try:
+    handle.lastError.setLen(0)
+    handle.builder.returnFromCompute()
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderLocal(
+    handle: CbssShaderBuilderHandle;
+    initialValue: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_local", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    output[] = handle.builder.localValue(
+      handle.shaderExpression(initialValue)
+    ).localId
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderLocalLoad(
+    handle: CbssShaderBuilderHandle;
+    local: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_local_load", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    storeShaderExpression(output, handle.shaderLocal(local).loadLocal())
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderLocalStore(
+    handle: CbssShaderBuilderHandle;
+    local, value: uint32
+): int32 {.exportc: "cbss_shader_builder_local_store", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  try:
+    handle.lastError.setLen(0)
+    handle.shaderLocal(local).storeLocal(handle.shaderExpression(value))
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderLocalArray(
+    handle: CbssShaderBuilderHandle;
+    initialValue, length: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_local_array", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    output[] = handle.builder.localArray(
+      handle.shaderExpression(initialValue), length
+    ).localArrayId
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderLocalArrayLoad(
+    handle: CbssShaderBuilderHandle;
+    localArray, index: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_local_array_load", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    storeShaderExpression(
+      output,
+      handle.shaderLocalArray(localArray).loadLocalArray(
+        handle.shaderExpression(index)
+      )
+    )
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderLocalArrayStore(
+    handle: CbssShaderBuilderHandle;
+    localArray, index, value: uint32
+): int32 {.exportc: "cbss_shader_builder_local_array_store", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  try:
+    handle.lastError.setLen(0)
+    handle.shaderLocalArray(localArray).storeLocalArray(
+      handle.shaderExpression(index),
+      handle.shaderExpression(value)
+    )
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderBeginFunction(
+    handle: CbssShaderBuilderHandle;
+    returnType: uint32;
+    parameterTypes: ptr uint32;
+    parameterCount: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_begin_function", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil or parameterCount > uint32(maxGpuShaderFunctionParameters) or
+      (parameterCount > 0 and parameterTypes.isNil):
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    var valueTypes = newSeq[GpuShaderValueType](int(parameterCount))
+    if parameterCount > 0:
+      let values = cast[ptr UncheckedArray[uint32]](parameterTypes)
+      for index in 0 ..< valueTypes.len:
+        valueTypes[index] = values[index].shaderValueType
+    handle.lastError.setLen(0)
+    output[] = handle.builder.beginFunction(
+      returnType.shaderValueType,
+      valueTypes
+    ).functionId
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderFunctionParameter(
+    handle: CbssShaderBuilderHandle;
+    function, index: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_function_parameter", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    storeShaderExpression(
+      output,
+      handle.shaderFunction(function).parameter(index)
+    )
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderFunctionReturn(
+    handle: CbssShaderBuilderHandle;
+    function, value: uint32
+): int32 {.exportc: "cbss_shader_builder_function_return", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  try:
+    handle.lastError.setLen(0)
+    handle.shaderFunction(function).returnValue(handle.shaderExpression(value))
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderEndFunction(
+    handle: CbssShaderBuilderHandle;
+    function: uint32
+): int32 {.exportc: "cbss_shader_builder_end_function", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  try:
+    handle.lastError.setLen(0)
+    handle.shaderFunction(function).endFunction()
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderFunctionCall(
+    handle: CbssShaderBuilderHandle;
+    function: uint32;
+    arguments: ptr uint32;
+    argumentCount: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_function_call", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil or argumentCount > uint32(maxGpuShaderFunctionParameters) or
+      (argumentCount > 0 and arguments.isNil):
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    var values = newSeq[GpuShaderExpression](int(argumentCount))
+    if argumentCount > 0:
+      let ids = cast[ptr UncheckedArray[uint32]](arguments)
+      for index in 0 ..< values.len:
+        values[index] = handle.shaderExpression(ids[index])
+    handle.lastError.setLen(0)
+    storeShaderExpression(
+      output,
+      handle.shaderFunction(function).callFunction(values)
+    )
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderBeginForInt(
+    handle: CbssShaderBuilderHandle;
+    start, stopExclusive, step: int32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_begin_for_int", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    output[] = handle.builder.beginForRange(
+      start, stopExclusive, step
+    ).localId
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderBeginForUint(
+    handle: CbssShaderBuilderHandle;
+    start, stopExclusive, step: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_begin_for_uint", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    output[] = handle.builder.beginForRange(
+      start, stopExclusive, step
+    ).localId
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderEndFor(
+    handle: CbssShaderBuilderHandle
+): int32 {.exportc: "cbss_shader_builder_end_for", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  try:
+    handle.lastError.setLen(0)
+    handle.builder.endForRange()
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderBreak(
+    handle: CbssShaderBuilderHandle
+): int32 {.exportc: "cbss_shader_builder_break", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  try:
+    handle.lastError.setLen(0)
+    handle.builder.breakLoop()
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderContinue(
+    handle: CbssShaderBuilderHandle
+): int32 {.exportc: "cbss_shader_builder_continue", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  try:
+    handle.lastError.setLen(0)
+    handle.builder.continueLoop()
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderTernary(
+    handle: CbssShaderBuilderHandle;
+    operation, first, second, third: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_ternary", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil or operation > uint32(ord(high(GpuShaderTernaryOperation))):
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    storeShaderExpression(
+      output,
+      handle.builder.ternary(
+        GpuShaderTernaryOperation(operation),
+        handle.shaderExpression(first),
+        handle.shaderExpression(second),
+        handle.shaderExpression(third)
+      )
+    )
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderSetPositionOutput(
+    handle: CbssShaderBuilderHandle;
+    expression: uint32
+): int32 {.exportc: "cbss_shader_builder_set_position_output", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  try:
+    handle.lastError.setLen(0)
+    handle.builder.setPositionOutput(handle.shaderExpression(expression))
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderSetColorOutput(
+    handle: CbssShaderBuilderHandle;
+    expression, index: uint32
+): int32 {.exportc: "cbss_shader_builder_set_color_output", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  try:
+    handle.lastError.setLen(0)
+    handle.builder.setColorOutput(handle.shaderExpression(expression), int(index))
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderSetVaryingOutput(
+    handle: CbssShaderBuilderHandle;
+    slot, expression: uint32
+): int32 {.exportc: "cbss_shader_builder_set_varying_output", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  try:
+    handle.lastError.setLen(0)
+    handle.builder.setVaryingOutput(
+      slot.shaderInterfaceSlot,
+      handle.shaderExpression(expression)
+    )
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderEmit(handle: CbssShaderBuilderHandle): int32 {.
+    exportc: "cbss_shader_builder_emit", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  try:
+    handle.lastError.setLen(0)
+    handle.emitted = handle.builder.emitGpuShaderSource()
+    handle.hasEmitted = true
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.hasEmitted = false
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.hasEmitted = false
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderValidateGraphics(
+    vertex, fragment: CbssShaderBuilderHandle
+): int32 {.exportc: "cbss_shader_builder_validate_graphics", cdecl, dynlib.} =
+  if vertex.isNil or vertex.builder.isNil or fragment.isNil or
+      fragment.builder.isNil:
+    return CbssInvalidHandle
+  try:
+    vertex.lastError.setLen(0)
+    fragment.lastError.setLen(0)
+    if not vertex.hasEmitted:
+      vertex.emitted = vertex.builder.emitGpuShaderSource()
+      vertex.hasEmitted = true
+    if not fragment.hasEmitted:
+      fragment.emitted = fragment.builder.emitGpuShaderSource()
+      fragment.hasEmitted = true
+    validateGpuShaderInterface(vertex.emitted, fragment.emitted)
+    CbssOk
+  except GpuShaderBuildError as error:
+    fragment.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    fragment.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderSource(
+    handle: CbssShaderBuilderHandle;
+    buffer: cstring;
+    capacity: uint32
+): uint32 {.exportc: "cbss_shader_builder_source", cdecl, dynlib.} =
+  if handle.isNil or not handle.hasEmitted:
+    if not buffer.isNil and capacity > 0:
+      cast[ptr UncheckedArray[char]](buffer)[0] = '\0'
+    return 0
+  copyString(handle.emitted.source, buffer, capacity)
+
+proc cbssShaderBuilderVaryingDefinitions(
+    handle: CbssShaderBuilderHandle;
+    buffer: cstring;
+    capacity: uint32
+): uint32 {.
+    exportc: "cbss_shader_builder_varying_definitions", cdecl, dynlib.} =
+  if handle.isNil or not handle.hasEmitted:
+    if not buffer.isNil and capacity > 0:
+      cast[ptr UncheckedArray[char]](buffer)[0] = '\0'
+    return 0
+  copyString(handle.emitted.varyingDefinitions, buffer, capacity)
+
+proc cbssRasterSurfaceCreate(
+    width, height: uint32;
+    initialRgba: pointer;
+    output: ptr CbssRasterSurfaceHandle
+): int32 {.exportc: "cbss_raster_surface_create", cdecl, dynlib.} =
+  ensureNimRuntime()
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = nil
+  if width == 0 or height == 0 or
+      uint64(width) > uint64(high(int)) or
+      uint64(height) > uint64(high(int)):
+    return CbssInvalidArgument
+  var fill = [0'u8, 0'u8, 0'u8, 0'u8]
+  if not initialRgba.isNil:
+    let channels = cast[ptr UncheckedArray[uint8]](initialRgba)
+    for index in 0 ..< RasterBytesPerPixel:
+      fill[index] = channels[index]
+  try:
+    let handle = create(CbssRasterSurfaceObj)
+    try:
+      handle.surface = newRasterSurface(int(width), int(height), fill)
+      output[] = handle
+      CbssOk
+    except CatchableError:
+      `=destroy`(handle[])
+      dealloc(handle)
+      raise
+  except ValueError:
+    CbssInvalidArgument
+  except CatchableError:
+    CbssInternalError
+
+proc cbssRasterSurfaceDestroy(surface: CbssRasterSurfaceHandle) {.
+    exportc: "cbss_raster_surface_destroy", cdecl, dynlib.} =
+  if surface.isNil:
+    return
+  `=destroy`(surface[])
+  dealloc(surface)
+
+proc cbssRasterSurfaceWidth(surface: CbssRasterSurfaceHandle): uint32 {.
+    exportc: "cbss_raster_surface_width", cdecl, dynlib, raises: [].} =
+  if surface.isNil or surface.surface.isNil:
+    0'u32
+  else:
+    uint32(surface.surface.width)
+
+proc cbssRasterSurfaceHeight(surface: CbssRasterSurfaceHandle): uint32 {.
+    exportc: "cbss_raster_surface_height", cdecl, dynlib, raises: [].} =
+  if surface.isNil or surface.surface.isNil:
+    0'u32
+  else:
+    uint32(surface.surface.height)
+
+proc cbssRasterSurfaceRevision(surface: CbssRasterSurfaceHandle): uint64 {.
+    exportc: "cbss_raster_surface_revision", cdecl, dynlib, raises: [].} =
+  if surface.isNil or surface.surface.isNil:
+    0'u64
+  else:
+    surface.surface.revision
+
+proc cbssRasterSurfaceUpdateRegion(
+    surface: CbssRasterSurfaceHandle;
+    region: CbssRasterRegionC;
+    bytes: pointer;
+    byteLength: uint64;
+    sourceStride: uint32
+): int32 {.exportc: "cbss_raster_surface_update_region", cdecl, dynlib.} =
+  if surface.isNil or surface.surface.isNil:
+    return CbssInvalidHandle
+  if bytes.isNil or byteLength == 0 or byteLength > uint64(high(int)) or
+      uint64(sourceStride) > uint64(high(int)) or
+      uint64(region.x) > uint64(high(int)) or
+      uint64(region.y) > uint64(high(int)) or
+      uint64(region.width) > uint64(high(int)) or
+      uint64(region.height) > uint64(high(int)):
+    return CbssInvalidArgument
+  try:
+    let values = cast[ptr UncheckedArray[uint8]](bytes)
+    surface.surface.updateRegion(
+      rasterRegion(
+        int(region.x), int(region.y), int(region.width), int(region.height)
+      ),
+      values.toOpenArray(0, int(byteLength) - 1),
+      int(sourceStride)
+    )
+    CbssOk
+  except ValueError:
+    CbssInvalidArgument
+  except CatchableError:
+    CbssInternalError
+
+proc cbssRasterSurfacePublish(
+    surface: CbssRasterSurfaceHandle;
+    outputRevision: ptr uint64
+): int32 {.exportc: "cbss_raster_surface_publish", cdecl, dynlib.} =
+  if surface.isNil or surface.surface.isNil:
+    return CbssInvalidHandle
+  try:
+    discard surface.surface.publish()
+    if not outputRevision.isNil:
+      outputRevision[] = surface.surface.revision
+    CbssOk
+  except ValueError:
+    CbssOutOfRange
+  except CatchableError:
+    CbssInternalError
+
+proc cbssRasterSurfaceDirtyRegionCount(
+    surface: CbssRasterSurfaceHandle
+): uint32 {.
+    exportc: "cbss_raster_surface_dirty_region_count", cdecl, dynlib,
+    raises: [].} =
+  if surface.isNil or surface.surface.isNil:
+    0'u32
+  else:
+    uint32(surface.surface.dirtyRegionCount)
+
+proc cbssRasterSurfaceDirtyRegionAt(
+    surface: CbssRasterSurfaceHandle;
+    index: uint32;
+    output: ptr CbssRasterRegionC
+): int32 {.
+    exportc: "cbss_raster_surface_dirty_region_at", cdecl, dynlib.} =
+  if surface.isNil or surface.surface.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = default(CbssRasterRegionC)
+  if index >= uint32(surface.surface.dirtyRegionCount):
+    return CbssOutOfRange
+  try:
+    let region = surface.surface.dirtyRegionAt(int(index))
+    output[] = CbssRasterRegionC(
+      x: uint32(region.x),
+      y: uint32(region.y),
+      width: uint32(region.width),
+      height: uint32(region.height)
+    )
+    CbssOk
+  except CatchableError:
+    CbssInternalError
 
 proc cbssBlobCreate(
     bytes: pointer;
@@ -2521,6 +4052,21 @@ proc cEventViewHandler(
       cbssFormDataRelease(view.formData)
     outcome
 
+proc cSurfacePaintProvider(
+    owner: CbssContextHandle
+): SurfacePaintProvider =
+  result = proc(
+      surfaceValue: uint64;
+      node: NodeId;
+      bounds: Rect;
+      opacity: float32
+  ): seq[PaintCommand] =
+    let binding = owner.surfaceBinding(surfaceValue)
+    if not binding.isNil:
+      result = binding.committedCanvas.paintCommands(
+        node, bounds, opacity, resolveBounds = false
+      )
+
 proc cbssContextCreate(): CbssContextHandle {.
     exportc: "cbss_context_create", cdecl, dynlib.} =
   ensureNimRuntime()
@@ -2544,6 +4090,8 @@ proc cbssContextCreate(): CbssContextHandle {.
       eventSubscriptions: initTable[uint64, EventSubscription](),
       surfaces: initRenderSurfaceRegistry(),
       surfaceBindings: initTable[RenderSurfaceId, CbssRenderSurfaceBinding](),
+      customPaintBindings: initTable[uint64, CbssCustomPaintProviderBinding](),
+      customPaintByMaterial: initTable[string, uint64](),
       pixelScale: 1.0'f32,
       diagnostics: Diagnostics(items: @[]),
       computed: false,
@@ -2556,18 +4104,11 @@ proc cbssContextCreate(): CbssContextHandle {.
       reducedMotion: false,
       motionDirtyDomains: 0
     )
-    let owner = allocated
-    allocated.surfacePaintProvider = proc(
-        surfaceValue: uint64;
-        node: NodeId;
-        bounds: Rect;
-        opacity: float32
-    ): seq[PaintCommand] =
-      let binding = owner.surfaceBinding(surfaceValue)
-      if not binding.isNil:
-        result = binding.committedCanvas.paintCommands(
-          node, bounds, opacity, resolveBounds = false
-        )
+    allocated.surfacePaintProvider = cSurfacePaintProvider(allocated)
+    allocated.customPaintSink = CbssCustomPaintSinkObj(
+      ownerContext: allocated,
+      active: false
+    )
     result = allocated
   except CatchableError:
     if not allocated.isNil:
@@ -2586,6 +4127,11 @@ proc cbssContextDestroy(context: CbssContextHandle) {.
     discard
   context.surfaces.unmountAllSurfaces()
   context.surfacePaintProvider = nil
+  context.customPaintProvider = nil
+  context.customPaintSink.active = false
+  context.customPaintSink.parameters = nil
+  context.releaseCustomPaintBindings()
+  context.customPaintSink.ownerContext = nil
   `=destroy`(context[])
   dealloc(context)
 
@@ -2597,6 +4143,10 @@ proc cbssContextReset(context: CbssContextHandle): int32 {.
     context.computed = false
     context.cancelAllMotion()
     context.surfaces.unmountAllSurfaces()
+    context.customPaintSink.active = false
+    context.customPaintSink.parameters = nil
+    context.releaseCustomPaintBindings()
+    context.customPaintProvider = nil
     context.tree = initTree()
     context.sheets.setLen(0)
     context.appliedStyles.setLen(0)
@@ -2625,6 +4175,179 @@ proc cbssContextReset(context: CbssContextHandle): int32 {.
     context.motionTimeInitialized = false
     context.reducedMotion = false
     context.motionDirtyDomains = 0
+    CbssOk
+  except CatchableError as error:
+    context.setError(error.msg)
+    CbssInternalError
+
+proc cbssContextRegisterCustomPaintProvider(
+    context: CbssContextHandle;
+    material: cstring;
+    stages: uint32;
+    callback: CbssCustomPaintProviderCallback;
+    releaseCallback: CbssCustomPaintProviderReleaseCallback;
+    userData: pointer;
+    replace: uint8;
+    outputRegistration: ptr uint64
+): int32 {.
+    exportc: "cbss_context_register_custom_paint_provider", cdecl, dynlib.} =
+  if outputRegistration.isNil:
+    return CbssInvalidArgument
+  outputRegistration[] = 0
+  if context.isNil:
+    return CbssInvalidHandle
+  if material.isNil or callback.isNil:
+    return CbssInvalidArgument
+  if context.customPaintSink.active or context.customPaintLifecycleActive:
+    return CbssNotAvailable
+  let stageSet = customPaintStagesFromC(stages)
+  if stageSet.isNone:
+    return CbssInvalidArgument
+  if cpsFilter in stageSet.get:
+    return CbssNotAvailable
+  let materialName = fromCString(material)
+  if not materialName.validCustomPaintMaterial:
+    return CbssInvalidArgument
+  if context.nextCustomPaintToken == high(uint64):
+    return CbssOutOfRange
+  try:
+    if context.customPaints.isNil:
+      context.customPaints = initCustomPaintRegistry()
+    let binding = CbssCustomPaintProviderBinding(
+      callback: callback,
+      release: releaseCallback,
+      userData: userData
+    )
+    let owner = context
+    let retained = binding
+    let materialCallback: CustomPaintMaterialProc = proc(
+        request: CustomPaintRequest
+    ): seq[PaintCommand] {.raises: [].} =
+      if retained.released or retained.callback.isNil or
+          owner.isNil or owner.customPaintSink.active:
+        if not owner.isNil:
+          owner.setError("custom paint provider re-entry is not available")
+        return
+      let sink = addr owner.customPaintSink
+      if sink.canvas.isNil:
+        sink.canvas = newCanvas2D()
+      sink.active = true
+      sink.canvas.clear()
+      sink.parameters = request.parameters
+      try:
+        var cRequest = CbssCustomPaintRequestC(
+          structSize: uint32(sizeof(CbssCustomPaintRequestC)),
+          apiVersion: CbssCustomPaintApiVersion,
+          stage: uint32(ord(request.stage)),
+          owner: uint32(request.owner.nodeRawValue),
+          bounds: request.bounds.toRect,
+          localBounds: CbssRectC(x: 0, y: 0, w: request.bounds.w,
+            h: request.bounds.h),
+          opacity: request.opacity,
+          parameterCount: uint32(request.parameters.len)
+        )
+        let status = retained.callback(addr cRequest, sink, retained.userData)
+        if status != CbssOk:
+          owner.setError("custom paint provider returned status " & $status)
+          return
+        result = sink.canvas.paintCommands(
+          request.owner, request.bounds, request.opacity,
+          resolveBounds = false
+        )
+      except Exception as error:
+        owner.setError("custom paint provider failed: " & error.msg)
+        result.setLen(0)
+      finally:
+        sink.parameters = nil
+        sink.active = false
+
+    let registration = context.customPaints.registerCustomPaintMaterialTracked(
+      materialName, materialCallback, stageSet.get, replace != 0
+    )
+    if registration.isNone:
+      return CbssInvalidArgument
+
+    inc context.nextCustomPaintToken
+    binding.token = context.nextCustomPaintToken
+    binding.registration = registration.get
+
+    if replace != 0 and materialName in context.customPaintByMaterial:
+      let oldToken = context.customPaintByMaterial.getOrDefault(materialName)
+      if oldToken in context.customPaintBindings:
+        let oldBinding = context.customPaintBindings.getOrDefault(oldToken)
+        context.customPaintBindings.del oldToken
+        context.releaseCustomPaintBinding(oldBinding)
+
+    context.customPaintBindings[binding.token] = binding
+    context.customPaintByMaterial[materialName] = binding.token
+    if context.customPaintProvider.isNil:
+      context.customPaintProvider = context.customPaints.provider()
+    outputRegistration[] = binding.token
+    if context.computed:
+      context.refreshPresentation()
+    CbssOk
+  except ValueError as error:
+    context.setError(error.msg)
+    CbssInvalidArgument
+  except CatchableError as error:
+    context.setError(error.msg)
+    CbssInternalError
+
+proc cbssContextUnregisterCustomPaintProvider(
+    context: CbssContextHandle;
+    registration: uint64
+): int32 {.
+    exportc: "cbss_context_unregister_custom_paint_provider", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if registration == 0:
+    return CbssInvalidArgument
+  if context.customPaintSink.active or context.customPaintLifecycleActive:
+    return CbssNotAvailable
+  if registration notin context.customPaintBindings:
+    return CbssOutOfRange
+  try:
+    let binding = context.customPaintBindings.getOrDefault(registration)
+    if binding.isNil or not context.customPaints.unregisterCustomPaintMaterial(
+        binding.registration):
+      return CbssOutOfRange
+    context.customPaintBindings.del registration
+    if context.customPaintByMaterial.getOrDefault(
+        binding.registration.material) == registration:
+      context.customPaintByMaterial.del binding.registration.material
+    context.releaseCustomPaintBinding(binding)
+    if context.computed:
+      context.refreshPresentation()
+    CbssOk
+  except CatchableError as error:
+    context.setError(error.msg)
+    CbssInternalError
+
+proc cbssContextInvalidateCustomPaintMaterial(
+    context: CbssContextHandle;
+    material: cstring;
+    outputConsumerCount: ptr uint32
+): int32 {.
+    exportc: "cbss_context_invalidate_custom_paint_material", cdecl, dynlib.} =
+  if outputConsumerCount.isNil:
+    return CbssInvalidArgument
+  outputConsumerCount[] = 0
+  if context.isNil:
+    return CbssInvalidHandle
+  if material.isNil:
+    return CbssInvalidArgument
+  if context.customPaintSink.active or context.customPaintLifecycleActive:
+    return CbssNotAvailable
+  let materialName = fromCString(material)
+  if not materialName.validCustomPaintMaterial:
+    return CbssInvalidArgument
+  if not context.customPaints.hasCustomPaintMaterial(materialName):
+    return CbssOutOfRange
+  try:
+    let consumers = context.customPaints.customPaintConsumers(materialName)
+    outputConsumerCount[] = uint32(consumers.len)
+    if context.computed and consumers.len > 0:
+      context.refreshPresentation()
     CbssOk
   except CatchableError as error:
     context.setError(error.msg)
@@ -3320,6 +5043,301 @@ proc cbssRenderSurfaceSetDeviceAvailable(
     return CbssInvalidArgument
   CbssOk
 
+proc pathFromC(
+    segments: ptr CbssPathSegmentC;
+    segmentCount: uint32
+): Option[Path2D]
+
+proc dashPatternFromC(
+    values: ptr cfloat;
+    valueCount: uint32
+): Option[seq[float32]]
+
+proc textStyleFromC(
+    value: ptr CbssTextStyleC;
+    fontFamily: cstring
+): tuple[valid: bool, style: computed_style_types.ComputedTextStyle]
+
+proc cbssCustomPaintParameter(
+    sink: CbssCustomPaintSinkHandle;
+    index: uint32;
+    output: ptr CbssCustomPaintParameterC
+): int32 {.exportc: "cbss_custom_paint_parameter", cdecl, dynlib.} =
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = default(CbssCustomPaintParameterC)
+  let checked = checkedCustomPaintSink(sink)
+  if checked.status != CbssOk:
+    return checked.status
+  if index >= uint32(sink.parameters.len):
+    return CbssOutOfRange
+  let parameter = sink.parameters[int(index)]
+  output.kind = uint32(ord(parameter.kind))
+  output.nameBytes = uint32(parameter.name.len)
+  case parameter.kind
+  of cppkFloat:
+    output.values[0] = parameter.floatValue
+  of cppkInteger:
+    output.integerValue = parameter.integerValue
+  of cppkBoolean:
+    output.integerValue = int64(ord(parameter.booleanValue))
+  of cppkVec2:
+    output.values[0] = parameter.vec2Value[0]
+    output.values[1] = parameter.vec2Value[1]
+  of cppkVec4:
+    output.values = parameter.vec4Value
+  of cppkColor:
+    output.values = [parameter.colorValue.r, parameter.colorValue.g,
+      parameter.colorValue.b, parameter.colorValue.a]
+  CbssOk
+
+proc cbssCustomPaintParameterName(
+    sink: CbssCustomPaintSinkHandle;
+    index: uint32;
+    buffer: cstring;
+    capacity: uint32
+): uint32 {.exportc: "cbss_custom_paint_parameter_name", cdecl, dynlib.} =
+  let checked = checkedCustomPaintSink(sink)
+  if checked.status != CbssOk or index >= uint32(sink.parameters.len):
+    if not buffer.isNil and capacity > 0:
+      cast[ptr UncheckedArray[char]](buffer)[0] = '\0'
+    return 0
+  copyString(sink.parameters[int(index)].name, buffer, capacity)
+
+proc cbssCustomPaintSinkSave(
+    sink: CbssCustomPaintSinkHandle
+): int32 {.exportc: "cbss_custom_paint_sink_save", cdecl, dynlib.} =
+  guardedCustomPaintMutation(sink):
+    checked.canvas.save()
+
+proc cbssCustomPaintSinkRestore(
+    sink: CbssCustomPaintSinkHandle
+): int32 {.exportc: "cbss_custom_paint_sink_restore", cdecl, dynlib.} =
+  guardedCustomPaintMutation(sink):
+    checked.canvas.restore()
+
+proc cbssCustomPaintSinkTransform(
+    sink: CbssCustomPaintSinkHandle;
+    transform: CbssAffineTransformC
+): int32 {.exportc: "cbss_custom_paint_sink_transform", cdecl, dynlib.} =
+  for value in [transform.m11, transform.m12, transform.m21,
+      transform.m22, transform.tx, transform.ty]:
+    if not value.finite:
+      return CbssInvalidArgument
+  guardedCustomPaintMutation(sink):
+    checked.canvas.transform(transform.toAffine)
+
+proc cbssCustomPaintSinkPushClip(
+    sink: CbssCustomPaintSinkHandle;
+    bounds: CbssRectC;
+    radius: cfloat
+): int32 {.exportc: "cbss_custom_paint_sink_push_clip", cdecl, dynlib.} =
+  if not bounds.validRect or not radius.finite or radius < 0:
+    return CbssInvalidArgument
+  guardedCustomPaintMutation(sink):
+    checked.canvas.pushClip(bounds.toRect, radius)
+
+proc cbssCustomPaintSinkPopClip(
+    sink: CbssCustomPaintSinkHandle
+): int32 {.exportc: "cbss_custom_paint_sink_pop_clip", cdecl, dynlib.} =
+  guardedCustomPaintMutation(sink):
+    checked.canvas.popClip()
+
+proc cbssCustomPaintSinkBeginLayer(
+    sink: CbssCustomPaintSinkHandle;
+    bounds: CbssRectC;
+    opacity: cfloat;
+    compositeMode: uint32
+): int32 {.exportc: "cbss_custom_paint_sink_begin_layer", cdecl, dynlib.} =
+  let mode = compositeMode.layerCompositeModeFromC
+  if not bounds.validRect or not opacity.finite or opacity < 0 or opacity > 1 or
+      mode.isNone:
+    return CbssInvalidArgument
+  guardedCustomPaintMutation(sink):
+    checked.canvas.beginLayer(bounds.toRect, opacity, mode.get)
+
+proc cbssCustomPaintSinkEndLayer(
+    sink: CbssCustomPaintSinkHandle
+): int32 {.exportc: "cbss_custom_paint_sink_end_layer", cdecl, dynlib.} =
+  guardedCustomPaintMutation(sink):
+    checked.canvas.endLayer()
+
+proc cbssCustomPaintSinkFillRect(
+    sink: CbssCustomPaintSinkHandle;
+    bounds: CbssRectC;
+    color: CbssColorC;
+    radius: cfloat
+): int32 {.exportc: "cbss_custom_paint_sink_fill_rect", cdecl, dynlib.} =
+  if not bounds.validRect or not color.validColor or
+      not radius.finite or radius < 0:
+    return CbssInvalidArgument
+  guardedCustomPaintMutation(sink):
+    checked.canvas.fillRect(bounds.toRect, color.toColor, radius)
+
+proc cbssCustomPaintSinkFillLinearGradient(
+    sink: CbssCustomPaintSinkHandle;
+    bounds: CbssRectC;
+    angle: cfloat;
+    interpolationSpace: uint32;
+    stops: ptr CbssGradientStopC;
+    stopCount: uint32;
+    radius: cfloat
+): int32 {.
+    exportc: "cbss_custom_paint_sink_fill_linear_gradient", cdecl, dynlib.} =
+  let gradientSpace = interpolationSpace.interpolationSpaceFromC
+  if not bounds.validRect or not angle.finite or not radius.finite or
+      radius < 0 or gradientSpace.isNone or stops.isNil or stopCount == 0 or
+      stopCount > 4_096:
+    return CbssInvalidArgument
+  guardedCustomPaintMutation(sink):
+    let values = cast[ptr UncheckedArray[CbssGradientStopC]](stops)
+    var gradientStops = newSeqOfCap[color.GradientStop](int(stopCount))
+    for index in 0 ..< int(stopCount):
+      let stop = values[index]
+      if not stop.color.validColor or not stop.offset.finite:
+        return CbssInvalidArgument
+      gradientStops.add colorStop(stop.color.toColor, stop.offset)
+    checked.canvas.fillLinearGradient(
+      bounds.toRect,
+      computed_style_types.LinearGradient(
+        angle: angle,
+        interpolationSpace: gradientSpace.get,
+        stops: gradientStops
+      ),
+      radius
+    )
+
+proc cbssCustomPaintSinkStrokeRect(
+    sink: CbssCustomPaintSinkHandle;
+    bounds: CbssRectC;
+    color: CbssColorC;
+    width, radius: cfloat
+): int32 {.exportc: "cbss_custom_paint_sink_stroke_rect", cdecl, dynlib.} =
+  if not bounds.validRect or not color.validColor or not width.finite or
+      not radius.finite or width <= 0 or radius < 0:
+    return CbssInvalidArgument
+  guardedCustomPaintMutation(sink):
+    checked.canvas.strokeRect(bounds.toRect, color.toColor, width, radius)
+
+proc cbssCustomPaintSinkStrokePath(
+    sink: CbssCustomPaintSinkHandle;
+    segments: ptr CbssPathSegmentC;
+    segmentCount: uint32;
+    color: CbssColorC;
+    width: cfloat;
+    lineCap, lineJoin: uint32;
+    miterLimit: cfloat
+): int32 {.exportc: "cbss_custom_paint_sink_stroke_path", cdecl, dynlib.} =
+  if not color.validColor or not width.finite or width <= 0 or
+      not miterLimit.finite or miterLimit < 1:
+    return CbssInvalidArgument
+  let cap = lineCap.strokeLineCapFromC
+  let join = lineJoin.strokeLineJoinFromC
+  let path = pathFromC(segments, segmentCount)
+  if cap.isNone or join.isNone or path.isNone:
+    return CbssInvalidArgument
+  guardedCustomPaintMutation(sink):
+    checked.canvas.strokePath(
+      path.get, color.toColor, width, cap.get, join.get, miterLimit
+    )
+
+proc cbssCustomPaintSinkStrokePathDashed(
+    sink: CbssCustomPaintSinkHandle;
+    segments: ptr CbssPathSegmentC;
+    segmentCount: uint32;
+    color: CbssColorC;
+    width: cfloat;
+    lineCap, lineJoin: uint32;
+    miterLimit: cfloat;
+    dashValues: ptr cfloat;
+    dashCount: uint32;
+    dashOffset: cfloat
+): int32 {.exportc: "cbss_custom_paint_sink_stroke_path_dashed", cdecl, dynlib.} =
+  if not color.validColor or not width.finite or width <= 0 or
+      not miterLimit.finite or miterLimit < 1 or not dashOffset.finite:
+    return CbssInvalidArgument
+  let cap = lineCap.strokeLineCapFromC
+  let join = lineJoin.strokeLineJoinFromC
+  let path = pathFromC(segments, segmentCount)
+  let dashes = dashPatternFromC(dashValues, dashCount)
+  if cap.isNone or join.isNone or path.isNone or dashes.isNone:
+    return CbssInvalidArgument
+  guardedCustomPaintMutation(sink):
+    checked.canvas.strokePath(
+      path.get, color.toColor, width, cap.get, join.get, miterLimit,
+      dashes.get, dashOffset
+    )
+
+proc cbssCustomPaintSinkFillPath(
+    sink: CbssCustomPaintSinkHandle;
+    segments: ptr CbssPathSegmentC;
+    segmentCount: uint32;
+    color: CbssColorC;
+    fillRule: uint32
+): int32 {.exportc: "cbss_custom_paint_sink_fill_path", cdecl, dynlib.} =
+  if not color.validColor or fillRule > uint32(ord(high(PathFillRule))):
+    return CbssInvalidArgument
+  let path = pathFromC(segments, segmentCount)
+  if path.isNone:
+    return CbssInvalidArgument
+  guardedCustomPaintMutation(sink):
+    checked.canvas.fillPath(
+      path.get, color.toColor, PathFillRule(fillRule)
+    )
+
+proc cbssCustomPaintSinkDrawText(
+    sink: CbssCustomPaintSinkHandle;
+    text: cstring;
+    x, y: cfloat;
+    color: CbssColorC;
+    style: ptr CbssTextStyleC;
+    fontFamily: cstring;
+    maxWidth: cfloat;
+    hasMaxWidth: uint8
+): int32 {.exportc: "cbss_custom_paint_sink_draw_text", cdecl, dynlib.} =
+  if text.isNil or not x.finite or not y.finite or not color.validColor or
+      (hasMaxWidth != 0 and (not maxWidth.finite or maxWidth <= 0)):
+    return CbssInvalidArgument
+  let convertedStyle = textStyleFromC(style, fontFamily)
+  if not convertedStyle.valid:
+    return CbssInvalidArgument
+  guardedCustomPaintMutation(sink):
+    checked.canvas.drawText(
+      fromCString(text), vec2(x, y), color.toColor, convertedStyle.style,
+      if hasMaxWidth != 0: some(maxWidth.float32) else: none(float32)
+    )
+
+proc cbssCustomPaintSinkDrawImage(
+    sink: CbssCustomPaintSinkHandle;
+    source: cstring;
+    bounds: CbssRectC;
+    opacity: cfloat
+): int32 {.exportc: "cbss_custom_paint_sink_draw_image", cdecl, dynlib.} =
+  if source.isNil or not bounds.validRect or not opacity.finite or
+      opacity < 0 or opacity > 1:
+    return CbssInvalidArgument
+  let sourceValue = fromCString(source)
+  if sourceValue.len == 0:
+    return CbssInvalidArgument
+  guardedCustomPaintMutation(sink):
+    checked.canvas.drawImage(sourceValue, bounds.toRect, opacity)
+
+proc cbssCustomPaintSinkDrawRasterSurface(
+    sink: CbssCustomPaintSinkHandle;
+    rasterSurface: CbssRasterSurfaceHandle;
+    bounds: CbssRectC;
+    opacity: cfloat
+): int32 {.
+    exportc: "cbss_custom_paint_sink_draw_raster_surface", cdecl, dynlib.} =
+  if rasterSurface.isNil or rasterSurface.surface.isNil:
+    return CbssInvalidHandle
+  if not bounds.validRect or not opacity.finite or opacity < 0 or opacity > 1:
+    return CbssInvalidArgument
+  guardedCustomPaintMutation(sink):
+    checked.canvas.drawRasterSurface(
+      rasterSurface.surface, bounds.toRect, opacity
+    )
+
 proc cbssRenderSurfaceCanvasClear(
     context: CbssContextHandle;
     surfaceValue: uint64
@@ -3528,6 +5546,23 @@ proc pathFromC(
       return none(Path2D)
   some(path)
 
+proc dashPatternFromC(
+    values: ptr cfloat;
+    valueCount: uint32
+): Option[seq[float32]] =
+  if valueCount == 0:
+    return some(newSeq[float32]())
+  if values.isNil or valueCount > uint32(maxStrokeDashPatternEntries):
+    return none(seq[float32])
+  let source = cast[ptr UncheckedArray[cfloat]](values)
+  var copied = newSeq[float32](int(valueCount))
+  for index in 0 ..< copied.len:
+    let value = float32(source[index])
+    if not value.finite or value < 0:
+      return none(seq[float32])
+    copied[index] = value
+  some(normalizeDashPattern(copied))
+
 proc cbssRenderSurfaceCanvasStrokePath(
     context: CbssContextHandle;
     surfaceValue: uint64;
@@ -3554,6 +5589,58 @@ proc cbssRenderSurfaceCanvasStrokePath(
       return CbssInvalidArgument
     checked.binding.canvas.strokePath(
       path.get, color.toColor, width, cap.get, join.get, miterLimit
+    )
+
+proc cbssRenderSurfaceCanvasStrokePathDashed(
+    context: CbssContextHandle;
+    surfaceValue: uint64;
+    segments: ptr CbssPathSegmentC;
+    segmentCount: uint32;
+    color: CbssColorC;
+    width: cfloat;
+    lineCap, lineJoin: uint32;
+    miterLimit: cfloat;
+    dashValues: ptr cfloat;
+    dashCount: uint32;
+    dashOffset: cfloat
+): int32 {.exportc: "cbss_render_surface_canvas_stroke_path_dashed", cdecl, dynlib.} =
+  let checked = context.checkedSurfaceCanvas(surfaceValue)
+  if checked.status != CbssOk:
+    return checked.status
+  if not color.validColor or not width.finite or width <= 0 or
+      not miterLimit.finite or miterLimit < 1 or not dashOffset.finite:
+    return CbssInvalidArgument
+  let cap = lineCap.strokeLineCapFromC
+  let join = lineJoin.strokeLineJoinFromC
+  let path = pathFromC(segments, segmentCount)
+  let dashes = dashPatternFromC(dashValues, dashCount)
+  if cap.isNone or join.isNone or path.isNone or dashes.isNone:
+    return CbssInvalidArgument
+  guardedCanvasMutation(context):
+    checked.binding.canvas.strokePath(
+      path.get, color.toColor, width, cap.get, join.get, miterLimit,
+      dashes.get, dashOffset
+    )
+
+proc cbssRenderSurfaceCanvasFillPath(
+    context: CbssContextHandle;
+    surfaceValue: uint64;
+    segments: ptr CbssPathSegmentC;
+    segmentCount: uint32;
+    color: CbssColorC;
+    fillRule: uint32
+): int32 {.exportc: "cbss_render_surface_canvas_fill_path", cdecl, dynlib.} =
+  let checked = context.checkedSurfaceCanvas(surfaceValue)
+  if checked.status != CbssOk:
+    return checked.status
+  if not color.validColor or fillRule > uint32(ord(high(PathFillRule))):
+    return CbssInvalidArgument
+  guardedCanvasMutation(context):
+    let path = pathFromC(segments, segmentCount)
+    if path.isNone:
+      return CbssInvalidArgument
+    checked.binding.canvas.fillPath(
+      path.get, color.toColor, PathFillRule(fillRule)
     )
 
 proc textStyleFromC(
@@ -3634,6 +5721,26 @@ proc cbssRenderSurfaceCanvasDrawImage(
     if sourceValue.len == 0:
       return CbssInvalidArgument
     checked.binding.canvas.drawImage(sourceValue, bounds.toRect, opacity)
+
+proc cbssRenderSurfaceCanvasDrawRasterSurface(
+    context: CbssContextHandle;
+    surfaceValue: uint64;
+    rasterSurface: CbssRasterSurfaceHandle;
+    bounds: CbssRectC;
+    opacity: cfloat
+): int32 {.
+    exportc: "cbss_render_surface_canvas_draw_raster_surface", cdecl, dynlib.} =
+  let checked = context.checkedSurfaceCanvas(surfaceValue)
+  if checked.status != CbssOk:
+    return checked.status
+  if rasterSurface.isNil or rasterSurface.surface.isNil:
+    return CbssInvalidHandle
+  if not bounds.validRect or not opacity.finite or opacity < 0 or opacity > 1:
+    return CbssInvalidArgument
+  guardedCanvasMutation(context):
+    checked.binding.canvas.drawRasterSurface(
+      rasterSurface.surface, bounds.toRect, opacity
+    )
 
 proc cbssRenderSurfaceCanvasCommit(
     context: CbssContextHandle;
@@ -4187,6 +6294,73 @@ proc cbssStyleClear(style: CbssStyleHandle): int32 {.
     return CbssInvalidHandle
   style.declarations.setLen(0)
   CbssOk
+
+proc customPaintParameterFromC(
+    value: CbssCustomPaintParameterInputC
+): CustomPaintParameter =
+  if value.name.isNil or value.reserved != 0:
+    raise newException(ValueError, "custom paint parameter is invalid")
+  let name = fromCString(value.name)
+  case value.kind
+  of CbssCustomPaintParameterFloat:
+    customPaintFloat(name, value.values[0])
+  of CbssCustomPaintParameterInteger:
+    customPaintInteger(name, value.integerValue)
+  of CbssCustomPaintParameterBoolean:
+    if value.integerValue notin [0'i64, 1'i64]:
+      raise newException(ValueError, "custom paint boolean must be zero or one")
+    customPaintBoolean(name, value.integerValue == 1)
+  of CbssCustomPaintParameterVec2:
+    customPaintVec2(name, value.values[0], value.values[1])
+  of CbssCustomPaintParameterVec4:
+    customPaintVec4(
+      name, value.values[0], value.values[1], value.values[2], value.values[3]
+    )
+  of CbssCustomPaintParameterColor:
+    customPaintColor(name, rgba(
+      value.values[0], value.values[1], value.values[2], value.values[3]
+    ))
+  else:
+    raise newException(ValueError, "custom paint parameter kind is invalid")
+
+proc cbssStyleSetCustomPaint(
+    style: CbssStyleHandle;
+    material: cstring;
+    stage: uint32;
+    parameters: ptr CbssCustomPaintParameterInputC;
+    parameterCount: uint32
+): int32 {.exportc: "cbss_style_set_custom_paint", cdecl, dynlib.} =
+  if style.isNil:
+    return CbssInvalidHandle
+  if material.isNil or stage > uint32(ord(high(CustomPaintStage))) or
+      parameterCount > uint32(maxCustomPaintParameters) or
+      (parameterCount != 0 and parameters.isNil):
+    return CbssInvalidArgument
+  try:
+    var converted = newSeqOfCap[CustomPaintParameter](int(parameterCount))
+    if parameterCount > 0:
+      let values = cast[ptr UncheckedArray[CbssCustomPaintParameterInputC]](
+        parameters
+      )
+      for index in 0 ..< int(parameterCount):
+        converted.add customPaintParameterFromC(values[index])
+    let declaration = customPaint(
+      fromCString(material), CustomPaintStage(stage), parameters = converted
+    )
+    for index in 0 ..< style.declarations.len:
+      if style.declarations[index].property == declaration.property:
+        var replacement = declaration
+        replacement.sourceOrder = index
+        style.declarations[index] = replacement
+        return CbssOk
+    var appended = declaration
+    appended.sourceOrder = style.declarations.len
+    style.declarations.add appended
+    CbssOk
+  except ValueError:
+    CbssInvalidArgument
+  except CatchableError:
+    CbssInternalError
 
 proc cbssKeyframesCreate(
     name: cstring;
@@ -5210,6 +7384,8 @@ proc cbssContextPaintCommand(
     )
   of pcStrokeRect:
     output.value0 = command.strokeWidth
+  of pcFillPath:
+    output.value0 = cfloat(ord(command.fillPathRule))
   of pcStrokePath:
     output.value0 = command.pathWidth
     output.value1 = cfloat(ord(command.pathLineCap))
@@ -5217,6 +7393,10 @@ proc cbssContextPaintCommand(
     output.value3 = command.pathMiterLimit
   of pcDrawImage:
     output.value0 = command.imageOpacity
+  of pcDrawRasterSurface:
+    output.value0 = command.rasterOpacity
+  of pcDrawGpuDirectSurface:
+    output.value0 = command.gpuSurfaceOpacity
   of pcPushLayer:
     output.value0 = command.layerOpacity
     output.value1 = cfloat(ord(command.layerCompositeMode))
@@ -5267,9 +7447,13 @@ proc cbssPaintCommandPathSegmentCount(
       uint64(index) >= uint64(context.commands.len):
     return 0
   let command = context.commands[int(index)]
-  if command.kind != pcStrokePath:
-    return 0
-  uint32(min(command.path.segments.len, int(high(uint32))))
+  case command.kind
+  of pcStrokePath:
+    uint32(min(command.path.segments.len, int(high(uint32))))
+  of pcFillPath:
+    uint32(min(command.fillPathValue.segments.len, int(high(uint32))))
+  else:
+    0
 
 proc cbssPaintCommandPathSegment(
     context: CbssContextHandle;
@@ -5282,11 +7466,14 @@ proc cbssPaintCommandPathSegment(
       uint64(commandIndex) >= uint64(context.commands.len):
     return CbssInvalidArgument
   let command = context.commands[int(commandIndex)]
-  if command.kind != pcStrokePath:
-    return CbssInvalidArgument
-  if uint64(segmentIndex) >= uint64(command.path.segments.len):
+  let path =
+    case command.kind
+    of pcStrokePath: command.path
+    of pcFillPath: command.fillPathValue
+    else: return CbssInvalidArgument
+  if uint64(segmentIndex) >= uint64(path.segments.len):
     return CbssOutOfRange
-  let segment = command.path.segments[int(segmentIndex)]
+  let segment = path.segments[int(segmentIndex)]
   output[] = CbssPathSegmentC(
     kind: uint32(ord(segment.kind)),
     control1X: segment.control1.x,
@@ -5296,6 +7483,52 @@ proc cbssPaintCommandPathSegment(
     endpointX: segment.endpoint.x,
     endpointY: segment.endpoint.y
   )
+  CbssOk
+
+proc cbssPaintCommandPathDashCount(
+    context: CbssContextHandle;
+    index: uint32
+): uint32 {.exportc: "cbss_paint_command_path_dash_count", cdecl, dynlib.} =
+  if context.isNil or not context.computed or
+      uint64(index) >= uint64(context.commands.len):
+    return 0
+  let command = context.commands[int(index)]
+  if command.kind != pcStrokePath:
+    return 0
+  uint32(min(command.pathDashPattern.len, int(high(uint32))))
+
+proc cbssPaintCommandPathDash(
+    context: CbssContextHandle;
+    commandIndex, dashIndex: uint32;
+    output: ptr cfloat
+): int32 {.exportc: "cbss_paint_command_path_dash", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if output.isNil or not context.computed or
+      uint64(commandIndex) >= uint64(context.commands.len):
+    return CbssInvalidArgument
+  let command = context.commands[int(commandIndex)]
+  if command.kind != pcStrokePath:
+    return CbssInvalidArgument
+  if uint64(dashIndex) >= uint64(command.pathDashPattern.len):
+    return CbssOutOfRange
+  output[] = cfloat(command.pathDashPattern[int(dashIndex)])
+  CbssOk
+
+proc cbssPaintCommandPathDashOffset(
+    context: CbssContextHandle;
+    index: uint32;
+    output: ptr cfloat
+): int32 {.exportc: "cbss_paint_command_path_dash_offset", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if output.isNil or not context.computed or
+      uint64(index) >= uint64(context.commands.len):
+    return CbssInvalidArgument
+  let command = context.commands[int(index)]
+  if command.kind != pcStrokePath:
+    return CbssInvalidArgument
+  output[] = cfloat(command.pathDashOffset)
   CbssOk
 
 proc cbssPaintCommandTextStyle(

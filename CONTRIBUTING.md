@@ -23,8 +23,10 @@ Before writing code, skim:
 - Open pull requests against `devel`. Feature pull requests do not target
   `main`.
 - Keep `devel` green with the required tests and compatibility checks.
-- For a release, merge `devel` into `main` with a merge commit after the
-  release checks pass. Do not squash or rebase the release pull request:
+- For a release, merge `devel` into `main` with a merge commit after CI has
+  passed on the current `devel` HEAD. The release pull request verifies that
+  exact successful run instead of repeating the full suite. Do not squash or
+  rebase the release pull request:
   preserving `devel` as an ancestor of `main` prevents the branches from
   appearing to contain different copies of the same release commits.
 - Create the version tag from `main` only after that merge. Direct development
@@ -33,8 +35,11 @@ Before writing code, skim:
   required source-policy check accepts `main` pull requests only from this
   repository's `devel` or `hotfix/*` branches.
 - Use `hotfix/*` only for an urgent correction to the released state. Cut it
-  from `main`, release the patch from `main`, then merge or cherry-pick the same
-  correction back into `devel`.
+  from `main` and open a pull request directly to `main`; hotfix pull requests
+  run the full CI suite. After release, open a `main` to `devel` synchronization
+  pull request, which also runs the full suite against ongoing development.
+- Pull requests to `main` from any source other than this repository's `devel`
+  or `hotfix/*` branches are rejected. Direct pushes to `main` remain blocked.
 
 ## Contribution License
 
@@ -47,6 +52,7 @@ only work that you have the right to license under those terms.
 
 ```sh
 nimble setupBundled       # select the vendored Linux runtime
+nimble ciPreflight        # fast release/PR contract checks; run this first
 nimble test              # unit/behavior test suite
 nimble testOrc           # the same suite under ORC
 nimble checkExamples     # examples plus bundled/system/custom link checks

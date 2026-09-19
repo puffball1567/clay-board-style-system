@@ -1,0 +1,1380 @@
+when not defined(cbssGpuBgfx):
+  {.error: "compile this fixture with -d:cbssGpuBgfx".}
+
+{.compile: "bgfx_host_stub.c".}
+when defined(cbssTestSdl3PlatformData):
+  {.compile: "sdl3_platform_data_stub.c".}
+
+import std/[options, unittest]
+
+import bgfx
+
+import clay_board_style_system/backends/bgfx/adapter
+import clay_board_style_system/backends/bgfx/platform_data
+when defined(cbssTestSdl3PlatformData):
+  import clay_board_style_system/backends/bgfx/sdl3_platform_data
+import clay_board_style_system/core/geometry
+import clay_board_style_system/core/node
+import clay_board_style_system/paint/gpu_direct_compositor
+import clay_board_style_system/paint/paint_command
+import clay_board_style_system/runtime/gpu_direct_surface
+import clay_board_style_system/runtime/gpu_host
+
+proc resetCounters() {.importc: "cbss_bgfx_stub_reset_counters", cdecl.}
+when defined(cbssTestSdl3PlatformData):
+  proc configureSdl3PlatformStub(
+      driver: cstring;
+      properties: uint32;
+      display, window: pointer;
+      x11Window: int64
+  ) {.importc: "cbss_sdl3_platform_stub_configure", cdecl.}
+proc shutdownCount(): uint32 {.importc: "cbss_bgfx_stub_shutdown_count", cdecl.}
+proc frameCount(): uint32 {.importc: "cbss_bgfx_stub_frame_count", cdecl.}
+proc resetCount(): uint32 {.importc: "cbss_bgfx_stub_reset_count", cdecl.}
+proc stubWidth(): uint32 {.importc: "cbss_bgfx_stub_width", cdecl.}
+proc stubHeight(): uint32 {.importc: "cbss_bgfx_stub_height", cdecl.}
+proc submitCount(): uint32 {.importc: "cbss_bgfx_stub_submit_count", cdecl.}
+proc dispatchCount(): uint32 {.importc: "cbss_bgfx_stub_dispatch_count", cdecl.}
+proc viewRectCount(): uint32 {.
+  importc: "cbss_bgfx_stub_view_rect_count", cdecl.}
+proc viewScissorCount(): uint32 {.
+  importc: "cbss_bgfx_stub_view_scissor_count", cdecl.}
+proc viewClearCount(): uint32 {.
+  importc: "cbss_bgfx_stub_view_clear_count", cdecl.}
+proc viewFrameBufferCount(): uint32 {.
+  importc: "cbss_bgfx_stub_view_frame_buffer_count", cdecl.}
+proc vertexBindCount(): uint32 {.
+  importc: "cbss_bgfx_stub_vertex_bind_count", cdecl.}
+proc indexBindCount(): uint32 {.
+  importc: "cbss_bgfx_stub_index_bind_count", cdecl.}
+proc stateCount(): uint32 {.importc: "cbss_bgfx_stub_state_count", cdecl.}
+proc uniformCreateCount(): uint32 {.
+  importc: "cbss_bgfx_stub_uniform_create_count", cdecl.}
+proc uniformDestroyCount(): uint32 {.
+  importc: "cbss_bgfx_stub_uniform_destroy_count", cdecl.}
+proc uniformSetCount(): uint32 {.
+  importc: "cbss_bgfx_stub_uniform_set_count", cdecl.}
+proc textureBindCount(): uint32 {.
+  importc: "cbss_bgfx_stub_texture_bind_count", cdecl.}
+proc imageBindCount(): uint32 {.
+  importc: "cbss_bgfx_stub_image_bind_count", cdecl.}
+proc computeIndexBindCount(): uint32 {.
+  importc: "cbss_bgfx_stub_compute_index_bind_count", cdecl.}
+proc computeDynamicIndexBindCount(): uint32 {.
+  importc: "cbss_bgfx_stub_compute_dynamic_index_bind_count", cdecl.}
+proc lastComputeBufferStage(): uint8 {.
+  importc: "cbss_bgfx_stub_last_compute_buffer_stage", cdecl.}
+proc lastComputeBufferAccess(): uint32 {.
+  importc: "cbss_bgfx_stub_last_compute_buffer_access", cdecl.}
+proc blitCount(): uint32 {.importc: "cbss_bgfx_stub_blit_count", cdecl.}
+proc readbackCount(): uint32 {.
+  importc: "cbss_bgfx_stub_readback_count", cdecl.}
+proc bufferBlitCount(): uint32 {.
+  importc: "cbss_bgfx_stub_buffer_blit_count", cdecl.}
+proc bufferReadbackCount(): uint32 {.
+  importc: "cbss_bgfx_stub_buffer_readback_count", cdecl.}
+proc lastBufferBlitSourceOffset(): uint32 {.
+  importc: "cbss_bgfx_stub_last_buffer_blit_source_offset", cdecl.}
+proc lastBufferBlitDestinationOffset(): uint32 {.
+  importc: "cbss_bgfx_stub_last_buffer_blit_destination_offset", cdecl.}
+proc lastBufferBlitBytes(): uint32 {.
+  importc: "cbss_bgfx_stub_last_buffer_blit_bytes", cdecl.}
+proc lastBufferReadbackOffset(): uint32 {.
+  importc: "cbss_bgfx_stub_last_buffer_readback_offset", cdecl.}
+proc lastBufferReadbackBytes(): uint32 {.
+  importc: "cbss_bgfx_stub_last_buffer_readback_bytes", cdecl.}
+proc lastSamplerFlags(): uint32 {.
+  importc: "cbss_bgfx_stub_last_sampler_flags", cdecl.}
+proc lastImageAccess(): uint32 {.
+  importc: "cbss_bgfx_stub_last_image_access", cdecl.}
+proc lastViewId(): uint16 {.importc: "cbss_bgfx_stub_last_view_id", cdecl.}
+proc lastState(): uint64 {.importc: "cbss_bgfx_stub_last_state", cdecl.}
+proc programDestroyCount(): uint32 {.
+  importc: "cbss_bgfx_stub_program_destroy_count", cdecl.}
+proc graphicsProgramCreateCount(): uint32 {.
+  importc: "cbss_bgfx_stub_graphics_program_create_count", cdecl.}
+proc computeProgramCreateCount(): uint32 {.
+  importc: "cbss_bgfx_stub_compute_program_create_count", cdecl.}
+proc shaderDestroyCount(): uint32 {.
+  importc: "cbss_bgfx_stub_shader_destroy_count", cdecl.}
+proc shaderCreateCount(): uint32 {.
+  importc: "cbss_bgfx_stub_shader_create_count", cdecl.}
+proc shaderNameCount(): uint32 {.
+  importc: "cbss_bgfx_stub_shader_name_count", cdecl.}
+proc shaderDataBytes(): uint32 {.
+  importc: "cbss_bgfx_stub_shader_data_bytes", cdecl.}
+proc textureCreateCount(): uint32 {.
+  importc: "cbss_bgfx_stub_texture_create_count", cdecl.}
+proc textureDestroyCount(): uint32 {.
+  importc: "cbss_bgfx_stub_texture_destroy_count", cdecl.}
+proc textureNameCount(): uint32 {.
+  importc: "cbss_bgfx_stub_texture_name_count", cdecl.}
+proc textureDataBytes(): uint32 {.
+  importc: "cbss_bgfx_stub_texture_data_bytes", cdecl.}
+proc textureUpdateCount(): uint32 {.
+  importc: "cbss_bgfx_stub_texture_update_count", cdecl.}
+proc textureUpdateDataBytes(): uint32 {.
+  importc: "cbss_bgfx_stub_texture_update_data_bytes", cdecl.}
+proc textureUpdateX(): uint16 {.
+  importc: "cbss_bgfx_stub_texture_update_x", cdecl.}
+proc textureUpdateY(): uint16 {.
+  importc: "cbss_bgfx_stub_texture_update_y", cdecl.}
+proc textureUpdateWidth(): uint16 {.
+  importc: "cbss_bgfx_stub_texture_update_width", cdecl.}
+proc textureUpdateHeight(): uint16 {.
+  importc: "cbss_bgfx_stub_texture_update_height", cdecl.}
+proc textureUpdatePitch(): uint16 {.
+  importc: "cbss_bgfx_stub_texture_update_pitch", cdecl.}
+proc textureWidth(): uint16 {.
+  importc: "cbss_bgfx_stub_texture_width", cdecl.}
+proc textureHeight(): uint16 {.
+  importc: "cbss_bgfx_stub_texture_height", cdecl.}
+proc textureFlags(): uint64 {.
+  importc: "cbss_bgfx_stub_texture_flags", cdecl.}
+proc textureFormat(): uint32 {.
+  importc: "cbss_bgfx_stub_texture_format", cdecl.}
+proc vertexBufferCreateCount(): uint32 {.
+  importc: "cbss_bgfx_stub_vertex_buffer_create_count", cdecl.}
+proc vertexBufferDestroyCount(): uint32 {.
+  importc: "cbss_bgfx_stub_vertex_buffer_destroy_count", cdecl.}
+proc indexBufferCreateCount(): uint32 {.
+  importc: "cbss_bgfx_stub_index_buffer_create_count", cdecl.}
+proc indexBufferDestroyCount(): uint32 {.
+  importc: "cbss_bgfx_stub_index_buffer_destroy_count", cdecl.}
+proc dynamicVertexBufferCreateCount(): uint32 {.
+  importc: "cbss_bgfx_stub_dynamic_vertex_buffer_create_count", cdecl.}
+proc dynamicVertexBufferDestroyCount(): uint32 {.
+  importc: "cbss_bgfx_stub_dynamic_vertex_buffer_destroy_count", cdecl.}
+proc dynamicIndexBufferCreateCount(): uint32 {.
+  importc: "cbss_bgfx_stub_dynamic_index_buffer_create_count", cdecl.}
+proc dynamicIndexBufferDestroyCount(): uint32 {.
+  importc: "cbss_bgfx_stub_dynamic_index_buffer_destroy_count", cdecl.}
+proc dynamicIndexBufferUpdateCount(): uint32 {.
+  importc: "cbss_bgfx_stub_dynamic_index_buffer_update_count", cdecl.}
+proc bufferNameCount(): uint32 {.
+  importc: "cbss_bgfx_stub_buffer_name_count", cdecl.}
+proc lastBufferDataBytes(): uint32 {.
+  importc: "cbss_bgfx_stub_last_buffer_data_bytes", cdecl.}
+proc lastBufferUpdateStart(): uint32 {.
+  importc: "cbss_bgfx_stub_last_buffer_update_start", cdecl.}
+proc lastBufferFlags(): uint16 {.
+  importc: "cbss_bgfx_stub_last_buffer_flags", cdecl.}
+proc lastVertexStride(): uint16 {.
+  importc: "cbss_bgfx_stub_last_vertex_stride", cdecl.}
+proc frameBufferCreateCount(): uint32 {.
+  importc: "cbss_bgfx_stub_frame_buffer_create_count", cdecl.}
+proc frameBufferDestroyCount(): uint32 {.
+  importc: "cbss_bgfx_stub_frame_buffer_destroy_count", cdecl.}
+proc frameBufferNameCount(): uint32 {.
+  importc: "cbss_bgfx_stub_frame_buffer_name_count", cdecl.}
+proc getTextureCount(): uint32 {.
+  importc: "cbss_bgfx_stub_get_texture_count", cdecl.}
+proc getTextureFrameBuffer(): uint16 {.
+  importc: "cbss_bgfx_stub_get_texture_frame_buffer", cdecl.}
+proc getTextureAttachment(): uint8 {.
+  importc: "cbss_bgfx_stub_get_texture_attachment", cdecl.}
+proc failGetTexture(value: bool) {.
+  importc: "cbss_bgfx_stub_fail_get_texture", cdecl.}
+proc frameBufferWidth(): uint16 {.
+  importc: "cbss_bgfx_stub_frame_buffer_width", cdecl.}
+proc frameBufferHeight(): uint16 {.
+  importc: "cbss_bgfx_stub_frame_buffer_height", cdecl.}
+proc frameBufferFlags(): uint64 {.
+  importc: "cbss_bgfx_stub_frame_buffer_flags", cdecl.}
+proc frameBufferFormat(): uint32 {.
+  importc: "cbss_bgfx_stub_frame_buffer_format", cdecl.}
+
+proc config(): GpuHostConfig =
+  GpuHostConfig(width: 640, height: 480, presentation: true)
+
+proc directRequest(
+    host: GpuHost;
+    resource: GpuResourceHandle;
+    provider = gpkBgfx
+): GpuDirectCompositeRequest =
+  let info = host.gpuPresentableResourceInfo(resource)
+  GpuDirectCompositeRequest(
+    frame: GpuDirectSurfaceFrame(
+      slotIndex: 0,
+      resource: resource,
+      backendResource: info.backendResource,
+      provider: provider,
+      alphaMode: gcamPremultiplied,
+      revision: 42,
+      width: info.width,
+      height: info.height,
+      format: info.format
+    ),
+    destination: rect(11, 13, 17, 19),
+    opacity: 0.75,
+    context: GpuDirectCompositeContext(
+      targetKind: gdctOffscreen,
+      targetBounds: rect(0, 0, 320, 240),
+      clipBounds: some(rect(7, 9, 80, 60)),
+      requiresClipMask: true,
+      pixelScale: 2.0
+    )
+  )
+
+suite "optional bgfxim adapter":
+  test "native window platform data maps supported systems safely":
+    let display = cast[pointer](0x1234'u)
+    let window = cast[pointer](0x5678'u)
+    for system in [bnwsX11, bnwsWayland]:
+      let data = bgfxPlatformData(BgfxNativeWindowHandles(
+        system: system,
+        display: display,
+        window: window
+      ))
+      check data.swapChain.ndt == display
+      check data.swapChain.nwh == window
+      check data.platform.context.isNil
+      check data.platform.queue.isNil
+      check data.platform.type ==
+        (if system == bnwsWayland:
+          BGFX_NATIVE_WINDOW_HANDLE_TYPE_WAYLAND
+        else:
+          BGFX_NATIVE_WINDOW_HANDLE_TYPE_DEFAULT)
+    for system in [bnwsWin32, bnwsCocoa]:
+      let data = bgfxPlatformData(BgfxNativeWindowHandles(
+        system: system,
+        window: window
+      ))
+      check data.swapChain.ndt.isNil
+      check data.swapChain.nwh == window
+      check data.platform.type == BGFX_NATIVE_WINDOW_HANDLE_TYPE_DEFAULT
+
+  test "native window platform data rejects missing required handles":
+    for system in BgfxNativeWindowSystem:
+      expect BgfxPlatformDataError:
+        discard bgfxPlatformData(BgfxNativeWindowHandles(system: system))
+    for system in [bnwsX11, bnwsWayland]:
+      expect BgfxPlatformDataError:
+        discard bgfxPlatformData(BgfxNativeWindowHandles(
+          system: system,
+          window: cast[pointer](1'u)
+        ))
+    for system in [bnwsWin32, bnwsCocoa]:
+      let data = bgfxPlatformData(BgfxNativeWindowHandles(
+        system: system,
+        window: cast[pointer](1'u)
+      ))
+      check data.swapChain.ndt.isNil
+      check data.swapChain.nwh == cast[pointer](1'u)
+      expect BgfxPlatformDataError:
+        discard bgfxPlatformData(BgfxNativeWindowHandles(
+          system: system,
+          display: cast[pointer](2'u),
+          window: cast[pointer](1'u)
+        ))
+
+  when defined(cbssTestSdl3PlatformData):
+    test "SDL3 native window data selects the active video driver":
+      let display = cast[pointer](0x1234'u)
+      let window = cast[pointer](0x5678'u)
+      for driver in ["wayland", "windows", "cocoa"]:
+        configureSdl3PlatformStub(
+          driver.cstring, 7, display, window, 0
+        )
+        let data = bgfxPlatformDataFromSdl3Window(cast[pointer](1'u))
+        check data.swapChain.nwh == window
+        check data.swapChain.ndt == (if driver == "wayland": display else: nil)
+        check data.platform.type ==
+          (if driver == "wayland":
+            BGFX_NATIVE_WINDOW_HANDLE_TYPE_WAYLAND
+          else:
+            BGFX_NATIVE_WINDOW_HANDLE_TYPE_DEFAULT)
+
+      configureSdl3PlatformStub("x11", 7, display, window, 0x7654)
+      let x11 = bgfxPlatformDataFromSdl3Window(cast[pointer](1'u))
+      check x11.swapChain.ndt == display
+      check x11.swapChain.nwh == cast[pointer](0x7654'u)
+      check x11.platform.type == BGFX_NATIVE_WINDOW_HANDLE_TYPE_DEFAULT
+
+    test "SDL3 native window data fails closed for invalid state":
+      let display = cast[pointer](0x1234'u)
+      let window = cast[pointer](0x5678'u)
+      configureSdl3PlatformStub("x11", 7, display, window, 1)
+      expect BgfxPlatformDataError:
+        discard bgfxPlatformDataFromSdl3Window(nil)
+
+      configureSdl3PlatformStub("x11", 0, display, window, 1)
+      expect BgfxPlatformDataError:
+        discard bgfxPlatformDataFromSdl3Window(cast[pointer](1'u))
+
+      configureSdl3PlatformStub(nil, 7, display, window, 1)
+      expect BgfxPlatformDataError:
+        discard bgfxPlatformDataFromSdl3Window(cast[pointer](1'u))
+
+      configureSdl3PlatformStub("kmsdrm", 7, display, window, 1)
+      expect BgfxPlatformDataError:
+        discard bgfxPlatformDataFromSdl3Window(cast[pointer](1'u))
+
+      for invalidX11Window in [0'i64, -1'i64]:
+        configureSdl3PlatformStub(
+          "x11", 7, display, window, invalidX11Window
+        )
+        expect BgfxPlatformDataError:
+          discard bgfxPlatformDataFromSdl3Window(cast[pointer](1'u))
+
+      for driver in ["x11", "wayland"]:
+        configureSdl3PlatformStub(
+          cast[cstring](unsafeAddr driver[0]), 7, nil, window, 1
+        )
+        expect BgfxPlatformDataError:
+          discard bgfxPlatformDataFromSdl3Window(cast[pointer](1'u))
+
+      for driver in ["wayland", "windows", "cocoa"]:
+        configureSdl3PlatformStub(
+          cast[cstring](unsafeAddr driver[0]), 7, display, nil, 1
+        )
+        expect BgfxPlatformDataError:
+          discard bgfxPlatformDataFromSdl3Window(cast[pointer](1'u))
+
+  test "qualified presentation profile enables the retained direct path":
+    resetCounters()
+    var options = defaultBgfxHostOptions()
+    options.directPresentation = newQualifiedBgfxDirectPresentationProfile(
+      {gtfRgba8},
+      maxBuffers = 2,
+      computeOutputSupported = true,
+      alphaModes = {gcamStraight},
+      maxWidth = 8,
+      maxHeight = 4
+    )
+    let backend = newBgfxBackend(options)
+    var directSubmitCount = 0
+    let compositor = newBgfxDirectCompositor(
+      backend,
+      gpuDirectCompositeCapabilities(
+        {gdctWindow},
+        sourceProviders = {gpkBgfx},
+        sourceKinds = {grkTexture, grkRenderTarget},
+        sourceFormats = {gtfRgba8},
+        alphaModes = {gcamStraight},
+        maxSourceWidth = 8,
+        maxSourceHeight = 4
+      ),
+      proc(submission: BgfxDirectCompositeSubmission): GpuDirectCompositeStatus =
+        inc directSubmitCount
+        check submission.texture.idx == 31'u16
+        check submission.sourceKind == grkTexture
+        check submission.revision == 1
+        gdcsPresented
+    )
+    let host = openGpuHost(backend, ghoOwned, config())
+    let info = host.backendInfo()
+    check info.directTexturePresentationSupported
+    check info.directRenderTargetPresentationSupported
+    check info.directComputeOutputPresentationSupported
+    check info.directPresentationFormats == {gtfRgba8}
+    check info.directPresentationAlphaModes == {gcamStraight}
+    check info.maxDirectPresentationBuffers == 2
+    check info.maxDirectPresentationWidth == 8
+    check info.maxDirectPresentationHeight == 4
+
+    let resources = host.createGpuNamespace(
+      "qualified-direct",
+      GpuResourceBudget(
+        persistentBytes: 4096,
+        workUnitsPerFrame: 4,
+        maxResources: 4
+      )
+    )
+    var surfaceConfig = defaultGpuDirectSurfaceConfig(8, 4)
+    surfaceConfig.bufferCount = 2
+    surfaceConfig.acceptComputeOutput = true
+    let surface = host.newGpuDirectSurface(resources, surfaceConfig)
+    let texture = host.createGpuTexture(
+      resources,
+      GpuTextureDescriptor(
+        width: 8,
+        height: 4,
+        format: gtfRgba8,
+        usage: {gtuSampled, gtuStorage},
+        label: "qualified-output"
+      )
+    )
+    let frame = host.beginGpuFrame()
+    check surface.queueGpuDirectSurfaceFrame(texture, frame)
+    check not surface.collectGpuDirectSurfaceFrame()
+    host.endGpuFrame(frame)
+    check surface.collectGpuDirectSurfaceFrame()
+    check surface.presentedRevision() == 1
+
+    let command = drawGpuDirectSurface(
+      NodeId(0),
+      surface,
+      rect(5, 7, 80, 40),
+      0.8'f32
+    )
+    check compositeGpuDirectSurface(
+      command,
+      GpuDirectCompositeContext(
+        targetKind: gdctWindow,
+        targetBounds: rect(0, 0, 640, 480),
+        pixelScale: 1
+      ),
+      compositor
+    ) == gdcsPresented
+    check directSubmitCount == 1
+
+    check surface.closeGpuDirectSurface()
+    check host.releaseGpuResource(texture)
+    host.close()
+
+  test "presentation profile rejects inconsistent capability claims":
+    for maxBuffers in [0, 1, 9, int(high(uint8)) + 1]:
+      expect ValueError:
+        discard newQualifiedBgfxDirectPresentationProfile(
+          {gtfRgba8},
+          maxBuffers = maxBuffers
+        )
+    expect ValueError:
+      discard newQualifiedBgfxDirectPresentationProfile({})
+    expect ValueError:
+      discard newQualifiedBgfxDirectPresentationProfile(
+        {gtfRgba8}, alphaModes = {}
+      )
+    expect ValueError:
+      discard newQualifiedBgfxDirectPresentationProfile(
+        {gtfRgba8},
+        textureSupported = false,
+        renderTargetSupported = false
+      )
+    expect ValueError:
+      discard newQualifiedBgfxDirectPresentationProfile(
+        {gtfRgba8},
+        textureSupported = false,
+        computeOutputSupported = true
+      )
+
+  test "presentation profile keeps capability axes independent":
+    let cases = @[
+      (texture: true, target: false, compute: false, buffers: 2),
+      (texture: false, target: true, compute: false, buffers: 8),
+      (texture: true, target: false, compute: true, buffers: 3)
+    ]
+    for item in cases:
+      resetCounters()
+      var options = defaultBgfxHostOptions()
+      options.directPresentation = newQualifiedBgfxDirectPresentationProfile(
+        {gtfRgba8, gtfBgra8},
+        maxBuffers = item.buffers,
+        textureSupported = item.texture,
+        renderTargetSupported = item.target,
+        computeOutputSupported = item.compute
+      )
+      let host = openGpuHost(newBgfxBackend(options), ghoOwned, config())
+      let info = host.backendInfo()
+      check info.directTexturePresentationSupported == item.texture
+      check info.directRenderTargetPresentationSupported == item.target
+      check info.directComputeOutputPresentationSupported == item.compute
+      check info.directPresentationFormats == {gtfRgba8, gtfBgra8}
+      check info.directPresentationAlphaModes == {
+        gcamStraight, gcamPremultiplied, gcamOpaque
+      }
+      check info.maxDirectPresentationBuffers == uint8(item.buffers)
+      check info.maxDirectPresentationWidth == 0
+      check info.maxDirectPresentationHeight == 0
+      host.close()
+
+  test "direct-composite adapter resolves only scoped presentable handles":
+    resetCounters()
+    let backend = newBgfxBackend()
+    var directSubmitCount = 0
+    var lastSubmission: BgfxDirectCompositeSubmission
+    var submitStatus = gdcsPresented
+    let submit: BgfxDirectSubmitProc =
+      proc(submission: BgfxDirectCompositeSubmission): GpuDirectCompositeStatus =
+        inc directSubmitCount
+        lastSubmission = submission
+        submitStatus
+    let compositor = newBgfxDirectCompositeAdapter(backend, submit)
+
+    check compositor(GpuDirectCompositeRequest(
+      frame: GpuDirectSurfaceFrame(provider: gpkBgfx)
+    )) == gdcsFailed
+    check directSubmitCount == 0
+
+    let host = openGpuHost(backend, ghoOwned, config())
+    let resources = host.createGpuNamespace(
+      "direct-composite",
+      GpuResourceBudget(persistentBytes: 4096, maxResources: 4)
+    )
+    let texture = host.createGpuTexture(
+      resources,
+      GpuTextureDescriptor(
+        width: 8,
+        height: 4,
+        format: gtfRgba8,
+        usage: {gtuSampled},
+        label: "direct-texture"
+      )
+    )
+    let renderTarget = host.createGpuRenderTarget(
+      resources,
+      GpuRenderTargetDescriptor(
+        width: 8,
+        height: 4,
+        format: gtfRgba8,
+        usage: {gtuRenderTarget, gtuSampled},
+        label: "direct-render-target"
+      )
+    )
+
+    let textureRequest = host.directRequest(texture)
+    check compositor(textureRequest) == gdcsPresented
+    check directSubmitCount == 1
+    check lastSubmission.texture.idx == 31'u16
+    check lastSubmission.sourceKind == grkTexture
+    check lastSubmission.destination == rect(11, 13, 17, 19)
+    check lastSubmission.opacity == 0.75'f32
+    check lastSubmission.alphaMode == gcamPremultiplied
+    check lastSubmission.revision == 42
+    check lastSubmission.width == 8
+    check lastSubmission.height == 4
+    check lastSubmission.format == gtfRgba8
+    check lastSubmission.context.targetKind == gdctOffscreen
+    check lastSubmission.context.targetBounds == rect(0, 0, 320, 240)
+    check lastSubmission.context.clipBounds == some(rect(7, 9, 80, 60))
+    check lastSubmission.context.requiresClipMask
+    check lastSubmission.context.pixelScale == 2.0'f32
+
+    let renderTargetRequest = host.directRequest(renderTarget)
+    submitStatus = gdcsRetry
+    check compositor(renderTargetRequest) == gdcsRetry
+    check directSubmitCount == 2
+    check lastSubmission.texture.idx == 1181'u16
+    check lastSubmission.sourceKind == grkRenderTarget
+    check getTextureCount() == 1
+    check getTextureFrameBuffer() == 181'u16
+    check getTextureAttachment() == 0'u8
+
+    failGetTexture(true)
+    check compositor(renderTargetRequest) == gdcsFailed
+    check directSubmitCount == 2
+    check getTextureCount() == 2
+    failGetTexture(false)
+
+    var wrongProvider = textureRequest
+    wrongProvider.frame.provider = gpkCustom
+    check compositor(wrongProvider) == gdcsUnsupported
+    check directSubmitCount == 2
+
+    var wrongKind = textureRequest
+    wrongKind.frame.resource.kind = grkRenderTarget
+    check compositor(wrongKind) == gdcsFailed
+    check directSubmitCount == 2
+
+    var unsupportedKind = textureRequest
+    unsupportedKind.frame.resource.kind = grkBuffer
+    check compositor(unsupportedKind) == gdcsUnsupported
+    check directSubmitCount == 2
+
+    var missingResource = textureRequest
+    missingResource.frame.backendResource = GpuBackendResourceId(0)
+    check compositor(missingResource) == gdcsFailed
+    check directSubmitCount == 2
+
+    check host.releaseGpuResource(texture)
+    check host.releaseGpuResource(renderTarget)
+    host.close()
+    check compositor(renderTargetRequest) == gdcsFailed
+    check directSubmitCount == 2
+    check getTextureCount() == 2
+
+  test "direct-composite adapter rejects invalid construction":
+    let submit: BgfxDirectSubmitProc =
+      proc(submission: BgfxDirectCompositeSubmission): GpuDirectCompositeStatus =
+        discard submission
+        gdcsPresented
+    expect ValueError:
+      discard newBgfxDirectCompositeAdapter(GpuBackendVTable(), submit)
+    var wrongProvider = newBgfxBackend()
+    wrongProvider.provider = gpkCustom
+    expect ValueError:
+      discard newBgfxDirectCompositeAdapter(wrongProvider, submit)
+    var wrongVersion = newBgfxBackend()
+    wrongVersion.apiVersion = gpuHostApiVersion + 1
+    expect ValueError:
+      discard newBgfxDirectCompositeAdapter(wrongVersion, submit)
+    expect ValueError:
+      discard newBgfxDirectCompositeAdapter(
+        newBgfxBackend(),
+        BgfxDirectSubmitProc(nil)
+      )
+
+  test "typed compositor rejects unsupported contexts before bgfx resolution":
+    resetCounters()
+    var options = defaultBgfxHostOptions()
+    options.directPresentation = newQualifiedBgfxDirectPresentationProfile(
+      {gtfRgba8}, maxBuffers = 2, renderTargetSupported = false
+    )
+    let backend = newBgfxBackend(options)
+    var submits = 0
+    let compositor = newBgfxDirectCompositor(
+      backend,
+      gpuDirectCompositeCapabilities(
+        {gdctWindow},
+        sourceProviders = {gpkCustom, gpkBgfx},
+        sourceKinds = {grkTexture},
+        sourceFormats = {gtfRgba8}
+      ),
+      proc(submission: BgfxDirectCompositeSubmission): GpuDirectCompositeStatus =
+        discard submission
+        inc submits
+        gdcsPresented
+    )
+    let unsupported = GpuDirectCompositeContext(
+      targetKind: gdctOffscreen,
+      targetBounds: rect(0, 0, 40, 30),
+      pixelScale: 1
+    )
+    check PaintCommand().compositeGpuDirectSurface(
+      unsupported, compositor
+    ) == gdcsUnsupported
+    check submits == 0
+    check compositor.capabilities.sourceProviders == {gpkBgfx}
+
+    expect ValueError:
+      discard newBgfxDirectCompositor(
+        backend,
+        gpuDirectCompositeCapabilities(
+          {gdctWindow}, sourceProviders = {gpkCustom}
+        ),
+        proc(submission: BgfxDirectCompositeSubmission): GpuDirectCompositeStatus =
+          discard submission
+          gdcsPresented
+      )
+    expect ValueError:
+      discard newBgfxDirectCompositor(
+        backend,
+        gpuDirectCompositeCapabilities(
+          {gdctWindow}, sourceFormats = {gtfBgra8}
+        ),
+        proc(submission: BgfxDirectCompositeSubmission): GpuDirectCompositeStatus =
+          discard submission
+          gdcsPresented
+      )
+    expect ValueError:
+      discard newBgfxDirectCompositor(
+        backend,
+        gpuDirectCompositeCapabilities(
+          {gdctWindow}, sourceKinds = {grkRenderTarget},
+          sourceFormats = {gtfRgba8}
+        ),
+        proc(submission: BgfxDirectCompositeSubmission): GpuDirectCompositeStatus =
+          discard submission
+          gdcsPresented
+      )
+
+  test "typed compositor exactly covers its qualified source profile":
+    resetCounters()
+    var options = defaultBgfxHostOptions()
+    options.directPresentation = newQualifiedBgfxDirectPresentationProfile(
+      {gtfRgba8, gtfBgra8},
+      maxBuffers = 3,
+      textureSupported = true,
+      renderTargetSupported = true,
+      alphaModes = {gcamStraight, gcamPremultiplied},
+      maxWidth = 1920,
+      maxHeight = 1080
+    )
+    let backend = newBgfxBackend(options)
+    let submit: BgfxDirectSubmitProc =
+      proc(submission: BgfxDirectCompositeSubmission): GpuDirectCompositeStatus =
+        discard submission
+        gdcsPresented
+
+    let exact = newBgfxDirectCompositor(
+      backend,
+      gpuDirectCompositeCapabilities(
+        {gdctWindow},
+        sourceKinds = {grkTexture, grkRenderTarget},
+        sourceFormats = {gtfRgba8, gtfBgra8},
+        alphaModes = {gcamStraight, gcamPremultiplied},
+        maxSourceWidth = 1920,
+        maxSourceHeight = 1080
+      ),
+      submit
+    )
+    check exact.capabilities.sourceProviders == {gpkBgfx}
+    check exact.capabilities.sourceKinds == {grkTexture, grkRenderTarget}
+    check exact.capabilities.sourceFormats == {gtfRgba8, gtfBgra8}
+    check exact.capabilities.alphaModes == {gcamStraight, gcamPremultiplied}
+    check exact.capabilities.maxSourceWidth == 1920
+    check exact.capabilities.maxSourceHeight == 1080
+
+    for sourceKinds in [
+      {grkTexture},
+      {grkRenderTarget}
+    ]:
+      expect ValueError:
+        discard newBgfxDirectCompositor(
+          backend,
+          gpuDirectCompositeCapabilities(
+            {gdctWindow},
+            sourceKinds = sourceKinds,
+            sourceFormats = {gtfRgba8, gtfBgra8},
+            alphaModes = {gcamStraight, gcamPremultiplied},
+            maxSourceWidth = 1920,
+            maxSourceHeight = 1080
+          ),
+          submit
+        )
+
+    for sourceFormats in [
+      {gtfRgba8},
+      {gtfRgba8, gtfBgra8, gtfRgba16F}
+    ]:
+      expect ValueError:
+        discard newBgfxDirectCompositor(
+          backend,
+          gpuDirectCompositeCapabilities(
+            {gdctWindow},
+            sourceKinds = {grkTexture, grkRenderTarget},
+            sourceFormats = sourceFormats,
+            alphaModes = {gcamStraight, gcamPremultiplied},
+            maxSourceWidth = 1920,
+            maxSourceHeight = 1080
+          ),
+          submit
+        )
+
+    for alphaModes in [
+      {gcamStraight},
+      {gcamStraight, gcamPremultiplied, gcamOpaque}
+    ]:
+      expect ValueError:
+        discard newBgfxDirectCompositor(
+          backend,
+          gpuDirectCompositeCapabilities(
+            {gdctWindow},
+            sourceKinds = {grkTexture, grkRenderTarget},
+            sourceFormats = {gtfRgba8, gtfBgra8},
+            alphaModes = alphaModes,
+            maxSourceWidth = 1920,
+            maxSourceHeight = 1080
+          ),
+          submit
+        )
+
+    for dimensions in [(0'u32, 1080'u32), (1920'u32, 0'u32),
+                       (1919'u32, 1080'u32), (1920'u32, 1081'u32)]:
+      expect ValueError:
+        discard newBgfxDirectCompositor(
+          backend,
+          gpuDirectCompositeCapabilities(
+            {gdctWindow},
+            sourceKinds = {grkTexture, grkRenderTarget},
+            sourceFormats = {gtfRgba8, gtfBgra8},
+            alphaModes = {gcamStraight, gcamPremultiplied},
+            maxSourceWidth = dimensions[0],
+            maxSourceHeight = dimensions[1]
+          ),
+          submit
+        )
+
+  test "owned mode initializes frames resizes and shuts down":
+    resetCounters()
+    let backend = newBgfxBackend()
+
+    check backend.provider == gpkBgfx
+    check backend.apiVersion == gpuHostApiVersion
+    check not backend.context.isNil
+
+    let host = openGpuHost(backend, ghoOwned, config())
+    check host.backendInfo.rendererName == "CBSS bgfx stub"
+    check host.backendInfo.computeSupported
+    check host.backendInfo.textureCopySupported
+    check host.backendInfo.textureReadbackSupported
+    check host.backendInfo.bufferCopySupported
+    check host.backendInfo.bufferReadbackSupported
+    check host.backendInfo.homogeneousDepth
+    check host.backendInfo.maxTextureSize == 16384
+    check not host.backendInfo.directTexturePresentationSupported
+    check not host.backendInfo.directRenderTargetPresentationSupported
+    check not host.backendInfo.directComputeOutputPresentationSupported
+    check host.backendInfo.directPresentationFormats == {}
+    check host.backendInfo.directPresentationAlphaModes == {}
+    check host.backendInfo.maxDirectPresentationBuffers == 0
+    check host.backendInfo.maxDirectPresentationWidth == 0
+    check host.backendInfo.maxDirectPresentationHeight == 0
+    check stubWidth() == 640
+    check stubHeight() == 480
+
+    let resourceNamespace = host.createGpuNamespace(
+      "adapter-textures",
+      GpuResourceBudget(
+        persistentBytes: 4096,
+        transientBytesPerFrame: 64,
+        readbackBytesPerFrame: 1024,
+        workUnitsPerFrame: 12,
+        maxResources: 24
+      )
+    )
+    let pixels = newSeq[byte](4 * 2 * 4)
+    let texture = host.createGpuTexture(
+      resourceNamespace,
+      GpuTextureDescriptor(
+        width: 4,
+        height: 2,
+        format: gtfRgba8,
+        usage: {gtuSampled, gtuBlitDestination},
+        label: "adapter-texture"
+      ),
+      pixels
+    )
+    check host.isGpuResourceLive(texture)
+    check textureCreateCount() == 1
+    check textureNameCount() == 1
+    check textureDataBytes() == uint32(pixels.len)
+    check textureWidth() == 4
+    check textureHeight() == 2
+    check textureFormat() == uint32(BGFX_TEXTURE_FORMAT_RGBA8)
+    check textureFlags() == BGFX_TEXTURE_BLIT_DST
+
+    let scalarField = host.createGpuTexture(
+      resourceNamespace,
+      GpuTextureDescriptor(
+        width: 2,
+        height: 2,
+        format: gtfR32F,
+        usage: {gtuSampled, gtuStorage},
+        label: "adapter-r32f-field"
+      ),
+      newSeq[byte](16)
+    )
+    check textureFormat() == uint32(BGFX_TEXTURE_FORMAT_R32F)
+    check textureDataBytes() == 16
+
+    let vectorField = host.createGpuTexture(
+      resourceNamespace,
+      GpuTextureDescriptor(
+        width: 1,
+        height: 1,
+        format: gtfRgba32F,
+        usage: {gtuSampled},
+        label: "adapter-rgba32f-field"
+      ),
+      newSeq[byte](16)
+    )
+    check textureFormat() == uint32(BGFX_TEXTURE_FORMAT_RGBA32F)
+    check textureDataBytes() == 16
+
+    let dynamicTexture = host.createGpuTexture(
+      resourceNamespace,
+      GpuTextureDescriptor(
+        width: 4,
+        height: 2,
+        format: gtfRgba8,
+        usage: {gtuSampled, gtuStorage},
+        access: gtaDynamic,
+        label: "adapter-dynamic-texture"
+      ),
+      newSeq[byte](32)
+    )
+    check textureDataBytes() == 0
+    check textureUpdateCount() == 1
+    check textureUpdateDataBytes() == 32
+    check textureUpdateX() == 0
+    check textureUpdateY() == 0
+    check textureUpdateWidth() == 4
+    check textureUpdateHeight() == 2
+    check textureUpdatePitch() == high(uint16)
+    let uploadFrame = host.beginGpuFrame()
+    host.updateGpuTexture(
+      dynamicTexture,
+      GpuTextureUpdateRegion(x: 1, y: 1, width: 2, height: 1),
+      newSeq[byte](8),
+      rowStride = 12
+    )
+    host.endGpuFrame(uploadFrame)
+    check textureUpdateCount() == 2
+    check textureUpdateDataBytes() == 8
+    check textureUpdateX() == 1
+    check textureUpdateY() == 1
+    check textureUpdateWidth() == 2
+    check textureUpdateHeight() == 1
+    check textureUpdatePitch() == 12
+
+    let storageTexture = host.createGpuTexture(
+      resourceNamespace,
+      GpuTextureDescriptor(
+        width: 4,
+        height: 2,
+        format: gtfRgba8,
+        usage: {gtuSampled, gtuStorage},
+        label: "adapter-storage-texture"
+      )
+    )
+    let colorUniform = host.createGpuUniform(
+      resourceNamespace,
+      GpuUniformDescriptor(
+        name: "u_cbssColor",
+        uniformType: gutVec4,
+        arrayLength: 1,
+        label: "adapter-color"
+      )
+    )
+    let colorSampler = host.createGpuSampler(
+      resourceNamespace,
+      GpuSamplerDescriptor(
+        name: "s_cbssColor",
+        addressU: gsamClamp,
+        addressV: gsamMirror,
+        minFilter: gsfNearest,
+        magFilter: gsfAnisotropic,
+        mipFilter: gsfNearest,
+        borderColorIndex: 3,
+        label: "adapter-sampler"
+      )
+    )
+    check uniformCreateCount() == 2
+
+    let vertexDescriptor = GpuBufferDescriptor(
+      byteSize: 24,
+      role: gbrVertex,
+      access: gbaStatic,
+      vertexLayout: @[
+        GpuVertexAttribute(
+          semantic: gvsPosition,
+          components: 2,
+          componentType: gvctFloat
+        ),
+        GpuVertexAttribute(
+          semantic: gvsColor0,
+          components: 4,
+          componentType: gvctUint8,
+          normalized: true
+        )
+      ],
+      label: "adapter-vertices"
+    )
+    let vertexBuffer = host.createGpuBuffer(
+      resourceNamespace,
+      vertexDescriptor,
+      newSeq[byte](24)
+    )
+    check host.isGpuResourceLive(vertexBuffer)
+    check vertexBufferCreateCount() == 1
+    check bufferNameCount() == 1
+    check lastBufferDataBytes() == 24
+    check lastVertexStride() == 12
+    check lastBufferFlags() == BGFX_BUFFER_NONE
+
+    var dynamicVertexDescriptor = vertexDescriptor
+    dynamicVertexDescriptor.access = gbaDynamic
+    dynamicVertexDescriptor.label = "adapter-dynamic-vertices"
+    let dynamicVertexBuffer = host.createGpuBuffer(
+      resourceNamespace,
+      dynamicVertexDescriptor
+    )
+    check host.isGpuResourceLive(dynamicVertexBuffer)
+    check dynamicVertexBufferCreateCount() == 1
+
+    let indexBuffer = host.createGpuBuffer(
+      resourceNamespace,
+      GpuBufferDescriptor(
+        byteSize: 12,
+        role: gbrIndex,
+        access: gbaStatic,
+        indexFormat: gifUint16,
+        label: "adapter-static-indices"
+      ),
+      newSeq[byte](12)
+    )
+    check host.isGpuResourceLive(indexBuffer)
+    check indexBufferCreateCount() == 1
+
+    let dynamicIndexBuffer = host.createGpuBuffer(
+      resourceNamespace,
+      GpuBufferDescriptor(
+        byteSize: 16,
+        role: gbrIndex,
+        access: gbaDynamic,
+        indexFormat: gifUint32,
+        label: "adapter-indices"
+      )
+    )
+    check host.isGpuResourceLive(dynamicIndexBuffer)
+    check dynamicIndexBufferCreateCount() == 1
+    check lastBufferDataBytes() == 16
+    check lastBufferFlags() == BGFX_BUFFER_INDEX32
+    host.updateGpuBuffer(dynamicIndexBuffer, 4, newSeq[byte](8))
+    check dynamicIndexBufferUpdateCount() == 1
+    check lastBufferUpdateStart() == 1
+    check lastBufferDataBytes() == 8
+
+    let staticStorageBuffer = host.createGpuBuffer(
+      resourceNamespace,
+      GpuBufferDescriptor(
+        byteSize: 32,
+        role: gbrStorage,
+        access: gbaStatic,
+        storageFormat: gsbfFloat32x4,
+        storageAccess: gsaRead,
+        label: "adapter-static-storage"
+      ),
+      newSeq[byte](32)
+    )
+    check indexBufferCreateCount() == 2
+    check (lastBufferFlags() and BGFX_BUFFER_INDEX32) != 0
+    check (lastBufferFlags() and BGFX_BUFFER_COMPUTE_READ) != 0
+
+    let dynamicStorageBuffer = host.createGpuBuffer(
+      resourceNamespace,
+      GpuBufferDescriptor(
+        byteSize: 64,
+        role: gbrStorage,
+        access: gbaDynamic,
+        storageFormat: gsbfUint32x2,
+        storageAccess: gsaReadWrite,
+        label: "adapter-dynamic-storage"
+      )
+    )
+    check dynamicIndexBufferCreateCount() == 2
+    check (lastBufferFlags() and BGFX_BUFFER_INDEX32) != 0
+    check (lastBufferFlags() and BGFX_BUFFER_COMPUTE_READ_WRITE) != 0
+    host.updateGpuBuffer(dynamicStorageBuffer, 16, newSeq[byte](16))
+    check dynamicIndexBufferUpdateCount() == 2
+    check lastBufferUpdateStart() == 4
+    check lastBufferDataBytes() == 16
+
+    let transferSourceBuffer = host.createGpuBuffer(
+      resourceNamespace,
+      GpuBufferDescriptor(
+        byteSize: 64,
+        role: gbrStorage,
+        access: gbaStatic,
+        storageFormat: gsbfUint32x2,
+        storageAccess: gsaRead,
+        label: "adapter-transfer-source"
+      ),
+      newSeq[byte](64)
+    )
+    check host.isGpuResourceLive(transferSourceBuffer)
+
+    let renderTarget = host.createGpuRenderTarget(
+      resourceNamespace,
+      GpuRenderTargetDescriptor(
+        width: 16,
+        height: 8,
+        format: gtfRgba8,
+        usage: {gtuRenderTarget, gtuSampled, gtuBlitSource},
+        label: "adapter-render-target"
+      )
+    )
+    check host.isGpuResourceLive(renderTarget)
+    check frameBufferCreateCount() == 1
+    check frameBufferNameCount() == 1
+    check frameBufferWidth() == 16
+    check frameBufferHeight() == 8
+    check frameBufferFormat() == uint32(BGFX_TEXTURE_FORMAT_RGBA8)
+    check frameBufferFlags() == BGFX_TEXTURE_RT
+
+    let readbackTexture = host.createGpuTexture(
+      resourceNamespace,
+      GpuTextureDescriptor(
+        width: 16,
+        height: 8,
+        format: gtfRgba8,
+        usage: {gtuBlitDestination, gtuReadback},
+        label: "adapter-readback"
+      )
+    )
+    check (textureFlags() and BGFX_TEXTURE_BLIT_DST) != 0
+    check (textureFlags() and BGFX_TEXTURE_READ_BACK) != 0
+
+    let mappedFragmentShader = host.createGpuShader(
+      resourceNamespace,
+      GpuShaderDescriptor(stage: gssFragment, label: "adapter-fragment"),
+      @[0x43'u8, 0x42'u8, 0x53'u8, 0x53'u8]
+    )
+    let mappedVertexShader = host.createGpuShader(
+      resourceNamespace,
+      GpuShaderDescriptor(stage: gssVertex, label: "adapter-vertex"),
+      @[0x56'u8]
+    )
+    let mappedComputeShader = host.createGpuShader(
+      resourceNamespace,
+      GpuShaderDescriptor(stage: gssCompute, label: "adapter-compute"),
+      @[0x43'u8]
+    )
+    check host.isGpuResourceLive(mappedFragmentShader)
+    check shaderCreateCount() == 3
+    check shaderNameCount() == 3
+    check shaderDataBytes() == 1
+
+    let mappedGraphicsPipeline = host.createGpuGraphicsPipeline(
+      resourceNamespace,
+      GpuGraphicsPipelineDescriptor(
+        vertexShader: mappedVertexShader,
+        fragmentShader: mappedFragmentShader,
+        vertexLayout: vertexDescriptor.vertexLayout,
+        colorFormat: gtfRgba8,
+        topology: gptTriangleList,
+        cullMode: gcmBack,
+        frontFace: gffCounterClockwise,
+        blend: alphaGpuBlendState(),
+        label: "adapter-graphics"
+      )
+    )
+    let mappedComputePipeline = host.createGpuComputePipeline(
+      resourceNamespace,
+      GpuComputePipelineDescriptor(
+        computeShader: mappedComputeShader,
+        label: "adapter-compute-pipeline"
+      )
+    )
+    check host.isGpuResourceLive(mappedGraphicsPipeline)
+    check host.isGpuResourceLive(mappedComputePipeline)
+    check graphicsProgramCreateCount() == 1
+    check computeProgramCreateCount() == 1
+
+    let token = host.beginGpuFrame()
+    host.submitGpuDraws(
+      resourceNamespace,
+      GpuGraphicsPassDescriptor(
+        viewport: GpuViewport(width: 16, height: 8),
+        scissorEnabled: true,
+        scissor: GpuViewport(x: 1, y: 1, width: 14, height: 6),
+        clearColorEnabled: true,
+        clearColor: GpuClearColor(
+          red: 0.25,
+          green: 0.5,
+          blue: 0.75,
+          alpha: 1
+        ),
+        renderTarget: renderTarget
+      ),
+      [
+        GpuDrawCommand(
+          pipeline: mappedGraphicsPipeline,
+          vertexBuffer: vertexBuffer,
+          vertexCount: 2,
+          indexBuffer: dynamicIndexBuffer,
+          indexCount: 4,
+          bindings: GpuBindingSet(
+            uniforms: @[
+              GpuUniformBinding(
+                uniform: colorUniform,
+                values: @[0.2'f32, 0.4'f32, 0.6'f32, 1'f32]
+              )
+            ],
+            textures: @[
+              GpuTextureBinding(
+                stage: 0,
+                sampler: colorSampler,
+                texture: texture
+              )
+            ]
+          )
+        ),
+        GpuDrawCommand(
+          pipeline: mappedGraphicsPipeline,
+          vertexBuffer: dynamicVertexBuffer,
+          vertexCount: 2,
+          indexBuffer: indexBuffer,
+          indexCount: 4
+        )
+      ]
+    )
+    host.dispatchGpuComputes(
+      resourceNamespace,
+      [
+        GpuComputeCommand(
+          pipeline: mappedComputePipeline,
+          groupsX: 2,
+          groupsY: 3,
+          groupsZ: 4,
+          bindings: GpuBindingSet(
+            uniforms: @[
+              GpuUniformBinding(
+                uniform: colorUniform,
+                values: @[1'f32, 0.75'f32, 0.5'f32, 0.25'f32]
+              )
+            ],
+            storageImages: @[
+              GpuStorageImageBinding(
+                stage: 1,
+                texture: storageTexture,
+                access: gsaReadWrite
+              )
+            ],
+            storageBuffers: @[
+              GpuStorageBufferBinding(
+                stage: 2,
+                buffer: staticStorageBuffer,
+                access: gsaRead
+              ),
+              GpuStorageBufferBinding(
+                stage: 3,
+                buffer: dynamicStorageBuffer,
+                access: gsaReadWrite
+              )
+            ]
+          )
+        ),
+        GpuComputeCommand(
+          pipeline: mappedComputePipeline,
+          groupsX: 1,
+          groupsY: 1,
+          groupsZ: 1
+        )
+      ]
+    )
+    host.copyGpuTexture(resourceNamespace, renderTarget, readbackTexture)
+    let readback = host.requestGpuReadback(resourceNamespace, readbackTexture)
+    host.copyGpuBuffer(
+      resourceNamespace,
+      transferSourceBuffer,
+      dynamicStorageBuffer,
+      GpuBufferCopyRegion(
+        sourceOffsetBytes: 16,
+        destinationOffsetBytes: 32,
+        byteCount: 16
+      )
+    )
+    let bufferReadback = host.requestGpuBufferReadback(
+      resourceNamespace,
+      dynamicStorageBuffer,
+      offsetBytes = 16,
+      byteCount = 16
+    )
+    check host.gpuReadbackState(readback) == grsPending
+    check host.gpuReadbackState(bufferReadback) == grsPending
+    host.endGpuFrame(token)
+    check host.gpuReadbackState(readback) == grsReady
+    check host.gpuReadbackState(bufferReadback) == grsReady
+    var readbackData: GpuReadbackData
+    check host.tryTakeGpuReadback(readback, readbackData)
+    check readbackData.width == 16
+    check readbackData.height == 8
+    check readbackData.rowStride == 64
+    check readbackData.pixels.len == 512
+    check readbackData.pixels[511] == byte(511 mod 251)
+    var bufferReadbackData: GpuBufferReadbackData
+    check host.tryTakeGpuBufferReadback(bufferReadback, bufferReadbackData)
+    check bufferReadbackData.offsetBytes == 16
+    check bufferReadbackData.bytes.len == 16
+    check bufferReadbackData.bytes[0] == byte(16 mod 251)
+    check bufferReadbackData.bytes[15] == byte(31 mod 251)
+    check frameCount() == 2
+    check submitCount() == 2
+    check dispatchCount() == 2
+    check viewRectCount() == 1
+    check viewScissorCount() == 1
+    check viewClearCount() == 1
+    check viewFrameBufferCount() == 1
+    check vertexBindCount() == 2
+    check indexBindCount() == 2
+    check stateCount() == 2
+    check uniformSetCount() == 2
+    check textureBindCount() == 1
+    check imageBindCount() == 1
+    check computeIndexBindCount() == 1
+    check computeDynamicIndexBindCount() == 1
+    check lastComputeBufferStage() == 3
+    check lastComputeBufferAccess() == uint32(BGFX_ACCESS_READWRITE)
+    check blitCount() == 1
+    check readbackCount() == 1
+    check bufferBlitCount() == 1
+    check bufferReadbackCount() == 1
+    check lastBufferBlitSourceOffset() == 16
+    check lastBufferBlitDestinationOffset() == 32
+    check lastBufferBlitBytes() == 16
+    check lastBufferReadbackOffset() == 16
+    check lastBufferReadbackBytes() == 16
+    check (lastSamplerFlags() and BGFX_SAMPLER_U_CLAMP) != 0
+    check (lastSamplerFlags() and BGFX_SAMPLER_V_MIRROR) != 0
+    check (lastSamplerFlags() and BGFX_SAMPLER_MIN_POINT) != 0
+    check (lastSamplerFlags() and BGFX_SAMPLER_MAG_ANISOTROPIC) != 0
+    check (lastSamplerFlags() and BGFX_SAMPLER_MIP_POINT) != 0
+    check lastImageAccess() == uint32(BGFX_ACCESS_READWRITE)
+    check lastViewId() == 4
+    check (lastState() and BGFX_STATE_WRITE_RGB) == BGFX_STATE_WRITE_RGB
+    check (lastState() and BGFX_STATE_WRITE_A) == BGFX_STATE_WRITE_A
+    check (lastState() and BGFX_STATE_CULL_CW) == BGFX_STATE_CULL_CW
+
+    check host.releaseGpuResource(mappedComputePipeline)
+    check host.releaseGpuResource(mappedGraphicsPipeline)
+    check programDestroyCount() == 2
+    check host.releaseGpuResource(mappedComputeShader)
+    check host.releaseGpuResource(mappedVertexShader)
+    check host.releaseGpuResource(mappedFragmentShader)
+    check shaderDestroyCount() == 3
+    check host.releaseGpuResource(colorSampler)
+    check host.releaseGpuResource(colorUniform)
+    check uniformDestroyCount() == 2
+
+    host.resizeGpuHost(800, 600)
+    check resetCount() == 1
+    check stubWidth() == 800
+    check stubHeight() == 600
+
+    expect GpuHostError:
+      discard openGpuHost(newBgfxBackend(), ghoBorrowed, config())
+
+    check host.releaseGpuResource(renderTarget)
+    check frameBufferDestroyCount() == 1
+    check host.releaseGpuResource(readbackTexture)
+    check host.releaseGpuResource(staticStorageBuffer)
+    check host.releaseGpuResource(transferSourceBuffer)
+    check host.releaseGpuResource(dynamicStorageBuffer)
+    check host.releaseGpuResource(indexBuffer)
+    check indexBufferDestroyCount() == 3
+    check host.releaseGpuResource(dynamicVertexBuffer)
+    check dynamicVertexBufferDestroyCount() == 1
+    check host.releaseGpuResource(dynamicIndexBuffer)
+    check dynamicIndexBufferDestroyCount() == 2
+    check host.releaseGpuResource(vertexBuffer)
+    check vertexBufferDestroyCount() == 1
+    check host.releaseGpuResource(texture)
+    check host.releaseGpuResource(dynamicTexture)
+    check host.releaseGpuResource(storageTexture)
+    check host.releaseGpuResource(scalarField)
+    check host.releaseGpuResource(vectorField)
+    check textureDestroyCount() == 6
+    host.close()
+    check shutdownCount() == 1
+
+  test "borrowed mode detaches without shutting down the runtime":
+    resetCounters()
+    let host = openGpuHost(newBgfxBackend(), ghoBorrowed, config())
+    check host.backendInfo.rendererName == "CBSS bgfx stub"
+    host.close()
+    check shutdownCount() == 0
+
+  test "owned mode recreates bgfx with the latest host configuration":
+    resetCounters()
+    let host = openGpuHost(newBgfxBackend(), ghoOwned, config())
+    let previousGeneration = host.generation()
+    host.resizeGpuHost(901, 507)
+
+    check host.markGpuDeviceLost()
+    let report = host.restoreGpuHostWithReport()
+
+    check report.previousGeneration == previousGeneration
+    check report.generation == previousGeneration + 1
+    check host.state() == ghsReady
+    check host.backendInfo.rendererName == "CBSS bgfx stub"
+    check stubWidth() == 901
+    check stubHeight() == 507
+    check shutdownCount() == 1
+
+    host.close()
+    check shutdownCount() == 2
+
+  test "borrowed mode requires its owner to restore and reattach bgfx":
+    resetCounters()
+    let host = openGpuHost(newBgfxBackend(), ghoBorrowed, config())
+
+    check host.markGpuDeviceLost()
+    expect GpuHostError:
+      discard host.restoreGpuHostWithReport()
+    check host.state() == ghsDeviceLost
+
+    host.close()
+    check shutdownCount() == 0

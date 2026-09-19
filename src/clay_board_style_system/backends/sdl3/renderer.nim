@@ -1,9 +1,11 @@
 import std/[hashes, math, options, os, strutils, tables]
 
 import ../../assets/asset_resolver
-import ../../core/[color, computed_style, geometry, gradient_sampling, node]
+import ../../core/[color, computed_style, geometry, gradient_sampling, node,
+    raster_surface]
 import ../../input/events
-import ../../paint/[paint_command, path_geometry]
+import ../../paint/[dirty_tiles, gpu_direct_compositor, paint_command,
+    path_geometry, retained_damage]
 import ../../text/[cosmic_text_engine, font_registry, text_engine]
 import ../../vendor/sdl3
 import ./config
@@ -31,10 +33,13 @@ const
   sdlTextureAccessTarget = SDL_TEXTUREACCESS_TARGET
   defaultTextCacheBytes = 64'u64 * 1024 * 1024
   defaultImageCacheBytes = 256'u64 * 1024 * 1024
+  defaultRasterSurfaceCacheBytes = 256'u64 * 1024 * 1024
   defaultRoundedTextureCacheBytes = 128'u64 * 1024 * 1024
   defaultShadowTextureCacheBytes = 128'u64 * 1024 * 1024
   defaultTransformTextureCacheBytes = 128'u64 * 1024 * 1024
+  maxSoftwareMaskFallbackBytes = 64'u64 * 1024 * 1024
   sdl3StreamWakeEventCode = 0x43425353'i32
+  maxRetainedDamagePasses = 8
 
 var
   sdl3StreamWakeEventType: uint32
@@ -58,6 +63,13 @@ type
     source: string
     texture: pointer
     width, height: float32
+    lastUsed: uint64
+
+  Sdl3RasterSurfaceCacheEntry = object
+    surfaceId: uint64
+    revision: uint64
+    texture: pointer
+    width, height: int
     lastUsed: uint64
 
   Sdl3RoundedTextureCacheEntry = object
@@ -84,9 +96,20 @@ type
     pixels*: seq[uint8]
 
   Sdl3CacheUsage* = object
-    textBytes*, imageBytes*: uint64
+    textBytes*, imageBytes*, rasterSurfaceBytes*: uint64
     roundedTextureBytes*, shadowTextureBytes*: uint64
     transformTextureBytes*: uint64
+    rasterFullUploads*, rasterPartialUploads*: uint64
+
+  Sdl3GpuDirectCompositionStats* = object
+    noFrame*, presented*, retry*, unsupported*, failed*: uint32
+
+  Sdl3RetainedLayerStats* = object
+    ## Cumulative retained-texture counters plus the most recent update size.
+    fullRepaints*, partialRepaints*, skippedRepaints*: uint64
+    coalescedRepaints*: uint64
+    lastDirtyTiles*, totalTiles*: int
+    lastDamagePasses*: int
 
   Sdl3ClipRegion = object
     rect: Rect
@@ -130,6 +153,7 @@ type
     sekPointerMove,
     sekPointerDown,
     sekPointerUp,
+    sekPointerCancel,
     sekKeyDown,
     sekKeyUp,
     sekTextInput,
@@ -158,7 +182,7 @@ type
       width*, height*: int
     of sekFocus, sekBlur:
       discard
-    of sekPointerMove:
+    of sekPointerMove, sekPointerCancel:
       x*, y*: float32
     of sekPointerDown, sekPointerUp:
       button*: int
@@ -198,6 +222,7 @@ type
     transientTextTextures: seq[pointer]
     imageCache: seq[Sdl3ImageCacheEntry]
     imageCacheIndex: Table[Hash, seq[int]]
+    rasterSurfaceCache: seq[Sdl3RasterSurfaceCacheEntry]
     roundedTextureCache: seq[Sdl3RoundedTextureCacheEntry]
     roundedTextureCacheIndex: Table[Hash, seq[int]]
     shadowTextureCache: seq[Sdl3ShadowTextureCacheEntry]
@@ -206,23 +231,35 @@ type
 
     staticLayerTexture: pointer
     staticLayerWidth, staticLayerHeight: int
+    staticLayerDamage: RetainedDamageTracker
+    staticLayerDamageClip: Option[SDL_Rect]
+    staticLayerBackground: Color
+    staticLayerBackgroundInitialized: bool
+    retainedLayerStatsValue: Sdl3RetainedLayerStats
     imageFailures: seq[string]
     imageEvents: seq[Sdl3ImageEvent]
     reportedImageEventKeys: seq[string]
     assetResolver: AssetResolver
     textCacheLimit: int
     imageCacheLimit: int
+    rasterSurfaceCacheLimit: int
     roundedTextureCacheLimit: int
     shadowTextureCacheLimit: int
     textCacheByteLimit, imageCacheByteLimit: uint64
+    rasterSurfaceCacheByteLimit: uint64
     roundedTextureCacheByteLimit, shadowTextureCacheByteLimit: uint64
     transformTextureCacheByteLimit: uint64
     textCacheBytes, imageCacheBytes: uint64
+    rasterSurfaceCacheBytes: uint64
+    rasterFullUploads, rasterPartialUploads: uint64
     roundedTextureCacheBytes, shadowTextureCacheBytes: uint64
     transformTextureCacheBytes: uint64
     frameId: uint64
     pendingEvents: seq[Sdl3Event]
     penStates: Table[SDL_PenID, Sdl3PenDeviceState]
+    mouseButtonsDown: uint32
+    nativeMouseCaptured: bool
+    lastMousePosition: Vec2
     captureNextFrame: bool
     capturedFrame: Option[Sdl3CapturedFrame]
     composing: bool
@@ -234,6 +271,8 @@ type
     cursorCache: array[CursorKind, pointer]
     ownsCursor: array[CursorKind, bool]
     activeCursor: CursorKind
+    gpuDirectCompositor: GpuDirectCompositor
+    gpuDirectCompositionStats: Sdl3GpuDirectCompositionStats
 
 const DefaultWheelStepPixels* = 54.0'f32
 
@@ -244,10 +283,80 @@ proc cacheUsage*(target: Sdl3Renderer): Sdl3CacheUsage =
   Sdl3CacheUsage(
     textBytes: target.textCacheBytes,
     imageBytes: target.imageCacheBytes,
+    rasterSurfaceBytes: target.rasterSurfaceCacheBytes,
     roundedTextureBytes: target.roundedTextureCacheBytes,
     shadowTextureBytes: target.shadowTextureCacheBytes,
-    transformTextureBytes: target.transformTextureCacheBytes
+    transformTextureBytes: target.transformTextureCacheBytes,
+    rasterFullUploads: target.rasterFullUploads,
+    rasterPartialUploads: target.rasterPartialUploads
   )
+
+proc setGpuDirectCompositor*(
+    target: var Sdl3Renderer;
+    compositor: GpuDirectCompositor
+) =
+  ## Installs the backend-specific bridge used by pcDrawGpuDirectSurface.
+  ## The callback is invoked while the command's SDL clip and layer are active.
+  target.gpuDirectCompositor = compositor
+
+proc setGpuDirectCompositor*(
+    target: var Sdl3Renderer;
+    compositor: GpuDirectCompositeProc
+) =
+  ## Compatibility overload. Typed compositors should declare narrower
+  ## capabilities with newGpuDirectCompositor().
+  if compositor.isNil:
+    target.gpuDirectCompositor = GpuDirectCompositor()
+    return
+  target.gpuDirectCompositor = newGpuDirectCompositor(
+    gpuDirectCompositeCapabilities(
+      {gdctUnspecified, gdctWindow, gdctOffscreen},
+      clipBoundsSupported = true,
+      clipMaskSupported = true
+    ),
+    compositor
+  )
+
+proc clearGpuDirectCompositor*(target: var Sdl3Renderer) =
+  target.gpuDirectCompositor = GpuDirectCompositor()
+
+proc gpuDirectCompositionStats*(
+    target: Sdl3Renderer
+): Sdl3GpuDirectCompositionStats =
+  target.gpuDirectCompositionStats
+
+proc retainedLayerStats*(target: Sdl3Renderer): Sdl3RetainedLayerStats =
+  target.retainedLayerStatsValue
+
+proc resetGpuDirectCompositionStats(target: var Sdl3Renderer) =
+  target.gpuDirectCompositionStats = Sdl3GpuDirectCompositionStats()
+
+proc gpuDirectCompositeContext(
+    target: Sdl3Renderer;
+    layers: openArray[Sdl3TransformLayer]
+): GpuDirectCompositeContext
+
+proc renderGpuDirectSurface(
+    target: var Sdl3Renderer;
+    command: PaintCommand;
+    layers: openArray[Sdl3TransformLayer]
+): bool =
+  let status = command.compositeGpuDirectSurface(
+    target.gpuDirectCompositeContext(layers),
+    target.gpuDirectCompositor
+  )
+  case status
+  of gdcsNoFrame:
+    inc target.gpuDirectCompositionStats.noFrame
+  of gdcsPresented:
+    inc target.gpuDirectCompositionStats.presented
+    result = true
+  of gdcsRetry:
+    inc target.gpuDirectCompositionStats.retry
+  of gdcsUnsupported:
+    inc target.gpuDirectCompositionStats.unsupported
+  of gdcsFailed:
+    inc target.gpuDirectCompositionStats.failed
 
 proc indexKey(index: var Table[Hash, seq[int]]; key: string; entryIndex: int) =
   index.mgetOrPut(hash(key), @[]).add entryIndex
@@ -295,6 +404,12 @@ proc pointerInputEvent*(event: Sdl3Event): Option[InputEvent] =
   of sekPointerUp:
     result = some(pointerUpEvent(
       vec2(event.buttonX, event.buttonY), event.button, event.pointer
+    ))
+  of sekPointerCancel:
+    result = some(InputEvent(
+      kind: iekPointerCancel,
+      position: some(vec2(event.x, event.y)),
+      pointer: event.pointer
     ))
   of sekTouchStart:
     result = some(InputEvent(
@@ -426,6 +541,13 @@ proc destroyImageCache(target: var Sdl3Renderer) =
   target.imageFailures.setLen(0)
   target.reportedImageEventKeys.setLen(0)
 
+proc destroyRasterSurfaceCache(target: var Sdl3Renderer) =
+  for entry in target.rasterSurfaceCache:
+    if not entry.texture.isNil:
+      SDL3.destroyTexture(entry.texture)
+  target.rasterSurfaceCache.setLen(0)
+  target.rasterSurfaceCacheBytes = 0
+
 proc destroyRoundedTextureCache(target: var Sdl3Renderer) =
   for entry in target.roundedTextureCache:
     if not entry.texture.isNil:
@@ -455,6 +577,9 @@ proc destroyStaticLayer(target: var Sdl3Renderer) =
     target.staticLayerTexture = nil
   target.staticLayerWidth = 0
   target.staticLayerHeight = 0
+  target.staticLayerDamage = RetainedDamageTracker()
+  target.staticLayerDamageClip = none(SDL_Rect)
+  target.staticLayerBackgroundInitialized = false
 
 proc destroyCursorCache(target: var Sdl3Renderer) =
   for cursor in CursorKind:
@@ -525,20 +650,54 @@ proc initSdl3Renderer*(
   result.penStates = initTable[SDL_PenID, Sdl3PenDeviceState]()
   result.textCacheLimit = 256
   result.imageCacheLimit = 128
+  result.rasterSurfaceCacheLimit = 128
   result.roundedTextureCacheLimit = 128
   result.shadowTextureCacheLimit = 128
   result.textCacheByteLimit = defaultTextCacheBytes
   result.imageCacheByteLimit = defaultImageCacheBytes
+  result.rasterSurfaceCacheByteLimit = defaultRasterSurfaceCacheBytes
   result.roundedTextureCacheByteLimit = defaultRoundedTextureCacheBytes
   result.shadowTextureCacheByteLimit = defaultShadowTextureCacheBytes
   result.transformTextureCacheByteLimit = defaultTransformTextureCacheBytes
   result.imeCandidatesEnabled = imeUi == siuCompositionAndCandidates
   result.activeCursor = ckDefault
 
+proc mouseButtonBit(button: uint8): uint32 {.inline.} =
+  if button >= 1 and button <= 32:
+    1'u32 shl (uint32(button) - 1)
+  else:
+    0'u32
+
+proc updateNativeMouseCapture(
+    target: var Sdl3Renderer;
+    button: uint8;
+    pressed: bool
+) =
+  let previous = target.mouseButtonsDown
+  let bit = mouseButtonBit(button)
+  if pressed:
+    target.mouseButtonsDown = target.mouseButtonsDown or bit
+  else:
+    target.mouseButtonsDown = target.mouseButtonsDown and not bit
+  if previous == 0 and target.mouseButtonsDown != 0:
+    target.nativeMouseCaptured = SDL3.captureMouse(true)
+  elif previous != 0 and target.mouseButtonsDown == 0:
+    discard SDL3.captureMouse(false)
+    target.nativeMouseCaptured = false
+
+proc cancelNativeMouseCapture(target: var Sdl3Renderer) =
+  if target.mouseButtonsDown != 0 or target.nativeMouseCaptured:
+    discard SDL3.captureMouse(false)
+  target.mouseButtonsDown = 0
+  target.nativeMouseCaptured = false
+
 proc close*(target: var Sdl3Renderer) =
+  target.clearGpuDirectCompositor()
+  target.cancelNativeMouseCapture()
   target.destroyCursorCache()
   target.destroyTextCache()
   target.destroyImageCache()
+  target.destroyRasterSurfaceCache()
   target.destroyRoundedTextureCache()
   target.destroyShadowTextureCache()
   target.destroyTransformTextureCache()
@@ -659,6 +818,8 @@ proc toSdlCursor(cursor: CursorKind): SDL_SystemCursor =
     SDL_SYSTEM_CURSOR_TEXT
   of ckPointer:
     SDL_SYSTEM_CURSOR_POINTER
+  of ckCrosshair:
+    SDL_SYSTEM_CURSOR_CROSSHAIR
   of ckMove:
     SDL_SYSTEM_CURSOR_MOVE
   of ckNotAllowed:
@@ -924,15 +1085,41 @@ proc pollEventFromRaw(
       event = Sdl3Event(kind: sekFocus, timestamp: raw.window.timestamp)
       return true
     of SDL_EVENT_WINDOW_FOCUS_LOST:
+      if target.mouseButtonsDown != 0:
+        target.cancelNativeMouseCapture()
+        target.pendingEvents.add Sdl3Event(
+          kind: sekBlur,
+          timestamp: raw.window.timestamp
+        )
+        event = Sdl3Event(
+          kind: sekPointerCancel,
+          timestamp: raw.window.timestamp,
+          x: target.lastMousePosition.x,
+          y: target.lastMousePosition.y,
+          pointer: some(PointerData(device: pdkMouse, primary: true))
+        )
+        return true
       event = Sdl3Event(kind: sekBlur, timestamp: raw.window.timestamp)
       return true
     of SDL_EVENT_WINDOW_MOUSE_ENTER:
       # Client-side decorations own the cursor while it is over the frame.
       # Reapply the cached application cursor when control returns to content.
       target.reapplyActiveCursor()
+    of SDL_EVENT_WINDOW_MOUSE_LEAVE:
+      if target.mouseButtonsDown != 0 and not target.nativeMouseCaptured:
+        target.cancelNativeMouseCapture()
+        event = Sdl3Event(
+          kind: sekPointerCancel,
+          timestamp: raw.window.timestamp,
+          x: target.lastMousePosition.x,
+          y: target.lastMousePosition.y,
+          pointer: some(PointerData(device: pdkMouse, primary: true))
+        )
+        return true
     of SDL_EVENT_MOUSE_MOTION:
       if raw.motion.which in [SDL_TOUCH_MOUSEID, SDL_PEN_MOUSEID]:
         continue
+      target.lastMousePosition = vec2(raw.motion.x.float32, raw.motion.y.float32)
       event = Sdl3Event(
         kind: sekPointerMove,
         timestamp: raw.motion.timestamp,
@@ -944,6 +1131,8 @@ proc pollEventFromRaw(
     of SDL_EVENT_MOUSE_BUTTON_DOWN:
       if raw.button.which in [SDL_TOUCH_MOUSEID, SDL_PEN_MOUSEID]:
         continue
+      target.lastMousePosition = vec2(raw.button.x.float32, raw.button.y.float32)
+      target.updateNativeMouseCapture(raw.button.button, true)
       event = Sdl3Event(
         kind: sekPointerDown,
         timestamp: raw.button.timestamp,
@@ -966,6 +1155,8 @@ proc pollEventFromRaw(
     of SDL_EVENT_MOUSE_BUTTON_UP:
       if raw.button.which in [SDL_TOUCH_MOUSEID, SDL_PEN_MOUSEID]:
         continue
+      target.lastMousePosition = vec2(raw.button.x.float32, raw.button.y.float32)
+      target.updateNativeMouseCapture(raw.button.button, false)
       event = Sdl3Event(
         kind: sekPointerUp,
         timestamp: raw.button.timestamp,
@@ -1411,24 +1602,78 @@ proc prepareRenderPlan(commands: openArray[PaintCommand]): seq[Sdl3PreparedComma
       result.add Sdl3PreparedCommand(command: command)
       if clipStack.len > 0:
         clipStack.setLen(clipStack.len - 1)
-    of pcDrawImage:
+    of pcDrawImage, pcDrawRasterSurface:
       var roundedClips: seq[Sdl3ClipRegion]
       if clipStack.hasRoundedClip():
         for clip in clipStack:
           roundedClips.add clip
       result.add Sdl3PreparedCommand(command: command, roundedImageClipStack: roundedClips)
+    of pcDrawGpuDirectSurface:
+      result.add Sdl3PreparedCommand(command: command)
     else:
       result.add Sdl3PreparedCommand(command: command)
 
 proc effectiveClipBounds(target: Sdl3Renderer): Option[SDL_Rect] =
-  if target.clipStack.len == 0:
-    return none(SDL_Rect)
-  result = some(target.clipStack[0].bounds)
-  for index in 1 ..< target.clipStack.len:
-    result = some(intersect(result.get, target.clipStack[index].bounds))
+  if target.clipStack.len > 0:
+    result = some(target.clipStack[0].bounds)
+    for index in 1 ..< target.clipStack.len:
+      result = some(intersect(result.get, target.clipStack[index].bounds))
+  if target.staticLayerDamageClip.isSome and
+      SDL3.getRenderTarget(target.renderer) == target.staticLayerTexture:
+    if result.isSome:
+      result = some(intersect(result.get, target.staticLayerDamageClip.get))
+    else:
+      result = target.staticLayerDamageClip
 
 proc hasRoundedClip(target: Sdl3Renderer): bool =
   target.clipStack.hasRoundedClip()
+
+proc effectiveLogicalClip(target: Sdl3Renderer): Option[Rect] =
+  if target.clipStack.len == 0:
+    return none(Rect)
+  result = some(target.clipStack[0].rect)
+  for index in 1 ..< target.clipStack.len:
+    result = some(result.get.intersection(target.clipStack[index].rect))
+
+proc activeLayerBounds(
+    layers: openArray[Sdl3TransformLayer];
+    scale: float32
+): Option[Rect] =
+  for index in countdown(layers.high, 0):
+    if layers[index].valid:
+      return some(rect(
+        0,
+        0,
+        layers[index].pixelWidth.float32 / scale,
+        layers[index].pixelHeight.float32 / scale
+      ))
+
+proc gpuDirectCompositeContext(
+    target: Sdl3Renderer;
+    layers: openArray[Sdl3TransformLayer]
+): GpuDirectCompositeContext =
+  let scale = max(target.pixelScale(), 0.001'f32)
+  let renderTarget = SDL3.getRenderTarget(target.renderer)
+  result = GpuDirectCompositeContext(
+    targetKind:
+      if renderTarget.isNil: gdctWindow
+      else: gdctOffscreen,
+    targetBounds: rect(0, 0, target.windowSize().w, target.windowSize().h),
+    clipBounds: target.effectiveLogicalClip(),
+    requiresClipMask: target.hasRoundedClip(),
+    pixelScale: scale
+  )
+  if not renderTarget.isNil:
+    let layerBounds = layers.activeLayerBounds(scale)
+    if layerBounds.isSome:
+      result.targetBounds = layerBounds.get
+    elif renderTarget == target.staticLayerTexture:
+      result.targetBounds = rect(
+        0,
+        0,
+        target.staticLayerWidth.float32 / scale,
+        target.staticLayerHeight.float32 / scale
+      )
 
 proc translated(command: PaintCommand; offset: Vec2): PaintCommand =
   result = command
@@ -1451,12 +1696,19 @@ proc translated(command: PaintCommand; offset: Vec2): PaintCommand =
     result.gradientClipRect = result.gradientClipRect.translated(offset)
   of pcStrokeRect:
     result.strokeRect = result.strokeRect.translated(offset)
+  of pcFillPath:
+    result.fillPathValue = result.fillPathValue.translated(offset)
   of pcStrokePath:
     result.path = result.path.translated(offset)
+    result.pathOutline = result.pathOutline.translated(offset)
   of pcDrawText:
     result.position = result.position.translated(offset)
   of pcDrawImage:
     result.imageRect = result.imageRect.translated(offset)
+  of pcDrawRasterSurface:
+    result.rasterRect = result.rasterRect.translated(offset)
+  of pcDrawGpuDirectSurface:
+    result.gpuSurfaceRect = result.gpuSurfaceRect.translated(offset)
 
 proc translated(region: Sdl3ClipRegion; offset: Vec2): Sdl3ClipRegion =
   result = region
@@ -1651,13 +1903,22 @@ proc sdlBlendMode(
   of lcmAdditive:
     if premultiplied: sdlBlendModeAddPremultiplied
     else: sdlBlendModeAdd
+  of lcmDestinationIn:
+    SDL3.composeCustomBlendMode(
+      SDL_BLENDFACTOR_ZERO,
+      SDL_BLENDFACTOR_SRC_ALPHA,
+      SDL_BLENDOPERATION_ADD,
+      SDL_BLENDFACTOR_ZERO,
+      SDL_BLENDFACTOR_SRC_ALPHA,
+      SDL_BLENDOPERATION_ADD
+    )
 
 proc configureLayerTexture(
     texture: pointer;
     opacity: float32;
     compositeMode: LayerCompositeMode;
     premultiplied: bool
-) =
+): bool =
   let resolvedOpacity = clamp(opacity, 0.0'f32, 1.0'f32)
   let colorMultiplier = if premultiplied: resolvedOpacity else: 1.0'f32
   discard SDL3.setTextureColorModFloat(
@@ -1665,14 +1926,157 @@ proc configureLayerTexture(
     cfloat(colorMultiplier)
   )
   discard SDL3.setTextureAlphaModFloat(texture, cfloat(resolvedOpacity))
-  discard SDL3.setTextureBlendMode(
+  result = SDL3.setTextureBlendMode(
     texture, compositeMode.sdlBlendMode(premultiplied)
   )
+  when defined(cbssTraceLayerBlend):
+    if not result:
+      echo "CBSS SDL3 layer blend unavailable: ", SDL3.getError()
 
 proc resetLayerTexture(texture: pointer) =
   discard SDL3.setTextureColorModFloat(texture, 1, 1, 1)
   discard SDL3.setTextureAlphaModFloat(texture, 1)
   discard SDL3.setTextureBlendMode(texture, sdlBlendModeBlend)
+
+proc applyDestinationInFallback(
+    target: var Sdl3Renderer;
+    texture: pointer;
+    source: SDL_FRect;
+    origin, right, down: Vec2;
+    opacity: float32
+): bool =
+  ## SDL's software renderer does not provide custom blend modes. Keep that
+  ## compatibility path correct with a bounded readback; hardware renderers
+  ## that accept destination-in never enter this function.
+  let horizontal = vec2(right.x - origin.x, right.y - origin.y)
+  let vertical = vec2(down.x - origin.x, down.y - origin.y)
+  let determinant = horizontal.x * vertical.y - horizontal.y * vertical.x
+  if texture.isNil or abs(determinant) <= 0.000001'f32:
+    return false
+
+  let fourth = vec2(right.x + down.x - origin.x, right.y + down.y - origin.y)
+  let logicalLeft = floor(min(min(origin.x, right.x), min(down.x, fourth.x)))
+  let logicalTop = floor(min(min(origin.y, right.y), min(down.y, fourth.y)))
+  let logicalRight = ceil(max(max(origin.x, right.x), max(down.x, fourth.x)))
+  let logicalBottom = ceil(max(max(origin.y, right.y), max(down.y, fourth.y)))
+  var scaleX = 1.0.cfloat
+  var scaleY = 1.0.cfloat
+  discard SDL3.getRenderScale(target.renderer, addr scaleX, addr scaleY)
+  let sx = max(0.001'f32, scaleX.float32)
+  let sy = max(0.001'f32, scaleY.float32)
+  var outputWidth, outputHeight: cint
+  if not SDL3.getCurrentRenderOutputSize(
+      target.renderer, addr outputWidth, addr outputHeight):
+    return false
+  let x0 = clamp(floor(logicalLeft * sx).int, 0, outputWidth.int)
+  let y0 = clamp(floor(logicalTop * sy).int, 0, outputHeight.int)
+  let x1 = clamp(ceil(logicalRight * sx).int, 0, outputWidth.int)
+  let y1 = clamp(ceil(logicalBottom * sy).int, 0, outputHeight.int)
+  if x1 <= x0 or y1 <= y0:
+    return true
+
+  var destinationRect = SDL_Rect(
+    x: cint(x0), y: cint(y0), w: cint(x1 - x0), h: cint(y1 - y0)
+  )
+  let width = x1 - x0
+  let height = y1 - y0
+  var textureWidth, textureHeight: cfloat
+  if not SDL3.getTextureSize(
+      texture, addr textureWidth, addr textureHeight):
+    return false
+  let maskWidth = ceil(textureWidth.float32).int
+  let maskHeight = ceil(textureHeight.float32).int
+  if maskWidth <= 0 or maskHeight <= 0:
+    return false
+  let maskBytes = maskWidth.uint64 * maskHeight.uint64 * 4'u64
+  let destinationBytes = width.uint64 * height.uint64 * 4'u64
+  # Account for both readback surfaces, the editable RGBA buffer, and its
+  # temporary upload texture before allocating any of them.
+  if maskBytes > maxSoftwareMaskFallbackBytes or
+      destinationBytes > (maxSoftwareMaskFallbackBytes - maskBytes) div 3'u64 or
+      destinationBytes > high(int).uint64:
+    return false
+
+  let destinationTarget = SDL3.getRenderTarget(target.renderer)
+  if not SDL3.setRenderTarget(target.renderer, texture):
+    return false
+  let maskSurface = SDL3.renderReadPixels(target.renderer, nil)
+  discard SDL3.setRenderTarget(target.renderer, destinationTarget)
+  target.renderer.setClip(target.effectiveClipBounds())
+  if maskSurface.isNil:
+    return false
+  defer:
+    SDL3.destroySurface(maskSurface)
+
+  let destinationSurface = SDL3.renderReadPixels(
+    target.renderer, addr destinationRect
+  )
+  if destinationSurface.isNil:
+    return false
+  defer:
+    SDL3.destroySurface(destinationSurface)
+
+  var pixels = newSeq[uint8](width * height * 4)
+  let resolvedOpacity = clamp(opacity, 0.0'f32, 1.0'f32)
+  for y in 0 ..< height:
+    for x in 0 ..< width:
+      var red, green, blue, alpha: uint8
+      if not SDL3.readSurfacePixel(
+          destinationSurface, cint(x), cint(y), addr red, addr green,
+          addr blue, addr alpha):
+        return false
+      let pixelIndex = (y * width + x) * 4
+      pixels[pixelIndex] = red
+      pixels[pixelIndex + 1] = green
+      pixels[pixelIndex + 2] = blue
+      pixels[pixelIndex + 3] = alpha
+
+      let point = vec2(
+        (x0.float32 + x.float32 + 0.5'f32) / sx,
+        (y0.float32 + y.float32 + 0.5'f32) / sy
+      )
+      let delta = vec2(point.x - origin.x, point.y - origin.y)
+      let u = (delta.x * vertical.y - delta.y * vertical.x) / determinant
+      let v = (horizontal.x * delta.y - horizontal.y * delta.x) / determinant
+      if u < 0 or u >= 1 or v < 0 or v >= 1:
+        continue
+      let maskX = clamp(
+        floor(source.x.float32 + u * source.w.float32).int,
+        0, maskWidth - 1
+      )
+      let maskY = clamp(
+        floor(source.y.float32 + v * source.h.float32).int,
+        0, maskHeight - 1
+      )
+      var maskAlpha: uint8
+      if not SDL3.readSurfacePixel(
+          maskSurface, cint(maskX), cint(maskY), nil, nil, nil,
+          addr maskAlpha):
+        return false
+      let factor = maskAlpha.float32 / 255.0'f32 * resolvedOpacity
+      pixels[pixelIndex + 3] = uint8(clamp(
+        round(alpha.float32 * factor).int, 0, 255
+      ))
+
+  let combined = SDL3.createTexture(
+    target.renderer, SDL_PIXELFORMAT_RGBA32, sdlTextureAccessStatic,
+    cint(width), cint(height)
+  )
+  if combined.isNil:
+    return false
+  defer:
+    SDL3.destroyTexture(combined)
+  if not SDL3.updateTexture(
+      combined, nil, unsafeAddr pixels[0], cint(width * 4)):
+    return false
+  discard SDL3.setTextureBlendMode(combined, sdlBlendModeNone)
+  var destination = SDL_FRect(
+    x: cfloat(x0.float32 / sx),
+    y: cfloat(y0.float32 / sy),
+    w: cfloat(width.float32 / sx),
+    h: cfloat(height.float32 / sy)
+  )
+  result = SDL3.renderTexture(target.renderer, combined, nil, addr destination)
 
 proc renderAffineLayer(
     target: var Sdl3Renderer;
@@ -1687,11 +2091,18 @@ proc renderAffineLayer(
     var sdlOrigin = SDL_FPoint(x: cfloat(origin.x), y: cfloat(origin.y))
     var sdlRight = SDL_FPoint(x: cfloat(right.x), y: cfloat(right.y))
     var sdlDown = SDL_FPoint(x: cfloat(down.x), y: cfloat(down.y))
-    texture.configureLayerTexture(opacity, compositeMode, premultiplied)
-    discard SDL3.renderTextureAffine(
-      target.renderer, texture, addr source,
-      addr sdlOrigin, addr sdlRight, addr sdlDown
+    let configured = texture.configureLayerTexture(
+      opacity, compositeMode, premultiplied
     )
+    if configured:
+      discard SDL3.renderTextureAffine(
+        target.renderer, texture, addr source,
+        addr sdlOrigin, addr sdlRight, addr sdlDown
+      )
+    elif compositeMode == lcmDestinationIn:
+      discard target.applyDestinationInFallback(
+        texture, source, origin, right, down, opacity
+      )
     texture.resetLayerTexture()
     return
 
@@ -1713,11 +2124,18 @@ proc renderAffineLayer(
     var sdlOrigin = SDL_FPoint(x: cfloat(origin.x), y: cfloat(origin.y))
     var sdlRight = SDL_FPoint(x: cfloat(right.x), y: cfloat(right.y))
     var sdlDown = SDL_FPoint(x: cfloat(down.x), y: cfloat(down.y))
-    texture.configureLayerTexture(opacity, compositeMode, premultiplied)
-    discard SDL3.renderTextureAffine(
-      target.renderer, texture, addr source,
-      addr sdlOrigin, addr sdlRight, addr sdlDown
+    let configured = texture.configureLayerTexture(
+      opacity, compositeMode, premultiplied
     )
+    if configured:
+      discard SDL3.renderTextureAffine(
+        target.renderer, texture, addr source,
+        addr sdlOrigin, addr sdlRight, addr sdlDown
+      )
+    elif compositeMode == lcmDestinationIn:
+      discard target.applyDestinationInFallback(
+        texture, source, origin, right, down, opacity
+      )
     texture.resetLayerTexture()
     return
 
@@ -1740,7 +2158,9 @@ proc renderAffineLayer(
   var localDown = SDL_FPoint(
     x: cfloat(down.x - bounds.x), y: cfloat(down.y - bounds.y)
   )
-  texture.configureLayerTexture(1.0'f32, lcmSourceOver, premultiplied)
+  discard texture.configureLayerTexture(
+    1.0'f32, lcmSourceOver, premultiplied
+  )
   discard SDL3.renderTextureAffine(
     target.renderer, texture, addr source,
     addr localOrigin, addr localRight, addr localDown
@@ -1753,10 +2173,21 @@ proc renderAffineLayer(
     x: 0, y: 0, w: cfloat(width), h: cfloat(height)
   )
   var destination = bounds.toSdl
-  clippedTexture.configureLayerTexture(opacity, compositeMode, premultiplied)
-  target.renderTextureClippedWith(
-    clippedTexture, clippedSource, destination, target.clipStack
+  let configured = clippedTexture.configureLayerTexture(
+    opacity, compositeMode, premultiplied
   )
+  if configured:
+    target.renderTextureClippedWith(
+      clippedTexture, clippedSource, destination, target.clipStack
+    )
+  elif compositeMode == lcmDestinationIn:
+    discard target.applyDestinationInFallback(
+      clippedTexture, clippedSource,
+      vec2(bounds.x, bounds.y),
+      vec2(bounds.x + bounds.w, bounds.y),
+      vec2(bounds.x, bounds.y + bounds.h),
+      opacity
+    )
   clippedTexture.resetLayerTexture()
   target.releaseTransformTexture(clipped.index)
 
@@ -1773,7 +2204,7 @@ proc endTransformLayer(
   discard SDL3.setRenderTarget(target.renderer, layer.previousTarget)
   target.clipStack = layer.previousClips
   target.renderer.setClip(target.effectiveClipBounds())
-  if layer.hasContent or layer.compositeMode == lcmCopy:
+  if layer.hasContent or layer.compositeMode in {lcmCopy, lcmDestinationIn}:
     let destinationOffset = layers.activeTransformOffset()
     let topLeft = layer.transform.transformPoint(
       vec2(layer.sourceBounds.x, layer.sourceBounds.y)
@@ -2366,195 +2797,56 @@ proc strokeRoundedRect(target: Sdl3Renderer; rect: Rect; radius, width: float32;
     else:
       target.fillHorizontal(ox1, ox2, y.float32, color)
 
-proc samePoint(a, b: Vec2): bool =
-  abs(a.x - b.x) <= 0.0001'f32 and abs(a.y - b.y) <= 0.0001'f32
-
-proc drawSolidTriangle(
-    target: Sdl3Renderer;
-    first, second, third: Vec2;
-    color: Color
-) =
-  let vertexColor = SDL_FColor(
-    r: cfloat(color.r), g: cfloat(color.g),
-    b: cfloat(color.b), a: cfloat(color.a)
-  )
-  var vertices = [
-    SDL_Vertex(position: SDL_FPoint(x: first.x, y: first.y), color: vertexColor),
-    SDL_Vertex(position: SDL_FPoint(x: second.x, y: second.y), color: vertexColor),
-    SDL_Vertex(position: SDL_FPoint(x: third.x, y: third.y), color: vertexColor)
-  ]
-  discard SDL3.renderGeometry(
-    target.renderer, nil, addr vertices[0], 3, nil, 0
-  )
-
-proc strokeJoin(
-    target: Sdl3Renderer;
-    previous, point, following: Vec2;
-    radius: float32;
-    color: Color;
-    lineJoin: StrokeLineJoin;
-    miterLimit: float32
-) =
-  let previousDelta = vec2(point.x - previous.x, point.y - previous.y)
-  let followingDelta = vec2(following.x - point.x, following.y - point.y)
-  let previousLength = sqrt(
-    previousDelta.x * previousDelta.x + previousDelta.y * previousDelta.y
-  )
-  let followingLength = sqrt(
-    followingDelta.x * followingDelta.x + followingDelta.y * followingDelta.y
-  )
-  if previousLength <= 0.0001'f32 or followingLength <= 0.0001'f32:
-    return
-  let previousDirection = vec2(
-    previousDelta.x / previousLength, previousDelta.y / previousLength
-  )
-  let followingDirection = vec2(
-    followingDelta.x / followingLength, followingDelta.y / followingLength
-  )
-  let turn = previousDirection.x * followingDirection.y -
-    previousDirection.y * followingDirection.x
-  if abs(turn) <= 0.0001'f32:
-    return
-  if lineJoin == sljRound:
-    target.fillRoundedRect(
-      rect(point.x - radius, point.y - radius, radius * 2, radius * 2),
-      radius,
-      color
-    )
-    return
-
-  let outerSign = if turn > 0: -1.0'f32 else: 1.0'f32
-  let previousNormal = vec2(
-    -previousDirection.y * outerSign,
-    previousDirection.x * outerSign
-  )
-  let followingNormal = vec2(
-    -followingDirection.y * outerSign,
-    followingDirection.x * outerSign
-  )
-  let previousOuter = vec2(
-    point.x + previousNormal.x * radius,
-    point.y + previousNormal.y * radius
-  )
-  let followingOuter = vec2(
-    point.x + followingNormal.x * radius,
-    point.y + followingNormal.y * radius
-  )
-  if lineJoin == sljBevel:
-    target.drawSolidTriangle(previousOuter, point, followingOuter, color)
-    return
-
-  let sum = vec2(
-    previousNormal.x + followingNormal.x,
-    previousNormal.y + followingNormal.y
-  )
-  let sumLength = sqrt(sum.x * sum.x + sum.y * sum.y)
-  if sumLength <= 0.0001'f32:
-    target.drawSolidTriangle(previousOuter, point, followingOuter, color)
-    return
-  let miterDirection = vec2(sum.x / sumLength, sum.y / sumLength)
-  let denominator = miterDirection.x * followingNormal.x +
-    miterDirection.y * followingNormal.y
-  if abs(denominator) <= 0.0001'f32:
-    target.drawSolidTriangle(previousOuter, point, followingOuter, color)
-    return
-  let miterLength = radius / denominator
-  if abs(miterLength) > radius * max(1.0'f32, miterLimit):
-    target.drawSolidTriangle(previousOuter, point, followingOuter, color)
-    return
-  let miterPoint = vec2(
-    point.x + miterDirection.x * miterLength,
-    point.y + miterDirection.y * miterLength
-  )
-  target.drawSolidTriangle(previousOuter, miterPoint, followingOuter, color)
-
-proc strokePolyline(
-    target: Sdl3Renderer;
-    points: openArray[Vec2];
-    width: float32;
-    color: Color;
-    closed: bool;
-    lineCap: StrokeLineCap;
-    lineJoin: StrokeLineJoin;
-    miterLimit: float32
-) =
-  if points.len < 2 or width <= 0:
-    return
-  var normalized = newSeqOfCap[Vec2](points.len)
-  for point in points:
-    if normalized.len == 0 or not normalized[^1].samePoint(point):
-      normalized.add point
-  if closed and normalized.len > 1 and normalized[0].samePoint(normalized[^1]):
-    normalized.setLen(normalized.len - 1)
-  if normalized.len < 2:
-    return
-
-  target.renderer.setColor(color)
-  let lanes = max(1, int(ceil(width)))
-  let halfLane = (lanes - 1).float32 * 0.5'f32
-  let radius = width * 0.5'f32
-  let segmentCount = normalized.len - 1 + ord(closed)
-  for index in 0 ..< segmentCount:
-    var first = normalized[index mod normalized.len]
-    var second = normalized[(index + 1) mod normalized.len]
-    let dx = second.x - first.x
-    let dy = second.y - first.y
-    let length = sqrt(dx * dx + dy * dy)
-    if length <= 0.0001'f32:
-      continue
-    let normalX = -dy / length
-    let normalY = dx / length
-    if not closed and lineCap == slcSquare:
-      if index == 0:
-        first.x -= dx / length * radius
-        first.y -= dy / length * radius
-      if index == segmentCount - 1:
-        second.x += dx / length * radius
-        second.y += dy / length * radius
-    for lane in 0 ..< lanes:
-      let offset = lane.float32 - halfLane
-      discard SDL3.renderLine(
-        target.renderer,
-        cfloat(first.x + normalX * offset),
-        cfloat(first.y + normalY * offset),
-        cfloat(second.x + normalX * offset),
-        cfloat(second.y + normalY * offset)
-      )
-
-  if closed:
-    for index in 0 ..< normalized.len:
-      target.strokeJoin(
-        normalized[(index - 1 + normalized.len) mod normalized.len],
-        normalized[index],
-        normalized[(index + 1) mod normalized.len],
-        radius, color, lineJoin, miterLimit
-      )
-  else:
-    for index in 1 ..< normalized.len - 1:
-      target.strokeJoin(
-        normalized[index - 1], normalized[index], normalized[index + 1],
-        radius, color, lineJoin, miterLimit
-      )
-    if lineCap == slcRound:
-      for point in [normalized[0], normalized[^1]]:
-        target.fillRoundedRect(
-          rect(point.x - radius, point.y - radius, width, width),
-          radius,
-          color
-        )
+proc renderFillPath(target: Sdl3Renderer; command: PaintCommand)
 
 proc renderStrokePath(target: Sdl3Renderer; command: PaintCommand) =
+  target.renderFillPath(PaintCommand(
+    kind: pcFillPath,
+    owner: command.owner,
+    fillPathValue: command.pathOutline,
+    fillPathColor: command.pathColor,
+    fillPathRule: pfrNonZero
+  ))
+
+proc renderFillPath(target: Sdl3Renderer; command: PaintCommand) =
   let tolerance = 0.25'f32 / max(1.0'f32, target.pixelScale())
-  for contour in command.path.flattened(tolerance):
-    target.strokePolyline(
-      contour.points,
-      command.pathWidth,
-      command.pathColor,
-      contour.closed,
-      command.pathLineCap,
-      command.pathLineJoin,
-      command.pathMiterLimit
+  let contours = command.fillPathValue.flattened(tolerance)
+  if contours.len == 0:
+    return
+  var bounds = command.fillPathValue.bounds(tolerance)
+  let clip = target.effectiveLogicalClip()
+  if clip.isSome:
+    bounds = bounds.intersection(clip.get)
+  let xStart = int(floor(bounds.x))
+  let xEnd = int(ceil(bounds.x + bounds.w))
+  let yStart = int(floor(bounds.y))
+  let yEnd = int(ceil(bounds.y + bounds.h))
+  var rowCoverage: seq[uint8]
+  var fillScratch: PathFillScratch
+  for y in yStart ..< yEnd:
+    contours.fillPathCoverageRow(
+      y, xStart, xEnd, command.fillPathRule, rowCoverage, fillScratch
     )
+    var runStart = xStart
+    var runCoverage = 0
+    for x in xStart .. xEnd:
+      let coverage =
+        if x < xEnd: pathCoverageCount(rowCoverage[x - xStart])
+        else: 0
+      if coverage != runCoverage:
+        if runCoverage > 0 and x > runStart:
+          let alpha = command.fillPathColor.a * runCoverage.float32 * 0.25'f32
+          target.fillHorizontal(
+            runStart.float32, x.float32, y.float32 + 0.5'f32,
+            rgba(
+              command.fillPathColor.r,
+              command.fillPathColor.g,
+              command.fillPathColor.b,
+              alpha
+            )
+          )
+        runStart = x
+        runCoverage = coverage
 
 proc shadowRect(command: PaintCommand; grow: float32): Rect =
   Rect(
@@ -3098,6 +3390,151 @@ proc drawImageTexture(
 
   target.renderTextureClipped(texture, rects.src, rects.dst)
 
+proc evictRasterSurfaceCacheIfNeeded(target: var Sdl3Renderer) =
+  let limit =
+    if target.rasterSurfaceCacheLimit > 0: target.rasterSurfaceCacheLimit
+    else: 128
+  while target.rasterSurfaceCache.len > limit or
+      (target.rasterSurfaceCache.len > 1 and
+        target.rasterSurfaceCacheBytes > target.rasterSurfaceCacheByteLimit):
+    var victim = 0
+    for index in 1 ..< target.rasterSurfaceCache.len:
+      if target.rasterSurfaceCache[index].lastUsed <
+          target.rasterSurfaceCache[victim].lastUsed:
+        victim = index
+    let entry = target.rasterSurfaceCache[victim]
+    if not entry.texture.isNil:
+      SDL3.destroyTexture(entry.texture)
+    target.rasterSurfaceCacheBytes -= textureBytes(entry.width, entry.height)
+    target.rasterSurfaceCache.delete(victim)
+
+proc uploadRasterSurface(
+    target: var Sdl3Renderer;
+    texture: pointer;
+    surface: RasterSurface;
+    partial: bool
+): bool =
+  let pixels = surface.pixels
+  if pixels.len == 0:
+    return false
+  if partial:
+    if surface.dirtyRegionCount == 0:
+      return false
+    for region in surface.dirtyRegions:
+      var updateRect = SDL_Rect(
+        x: cint(region.x),
+        y: cint(region.y),
+        w: cint(region.width),
+        h: cint(region.height)
+      )
+      let byteOffset =
+        (region.y * surface.width + region.x) * RasterBytesPerPixel
+      let source = cast[pointer](
+        cast[uint](unsafeAddr pixels[0]) + uint(byteOffset)
+      )
+      if not SDL3.updateTexture(
+        texture, addr updateRect, source,
+        cint(surface.width * RasterBytesPerPixel)
+      ):
+        return false
+    inc target.rasterPartialUploads
+    result = true
+  else:
+    result = SDL3.updateTexture(
+      texture, nil, unsafeAddr pixels[0],
+      cint(surface.width * RasterBytesPerPixel)
+    )
+    if result:
+      inc target.rasterFullUploads
+
+proc rasterSurfaceTexture(
+    target: var Sdl3Renderer;
+    surface: RasterSurface
+): Option[pointer] =
+  if surface.isNil or surface.width <= 0 or surface.height <= 0:
+    return none(pointer)
+  var entryIndex = -1
+  for index, entry in target.rasterSurfaceCache:
+    if entry.surfaceId == surface.id:
+      entryIndex = index
+      break
+
+  if entryIndex >= 0:
+    var entry = target.rasterSurfaceCache[entryIndex]
+    if entry.width != surface.width or entry.height != surface.height:
+      if not entry.texture.isNil:
+        SDL3.destroyTexture(entry.texture)
+      target.rasterSurfaceCacheBytes -= textureBytes(entry.width, entry.height)
+      target.rasterSurfaceCache.delete(entryIndex)
+      entryIndex = -1
+    elif entry.revision != surface.revision:
+      let consecutive = entry.revision < high(uint64) and
+        entry.revision + 1 == surface.revision
+      if consecutive:
+        if not target.uploadRasterSurface(entry.texture, surface, true):
+          if not target.uploadRasterSurface(entry.texture, surface, false):
+            return none(pointer)
+      elif not target.uploadRasterSurface(entry.texture, surface, false):
+        return none(pointer)
+      entry.revision = surface.revision
+      entry.lastUsed = target.frameId
+      target.rasterSurfaceCache[entryIndex] = entry
+      return some(entry.texture)
+    else:
+      target.rasterSurfaceCache[entryIndex].lastUsed = target.frameId
+      return some(entry.texture)
+
+  let texture = SDL3.createTexture(
+    target.renderer,
+    SDL_PIXELFORMAT_RGBA32,
+    sdlTextureAccessStatic,
+    cint(surface.width),
+    cint(surface.height)
+  )
+  if texture.isNil:
+    return none(pointer)
+  discard SDL3.setTextureBlendMode(texture, sdlBlendModeBlend)
+  discard SDL3.setTextureScaleMode(texture, SDL_SCALEMODE_LINEAR)
+  if not target.uploadRasterSurface(texture, surface, false):
+    SDL3.destroyTexture(texture)
+    return none(pointer)
+  target.rasterSurfaceCache.add Sdl3RasterSurfaceCacheEntry(
+    surfaceId: surface.id,
+    revision: surface.revision,
+    texture: texture,
+    width: surface.width,
+    height: surface.height,
+    lastUsed: target.frameId
+  )
+  target.rasterSurfaceCacheBytes += textureBytes(surface.width, surface.height)
+  target.evictRasterSurfaceCacheIfNeeded()
+  some(texture)
+
+proc drawRasterSurfaceTexture(
+    target: var Sdl3Renderer;
+    command: PaintCommand;
+    roundedClips: openArray[Sdl3ClipRegion] = []
+) =
+  let texture = target.rasterSurfaceTexture(command.rasterSurface)
+  if texture.isNone or command.rasterRect.isEmpty:
+    return
+  discard SDL3.setTextureAlphaModFloat(
+    texture.get,
+    cfloat(clamp(command.rasterOpacity, 0.0'f32, 1.0'f32))
+  )
+  var source = SDL_FRect(
+    x: 0,
+    y: 0,
+    w: cfloat(command.rasterSurface.width),
+    h: cfloat(command.rasterSurface.height)
+  )
+  var destination = command.rasterRect.toSdl
+  target.renderTextureClippedWith(
+    texture.get, source, destination,
+    if roundedClips.len > 0: roundedClips else: target.clipStack
+  )
+  target.evictRasterSurfaceCacheIfNeeded()
+
 proc evictTextCacheIfNeeded(target: var Sdl3Renderer) =
   let limit =
     if target.textCacheLimit > 0: target.textCacheLimit
@@ -3138,6 +3575,7 @@ proc evictImageCacheIfNeeded(target: var Sdl3Renderer) =
 
 proc render*(target: var Sdl3Renderer; commands: openArray[PaintCommand]; clearColor = rgb(1, 1, 1)) =
   inc target.frameId
+  target.resetGpuDirectCompositionStats()
   target.updateLogicalPresentation()
   target.renderer.setColor(clearColor)
   discard SDL3.renderClear(target.renderer)
@@ -3189,6 +3627,9 @@ proc render*(target: var Sdl3Renderer; commands: openArray[PaintCommand]; clearC
     of pcStrokeRect:
       transformLayers.markTransformContent()
       target.strokeRoundedRect(command.strokeRect, command.strokeRadius, command.strokeWidth, command.strokeColor)
+    of pcFillPath:
+      transformLayers.markTransformContent()
+      target.renderFillPath(command)
     of pcStrokePath:
       transformLayers.markTransformContent()
       target.renderStrokePath(command)
@@ -3199,6 +3640,12 @@ proc render*(target: var Sdl3Renderer; commands: openArray[PaintCommand]; clearC
       transformLayers.markTransformContent()
       target.drawImageTexture(command, prepared.roundedImageClipStack)
       target.evictImageCacheIfNeeded()
+    of pcDrawRasterSurface:
+      transformLayers.markTransformContent()
+      target.drawRasterSurfaceTexture(command, prepared.roundedImageClipStack)
+    of pcDrawGpuDirectSurface:
+      if target.renderGpuDirectSurface(command, transformLayers):
+        transformLayers.markTransformContent()
 
   target.closeTransformLayers(transformLayers)
 
@@ -3340,6 +3787,7 @@ proc render*(
     clearColor = rgb(1, 1, 1)
 ) =
   inc target.frameId
+  target.resetGpuDirectCompositionStats()
   target.updateLogicalPresentation()
   target.renderer.setColor(clearColor)
   discard SDL3.renderClear(target.renderer)
@@ -3391,6 +3839,9 @@ proc render*(
     of pcStrokeRect:
       transformLayers.markTransformContent()
       target.strokeRoundedRect(command.strokeRect, command.strokeRadius, command.strokeWidth, command.strokeColor)
+    of pcFillPath:
+      transformLayers.markTransformContent()
+      target.renderFillPath(command)
     of pcStrokePath:
       transformLayers.markTransformContent()
       target.renderStrokePath(command)
@@ -3401,6 +3852,12 @@ proc render*(
       transformLayers.markTransformContent()
       target.drawImageTexture(command, prepared.roundedImageClipStack)
       target.evictImageCacheIfNeeded()
+    of pcDrawRasterSurface:
+      transformLayers.markTransformContent()
+      target.drawRasterSurfaceTexture(command, prepared.roundedImageClipStack)
+    of pcDrawGpuDirectSurface:
+      if target.renderGpuDirectSurface(command, transformLayers):
+        transformLayers.markTransformContent()
 
   target.closeTransformLayers(transformLayers)
 
@@ -3474,6 +3931,10 @@ proc renderPreparedCommand(
     if drawCommand:
       transformLayers.markTransformContent()
       target.strokeRoundedRect(command.strokeRect, command.strokeRadius, command.strokeWidth, command.strokeColor)
+  of pcFillPath:
+    if drawCommand:
+      transformLayers.markTransformContent()
+      target.renderFillPath(command)
   of pcStrokePath:
     if drawCommand:
       transformLayers.markTransformContent()
@@ -3487,6 +3948,15 @@ proc renderPreparedCommand(
       transformLayers.markTransformContent()
       target.drawImageTexture(command, localPrepared.roundedImageClipStack)
       target.evictImageCacheIfNeeded()
+  of pcDrawRasterSurface:
+    if drawCommand:
+      transformLayers.markTransformContent()
+      target.drawRasterSurfaceTexture(
+        command, localPrepared.roundedImageClipStack
+      )
+  of pcDrawGpuDirectSurface:
+    if drawCommand and target.renderGpuDirectSurface(command, transformLayers):
+      transformLayers.markTransformContent()
 
 proc renderCommandPass(
     target: var Sdl3Renderer;
@@ -3498,7 +3968,7 @@ proc renderCommandPass(
     dynamicNodes: openArray[NodeId] = []
 ) =
   target.clipStack.setLen(0)
-  target.renderer.setClip(none(SDL_Rect))
+  target.renderer.setClip(target.effectiveClipBounds())
   var highestDynamicNode = -1
   for node in dynamicNodes:
     highestDynamicNode = max(highestDynamicNode, node.nodeIndex)
@@ -3536,7 +4006,118 @@ proc ensureStaticLayer(target: var Sdl3Renderer): bool =
   discard SDL3.setTextureBlendMode(target.staticLayerTexture, sdlBlendModeBlend)
   target.staticLayerWidth = width
   target.staticLayerHeight = height
+  target.staticLayerDamage = initRetainedDamageTracker(
+    width, height, DefaultDirtyTileSize
+  )
+  target.staticLayerBackgroundInitialized = false
   true
+
+proc staticPaintCommands(
+    commands: openArray[PaintCommand];
+    dynamicNodes: openArray[NodeId]
+): seq[PaintCommand] =
+  var highestDynamicNode = -1
+  for node in dynamicNodes:
+    highestDynamicNode = max(highestDynamicNode, node.nodeIndex)
+  var dynamicNodeMask = newSeq[bool](highestDynamicNode + 1)
+  for node in dynamicNodes:
+    if node.nodeIndex >= 0:
+      dynamicNodeMask[node.nodeIndex] = true
+  for command in commands:
+    let isDynamic =
+      command.owner.isSome and
+        command.owner.get.nodeIndex >= 0 and
+        command.owner.get.nodeIndex < dynamicNodeMask.len and
+        dynamicNodeMask[command.owner.get.nodeIndex]
+    if command.isPaintScopeCommand or not isDynamic:
+      result.add command
+
+proc clearStaticDamageRegion(
+    target: var Sdl3Renderer;
+    region: Rect;
+    clearColor: Color
+) =
+  target.staticLayerDamageClip = some(region.toSdlClip)
+  target.renderer.setClip(target.effectiveClipBounds())
+  var previousBlendMode = sdlBlendModeBlend
+  discard SDL3.getRenderDrawBlendMode(
+    target.renderer, addr previousBlendMode
+  )
+  discard SDL3.setRenderDrawBlendMode(target.renderer, sdlBlendModeNone)
+  target.renderer.setColor(clearColor)
+  var destination = region.toSdl
+  discard SDL3.renderFillRect(target.renderer, addr destination)
+  discard SDL3.setRenderDrawBlendMode(target.renderer, previousBlendMode)
+
+proc boundedDamageRegions(
+    regions: openArray[Rect]
+): seq[Rect] =
+  ## SDL has one active clip rectangle. Bound full command replays when sparse
+  ## invalidation would otherwise multiply traversal by an arbitrary count.
+  if regions.len <= maxRetainedDamagePasses:
+    return @regions
+  var left = regions[0].x
+  var top = regions[0].y
+  var right = regions[0].x + regions[0].w
+  var bottom = regions[0].y + regions[0].h
+  for index in 1 ..< regions.len:
+    left = min(left, regions[index].x)
+    top = min(top, regions[index].y)
+    right = max(right, regions[index].x + regions[index].w)
+    bottom = max(bottom, regions[index].y + regions[index].h)
+  @[rect(left, top, right - left, bottom - top)]
+
+proc updateStaticLayer(
+    target: var Sdl3Renderer;
+    commands: openArray[PaintCommand];
+    cosmic: CosmicTextEngine;
+    fonts: FontRegistry;
+    clearColor: Color;
+    dynamicNodes: openArray[NodeId]
+) =
+  let retainedCommands = staticPaintCommands(commands, dynamicNodes)
+  let backgroundChanged =
+    target.staticLayerBackgroundInitialized and
+      target.staticLayerBackground != clearColor
+  let damage = target.staticLayerDamage.plan(
+    retainedCommands,
+    forceFullRepaint = backgroundChanged
+  )
+  target.retainedLayerStatsValue.lastDirtyTiles = damage.dirtyTiles
+  target.retainedLayerStatsValue.totalTiles = damage.totalTiles
+  if damage.regions.len == 0:
+    target.retainedLayerStatsValue.lastDamagePasses = 0
+    inc target.retainedLayerStatsValue.skippedRepaints
+    return
+  if damage.fullRepaint:
+    inc target.retainedLayerStatsValue.fullRepaints
+  else:
+    inc target.retainedLayerStatsValue.partialRepaints
+
+  let regions = boundedDamageRegions(damage.regions)
+  target.retainedLayerStatsValue.lastDamagePasses = regions.len
+  if regions.len < damage.regions.len:
+    inc target.retainedLayerStatsValue.coalescedRepaints
+
+  let previousTarget = SDL3.getRenderTarget(target.renderer)
+  discard SDL3.setRenderTarget(target.renderer, target.staticLayerTexture)
+  defer:
+    target.staticLayerDamageClip = none(SDL_Rect)
+    target.renderer.setClip(none(SDL_Rect))
+    discard SDL3.setRenderTarget(target.renderer, previousTarget)
+
+  for region in regions:
+    target.clearStaticDamageRegion(region, clearColor)
+    target.renderCommandPass(
+      commands,
+      cosmic,
+      fonts,
+      dynamicOnly = false,
+      skipDynamic = true,
+      dynamicNodes = dynamicNodes
+    )
+  target.staticLayerBackground = clearColor
+  target.staticLayerBackgroundInitialized = true
 
 proc renderLayered*(
     target: var Sdl3Renderer;
@@ -3553,22 +4134,18 @@ proc renderLayered*(
     return
 
   inc target.frameId
+  target.resetGpuDirectCompositionStats()
   target.updateLogicalPresentation()
 
-  if rebuildStatic:
-    let previousTarget = SDL3.getRenderTarget(target.renderer)
-    discard SDL3.setRenderTarget(target.renderer, target.staticLayerTexture)
-    target.renderer.setColor(clearColor)
-    discard SDL3.renderClear(target.renderer)
-    target.renderCommandPass(
-      commands,
-      cosmic,
-      fonts,
-      dynamicOnly = false,
-      skipDynamic = true,
-      dynamicNodes = dynamicNodes
+  if rebuildStatic or not target.staticLayerDamage.isInitialized or
+      not target.staticLayerBackgroundInitialized or
+      target.staticLayerBackground != clearColor:
+    target.updateStaticLayer(
+      commands, cosmic, fonts, clearColor, dynamicNodes
     )
-    discard SDL3.setRenderTarget(target.renderer, previousTarget)
+  else:
+    target.retainedLayerStatsValue.lastDirtyTiles = 0
+    target.retainedLayerStatsValue.lastDamagePasses = 0
 
   target.renderer.setColor(clearColor)
   discard SDL3.renderClear(target.renderer)

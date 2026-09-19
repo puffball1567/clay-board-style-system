@@ -8,11 +8,14 @@ import clay_board_style_system/core/[
   color_parser,
   color_value,
   computed_style,
+  custom_paint,
+  custom_paint_parameter,
   declaration,
   diagnostics,
   geometry,
   gradient_sampling,
   node,
+  raster_surface,
   property,
   property_authoring,
   registry,
@@ -31,12 +34,18 @@ import clay_board_style_system/layout/scrollbar_geometry
 import clay_board_style_system/hit/hit_test
 import clay_board_style_system/input/events
 import clay_board_style_system/input/pointer
-import clay_board_style_system/paint/[paint, paint_command, path_geometry]
+import clay_board_style_system/paint/[custom_paint_registry,
+    dirty_tiles, gpu_direct_compositor, gpu_host_compositor, paint, paint_command,
+    path_geometry, retained_damage]
 import clay_board_style_system/runtime/[accessibility, button, checkbox,
     animation_clock, canvas, component, declarative_keyframes,
     declarative_transition, details, dialog,
     fieldset, focus, form,
-    file_input, frame_scheduler, image,
+    file_input, frame_scheduler, gpu_host, gpu_shader_builder, gpu_shader_records,
+    gpu_shader_package, image,
+    gpu_canvas, gpu_canvas_ui, gpu_direct_surface, gpu_direct_surface_ui,
+    gpu_display_surface, gpu_display_surface_ui,
+    gpu_raster_texture,
     invalidation, label, link, navigation, navigation_focus,
     navigation_transition, navigation_screen_host, platform_links, progress,
     providers, radio, render_surface, select_box, signal, slider, state_runtime,
@@ -48,6 +57,9 @@ import clay_board_style_system/design_source/model
 import clay_board_style_system/backends/atspi/adapter
 when defined(linux) and defined(cbssLinuxAtspi):
   import clay_board_style_system/backends/atspi/linux_dbus
+when defined(cbssGpuBgfx):
+  import clay_board_style_system/backends/bgfx/adapter as bgfx_adapter
+  import clay_board_style_system/backends/bgfx/platform_data as bgfx_platform_data
 import clay_board_style_system/craft/[pack, style, style_slots]
 
 export asset_resolver
@@ -62,11 +74,14 @@ export color_mix_parser
 export color_parser
 export color_value
 export computed_style
+export custom_paint
+export custom_paint_parameter
 export declaration
 export diagnostics
 export geometry
 export gradient_sampling
 export node
+export raster_surface
 export property
 export property_authoring
 export registry
@@ -87,6 +102,11 @@ export pointer
 export paint
 export paint_command
 export path_geometry
+export custom_paint_registry
+export dirty_tiles
+export retained_damage
+export gpu_direct_compositor
+export gpu_host_compositor
 export accessibility
 export animation_clock
 export declarative_keyframes
@@ -102,6 +122,17 @@ export file_input
 export focus
 export form
 export frame_scheduler
+export gpu_host
+export gpu_shader_builder
+export gpu_shader_records
+export gpu_shader_package
+export gpu_canvas
+export gpu_canvas_ui
+export gpu_direct_surface
+export gpu_direct_surface_ui
+export gpu_display_surface
+export gpu_display_surface_ui
+export gpu_raster_texture
 export image
 export invalidation
 export label
@@ -138,6 +169,9 @@ export model
 export adapter
 when defined(linux) and defined(cbssLinuxAtspi):
   export linux_dbus
+when defined(cbssGpuBgfx):
+  export bgfx_adapter
+  export bgfx_platform_data
 export pack
 export style
 export style_slots

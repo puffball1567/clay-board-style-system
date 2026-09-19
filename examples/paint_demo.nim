@@ -82,10 +82,16 @@ proc main() =
       echo &"  StrokeRect rect=({command.strokeRect.x:.1f}, {command.strokeRect.y:.1f}, {command.strokeRect.w:.1f}, {command.strokeRect.h:.1f}) width={command.strokeWidth:.1f} radius={command.strokeRadius:.1f} color={command.strokeColor}"
     of pcStrokePath:
       echo &"  StrokePath segments={command.path.segments.len} width={command.pathWidth:.1f} color={command.pathColor}"
+    of pcFillPath:
+      echo &"  FillPath segments={command.fillPathValue.segments.len} rule={command.fillPathRule} color={command.fillPathColor}"
     of pcDrawText:
       echo &"  DrawText node={command.node.nodeIndex} text=\"{command.text}\" pos=({command.position.x:.1f}, {command.position.y:.1f}) color={command.textColor}"
     of pcDrawImage:
       echo &"  DrawImage node={command.imageNode.nodeIndex} source=\"{command.imageSource}\" rect=({command.imageRect.x:.1f}, {command.imageRect.y:.1f}, {command.imageRect.w:.1f}, {command.imageRect.h:.1f}) opacity={command.imageOpacity:.2f}"
+    of pcDrawRasterSurface:
+      echo &"  DrawRasterSurface id={command.rasterSurface.id} revision={command.rasterSurface.revision} rect=({command.rasterRect.x:.1f}, {command.rasterRect.y:.1f}, {command.rasterRect.w:.1f}, {command.rasterRect.h:.1f}) opacity={command.rasterOpacity:.2f}"
+    of pcDrawGpuDirectSurface:
+      echo &"  DrawGpuDirectSurface revision={command.gpuDirectSurface.presentedRevision} rect=({command.gpuSurfaceRect.x:.1f}, {command.gpuSurfaceRect.y:.1f}, {command.gpuSurfaceRect.w:.1f}, {command.gpuSurfaceRect.h:.1f}) opacity={command.gpuSurfaceOpacity:.2f}"
     of pcPushClip:
       echo &"  PushClip rect=({command.clipRect.x:.1f}, {command.clipRect.y:.1f}, {command.clipRect.w:.1f}, {command.clipRect.h:.1f})"
     of pcPopClip:

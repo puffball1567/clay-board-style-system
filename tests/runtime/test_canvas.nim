@@ -12,6 +12,84 @@ proc resolveUi(ui: UiRoot): tuple[styles: ResolvedTree, layout: LayoutResult] =
   result.layout = computeLayout(ui.tree, result.styles, size(320, 200))
 
 suite "standard canvas surface":
+  test "unstyled raster surfaces use their pixel dimensions as intrinsic size":
+    let ui = initUiRoot()
+    let raster = newRasterSurface(31, 17)
+    let host = ui.rasterSurface(raster)
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(
+      ui.tree, ui.styleSheets(), defaultProperties(), diagnostics
+    )
+    let layout = computeLayout(ui.tree, styles, size(100, 100))
+    check not diagnostics.hasErrors
+    check layout.boxes[host.nodeHandle.id.nodeIndex].rect.w == 31
+    check layout.boxes[host.nodeHandle.id.nodeIndex].rect.h == 17
+
+  test "raster surfaces mount as ordinary canvas boxes and fill content":
+    let ui = initUiRoot()
+    let surface = newRasterSurface(2, 2, [20'u8, 30'u8, 40'u8, 255'u8])
+    let handle = ui.rasterSurface(
+      surface,
+      uiStyle([
+        decl("width", px(80)),
+        decl("height", px(60)),
+        decl("padding", px(5))
+      ]),
+      code = "raster-preview"
+    )
+    let frame = resolveUi(ui)
+    ui.syncRenderSurfaces(frame.styles, frame.layout)
+    let commands = buildPaintCommands(
+      ui.tree, frame.styles, frame.layout, ui.scroll, ui.canvasPaintProvider()
+    )
+
+    check handle.valid
+    check handle.nodeHandle.valid
+    check ui.tree.nodes[handle.nodeHandle.id.nodeIndex].code == "raster-preview"
+    var rasterCommand = none(PaintCommand)
+    for command in commands:
+      if command.kind == pcDrawRasterSurface:
+        rasterCommand = some(command)
+    check rasterCommand.isSome
+    check rasterCommand.get.owner == some(handle.nodeHandle.id)
+    check rasterCommand.get.rasterSurface == surface
+    check rasterCommand.get.rasterRect.w == 80
+    check rasterCommand.get.rasterRect.h == 60
+
+  test "publishing raster pixels invalidates only owning canvas paint":
+    let ui = initUiRoot()
+    let surface = newRasterSurface(4, 4)
+    let handle = ui.rasterSurface(
+      surface,
+      uiStyle([decl("width", px(40)), decl("height", px(40))])
+    )
+    discard ui.consumeInvalidation()
+    surface.updateRegion(
+      rasterRegion(1, 1, 1, 1), @[255'u8, 10, 20, 255]
+    )
+    check not ui.hasPendingInvalidation
+    check handle.publish()
+    let invalidation = ui.consumeInvalidation()
+    check invalidation.domains == {ddPaint}
+    check invalidation.roots == @[handle.nodeHandle.id]
+    check handle.canvas.canvas.revision > 1
+    check not handle.publish()
+    check not ui.hasPendingInvalidation
+
+  test "canvas rejects publication for unrelated raster resources":
+    let ui = initUiRoot()
+    let attached = newRasterSurface(1, 1)
+    let unrelated = newRasterSurface(1, 1)
+    let handle = ui.rasterSurface(
+      attached,
+      uiStyle([decl("width", px(10)), decl("height", px(10))])
+    )
+    unrelated.updateRegion(
+      rasterRegion(0, 0, 1, 1), @[255'u8, 255, 255, 255]
+    )
+    check not handle.canvas.publishRasterSurface(unrelated)
+    check unrelated.pendingUpdateCount == 1
+
   test "canvas is a normal styled box backed by a registered surface":
     let ui = initUiRoot()
     let app = ui.box(uiStyle([
@@ -260,6 +338,7 @@ suite "standard canvas surface":
     drawing.strokePath([vec2(7, 7)], rgb(0, 0, 1), width = 2)
 
     check drawing.revision == initialRevision + 3
+    let localOutlineBounds = drawing.commands[0].pathOutline.bounds()
     let owner = NodeId(17)
     let commands = drawing.paintCommands(owner, rect(20, 30, 100, 80), 0.5)
     check commands.len == 2
@@ -268,6 +347,11 @@ suite "standard canvas surface":
     check commands[0].path.segments.len == 2
     check commands[0].path.segments[0].endpoint == vec2(21, 32)
     check commands[0].path.segments[1].endpoint == vec2(28, 39)
+    check commands[0].pathOutline.fillable
+    check abs(commands[0].pathOutline.bounds().x -
+      (localOutlineBounds.x + 20)) < 0.0001
+    check abs(commands[0].pathOutline.bounds().y -
+      (localOutlineBounds.y + 30)) < 0.0001
     check commands[0].pathWidth == 3
     check commands[0].pathLineCap == slcButt
     check commands[0].pathLineJoin == sljMiter
@@ -275,6 +359,7 @@ suite "standard canvas surface":
     check commands[1].kind == pcStrokePath
     check commands[1].path.segments.len == 4
     check commands[1].path.segments[^1].kind == pskClose
+    check commands[1].pathOutline.fillable
 
   test "non-positive path widths are retained safely but do not paint":
     let drawing = newCanvas2D()
@@ -307,6 +392,37 @@ suite "standard canvas surface":
     check commands[0].pathLineCap == slcRound
     check commands[0].pathLineJoin == sljBevel
     check commands[0].pathMiterLimit == 3
+
+  test "canvas retains normalized dash state and precomputed geometry":
+    let drawing = newCanvas2D()
+    drawing.strokePath(
+      [vec2(0, 0), vec2(30, 0)], rgb(1, 0, 0), width = 2,
+      dashPattern = [5.0'f32], dashOffset = 2
+    )
+    check drawing.commands.len == 1
+    check drawing.commands[0].pathDashPattern == @[5.0'f32, 5.0'f32]
+    check drawing.commands[0].pathDashOffset == 2
+    check drawing.commands[0].pathOutline.fillable
+    let commands = drawing.paintCommands(NodeId(4), rect(10, 20, 40, 10))
+    check commands.len == 1
+    check commands[0].pathDashPattern == @[5.0'f32, 5.0'f32]
+    check commands[0].pathDashOffset == 2
+
+  test "filled paths retain color and fill rule":
+    let drawing = newCanvas2D()
+    let path = path2D([
+      vec2(0, 0), vec2(20, 0), vec2(20, 10), vec2(0, 10)
+    ], closed = true)
+    drawing.fillPath(path, rgba(0.2, 0.4, 0.8, 0.75), pfrEvenOdd)
+
+    let commands = drawing.paintCommands(
+      NodeId(11), rect(5, 7, 40, 20), 0.5
+    )
+    check commands.len == 1
+    check commands[0].kind == pcFillPath
+    check commands[0].fillPathRule == pfrEvenOdd
+    check commands[0].fillPathValue.bounds() == rect(5, 7, 20, 10)
+    check abs(commands[0].fillPathColor.a - 0.375) < 0.0001
 
   test "surface events preserve local coordinates and consumption":
     let ui = initUiRoot()

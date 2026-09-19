@@ -67,8 +67,47 @@ bgfx is the planned standard GPU adapter. Its low-level Nim C99 binding,
 [bgfxim](https://github.com/puffball1567/bgfxim), is an independent package so
 games and visualization libraries may use it without CBSS. CBSS depends on
 that package only when the bgfx capability is selected. `bgfxim` is already
-available; the CBSS adapter, ownership integration, and real-GPU release gates
-remain planned work rather than part of the current standard profile.
+available. The first CBSS adapter and ownership layer are implemented behind
+`-d:cbssGpuBgfx`; portable GPU Canvas composition through `RasterSurface` is
+implemented. A GPU Canvas can now be mounted as a visual-only underlay or
+overlay of an ordinary CBSS component while that component retains layout,
+input, focus, and accessibility ownership. Shared-texture composition,
+native-window presentation qualification, and visible real-GPU release gates
+remain Version 0.7 work rather than part of the current standard profile.
+
+The public `GpuHost` contract is renderer-neutral. It records an explicit
+`owned` or `borrowed` runtime, rejects incompatible adapter versions, allows
+only one active frame token, and invalidates every generation-bound resource
+after device loss. Independent visualization and compute packages receive
+named resource namespaces with separate persistent, transient-upload,
+readback, per-frame work, and resource-count budgets. The current namespace
+API establishes identity and accounting. Typed resources, graphics/compute
+submission, texture and storage-buffer blits, and asynchronous typed readback
+are implemented without exposing raw bgfx handles in ordinary UI code. Storage
+results may remain GPU-resident across ordered passes, move between compatible
+buffers, and return only a bounded final range to CPU memory. `GpuCanvasSurface` owns a bounded
+asynchronous readback ring and publishes the newest ordered GPU frame through
+the existing `RasterSurface`. `GpuDisplaySurface` additionally negotiates a
+backend-neutral direct Texture/RenderTarget path with the same asynchronous
+readback implementation as its deterministic fallback. The current bgfx
+adapter keeps direct capability disabled until its same-device compositor is
+qualified.
+
+The bgfx adapter uses `bgfxim` directly. Owned mode initializes and shuts down
+the bgfx runtime, retains its current host configuration, and recreates the
+runtime after device loss before namespace restoration runs. Borrowed mode
+attaches to an application-initialized runtime and detaches without destroying
+it; the external owner remains responsible for rebuilding a lost borrowed
+runtime. A process cannot attach two CBSS bgfx hosts at once. In addition to
+the portable ABI contract, Linux and
+macOS CI build the pinned real bgfx NOOP renderer and exercise resource,
+partial-update, offscreen-target, encoder, readback, frame, owned-runtime
+restoration, and teardown calls inside a CBSS-owned host under ARC and ORC. A
+separate portable API-159 contract links the buffer-transfer adapter to the
+pinned headers and verifies exact copy/readback ranges under ARC and ORC. The
+portable deterministic adapter contract also covers shader/program creation,
+graphics submission, compute dispatch, and destruction without claiming
+visible renderer output.
 
 CBSS supplies bgfx with bounded scene data, textures, render targets, graphics
 or compute work, and composition metadata. SDL3 supplies the native window and
@@ -86,6 +125,19 @@ bgfx-specific handles remain private to the adapter. Public Canvas, scene,
 resource, frame-scheduling, device-loss, and diagnostics contracts use
 CBSS-owned types. An additional GPU adapter may be implemented later, but it
 does not change the standard profile or require duplicate GPU runtimes.
+
+Shader authoring follows the same boundary. A bounded typed IR is authored
+through Nim procedures or the equivalent opaque C ABI Builder, then mapped to
+deterministic bgfx source and compiled by build tools for the target renderers.
+CBSS does not define a `.cbshader` text language, expose bgfx handles in Style,
+or include shader compilers in runtime artifacts. The resulting compiled
+artifact is shared by direct GPU submission and component-owned GPU visual
+layers. Target-specific bytecode is stored in a bounded, checksummed,
+deterministic package; only the selected target variants enter the application
+build. See [GPU Shaders](gpu-shaders.md) for the build/runtime boundary and
+package contract.
+
+See [GPU Host](gpu-host.md) for the implemented lifecycle and budget contract.
 
 ## Optional Little CMS Color Management
 

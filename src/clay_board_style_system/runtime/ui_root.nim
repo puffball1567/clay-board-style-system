@@ -1,7 +1,8 @@
 import std/[algorithm, hashes, math, options, sets, tables]
 
 import ../craft/[pack, style, style_slots]
-import ../core/[color, declaration, geometry, node, rule, selector, style_value]
+import ../core/[color, declaration, geometry, node, raster_surface, rule,
+    selector, style_value, custom_paint]
 import ../core/style_resolver
 import ../input/events
 import ../layout/layout
@@ -9,6 +10,7 @@ import ../layout/presentation
 import ../layout/scroll_state
 import ../paint/paint
 import ../paint/paint_command
+import ../paint/custom_paint_registry
 import ../text/[font_registry, text_engine]
 import ./animation_clock
 import ./canvas
@@ -80,6 +82,7 @@ type
     scroll*: ScrollState
     surfaces*: RenderSurfaceRegistry
     canvases*: Table[RenderSurfaceId, Canvas2D]
+    customPaints: CustomPaintRegistry
     defaultContextMenuOpen*: bool
     defaultContextMenuPosition*: Vec2
     defaultContextMenuTarget*: Option[NodeId]
@@ -122,6 +125,10 @@ type
     surface*: RenderSurfaceId
     canvas*: Canvas2D
 
+  RasterSurfaceHandle* = object
+    canvas*: CanvasHandle
+    raster*: RasterSurface
+
 proc initUiRoot*(): UiRoot =
   UiRoot(
     tree: initTree(),
@@ -136,6 +143,7 @@ proc initUiRoot*(): UiRoot =
     scroll: initScrollState(),
     surfaces: initRenderSurfaceRegistry(),
     canvases: initTable[RenderSurfaceId, Canvas2D](),
+    customPaints: initCustomPaintRegistry(),
     defaultContextMenuPosition: vec2(0, 0),
     defaultContextMenuTarget: none(NodeId),
     defaultContextMenuNode: none(NodeId),
@@ -670,6 +678,47 @@ proc requestFrame*(handle: CanvasHandle): bool {.discardable.} =
     return false
   handle.node.root.surfaces.requestSurfaceFrame(handle.surface)
 
+proc valid*(handle: RasterSurfaceHandle): bool =
+  handle.canvas.valid and not handle.raster.isNil and
+    handle.canvas.canvas.containsRasterSurface(handle.raster)
+
+proc nodeHandle*(handle: RasterSurfaceHandle): NodeHandle =
+  handle.canvas.node
+
+proc publishRasterSurface*(
+    handle: CanvasHandle;
+    surface: RasterSurface
+): bool {.discardable.} =
+  ## Publishes pending pixels and invalidates only the owning Canvas paint.
+  if not handle.valid or surface.isNil or
+      not handle.canvas.containsRasterSurface(surface):
+    return false
+  if not surface.publish():
+    return false
+  discard handle.canvas.noteRasterUpdate(surface)
+  handle.node.root.invalidate(handle.node.id, {ddPaint})
+  discard handle.node.root.surfaces.updateSurface(
+    handle.surface, handle.canvas.revision
+  )
+  true
+
+proc publish*(handle: RasterSurfaceHandle): bool {.discardable.} =
+  handle.canvas.publishRasterSurface(handle.raster)
+
+proc updateRegion*(
+    handle: RasterSurfaceHandle;
+    region: RasterRegion;
+    source: openArray[uint8];
+    sourceStride = 0;
+    publish = true
+): bool {.discardable.} =
+  if not handle.valid:
+    return false
+  handle.raster.updateRegion(region, source, sourceStride)
+  if publish:
+    return handle.publish()
+  true
+
 proc storeComponentStyle(root: UiRoot; sheet: StyleSheet): int =
   if root.freeComponentStyleIndices.len > 0:
     result = root.freeComponentStyleIndices.pop()
@@ -938,6 +987,7 @@ proc disposeSubtree*(
   let componentUnmountCallbacks = root.takeComponentUnmountCallbacks(removed)
   discard root.events.removeEventHandlers(removed)
   root.removeSubtreeStyles(removed)
+  root.customPaints.removeCustomPaintConsumers(removed)
   discard root.craftStyles.removePublicStyleSlots(root.tree, removed)
   root.scroll.clearNodes(removedIds)
 
@@ -1145,8 +1195,10 @@ proc box*(
 
 proc bindRenderSurfaceEvents(root: UiRoot; node: NodeHandle; surface: RenderSurfaceId) =
   let target = node
+  var pointerCaptured = false
   const surfaceInputEventKinds = {
     iekPointerMove, iekPointerDown, iekPointerUp, iekPointerCancel,
+    iekGotPointerCapture, iekLostPointerCapture,
     iekPointerEnter, iekPointerLeave, iekClick, iekAuxClick,
     iekContextMenu, iekDoubleClick, iekWheel,
     iekKeyDown, iekKeyUp, iekTextInput,
@@ -1167,8 +1219,21 @@ proc bindRenderSurfaceEvents(root: UiRoot; node: NodeHandle; surface: RenderSurf
       let handled = target.root.surfaces.dispatchSurfaceInput(
         surface,
         event.event,
-        captured = false
+        captured = pointerCaptured
       )
+      case event.event.kind
+      of iekPointerDown, iekTouchStart:
+        if handled and event.capturePointer():
+          pointerCaptured = true
+      of iekGotPointerCapture:
+        pointerCaptured = true
+      of iekLostPointerCapture:
+        pointerCaptured = false
+      of iekPointerUp, iekPointerCancel, iekTouchEnd, iekTouchCancel:
+        if pointerCaptured:
+          discard event.releasePointer()
+      else:
+        discard
       if handled: stoppedEvent() else: ignoredEvent()
     )
 
@@ -1217,6 +1282,39 @@ proc canvas*(
   result = root.canvas(value, parent, id, code, groups)
   root.applyStyle(result.node, style)
 
+proc rasterSurface*(
+    root: UiRoot;
+    value: RasterSurface;
+    parent = none(NodeHandle);
+    id = "";
+    code = "";
+    groups: openArray[string] = []
+): RasterSurfaceHandle {.discardable.} =
+  if value.isNil:
+    raise newException(ValueError, "raster surface value must not be nil")
+  let drawing = newCanvas2D()
+  drawing.drawRasterSurfaceToContent(value)
+  result = RasterSurfaceHandle(
+    canvas: root.canvas(drawing, parent, id, code, groups),
+    raster: value
+  )
+  root.applyStyle(result.canvas.node, uiStyle([
+    decl("width", px(value.width)),
+    decl("height", px(value.height))
+  ]))
+
+proc rasterSurface*(
+    root: UiRoot;
+    value: RasterSurface;
+    style: UiStyle;
+    parent = none(NodeHandle);
+    id = "";
+    code = "";
+    groups: openArray[string] = []
+): RasterSurfaceHandle {.discardable.} =
+  result = root.rasterSurface(value, parent, id, code, groups)
+  root.applyStyle(result.canvas.node, style)
+
 proc canvasPaintProvider*(root: UiRoot): SurfacePaintProvider =
   let owner = root
   result = proc(
@@ -1230,6 +1328,114 @@ proc canvasPaintProvider*(root: UiRoot): SurfacePaintProvider =
       result = owner.canvases[id].paintCommands(
         node, bounds, opacity, resolveBounds = false
       )
+
+proc invalidateCustomPaintMaterial*(
+    root: UiRoot;
+    material: string
+): int {.discardable.}
+
+proc registerCustomPaintMaterial*(
+    root: UiRoot;
+    material: string;
+    callback: CustomPaintMaterialProc;
+    stages: set[CustomPaintStage] = {cpsUnderlay, cpsOverlay};
+    replace = false
+): bool {.discardable.} =
+  if root.isNil:
+    raise newException(ValueError, "custom paint UiRoot cannot be nil")
+  result = root.customPaints.registerCustomPaintMaterial(
+    material, callback, stages, replace
+  )
+  if result:
+    discard root.invalidateCustomPaintMaterial(material)
+
+proc invalidateCustomPaintMaterial*(
+    root: UiRoot;
+    material: string
+): int {.discardable.} =
+  ## Repaints current consumers without restyling or relayout.
+  if root.isNil:
+    return
+  for owner in root.customPaints.customPaintConsumers(material):
+    if root.tree.isValid(owner):
+      root.invalidate(owner, {ddPaint})
+      inc result
+
+proc registerCustomPaintMaterialTracked*(
+    root: UiRoot;
+    material: string;
+    callback: CustomPaintMaterialProc;
+    stages: set[CustomPaintStage] = {cpsUnderlay, cpsOverlay};
+    replace = false
+): Option[CustomPaintRegistration] =
+  if root.isNil:
+    raise newException(ValueError, "custom paint UiRoot cannot be nil")
+  result = root.customPaints.registerCustomPaintMaterialTracked(
+    material, callback, stages, replace
+  )
+  if result.isSome:
+    discard root.invalidateCustomPaintMaterial(material)
+
+proc unregisterCustomPaintMaterial*(
+    root: UiRoot;
+    material: string
+): bool {.discardable.} =
+  if root.isNil:
+    return false
+  result = root.customPaints.unregisterCustomPaintMaterial(material)
+  if result:
+    discard root.invalidateCustomPaintMaterial(material)
+
+proc unregisterCustomPaintMaterial*(
+    root: UiRoot;
+    registration: CustomPaintRegistration
+): bool {.discardable.} =
+  if root.isNil:
+    return false
+  result = root.customPaints.unregisterCustomPaintMaterial(registration)
+  if result:
+    discard root.invalidateCustomPaintMaterial(registration.material)
+
+proc hasCustomPaintMaterial*(root: UiRoot; material: string): bool =
+  not root.isNil and root.customPaints.hasCustomPaintMaterial(material)
+
+proc hasCustomPaintRegistration*(
+    root: UiRoot;
+    registration: CustomPaintRegistration
+): bool =
+  not root.isNil and root.customPaints.hasCustomPaintRegistration(registration)
+
+proc customPaintProvider*(root: UiRoot): CustomPaintProvider =
+  if root.isNil:
+    return nil
+  root.customPaints.provider()
+
+proc takeCustomPaintDiagnostics*(root: UiRoot): seq[CustomPaintDiagnostic] =
+  if root.isNil:
+    return
+  root.customPaints.takeCustomPaintDiagnostics()
+
+proc clearCustomPaintDiagnostics*(root: UiRoot) =
+  if not root.isNil:
+    root.customPaints.clearCustomPaintDiagnostics()
+
+proc buildPaintCommands*(
+    root: UiRoot;
+    styles: ResolvedTree;
+    layout: LayoutResult
+): seq[PaintCommand] =
+  ## Connects every UiRoot-owned paint source through one retained paint pass.
+  if root.isNil:
+    return
+  root.customPaints.clearCustomPaintConsumers()
+  buildPaintCommands(
+    root.tree,
+    styles,
+    layout,
+    root.scroll,
+    root.canvasPaintProvider(),
+    root.customPaintProvider()
+  )
 
 proc syncRenderSurfaces*(
     root: UiRoot;

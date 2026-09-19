@@ -1,13 +1,15 @@
 import std/[json, math, options, os, strutils]
 
-import ../core/[computed_style, diagnostics, geometry, node, style_resolver]
+import ../core/[computed_style, diagnostics, geometry, node, raster_surface,
+  style_resolver]
 import ../generated/default_properties
 import ../hit/hit_test
 import ../input/events
 import ../layout/layout
 import ../layout/scroll_state
 import ../paint/[paint, paint_command, path_geometry]
-import ../runtime/[focus, frame_scheduler, invalidation, text_focus, ui_root]
+import ../runtime/[focus, frame_scheduler, gpu_direct_surface, invalidation,
+  text_focus, ui_root]
 
 type
   CbssQueryKind* = enum
@@ -1016,14 +1018,30 @@ proc paintSnapshot*(driver: CbssTestDriver): string =
       lines.add "linear-gradient " & rectSnapshot(command.gradientRect)
     of pcStrokeRect:
       lines.add "stroke-rect " & rectSnapshot(command.strokeRect) & " width=" & $command.strokeWidth
+    of pcFillPath:
+      lines.add "fill-path " & pathSnapshot(command.fillPathValue) &
+        " rule=" & $command.fillPathRule
     of pcStrokePath:
       lines.add "stroke-path " & pathSnapshot(command.path) &
         " width=" & $command.pathWidth & " cap=" & $command.pathLineCap &
-        " join=" & $command.pathLineJoin
+        " join=" & $command.pathLineJoin &
+        " dash=" & $command.pathDashPattern &
+        " offset=" & $command.pathDashOffset
     of pcDrawText:
       lines.add "draw-text " & $command.node.nodeIndex & " " & command.text & " @" & $command.position.x & "," & $command.position.y
     of pcDrawImage:
       lines.add "draw-image " & $command.imageNode.nodeIndex & " " & command.imageSource & " " & rectSnapshot(command.imageRect)
+    of pcDrawRasterSurface:
+      lines.add "draw-raster " & $command.rasterSurface.id & " " &
+        $command.rasterSurface.width & "x" & $command.rasterSurface.height &
+        " rev=" & $command.rasterSurface.revision & " " &
+        rectSnapshot(command.rasterRect) & " opacity=" &
+        $command.rasterOpacity
+    of pcDrawGpuDirectSurface:
+      lines.add "draw-gpu-direct rev=" &
+        $command.gpuDirectSurface.presentedRevision & " " &
+        rectSnapshot(command.gpuSurfaceRect) & " opacity=" &
+        $command.gpuSurfaceOpacity
   lines.join("\n")
 
 proc paintSnapshot*(driver: CbssTestDriver; query: CbssQuery): string =
@@ -1036,6 +1054,8 @@ proc paintSnapshot*(driver: CbssTestDriver; query: CbssQuery): string =
         command.node == target
       of pcDrawImage:
         command.imageNode == target
+      of pcDrawRasterSurface, pcDrawGpuDirectSurface:
+        command.owner == some(target)
       else:
         false
     if matches:
@@ -1044,6 +1064,17 @@ proc paintSnapshot*(driver: CbssTestDriver; query: CbssQuery): string =
         lines.add "draw-text " & $command.node.nodeIndex & " " & command.text & " @" & $command.position.x & "," & $command.position.y
       of pcDrawImage:
         lines.add "draw-image " & $command.imageNode.nodeIndex & " " & command.imageSource & " " & rectSnapshot(command.imageRect)
+      of pcDrawRasterSurface:
+        lines.add "draw-raster " & $command.rasterSurface.id & " " &
+        $command.rasterSurface.width & "x" & $command.rasterSurface.height &
+          " rev=" & $command.rasterSurface.revision & " " &
+          rectSnapshot(command.rasterRect) & " opacity=" &
+          $command.rasterOpacity
+      of pcDrawGpuDirectSurface:
+        lines.add "draw-gpu-direct rev=" &
+          $command.gpuDirectSurface.presentedRevision & " " &
+          rectSnapshot(command.gpuSurfaceRect) & " opacity=" &
+          $command.gpuSurfaceOpacity
       else:
         discard
   lines.join("\n")
@@ -1136,6 +1167,17 @@ proc structuredSnapshotJson*(driver: CbssTestDriver): JsonNode =
     of pcStrokeRect:
       entry["rect"] = rectJson(command.strokeRect)
       entry["width"] = %command.strokeWidth
+    of pcFillPath:
+      var segments = newJArray()
+      for segment in command.fillPathValue.segments:
+        segments.add %*{
+          "kind": $segment.kind,
+          "control1": {"x": segment.control1.x, "y": segment.control1.y},
+          "control2": {"x": segment.control2.x, "y": segment.control2.y},
+          "endpoint": {"x": segment.endpoint.x, "y": segment.endpoint.y}
+        }
+      entry["segments"] = segments
+      entry["fillRule"] = %($command.fillPathRule)
     of pcStrokePath:
       var segments = newJArray()
       for segment in command.path.segments:
@@ -1150,6 +1192,8 @@ proc structuredSnapshotJson*(driver: CbssTestDriver): JsonNode =
       entry["lineCap"] = %($command.pathLineCap)
       entry["lineJoin"] = %($command.pathLineJoin)
       entry["miterLimit"] = %command.pathMiterLimit
+      entry["dashPattern"] = %command.pathDashPattern
+      entry["dashOffset"] = %command.pathDashOffset
     of pcDrawText:
       entry["node"] = %command.node.nodeIndex
       entry["text"] = %command.text
@@ -1159,6 +1203,23 @@ proc structuredSnapshotJson*(driver: CbssTestDriver): JsonNode =
       entry["node"] = %command.imageNode.nodeIndex
       entry["source"] = %command.imageSource
       entry["rect"] = rectJson(command.imageRect)
+    of pcDrawRasterSurface:
+      entry["node"] = %(
+        if command.owner.isSome: command.owner.get.nodeIndex else: -1
+      )
+      entry["surface"] = %command.rasterSurface.id
+      entry["revision"] = %command.rasterSurface.revision
+      entry["width"] = %command.rasterSurface.width
+      entry["height"] = %command.rasterSurface.height
+      entry["rect"] = rectJson(command.rasterRect)
+      entry["opacity"] = %command.rasterOpacity
+    of pcDrawGpuDirectSurface:
+      entry["node"] = %(
+        if command.owner.isSome: command.owner.get.nodeIndex else: -1
+      )
+      entry["revision"] = %command.gpuDirectSurface.presentedRevision
+      entry["rect"] = rectJson(command.gpuSurfaceRect)
+      entry["opacity"] = %command.gpuSurfaceOpacity
     paint.add entry
   result["paint"] = paint
 

@@ -26,7 +26,7 @@ extern "C" {
 #endif
 
 /* CBSS_GENERATED_DRIVER_CONTRACT_BEGIN */
-#define CBSS_ABI_VERSION 0x00010019u
+#define CBSS_ABI_VERSION 0x00010026u
 #define CBSS_DRIVER_CONTRACT_VERSION 0x00010000u
 
 typedef enum CbssCapabilityId {
@@ -48,7 +48,10 @@ typedef enum CbssCapabilityId {
   CBSS_CAPABILITY_CRAFT_STYLE = 16u,
   CBSS_CAPABILITY_CRAFT_PACK = 17u,
   CBSS_CAPABILITY_SUBTREE_LIFECYCLE = 18u,
-  CBSS_CAPABILITY_VALIDATION_PATTERN = 19u
+  CBSS_CAPABILITY_VALIDATION_PATTERN = 19u,
+  CBSS_CAPABILITY_RASTER_SURFACE = 20u,
+  CBSS_CAPABILITY_SHADER_AUTHORING = 21u,
+  CBSS_CAPABILITY_CUSTOM_PAINT_PROVIDER = 22u
 } CbssCapabilityId;
 
 enum {
@@ -74,6 +77,10 @@ typedef struct CbssCapabilityInfo {
 #define CBSS_MAX_CRAFT_PACK_SOURCE_BYTES (4u * 1024u * 1024u)
 #define CBSS_MAX_VALIDATION_PATTERN_BYTES 65536u
 #define CBSS_MAX_VALIDATION_VALUE_BYTES (16u * 1024u * 1024u)
+#define CBSS_MAX_RASTER_SURFACE_BYTES (256u * 1024u * 1024u)
+#define CBSS_CUSTOM_PAINT_API_VERSION 1u
+#define CBSS_MAX_CUSTOM_PAINT_PARAMETERS 64u
+#define CBSS_MAX_CUSTOM_PAINT_COMMANDS 4096u
 
 typedef struct CbssContext CbssContext;
 typedef struct CbssStyle CbssStyle;
@@ -86,7 +93,17 @@ typedef struct CbssFormData CbssFormData;
 typedef struct CbssEventView CbssEventView;
 typedef struct CbssBlobStream CbssBlobStream;
 typedef struct CbssStreamProducer CbssStreamProducer;
+typedef struct CbssRasterSurface CbssRasterSurface;
+typedef struct CbssShaderBuilder CbssShaderBuilder;
+typedef struct CbssCustomPaintSink CbssCustomPaintSink;
 typedef uint64_t CbssEventSubscription;
+typedef uint64_t CbssCustomPaintRegistration;
+typedef uint32_t CbssShaderExpression;
+typedef uint32_t CbssShaderStorageBuffer;
+typedef uint32_t CbssShaderStorageImage;
+typedef uint32_t CbssShaderLocal;
+typedef uint32_t CbssShaderLocalArray;
+typedef uint32_t CbssShaderFunction;
 
 typedef int32_t CbssStatus;
 enum {
@@ -98,6 +115,135 @@ enum {
   CBSS_INTERNAL_ERROR = 5,
   CBSS_NOT_AVAILABLE = 6
 };
+
+typedef enum CbssShaderStage {
+  CBSS_SHADER_STAGE_VERTEX = 0,
+  CBSS_SHADER_STAGE_FRAGMENT = 1,
+  CBSS_SHADER_STAGE_COMPUTE = 2
+} CbssShaderStage;
+
+typedef enum CbssShaderValueType {
+  CBSS_SHADER_VALUE_BOOL = 0,
+  CBSS_SHADER_VALUE_FLOAT = 1,
+  CBSS_SHADER_VALUE_VEC2 = 2,
+  CBSS_SHADER_VALUE_VEC3 = 3,
+  CBSS_SHADER_VALUE_VEC4 = 4,
+  CBSS_SHADER_VALUE_MAT3 = 5,
+  CBSS_SHADER_VALUE_MAT4 = 6,
+  CBSS_SHADER_VALUE_INT = 7,
+  CBSS_SHADER_VALUE_UINT = 8,
+  CBSS_SHADER_VALUE_IVEC2 = 9,
+  CBSS_SHADER_VALUE_IVEC3 = 10,
+  CBSS_SHADER_VALUE_IVEC4 = 11,
+  CBSS_SHADER_VALUE_UVEC2 = 12,
+  CBSS_SHADER_VALUE_UVEC3 = 13,
+  CBSS_SHADER_VALUE_UVEC4 = 14
+} CbssShaderValueType;
+
+typedef enum CbssShaderStorageFormat {
+  CBSS_SHADER_STORAGE_INT32 = 0,
+  CBSS_SHADER_STORAGE_UINT32 = 1,
+  CBSS_SHADER_STORAGE_FLOAT32 = 2,
+  CBSS_SHADER_STORAGE_INT32X2 = 3,
+  CBSS_SHADER_STORAGE_UINT32X2 = 4,
+  CBSS_SHADER_STORAGE_FLOAT32X2 = 5,
+  CBSS_SHADER_STORAGE_INT32X4 = 6,
+  CBSS_SHADER_STORAGE_UINT32X4 = 7,
+  CBSS_SHADER_STORAGE_FLOAT32X4 = 8
+} CbssShaderStorageFormat;
+
+typedef enum CbssShaderStorageAccess {
+  CBSS_SHADER_STORAGE_READ = 0,
+  CBSS_SHADER_STORAGE_WRITE = 1,
+  CBSS_SHADER_STORAGE_READ_WRITE = 2
+} CbssShaderStorageAccess;
+
+typedef enum CbssShaderStorageImageFormat {
+  CBSS_SHADER_IMAGE_R8 = 0,
+  CBSS_SHADER_IMAGE_RGBA8 = 1,
+  CBSS_SHADER_IMAGE_R16F = 2,
+  CBSS_SHADER_IMAGE_R32F = 3,
+  CBSS_SHADER_IMAGE_RG16F = 4,
+  CBSS_SHADER_IMAGE_RGBA16F = 5,
+  CBSS_SHADER_IMAGE_RGBA32F = 6
+} CbssShaderStorageImageFormat;
+
+typedef enum CbssShaderComputeBuiltin {
+  CBSS_SHADER_COMPUTE_GLOBAL_INVOCATION_ID = 0,
+  CBSS_SHADER_COMPUTE_LOCAL_INVOCATION_ID = 1,
+  CBSS_SHADER_COMPUTE_WORK_GROUP_ID = 2,
+  CBSS_SHADER_COMPUTE_LOCAL_INVOCATION_INDEX = 3,
+  CBSS_SHADER_COMPUTE_WORK_GROUP_COUNT = 4
+} CbssShaderComputeBuiltin;
+
+typedef enum CbssShaderInterfaceSlot {
+  CBSS_SHADER_SLOT_POSITION = 0,
+  CBSS_SHADER_SLOT_NORMAL = 1,
+  CBSS_SHADER_SLOT_TANGENT = 2,
+  CBSS_SHADER_SLOT_BITANGENT = 3,
+  CBSS_SHADER_SLOT_COLOR0 = 4,
+  CBSS_SHADER_SLOT_COLOR1 = 5,
+  CBSS_SHADER_SLOT_COLOR2 = 6,
+  CBSS_SHADER_SLOT_COLOR3 = 7,
+  CBSS_SHADER_SLOT_TEXCOORD0 = 8,
+  CBSS_SHADER_SLOT_TEXCOORD1 = 9,
+  CBSS_SHADER_SLOT_TEXCOORD2 = 10,
+  CBSS_SHADER_SLOT_TEXCOORD3 = 11,
+  CBSS_SHADER_SLOT_TEXCOORD4 = 12,
+  CBSS_SHADER_SLOT_TEXCOORD5 = 13,
+  CBSS_SHADER_SLOT_TEXCOORD6 = 14,
+  CBSS_SHADER_SLOT_TEXCOORD7 = 15
+} CbssShaderInterfaceSlot;
+
+typedef enum CbssShaderUnaryOperation {
+  CBSS_SHADER_UNARY_NEGATE = 0,
+  CBSS_SHADER_UNARY_SINE = 1,
+  CBSS_SHADER_UNARY_COSINE = 2,
+  CBSS_SHADER_UNARY_ABSOLUTE = 3,
+  CBSS_SHADER_UNARY_FLOOR = 4,
+  CBSS_SHADER_UNARY_CEIL = 5,
+  CBSS_SHADER_UNARY_NORMALIZE = 6,
+  CBSS_SHADER_UNARY_BITWISE_NOT = 7
+} CbssShaderUnaryOperation;
+
+typedef enum CbssShaderBinaryOperation {
+  CBSS_SHADER_BINARY_ADD = 0,
+  CBSS_SHADER_BINARY_SUBTRACT = 1,
+  CBSS_SHADER_BINARY_MULTIPLY = 2,
+  CBSS_SHADER_BINARY_DIVIDE = 3,
+  CBSS_SHADER_BINARY_MINIMUM = 4,
+  CBSS_SHADER_BINARY_MAXIMUM = 5,
+  CBSS_SHADER_BINARY_DOT = 6,
+  CBSS_SHADER_BINARY_POWER = 7,
+  CBSS_SHADER_BINARY_MODULO = 8,
+  CBSS_SHADER_BINARY_BITWISE_AND = 9,
+  CBSS_SHADER_BINARY_BITWISE_OR = 10,
+  CBSS_SHADER_BINARY_BITWISE_XOR = 11,
+  CBSS_SHADER_BINARY_SHIFT_LEFT = 12,
+  CBSS_SHADER_BINARY_SHIFT_RIGHT = 13
+} CbssShaderBinaryOperation;
+
+typedef enum CbssShaderComparisonOperation {
+  CBSS_SHADER_COMPARISON_EQUAL = 0,
+  CBSS_SHADER_COMPARISON_NOT_EQUAL = 1,
+  CBSS_SHADER_COMPARISON_LESS_THAN = 2,
+  CBSS_SHADER_COMPARISON_LESS_THAN_OR_EQUAL = 3,
+  CBSS_SHADER_COMPARISON_GREATER_THAN = 4,
+  CBSS_SHADER_COMPARISON_GREATER_THAN_OR_EQUAL = 5
+} CbssShaderComparisonOperation;
+
+typedef enum CbssShaderLogicalOperation {
+  CBSS_SHADER_LOGICAL_NOT = 0,
+  CBSS_SHADER_LOGICAL_AND = 1,
+  CBSS_SHADER_LOGICAL_OR = 2,
+  CBSS_SHADER_LOGICAL_EXCLUSIVE_OR = 3
+} CbssShaderLogicalOperation;
+
+typedef enum CbssShaderTernaryOperation {
+  CBSS_SHADER_TERNARY_MIX = 0,
+  CBSS_SHADER_TERNARY_CLAMP = 1,
+  CBSS_SHADER_TERNARY_SMOOTHSTEP = 2
+} CbssShaderTernaryOperation;
 
 typedef enum CbssCraftDiagnosticDomain {
   CBSS_CRAFT_DIAGNOSTIC_STYLE_PARSE = 0,
@@ -498,13 +644,17 @@ typedef enum CbssPaintKind {
   CBSS_PAINT_PUSH_TRANSFORM = 9,
   CBSS_PAINT_POP_TRANSFORM = 10,
   CBSS_PAINT_PUSH_LAYER = 11,
-  CBSS_PAINT_POP_LAYER = 12
+  CBSS_PAINT_POP_LAYER = 12,
+  CBSS_PAINT_DRAW_RASTER_SURFACE = 13,
+  CBSS_PAINT_DRAW_GPU_DIRECT_SURFACE = 14,
+  CBSS_PAINT_FILL_PATH = 15
 } CbssPaintKind;
 
 typedef enum CbssLayerCompositeMode {
   CBSS_LAYER_SOURCE_OVER = 0,
   CBSS_LAYER_COPY = 1,
-  CBSS_LAYER_ADDITIVE = 2
+  CBSS_LAYER_ADDITIVE = 2,
+  CBSS_LAYER_DESTINATION_IN = 3
 } CbssLayerCompositeMode;
 
 typedef enum CbssPathSegmentKind {
@@ -514,6 +664,11 @@ typedef enum CbssPathSegmentKind {
   CBSS_PATH_CUBIC_TO = 3,
   CBSS_PATH_CLOSE = 4
 } CbssPathSegmentKind;
+
+typedef enum CbssPathFillRule {
+  CBSS_PATH_FILL_NONZERO = 0,
+  CBSS_PATH_FILL_EVENODD = 1
+} CbssPathFillRule;
 
 typedef enum CbssStrokeLineCap {
   CBSS_STROKE_CAP_BUTT = 0,
@@ -533,6 +688,13 @@ typedef struct CbssRect {
   float w;
   float h;
 } CbssRect;
+
+typedef struct CbssRasterRegion {
+  uint32_t x;
+  uint32_t y;
+  uint32_t width;
+  uint32_t height;
+} CbssRasterRegion;
 
 typedef struct CbssColor {
   float r;
@@ -616,7 +778,9 @@ typedef struct CbssHitResult {
  * BOX_SHADOW: offset_x, offset_y, blur, spread
  * LINEAR_GRADIENT: angle, stop_count, interpolation_space
  * STROKE_RECT: width
+ * FILL_PATH: fill_rule
  * STROKE_PATH: width, line_cap, line_join, miter_limit
+ * DRAW_GPU_DIRECT_SURFACE: opacity
  * DRAW_IMAGE: opacity
  * PUSH_LAYER: opacity, layer_composite_mode
  */
@@ -654,6 +818,61 @@ typedef struct CbssGradientStop {
   CbssColor color;
   float offset;
 } CbssGradientStop;
+
+typedef enum CbssCustomPaintStage {
+  CBSS_CUSTOM_PAINT_UNDERLAY = 0,
+  CBSS_CUSTOM_PAINT_OVERLAY = 1,
+  CBSS_CUSTOM_PAINT_MASK = 2,
+  CBSS_CUSTOM_PAINT_FILTER = 3
+} CbssCustomPaintStage;
+
+enum {
+  CBSS_CUSTOM_PAINT_STAGE_UNDERLAY = 1u << CBSS_CUSTOM_PAINT_UNDERLAY,
+  CBSS_CUSTOM_PAINT_STAGE_OVERLAY = 1u << CBSS_CUSTOM_PAINT_OVERLAY,
+  CBSS_CUSTOM_PAINT_STAGE_MASK = 1u << CBSS_CUSTOM_PAINT_MASK,
+  CBSS_CUSTOM_PAINT_STAGE_FILTER = 1u << CBSS_CUSTOM_PAINT_FILTER
+};
+
+typedef enum CbssCustomPaintParameterKind {
+  CBSS_CUSTOM_PAINT_PARAMETER_FLOAT = 0,
+  CBSS_CUSTOM_PAINT_PARAMETER_INTEGER = 1,
+  CBSS_CUSTOM_PAINT_PARAMETER_BOOLEAN = 2,
+  CBSS_CUSTOM_PAINT_PARAMETER_VEC2 = 3,
+  CBSS_CUSTOM_PAINT_PARAMETER_VEC4 = 4,
+  CBSS_CUSTOM_PAINT_PARAMETER_COLOR = 5
+} CbssCustomPaintParameterKind;
+
+/*
+ * Input names and parameter arrays are copied by cbss_style_set_custom_paint.
+ * reserved must be zero. FLOAT uses values[0], VEC2 uses values[0..1], VEC4
+ * and COLOR use values[0..3], and INTEGER/BOOLEAN use integer_value.
+ */
+typedef struct CbssCustomPaintParameterInput {
+  const char *name;
+  uint32_t kind;
+  uint32_t reserved;
+  int64_t integer_value;
+  float values[4];
+} CbssCustomPaintParameterInput;
+
+typedef struct CbssCustomPaintParameter {
+  uint32_t kind;
+  uint32_t name_bytes;
+  int64_t integer_value;
+  float values[4];
+} CbssCustomPaintParameter;
+
+typedef struct CbssCustomPaintRequest {
+  uint32_t struct_size;
+  uint32_t api_version;
+  uint32_t stage;
+  uint32_t owner;
+  CbssRect bounds;
+  CbssRect local_bounds;
+  float opacity;
+  uint32_t parameter_count;
+  uint64_t reserved;
+} CbssCustomPaintRequest;
 
 typedef struct CbssColorValueGradientStop {
   const CbssColorValue *color;
@@ -883,6 +1102,16 @@ typedef CbssStatus (*CbssBlobProviderReadCallback)(
     void *user_data, uint64_t offset, uint8_t *output, uint32_t capacity,
     uint32_t *output_read);
 typedef void (*CbssBlobProviderReleaseCallback)(void *user_data);
+/*
+ * The request and sink are borrowed for this synchronous callback only.
+ * Drawing coordinates are local to request.local_bounds. The callback must
+ * not retain either pointer, block, or re-enter presentation/registration on
+ * the same context. Returning a non-CBSS_OK status fails closed.
+ */
+typedef CbssStatus (*CbssCustomPaintProviderCallback)(
+    const CbssCustomPaintRequest *request, CbssCustomPaintSink *sink,
+    void *user_data);
+typedef void (*CbssCustomPaintProviderReleaseCallback)(void *user_data);
 
 CBSS_API uint32_t cbss_abi_version(void);
 /*
@@ -903,6 +1132,263 @@ CBSS_API uint32_t cbss_capability_name(
  */
 CBSS_API void cbss_thread_attach(void);
 CBSS_API void cbss_thread_detach(void);
+
+/*
+ * Build-time typed shader authoring. Expressions are builder-local ids; zero
+ * is invalid. emit validates the graph and produces deterministic bgfx shader
+ * source plus varying definitions. Applications compile those files during
+ * their build and pass the resulting bytes through the GPU Host contract.
+ * The ordinary runtime does not invoke or ship a shader compiler.
+ */
+CBSS_API CbssStatus cbss_shader_builder_create(
+    CbssShaderStage stage, const char *label, CbssShaderBuilder **output);
+CBSS_API void cbss_shader_builder_destroy(CbssShaderBuilder *builder);
+CBSS_API uint32_t cbss_shader_builder_last_error(
+    const CbssShaderBuilder *builder, char *buffer, uint32_t capacity);
+CBSS_API CbssStatus cbss_shader_builder_literal(
+    CbssShaderBuilder *builder, float value, CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_vector_literal(
+    CbssShaderBuilder *builder, const float *values, uint32_t count,
+    CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_int_literal(
+    CbssShaderBuilder *builder, int32_t value,
+    CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_uint_literal(
+    CbssShaderBuilder *builder, uint32_t value,
+    CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_set_compute_work_group_size(
+    CbssShaderBuilder *builder, uint32_t x, uint32_t y, uint32_t z);
+CBSS_API CbssStatus cbss_shader_builder_storage_buffer(
+    CbssShaderBuilder *builder, const char *name, uint32_t stage,
+    CbssShaderStorageFormat format, CbssShaderStorageAccess access,
+    CbssShaderStorageBuffer *output);
+CBSS_API CbssStatus cbss_shader_builder_storage_image(
+    CbssShaderBuilder *builder, const char *name, uint32_t stage,
+    CbssShaderStorageImageFormat format, CbssShaderStorageAccess access,
+    CbssShaderStorageImage *output);
+CBSS_API CbssStatus cbss_shader_builder_compute_builtin(
+    CbssShaderBuilder *builder, CbssShaderComputeBuiltin builtin,
+    CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_storage_load(
+    CbssShaderBuilder *builder, CbssShaderStorageBuffer storage,
+    CbssShaderExpression index, CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_storage_store(
+    CbssShaderBuilder *builder, CbssShaderStorageBuffer storage,
+    CbssShaderExpression index, CbssShaderExpression value);
+CBSS_API CbssStatus cbss_shader_builder_convert(
+    CbssShaderBuilder *builder, CbssShaderValueType value_type,
+    CbssShaderExpression expression, CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_bitcast(
+    CbssShaderBuilder *builder, CbssShaderValueType value_type,
+    CbssShaderExpression expression, CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_storage_image_load(
+    CbssShaderBuilder *builder, CbssShaderStorageImage storage,
+    CbssShaderExpression coordinates, CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_storage_image_store(
+    CbssShaderBuilder *builder, CbssShaderStorageImage storage,
+    CbssShaderExpression coordinates, CbssShaderExpression value);
+CBSS_API CbssStatus cbss_shader_builder_vertex_input(
+    CbssShaderBuilder *builder, CbssShaderInterfaceSlot slot,
+    CbssShaderValueType value_type, CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_varying_input(
+    CbssShaderBuilder *builder, CbssShaderInterfaceSlot slot,
+    CbssShaderValueType value_type, CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_uniform(
+    CbssShaderBuilder *builder, const char *name,
+    CbssShaderValueType value_type, CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_construct(
+    CbssShaderBuilder *builder, CbssShaderValueType value_type,
+    const CbssShaderExpression *expressions, uint32_t count,
+    CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_swizzle(
+    CbssShaderBuilder *builder, CbssShaderExpression expression,
+    const char *components, CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_unary(
+    CbssShaderBuilder *builder, CbssShaderUnaryOperation operation,
+    CbssShaderExpression expression, CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_binary(
+    CbssShaderBuilder *builder, CbssShaderBinaryOperation operation,
+    CbssShaderExpression left, CbssShaderExpression right,
+    CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_compare(
+    CbssShaderBuilder *builder, CbssShaderComparisonOperation operation,
+    CbssShaderExpression left, CbssShaderExpression right,
+    CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_logical(
+    CbssShaderBuilder *builder, CbssShaderLogicalOperation operation,
+    CbssShaderExpression left, CbssShaderExpression right,
+    CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_select(
+    CbssShaderBuilder *builder, CbssShaderExpression condition,
+    CbssShaderExpression when_true, CbssShaderExpression when_false,
+    CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_begin_if(
+    CbssShaderBuilder *builder, CbssShaderExpression condition);
+CBSS_API CbssStatus cbss_shader_builder_begin_else(CbssShaderBuilder *builder);
+CBSS_API CbssStatus cbss_shader_builder_end_if(CbssShaderBuilder *builder);
+CBSS_API CbssStatus cbss_shader_builder_return_from_compute(
+    CbssShaderBuilder *builder);
+CBSS_API CbssStatus cbss_shader_builder_local(
+    CbssShaderBuilder *builder, CbssShaderExpression initial_value,
+    CbssShaderLocal *output);
+CBSS_API CbssStatus cbss_shader_builder_local_load(
+    CbssShaderBuilder *builder, CbssShaderLocal local,
+    CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_local_store(
+    CbssShaderBuilder *builder, CbssShaderLocal local,
+    CbssShaderExpression value);
+CBSS_API CbssStatus cbss_shader_builder_local_array(
+    CbssShaderBuilder *builder, CbssShaderExpression initial_value,
+    uint32_t length, CbssShaderLocalArray *output);
+CBSS_API CbssStatus cbss_shader_builder_local_array_load(
+    CbssShaderBuilder *builder, CbssShaderLocalArray local_array,
+    CbssShaderExpression index, CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_local_array_store(
+    CbssShaderBuilder *builder, CbssShaderLocalArray local_array,
+    CbssShaderExpression index, CbssShaderExpression value);
+CBSS_API CbssStatus cbss_shader_builder_begin_function(
+    CbssShaderBuilder *builder, CbssShaderValueType return_type,
+    const CbssShaderValueType *parameter_types, uint32_t parameter_count,
+    CbssShaderFunction *output);
+CBSS_API CbssStatus cbss_shader_builder_function_parameter(
+    CbssShaderBuilder *builder, CbssShaderFunction function, uint32_t index,
+    CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_function_return(
+    CbssShaderBuilder *builder, CbssShaderFunction function,
+    CbssShaderExpression value);
+CBSS_API CbssStatus cbss_shader_builder_end_function(
+    CbssShaderBuilder *builder, CbssShaderFunction function);
+CBSS_API CbssStatus cbss_shader_builder_function_call(
+    CbssShaderBuilder *builder, CbssShaderFunction function,
+    const CbssShaderExpression *arguments, uint32_t argument_count,
+    CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_begin_for_int(
+    CbssShaderBuilder *builder, int32_t start, int32_t stop_exclusive,
+    int32_t step, CbssShaderLocal *output);
+CBSS_API CbssStatus cbss_shader_builder_begin_for_uint(
+    CbssShaderBuilder *builder, uint32_t start, uint32_t stop_exclusive,
+    uint32_t step, CbssShaderLocal *output);
+CBSS_API CbssStatus cbss_shader_builder_end_for(CbssShaderBuilder *builder);
+CBSS_API CbssStatus cbss_shader_builder_break(CbssShaderBuilder *builder);
+CBSS_API CbssStatus cbss_shader_builder_continue(CbssShaderBuilder *builder);
+CBSS_API CbssStatus cbss_shader_builder_ternary(
+    CbssShaderBuilder *builder, CbssShaderTernaryOperation operation,
+    CbssShaderExpression first, CbssShaderExpression second,
+    CbssShaderExpression third, CbssShaderExpression *output);
+CBSS_API CbssStatus cbss_shader_builder_set_position_output(
+    CbssShaderBuilder *builder, CbssShaderExpression expression);
+CBSS_API CbssStatus cbss_shader_builder_set_color_output(
+    CbssShaderBuilder *builder, CbssShaderExpression expression,
+    uint32_t index);
+CBSS_API CbssStatus cbss_shader_builder_set_varying_output(
+    CbssShaderBuilder *builder, CbssShaderInterfaceSlot slot,
+    CbssShaderExpression expression);
+CBSS_API CbssStatus cbss_shader_builder_emit(CbssShaderBuilder *builder);
+CBSS_API CbssStatus cbss_shader_builder_validate_graphics(
+    CbssShaderBuilder *vertex, CbssShaderBuilder *fragment);
+CBSS_API uint32_t cbss_shader_builder_source(
+    const CbssShaderBuilder *builder, char *buffer, uint32_t capacity);
+CBSS_API uint32_t cbss_shader_builder_varying_definitions(
+    const CbssShaderBuilder *builder, char *buffer, uint32_t capacity);
+
+/*
+ * Retained, UI-owned RGBA8/sRGB/straight-alpha pixels. Updates copy caller
+ * bytes into pending storage. publish makes all pending regions visible as one
+ * revision. source_stride is measured in bytes; zero selects width * 4.
+ */
+CBSS_API CbssStatus cbss_raster_surface_create(
+    uint32_t width, uint32_t height, const uint8_t *initial_rgba,
+    CbssRasterSurface **output);
+CBSS_API void cbss_raster_surface_destroy(CbssRasterSurface *surface);
+CBSS_API uint32_t cbss_raster_surface_width(
+    const CbssRasterSurface *surface);
+CBSS_API uint32_t cbss_raster_surface_height(
+    const CbssRasterSurface *surface);
+CBSS_API uint64_t cbss_raster_surface_revision(
+    const CbssRasterSurface *surface);
+CBSS_API CbssStatus cbss_raster_surface_update_region(
+    CbssRasterSurface *surface, CbssRasterRegion region,
+    const uint8_t *bytes, uint64_t byte_length, uint32_t source_stride);
+CBSS_API CbssStatus cbss_raster_surface_publish(
+    CbssRasterSurface *surface, uint64_t *output_revision);
+CBSS_API uint32_t cbss_raster_surface_dirty_region_count(
+    const CbssRasterSurface *surface);
+CBSS_API CbssStatus cbss_raster_surface_dirty_region_at(
+    const CbssRasterSurface *surface, uint32_t index,
+    CbssRasterRegion *output);
+
+CBSS_API CbssStatus cbss_style_set_custom_paint(
+    CbssStyle *style, const char *material, CbssCustomPaintStage stage,
+    const CbssCustomPaintParameterInput *parameters,
+    uint32_t parameter_count);
+/*
+ * Registration takes ownership of user_data on success only. Replacement,
+ * unregister, context reset, or context destruction invokes release_callback
+ * exactly once. A release callback must not re-enter the same context.
+ * Registration tokens are context-local and never reused.
+ */
+CBSS_API CbssStatus cbss_context_register_custom_paint_provider(
+    CbssContext *context, const char *material, uint32_t stages,
+    CbssCustomPaintProviderCallback callback,
+    CbssCustomPaintProviderReleaseCallback release_callback,
+    void *user_data, uint8_t replace,
+    CbssCustomPaintRegistration *output_registration);
+CBSS_API CbssStatus cbss_context_unregister_custom_paint_provider(
+    CbssContext *context, CbssCustomPaintRegistration registration);
+CBSS_API CbssStatus cbss_context_invalidate_custom_paint_material(
+    CbssContext *context, const char *material,
+    uint32_t *output_consumer_count);
+CBSS_API CbssStatus cbss_custom_paint_parameter(
+    CbssCustomPaintSink *sink, uint32_t index,
+    CbssCustomPaintParameter *output);
+CBSS_API uint32_t cbss_custom_paint_parameter_name(
+    CbssCustomPaintSink *sink, uint32_t index,
+    char *buffer, uint32_t capacity);
+CBSS_API CbssStatus cbss_custom_paint_sink_save(CbssCustomPaintSink *sink);
+CBSS_API CbssStatus cbss_custom_paint_sink_restore(CbssCustomPaintSink *sink);
+CBSS_API CbssStatus cbss_custom_paint_sink_transform(
+    CbssCustomPaintSink *sink, CbssAffineTransform transform);
+CBSS_API CbssStatus cbss_custom_paint_sink_push_clip(
+    CbssCustomPaintSink *sink, CbssRect bounds, float radius);
+CBSS_API CbssStatus cbss_custom_paint_sink_pop_clip(
+    CbssCustomPaintSink *sink);
+CBSS_API CbssStatus cbss_custom_paint_sink_begin_layer(
+    CbssCustomPaintSink *sink, CbssRect bounds, float opacity,
+    uint32_t composite_mode);
+CBSS_API CbssStatus cbss_custom_paint_sink_end_layer(
+    CbssCustomPaintSink *sink);
+CBSS_API CbssStatus cbss_custom_paint_sink_fill_rect(
+    CbssCustomPaintSink *sink, CbssRect bounds,
+    CbssColor color, float radius);
+CBSS_API CbssStatus cbss_custom_paint_sink_fill_linear_gradient(
+    CbssCustomPaintSink *sink, CbssRect bounds, float angle,
+    uint32_t interpolation_space, const CbssGradientStop *stops,
+    uint32_t stop_count, float radius);
+CBSS_API CbssStatus cbss_custom_paint_sink_stroke_rect(
+    CbssCustomPaintSink *sink, CbssRect bounds,
+    CbssColor color, float width, float radius);
+CBSS_API CbssStatus cbss_custom_paint_sink_stroke_path(
+    CbssCustomPaintSink *sink, const CbssPathSegment *segments,
+    uint32_t segment_count, CbssColor color, float width,
+    uint32_t line_cap, uint32_t line_join, float miter_limit);
+CBSS_API CbssStatus cbss_custom_paint_sink_stroke_path_dashed(
+    CbssCustomPaintSink *sink, const CbssPathSegment *segments,
+    uint32_t segment_count, CbssColor color, float width,
+    uint32_t line_cap, uint32_t line_join, float miter_limit,
+    const float *dash_values, uint32_t dash_count, float dash_offset);
+CBSS_API CbssStatus cbss_custom_paint_sink_fill_path(
+    CbssCustomPaintSink *sink, const CbssPathSegment *segments,
+    uint32_t segment_count, CbssColor color, uint32_t fill_rule);
+CBSS_API CbssStatus cbss_custom_paint_sink_draw_text(
+    CbssCustomPaintSink *sink, const char *text, float x, float y,
+    CbssColor color, const CbssTextStyle *style,
+    const char *font_family, float max_width, uint8_t has_max_width);
+CBSS_API CbssStatus cbss_custom_paint_sink_draw_image(
+    CbssCustomPaintSink *sink, const char *source,
+    CbssRect bounds, float opacity);
+CBSS_API CbssStatus cbss_custom_paint_sink_draw_raster_surface(
+    CbssCustomPaintSink *sink, CbssRasterSurface *raster_surface,
+    CbssRect bounds, float opacity);
 
 CBSS_API CbssStatus cbss_blob_create(
     const uint8_t *bytes, uint64_t length, const char *mime_type,
@@ -1134,6 +1620,16 @@ CBSS_API CbssStatus cbss_render_surface_canvas_stroke_path(
     const CbssPathSegment *segments, uint32_t segment_count,
     CbssColor color, float width, uint32_t line_cap,
     uint32_t line_join, float miter_limit);
+CBSS_API CbssStatus cbss_render_surface_canvas_stroke_path_dashed(
+    CbssContext *context, uint64_t surface,
+    const CbssPathSegment *segments, uint32_t segment_count,
+    CbssColor color, float width, uint32_t line_cap,
+    uint32_t line_join, float miter_limit,
+    const float *dash_values, uint32_t dash_count, float dash_offset);
+CBSS_API CbssStatus cbss_render_surface_canvas_fill_path(
+    CbssContext *context, uint64_t surface,
+    const CbssPathSegment *segments, uint32_t segment_count,
+    CbssColor color, uint32_t fill_rule);
 CBSS_API CbssStatus cbss_render_surface_canvas_draw_text(
     CbssContext *context, uint64_t surface, const char *text,
     float x, float y, CbssColor color, const CbssTextStyle *style,
@@ -1141,6 +1637,9 @@ CBSS_API CbssStatus cbss_render_surface_canvas_draw_text(
 CBSS_API CbssStatus cbss_render_surface_canvas_draw_image(
     CbssContext *context, uint64_t surface, const char *source,
     CbssRect bounds, float opacity);
+CBSS_API CbssStatus cbss_render_surface_canvas_draw_raster_surface(
+    CbssContext *context, uint64_t surface,
+    CbssRasterSurface *raster_surface, CbssRect bounds, float opacity);
 CBSS_API CbssStatus cbss_render_surface_canvas_commit(
     CbssContext *context, uint64_t surface, uint64_t *output_revision);
 CBSS_API CbssStatus cbss_context_set_pixel_scale(
@@ -1344,6 +1843,13 @@ CBSS_API uint32_t cbss_paint_command_path_segment_count(
 CBSS_API CbssStatus cbss_paint_command_path_segment(
     CbssContext *context, uint32_t command_index, uint32_t segment_index,
     CbssPathSegment *output);
+CBSS_API uint32_t cbss_paint_command_path_dash_count(
+    CbssContext *context, uint32_t index);
+CBSS_API CbssStatus cbss_paint_command_path_dash(
+    CbssContext *context, uint32_t command_index, uint32_t dash_index,
+    float *output);
+CBSS_API CbssStatus cbss_paint_command_path_dash_offset(
+    CbssContext *context, uint32_t index, float *output);
 CBSS_API CbssStatus cbss_paint_command_text_style(
     CbssContext *context, uint32_t index, CbssTextStyle *output);
 CBSS_API uint32_t cbss_paint_command_font_family(

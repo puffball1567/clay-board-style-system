@@ -169,19 +169,63 @@ The release ARC benchmark on the development machine measured:
 | flatten 1,000 transformed Canvas scopes | 0.566 ms average | <= 4 ms |
 | flatten 1,000 bounded Canvas layers | 0.382 ms average | <= 4 ms |
 | flatten a retained path with 1,000 cubic curves | 0.436 ms average | <= 12 ms |
+| fill a 256-edge path across 512 scanlines | 4.625 ms average | <= 20 ms |
+| repaint one retained 64px Canvas tile among 2,000 commands | 1.492 ms | <= 20 ms |
 
-`tests/perf/render_surface_benchmark.nim` enforces all five gates. The Canvas
+`tests/perf/render_surface_benchmark.nim` enforces these retained-rendering
+gates. The Canvas
 measurements cover display-list translation, transform-scope balancing, and
 transform visual-bounds resolution into canonical paint commands. The layer
 measurement covers bounded scope conversion and balancing; it does not include
 backend texture allocation or composition. The path
 measurement covers adaptive curve subdivision into backend-ready contours.
-None of these measurements includes backend rasterization or text shaping.
+The path-fill measurement covers four-sample scanline coverage generation and
+reused intersection storage; it excludes final backend pixel blending. The
+stroke path retains its fillable outline, including normalized dash geometry,
+at authoring time. Dash pattern entries and generated fragments are bounded so
+untrusted C ABI input cannot turn a redraw into unbounded geometry work.
+The
+other measurements do not include backend rasterization or text shaping.
 Memory instrumentation may compile the same workload with
 `-d:cbssMemoryCheck`; this keeps structural assertions and workload sizes but
 disables wall-clock gates that are not meaningful under Valgrind.
+
+The retained Canvas benchmark includes command comparison, transformed damage
+resolution, tile planning, clearing, and deterministic CPU replay. It asserts
+that one bounded command change dirties one tile rather than the full raster.
+The current comparison fallback still scans the retained command sequence;
+resolved bounds from the previous snapshot are retained so only the current
+command sequence resolves transforms and clips again. Backend raster work is
+tile-bounded, while indexed command mutation remains a
+later optimization before claiming end-to-end `O(dirty)` authoring cost.
+The SDL3 layered renderer consumes the same plan for its retained static
+texture. An identical static command stream causes no texture update; a bounded
+change clears and replays only its damage tiles. SDL3 performs at most eight
+disjoint damage passes per update and unions larger sparse sets into one
+conservative rectangle, preventing region-count multiplication of the retained
+command scan. This is a bounded replay policy, not yet an end-to-end `O(dirty)`
+command-selection claim.
 The release ARC memory-check build completed this workload under Valgrind with
 zero bytes retained at exit and zero reported memory errors.
+
+### Version 0.7 RasterSurface baseline (2026-08-28)
+
+RasterSurface publication is proportional to dirty bytes and bounded dirty
+metadata, not total surface area. The release ARC benchmark publishes 20,000
+independent one-pixel updates on both a 64 x 64 surface and a 4,096 x 4,096
+surface:
+
+| surface | 20,000 update + publish operations |
+| ---: | ---: |
+| 64 x 64 | 1.164 ms total |
+| 4,096 x 4,096 | 1.165 ms total |
+
+`tests/perf/render_surface_benchmark.nim` rejects a large-surface result that
+scales materially with total pixels. The benchmark covers owned patch copy,
+dirty-region publication, and committed-pixel update; SDL3 upload behavior is
+separately fixed by an integration test that requires one partial upload for a
+consecutive revision and a safe full upload after skipped revisions. Absolute
+times are machine-local; the structural near-equality is the release property.
 
 ### Version 0.5 validation gate
 

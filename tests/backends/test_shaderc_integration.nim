@@ -1,0 +1,368 @@
+import std/[os, tempfiles, unittest]
+
+import clay_board_style_system/build/gpu_shader_compiler
+import clay_board_style_system/paint/gpu_host_compositor
+import clay_board_style_system/runtime/[gpu_host, gpu_shader_builder,
+    gpu_shader_package, gpu_shader_records]
+import ../fixtures/gpu_wet_supply_compatibility
+
+proc vertexSource(): GpuShaderSource =
+  let builder = newGpuShaderBuilder(gssVertex, "shaderc-vertex")
+  let position = builder.vertexInput(gsisPosition, gsvtVec3)
+  let texCoord = builder.vertexInput(gsisTexCoord0, gsvtVec2)
+  builder.setPositionOutput(builder.construct(gsvtVec4, [
+    builder.swizzle(position, "x"),
+    builder.swizzle(position, "y"),
+    builder.swizzle(position, "z"),
+    builder.scalar(1'f32)
+  ]))
+  builder.setVaryingOutput(gsisTexCoord0, texCoord)
+  builder.emitGpuShaderSource()
+
+proc fragmentSource(): GpuShaderSource =
+  let builder = newGpuShaderBuilder(gssFragment, "shaderc-fragment")
+  let texCoord = builder.varyingInput(gsisTexCoord0, gsvtVec2)
+  let x = builder.swizzle(texCoord, "x")
+  builder.setColorOutput(builder.construct(gsvtVec4, [
+    x,
+    builder.scalar(0.25'f32),
+    builder.scalar(0.75'f32),
+    builder.scalar(1'f32)
+  ]))
+  builder.emitGpuShaderSource()
+
+proc computeSource(): GpuShaderSource =
+  let builder = newGpuShaderBuilder(gssCompute, "shaderc-compute")
+  builder.setComputeWorkGroupSize(64, 1, 1)
+  let input = builder.storageBuffer(
+    "b_input", 0, gsbfFloat32x4, gsaRead
+  )
+  let output = builder.storageBuffer(
+    "b_output", 1, gsbfFloat32x4, gsaWrite
+  )
+  let flags = builder.storageBuffer(
+    "b_flags", 2, gsbfUint32, gsaWrite
+  )
+  let index = builder.swizzle(builder.globalInvocationId(), "x")
+  let count = builder.unsignedInteger(1_000)
+  let outside = greaterThanOrEqual(index, count)
+  builder.beginIf(outside)
+  builder.returnFromCompute()
+  builder.endIf()
+  let wrapped = builder.binary(gsbModulo, index, count)
+  let value = builder.loadStorage(input, wrapped)
+  builder.storeStorage(
+    output,
+    index,
+    builder.selectValue(logicalNot(outside), value, value)
+  )
+  let active = builder.unsignedInteger(1)
+  let pinned = builder.unsignedInteger(2)
+  let packed = active.bitwiseOr(pinned).shiftLeft(builder.unsignedInteger(1))
+  let restored = packed.shiftRight(builder.unsignedInteger(1))
+  builder.storeStorage(
+    flags,
+    index,
+    restored.bitwiseAnd(builder.unsignedInteger(3)).bitwiseXor(
+      active.bitwiseNot()
+    )
+  )
+  builder.emitGpuShaderSource()
+
+proc storageImageSource(): GpuShaderSource =
+  let builder = newGpuShaderBuilder(gssCompute, "shaderc-storage-image")
+  builder.setComputeWorkGroupSize(8, 8, 1)
+  let output = builder.storageImage(
+    "i_output", 0, gtfRgba32F, gsaWrite
+  )
+  let coordinates = builder.convertValue(
+    gsvtIVec2,
+    builder.swizzle(builder.globalInvocationId(), "xy")
+  )
+  builder.storeStorageImage(
+    output,
+    coordinates,
+    builder.vector([0.125'f32, 0.25'f32, 0.5'f32, 1'f32])
+  )
+  builder.emitGpuShaderSource()
+
+proc packedRecordSource(): GpuShaderSource =
+  let layout = gpuPackedRecordLayout([
+    gpuPackedField("liquid", gsvtVec4),
+    gpuPackedField("material", gsvtVec4),
+    gpuPackedField("domainId", gsvtUint)
+  ], wordStride = 12)
+  let builder = newGpuShaderBuilder(gssCompute, "shaderc-packed-record")
+  builder.setComputeWorkGroupSize(64, 1, 1)
+  let cells = builder.packedRecordBuffer(
+    "b_cells", 0, layout, gsaReadWrite
+  )
+  let index = builder.swizzle(builder.globalInvocationId(), "x")
+  let liquid = cells.loadPackedField(index, "liquid")
+  let material = cells.loadPackedField(index, "material")
+  cells.storePackedField(index, "liquid", liquid + material)
+  cells.storePackedField(
+    index,
+    "domainId",
+    cells.loadPackedField(index, "domainId")
+  )
+  builder.emitGpuShaderSource()
+
+proc boundedLoopSource(): GpuShaderSource =
+  let builder = newGpuShaderBuilder(gssCompute, "shaderc-bounded-loops")
+  builder.setComputeWorkGroupSize(8, 1, 1)
+  let output = builder.storageBuffer(
+    "b_output", 0, gsbfInt32, gsaWrite
+  )
+  let accumulator = builder.localValue(builder.signedInteger(0))
+  let row = builder.beginForRange(-1'i32, 2'i32, 1'i32)
+  let column = builder.beginForRange(-1'i32, 2'i32, 1'i32)
+  builder.beginIf(equalTo(column.loadLocal(), builder.signedInteger(0)))
+  builder.continueLoop()
+  builder.endIf()
+  accumulator.storeLocal(
+    accumulator.loadLocal() + row.loadLocal() + column.loadLocal()
+  )
+  builder.beginIf(equalTo(accumulator.loadLocal(), builder.signedInteger(4)))
+  builder.breakLoop()
+  builder.endIf()
+  builder.endForRange()
+  builder.endForRange()
+  builder.storeStorage(
+    output,
+    builder.swizzle(builder.globalInvocationId(), "x"),
+    accumulator.loadLocal()
+  )
+  builder.emitGpuShaderSource()
+
+proc localArraySource(): GpuShaderSource =
+  let builder = newGpuShaderBuilder(gssCompute, "shaderc-local-array")
+  builder.setComputeWorkGroupSize(8, 1, 1)
+  let output = builder.storageBuffer(
+    "b_output", 0, gsbfUint32, gsaWrite
+  )
+  let candidates = builder.localArray(builder.unsignedInteger(0), 8)
+  let index = builder.beginForRange(0'u32, 8'u32, 1'u32)
+  let indexValue = index.loadLocal()
+  candidates.storeLocalArray(
+    indexValue,
+    indexValue + builder.unsignedInteger(1)
+  )
+  builder.endForRange()
+  builder.storeStorage(
+    output,
+    builder.swizzle(builder.globalInvocationId(), "x"),
+    candidates.loadLocalArray(builder.unsignedInteger(7))
+  )
+  builder.emitGpuShaderSource()
+
+let shaderc = getEnv("CBSS_SHADERC")
+let shaderIncludes = getEnv("CBSS_BGFX_SHADER_INCLUDE")
+if shaderc.len == 0 or shaderIncludes.len == 0:
+  stderr.writeLine(
+    "CBSS_SHADERC and CBSS_BGFX_SHADER_INCLUDE are required for this integration test"
+  )
+  quit(QuitFailure)
+
+suite "official bgfx shaderc integration":
+  test "compiles the standard direct compositor shaders for Vulkan":
+    let root = createTempDir("cbss-direct-compositor-shaderc-", "")
+    defer:
+      removeDir(root)
+
+    let vertex = gpuHostDirectCompositeVertexSource()
+    let fragment = gpuHostDirectCompositeFragmentSource()
+    validateGpuShaderInterface(vertex, fragment)
+    let config = gpuShaderCompilerConfig(
+      shaderc,
+      [shaderIncludes],
+      workDirectory = root
+    )
+    let target = gpuShaderCompileTarget(gsbtVulkan, gscpLinux, "spirv")
+
+    check compileGpuShader(vertex, target, config).artifact.bytecode.len > 0
+    check compileGpuShader(fragment, target, config).artifact.bytecode.len > 0
+
+  test "compiles generated graphics shaders and packages SPIR-V":
+    let root = createTempDir("cbss-shaderc-integration-", "")
+    defer:
+      removeDir(root)
+
+    let vertex = vertexSource()
+    let fragment = fragmentSource()
+    validateGpuShaderInterface(vertex, fragment)
+    let config = gpuShaderCompilerConfig(
+      shaderc,
+      [shaderIncludes],
+      workDirectory = root
+    )
+    let target = gpuShaderCompileTarget(
+      gsbtVulkan,
+      gscpLinux,
+      "spirv"
+    )
+
+    var vertexPackage = gpuShaderPackage(vertex)
+    discard vertexPackage.compileAndAddVariant(vertex, target, config)
+    var fragmentPackage = gpuShaderPackage(fragment)
+    discard fragmentPackage.compileAndAddVariant(fragment, target, config)
+
+    let encodedVertex = vertexPackage.encodeGpuShaderPackage()
+    let encodedFragment = fragmentPackage.encodeGpuShaderPackage()
+    check encodedVertex.decodeGpuShaderPackage().artifactFor(
+        gsbtVulkan).bytecode.len > 0
+    check encodedFragment.decodeGpuShaderPackage().artifactFor(
+        gsbtVulkan).bytecode.len > 0
+
+  test "compiles generated compute shader and packages SPIR-V":
+    let root = createTempDir("cbss-shaderc-compute-integration-", "")
+    defer:
+      removeDir(root)
+
+    let compute = computeSource()
+    let config = gpuShaderCompilerConfig(
+      shaderc,
+      [shaderIncludes],
+      workDirectory = root
+    )
+    let target = gpuShaderCompileTarget(
+      gsbtVulkan,
+      gscpLinux,
+      "spirv"
+    )
+
+    var package = gpuShaderPackage(compute)
+    discard package.compileAndAddVariant(compute, target, config)
+    let decoded = package.encodeGpuShaderPackage().decodeGpuShaderPackage()
+    check decoded.descriptor.stage == gssCompute
+    check decoded.artifactFor(gsbtVulkan).bytecode.len > 0
+
+  test "compiles typed storage-image compute output to SPIR-V":
+    let root = createTempDir("cbss-shaderc-storage-image-", "")
+    defer:
+      removeDir(root)
+
+    let compute = storageImageSource()
+    let config = gpuShaderCompilerConfig(
+      shaderc,
+      [shaderIncludes],
+      workDirectory = root
+    )
+    let target = gpuShaderCompileTarget(
+      gsbtVulkan,
+      gscpLinux,
+      "spirv"
+    )
+
+    let compiled = compileGpuShader(compute, target, config)
+    check compiled.artifact.bytecode.len > 0
+
+  test "compiles packed mixed-field records to SPIR-V":
+    let root = createTempDir("cbss-shaderc-packed-record-", "")
+    defer:
+      removeDir(root)
+
+    let compute = packedRecordSource()
+    let config = gpuShaderCompilerConfig(
+      shaderc,
+      [shaderIncludes],
+      workDirectory = root
+    )
+    let target = gpuShaderCompileTarget(
+      gsbtVulkan,
+      gscpLinux,
+      "spirv"
+    )
+
+    let compiled = compileGpuShader(compute, target, config)
+    check compiled.artifact.bytecode.len > 0
+
+  test "compiles bounded local control flow to SPIR-V":
+    let root = createTempDir("cbss-shaderc-bounded-loops-", "")
+    defer:
+      removeDir(root)
+
+    let compute = boundedLoopSource()
+    let config = gpuShaderCompilerConfig(
+      shaderc,
+      [shaderIncludes],
+      workDirectory = root
+    )
+    let target = gpuShaderCompileTarget(
+      gsbtVulkan,
+      gscpLinux,
+      "spirv"
+    )
+
+    let compiled = compileGpuShader(compute, target, config)
+    check compiled.artifact.bytecode.len > 0
+
+  test "compiles initialized fixed local arrays to SPIR-V":
+    let root = createTempDir("cbss-shaderc-local-array-", "")
+    defer:
+      removeDir(root)
+
+    let compute = localArraySource()
+    let config = gpuShaderCompilerConfig(
+      shaderc,
+      [shaderIncludes],
+      workDirectory = root
+    )
+    let target = gpuShaderCompileTarget(
+      gsbtVulkan,
+      gscpLinux,
+      "spirv"
+    )
+
+    let compiled = compileGpuShader(compute, target, config)
+    check compiled.artifact.bytecode.len > 0
+
+  test "compiles the wet-supply compatibility kernel to SPIR-V":
+    let root = createTempDir("cbss-shaderc-wet-supply-", "")
+    defer:
+      removeDir(root)
+
+    let compute = buildWetSupplyCompatibilityShader()
+    let config = gpuShaderCompilerConfig(
+      shaderc,
+      [shaderIncludes],
+      workDirectory = root
+    )
+    let target = gpuShaderCompileTarget(
+      gsbtVulkan,
+      gscpLinux,
+      "spirv"
+    )
+
+    let compiled = compileGpuShader(compute, target, config)
+    check compiled.artifact.bytecode.len > 0
+
+  test "compiles the Version 0.7 GPU showcase shaders for OpenGL":
+    let repoRoot = currentSourcePath().parentDir().parentDir().parentDir()
+    let sourceRoot = repoRoot / "examples/shaders/v07_gpu_showcase"
+    let root = createTempDir("cbss-v07-showcase-shaderc-", "")
+    defer:
+      removeDir(root)
+
+    let varying = readFile(sourceRoot / "varying.def.sc")
+    let config = gpuShaderCompilerConfig(
+      shaderc,
+      [shaderIncludes],
+      workDirectory = root
+    )
+    let target = gpuShaderCompileTarget(gsbtOpenGL, gscpLinux, "330")
+    let vertex = GpuShaderSource(
+      stage: gssVertex,
+      label: "v07-showcase-vertex",
+      source: readFile(sourceRoot / "vs_showcase.sc"),
+      varyingDefinitions: varying
+    )
+    let fragment = GpuShaderSource(
+      stage: gssFragment,
+      label: "v07-showcase-fragment",
+      source: readFile(sourceRoot / "fs_showcase.sc"),
+      varyingDefinitions: varying
+    )
+
+    check compileGpuShader(vertex, target, config).artifact.bytecode.len > 0
+    check compileGpuShader(fragment, target, config).artifact.bytecode.len > 0

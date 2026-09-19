@@ -1,0 +1,52 @@
+# GPU Surface Quality Matrix
+
+Status: `Deterministic contract coverage implemented; visible real-GPU coverage pending`
+
+This matrix is the release-quality contract for `GpuDirectSurface` and
+`GpuDisplaySurface`. A row is complete only when its normal, failure, and edge
+behavior is deterministic under ARC and ORC. Backend-neutral rows run in the
+ordinary test suite. Hardware rows run only in explicitly qualified real-GPU
+jobs and must not be replaced by a mock-only success.
+
+| Area | Normal cases | Failure cases | Edge cases | Coverage |
+| --- | --- | --- | --- | --- |
+| Configuration | defaults, 2 and 8 buffers, maximum texture size | zero dimensions, invalid buffer count, oversized label | exact label and texture limits | Automated |
+| Capability negotiation | Texture, RenderTarget, compute output, supported formats and alpha modes; explicit qualified bgfx profile reaches retained direct submission | missing feature, unsupported format or alpha mode, inconsistent backend/profile/compositor declaration; typed limitation reasons drive fallback | independent Texture/RenderTarget support; buffer limits 2 and 8; exact, exceeded, and combined direct-display limits | Automated |
+| Queueing | queue, complete, collect, acquire, release | duplicate resource, foreign namespace, wrong shape/format/usage/token | queue saturation and recovery | Automated |
+| Frame selection | ordered publication and latest-ready coalescing | incomplete frame cannot publish | thousands of monotonic revisions | Automated |
+| Lifetime | presented resources stay retained | write, destroy, namespace close, host close while retained | multiple leases and retirement after last release | Automated |
+| Shutdown | close an idle or completed surface | incomplete work and active leases block close | completed pending work closes without collect; repeated close is harmless | Automated |
+| Device loss | stale frames disappear and resources invalidate | stale generation cannot queue or acquire | loss with pending/presented resources | Automated mock; real GPU pending |
+| Direct compositor | all compositor statuses propagate; SDL normal, text and layered paths invoke the bridge; standard same-host draw accepts retained Texture and RenderTarget sources across producer/compositor namespaces; bgfx resolves both to sampled textures | callback exception releases lease; unretained source, duplicate stage, detached host, wrong provider, mismatched resource tag and invalid attachment fail closed | no active frame returns retry; rectangular clipping crops viewport and UV; nil compositor or submit, mismatched backend API; per-frame bounded status counters | Automated |
+| Native-window data | X11, Wayland, Win32 and Cocoa map to typed bgfx platform data | missing window or required display fails before bgfx initialization | display is optional only for Win32 and Cocoa; non-Wayland systems use the default bgfx handle type | Automated portable mapping on Linux, Windows and macOS; SDL3 acquisition compiled on configured Linux backend |
+| Readback fallback | R8, RGBA8 and BGRA8 paths | missing copy/readback support, unsupported float format | byte limit, label limit, dimension multiplication overflow | Automated |
+| UI integration | standalone, underlay and overlay layout/paint | foreign or invalid owner, closed surface | safety styles override injected pointer/z-index values | Automated |
+| Invalidation | completed frame invalidates paint owner | incomplete/failed collect does not invalidate | no style/layout invalidation | Automated |
+| Memory models | deterministic ownership and teardown | sanitizer/Valgrind failures are fatal | ARC and ORC | Automated CI |
+| Real compositor | visible direct Texture and RenderTarget through the same-host draw compositor | unsupported adapter falls back or fails closed | resize, DPI, opacity, clip and transform | Pending visible real-GPU qualification |
+| Hardware stress | sustained bounded presentation | device loss, cancellation, teardown races | multiple surfaces and GPU-memory pressure | Pending real-GPU CI |
+
+The primary executable matrix lives in
+`tests/runtime/test_gpu_host.nim`. The same test unit is included in ARC, ORC,
+ASan, UBSan, LSan, and Valgrind jobs where the toolchain supports them. The
+optional bgfx jobs additionally compile the adapter and run its NOOP resource
+integration. The test observes Texture and RenderTarget attachment resolution,
+callback metadata, rejection paths, and ARC/ORC teardown. NOOP validates backend
+calls and ownership, but it does not count as visible pixel conformance.
+
+## Real-GPU Release Gate
+
+The same-host draw path is implemented, but the production direct compositor is
+not complete until a qualified Linux GPU fixture proves all of the following:
+
+- one SDL window, one GPU device/queue, and one presentation owner;
+- direct Texture and RenderTarget output without CPU readback;
+- deterministic pixels for clip, opacity, transform, stacking, alpha mode,
+  resize, and DPI changes;
+- bounded double/triple buffering under producer pressure;
+- safe device loss, cancellation, namespace teardown, and shutdown ordering;
+- multiple independent display surfaces without cross-surface corruption; and
+- an explicit fallback or diagnostic for every unsupported capability.
+
+Hardware-specific failures must be reported separately from contract-test,
+compiler, linker, and sanitizer-runtime failures.

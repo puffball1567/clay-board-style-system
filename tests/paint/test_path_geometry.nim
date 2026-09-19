@@ -1,4 +1,4 @@
-import std/[math, unittest]
+import std/[math, sequtils, unittest]
 
 import clay_board_style_system
 
@@ -31,6 +31,102 @@ suite "retained path geometry":
     check coarse[0].points[^1] == vec2(40, 0)
     check fine[0].points.len > coarse[0].points.len
     check fine[0].points[^1] == vec2(40, 0)
+
+  test "arc and ellipse append bounded cubic geometry":
+    var path = initPath2D()
+    path.arc(vec2(10, 10), 8, 0, PI.float32 * 0.5'f32)
+    check path.segments.len == 2
+    check path.segments[0].kind == pskMoveTo
+    check path.segments[1].kind == pskCubicTo
+    check abs(path.segments[0].endpoint.x - 18) < 0.001
+    check abs(path.segments[0].endpoint.y - 10) < 0.001
+    check abs(path.segments[1].endpoint.x - 10) < 0.001
+    check abs(path.segments[1].endpoint.y - 18) < 0.001
+
+    var ellipsePath = initPath2D()
+    ellipsePath.ellipse(
+      vec2(20, 20), 10, 4, PI.float32 * 0.5'f32,
+      0, PI.float32 * 2.0'f32
+    )
+    check ellipsePath.segments.len == 5
+    check ellipsePath.segments[1 .. ^1].allIt(it.kind == pskCubicTo)
+    check ellipsePath.flattened(0.1).len == 1
+
+  test "arc direction connection and invalid input are deterministic":
+    var path = path2D([vec2(0, 0), vec2(1, 0)])
+    path.arc(
+      vec2(5, 5), 3, 0, PI.float32 * 0.5'f32,
+      counterClockwise = true
+    )
+    check path.segments[2].kind == pskLineTo
+    check path.segments[3 .. ^1].len == 3
+    check path.segments[3 .. ^1].allIt(it.kind == pskCubicTo)
+
+    let retained = path.segments
+    path.arc(vec2(0, 0), -1, 0, PI.float32)
+    path.ellipse(vec2(0, 0), 1, NaN.float32, 0, 0, PI.float32)
+    check path.segments == retained
+
+  test "stroke outlines preserve caps and closed fill contours":
+    let centerline = path2D([vec2(5, 5), vec2(11, 5)])
+    let butt = centerline.strokeOutline(4, slcButt)
+    let round = centerline.strokeOutline(4, slcRound)
+    let square = centerline.strokeOutline(4, slcSquare)
+
+    check butt.fillable
+    check round.fillable
+    check square.fillable
+    check abs(butt.bounds.x - 5) < 0.001
+    check abs(butt.bounds.w - 6) < 0.001
+    check round.bounds.x < 3.01
+    check round.bounds.x + round.bounds.w > 12.99
+    check square.bounds.x < 3.01
+    check square.bounds.x + square.bounds.w > 12.99
+    for contour in round.flattened():
+      check contour.closed
+
+  test "stroke outlines reject invalid widths and normalize invalid tolerance":
+    let centerline = path2D([vec2(2, 2), vec2(8, 2)])
+    check not centerline.strokeOutline(NaN.float32).fillable
+    check not centerline.strokeOutline(Inf.float32).fillable
+    check not centerline.strokeOutline(-1).fillable
+    check centerline.strokeOutline(2, tolerance = NaN.float32).fillable
+
+  test "dash patterns normalize and split retained stroke geometry":
+    check normalizeDashPattern([3.0'f32]) == @[3.0'f32, 3.0'f32]
+    check normalizeDashPattern([3.0'f32, 2.0'f32]) == @[3.0'f32, 2.0'f32]
+    check normalizeDashPattern([3.0'f32, -1.0'f32]).len == 0
+    check normalizeDashPattern([NaN.float32, 1.0'f32]).len == 0
+    check normalizeDashPattern([0.0'f32, 0.0'f32]).len == 0
+
+    let centerline = path2D([vec2(0, 0), vec2(20, 0)])
+    let outline = centerline.strokeOutline(2, dashPattern = [4.0'f32, 2.0'f32])
+    let contours = outline.flattened()
+    check contours.contains(vec2(2, 0))
+    check not contours.contains(vec2(5, 0))
+    check contours.contains(vec2(7, 0))
+
+    let offsetOutline = centerline.strokeOutline(
+      2, dashPattern = [4.0'f32, 2.0'f32], dashOffset = 2
+    )
+    check not offsetOutline.flattened().contains(vec2(3, 0))
+
+  test "closed dashed contours join across their retained seam":
+    let square = path2D([
+      vec2(0, 0), vec2(10, 0), vec2(10, 10), vec2(0, 10)
+    ], closed = true)
+    let outline = square.strokeOutline(
+      2, lineCap = slcRound, dashPattern = [12.0'f32, 4.0'f32]
+    )
+    check outline.fillable
+    check outline.flattened().contains(vec2(0, 1))
+
+  test "pathological dash complexity falls back to a bounded solid outline":
+    let centerline = path2D([vec2(0, 0), vec2(1_000_000, 0)])
+    let outline = centerline.strokeOutline(
+      2, dashPattern = [0.01'f32, 0.01'f32]
+    )
+    check outline.flattened().contains(vec2(500_000, 0))
 
   test "move commands split independent contours":
     var path = initPath2D()
@@ -73,3 +169,69 @@ suite "retained path geometry":
     check moved.segments[1].control2 == vec2(15, 26)
     check moved.segments[1].endpoint == vec2(17, 28)
     check moved.segments[^1].kind == pskClose
+
+  test "nonzero and evenodd rules distinguish same-direction contours":
+    var path = initPath2D()
+    for points in [
+      [vec2(0, 0), vec2(12, 0), vec2(12, 12), vec2(0, 12)],
+      [vec2(3, 3), vec2(9, 3), vec2(9, 9), vec2(3, 9)]
+    ]:
+      path.moveTo(points[0])
+      for index in 1 .. points.high:
+        path.lineTo(points[index])
+      path.closePath()
+    let contours = path.flattened()
+
+    check contours.contains(vec2(1, 1), pfrNonZero)
+    check contours.contains(vec2(6, 6), pfrNonZero)
+    check contours.contains(vec2(1, 1), pfrEvenOdd)
+    check not contours.contains(vec2(6, 6), pfrEvenOdd)
+
+  test "opposite contour winding cuts a nonzero hole":
+    var path = initPath2D()
+    path.moveTo(vec2(0, 0))
+    path.lineTo(vec2(12, 0))
+    path.lineTo(vec2(12, 12))
+    path.lineTo(vec2(0, 12))
+    path.closePath()
+    path.moveTo(vec2(3, 3))
+    path.lineTo(vec2(3, 9))
+    path.lineTo(vec2(9, 9))
+    path.lineTo(vec2(9, 3))
+    path.closePath()
+
+    check not path.flattened().contains(vec2(6, 6), pfrNonZero)
+
+  test "scanline coverage encodes stable antialias samples":
+    let path = path2D([
+      vec2(1, 1), vec2(3, 1), vec2(3, 3), vec2(1, 3)
+    ], closed = true)
+    var coverage: seq[uint8]
+
+    path.flattened().fillPathCoverageRow(
+      y = 1, xStart = 0, xEnd = 4, fillRule = pfrNonZero,
+      coverage = coverage
+    )
+
+    check coverage == @[0'u8, 15'u8, 15'u8, 0'u8]
+    check coverage[1].pathCoverageCount == 4
+    check pathCoverageCount(0b0101'u8) == 2
+
+  test "scanline coverage clears reused storage for empty and outside rows":
+    let path = path2D([
+      vec2(1, 1), vec2(3, 1), vec2(3, 3), vec2(1, 3)
+    ], closed = true)
+    let contours = path.flattened()
+    var coverage = @[255'u8, 255'u8]
+
+    contours.fillPathCoverageRow(
+      y = 8, xStart = 0, xEnd = 2, fillRule = pfrNonZero,
+      coverage = coverage
+    )
+    check coverage == @[0'u8, 0'u8]
+
+    contours.fillPathCoverageRow(
+      y = 0, xStart = 2, xEnd = 2, fillRule = pfrEvenOdd,
+      coverage = coverage
+    )
+    check coverage.len == 0

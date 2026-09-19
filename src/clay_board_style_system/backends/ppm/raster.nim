@@ -1,5 +1,6 @@
 import std/[math, options, sequtils]
-import ../../core/[color, computed_style, geometry, gradient_sampling]
+import ../../core/[color, computed_style, geometry, gradient_sampling,
+    raster_surface]
 import ../../paint/[paint_command, path_geometry]
 
 type
@@ -8,9 +9,13 @@ type
     pixels*: seq[uint8]
     alpha*: seq[uint8]
 
+  PpmClipShape = object
+    transformed: TransformedRect
+    radius: float32
+
   PpmClip = object
     bounds: Rect
-    shapes: seq[TransformedRect]
+    shapes: seq[PpmClipShape]
 
   PpmLinearGradientSampler = object
     dx, dy: float32
@@ -102,6 +107,14 @@ proc compositePixel(
       min(1.0'f32, destinationColor.b + sourceColor.b * sourceAlpha),
       destinationColor.a
     ))
+  of lcmDestinationIn:
+    let maskAlpha = clamp(sourceColor.a, 0.0'f32, 1.0'f32)
+    destination.storePixel(x, y, rgba(
+      destinationColor.r,
+      destinationColor.g,
+      destinationColor.b,
+      destinationColor.a * maskAlpha
+    ))
 
 proc intBounds(rect: Rect; width, height: int): tuple[x0, y0, x1, y1: int]
 proc intersect(a, b: Rect): Rect
@@ -137,6 +150,34 @@ proc intersect(a, b: Rect): Rect =
   let y1 = min(a.y + a.h, b.y + b.h)
   rect(x0, y0, max(0.0'f32, x1 - x0), max(0.0'f32, y1 - y0))
 
+proc contains(shape: PpmClipShape; point: Vec2): bool =
+  let transformed = shape.transformed
+  if not transformed.bounds.contains(point) or
+      transformed.inverseTransform.isNone:
+    return false
+  let local = transformed.inverseTransform.get.transformPoint(point)
+  let source = transformed.source
+  if not source.contains(local):
+    return false
+  let radius = min(
+    max(0.0'f32, shape.radius), min(source.w, source.h) * 0.5'f32
+  )
+  if radius <= 0 or
+      (local.x >= source.x + radius and
+       local.x < source.x + source.w - radius) or
+      (local.y >= source.y + radius and
+       local.y < source.y + source.h - radius):
+    return true
+  let centerX =
+    if local.x < source.x + radius: source.x + radius
+    else: source.x + source.w - radius
+  let centerY =
+    if local.y < source.y + radius: source.y + radius
+    else: source.y + source.h - radius
+  let dx = local.x - centerX
+  let dy = local.y - centerY
+  dx * dx + dy * dy <= radius * radius
+
 proc contains(clip: PpmClip; point: Vec2): bool =
   if not clip.bounds.contains(point):
     return false
@@ -145,12 +186,16 @@ proc contains(clip: PpmClip; point: Vec2): bool =
       return false
   true
 
-proc withShape(clip: PpmClip; shape: TransformedRect): PpmClip =
+proc withShape(
+    clip: PpmClip;
+    shape: TransformedRect;
+    radius = 0.0'f32
+): PpmClip =
   result.bounds = intersect(clip.bounds, shape.bounds)
-  result.shapes = newSeqOfCap[TransformedRect](clip.shapes.len + 1)
+  result.shapes = newSeqOfCap[PpmClipShape](clip.shapes.len + 1)
   for existing in clip.shapes:
     result.shapes.add existing
-  result.shapes.add shape
+  result.shapes.add PpmClipShape(transformed: shape, radius: radius)
 
 proc fillCircle(
     image: var RasterImage;
@@ -403,22 +448,121 @@ proc strokePolyline(
       image.fillCircle(normalized[0], radius, color, clip)
       image.fillCircle(normalized[^1], radius, color, clip)
 
+proc fillPath(
+    image: var RasterImage;
+    command: PaintCommand;
+    transform: Affine2D;
+    clip: PpmClip
+)
+
 proc strokePath(
     image: var RasterImage;
     command: PaintCommand;
+    transform: Affine2D;
     clip: PpmClip
 ) =
-  for contour in command.path.flattened():
-    image.strokePolyline(
-      contour.points,
-      command.pathColor,
-      command.pathWidth,
-      contour.closed,
-      command.pathLineCap,
-      command.pathLineJoin,
-      command.pathMiterLimit,
-      clip
+  image.fillPath(
+    PaintCommand(
+      kind: pcFillPath,
+      owner: command.owner,
+      fillPathValue: command.pathOutline,
+      fillPathColor: command.pathColor,
+      fillPathRule: pfrNonZero
+    ),
+    transform,
+    clip
+  )
+
+proc fillPath(
+    image: var RasterImage;
+    command: PaintCommand;
+    transform: Affine2D;
+    clip: PpmClip
+) =
+  let transformedPath = command.fillPathValue.transformed(transform)
+  let contours = transformedPath.flattened()
+  if contours.len == 0:
+    return
+  let pathBounds = transformedPath.bounds()
+  let bounds = intBounds(
+    intersect(pathBounds, clip.bounds), image.width, image.height
+  )
+  var rowCoverage: seq[uint8]
+  var fillScratch: PathFillScratch
+  for y in bounds.y0 ..< bounds.y1:
+    contours.fillPathCoverageRow(
+      y, bounds.x0, bounds.x1, command.fillPathRule, rowCoverage,
+      fillScratch
     )
+    for localX, pathMask in rowCoverage:
+      if pathMask > 0:
+        var clipMask = 0'u8
+        const offsets = [0.25'f32, 0.75'f32]
+        for offsetYIndex, offsetY in offsets:
+          for offsetXIndex, offsetX in offsets:
+            let sample = vec2(
+              (bounds.x0 + localX).float32 + offsetX,
+              y.float32 + offsetY
+            )
+            if clip.contains(sample):
+              clipMask = clipMask or
+                (1'u8 shl (offsetYIndex * offsets.len + offsetXIndex))
+        let covered = pathCoverageCount(pathMask and clipMask)
+        if covered > 0:
+          let coverage = covered.float32 * 0.25'f32
+          image.putPixel(
+            bounds.x0 + localX, y,
+            rgba(
+              command.fillPathColor.r,
+              command.fillPathColor.g,
+              command.fillPathColor.b,
+              command.fillPathColor.a * coverage
+            )
+          )
+
+proc rasterPixelColor(surface: RasterSurface; x, y: int; opacity: float32): Color =
+  let offset = (y * surface.width + x) * RasterBytesPerPixel
+  let pixels = surface.pixels
+  rgba(
+    pixels[offset].float32 / 255.0'f32,
+    pixels[offset + 1].float32 / 255.0'f32,
+    pixels[offset + 2].float32 / 255.0'f32,
+    pixels[offset + 3].float32 / 255.0'f32 * opacity
+  )
+
+proc drawRasterSurface(
+    image: var RasterImage;
+    command: PaintCommand;
+    transform: Affine2D;
+    clip: PpmClip
+) =
+  let surface = command.rasterSurface
+  if surface.isNil or command.rasterRect.isEmpty or command.rasterOpacity <= 0:
+    return
+  let shape = transformedRect(command.rasterRect, transform)
+  if shape.inverseTransform.isNone:
+    return
+  let bounds = intBounds(
+    intersect(shape.bounds, clip.bounds), image.width, image.height
+  )
+  let opacity = clamp(command.rasterOpacity, 0.0'f32, 1.0'f32)
+  for y in bounds.y0 ..< bounds.y1:
+    for x in bounds.x0 ..< bounds.x1:
+      let destination = vec2(x.float32 + 0.5'f32, y.float32 + 0.5'f32)
+      if not clip.contains(destination):
+        continue
+      let local = shape.inverseTransform.get.transformPoint(destination)
+      if not command.rasterRect.contains(local):
+        continue
+      let u = (local.x - command.rasterRect.x) / command.rasterRect.w
+      let v = (local.y - command.rasterRect.y) / command.rasterRect.h
+      let sourceX = clamp(
+        floor(u * surface.width.float32).int, 0, surface.width - 1
+      )
+      let sourceY = clamp(
+        floor(v * surface.height.float32).int, 0, surface.height - 1
+      )
+      image.putPixel(x, y, surface.rasterPixelColor(sourceX, sourceY, opacity))
 
 proc prepareLinearGradient(rect: Rect; gradient: LinearGradient): PpmLinearGradientSampler =
   let radians = (gradient.angle - 90.0'f32) * PI / 180.0'f32
@@ -502,11 +646,35 @@ proc fillLinearGradient(
       if sample.isSome:
         image.putPixel(x, y, sampler.colorAt(sample.get))
 
-proc render*(commands: openArray[PaintCommand]; width, height: int; background = rgb(1, 1, 1)): RasterImage =
-  var targets = @[initRasterImage(width, height, background)]
+proc clearRegion(image: var RasterImage; bounds: Rect; background: Color) =
+  let pixels = intBounds(bounds, image.width, image.height)
+  for y in pixels.y0 ..< pixels.y1:
+    for x in pixels.x0 ..< pixels.x1:
+      image.storePixel(x, y, background)
+
+proc renderInto*(
+    image: var RasterImage;
+    commands: openArray[PaintCommand];
+    damage: Rect;
+    background = rgb(1, 1, 1)
+) =
+  ## Replays a command list only inside `damage`, preserving every pixel
+  ## outside it. This is the deterministic reference path used by retained
+  ## dirty-tile backends.
+  if image.width <= 0 or image.height <= 0 or
+      image.pixels.len != image.width * image.height * 3 or
+      image.alpha.len != image.width * image.height:
+    raise newException(ValueError, "raster target storage is invalid")
+  let clippedDamage = damage.intersection(
+    rect(0, 0, image.width.float32, image.height.float32)
+  )
+  if clippedDamage.isEmpty:
+    return
+  image.clearRegion(clippedDamage, background)
+  var targets = @[image]
   var layers: seq[PpmLayer]
   var clipStack = @[
-    PpmClip(bounds: rect(0, 0, width.float32, height.float32))
+    PpmClip(bounds: clippedDamage)
   ]
   var transformStack = @[identityAffine2D()]
   for command in commands:
@@ -524,7 +692,9 @@ proc render*(commands: openArray[PaintCommand]; width, height: int; background =
         compositeMode: command.layerCompositeMode,
         clipDepth: clipStack.len
       )
-      targets.add initRasterImage(width, height, rgba(0, 0, 0, 0))
+      targets.add initRasterImage(
+        image.width, image.height, rgba(0, 0, 0, 0)
+      )
       clipStack.add clipStack[^1].withShape(
         transformedRect(command.layerBounds, transformStack[^1])
       )
@@ -536,7 +706,8 @@ proc render*(commands: openArray[PaintCommand]; width, height: int; background =
         targets[^1].compositeLayer(source, layer, clipStack[^1])
     of pcPushClip:
       clipStack.add clipStack[^1].withShape(
-        transformedRect(command.clipRect, transformStack[^1])
+        transformedRect(command.clipRect, transformStack[^1]),
+        command.clipRadius
       )
     of pcPopClip:
       if clipStack.len > 1:
@@ -574,22 +745,33 @@ proc render*(commands: openArray[PaintCommand]; width, height: int; background =
         command.strokeWidth * transformStack[^1].strokeScale,
         true, slcButt, sljMiter, 10, clipStack[^1]
       )
+    of pcFillPath:
+      targets[^1].fillPath(command, transformStack[^1], clipStack[^1])
     of pcStrokePath:
-      var transformedCommand = command
-      transformedCommand.path = command.path.transformed(transformStack[^1])
-      transformedCommand.pathWidth = command.pathWidth * transformStack[^1].strokeScale
-      targets[^1].strokePath(transformedCommand, clipStack[^1])
+      targets[^1].strokePath(command, transformStack[^1], clipStack[^1])
     of pcDrawText:
       discard
     of pcDrawImage:
       discard
+    of pcDrawRasterSurface:
+      targets[^1].drawRasterSurface(
+        command, transformStack[^1], clipStack[^1]
+      )
+    of pcDrawGpuDirectSurface:
+      discard # The deterministic CPU backend has no compatible GPU device.
 
   while layers.len > 0 and targets.len > 1:
     let source = targets.pop()
     let layer = layers.pop()
     clipStack.setLen(max(1, layer.clipDepth))
     targets[^1].compositeLayer(source, layer, clipStack[^1])
-  result = targets[0]
+  image = move(targets[0])
+
+proc render*(commands: openArray[PaintCommand]; width, height: int; background = rgb(1, 1, 1)): RasterImage =
+  result = initRasterImage(width, height, background)
+  result.renderInto(
+    commands, rect(0, 0, width.float32, height.float32), background
+  )
 
 proc writePpm*(image: RasterImage; path: string) =
   var content = "P6\n" & $image.width & " " & $image.height & "\n255\n"

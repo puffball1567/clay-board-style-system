@@ -115,6 +115,49 @@ The first `CanvasContext` should cover the common 2D substrate:
 - Transforms, save/restore state, clipping, alpha, and blend modes.
 - Texture-backed offscreen surfaces for cached layers and composition.
 
+### Retained Raster Surface
+
+Status: `Version 0.7 release gate; retained RGBA8 core, Canvas composition,
+headless rendering, SDL3 partial uploads, and C ABI implemented`
+
+CBSS provides a first-class `RasterSurface` for drawing engines, image
+editors, progressive decoders, generated imagery, and other producers that
+already own pixels in memory. It is not an encoded-image loader and does not
+require callers to rebuild a Canvas display list for every changed pixel.
+
+The initial public contract provides:
+
+- explicit dimensions, RGBA8 format, color-space and alpha-mode declarations,
+  and checked allocation limits;
+- rectangular pixel updates with destination coordinates, width, height,
+  source stride, byte length, and overflow-safe bounds validation;
+- explicit publication by monotonically increasing revision, with dirty
+  rectangles merged or bounded before renderer work is scheduled;
+- copy-in or otherwise explicitly owned update data so a caller cannot mutate
+  bytes while the UI thread or renderer consumes them;
+- composition in a normal Canvas or Box content region with the same clip,
+  opacity, transform, stacking, DPI, visibility, and local-input rules as
+  other retained surfaces;
+- SDL3 texture caching with partial texture uploads where the backend supports
+  them, plus a bounded full-upload fallback and deterministic headless output;
+- resize, replacement, unmount, renderer loss/recovery, ARC/ORC lifetime, and
+  C ABI ownership rules; and
+- performance and memory tests proving that a small dirty update is
+  proportional to the changed region and does not resolve Style, recompute
+  layout, rebuild unrelated paint commands, or retain an unbounded update
+  history.
+
+Worker threads may prepare immutable pixel blocks, but publication and surface
+lifecycle changes cross the existing UI-thread queue. The surface does not
+grant file access, borrow arbitrary application memory indefinitely, or infer
+pixel ownership from a raw pointer.
+
+This surface is the minimum efficient display boundary for a desktop drawing
+application. Existing mouse and pen events can drive strokes in Version 0.7;
+the multi-touch gestures, gesture arbitration, and palm rejection planned for
+Version 0.9 improve touch-tablet workflows but are not prerequisites for
+mouse- or pen-driven drawing.
+
 Sprites and tile maps are first-class Canvas drawing targets. They are not a
 second layout system: a `SpriteAnimation` or `TileMap` lives inside a resolved
 CBSS box and inherits its clipping, opacity, transform, stacking, hit routing,
@@ -161,6 +204,23 @@ CPU effect work follows retained invalidation:
 - continuous regeneration is explicit and active only while requested; and
 - application policy may restrict quality, cache memory, or dynamic effects
   for embedded Linux deployments.
+
+The deterministic CPU reference backend now implements this contract for
+bounded retained commands. A fixed-size, allocation-bounded tile grid maps old
+and new visual bounds through transforms and clips, merges adjacent tile runs,
+and replays only dirty regions into the existing raster image. Published
+`RasterSurface` source dirt is scaled into its destination rather than
+invalidating the full image placement. Scope or text-bound changes that cannot
+yet be bounded conservatively fall back to a full repaint. SDL3 now consumes
+the same planner in its retained static texture: unchanged commands perform no
+texture update, bounded changes clear and replay only affected tiles, and
+resize, background, scope, or unbounded text changes repaint the complete
+texture. RasterSurface dirty revisions preserve their destination mapping on
+both backends. To bound command replay under sparse adversarial damage, SDL3
+uses at most eight disjoint passes and conservatively unions larger region
+sets. Command comparison still scans the retained command sequence, so this
+closes bounded backend pixel work rather than the later indexed `O(dirty)`
+authoring goal.
 
 No rasterizer-internal type or owning object crosses the C ABI. Foreign callers
 select CBSS capabilities and policies through CBSS-owned versioned API, while
@@ -286,7 +346,13 @@ closure for the standard CPU/SDL 2D profile and the target's full profile.
 
 ## Phase 3: bgfx GPU Canvas Capability
 
-Status: `Planned`
+Status: `In progress; GpuHost ownership, budget accounting, mapped static and
+dynamic Texture with checked partial updates, Buffer, owned color RenderTarget,
+precompiled Shader, typed Uniform and
+Sampler resources, sampled-texture and compute storage-image bindings,
+dependency-safe Graphics and Compute Pipeline resources, bounded Draw/Dispatch
+submission, typed texture copy, asynchronous readback, and the optional bgfxim
+lifecycle adapter are implemented`
 
 bgfx provides portable graphics and compute primitives across the GPU APIs
 selected for each target. CBSS exposes it as an optional capability of the
@@ -318,22 +384,118 @@ Constraints:
   the Canvas interior, avoiding a second renderer-specific interpretation of
   normal CBSS properties.
 
+### GPU-Backed Controls
+
+A GPU-rendered Button, switch, chart control, or third-party widget remains an
+ordinary CBSS component. Its Box owns layout, clipping, hit testing, focus,
+disabled state, keyboard activation, accessibility semantics, and public event
+handlers. The GPU capability may supply a bounded underlay, overlay, mask, or
+post-process layer, but it must not create a second GPU-only control hierarchy.
+This preserves behavior and testability when the effect is disabled or the GPU
+profile is unavailable.
+
+The first public part of this contract is implemented as `gpuVisualLayer`.
+`gvlUnderlay` and `gvlOverlay` attach a `GpuCanvasSurface` to any existing
+component owner. CBSS fixes the layer to the owner's bounds, removes it from
+pointer and accessibility targeting, preserves component-owned semantics, and
+invalidates only the visual layer when a completed GPU frame is published.
+Mask and post-process stages remain later work.
+
+Version 0.7 visual acceptance includes multiple independent scenes rather than
+one backend probe:
+
+- a pop motion scene with hearts, stars, layered color, and GPU-accented
+  controls;
+- a realistic fluid scene exercising compute, ping-pong textures, and bounded
+  composition; and
+- a realistic mechanical scene with robot armor plates, screws, seams, surface
+  wear, and emissive details.
+
+These are release acceptance targets, not bundled application widgets. Each
+scene must use the same public Canvas, resource, and component contracts that a
+third-party library can use.
+
 The bgfx binding is an independent low-level Nim package and is linked only by
 the selected GPU profile. A later wgpu-native or other provider may implement
 the same Canvas composition, input, resource, and lifecycle contract, but it
 is not a prerequisite for this roadmap and must not change the canonical
 renderer for ordinary CBSS UI.
 
-### WGSL-Backed Custom Style Painting
+The first implementation slices provide a versioned backend-neutral `GpuHost`,
+owned and borrowed attachment, ordered frame tokens, resize and device-loss
+state, and generation-checked resource namespaces with explicit budgets. The
+`cbssGpuBgfx` adapter uses `bgfxim` for the corresponding bgfx lifecycle and
+rejects a second attached bgfx host. Backend-neutral Texture, static/dynamic
+Buffer, owned single-color RenderTarget, precompiled Shader, and typed Graphics
+and Compute Pipeline descriptors now map to real bgfx resources with bounded
+updates and deterministic destruction. Pipelines retain same-namespace,
+stage-correct shader dependencies and prevent early stage destruction.
+Typed graphics passes and compute dispatches validate target bounds, scissors,
+color formats, layouts, buffer ranges, pipeline kind, namespace, generation,
+work budget, and a host-reserved view-ID range before reaching bgfx. Batched
+draw commands share one ordered view and `endGpuFrame` remains the only Present
+boundary. View target, viewport, scissor, and clear configuration is performed
+once per graphics pass rather than once per draw.
+Render-target and texture output can now be copied into a dedicated CPU-only
+readback texture and collected through a bounded asynchronous handle without
+exposing bgfx resources. The host retains destination memory and the source
+dependency until the caller takes the completed result; namespace closure,
+borrowed-host detach, device loss, and frame budgets have explicit behavior.
+Namespace owners can register deterministic restoration handlers. Old
+generation handles never revive, failed handlers have their partial resources
+rolled back, and successful owners remain available independently.
+This establishes the portable `GPU -> RasterSurface` transfer boundary used by
+the first GPU Canvas path. `GpuCanvasSurface` now composes that boundary into a
+normal retained surface with a bounded asynchronous readback ring, ordered
+collection, latest-frame coalescing, backpressure, and explicit R8/RGBA8/BGRA8
+plus alpha-mode normalization. `gpuVisualLayer` additionally attaches this
+surface as a bounded underlay or overlay of an ordinary component without
+duplicating input or semantic ownership. The backend-neutral direct
+Texture/RenderTarget queue, retention, paint command, and readback fallback are
+also implemented. `GpuRasterTexture` provides the opposite CPU-to-GPU boundary:
+it keeps one dynamic Texture mapped to a retained `RasterSurface`, uploads
+consecutive dirty revisions by region, and falls back to one full upload when a
+consumer skips revisions or exceeds its configured region bound. Dynamic
+vertex, index, storage-buffer, and texture updates accept synchronously consumed
+borrowed byte spans, allowing staging-buffer slices to cross the host boundary
+without a second application-side allocation. Portable
+native-window conversion and SDL3 handoff are implemented as well. A
+renderer-facing direct-composition context now distinguishes final-window and
+offscreen targets and carries target bounds, effective clip, rounded-mask
+requirements, and pixel scale without exposing a backend target handle. Typed
+compositor capabilities fail closed before frame acquisition when any of these
+target constraints are unsupported, then reject unsupported source provider,
+Texture/RenderTarget kind, format, alpha mode, or dimensions before backend
+handle resolution. Host-level Surface negotiation now exposes and checks the
+same alpha-mode and dimension limits before choosing direct presentation. The
+bgfx helper requires source-kind, format, alpha-mode, and dimension coverage to
+exactly match its qualified direct-presentation profile, preventing the host
+from advertising a path the compositor cannot draw. The standard same-host
+compositor now consumes final-window contexts, resolves retained Texture and
+RenderTarget sources without readback, crops rectangular clips through viewport
+and UV coordinates, and submits inside the presentation owner's active frame.
+Rounded masks, offscreen targets, and visible real-GPU conformance remain
+release gates below. An owned bgfx adapter now
+recreates its runtime from the latest validated host configuration before
+namespace restoration. A borrowed adapter continues to fail closed because
+only its external owner may recreate and reattach that runtime.
 
-Status: `Deferred adapter-specific design; not a bgfx release gate`
+Direct Surface negotiation also returns a fixed set of typed limitations for
+host availability, path, format, alpha, buffering, dimensions, texture limits,
+and compute output. This gives adapters and applications deterministic fallback
+policy without treating human-readable backend errors as control flow.
 
-The primary intended use of WGSL in ordinary CBSS UI is not to reimplement the
-layout engine, text stack, or every control on the GPU. CBSS first resolves
+### Typed Shader Custom Style Painting
+
+Status: `Typed authoring and underlay/overlay/mask composition implemented;
+filter composition remains Version 0.7 work`
+
+The primary intended use of shaders in ordinary CBSS UI is not to reimplement
+the layout engine, text stack, or every control on the GPU. CBSS first resolves
 Style, layout, text, and ordinary paint through its CPU-owned pipeline. A
-selected Box or retained layer can then use WGSL to paint beneath that result,
-paint over it, or process the CPU-rendered pixels as an input texture before
-CBSS performs final composition.
+selected Box or retained layer can then use a typed, packaged shader to paint
+beneath that result, paint over it, or process the CPU-rendered pixels as an
+input texture before CBSS performs final composition.
 
 ```text
 CBSS Style / component tree
@@ -344,10 +506,10 @@ CPU style, layout, text shaping, paint generation
           v
 bounded retained element/layer texture
           |
-          +--> WGSL underlay
+          +--> typed shader underlay
           +--> CPU-rendered content
-          +--> WGSL overlay
-          `--> WGSL post-process/filter
+          +--> typed shader overlay
+          `--> typed shader post-process/filter
                          |
                          v
               CBSS clip, opacity, transform,
@@ -358,7 +520,7 @@ This makes effects such as a moving liquid surface on a Button, animated light
 over static text, refraction of a baked panel, procedural borders, generated
 backgrounds, masks, and local color processing possible without making those
 elements separate GPU-only widgets. A later GPU profile may therefore let a
-normal CBSS Style reference a typed, registered WGSL material. The Style stores
+normal CBSS Style reference a typed, registered material. The Style stores
 a stable material identifier and typed parameters, not a backend device,
 pipeline, raw native handle, or unvalidated shader string. Style resolution and
 layout remain backend-neutral; the material executes only after CBSS has
@@ -366,13 +528,14 @@ produced the element's layout and paint placement.
 
 The public authoring unit remains `UiStyle`. A "custom Style" is an ordinary,
 mergeable `UiStyle` exported by a Nim library, with one or more typed custom
-paint declarations that reference packaged WGSL resources. It is not a second
-style system and does not require application code to manage a GPU pipeline.
+paint declarations that reference packaged Shader Builder artifacts. It is not
+a second style system and does not require application code to manage a GPU
+pipeline.
 
 ```nim
 proc liquidButtonStyle*(): UiStyle =
-  let liquid = wgslPaint(
-    shader = wgslResource("liquid-button"),
+  let liquid = gpuPaint(
+    shader = shaderResource("liquid-button"),
     fallback = linearGradient(...),
     effectOutset = px(8)
   )
@@ -388,29 +551,29 @@ button.applyStyle(liquidButtonStyle())
 
 Custom paint declarations participate in the existing Style merge, component
 DI, replacement, state-style, invalidation, and ownership rules. A component
-library can therefore package a WGSL-backed visual language and consumers use
+library can therefore package a shader-backed visual language and consumers use
 it in the same way as any other imported Style. Shader identity, typed uniform
 schema, fallback, paint stage, effect bounds, frame policy, and required GPU
 capabilities are part of the declaration; backend objects are not.
 
 Provisional paint stages are:
 
-- `underlay`: run WGSL before ordinary CPU content, within the element's
+- `underlay`: run the shader before ordinary CPU content, within the element's
   background/effect bounds;
-- `overlay`: preserve the CPU-rendered content and paint WGSL output over it;
+- `overlay`: preserve the CPU-rendered content and paint shader output over it;
 - `filter`: provide the CPU-rendered element/layer as a sampled input texture
   and replace it with the shader result; and
-- `mask`: use bounded WGSL output to control the final alpha of the retained
+- `mask`: use bounded shader output to control the final alpha of the retained
   layer.
 
 The execution and caching contract is:
 
-- One presentation owner performs the final frame. When WGSL participates, CPU
-  raster output is uploaded or updated as a bounded texture; a second renderer
-  does not independently present the same window.
+- One presentation owner performs the final frame. When a shader participates,
+  CPU raster output is uploaded or updated as a bounded texture; a second
+  renderer does not independently present the same window.
 - CPU content is rerasterized and reuploaded only when its paint revision,
   logical size, pixel scale, clip source, or required color context changes.
-  Time-only WGSL animation reuses the retained CPU texture and must not rerun
+  Time-only shader animation reuses the retained CPU texture and must not rerun
   style resolution, layout, text shaping, or ordinary CPU paint each frame.
 - A static shader result is cacheable after its source texture, uniforms, size,
   and output context stop changing. An animated shader requests frames only
@@ -427,19 +590,32 @@ The execution and caching contract is:
   element state, resolved colors, and explicitly registered images or textures.
   They do not expose mutable `UiRoot`, backend ownership, arbitrary filesystem
   access, or application memory.
-- If the selected profile cannot execute WGSL, the material uses its declared
-  standard Style/CPU fallback or reports a capability error according to its
-  policy. It must not leave the element blank without a diagnostic.
+- If the selected profile cannot execute the packaged artifact, the material
+  uses its declared standard Style/CPU fallback or reports a capability error
+  according to its policy. It must not leave the element blank without a
+  diagnostic.
 
-The initial implementation should prove a bounded overlay first: bake one
-ordinary CPU-rendered Button or panel, upload it when dirty, animate a WGSL
-surface effect above it, preserve the existing Box hit region and accessibility
-semantics, and return to idle when the effect stops. Filter, mask, visual-shape
-hit testing, and arbitrary scene picking remain later layers on the same
-contract.
+The implemented slices provide bounded GPU Canvas output, the existing
+`gpuVisualLayer` attachment, and declarative named `customPaint` underlay,
+overlay, and alpha-mask stages. A normal Box can now consume CPU or
+GPU-produced paint without adding a second layout, input, focus, or
+accessibility node. Registrations are generation-checked, command streams are
+bounded by the owner's clip, and missing or malformed materials fail closed
+with bounded diagnostics. Typed,
+bounded `float32`, `int64`, `bool`, `vec2`, `vec4`, and color material
+parameters now travel from immutable Style declarations to paint callbacks
+without per-frame string parsing or hot-layout growth. The typed Shader Builder
+emits deterministic bgfx source at build time and its compiled
+artifact uses the same retained Pipeline contract as low-level GPU submission.
+A build-only wrapper invokes the official `shaderc` without shell evaluation,
+and bounded checksummed packages retain unique target variants for runtime
+selection. Retained-layer filter composition, production mapping from
+typed parameters to backend bindings, visual-shape hit testing, and arbitrary
+scene picking remain later layers on the same contract. See
+[Custom Paint](custom-paint.md) for the current public API and failure rules.
 
 This bounded Custom Style path is the scope of the design above. It ends at
-declaratively attaching packaged WGSL paint to an ordinary CPU-defined CBSS
+declaratively attaching packaged shader paint to an ordinary CPU-defined CBSS
 element and composing the result correctly. It does not require shader-derived
 layout, GPU-derived accessibility geometry, or visual-shape event targeting.
 

@@ -960,6 +960,58 @@ suite "input events":
 
     check seen == @[iekGotPointerCapture, iekPointerMove, iekLostPointerCapture]
 
+  test "pointer up outside the captured target releases without clicking":
+    var tree = initTree()
+    let root = tree.addBox(id = "root")
+    let captured = tree.addBox(parent = some(root), id = "captured")
+    let other = tree.addBox(parent = some(root), id = "other")
+    let regions = @[
+      HitRegion(node: root, rect: rect(0, 0, 140, 40), zIndex: 0),
+      HitRegion(node: captured, rect: rect(10, 8, 40, 20), zIndex: 1),
+      HitRegion(node: other, rect: rect(70, 8, 40, 20), zIndex: 1)
+    ]
+    var state = initInteractionState()
+
+    discard state.processInput(tree, regions, pointerDownEvent(vec2(20, 10)))
+    discard state.capturePointer(captured)
+    let released = state.processInput(
+      tree, regions, pointerUpEvent(vec2(80, 10))
+    )
+
+    let pointerUp = released.filterIt(it.event.kind == iekPointerUp)
+    check pointerUp.len == 1
+    check pointerUp[0].target == some(captured)
+    check pointerUp[0].local == some(vec2(70, 2))
+    check released.allIt(it.event.kind != iekClick)
+    check released.anyIt(it.event.kind == iekLostPointerCapture)
+    check state.pointerCaptureTarget.isNone
+    check state.pressedTarget.isNone
+
+    let afterRelease = state.processInput(
+      tree, regions, pointerMoveEvent(vec2(80, 10))
+    )
+    check afterRelease[^1].target == some(other)
+
+  test "pointer up inside the captured target clicks then releases":
+    var tree = initTree()
+    let root = tree.addBox(id = "root")
+    let captured = tree.addBox(parent = some(root), id = "captured")
+    let regions = @[
+      HitRegion(node: root, rect: rect(0, 0, 100, 40), zIndex: 0),
+      HitRegion(node: captured, rect: rect(10, 8, 40, 20), zIndex: 1)
+    ]
+    var state = initInteractionState()
+
+    discard state.processInput(tree, regions, pointerDownEvent(vec2(20, 10)))
+    discard state.capturePointer(captured)
+    let released = state.processInput(
+      tree, regions, pointerUpEvent(vec2(30, 10))
+    )
+
+    check released.anyIt(it.event.kind == iekClick)
+    check released[^1].event.kind == iekLostPointerCapture
+    check state.pointerCaptureTarget.isNone
+
   test "touch input drives pointer compatible handlers":
     var tree = initTree()
     let root = tree.addBox(id = "root")

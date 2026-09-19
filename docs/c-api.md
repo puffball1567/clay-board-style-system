@@ -30,7 +30,7 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x00010019` supports:
+ABI version `0x00010026` supports:
 
 - machine-readable Craft Driver contract metadata and runtime capability
   negotiation through stable numeric identifiers before tree construction;
@@ -39,6 +39,38 @@ ABI version `0x00010019` supports:
   at the call boundary and no Nim-managed string escapes the ABI;
 - public Craft Style Slot exposure, bounded atomic Craft Style replacement,
   active Style queries, and structured parse/replacement diagnostics;
+- retained RGBA8/sRGB/straight-alpha RasterSurface handles with bounded
+  copy-in updates, explicit atomic publication, merged dirty-region queries,
+  Canvas composition, and append-only paint-command inspection;
+- versioned Custom Paint provider registration for foreign-language Craft
+  Drivers. A callback receives a fixed-layout request and a callback-scoped,
+  opaque command sink with local coordinates. Typed Style parameters are
+  copied at authoring time and queried without exposing Nim object layouts.
+  The sink supports retained Canvas primitives, rejects use outside the
+  callback, caps each material at 4,096 commands, and preserves the owning
+  node's layout, clip, opacity, transform, stacking, hit, focus, and
+  accessibility behavior. Registration user data is released exactly once on
+  replacement, unregister, context reset, or context destruction;
+- opaque typed Shader Builder handles with builder-local expression IDs,
+  bounded graph/source sizes, stage and value-type validation, and deterministic
+  pure compute helper functions with generated names, typed parameters and
+  returns, bounded counts, sealed-definition calls, and no resource access or
+  recursion;
+  bgfx source plus varying-definition output. Compute authoring adds
+  builder-local storage-buffer and storage-image IDs, typed load/store
+  operations, numeric scalar/vector conversion, invocation builtins, bounded
+  work-group sizes, scalar comparisons, boolean composition, typed selection,
+  integer modulo, unsigned integer bitwise operations, scoped `if`/`else`, and
+  guarded early return without exposing backend handles. Exact float/integer
+  bit reinterpretation lets foreign drivers address mixed packed records over
+  the same portable `uint32` storage-buffer contract used by Nim. Typed
+  mutable locals and signed or unsigned literal-bounded `for` ranges add
+  lexically checked `break` and `continue`. Initialized fixed-size local arrays
+  add typed numeric-scalar dynamic load/store operations under bounded array,
+  length, and total-element limits, without accepting arbitrary shader source
+  through the runtime boundary;
+  Shader compilation remains a build-tool operation and is not linked into
+  ordinary runtime artifacts;
 - bounded atomic Craft Pack manifest loading, compatibility negotiation,
   active Pack queries, and structured Pack diagnostics;
 - Opaque context and style handles.
@@ -64,7 +96,7 @@ ABI version `0x00010019` supports:
   and accessibility semantics, including an append-only protected-password
   text role.
 - Typed length, number, keyword, color, color-pair, border, shadow, gradient,
-  and transform declarations.
+  transform, and Custom Paint declarations.
 - Append-only `lh`, `rlh`, `ex`, `ch`, `rex`, and `rch` unit tags. The C ABI
   uses deterministic CSS fallback font metrics because concrete text engines
   remain an application-side adapter concern.
@@ -80,12 +112,15 @@ ABI version `0x00010019` supports:
 - Layout-box and node-rectangle queries.
 - Renderer-neutral paint-command iteration.
 - Text/image payload, basic computed text style, and gradient-stop queries.
-- Append-only paint kinds for retained paths and 2D transform scopes, including
-  path-segment/stroke metadata and affine-matrix queries. Existing paint-kind
-  values remain unchanged.
+- Append-only paint kinds for retained stroked and filled paths and 2D
+  transform scopes, including path segments, nonzero/evenodd fill rules,
+  stroke metadata, and affine-matrix queries. Existing paint-kind values remain
+  unchanged.
 - Append-only bounded layer paint scopes. `CBSS_PAINT_PUSH_LAYER` stores bounds
   in `rect`, opacity in `value0`, and `CbssLayerCompositeMode` in `value1`;
-  `CBSS_PAINT_POP_LAYER` closes the scope.
+  `CBSS_PAINT_POP_LAYER` closes the scope. The append-only
+  `CBSS_LAYER_DESTINATION_IN` mode multiplies retained destination alpha by the
+  source layer alpha and is used by Custom Paint masks.
 - A retained Canvas drawing adapter on every registered RenderSurface. Foreign
   libraries append local drawing commands and publish the complete display-list
   update with one `cbss_render_surface_canvas_commit`.
@@ -209,6 +244,34 @@ two update paths:
 
 `cbss_context_recompute` reuses the last successful viewport size. A resize
 uses `cbss_context_compute` with the new dimensions.
+
+## RasterSurface
+
+`cbss_raster_surface_create` allocates a retained RGBA8 surface. Passing a
+four-byte `initial_rgba` fills every pixel; passing null creates a transparent
+surface. Allocation and pending-update storage are independently bounded by
+`CBSS_MAX_RASTER_SURFACE_BYTES`.
+
+`cbss_raster_surface_update_region` copies the addressed rows immediately into
+CBSS-owned pending storage. A zero `source_stride` means `region.width * 4`;
+otherwise the stride is expressed in bytes and may include host-side row
+padding. Failed updates do not modify committed pixels or existing pending
+updates.
+
+`cbss_raster_surface_publish` applies every pending region as one monotonically
+increasing revision. The resulting merged dirty rectangles remain available
+until the next successful publication. A publication with no pending updates
+is a successful no-op and preserves the current revision.
+
+Draw the handle into a registered RenderSurface with
+`cbss_render_surface_canvas_draw_raster_surface`, then publish the Canvas
+display list normally. The Canvas retains the underlying RasterSurface, so the
+opaque handle may be destroyed after a successful draw call. After later pixel
+publications, pass the returned revision to `cbss_render_surface_update` to
+schedule presentation without rebuilding the Canvas display list or layout.
+RasterSurface mutation and publication are UI-owned; worker threads should
+prepare immutable byte blocks and hand them to the UI thread through the
+existing stream or host queue boundary.
 
 ## Declarative Motion
 
@@ -377,13 +440,21 @@ Calling commit again without a Canvas mutation is a no-op and returns the same
 revision.
 
 The adapter accepts save/restore, affine transforms, rectangular clips,
-bounded composition layers, rectangles, gradients, retained path strokes,
-text, and images. All pointer arrays are copied during the call. Caller-owned
+bounded composition layers, rectangles, gradients, retained solid or dashed
+path strokes, text, and images. Use
+`cbss_render_surface_canvas_stroke_path_dashed` for a copied dash array and
+offset; odd-length arrays repeat to form an even cycle. All pointer arrays are
+copied during the call. Caller-owned
 arrays and strings need remain valid only until the function returns. Invalid
 handles, unknown enums, non-finite coordinates, negative dimensions, and
 unusable widths are rejected before they enter the retained list. Scope
 balancing follows the Nim Canvas contract: unmatched closes are safe no-ops
 and dangling scopes are closed at the paint boundary.
+
+Paint-command consumers inspect retained dash data through
+`cbss_paint_command_path_dash_count`, `cbss_paint_command_path_dash`, and
+`cbss_paint_command_path_dash_offset`. The dash count is zero for a solid
+stroke. Pattern and generated-fragment limits keep foreign input bounded.
 
 This is the language-neutral path for chart, visualization, game, and other
 drawing libraries that can emit canonical CBSS Canvas commands. Shared GPU

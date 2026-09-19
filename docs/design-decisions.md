@@ -198,10 +198,25 @@ or reduced to the documented generator input — one binding copy only
   Wayland tests, performance benchmarks, and the cosmic-text integration test
   remain explicit opt-in tasks because they require a display, release-mode
   timing, or a prebuilt native bridge.
+- The discovery runner supports deterministic index-based sharding after its
+  test paths are sorted. Shards must partition the complete list without
+  overlap or omission; sharding changes scheduling only, never test scope.
+  CI currently uses two portable shards on Linux and macOS and three on
+  Windows because compiling every independent Nim test executable serially is
+  the dominant cross-platform cost. These counts are scheduling values and may
+  be tuned from measured runner durations without changing the contract.
+- Long sanitizer suites may select one ownership model through
+  `CBSS_MEMORY_MODEL=arc|orc`. An unset value preserves the local developer
+  contract and runs both models. CI uses separate ARC and ORC jobs where the
+  measured suite duration justifies the additional runner setup, so failures
+  remain isolated without reducing sanitizer coverage.
 - CI runs `nimble check`, the discovered ARC suite, the same suite and public
   examples under ORC, ARC example checks for all three SDL3 link modes, and
   locked Cargo bridge tests/builds. Release hygiene checks verify required
   notices, SDL3 symlinks, and the absence of unrelated native binaries.
+- Native Rust bridge outputs are cached by OS, architecture, and every native
+  `Cargo.lock`. An initial cache miss remains within the job budget; a cache
+  hit is an optimization and cannot remove compilation or test steps.
 - A root `LICENSE` (Apache-2.0) is added, plus SDL3/cosmic-text third-party
   notices alongside the existing image-rs notice. The explicit contributor
   patent grant is appropriate for a shared native UI foundation intended for
@@ -215,8 +230,9 @@ or reduced to the documented generator input — one binding copy only
   `.cbss/link-mode` plus `.cbss/runtime-root` through `cbss_configure`, without
   changing application imports or API calls.
 
-**Implementation status.** Implemented. The portable runner currently
-discovers 47 test files. The development checkout keeps one versioned SDL3
+**Implementation status.** Implemented. The portable runner discovers tests
+from the repository instead of relying on a manually maintained count. The
+development checkout keeps one versioned SDL3
 shared binary plus SONAME/link-name symlinks; release packages do not include
 these native binaries. The image bridge is built from CBSS-owned Rust source,
 and the unused font binary was removed. See
@@ -794,3 +810,39 @@ operating-system artifacts include only target-relevant GPU backends, and
 codecs remain separate capabilities. The complete boundaries, profiles, and
 release gates are defined in
 [Native Rendering And Color Capability Stack](native-rendering-stack.md).
+
+## D30 — Typed shader IR is the portable authoring contract (Adopted)
+
+**Context.** bgfx deliberately accepts precompiled renderer-specific shader
+artifacts and its build tool uses a GLSL-like source dialect. Exposing that
+dialect directly would make CBSS GPU code harder to discover through Nim LSP,
+would not provide a common authoring surface to Craft Drivers, and would make
+Style materials and low-level GPU work look like unrelated systems. Inventing a
+new `.cbshader` text language would add another parser, toolchain, editor
+integration burden, and compatibility surface without improving GPU semantics.
+Treating arbitrary Nim procedures as shaders would be incorrect because GPU
+programs support a restricted value, resource, control-flow, and execution
+model.
+
+**Decision.** CBSS owns a backend-neutral, bounded, typed Shader IR. Nim exposes
+it through an explicit Builder with ordinary typed procedures and expression
+handles. The C ABI exposes the same graph through opaque Builder ownership and
+fixed-width builder-local expression IDs so Rust, Zig, C++, and later Craft
+Drivers can provide native wrappers without copying the compiler model.
+
+The Builder validates ownership, stage interfaces, value shapes, identifiers,
+finite constants, mandatory outputs, graph size, and linked vertex/fragment
+varyings before backend work. It maps the supported subset to deterministic
+bgfx source and varying definitions. Build tools compile that output for the
+selected target; ordinary runtime artifacts contain only compiled Shader
+artifacts and do not invoke or ship shader compilers. Raw precompiled shader
+assets remain an advanced escape hatch while IR coverage expands.
+
+One compiled Shader artifact enters the existing `GpuHost` namespace, budget,
+generation, Pipeline, frame, and device-loss contract. A visualization library
+may submit that Pipeline directly. A component library may render it into a
+`GpuCanvasSurface` and attach the result as an underlay or overlay of the normal
+semantic component; later declarative `customPaint`, mask, and filter stages use
+the same artifact identity. CBSS does not create a second GPU widget hierarchy,
+allow raw backend handles in Style, or let shader output redefine layout,
+accessibility, or hit geometry implicitly.

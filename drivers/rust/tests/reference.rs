@@ -8,15 +8,44 @@ use cbss_craft::{
     NavigationTransitionContext, NavigationTransitionPhase, NavigationTransitionSpec, Navigator,
     NodeState, Store, Style, Ui, ValidationBinding, ValidationFile, ValidationForm,
     ValidationPattern, ValidationReport, ValidationRules, ValidationTrigger, ValidationValue,
-    ABI_VERSION, CAPABILITIES, CRAFT_DIAGNOSTIC_PACK, CRAFT_DIAGNOSTIC_STYLE_REPLACEMENT,
-    CRAFT_PACK_MISSING_CAPABILITY, CRAFT_STYLE_PARSE_UNKNOWN_PROPERTY,
-    CRAFT_STYLE_REPLACEMENT_UNDECLARED_STYLE_SLOT, DRIVER_CONTRACT_VERSION,
-    NAVIGATION_SCREEN_DIRTY_DOMAINS, STATUS_INVALID_ARGUMENT, STATUS_INVALID_HANDLE,
-    STATUS_STYLE_ERROR,
+    ABI_VERSION, CAPABILITIES, CAPABILITY_CUSTOM_PAINT_PROVIDER, CRAFT_DIAGNOSTIC_PACK,
+    CRAFT_DIAGNOSTIC_STYLE_REPLACEMENT, CRAFT_PACK_MISSING_CAPABILITY,
+    CRAFT_STYLE_PARSE_UNKNOWN_PROPERTY, CRAFT_STYLE_REPLACEMENT_UNDECLARED_STYLE_SLOT,
+    DRIVER_CONTRACT_VERSION, NAVIGATION_SCREEN_DIRTY_DOMAINS, STATUS_INVALID_ARGUMENT,
+    STATUS_INVALID_HANDLE, STATUS_STYLE_ERROR,
 };
 use std::cell::{Cell, RefCell};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
+
+#[test]
+fn first_c_abi_call_is_safe_on_each_foreign_thread() {
+    for operation in 0..4 {
+        std::thread::spawn(move || match operation {
+            0 => {
+                assert_eq!(Contract::abi_version(), ABI_VERSION);
+                assert_eq!(Contract::driver_version(), DRIVER_CONTRACT_VERSION);
+            }
+            1 => {
+                let mut style = Style::new().expect("Style on foreign thread");
+                style
+                    .set("width", px(24.0))
+                    .expect("Style mutation on foreign thread");
+            }
+            2 => {
+                let pattern = ValidationPattern::compile("^[a-z]+$")
+                    .expect("validation pattern on foreign thread");
+                assert!(pattern.test("attached").expect("pattern match"));
+            }
+            _ => {
+                let blob = Blob::new(b"attached", "text/plain").expect("Blob on foreign thread");
+                assert_eq!(blob.read(0, 8).expect("Blob read"), b"attached");
+            }
+        })
+        .join()
+        .expect("foreign thread must exit cleanly");
+    }
+}
 
 #[test]
 fn blob_form_data_and_submit_payload_are_owned_and_ordered() {
@@ -164,7 +193,8 @@ fn reference_tree_matches_the_driver_contract() {
     Contract::require_authoring().expect("authoring contract");
     assert_eq!(Contract::abi_version(), ABI_VERSION);
     assert_eq!(Contract::driver_version(), DRIVER_CONTRACT_VERSION);
-    assert_eq!(CAPABILITIES.len(), 19);
+    assert_eq!(CAPABILITIES.len(), 22);
+    assert_eq!(CAPABILITY_CUSTOM_PAINT_PROVIDER, 22);
     assert_eq!(CRAFT_STYLE_PARSE_UNKNOWN_PROPERTY, 7);
     assert_eq!(CRAFT_STYLE_REPLACEMENT_UNDECLARED_STYLE_SLOT, 1);
     assert_eq!(CRAFT_PACK_MISSING_CAPABILITY, 12);
@@ -220,8 +250,8 @@ fn reference_tree_matches_the_driver_contract() {
     ui.compute(200.0, 80.0).expect("layout");
     let root_rect = ui.rect(root).expect("root rect");
     let child_rect = ui.rect(child).expect("child rect");
-    assert!((root_rect.width - 200.0).abs() < 0.001);
-    assert!((root_rect.height - 80.0).abs() < 0.001);
+    assert!((root_rect.width - 220.0).abs() < 0.001);
+    assert!((root_rect.height - 100.0).abs() < 0.001);
     assert!((child_rect.width - 40.0).abs() < 0.001);
     assert!((child_rect.height - 30.0).abs() < 0.001);
 
@@ -1072,7 +1102,10 @@ fn craft_style_and_pack_loading_are_atomic_and_slot_scoped() {
             version: "1.2.0".to_owned(),
         }]
     );
-    let incompatible_pack = PACK.replace("\"minimumAbi\": 65561", "\"minimumAbi\": 4294967295");
+    let incompatible_pack = PACK.replace(
+        &format!("\"minimumAbi\": {ABI_VERSION}"),
+        "\"minimumAbi\": 4294967295",
+    );
     let rejected_pack = ui
         .replace_craft_pack(&incompatible_pack)
         .expect_err("incompatible Pack must fail");

@@ -1,5 +1,6 @@
 import std/[algorithm, math, options, strutils]
-import ../core/[color, computed_style, geometry, node, style_resolver]
+import ../core/[color, computed_style, custom_paint, geometry, node,
+    style_resolver]
 import ../layout/layout
 import ../layout/overflow_geometry
 import ../layout/presentation
@@ -8,6 +9,7 @@ import ../layout/scrollbar_geometry
 import ../layout/transform_geometry
 import ../text/display_text
 import ./background_geometry
+import ./custom_paint_registry
 import ./paint_command
 
 type
@@ -265,6 +267,56 @@ proc addTextDecoration(
 proc hidesContents(style: ComputedStyle): bool =
   style.visual.contentVisibility.isSome and style.visual.contentVisibility.get == "hidden"
 
+proc resolveCustomPaintStage(
+    provider: CustomPaintProvider;
+    style: ComputedStyle;
+    stage: CustomPaintStage;
+    owner: NodeId;
+    bounds: Rect;
+    opacity: float32
+): Option[CustomPaintResolution] =
+  let material = style.customPaintMaterial(stage)
+  if material.isNone or provider.isNil:
+    return none(CustomPaintResolution)
+  some(provider(CustomPaintRequest(
+    material: material.get,
+    stage: stage,
+    owner: owner,
+    bounds: bounds,
+    opacity: opacity,
+    parameters: style.customPaintParameters(stage)
+  )))
+
+proc addResolvedCustomPaint(
+    output: var seq[PaintCommand];
+    resolved: CustomPaintResolution;
+    bounds: Rect;
+    radius: float32
+) =
+  if resolved.status != cprsResolved or resolved.commands.len == 0:
+    return
+  output.add pushClip(bounds, radius)
+  for command in resolved.commands:
+    output.add command
+  output.add popClip()
+
+proc addCustomPaint(
+    output: var seq[PaintCommand];
+    provider: CustomPaintProvider;
+    style: ComputedStyle;
+    stage: CustomPaintStage;
+    owner: NodeId;
+    bounds: Rect;
+    opacity: float32
+) =
+  let resolved = provider.resolveCustomPaintStage(
+    style, stage, owner, bounds, opacity
+  )
+  if resolved.isSome:
+    output.addResolvedCustomPaint(
+      resolved.get, bounds, style.box.borderRadius
+    )
+
 proc addScrollbars(
     output: var seq[PaintCommand];
     nodeRect: Rect;
@@ -312,6 +364,7 @@ proc paintNode(
     scroll: ScrollState;
     translation: Vec2;
     surfaceProvider: SurfacePaintProvider;
+    customPaintProvider: CustomPaintProvider;
     overlayPass = false
 ) =
   let node = tree.nodes[id.nodeIndex]
@@ -345,6 +398,17 @@ proc paintNode(
     output.add pushClip(visualClip.get, style.box.borderRadius)
 
   let needsClip = node.kind == nkBox and style.clipsOverflow()
+  let maskResolution =
+    if node.kind == nkBox:
+      customPaintProvider.resolveCustomPaintStage(
+        style, cpsMask, id, nodeRect, 1.0'f32
+      )
+    else:
+      none(CustomPaintResolution)
+  let appliesMask = maskResolution.isSome and
+    maskResolution.get.status == cprsResolved
+  if appliesMask:
+    output.add pushLayer(nodeRect)
 
   if node.kind == nkBox and style.box.boxShadow.isSome:
     let shadow = style.box.boxShadow.get
@@ -457,6 +521,14 @@ proc paintNode(
       overflowClipRect(nodeRect, style, item.padding), style.box.borderRadius
     )
 
+  if node.kind == nkBox:
+    output.addCustomPaint(
+      customPaintProvider, style, cpsUnderlay, id, nodeRect, opacity
+    )
+    output.addCustomPaint(
+      customPaintProvider, style, cpsFilter, id, nodeRect, opacity
+    )
+
   if node.renderSurfaceId.isSome and not surfaceProvider.isNil:
     let contentRect = presentedContentBounds(nodeRect, style, item.padding)
     output.add pushClip(contentRect, style.box.borderRadius)
@@ -476,8 +548,14 @@ proc paintNode(
         tree, styles, layout, boxIndices, child, opacity, output, hasTransform,
         scroll, childTranslation,
         surfaceProvider,
+        customPaintProvider,
         overlayPass = overlayPass
       )
+
+  if node.kind == nkBox:
+    output.addCustomPaint(
+      customPaintProvider, style, cpsOverlay, id, nodeRect, opacity
+    )
 
   let scrollMetrics = scroll.metricsFor(id)
   if node.kind == nkBox and scrollMetrics.isSome:
@@ -487,6 +565,14 @@ proc paintNode(
 
   if needsClip:
     output.add popClip()
+
+  if appliesMask:
+    output.add pushLayer(nodeRect, compositeMode = lcmDestinationIn)
+    output.addResolvedCustomPaint(
+      maskResolution.get, nodeRect, style.box.borderRadius
+    )
+    output.add popLayer()
+    output.add popLayer()
 
   if visualClip.isSome:
     output.add popClip()
@@ -567,14 +653,15 @@ proc buildPaintCommands*(
     styles: ResolvedTree;
     layout: LayoutResult;
     scroll: ScrollState;
-    surfaceProvider: SurfacePaintProvider = nil
+    surfaceProvider: SurfacePaintProvider = nil;
+    customPaintProvider: CustomPaintProvider = nil
 ): seq[PaintCommand] =
   var hasTransform = false
   if tree.root.isSome:
     withLayoutBoxIndices(layout, tree.nodes.len, boxIndices):
       paintNode(
         tree, styles, layout, boxIndices, tree.root.get, 1.0'f32, result,
-        hasTransform, scroll, vec2(0, 0), surfaceProvider
+        hasTransform, scroll, vec2(0, 0), surfaceProvider, customPaintProvider
       )
       var overlays: seq[NodeId]
       collectOverlayRoots(tree, styles, tree.root.get, overlays)
@@ -585,6 +672,7 @@ proc buildPaintCommands*(
         paintNode(
           tree, styles, layout, boxIndices, overlay, context.opacity, result,
           hasTransform, scroll, context.translation, surfaceProvider,
+          customPaintProvider,
           overlayPass = true
         )
         popAncestorPaintContext(context, result)
@@ -600,7 +688,8 @@ proc buildPaintCommandsForSubtree*(
     layout: LayoutResult;
     root: NodeId;
     scroll: ScrollState;
-    surfaceProvider: SurfacePaintProvider = nil
+    surfaceProvider: SurfacePaintProvider = nil;
+    customPaintProvider: CustomPaintProvider = nil
 ): seq[PaintCommand] =
   var hasTransform = false
   if root.nodeIndex < 0 or root.nodeIndex >= tree.nodes.len:
@@ -624,6 +713,7 @@ proc buildPaintCommandsForSubtree*(
       scroll,
       context.translation,
       surfaceProvider,
+      customPaintProvider,
       overlayPass = overlayPass
     )
     popAncestorPaintContext(context, result)
@@ -641,6 +731,7 @@ proc buildPaintCommandsForSubtree*(
       paintNode(
         tree, styles, layout, boxIndices, overlay, overlayContext.opacity,
         result, hasTransform, scroll, overlayContext.translation, surfaceProvider,
+        customPaintProvider,
         overlayPass = true
       )
       popAncestorPaintContext(overlayContext, result)

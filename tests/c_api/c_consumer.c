@@ -1,6 +1,6 @@
 #include "cbss.h"
 
-_Static_assert(CBSS_ABI_VERSION == 0x00010019u, "unexpected CBSS ABI version");
+_Static_assert(CBSS_ABI_VERSION == 0x00010026u, "unexpected CBSS ABI version");
 _Static_assert(CBSS_ROLE_SWITCH == 22, "unexpected switch role value");
 _Static_assert(CBSS_ROLE_PASSWORD_TEXT == 23,
                "unexpected password text role value");
@@ -9,6 +9,7 @@ _Static_assert(CBSS_ROLE_PASSWORD_TEXT == 23,
 #include <stddef.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 _Static_assert(sizeof(CbssRect) == 16, "CbssRect ABI changed");
@@ -55,6 +56,12 @@ _Static_assert(sizeof(CbssRenderSurfacePlacement) == 40,
                "CbssRenderSurfacePlacement ABI changed");
 _Static_assert(sizeof(CbssRenderSurfaceEvent) == 232,
                "CbssRenderSurfaceEvent ABI changed");
+_Static_assert(sizeof(CbssCustomPaintParameterInput) == 40,
+               "CbssCustomPaintParameterInput ABI changed");
+_Static_assert(sizeof(CbssCustomPaintParameter) == 32,
+               "CbssCustomPaintParameter ABI changed");
+_Static_assert(sizeof(CbssCustomPaintRequest) == 64,
+               "CbssCustomPaintRequest ABI changed");
 _Static_assert(offsetof(CbssPaintCommand, string_bytes) == 60,
                "CbssPaintCommand ABI changed");
 
@@ -194,6 +201,312 @@ static void require_ok(CbssContext *context, CbssStatus status) {
   assert(status == CBSS_OK);
 }
 
+typedef struct CustomPaintState {
+  int calls;
+  int releases;
+  CbssCustomPaintSink *borrowed_sink;
+  CbssRasterSurface *raster;
+  CbssColor color;
+} CustomPaintState;
+
+static CbssStatus paint_custom_material(
+    const CbssCustomPaintRequest *request, CbssCustomPaintSink *sink,
+    void *user_data) {
+  CustomPaintState *state = user_data;
+  ++state->calls;
+  state->borrowed_sink = sink;
+  assert(request != NULL);
+  assert(request->struct_size == sizeof(CbssCustomPaintRequest));
+  assert(request->api_version == CBSS_CUSTOM_PAINT_API_VERSION);
+  assert(request->stage == CBSS_CUSTOM_PAINT_OVERLAY);
+  assert(request->local_bounds.x == 0.0f);
+  assert(request->local_bounds.y == 0.0f);
+  assert(fabsf(request->local_bounds.w - 96.0f) < 0.01f);
+  assert(fabsf(request->local_bounds.h - 48.0f) < 0.01f);
+  assert(request->parameter_count == 3);
+
+  CbssCustomPaintParameter parameter = {0};
+  char name[16] = {0};
+  assert(cbss_custom_paint_parameter(sink, 0, &parameter) == CBSS_OK);
+  assert(parameter.kind == CBSS_CUSTOM_PAINT_PARAMETER_FLOAT);
+  assert(fabsf(parameter.values[0] - 0.25f) < 0.001f);
+  assert(cbss_custom_paint_parameter_name(
+      sink, 0, name, sizeof(name)) == strlen("phase"));
+  assert(strcmp(name, "phase") == 0);
+  assert(cbss_custom_paint_parameter(sink, 1, &parameter) == CBSS_OK);
+  assert(parameter.kind == CBSS_CUSTOM_PAINT_PARAMETER_BOOLEAN);
+  assert(parameter.integer_value == 1);
+  assert(cbss_custom_paint_parameter(sink, 2, &parameter) == CBSS_OK);
+  assert(parameter.kind == CBSS_CUSTOM_PAINT_PARAMETER_COLOR);
+  state->color = (CbssColor){parameter.values[0], parameter.values[1],
+                             parameter.values[2], parameter.values[3]};
+  assert(cbss_custom_paint_parameter(
+      sink, request->parameter_count, &parameter) == CBSS_OUT_OF_RANGE);
+  assert(cbss_custom_paint_parameter(sink, 0, NULL) ==
+         CBSS_INVALID_ARGUMENT);
+  assert(cbss_custom_paint_sink_fill_rect(
+      sink, (CbssRect){0.0f, 0.0f, NAN, 48.0f}, state->color, 8.0f) ==
+      CBSS_INVALID_ARGUMENT);
+  assert(cbss_custom_paint_sink_fill_rect(
+      sink, request->local_bounds, state->color, 8.0f) == CBSS_OK);
+  assert(cbss_custom_paint_sink_stroke_rect(
+      sink, (CbssRect){2.0f, 2.0f, 92.0f, 44.0f},
+      (CbssColor){1.0f, 1.0f, 1.0f, 0.5f}, 2.0f, 6.0f) == CBSS_OK);
+  CbssGradientStop stops[] = {
+      {.color = {1.0f, 0.0f, 0.0f, 1.0f}, .offset = 0.0f},
+      {.color = {0.0f, 0.0f, 1.0f, 1.0f}, .offset = 1.0f},
+  };
+  CbssPathSegment path[] = {
+      {.kind = CBSS_PATH_MOVE_TO, .endpoint_x = 4.0f, .endpoint_y = 4.0f},
+      {.kind = CBSS_PATH_LINE_TO, .endpoint_x = 20.0f, .endpoint_y = 12.0f},
+      {.kind = CBSS_PATH_LINE_TO, .endpoint_x = 4.0f, .endpoint_y = 20.0f},
+      {.kind = CBSS_PATH_CLOSE},
+  };
+  assert(cbss_custom_paint_sink_save(sink) == CBSS_OK);
+  assert(cbss_custom_paint_sink_transform(
+      sink, (CbssAffineTransform){1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 2.0f}) ==
+      CBSS_OK);
+  assert(cbss_custom_paint_sink_push_clip(
+      sink, (CbssRect){0.0f, 0.0f, 48.0f, 24.0f}, 4.0f) == CBSS_OK);
+  assert(cbss_custom_paint_sink_begin_layer(
+      sink, request->local_bounds, 0.75f, CBSS_LAYER_SOURCE_OVER) == CBSS_OK);
+  assert(cbss_custom_paint_sink_fill_linear_gradient(
+      sink, (CbssRect){4.0f, 4.0f, 20.0f, 12.0f}, 90.0f,
+      CBSS_COLOR_INTERPOLATE_SRGB, stops, 2, 2.0f) == CBSS_OK);
+  assert(cbss_custom_paint_sink_stroke_path(
+      sink, path, 4, (CbssColor){0.0f, 0.0f, 0.0f, 1.0f}, 1.0f,
+      CBSS_STROKE_CAP_ROUND, CBSS_STROKE_JOIN_ROUND, 4.0f) == CBSS_OK);
+  const float dash_values[] = {3.0f, 2.0f, 1.0f};
+  assert(cbss_custom_paint_sink_stroke_path_dashed(
+      sink, path, 4, (CbssColor){0.1f, 0.2f, 0.3f, 1.0f}, 1.5f,
+      CBSS_STROKE_CAP_ROUND, CBSS_STROKE_JOIN_BEVEL, 4.0f,
+      dash_values, 3, 1.0f) == CBSS_OK);
+  const float invalid_dash = -1.0f;
+  assert(cbss_custom_paint_sink_stroke_path_dashed(
+      sink, path, 4, (CbssColor){0.1f, 0.2f, 0.3f, 1.0f}, 1.5f,
+      CBSS_STROKE_CAP_ROUND, CBSS_STROKE_JOIN_BEVEL, 4.0f,
+      &invalid_dash, 1, 1.0f) == CBSS_INVALID_ARGUMENT);
+  assert(cbss_custom_paint_sink_fill_path(
+      sink, path, 4, (CbssColor){0.2f, 0.8f, 0.4f, 0.75f},
+      CBSS_PATH_FILL_EVENODD) == CBSS_OK);
+  assert(cbss_custom_paint_sink_fill_path(
+      sink, path, 4, (CbssColor){0.2f, 0.8f, 0.4f, 0.75f}, UINT32_MAX) ==
+      CBSS_INVALID_ARGUMENT);
+  assert(cbss_custom_paint_sink_draw_text(
+      sink, "C", 8.0f, 16.0f, (CbssColor){1.0f, 1.0f, 1.0f, 1.0f},
+      NULL, NULL, 0.0f, 0) == CBSS_OK);
+  assert(cbss_custom_paint_sink_draw_image(
+      sink, "asset://custom-paint", (CbssRect){24.0f, 4.0f, 8.0f, 8.0f},
+      0.5f) == CBSS_OK);
+  if (state->raster != NULL) {
+    assert(cbss_custom_paint_sink_draw_raster_surface(
+        sink, state->raster, (CbssRect){34.0f, 4.0f, 8.0f, 8.0f}, 1.0f) ==
+        CBSS_OK);
+  }
+  assert(cbss_custom_paint_sink_end_layer(sink) == CBSS_OK);
+  assert(cbss_custom_paint_sink_pop_clip(sink) == CBSS_OK);
+  assert(cbss_custom_paint_sink_restore(sink) == CBSS_OK);
+  return CBSS_OK;
+}
+
+static void release_custom_material(void *user_data) {
+  CustomPaintState *state = user_data;
+  ++state->releases;
+}
+
+static void test_custom_paint_provider(void) {
+  CbssContext *context = cbss_context_create();
+  CbssStyle *style = cbss_style_create();
+  assert(context != NULL);
+  assert(style != NULL);
+  uint8_t raster_bytes[16] = {
+      255, 0, 0, 255, 0, 255, 0, 255,
+      0, 0, 255, 255, 255, 255, 255, 255};
+  CbssRasterSurface *raster = NULL;
+  assert(cbss_raster_surface_create(2, 2, raster_bytes, &raster) == CBSS_OK);
+
+  CbssCustomPaintParameterInput parameters[] = {
+      {.name = "phase",
+       .kind = CBSS_CUSTOM_PAINT_PARAMETER_FLOAT,
+       .values = {0.25f, 0.0f, 0.0f, 0.0f}},
+      {.name = "enabled",
+       .kind = CBSS_CUSTOM_PAINT_PARAMETER_BOOLEAN,
+       .integer_value = 1},
+      {.name = "accent",
+       .kind = CBSS_CUSTOM_PAINT_PARAMETER_COLOR,
+       .values = {0.2f, 0.4f, 0.8f, 1.0f}},
+  };
+  assert(cbss_style_set_custom_paint(
+      NULL, "foreign-panel", CBSS_CUSTOM_PAINT_OVERLAY,
+      parameters, 3) == CBSS_INVALID_HANDLE);
+  assert(cbss_style_set_custom_paint(
+      style, "foreign-panel", CBSS_CUSTOM_PAINT_OVERLAY,
+      parameters, 3) == CBSS_OK);
+  CbssCustomPaintParameterInput invalid = {
+      .name = "bad-name", .kind = CBSS_CUSTOM_PAINT_PARAMETER_FLOAT};
+  assert(cbss_style_set_custom_paint(
+      style, "invalid", CBSS_CUSTOM_PAINT_OVERLAY,
+      &invalid, 1) == CBSS_INVALID_ARGUMENT);
+
+  require_ok(context, cbss_style_set_length(
+      style, "width", CBSS_UNIT_PX, 96.0f));
+  require_ok(context, cbss_style_set_length(
+      style, "height", CBSS_UNIT_PX, 48.0f));
+  uint32_t root = cbss_context_add_box(
+      context, CBSS_NODE_NONE, "custom-paint-root");
+  assert(root != CBSS_NODE_NONE);
+  require_ok(context, cbss_node_apply_style(context, root, style, 0, 0));
+
+  CustomPaintState first = {.raster = raster};
+  CbssCustomPaintRegistration first_registration = 99;
+  assert(cbss_context_register_custom_paint_provider(
+      NULL, "foreign-panel", CBSS_CUSTOM_PAINT_STAGE_OVERLAY,
+      paint_custom_material, release_custom_material, &first, 0,
+      &first_registration) == CBSS_INVALID_HANDLE);
+  assert(first_registration == 0);
+  assert(cbss_context_register_custom_paint_provider(
+      context, "foreign-panel", CBSS_CUSTOM_PAINT_STAGE_OVERLAY,
+      paint_custom_material, release_custom_material, &first, 0,
+      &first_registration) == CBSS_OK);
+  assert(first_registration != 0);
+  require_ok(context, cbss_context_compute(context, 160.0f, 80.0f));
+  assert(first.calls == 1);
+  assert(first.releases == 0);
+  assert(fabsf(first.color.b - 0.8f) < 0.001f);
+
+  assert(cbss_custom_paint_sink_fill_rect(
+      first.borrowed_sink, (CbssRect){0.0f, 0.0f, 1.0f, 1.0f},
+      first.color, 0.0f) == CBSS_NOT_AVAILABLE);
+  CbssCustomPaintParameter expired_parameter = {0};
+  assert(cbss_custom_paint_parameter(
+      first.borrowed_sink, 0, &expired_parameter) == CBSS_NOT_AVAILABLE);
+
+  int found_fill = 0;
+  int found_stroke = 0;
+  int found_gradient = 0;
+  int found_path = 0;
+  int found_dashed_path = 0;
+  int found_fill_path = 0;
+  int found_text = 0;
+  int found_image = 0;
+  int found_raster = 0;
+  for (uint32_t index = 0;
+       index < cbss_context_paint_command_count(context); ++index) {
+    CbssPaintCommand command = {0};
+    require_ok(context, cbss_context_paint_command(context, index, &command));
+    if (command.kind == CBSS_PAINT_FILL_RECT && command.owner == root &&
+        fabsf(command.rect.w - 96.0f) < 0.01f &&
+        fabsf(command.color.b - 0.8f) < 0.001f) {
+      found_fill = 1;
+    }
+    if (command.kind == CBSS_PAINT_STROKE_RECT && command.owner == root) {
+      found_stroke = 1;
+    }
+    found_gradient |= command.kind == CBSS_PAINT_FILL_LINEAR_GRADIENT;
+    if (command.kind == CBSS_PAINT_STROKE_PATH) {
+      uint32_t dash_count = cbss_paint_command_path_dash_count(
+          context, index);
+      if (dash_count == 0) {
+        found_path = 1;
+      } else {
+        float dash = 0.0f;
+        float offset = 0.0f;
+        assert(dash_count == 6);
+        require_ok(context, cbss_paint_command_path_dash(
+            context, index, 0, &dash));
+        assert(fabsf(dash - 3.0f) < 0.001f);
+        require_ok(context, cbss_paint_command_path_dash(
+            context, index, 5, &dash));
+        assert(fabsf(dash - 1.0f) < 0.001f);
+        assert(cbss_paint_command_path_dash(
+            context, index, 6, &dash) == CBSS_OUT_OF_RANGE);
+        require_ok(context, cbss_paint_command_path_dash_offset(
+            context, index, &offset));
+        assert(fabsf(offset - 1.0f) < 0.001f);
+        found_dashed_path = 1;
+      }
+    }
+    found_fill_path |= command.kind == CBSS_PAINT_FILL_PATH;
+    found_text |= command.kind == CBSS_PAINT_DRAW_TEXT;
+    found_image |= command.kind == CBSS_PAINT_DRAW_IMAGE;
+    found_raster |= command.kind == CBSS_PAINT_DRAW_RASTER_SURFACE;
+  }
+  assert(found_fill && found_stroke && found_gradient && found_path &&
+         found_dashed_path &&
+         found_fill_path &&
+         found_text && found_image && found_raster);
+
+  uint32_t consumers = 99;
+  require_ok(context, cbss_context_invalidate_custom_paint_material(
+      context, "foreign-panel", &consumers));
+  assert(consumers == 1);
+  assert(first.calls == 2);
+
+  CustomPaintState duplicate = {.raster = raster};
+  CbssCustomPaintRegistration duplicate_registration = 99;
+  assert(cbss_context_register_custom_paint_provider(
+      context, "foreign-panel", CBSS_CUSTOM_PAINT_STAGE_OVERLAY,
+      paint_custom_material, release_custom_material, &duplicate, 0,
+      &duplicate_registration) == CBSS_INVALID_ARGUMENT);
+  assert(duplicate_registration == 0);
+  assert(duplicate.releases == 0);
+
+  CustomPaintState replacement = {.raster = raster};
+  CbssCustomPaintRegistration replacement_registration = 0;
+  require_ok(context, cbss_context_register_custom_paint_provider(
+      context, "foreign-panel", CBSS_CUSTOM_PAINT_STAGE_OVERLAY,
+      paint_custom_material, release_custom_material, &replacement, 1,
+      &replacement_registration));
+  assert(replacement_registration > first_registration);
+  assert(first.releases == 1);
+  assert(replacement.calls == 1);
+  assert(cbss_context_unregister_custom_paint_provider(
+      context, first_registration) == CBSS_OUT_OF_RANGE);
+  require_ok(context, cbss_context_unregister_custom_paint_provider(
+      context, replacement_registration));
+  assert(replacement.releases == 1);
+  assert(cbss_context_unregister_custom_paint_provider(
+      context, replacement_registration) == CBSS_OUT_OF_RANGE);
+
+  CustomPaintState mask_state = {.raster = raster};
+  CbssCustomPaintRegistration mask_registration = 0;
+  require_ok(context, cbss_context_register_custom_paint_provider(
+      context, "foreign-mask", CBSS_CUSTOM_PAINT_STAGE_MASK,
+      paint_custom_material, release_custom_material, &mask_state, 0,
+      &mask_registration));
+  assert(mask_registration != 0);
+  require_ok(context, cbss_context_unregister_custom_paint_provider(
+      context, mask_registration));
+  assert(mask_state.releases == 1);
+
+  CustomPaintState filter_state = {.raster = raster};
+  CbssCustomPaintRegistration filter_registration = 99;
+  assert(cbss_context_register_custom_paint_provider(
+      context, "foreign-filter", CBSS_CUSTOM_PAINT_STAGE_FILTER,
+      paint_custom_material, release_custom_material, &filter_state, 0,
+      &filter_registration) == CBSS_NOT_AVAILABLE);
+  assert(filter_registration == 0);
+  assert(filter_state.releases == 0);
+
+  CustomPaintState reset_state = {.raster = raster};
+  CbssCustomPaintRegistration reset_registration = 0;
+  require_ok(context, cbss_context_register_custom_paint_provider(
+      context, "foreign-panel", CBSS_CUSTOM_PAINT_STAGE_OVERLAY,
+      paint_custom_material, release_custom_material, &reset_state, 0,
+      &reset_registration));
+  require_ok(context, cbss_context_reset(context));
+  assert(reset_state.releases == 1);
+  assert(cbss_context_unregister_custom_paint_provider(
+      context, reset_registration) == CBSS_OUT_OF_RANGE);
+
+  cbss_style_destroy(style);
+  cbss_context_destroy(context);
+  cbss_raster_surface_destroy(raster);
+  assert(first.releases == 1);
+  assert(replacement.releases == 1);
+  assert(reset_state.releases == 1);
+}
+
 static void test_craft_loading(void) {
   static const char style_json[] =
       "{\"format\":\"cbss-craft-style\",\"version\":1,"
@@ -210,7 +523,7 @@ static void test_craft_loading(void) {
   static const char pack_json[] =
       "{\"format\":\"cbss-craft-pack\",\"version\":1,"
       "\"id\":\"org.example.c\",\"packVersion\":\"1.0.0\","
-      "\"compatibility\":{\"minimumAbi\":65561,"
+      "\"compatibility\":{\"minimumAbi\":65563,"
       "\"minimumDriverContract\":65536,\"capabilities\":["
       "{\"id\":16,\"minimumVersion\":1},"
       "{\"id\":17,\"minimumVersion\":1}]},"
@@ -542,14 +855,503 @@ static void test_subtree_lifecycle(void) {
   cbss_context_destroy(context);
 }
 
+static void test_raster_surface(void) {
+  const uint8_t fill[] = {1, 2, 3, 4};
+  CbssRasterSurface *surface = NULL;
+  assert(cbss_raster_surface_create(3, 2, fill, NULL) ==
+         CBSS_INVALID_ARGUMENT);
+  assert(cbss_raster_surface_create(0, 2, fill, &surface) ==
+         CBSS_INVALID_ARGUMENT);
+  assert(surface == NULL);
+  assert(cbss_raster_surface_create(3, 2, fill, &surface) == CBSS_OK);
+  assert(surface != NULL);
+  assert(cbss_raster_surface_width(surface) == 3);
+  assert(cbss_raster_surface_height(surface) == 2);
+  assert(cbss_raster_surface_revision(surface) == 1);
+  assert(cbss_raster_surface_dirty_region_count(surface) == 1);
+
+  CbssRasterRegion dirty = {0};
+  assert(cbss_raster_surface_dirty_region_at(surface, 0, &dirty) == CBSS_OK);
+  assert(dirty.x == 0 && dirty.y == 0 && dirty.width == 3 && dirty.height == 2);
+  assert(cbss_raster_surface_dirty_region_at(surface, 1, &dirty) ==
+         CBSS_OUT_OF_RANGE);
+  assert(dirty.x == 0 && dirty.width == 0);
+
+  const uint8_t update[] = {
+      10, 20, 30, 255, 40, 50, 60, 255, 99, 99, 99, 99,
+      70, 80, 90, 255, 100, 110, 120, 255, 88, 88, 88, 88
+  };
+  const CbssRasterRegion region = {1, 0, 2, 2};
+  assert(cbss_raster_surface_update_region(
+      surface, region, update, sizeof(update), 7) == CBSS_INVALID_ARGUMENT);
+  assert(cbss_raster_surface_update_region(
+      surface, region, update, sizeof(update), 12) == CBSS_OK);
+  assert(cbss_raster_surface_revision(surface) == 1);
+  uint64_t revision = 0;
+  assert(cbss_raster_surface_publish(surface, &revision) == CBSS_OK);
+  assert(revision == 2);
+  assert(cbss_raster_surface_dirty_region_count(surface) == 1);
+  assert(cbss_raster_surface_dirty_region_at(surface, 0, &dirty) == CBSS_OK);
+  assert(dirty.x == 1 && dirty.y == 0 && dirty.width == 2 && dirty.height == 2);
+  assert(cbss_raster_surface_publish(surface, &revision) == CBSS_OK);
+  assert(revision == 2);
+
+  cbss_raster_surface_destroy(surface);
+  cbss_raster_surface_destroy(NULL);
+}
+
+static void test_shader_builder(void) {
+  CbssShaderBuilder *vertex = NULL;
+  CbssShaderBuilder *builder = NULL;
+  assert(cbss_shader_builder_create(
+      CBSS_SHADER_STAGE_VERTEX, "basic-vertex", &vertex) == CBSS_OK);
+  assert(cbss_shader_builder_create(
+      CBSS_SHADER_STAGE_FRAGMENT, "accent-fragment", &builder) == CBSS_OK);
+  assert(vertex != NULL && builder != NULL);
+
+  CbssShaderExpression position = 0;
+  CbssShaderExpression vertex_uv = 0;
+  CbssShaderExpression x = 0;
+  CbssShaderExpression y = 0;
+  CbssShaderExpression z = 0;
+  CbssShaderExpression one = 0;
+  CbssShaderExpression clip_position = 0;
+  assert(cbss_shader_builder_vertex_input(
+      vertex, CBSS_SHADER_SLOT_POSITION, CBSS_SHADER_VALUE_VEC3,
+      &position) == CBSS_OK);
+  assert(cbss_shader_builder_vertex_input(
+      vertex, CBSS_SHADER_SLOT_TEXCOORD0, CBSS_SHADER_VALUE_VEC2,
+      &vertex_uv) == CBSS_OK);
+  assert(cbss_shader_builder_swizzle(vertex, position, "x", &x) == CBSS_OK);
+  assert(cbss_shader_builder_swizzle(vertex, position, "y", &y) == CBSS_OK);
+  assert(cbss_shader_builder_swizzle(vertex, position, "z", &z) == CBSS_OK);
+  assert(cbss_shader_builder_literal(vertex, 1.0f, &one) == CBSS_OK);
+  const CbssShaderExpression position_components[] = {x, y, z, one};
+  assert(cbss_shader_builder_construct(
+      vertex, CBSS_SHADER_VALUE_VEC4, position_components, 4,
+      &clip_position) == CBSS_OK);
+  assert(cbss_shader_builder_set_position_output(
+      vertex, clip_position) == CBSS_OK);
+  assert(cbss_shader_builder_set_varying_output(
+      vertex, CBSS_SHADER_SLOT_TEXCOORD0, vertex_uv) == CBSS_OK);
+
+  CbssShaderExpression uv = 0;
+  CbssShaderExpression factor = 0;
+  CbssShaderExpression base = 0;
+  CbssShaderExpression accent = 0;
+  CbssShaderExpression color = 0;
+  const float base_values[] = {0.1f, 0.2f, 0.3f, 1.0f};
+  assert(cbss_shader_builder_varying_input(
+      builder, CBSS_SHADER_SLOT_TEXCOORD0, CBSS_SHADER_VALUE_VEC2,
+      &uv) == CBSS_OK);
+  assert(cbss_shader_builder_swizzle(builder, uv, "x", &factor) == CBSS_OK);
+  assert(cbss_shader_builder_vector_literal(
+      builder, base_values, 4, &base) == CBSS_OK);
+  assert(cbss_shader_builder_uniform(
+      builder, "u_accent", CBSS_SHADER_VALUE_VEC4, &accent) == CBSS_OK);
+  assert(cbss_shader_builder_ternary(
+      builder, CBSS_SHADER_TERNARY_MIX, base, accent, factor,
+      &color) == CBSS_OK);
+  assert(cbss_shader_builder_set_position_output(builder, color) ==
+         CBSS_INVALID_ARGUMENT);
+  assert(cbss_shader_builder_set_color_output(builder, color, 0) == CBSS_OK);
+  assert(cbss_shader_builder_validate_graphics(vertex, builder) == CBSS_OK);
+
+  const uint32_t source_bytes = cbss_shader_builder_source(builder, NULL, 0);
+  const uint32_t varying_bytes =
+      cbss_shader_builder_varying_definitions(builder, NULL, 0);
+  assert(source_bytes > 0);
+  assert(varying_bytes > 0);
+  char *source = malloc((size_t)source_bytes + 1);
+  char *varying = malloc((size_t)varying_bytes + 1);
+  assert(source != NULL && varying != NULL);
+  assert(cbss_shader_builder_source(
+      builder, source, source_bytes + 1) == source_bytes);
+  assert(cbss_shader_builder_varying_definitions(
+      builder, varying, varying_bytes + 1) == varying_bytes);
+  assert(strstr(source, "$input v_texcoord0") != NULL);
+  assert(strstr(source, "uniform vec4 u_accent;") != NULL);
+  assert(strstr(source, " = mix(") != NULL);
+  assert(strstr(source, "gl_FragColor = cbss_n") != NULL);
+  assert(strstr(varying, "vec2 v_texcoord0 : TEXCOORD0;") != NULL);
+  free(varying);
+  free(source);
+
+  CbssShaderExpression rejected = 0;
+  assert(cbss_shader_builder_set_color_output(builder, color, 0) ==
+         CBSS_INVALID_ARGUMENT);
+  assert(cbss_shader_builder_literal(builder, 1.0f, &rejected) ==
+         CBSS_INVALID_ARGUMENT);
+  assert(rejected == 0);
+  char error[128];
+  assert(cbss_shader_builder_last_error(builder, error, sizeof(error)) > 0);
+  assert(strstr(error, "sealed") != NULL);
+  cbss_shader_builder_destroy(vertex);
+  cbss_shader_builder_destroy(builder);
+  cbss_shader_builder_destroy(NULL);
+}
+
+static void test_compute_shader_builder(void) {
+  CbssShaderBuilder *compute = NULL;
+  assert(cbss_shader_builder_create(
+      CBSS_SHADER_STAGE_COMPUTE, "c-compute", &compute) == CBSS_OK);
+  assert(compute != NULL);
+  assert(cbss_shader_builder_set_compute_work_group_size(
+      compute, 64, 1, 1) == CBSS_OK);
+
+  CbssShaderStorageBuffer input = 0;
+  CbssShaderStorageBuffer output = 0;
+  CbssShaderStorageBuffer flags = 0;
+  assert(cbss_shader_builder_storage_buffer(
+      compute, "b_input", 0, CBSS_SHADER_STORAGE_FLOAT32X4,
+      CBSS_SHADER_STORAGE_READ, &input) == CBSS_OK);
+  assert(cbss_shader_builder_storage_buffer(
+      compute, "b_output", 1, CBSS_SHADER_STORAGE_FLOAT32X4,
+      CBSS_SHADER_STORAGE_WRITE, &output) == CBSS_OK);
+  assert(cbss_shader_builder_storage_buffer(
+      compute, "b_flags", 2, CBSS_SHADER_STORAGE_UINT32,
+      CBSS_SHADER_STORAGE_WRITE, &flags) == CBSS_OK);
+  assert(input != 0 && output != 0 && flags != 0 && input != output);
+
+  CbssShaderExpression invocation = 0;
+  CbssShaderExpression index = 0;
+  CbssShaderExpression count = 0;
+  CbssShaderExpression outside = 0;
+  CbssShaderExpression inside = 0;
+  CbssShaderExpression wrapped_index = 0;
+  CbssShaderExpression value = 0;
+  CbssShaderExpression selected = 0;
+  CbssShaderExpression active = 0;
+  CbssShaderExpression pinned = 0;
+  CbssShaderExpression packed = 0;
+  CbssShaderExpression shift = 0;
+  CbssShaderExpression shifted = 0;
+  CbssShaderExpression restored = 0;
+  CbssShaderExpression masked = 0;
+  CbssShaderExpression toggled = 0;
+  CbssShaderExpression inverted = 0;
+  CbssShaderExpression one_float = 0;
+  CbssShaderExpression one_bits = 0;
+  CbssShaderExpression restored_float = 0;
+  CbssShaderExpression loop_one = 0;
+  CbssShaderExpression loop_two = 0;
+  CbssShaderExpression loop_value = 0;
+  CbssShaderExpression loop_condition = 0;
+  CbssShaderExpression accumulator_value = 0;
+  CbssShaderExpression accumulator_next = 0;
+  CbssShaderExpression array_value = 0;
+  CbssShaderExpression array_next = 0;
+  CbssShaderLocal accumulator_local = 0;
+  CbssShaderLocal loop_local = 0;
+  CbssShaderLocalArray candidates = 0;
+  CbssShaderFunction square_function = 0;
+  CbssShaderExpression square_parameter = 0;
+  CbssShaderExpression square_value = 0;
+  CbssShaderExpression square_argument = 0;
+  CbssShaderExpression square_call = 0;
+  CbssShaderExpression rejected = 123;
+  assert(cbss_shader_builder_compute_builtin(
+      compute, CBSS_SHADER_COMPUTE_GLOBAL_INVOCATION_ID,
+      &invocation) == CBSS_OK);
+  assert(cbss_shader_builder_swizzle(
+      compute, invocation, "x", &index) == CBSS_OK);
+  assert(cbss_shader_builder_uint_literal(compute, 64, &count) == CBSS_OK);
+  assert(cbss_shader_builder_compare(
+      compute, CBSS_SHADER_COMPARISON_GREATER_THAN_OR_EQUAL,
+      index, count, &outside) == CBSS_OK);
+  assert(cbss_shader_builder_begin_if(compute, outside) == CBSS_OK);
+  assert(cbss_shader_builder_return_from_compute(compute) == CBSS_OK);
+  assert(cbss_shader_builder_begin_else(compute) == CBSS_OK);
+  assert(cbss_shader_builder_logical(
+      compute, CBSS_SHADER_LOGICAL_NOT, outside, 0, &inside) == CBSS_OK);
+  assert(cbss_shader_builder_binary(
+      compute, CBSS_SHADER_BINARY_MODULO,
+      index, count, &wrapped_index) == CBSS_OK);
+  assert(cbss_shader_builder_storage_load(
+      compute, input, wrapped_index, &value) == CBSS_OK);
+  assert(cbss_shader_builder_select(
+      compute, inside, value, value, &selected) == CBSS_OK);
+  assert(cbss_shader_builder_storage_store(
+      compute, output, index, selected) == CBSS_OK);
+  assert(cbss_shader_builder_uint_literal(compute, 1, &active) == CBSS_OK);
+  assert(cbss_shader_builder_uint_literal(compute, 2, &pinned) == CBSS_OK);
+  assert(cbss_shader_builder_uint_literal(compute, 1, &shift) == CBSS_OK);
+  assert(cbss_shader_builder_binary(
+      compute, CBSS_SHADER_BINARY_BITWISE_OR,
+      active, pinned, &packed) == CBSS_OK);
+  assert(cbss_shader_builder_binary(
+      compute, CBSS_SHADER_BINARY_SHIFT_LEFT,
+      packed, shift, &shifted) == CBSS_OK);
+  assert(cbss_shader_builder_binary(
+      compute, CBSS_SHADER_BINARY_SHIFT_RIGHT,
+      shifted, shift, &restored) == CBSS_OK);
+  assert(cbss_shader_builder_binary(
+      compute, CBSS_SHADER_BINARY_BITWISE_AND,
+      restored, packed, &masked) == CBSS_OK);
+  assert(cbss_shader_builder_binary(
+      compute, CBSS_SHADER_BINARY_BITWISE_XOR,
+      masked, pinned, &toggled) == CBSS_OK);
+  assert(cbss_shader_builder_unary(
+      compute, CBSS_SHADER_UNARY_BITWISE_NOT,
+      toggled, &inverted) == CBSS_OK);
+  assert(cbss_shader_builder_storage_store(
+      compute, flags, index, inverted) == CBSS_OK);
+  assert(cbss_shader_builder_literal(compute, 1.0f, &one_float) == CBSS_OK);
+  assert(cbss_shader_builder_bitcast(
+      compute, CBSS_SHADER_VALUE_UINT, one_float, &one_bits) == CBSS_OK);
+  assert(cbss_shader_builder_bitcast(
+      compute, CBSS_SHADER_VALUE_FLOAT, one_bits, &restored_float) == CBSS_OK);
+  assert(cbss_shader_builder_bitcast(
+      compute, CBSS_SHADER_VALUE_VEC2, one_float, &rejected) ==
+      CBSS_INVALID_ARGUMENT);
+  assert(rejected == 0);
+  assert(cbss_shader_builder_end_if(compute) == CBSS_OK);
+  const CbssShaderValueType square_parameters[] = {
+      CBSS_SHADER_VALUE_FLOAT};
+  assert(cbss_shader_builder_begin_function(
+      compute, CBSS_SHADER_VALUE_FLOAT, square_parameters, 1,
+      &square_function) == CBSS_OK);
+  assert(square_function != 0);
+  assert(cbss_shader_builder_function_parameter(
+      compute, square_function, 0, &square_parameter) == CBSS_OK);
+  assert(cbss_shader_builder_binary(
+      compute, CBSS_SHADER_BINARY_MULTIPLY, square_parameter,
+      square_parameter, &square_value) == CBSS_OK);
+  assert(cbss_shader_builder_function_return(
+      compute, square_function, square_value) == CBSS_OK);
+  assert(cbss_shader_builder_end_function(
+      compute, square_function) == CBSS_OK);
+  assert(cbss_shader_builder_literal(
+      compute, 2.0f, &square_argument) == CBSS_OK);
+  const CbssShaderExpression square_arguments[] = {square_argument};
+  assert(cbss_shader_builder_function_call(
+      compute, square_function, square_arguments, 1, &square_call) == CBSS_OK);
+  assert(square_call != 0);
+  rejected = 123;
+  assert(cbss_shader_builder_function_parameter(
+      compute, square_function, 1, &rejected) == CBSS_INVALID_ARGUMENT);
+  assert(rejected == 0);
+  rejected = 123;
+  assert(cbss_shader_builder_function_call(
+      compute, square_function, NULL, 0, &rejected) == CBSS_INVALID_ARGUMENT);
+  assert(rejected == 0);
+  rejected = 123;
+  assert(cbss_shader_builder_function_call(
+      compute, square_function, &one_bits, 1, &rejected) ==
+      CBSS_INVALID_ARGUMENT);
+  assert(rejected == 0);
+  rejected = 123;
+  assert(cbss_shader_builder_function_call(
+      compute, UINT32_MAX, square_arguments, 1, &rejected) ==
+      CBSS_INVALID_ARGUMENT);
+  assert(rejected == 0);
+  assert(cbss_shader_builder_uint_literal(compute, 1, &loop_one) == CBSS_OK);
+  assert(cbss_shader_builder_uint_literal(compute, 2, &loop_two) == CBSS_OK);
+  assert(cbss_shader_builder_local(
+      compute, loop_one, &accumulator_local) == CBSS_OK);
+  assert(accumulator_local != 0);
+  assert(cbss_shader_builder_begin_for_uint(
+      compute, 0, 4, 1, &loop_local) == CBSS_OK);
+  assert(loop_local != 0 && loop_local != accumulator_local);
+  assert(cbss_shader_builder_local_load(
+      compute, loop_local, &loop_value) == CBSS_OK);
+  assert(cbss_shader_builder_compare(
+      compute, CBSS_SHADER_COMPARISON_EQUAL,
+      loop_value, loop_one, &loop_condition) == CBSS_OK);
+  assert(cbss_shader_builder_begin_if(compute, loop_condition) == CBSS_OK);
+  assert(cbss_shader_builder_continue(compute) == CBSS_OK);
+  assert(cbss_shader_builder_end_if(compute) == CBSS_OK);
+  assert(cbss_shader_builder_local_load(
+      compute, accumulator_local, &accumulator_value) == CBSS_OK);
+  assert(cbss_shader_builder_binary(
+      compute, CBSS_SHADER_BINARY_ADD,
+      accumulator_value, loop_value, &accumulator_next) == CBSS_OK);
+  assert(cbss_shader_builder_local_store(
+      compute, accumulator_local, accumulator_next) == CBSS_OK);
+  assert(cbss_shader_builder_compare(
+      compute, CBSS_SHADER_COMPARISON_EQUAL,
+      loop_value, loop_two, &loop_condition) == CBSS_OK);
+  assert(cbss_shader_builder_begin_if(compute, loop_condition) == CBSS_OK);
+  assert(cbss_shader_builder_break(compute) == CBSS_OK);
+  assert(cbss_shader_builder_end_if(compute) == CBSS_OK);
+  assert(cbss_shader_builder_end_for(compute) == CBSS_OK);
+  accumulator_value = 123;
+  assert(cbss_shader_builder_local_load(
+      compute, loop_local, &accumulator_value) == CBSS_INVALID_ARGUMENT);
+  assert(accumulator_value == 0);
+  assert(cbss_shader_builder_local_load(
+      compute, accumulator_local, &accumulator_value) == CBSS_OK);
+  assert(cbss_shader_builder_storage_store(
+      compute, flags, index, accumulator_value) == CBSS_OK);
+  assert(cbss_shader_builder_local_array(
+      compute, loop_one, 8, &candidates) == CBSS_OK);
+  assert(candidates != 0);
+  assert(cbss_shader_builder_local_array_load(
+      compute, candidates, loop_one, &array_value) == CBSS_OK);
+  assert(cbss_shader_builder_binary(
+      compute, CBSS_SHADER_BINARY_ADD,
+      array_value, loop_one, &array_next) == CBSS_OK);
+  assert(cbss_shader_builder_local_array_store(
+      compute, candidates, loop_one, array_next) == CBSS_OK);
+  assert(cbss_shader_builder_local_array_store(
+      compute, candidates, loop_one, one_float) == CBSS_INVALID_ARGUMENT);
+  rejected = 123;
+  assert(cbss_shader_builder_local_array_load(
+      compute, candidates, count, &rejected) == CBSS_INVALID_ARGUMENT);
+  assert(rejected == 0);
+  rejected = 123;
+  assert(cbss_shader_builder_local_array(
+      compute, loop_one, 0, &candidates) == CBSS_INVALID_ARGUMENT);
+  assert(candidates == 0);
+  rejected = 123;
+  assert(cbss_shader_builder_local_array_load(
+      compute, 0, loop_one, &rejected) == CBSS_INVALID_ARGUMENT);
+  assert(rejected == 0);
+  assert(cbss_shader_builder_emit(compute) == CBSS_OK);
+
+  const uint32_t source_bytes = cbss_shader_builder_source(compute, NULL, 0);
+  assert(source_bytes > 0);
+  char *source = malloc((size_t)source_bytes + 1);
+  assert(source != NULL);
+  assert(cbss_shader_builder_source(
+      compute, source, source_bytes + 1) == source_bytes);
+  assert(strstr(source, "#include <bgfx_compute.sh>") != NULL);
+  assert(strstr(source, "BUFFER_RO(b_input, vec4, 0);") != NULL);
+  assert(strstr(source, "BUFFER_WO(b_output, vec4, 1);") != NULL);
+  assert(strstr(source, "BUFFER_WO(b_flags, uint, 2);") != NULL);
+  assert(strstr(source, "NUM_THREADS(64, 1, 1)") != NULL);
+  assert(strstr(source, "gl_GlobalInvocationID") != NULL);
+  assert(strstr(source, " >= ") != NULL);
+  assert(strstr(source, "return;") != NULL);
+  assert(strstr(source, "else") != NULL);
+  assert(strstr(source, " % ") != NULL);
+  assert(strstr(source, " | ") != NULL);
+  assert(strstr(source, " & ") != NULL);
+  assert(strstr(source, " ^ ") != NULL);
+  assert(strstr(source, " << ") != NULL);
+  assert(strstr(source, "uint cbss_a0[8];") != NULL);
+  assert(strstr(source, "float cbss_f0(float cbss_p0)") != NULL);
+  assert(strstr(source, "cbss_f0(") != NULL);
+  assert(strstr(source, " >> ") != NULL);
+  assert(strstr(source, "~(") != NULL);
+  assert(strstr(source, "floatBitsToUint(") != NULL);
+  assert(strstr(source, "uintBitsToFloat(") != NULL);
+  assert(strstr(source, " ? ") != NULL);
+  assert(strstr(source, "for (uint cbss_l") != NULL);
+  assert(strstr(source, "continue;") != NULL);
+  assert(strstr(source, "break;") != NULL);
+  assert(strstr(source, "b_output[") != NULL);
+  free(source);
+
+  rejected = 123;
+  assert(cbss_shader_builder_uint_literal(compute, 1, &rejected) ==
+         CBSS_INVALID_ARGUMENT);
+  assert(rejected == 0);
+  cbss_shader_builder_destroy(compute);
+
+  CbssShaderBuilder *invalid = NULL;
+  assert(cbss_shader_builder_create(
+      CBSS_SHADER_STAGE_COMPUTE, "invalid-compute", &invalid) == CBSS_OK);
+  assert(cbss_shader_builder_set_compute_work_group_size(
+      invalid, 1025, 1, 1) == CBSS_INVALID_ARGUMENT);
+  CbssShaderLocal invalid_local = 123;
+  assert(cbss_shader_builder_begin_for_uint(
+      invalid, 0, 4, 0, &invalid_local) == CBSS_INVALID_ARGUMENT);
+  assert(invalid_local == 0);
+  invalid_local = 123;
+  assert(cbss_shader_builder_begin_for_int(
+      invalid, -1, 2, 0, &invalid_local) == CBSS_INVALID_ARGUMENT);
+  assert(invalid_local == 0);
+  assert(cbss_shader_builder_end_for(invalid) == CBSS_INVALID_ARGUMENT);
+  assert(cbss_shader_builder_break(invalid) == CBSS_INVALID_ARGUMENT);
+  assert(cbss_shader_builder_continue(invalid) == CBSS_INVALID_ARGUMENT);
+  assert(cbss_shader_builder_storage_buffer(
+      invalid, "input", 0, CBSS_SHADER_STORAGE_UINT32,
+      CBSS_SHADER_STORAGE_READ, &input) == CBSS_INVALID_ARGUMENT);
+  assert(cbss_shader_builder_compute_builtin(
+      invalid, (CbssShaderComputeBuiltin)UINT32_MAX,
+      &rejected) == CBSS_INVALID_ARGUMENT);
+  assert(rejected == 0);
+  assert(cbss_shader_builder_storage_load(
+      invalid, UINT32_MAX, 1, &rejected) == CBSS_INVALID_ARGUMENT);
+  assert(rejected == 0);
+  cbss_shader_builder_destroy(invalid);
+
+  CbssShaderBuilder *image_compute = NULL;
+  assert(cbss_shader_builder_create(
+      CBSS_SHADER_STAGE_COMPUTE, "c-storage-image", &image_compute) == CBSS_OK);
+  assert(cbss_shader_builder_set_compute_work_group_size(
+      image_compute, 8, 8, 1) == CBSS_OK);
+  CbssShaderStorageImage image = 0;
+  assert(cbss_shader_builder_storage_image(
+      image_compute, "i_output", 0, CBSS_SHADER_IMAGE_RGBA32F,
+      CBSS_SHADER_STORAGE_WRITE, &image) == CBSS_OK);
+  CbssShaderExpression image_invocation = 0;
+  CbssShaderExpression unsigned_coordinates = 0;
+  CbssShaderExpression signed_coordinates = 0;
+  CbssShaderExpression color = 0;
+  const float rgba[] = {0.25f, 0.5f, 0.75f, 1.0f};
+  assert(cbss_shader_builder_compute_builtin(
+      image_compute, CBSS_SHADER_COMPUTE_GLOBAL_INVOCATION_ID,
+      &image_invocation) == CBSS_OK);
+  assert(cbss_shader_builder_swizzle(
+      image_compute, image_invocation, "xy", &unsigned_coordinates) == CBSS_OK);
+  assert(cbss_shader_builder_convert(
+      image_compute, CBSS_SHADER_VALUE_IVEC2, unsigned_coordinates,
+      &signed_coordinates) == CBSS_OK);
+  assert(cbss_shader_builder_vector_literal(
+      image_compute, rgba, 4, &color) == CBSS_OK);
+  assert(cbss_shader_builder_storage_image_store(
+      image_compute, image, signed_coordinates, color) == CBSS_OK);
+  assert(cbss_shader_builder_emit(image_compute) == CBSS_OK);
+
+  const uint32_t image_source_bytes =
+      cbss_shader_builder_source(image_compute, NULL, 0);
+  assert(image_source_bytes > 0);
+  char *image_source = malloc((size_t)image_source_bytes + 1);
+  assert(image_source != NULL);
+  assert(cbss_shader_builder_source(
+      image_compute, image_source, image_source_bytes + 1) ==
+      image_source_bytes);
+  assert(strstr(image_source,
+                "IMAGE2D_WO(i_output, rgba32f, 0);") != NULL);
+  assert(strstr(image_source, "ivec2(") != NULL);
+  assert(strstr(image_source, "imageStore(i_output,") != NULL);
+  free(image_source);
+  cbss_shader_builder_destroy(image_compute);
+
+  CbssShaderBuilder *invalid_image = NULL;
+  assert(cbss_shader_builder_create(
+      CBSS_SHADER_STAGE_COMPUTE, "invalid-image", &invalid_image) == CBSS_OK);
+  image = 99;
+  assert(cbss_shader_builder_storage_image(
+      invalid_image, "i_output", 0,
+      (CbssShaderStorageImageFormat)UINT32_MAX,
+      CBSS_SHADER_STORAGE_WRITE, &image) == CBSS_INVALID_ARGUMENT);
+  assert(image == 0);
+  cbss_shader_builder_destroy(invalid_image);
+}
+
 int main(void) {
+  test_shader_builder();
+  test_compute_shader_builder();
+  test_raster_surface();
+  test_custom_paint_provider();
   test_craft_loading();
   test_subtree_lifecycle();
   assert(cbss_abi_version() == CBSS_ABI_VERSION);
   assert(cbss_driver_contract_version() == CBSS_DRIVER_CONTRACT_VERSION);
-  assert(cbss_capability_count() == 19);
+  assert(cbss_capability_count() == 22);
   assert(cbss_has_capability(CBSS_CAPABILITY_RETAINED_TREE, 1));
   assert(!cbss_has_capability(CBSS_CAPABILITY_RETAINED_TREE, 2));
+  assert(cbss_has_capability(CBSS_CAPABILITY_PAINT_COMMANDS, 3));
+  assert(!cbss_has_capability(CBSS_CAPABILITY_PAINT_COMMANDS, 4));
+  assert(cbss_has_capability(CBSS_CAPABILITY_RETAINED_CANVAS, 3));
+  assert(!cbss_has_capability(CBSS_CAPABILITY_RETAINED_CANVAS, 4));
+  assert(cbss_has_capability(CBSS_CAPABILITY_SHADER_AUTHORING, 9));
+  assert(!cbss_has_capability(CBSS_CAPABILITY_SHADER_AUTHORING, 10));
+  assert(cbss_has_capability(CBSS_CAPABILITY_CUSTOM_PAINT_PROVIDER, 3));
+  assert(!cbss_has_capability(CBSS_CAPABILITY_CUSTOM_PAINT_PROVIDER, 4));
   assert(!cbss_has_capability(UINT32_MAX, 1));
 
   CbssCapabilityInfo capability = {0};
@@ -570,6 +1372,17 @@ int main(void) {
   assert(cbss_capability_at(18, &capability) == CBSS_OK);
   assert(capability.id == CBSS_CAPABILITY_VALIDATION_PATTERN);
   assert(capability.since_abi == 0x00010019u);
+  assert(cbss_capability_at(19, &capability) == CBSS_OK);
+  assert(capability.id == CBSS_CAPABILITY_RASTER_SURFACE);
+  assert(capability.since_abi == 0x0001001Au);
+  assert(cbss_capability_at(20, &capability) == CBSS_OK);
+  assert(capability.id == CBSS_CAPABILITY_SHADER_AUTHORING);
+  assert(capability.version == 9);
+  assert(capability.since_abi == 0x0001001Bu);
+  assert(cbss_capability_at(21, &capability) == CBSS_OK);
+  assert(capability.id == CBSS_CAPABILITY_CUSTOM_PAINT_PROVIDER);
+  assert(capability.version == 3);
+  assert(capability.since_abi == 0x0001001Du);
   memset(&capability, 0xff, sizeof(capability));
   assert(cbss_capability_at(
       cbss_capability_count(), &capability) == CBSS_OUT_OF_RANGE);
@@ -599,9 +1412,12 @@ int main(void) {
   }
   assert(CBSS_PAINT_PUSH_LAYER == 11);
   assert(CBSS_PAINT_POP_LAYER == 12);
+  assert(CBSS_PAINT_DRAW_RASTER_SURFACE == 13);
+  assert(CBSS_PAINT_DRAW_GPU_DIRECT_SURFACE == 14);
   assert(CBSS_LAYER_SOURCE_OVER == 0);
   assert(CBSS_LAYER_COPY == 1);
   assert(CBSS_LAYER_ADDITIVE == 2);
+  assert(CBSS_LAYER_DESTINATION_IN == 3);
 
   CbssValidationPattern *validation_pattern = NULL;
   char validation_error[128] = {0};
@@ -865,6 +1681,29 @@ int main(void) {
       (CbssColor){1.0f, 0.0f, 0.0f, 1.0f}, 1.0f,
       CBSS_STROKE_CAP_BUTT, CBSS_STROKE_JOIN_MITER, 4.0f) ==
       CBSS_INVALID_ARGUMENT);
+  const float invalid_canvas_dash = -2.0f;
+  const CbssPathSegment valid_dash_path[] = {
+      {.kind = CBSS_PATH_MOVE_TO, .endpoint_x = 1.0f, .endpoint_y = 1.0f},
+      {.kind = CBSS_PATH_LINE_TO, .endpoint_x = 8.0f, .endpoint_y = 8.0f}
+  };
+  assert(cbss_render_surface_canvas_stroke_path_dashed(
+      context, surface_state.surface, &invalid_canvas_path, 1,
+      (CbssColor){1.0f, 0.0f, 0.0f, 1.0f}, 1.0f,
+      CBSS_STROKE_CAP_BUTT, CBSS_STROKE_JOIN_MITER, 4.0f,
+      NULL, 1, 0.0f) == CBSS_INVALID_ARGUMENT);
+  assert(cbss_render_surface_canvas_stroke_path_dashed(
+      context, surface_state.surface, valid_dash_path, 2,
+      (CbssColor){1.0f, 0.0f, 0.0f, 1.0f}, 1.0f,
+      CBSS_STROKE_CAP_BUTT, CBSS_STROKE_JOIN_MITER, 4.0f,
+      &invalid_canvas_dash, 1, 0.0f) == CBSS_INVALID_ARGUMENT);
+  assert(cbss_render_surface_canvas_fill_path(
+      context, surface_state.surface, &invalid_canvas_path, 1,
+      (CbssColor){1.0f, 0.0f, 0.0f, 1.0f}, CBSS_PATH_FILL_NONZERO) ==
+      CBSS_INVALID_ARGUMENT);
+  assert(cbss_render_surface_canvas_fill_path(
+      context, surface_state.surface, &invalid_canvas_path, 1,
+      (CbssColor){1.0f, 0.0f, 0.0f, 1.0f}, UINT32_MAX) ==
+      CBSS_INVALID_ARGUMENT);
   CbssTextStyle invalid_canvas_text_style = {
       .flags = 1u << 31
   };
@@ -881,6 +1720,10 @@ int main(void) {
       context, surface_state.surface, "invalid.png",
       (CbssRect){0.0f, 0.0f, 10.0f, 10.0f}, 1.1f) ==
       CBSS_INVALID_ARGUMENT);
+  assert(cbss_render_surface_canvas_draw_raster_surface(
+      context, surface_state.surface, NULL,
+      (CbssRect){0.0f, 0.0f, 10.0f, 10.0f}, 1.0f) ==
+      CBSS_INVALID_HANDLE);
   assert(cbss_context_set_pixel_scale(context, 0.0f) == CBSS_INVALID_ARGUMENT);
   assert(cbss_context_set_pixel_scale(context, NAN) == CBSS_INVALID_ARGUMENT);
 
@@ -1308,6 +2151,10 @@ int main(void) {
       .font_size = 12.0f,
       .font_weight = 600.0f
   };
+  CbssRasterSurface *canvas_raster = NULL;
+  const uint8_t raster_fill[] = {24, 96, 192, 255};
+  require_ok(context, cbss_raster_surface_create(
+      4, 4, raster_fill, &canvas_raster));
   require_ok(context, cbss_render_surface_canvas_clear(
       context, surface_state.surface));
   require_ok(context, cbss_render_surface_canvas_save(
@@ -1338,6 +2185,21 @@ int main(void) {
       context, surface_state.surface, surface_path, 2,
       (CbssColor){0.0f, 0.0f, 1.0f, 1.0f}, 1.0f,
       CBSS_STROKE_CAP_ROUND, CBSS_STROKE_JOIN_ROUND, 4.0f));
+  const float surface_dashes[] = {4.0f, 2.0f};
+  require_ok(context, cbss_render_surface_canvas_stroke_path_dashed(
+      context, surface_state.surface, surface_path, 2,
+      (CbssColor){0.2f, 0.4f, 0.8f, 1.0f}, 1.0f,
+      CBSS_STROKE_CAP_BUTT, CBSS_STROKE_JOIN_BEVEL, 4.0f,
+      surface_dashes, 2, 0.5f));
+  CbssPathSegment surface_fill_path[] = {
+      {.kind = CBSS_PATH_MOVE_TO, .endpoint_x = 14.0f, .endpoint_y = 10.0f},
+      {.kind = CBSS_PATH_LINE_TO, .endpoint_x = 24.0f, .endpoint_y = 10.0f},
+      {.kind = CBSS_PATH_LINE_TO, .endpoint_x = 19.0f, .endpoint_y = 18.0f},
+      {.kind = CBSS_PATH_CLOSE}
+  };
+  require_ok(context, cbss_render_surface_canvas_fill_path(
+      context, surface_state.surface, surface_fill_path, 4,
+      (CbssColor){0.8f, 0.2f, 0.5f, 0.9f}, CBSS_PATH_FILL_NONZERO));
   require_ok(context, cbss_render_surface_canvas_draw_text(
       context, surface_state.surface, "Surface", 2.0f, 18.0f,
       (CbssColor){1.0f, 1.0f, 1.0f, 1.0f},
@@ -1345,6 +2207,10 @@ int main(void) {
   require_ok(context, cbss_render_surface_canvas_draw_image(
       context, surface_state.surface, "surface.png",
       (CbssRect){16.0f, 10.0f, 8.0f, 8.0f}, 0.8f));
+  require_ok(context, cbss_render_surface_canvas_draw_raster_surface(
+      context, surface_state.surface, canvas_raster,
+      (CbssRect){4.0f, 4.0f, 6.0f, 6.0f}, 0.6f));
+  cbss_raster_surface_destroy(canvas_raster);
   require_ok(context, cbss_render_surface_canvas_pop_clip(
       context, surface_state.surface));
   require_ok(context, cbss_render_surface_canvas_end_layer(
@@ -1473,8 +2339,11 @@ int main(void) {
   int found_surface_fill = 0;
   int found_surface_gradient = 0;
   int found_surface_path = 0;
+  int found_surface_dashed_path = 0;
+  int found_surface_fill_path = 0;
   int found_surface_text = 0;
   int found_surface_image = 0;
+  int found_surface_raster = 0;
   int found_surface_layer = 0;
   for (uint32_t i = 0; i < command_count; ++i) {
     CbssPaintCommand command;
@@ -1544,7 +2413,30 @@ int main(void) {
     } else if (command.kind == CBSS_PAINT_STROKE_PATH &&
                command.owner == surface_node) {
       assert(cbss_paint_command_path_segment_count(context, i) == 2);
-      found_surface_path = 1;
+      uint32_t dash_count = cbss_paint_command_path_dash_count(context, i);
+      if (dash_count == 0) {
+        found_surface_path = 1;
+      } else {
+        float dash = 0.0f;
+        float offset = 0.0f;
+        assert(dash_count == 2);
+        require_ok(context, cbss_paint_command_path_dash(
+            context, i, 0, &dash));
+        assert(fabsf(dash - 4.0f) < 0.001f);
+        require_ok(context, cbss_paint_command_path_dash_offset(
+            context, i, &offset));
+        assert(fabsf(offset - 0.5f) < 0.001f);
+        found_surface_dashed_path = 1;
+      }
+    } else if (command.kind == CBSS_PAINT_FILL_PATH &&
+               command.owner == surface_node) {
+      assert(cbss_paint_command_path_segment_count(context, i) == 4);
+      assert((uint32_t)command.value0 == CBSS_PATH_FILL_NONZERO);
+      CbssPathSegment segment = {0};
+      require_ok(context, cbss_paint_command_path_segment(context, i, 3,
+                                                           &segment));
+      assert(segment.kind == CBSS_PATH_CLOSE);
+      found_surface_fill_path = 1;
     } else if (command.kind == CBSS_PAINT_DRAW_IMAGE &&
                command.owner == surface_node) {
       char source[32];
@@ -1552,6 +2444,12 @@ int main(void) {
           context, i, source, sizeof(source)) == 11);
       assert(strcmp(source, "surface.png") == 0);
       found_surface_image = 1;
+    } else if (command.kind == CBSS_PAINT_DRAW_RASTER_SURFACE &&
+               command.owner == surface_node) {
+      assert(fabsf(command.rect.w - 6.0f) < 0.001f);
+      assert(fabsf(command.rect.h - 6.0f) < 0.001f);
+      assert(fabsf(command.value0 - 0.6f) < 0.001f);
+      found_surface_raster = 1;
     } else if (command.kind == CBSS_PAINT_PUSH_LAYER) {
       assert(fabsf(command.value0 - 0.75f) < 0.001f);
       found_surface_layer = 1;
@@ -1564,8 +2462,11 @@ int main(void) {
   assert(found_surface_fill);
   assert(found_surface_gradient);
   assert(found_surface_path);
+  assert(found_surface_dashed_path);
+  assert(found_surface_fill_path);
   assert(found_surface_text);
   assert(found_surface_image);
+  assert(found_surface_raster);
   assert(found_surface_layer);
 
   require_ok(context, cbss_render_surface_canvas_clear(

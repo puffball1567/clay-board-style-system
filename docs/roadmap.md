@@ -1038,7 +1038,9 @@ an enum-only API.
 
 ## GPU Canvas Capability
 
-Status: `Planned`
+Status: `Version 0.7.0 GPU foundation released on 2026-09-19; the Version 0.7
+patch line continues rounded/offscreen composition, broader real-GPU
+qualification, CPU filters, and Motion Scene work`
 
 CBSS will support optional GPU-backed drawing inside the standard Canvas
 element. This is a capability for game scenes, charts, visualizations, image
@@ -1054,16 +1056,62 @@ Button or a second interpretation of Flex, text, events, or accessibility.
 Static CPU content remains baked while an animated shader overlay runs, so
 shader-only frames do not repeat layout, shaping, or unrelated paint work.
 
+The first portable composition path is explicit and asynchronous:
+
+```text
+GPU RenderTarget -> typed blit -> CPU-only readback Texture
+                 -> async completion -> RasterSurface -> normal CBSS Canvas
+```
+
+The implemented host bounds copy work, readback bytes, and pending requests;
+retains destination storage until completion; and rejects unsupported adapters
+before submission. `GpuCanvasSurface` adds a bounded multi-frame readback ring,
+non-blocking backpressure, ordered latest-frame publication, and explicit
+format/alpha normalization before exposing the result as a normal
+`RasterSurface`. `GpuDisplaySurface` now negotiates a direct same-device
+Texture/RenderTarget path and this deterministic fallback without changing the
+upper Canvas contract. A backend may advertise the direct path only when its
+paint compositor shares the producer's device and ordered queue.
+
 The planned standard GPU adapter is bgfx, with explicit resource, swapchain,
 shader, synchronization, resize, device-loss, and presentation ownership.
 SDL3 continues to own windows, native handles, input, event integration, and
 the canonical CPU presentation path. The independent low-level bgfx Nim C99
 binding is [bgfxim](https://github.com/puffball1567/bgfxim). It is distributed
 separately, remains useful without CBSS, and enters an application only when
-its GPU profile is selected. The binding is available; the CBSS adapter and
-its real-GPU qualification remain Version 0.7 work. A later wgpu-native adapter
+its GPU profile is selected. The binding, typed resource adapter, SDL compositor
+hook, callback-scoped bgfx Texture/RenderTarget resolution, and explicit
+qualified capability profile are available. Typed compositor preflight now
+checks both renderer target constraints and source provider, resource kind,
+format, alpha mode, and dimensions before backend submission. Host Surface
+negotiation applies the same alpha-mode and dimension constraints before
+resource retention, preserving readback fallback. The bgfx constructor
+requires exact source-kind, format, alpha-mode, and dimension coverage of the
+qualified profile. The standard same-host compositor, restricted
+cross-namespace presentation binding, RenderTarget color-attachment resolution,
+rectangular clip/UV crop, and portable shader source contract are implemented;
+rounded/offscreen composition and real-GPU pixel qualification remain Version
+0.7 work. A later wgpu-native adapter
 may implement the same CBSS-owned contract, but it is no longer the standard
 provider or a release prerequisite.
+
+Direct Surface capability queries retain typed limitation reasons for every
+negotiation axis. `GpuDisplaySurface` can therefore preserve deterministic
+readback fallback while tooling reports the exact rejected direct capability,
+without parsing backend-specific strings.
+
+Typed Vertex, Fragment, and Compute graphs now compile through an explicitly
+imported build-only wrapper around the official bgfx `shaderc`. Compute graphs
+include bounded work-group sizes, invocation builtins, integer/vector values,
+and typed storage-buffer load/store operations. The runtime consumes a
+bounded deterministic package containing only selected target variants, and
+does not link or launch the compiler. The package validates version, stage,
+target uniqueness, source identity, typed Uniform and storage binding layouts,
+payload size,
+checksums, and trailing data. Compute dispatch matches that retained layout
+against the actual storage resource stages, formats, and access directions
+before backend work.
+See [GPU Shader Authoring And Packaging](gpu-shaders.md).
 
 CBSS will not claim exclusive ownership of the machine's GPU. A separate
 backend process may own an independent compute device and return bounded Blob,
@@ -2129,9 +2177,10 @@ After the parallel Version 0.5 and Version 0.6 foundation work, the provisional
 sequence is:
 
 - **Version 0.7:** one visual-expression milestone combining complete color
-  authoring, the canonical high-quality CPU vector Canvas, optional bgfx GPU
-  Canvas and compute, optional Little CMS color management, portable shader
-  Style stages, shared GPU ownership, and the retained Motion Scene contract;
+  authoring, a retained partial-update `RasterSurface`, the canonical
+  high-quality CPU vector Canvas, optional bgfx GPU Canvas and compute,
+  optional Little CMS color management, portable shader Style stages, shared
+  GPU ownership, and the retained Motion Scene contract;
 - **Version 0.8:** sprite animation, Tiled-output tile maps, richer game input,
   camera/video surfaces, audio, and media/game Cue adapters; and
 - **Version 0.9:** complete touch and expressive-input behavior, ecosystem
@@ -2144,6 +2193,11 @@ dependencies and performance costs.
 
 ### Version 0.7 Visual Rendering Release Scope
 
+Status: `The GPU host, drawing-engine compute, Custom Paint, retained vector,
+RasterSurface, direct/fallback display-surface, and typed shader-authoring
+baseline shipped in Version 0.7.0 on 2026-09-19. Remaining items continue in
+Version 0.7 patch releases.`
+
 Version 0.7 combines the CPU and GPU expression tracks so applications and
 component libraries receive one coherent visual release rather than separate
 backend-shaped feature sets. Its release gates are:
@@ -2154,6 +2208,17 @@ backend-shaped feature sets. Its release gates are:
   behavior, and deterministic headless references;
 - complete CBSS-owned CPU vector rasterization with fill rules, stroke
   outlines, subpixel coverage, clipping, masks, and retained dirty tiles;
+- a retained `RasterSurface` that creates an explicitly sized RGBA8 image,
+  accepts bounds-checked rectangular updates with an explicit source stride,
+  merges dirty regions per published revision, and composites the current
+  revision inside an ordinary Canvas or Box-owned content region;
+- one raster-surface composition contract across SDL3 and the deterministic
+  headless backend, including clipping, opacity, transforms, stacking, DPI,
+  resize, visibility, input coordinates, color-space and alpha declarations,
+  deterministic teardown, and cache invalidation without relayout;
+- backend uploads that update only changed raster regions when supported,
+  bounded full-upload fallback otherwise, and tests proving that a small
+  update does not rebuild unrelated UI or copy an unbounded historical queue;
 - an optional bgfx GPU Canvas backend for textures, buffers, render targets,
   graphics pipelines, compute pipelines, offscreen rendering, and composition
   inside a normal Canvas-owned layout region;
@@ -2170,8 +2235,8 @@ backend-shaped feature sets. Its release gates are:
   low-level bgfx Nim C99 binding and one compatible selected bgfx runtime
   configuration per process;
 - explicit owned and borrowed `GpuHost` modes, one Surface/Present owner, and
-  documented Instance, Adapter, Device, Queue, swapchain, resize, and
-  device-loss lifecycles;
+  documented bgfx renderer context, platform-data, presentation, resize,
+  frame, shutdown, and device-loss lifecycles;
 - budgeted persistent resource namespaces for independent Nim visualization or
   compute libraries, with frame-scoped submission capabilities and no raw
   swapchain ownership escape;
@@ -2187,11 +2252,139 @@ backend-shaped feature sets. Its release gates are:
 - device-loss, cancellation, teardown order, version mismatch, GPU-memory
   budget, idle-frame, and CPU fallback verification.
 
+The first part of this scope is implemented: `GpuHost` now provides versioned
+owned/borrowed attachment, ordered frame tokens, resize and device-loss state,
+generation-checked resource namespaces with bounded accounting, and mapped
+Texture, Buffer, owned RenderTarget, precompiled Shader, typed Uniform and
+Sampler resources, and dependency-safe Graphics/Compute Pipeline resources. The
+optional `cbssGpuBgfx` adapter consumes `bgfxim` for the bgfx lifecycle while
+remaining absent from standard builds. Bounded graphics and compute submission
+now validates retained resources, pass bounds, work budgets, and a reserved
+backend view range without exposing backend handles. Batched draws initialize
+their shared view once per pass before issuing draw commands. Ordered compute
+batches validate every command plus their aggregate view and work budgets
+before the first dispatch, allowing multi-stage simulation graphs to fail
+before partial submission on host-contract errors. Typed Vec4/Mat3/
+Mat4 Uniforms, wrap/filter Samplers, sampled textures, and compute storage
+images are resolved through the same namespace and generation checks before
+backend submission. Checked texture-region copies and bounded asynchronous
+readback now establish the portable GPU-to-`RasterSurface` transfer boundary.
+Compatible typed storage buffers can now copy complete or element-aligned byte
+ranges on the ordered GPU queue, and shader-written buffers can return a whole
+buffer or bounded range through the same asynchronous lifetime and budget
+model. This lets drawing and image-processing packages keep working fields on
+the GPU, clear ranges from retained zero buffers, chain compute passes without
+CPU staging, and retrieve only final output or diagnostics.
+Offscreen Canvas composition is implemented through `GpuCanvasSurface`, and
+`gpuVisualLayer` mounts it as a bounded underlay or overlay of an ordinary
+component without taking over events or accessibility. Typed Shader Builder
+authoring now maps bounded Nim expression graphs to deterministic bgfx source,
+and the append-only C ABI exposes the same graph through opaque handles and
+fixed-width expression IDs. Generated source is compiled only by build tools;
+the resulting artifact enters the existing retained Shader/Pipeline contract
+for both direct GPU submission and component-owned GPU visual layers. Fixed-
+stride packed physical records now map mixed float and unsigned fields onto
+portable `uint32` storage with exact bit reinterpretation and explicit offsets.
+This avoids backend-specific structure padding while simulation and image-
+processing packages move resident field arrays into CBSS compute graphs; the
+matching primitive is append-only in the C ABI. Typed mutable locals and
+literal-bounded signed or unsigned ranges now provide lexically checked nested
+neighbourhood traversal, `break`, and `continue` through both Nim and the C
+ABI. Initialized fixed-size local arrays now add typed numeric-scalar
+candidate-set load/store operations with lexical scope and bounded resource
+limits. Together, these supply the bounded nested-loop and local-array portions
+of wet-pressure, capillary, and wet-supply kernels needed by drawing engines
+without accepting arbitrary shader text or unbounded data-dependent loops.
+An ARC/ORC fixture now composes the public primitives into a wet-supply-style
+kernel with exact packed cell, edge, parameter, and output layouts, two bounded
+candidate passes, flow limiting, pigment and binder transfer, and metadata
+packing; the Linux GPU lane compiles that same generated source with official
+bgfx `shaderc`. Typed pure compute helpers now factor repeated physical formulas
+without duplicating graph nodes or exposing backend source. Generated names,
+typed parameters and returns, sealed-definition calls, and bounded function
+counts keep package output deterministic; resource access, recursion, forward
+calls, and unbounded control flow are rejected. The
+resource contract additionally supports R16F/R32F, RG16F/RG32F, and
+RGBA16F/RGBA32F textures plus typed compute storage buffers with bounded,
+stage-checked read/write access. Dynamic storage buffers accept element-aligned
+partial host uploads for every shader access direction between frames, allowing
+persistent simulation fields to be restored or patched without rebuilding their
+resource namespace. Dynamic textures accept frame-budgeted full and
+rectangular updates, and `GpuRasterTexture` synchronizes retained
+`RasterSurface` revisions through borrowed dirty row spans with a bounded
+full-upload fallback when revisions are skipped. Device-loss recovery now
+includes deterministic per-namespace rebuild handlers, generation reporting,
+and rollback of partial
+resources from failed owners. A backend-neutral direct Texture/RenderTarget
+surface now adds bounded double/triple buffering, presentation retention,
+latest-ready coalescing, paint-only invalidation, capability negotiation, and
+the existing asynchronous readback fallback. Direct submissions now carry a
+backend-neutral composition context containing the final-window versus
+offscreen target kind, target bounds, effective rectangular clip, rounded-mask
+requirement, and pixel scale. This lets a presentation adapter reject a path it
+cannot preserve instead of drawing into the wrong target. Typed compositor
+capabilities now reject unsupported target, clip, and mask combinations before
+acquiring the published GPU frame. Custom Paint declarations now
+retain bounded typed material parameters in cold style storage and deliver them
+to providers without per-frame string parsing. A standard same-host compositor
+now consumes final-window contexts and retained Texture/RenderTarget sources in
+the active presentation frame. Rounded/offscreen direct-GPU composition,
+declarative filter composition, and broader real-GPU qualification remain open Version
+0.7 work. Owned bgfx hosts
+now recreate the backend from their latest validated configuration after
+device loss before deterministic namespace restoration begins; borrowed hosts
+continue to require recreation by their external owner.
+The CPU Canvas now fills retained concave and multi-contour `Path2D` geometry
+with nonzero or evenodd rules through one scanline coverage contract shared by
+SDL3 and the deterministic PPM backend. Circular and elliptical arcs feed the
+same retained path model. Butt, round, and square caps plus miter, round, and
+bevel joins are expanded once into canonical fillable stroke outlines when a
+paint or Canvas command is retained, rather than during every redraw. This
+also preserves stroke geometry under non-uniform transforms. The scanline
+implementation reuses bounded scratch storage, preserves transformed
+rectangular and rounded clips, and is exposed through retained Canvas, Custom
+Paint, test snapshots, and the versioned C ABI. Dashed strokes and offsets now
+use that same retained outline path with bounded authoring-time expansion.
+The backend-neutral retained dirty-tile planner and deterministic CPU reference
+cache now preserve unchanged pixels, coalesce bounded tile regions, resolve
+transform and clip scopes, and map `RasterSurface` source dirt directly into
+destination tiles. The SDL3 layered renderer now consumes the same retained
+damage plan, skips texture updates for identical static commands, redraws only
+bounded damaged tiles, and caps sparse damage replay by conservatively merging
+more than eight regions. Initial construction, resize, background changes, and
+unbounded scope or text changes retain a full-repaint fallback. Custom Paint
+alpha masks now isolate the complete owner subtree and use shared
+destination-in semantics in the PPM reference and SDL3 renderer; SDL3 software
+renderers use a bounded compatibility fallback when custom blending is
+unavailable. CPU filter composition and the broader Motion Scene remain open
+Version 0.7 work.
+Backend-neutral named Custom Paint
+materials now connect ordinary Style declarations to bounded underlay and
+overlay command streams without adding nodes. `GpuCanvasSurface` can use that
+same contract, records its actual component consumers, and invalidates only
+those owners when a completed GPU frame is collected. See
+[Custom Paint](custom-paint.md). The provider registry now also has an opaque,
+versioned C ABI `0x0001001D` boundary with copied typed declarations,
+callback-scoped local-coordinate command sinks, bounded Canvas primitives,
+monotonic registration tokens, and exactly-once release semantics. This closes
+the foreign-provider release gate without exposing Nim closures or backend
+handles.
+
+The Version 0.7 drawing baseline is intentionally usable before the complete
+Version 0.9 gesture layer. Mouse input and the existing pen metadata, pressure,
+tilt, rotation, eraser, proximity, pointer capture, and Canvas-local coordinate
+contracts are sufficient for a desktop drawing application. Version 0.9 adds
+the production touch-tablet experience: stable multi-contact gestures,
+gesture arbitration, palm rejection, kinetic touch navigation, and native
+touch-selection behavior. A drawing application must not require Version 0.9
+unless it depends on those higher-level touch capabilities.
+
 The complete Custom Style, shared-device, persistent-resource, interaction,
 and complex visual-scene design remains in
-[Render Surface Roadmap](render-surface-roadmap.md). A language-neutral GPU ABI
-is considered only after the Nim ownership and submission contracts are stable;
-raw backend handles are not the portable public contract.
+[Render Surface Roadmap](render-surface-roadmap.md). The language-neutral Shader
+Builder ABI is now established; language-neutral GPU device and submission APIs
+remain gated on stable Nim ownership contracts. Raw backend handles are not the
+portable public contract.
 
 ### Version 0.9 Touch And Expressive Input Scope
 

@@ -1,7 +1,8 @@
 import std/[math, options, tables]
 
-import ../core/[color, computed_style, geometry, node]
+import ../core/[color, computed_style, geometry, node, raster_surface]
 import ../paint/[paint_command, path_geometry]
+import ./gpu_direct_surface
 import ./render_surface
 
 type
@@ -16,9 +17,12 @@ type
     cckFillRect,
     cckFillLinearGradient,
     cckStrokeRect,
+    cckFillPath,
     cckStrokePath,
     cckDrawText,
-    cckDrawImage
+    cckDrawImage,
+    cckDrawRasterSurface,
+    cckDrawGpuDirectSurface
 
   CanvasCommand* = object
     case kind*: CanvasCommandKind
@@ -50,13 +54,20 @@ type
       strokeColor*: Color
       strokeWidth*: float32
       strokeRadius*: float32
+    of cckFillPath:
+      fillPathValue*: Path2D
+      fillPathColor*: Color
+      fillPathRule*: PathFillRule
     of cckStrokePath:
       path*: Path2D
+      pathOutline*: Path2D
       pathColor*: Color
       pathWidth*: float32
       pathLineCap*: StrokeLineCap
       pathLineJoin*: StrokeLineJoin
       pathMiterLimit*: float32
+      pathDashPattern*: seq[float32]
+      pathDashOffset*: float32
     of cckDrawText:
       text*: string
       textPosition*: Vec2
@@ -68,6 +79,16 @@ type
       imageRect*: Rect
       imageOpacity*: float32
       imageStyle*: ComputedImageStyle
+    of cckDrawRasterSurface:
+      rasterSurface*: RasterSurface
+      rasterRect*: Rect
+      rasterOpacity*: float32
+      rasterFillContent*: bool
+    of cckDrawGpuDirectSurface:
+      gpuDirectSurface*: GpuDirectSurface
+      gpuSurfaceRect*: Rect
+      gpuSurfaceOpacity*: float32
+      gpuSurfaceFillContent*: bool
 
   Canvas2D* = ref object
     commands*: seq[CanvasCommand]
@@ -388,18 +409,46 @@ proc strokePath*(
     width = 1.0'f32;
     lineCap = slcButt;
     lineJoin = sljMiter;
-    miterLimit = 10.0'f32
+    miterLimit = 10.0'f32;
+    dashPattern: openArray[float32] = [];
+    dashOffset = 0.0'f32
 ) =
   ## Adds a retained path in Canvas-local coordinates. Empty paths are
   ## retained safely but produce no paint command.
+  let normalizedWidth = if width.finite: max(0.0'f32, width) else: 0.0'f32
+  let normalizedMiterLimit =
+    if miterLimit.finite: max(1.0'f32, miterLimit) else: 1.0'f32
+  let normalizedDashPattern = normalizeDashPattern(dashPattern)
+  let normalizedDashOffset = if dashOffset.finite: dashOffset else: 0.0'f32
   canvas.commands.add CanvasCommand(
     kind: cckStrokePath,
     path: path,
+    pathOutline: path.strokeOutline(
+      normalizedWidth, lineCap, lineJoin, normalizedMiterLimit,
+      dashPattern = normalizedDashPattern,
+      dashOffset = normalizedDashOffset
+    ),
     pathColor: color,
-    pathWidth: max(0.0'f32, width),
+    pathWidth: normalizedWidth,
     pathLineCap: lineCap,
     pathLineJoin: lineJoin,
-    pathMiterLimit: max(1.0'f32, miterLimit)
+    pathMiterLimit: normalizedMiterLimit,
+    pathDashPattern: normalizedDashPattern,
+    pathDashOffset: normalizedDashOffset
+  )
+  canvas.touch()
+
+proc fillPath*(
+    canvas: Canvas2D;
+    path: Path2D;
+    color: Color;
+    fillRule = pfrNonZero
+) =
+  canvas.commands.add CanvasCommand(
+    kind: cckFillPath,
+    fillPathValue: path,
+    fillPathColor: color,
+    fillPathRule: fillRule
   )
   canvas.touch()
 
@@ -411,10 +460,13 @@ proc strokePath*(
     closed = false;
     lineCap = slcButt;
     lineJoin = sljMiter;
-    miterLimit = 10.0'f32
+    miterLimit = 10.0'f32;
+    dashPattern: openArray[float32] = [];
+    dashOffset = 0.0'f32
 ) =
   canvas.strokePath(
-    path2D(points, closed), color, width, lineCap, lineJoin, miterLimit
+    path2D(points, closed), color, width, lineCap, lineJoin, miterLimit,
+    dashPattern, dashOffset
   )
 
 proc strokeLine*(
@@ -461,6 +513,98 @@ proc drawImage*(
     imageStyle: style
   )
   canvas.touch()
+
+proc drawRasterSurface*(
+    canvas: Canvas2D;
+    surface: RasterSurface;
+    bounds: Rect;
+    opacity = 1.0'f32
+) =
+  if canvas.isNil:
+    raise newException(ValueError, "canvas cannot be nil")
+  if surface.isNil:
+    raise newException(ValueError, "raster surface cannot be nil")
+  if not bounds.finite or bounds.isEmpty:
+    raise newException(ValueError, "raster surface bounds must be finite and positive")
+  canvas.commands.add CanvasCommand(
+    kind: cckDrawRasterSurface,
+    rasterSurface: surface,
+    rasterRect: bounds,
+    rasterOpacity: clamp(opacity, 0.0'f32, 1.0'f32),
+    rasterFillContent: false
+  )
+  canvas.touch()
+
+proc drawRasterSurfaceToContent*(
+    canvas: Canvas2D;
+    surface: RasterSurface;
+    opacity = 1.0'f32
+) =
+  if canvas.isNil:
+    raise newException(ValueError, "canvas cannot be nil")
+  if surface.isNil:
+    raise newException(ValueError, "raster surface cannot be nil")
+  canvas.commands.add CanvasCommand(
+    kind: cckDrawRasterSurface,
+    rasterSurface: surface,
+    rasterRect: rect(0, 0, 0, 0),
+    rasterOpacity: clamp(opacity, 0.0'f32, 1.0'f32),
+    rasterFillContent: true
+  )
+  canvas.touch()
+
+proc drawGpuDirectSurface*(
+    canvas: Canvas2D;
+    surface: GpuDirectSurface;
+    bounds: Rect;
+    opacity = 1.0'f32
+) =
+  if canvas.isNil:
+    raise newException(ValueError, "canvas cannot be nil")
+  if surface.isNil or surface.isClosed:
+    raise newException(ValueError, "GPU direct surface cannot be nil or closed")
+  if not bounds.finite or bounds.isEmpty:
+    raise newException(ValueError, "GPU direct surface bounds must be finite and positive")
+  canvas.commands.add CanvasCommand(
+    kind: cckDrawGpuDirectSurface,
+    gpuDirectSurface: surface,
+    gpuSurfaceRect: bounds,
+    gpuSurfaceOpacity: clamp(opacity, 0.0'f32, 1.0'f32),
+    gpuSurfaceFillContent: false
+  )
+  canvas.touch()
+
+proc drawGpuDirectSurfaceToContent*(
+    canvas: Canvas2D;
+    surface: GpuDirectSurface;
+    opacity = 1.0'f32
+) =
+  if canvas.isNil:
+    raise newException(ValueError, "canvas cannot be nil")
+  if surface.isNil or surface.isClosed:
+    raise newException(ValueError, "GPU direct surface cannot be nil or closed")
+  canvas.commands.add CanvasCommand(
+    kind: cckDrawGpuDirectSurface,
+    gpuDirectSurface: surface,
+    gpuSurfaceRect: rect(0, 0, 0, 0),
+    gpuSurfaceOpacity: clamp(opacity, 0.0'f32, 1.0'f32),
+    gpuSurfaceFillContent: true
+  )
+  canvas.touch()
+
+proc containsRasterSurface*(canvas: Canvas2D; surface: RasterSurface): bool =
+  if canvas.isNil or surface.isNil:
+    return false
+  for command in canvas.commands:
+    if command.kind == cckDrawRasterSurface and command.rasterSurface == surface:
+      return true
+
+proc noteRasterUpdate*(canvas: Canvas2D; surface: RasterSurface): bool =
+  ## Advances the display-list revision without rebuilding retained commands.
+  if not canvas.containsRasterSurface(surface):
+    return false
+  canvas.touch()
+  true
 
 proc withOpacity(color: Color; opacity: float32): Color =
   rgba(color.r, color.g, color.b, color.a * opacity)
@@ -555,13 +699,25 @@ proc paintCommands*(
       )
     of cckStrokePath:
       if command.path.drawable and command.pathWidth > 0:
-        result.add strokePath(
-          command.path.translated(offset),
-          command.pathColor.withOpacity(opacity),
-          command.pathWidth,
-          command.pathLineCap,
-          command.pathLineJoin,
-          command.pathMiterLimit,
+        result.add PaintCommand(
+          kind: pcStrokePath,
+          owner: some(owner),
+          path: command.path.translated(offset),
+          pathOutline: command.pathOutline.translated(offset),
+          pathColor: command.pathColor.withOpacity(opacity),
+          pathWidth: command.pathWidth,
+          pathLineCap: command.pathLineCap,
+          pathLineJoin: command.pathLineJoin,
+          pathMiterLimit: command.pathMiterLimit,
+          pathDashPattern: command.pathDashPattern,
+          pathDashOffset: command.pathDashOffset
+        )
+    of cckFillPath:
+      if command.fillPathValue.fillable:
+        result.add fillPath(
+          command.fillPathValue.translated(offset),
+          command.fillPathColor.withOpacity(opacity),
+          command.fillPathRule,
           some(owner)
         )
     of cckDrawText:
@@ -580,6 +736,30 @@ proc paintCommands*(
         command.imageRect.translated(offset),
         command.imageOpacity * opacity,
         command.imageStyle
+      )
+    of cckDrawRasterSurface:
+      let destination =
+        if command.rasterFillContent:
+          bounds
+        else:
+          command.rasterRect.translated(offset)
+      result.add drawRasterSurface(
+        owner,
+        command.rasterSurface,
+        destination,
+        command.rasterOpacity * opacity
+      )
+    of cckDrawGpuDirectSurface:
+      let destination =
+        if command.gpuSurfaceFillContent:
+          bounds
+        else:
+          command.gpuSurfaceRect.translated(offset)
+      result.add drawGpuDirectSurface(
+        owner,
+        command.gpuDirectSurface,
+        destination,
+        command.gpuSurfaceOpacity * opacity
       )
   while scopes.len > 0:
     case scopes.pop()

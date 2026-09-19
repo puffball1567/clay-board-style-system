@@ -327,7 +327,8 @@ proc main() =
       )
       discard ui.handleEvents(dispatches)
       scheduler.markDirty({ddStyle, ddPaint, ddHit})
-    of sekTouchStart, sekTouchMove, sekTouchEnd, sekTouchCancel,
+    of sekPointerCancel,
+       sekTouchStart, sekTouchMove, sekTouchEnd, sekTouchCancel,
        sekPenProximityIn, sekPenProximityOut,
        sekPenButtonDown, sekPenButtonUp:
       let input = event.pointerInputEvent()

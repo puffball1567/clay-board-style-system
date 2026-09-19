@@ -1,6 +1,7 @@
-import std/[strformat, times]
+import std/[math, strformat, times]
 
 import clay_board_style_system
+import clay_board_style_system/backends/ppm/retained_canvas
 
 const
   surfaceCount = 10_000
@@ -13,6 +14,10 @@ const
   layerIterations = 30
   curveSegmentCount = 1_000
   curveIterations = 30
+  fillPathPointCount = 256
+  fillPathIterations = 10
+  rasterUpdateIterations = 20_000
+  retainedCommandCount = 2_000
 
 proc elapsedMilliseconds(started: float): float =
   (cpuTime() - started) * 1000.0
@@ -127,8 +132,89 @@ when not defined(cbssMemoryCheck):
   doAssert curveAverageMs <= 12.0,
     &"1k-curve path flatten exceeded budget: {curveAverageMs:.3f} ms"
 
+var filledPath = initPath2D()
+for index in 0 ..< fillPathPointCount:
+  let angle = index.float32 / fillPathPointCount.float32 * PI.float32 * 2
+  let radius = if index mod 2 == 0: 240.0'f32 else: 120.0'f32
+  let point = vec2(
+    256.0'f32 + cos(angle) * radius,
+    256.0'f32 + sin(angle) * radius
+  )
+  if index == 0:
+    filledPath.moveTo(point)
+  else:
+    filledPath.lineTo(point)
+filledPath.closePath()
+let filledContours = filledPath.flattened()
+var fillCoverage: seq[uint8]
+var fillScratch: PathFillScratch
+var filledSamples = 0
+let fillStarted = cpuTime()
+for _ in 0 ..< fillPathIterations:
+  for y in 0 ..< 512:
+    filledContours.fillPathCoverageRow(
+      y, 0, 512, pfrNonZero, fillCoverage, fillScratch
+    )
+    for coverage in fillCoverage:
+      filledSamples += coverage.pathCoverageCount
+let fillMs = elapsedMilliseconds(fillStarted)
+let fillAverageMs = fillMs / fillPathIterations.float
+doAssert filledSamples > 0
+when not defined(cbssMemoryCheck):
+  doAssert fillAverageMs <= 20.0,
+    &"256-edge 512px path fill exceeded budget: {fillAverageMs:.3f} ms"
+
+proc rasterUpdateMilliseconds(surface: RasterSurface): float =
+  let pixel = @[32'u8, 96, 192, 255]
+  let started = cpuTime()
+  for index in 0 ..< rasterUpdateIterations:
+    surface.updateRegion(rasterRegion(
+      index mod surface.width, (index div surface.width) mod surface.height,
+      1, 1
+    ), pixel)
+    doAssert surface.publish()
+  elapsedMilliseconds(started)
+
+let smallRaster = newRasterSurface(64, 64)
+let largeRaster = newRasterSurface(4_096, 4_096)
+let smallRasterMs = smallRaster.rasterUpdateMilliseconds()
+let largeRasterMs = largeRaster.rasterUpdateMilliseconds()
+doAssert smallRaster.revision == uint64(rasterUpdateIterations + 1)
+doAssert largeRaster.revision == uint64(rasterUpdateIterations + 1)
+when not defined(cbssMemoryCheck):
+  doAssert smallRasterMs <= 100.0,
+    &"small RasterSurface dirty updates exceeded budget: {smallRasterMs:.3f} ms"
+  doAssert largeRasterMs <= smallRasterMs * 4.0 + 10.0,
+    &"RasterSurface dirty update scaled with total pixels: small={smallRasterMs:.3f} ms large={largeRasterMs:.3f} ms"
+
+var retainedCommands = newSeqOfCap[PaintCommand](retainedCommandCount)
+for index in 0 ..< retainedCommandCount:
+  retainedCommands.add fillRect(
+    rect(
+      (index mod 64).float32 * 12,
+      (index div 64).float32 * 12,
+      8,
+      8
+    ),
+    rgb(0.2, 0.5, 0.8)
+  )
+let retained = newRetainedRasterCanvas(768, 384, tileSize = 64)
+discard retained.update(retainedCommands)
+retainedCommands[retainedCommandCount div 2].color = rgb(0.9, 0.2, 0.3)
+let retainedStarted = cpuTime()
+let retainedUpdate = retained.update(retainedCommands)
+let retainedMs = elapsedMilliseconds(retainedStarted)
+doAssert not retainedUpdate.fullRepaint
+doAssert retainedUpdate.dirtyTiles == 1
+when not defined(cbssMemoryCheck):
+  doAssert retainedMs <= 20.0,
+    &"retained Canvas single-tile update exceeded budget: {retainedMs:.3f} ms"
+
 echo &"render-surface idle probes ({surfaceCount} registered): {idleMs:.3f} ms / {idleProbeCount}"
 echo &"Canvas flatten ({canvasCommandCount} commands): {canvasAverageMs:.3f} ms average"
 echo &"Canvas transform flatten ({transformScopeCount} scopes): {transformAverageMs:.3f} ms average"
 echo &"Canvas layer flatten ({layerScopeCount} scopes): {layerAverageMs:.3f} ms average"
 echo &"Path flatten ({curveSegmentCount} cubic curves): {curveAverageMs:.3f} ms average"
+echo &"Path fill ({fillPathPointCount} edges at 512px): {fillAverageMs:.3f} ms average"
+echo &"RasterSurface 1px publish ({rasterUpdateIterations} updates): small={smallRasterMs:.3f} ms large={largeRasterMs:.3f} ms"
+echo &"Retained Canvas single-tile repaint ({retainedCommandCount} commands): {retainedMs:.3f} ms"

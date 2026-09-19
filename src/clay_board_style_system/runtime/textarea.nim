@@ -1758,6 +1758,7 @@ proc textArea*(
       area.focus()
       area.state.selecting = true
       area.moveCaretToPoint(event.local.get, extendSelection = event.event.shiftKey)
+      discard event.capturePointer()
     ignoredEvent()
   )
   root.events.addInternalEventHandler(area.container.id, iekPointerMove, proc(event: DispatchResult): EventOutcome =
@@ -1778,6 +1779,12 @@ proc textArea*(
   )
   root.events.addInternalEventHandler(area.container.id, iekPointerUp, proc(event: DispatchResult): EventOutcome =
     area.state.selecting = false
+    discard event.releasePointer()
+    ignoredEvent()
+  )
+  root.events.addInternalEventHandler(area.container.id, iekPointerCancel, proc(event: DispatchResult): EventOutcome =
+    area.state.selecting = false
+    discard event.releasePointer()
     ignoredEvent()
   )
   root.events.addInternalEventHandler(area.container.id, iekDragEnd, proc(event: DispatchResult): EventOutcome =
@@ -1800,6 +1807,7 @@ proc textArea*(
     area.state.scrollbarDragging = true
     area.state.scrollbarDragStartY = event.event.position.get.y
     area.state.scrollbarDragStartScrollY = area.state.scrollY
+    discard event.capturePointer()
     stoppedEvent()
   )
   root.events.addInternalEventHandler(area.scrollbarThumb.id, iekPointerMove, proc(event: DispatchResult): EventOutcome =
@@ -1822,6 +1830,13 @@ proc textArea*(
   root.events.addInternalEventHandler(area.scrollbarThumb.id, iekPointerUp, proc(event: DispatchResult): EventOutcome =
     let wasDragging = area.state.scrollbarDragging
     area.state.scrollbarDragging = false
+    discard event.releasePointer()
+    if wasDragging: stoppedEvent() else: ignoredEvent()
+  )
+  root.events.addInternalEventHandler(area.scrollbarThumb.id, iekPointerCancel, proc(event: DispatchResult): EventOutcome =
+    let wasDragging = area.state.scrollbarDragging
+    area.state.scrollbarDragging = false
+    discard event.releasePointer()
     if wasDragging: stoppedEvent() else: ignoredEvent()
   )
   root.events.addInternalEventHandler(area.scrollbarTrack.id, iekPointerDown, proc(event: DispatchResult): EventOutcome =
@@ -2045,6 +2060,7 @@ proc textArea*(
       if area.state.height.isSome: area.state.height.get
       else: 0
     area.syncResizeStyle()
+    discard event.capturePointer()
     stoppedEvent()
   )
   root.events.addInternalEventHandler(area.resizeHandle.id, iekPointerMove, proc(event: DispatchResult): EventOutcome =
@@ -2071,6 +2087,15 @@ proc textArea*(
     if area.state.resizing:
       area.state.resizing = false
       area.syncResizeStyle()
+      discard event.releasePointer()
+      return stoppedEvent()
+    ignoredEvent()
+  )
+  root.events.addInternalEventHandler(area.resizeHandle.id, iekPointerCancel, proc(event: DispatchResult): EventOutcome =
+    if area.state.resizing:
+      area.state.resizing = false
+      area.syncResizeStyle()
+      discard event.releasePointer()
       return stoppedEvent()
     ignoredEvent()
   )

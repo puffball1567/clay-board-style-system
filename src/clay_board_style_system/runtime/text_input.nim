@@ -1230,6 +1230,7 @@ proc textInput*(
       input.focus()
       input.state.selecting = true
       input.moveCaretToPoint(event.local.get, extendSelection = event.event.shiftKey)
+      discard event.capturePointer()
     ignoredEvent()
   )
 
@@ -1251,6 +1252,12 @@ proc textInput*(
   )
   root.events.addInternalEventHandler(input.container.id, iekPointerUp, proc(event: DispatchResult): EventOutcome =
     input.state.selecting = false
+    discard event.releasePointer()
+    ignoredEvent()
+  )
+  root.events.addInternalEventHandler(input.container.id, iekPointerCancel, proc(event: DispatchResult): EventOutcome =
+    input.state.selecting = false
+    discard event.releasePointer()
     ignoredEvent()
   )
   root.events.addInternalEventHandler(input.container.id, iekDragEnd, proc(event: DispatchResult): EventOutcome =

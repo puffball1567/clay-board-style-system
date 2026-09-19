@@ -7,6 +7,237 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-19
+
+### Added
+
+- Added typed pure helper functions to Compute shader authoring. Generated
+  backend names, typed parameters and returns, lexical ownership, sealed calls,
+  and bounded function counts let drawing and simulation packages reuse
+  physical formulas without duplicating graph nodes or exposing shader source.
+  Resource access, recursion, forward calls, and unbounded control flow remain
+  rejected. The append-only C API advances the ABI to `0x00010026` and
+  `shader.authoring` capability version 9.
+
+- Added a drawing-engine compatibility qualification for typed Compute shader
+  authoring. One public-API-only fixture now combines exact packed physical
+  record layouts, an eight-entry local candidate array, bounded neighbourhood
+  passes, flow limiting, pigment and binder transfer, and packed metadata. ARC,
+  ORC, and official bgfx `shaderc` CI compile the same fixture so these
+  primitives remain usable together rather than only as isolated operations.
+
+- Added initialized fixed-size local arrays to typed Compute shader authoring.
+  Arrays support typed numeric-scalar dynamic load/store operations, expression
+  snapshots, lexical scope checks, literal index validation, and bounded array,
+  length, and total-element budgets without exposing arbitrary shader text. The
+  matching append-only C API advances the ABI to `0x00010025` and
+  `shader.authoring` capability version 8.
+
+- Added typed mutable Compute locals and literal-bounded signed and unsigned
+  `for` ranges with lexical scope validation, `break`, and `continue`. Loops
+  are rejected before source generation when their step is zero or their
+  iteration count exceeds 1,024. The matching append-only C API advances the
+  ABI to `0x00010024` and `shader.authoring` capability version 7.
+
+- Added fixed-stride packed GPU records for mixed float and unsigned physical
+  fields. Typed shaders address portable `uint32` storage words, preserve
+  floating bits exactly, validate explicit offsets, overlap, stride, access,
+  ownership, and host-size limits, and derive matching GPU buffer descriptors.
+  The additive `cbss_shader_builder_bitcast` C API advances the ABI to
+  `0x00010023` and `shader.authoring` capability version 6.
+
+- Added typed unsigned-integer bitwise shader operations for packed compute
+  metadata: not, and, or, xor, left shift, and right shift. The matching C ABI
+  advances to `0x00010022` and `shader.authoring` capability version 5.
+
+- Added typed Compute storage-image authoring for portable `R8`, `RGBA8`,
+  `R16F`, `R32F`, `RG16F`, `RGBA16F`, and `RGBA32F` images. Builders now
+  validate image access, `ivec2` coordinates, buffer/image binding collisions,
+  and numeric scalar/vector conversions before emitting bgfx `IMAGE2D_*`,
+  `imageLoad`, and `imageStore` operations. The matching C ABI advances to
+  `0x00010021` and `shader.authoring` capability version 4.
+
+- Extended typed Compute shader authoring with scalar comparisons, boolean
+  composition, typed conditional selection, integer modulo, nested
+  `if`/`else`, guarded early return, and lexical scope validation. The same
+  additive operations are available through the C ABI, which advances to
+  `0x00010020`; `shader.authoring` capability version 3 lets foreign drivers
+  negotiate the control-flow surface explicitly.
+
+- Added Version 0.7 design and GPU showcase applications. The native design
+  showcase switches among five original visual systems, including a retained
+  infinite-heart ribbon, while preserving explicit frame scheduling. The
+  optional bgfx showcase runs five full-screen fragment workloads for fluid,
+  particles, mechanical surfaces, image processing, and a pointer-reactive UI
+  material. Its original shaders are compiled by the official build-only
+  `shaderc`, use one CBSS-owned GPU host and presentation path, and do not enter
+  standard package builds.
+
+- Added retained dashed path strokes across the Nim Canvas, Custom Paint, the
+  deterministic PPM backend, SDL3, test snapshots, and the C ABI. Dash lists
+  accept offsets and CSS-compatible odd-length repetition, reject invalid
+  foreign input, and are expanded into the canonical stroke outline once at
+  command authoring time. Bounded pattern and fragment counts prevent
+  adversarial or accidentally tiny dashes from creating unbounded work; an
+  over-complex typed pattern falls back to a solid stroke. C ABI
+  `0x0001001F` advances `paint.commands`, `canvas.retained`, and
+  `custom-paint.provider` to version 3.
+
+- Added retained circular and elliptical `Path2D` arcs plus one canonical CPU
+  stroke-outline path for butt, round, and square caps and miter, round, and
+  bevel joins. Stroke geometry is generated once when a paint or Canvas
+  command is retained, then shared by SDL3 and the deterministic PPM backend;
+  ordinary redraws no longer flatten and rebuild the same outline per frame.
+  Filled outline composition also keeps stroke width correct under non-uniform
+  affine transforms.
+
+- Added retained filled `Path2D` drawing with nonzero and evenodd fill rules
+  across `Canvas2D`, Custom Paint providers, SDL3, the deterministic PPM
+  backend, test snapshots, and the C ABI. The scanline rasterizer preserves
+  subpixel coverage and nested clips without testing every edge for every
+  pixel. C ABI `0x0001001E` appends `CBSS_PAINT_FILL_PATH`; capability versions
+  for `paint.commands`, `canvas.retained`, and `custom-paint.provider` advance
+  to version 2 so foreign Drivers can negotiate the addition explicitly.
+
+- Added the opaque, versioned Custom Paint provider boundary for foreign
+  Craft Drivers. C ABI `0x0001001D` advertises `custom-paint.provider`
+  capability 22 version 1, copies typed material declarations, and supplies a
+  callback-scoped local-coordinate command sink for transforms, clips, layers,
+  rectangles, gradients, paths, text, images, and RasterSurface composition.
+  The boundary caps command and parameter work, rejects expired sinks and stale
+  registrations, preserves ordinary node semantics, and releases provider user
+  data exactly once on replacement, unregister, reset, or destruction. Static
+  C ABI context construction now also creates capturing closures only after
+  Nim runtime initialization, so a minimal static consumer can safely call
+  `cbss_context_create` as its first engine operation.
+
+- Added bounded typed GPU shader authoring for Nim and the C ABI. The builder
+  represents portable scalar/vector expression graphs, including signed and
+  unsigned compute values, storage-buffer load/store operations, invocation
+  builtins, and bounded work-group sizes. It validates stages,
+  interfaces, identifiers, types, ownership, finite values, and resource
+  limits, then emits deterministic bgfx shader source and varying definitions.
+  Build tools compile that output; ordinary runtime artifacts do not contain a
+  shader compiler. Compiled `GpuShaderArtifact` values feed the existing
+  retained Shader/Pipeline path used by both direct GPU submission and
+  component-owned `gpuVisualLayer` composition. This advanced the C ABI to
+  `0x0001001C` and advertises `shader.authoring` capability 21 version 2.
+
+- Added the first Version 0.7 GPU-host foundation. The backend-neutral
+  `GpuHost` distinguishes owned and borrowed runtimes, enforces versioned
+  backend attachment, ordered frame tokens, resize and device-loss state, and
+  generation-checked persistent resource namespaces with bounded persistent,
+  transient, readback, work, and resource-count budgets. The optional
+  `-d:cbssGpuBgfx` adapter uses the independently distributed `bgfxim` binding
+  for bgfx initialization, attachment, frame presentation, resize, and
+  deterministic owned/borrowed teardown. Standard builds do not import or
+  require bgfx. Contract CI runs against the pinned `bgfxim` declarations on
+  Linux, Windows, and macOS, including shader/program creation, graphics
+  submission, compute dispatch, and destruction. Linux and macOS additionally
+  initialize the real bgfx NOOP renderer and execute buffer, texture, partial
+  update, blit, readback, framebuffer, uniform, encoder, view, frame, and
+  destruction paths under both ARC and ORC. A visible Linux SDL3/OpenGL demo
+  exercises native-window attachment, dynamic vertex uploads, indexed graphics
+  submission, presentation, and resize. The adapter now preserves bgfx's valid
+  constructor defaults unless an option explicitly overrides them, preventing
+  invalid color/depth/back-buffer settings from reaching real renderers. The
+  backend-mapped resource APIs create validated R8/RGBA8/BGRA8 textures,
+  static or dynamic vertex/index buffers, owned single-color offscreen render
+  targets, retained precompiled vertex/fragment/compute shaders, and typed
+  graphics/compute pipelines. Pipeline creation validates shader stage,
+  namespace, generation, color-write state, compute capability, and backend
+  support before allocation. Live pipelines retain their shader dependencies,
+  preventing early shader destruction while namespace teardown still destroys
+  programs before their stages. Buffers use backend-neutral vertex layouts,
+  16/32-bit indices, and aligned bounded updates. Dynamic vertex, index, and
+  storage-buffer updates accept borrowed byte spans, so callers can upload a
+  validated slice without allocating another `seq[byte]`; adapters must consume
+  or copy the span before returning. These resources enforce namespace
+  byte/count budgets before allocation, copy optional
+  initial pixels, and deterministically destroy mapped resources on release,
+  namespace teardown, or host teardown. Device loss invalidates mapped handles
+  without attempting to destroy stale backend objects. Shader bytecode is
+  copied into the selected adapter, budgeted by its retained binary size, and
+  never interpreted as a runtime source string. ARC/ORC tests cover
+  normal, dependency, limit, failure, active-frame, teardown-order, and device-loss paths
+  against both deterministic C fixtures and the real bgfx NOOP runtime.
+  Typed graphics passes and compute dispatches submit retained resources
+  without exposing bgfx handles. The host validates render-target, viewport,
+  scissor, clear color, pipeline kind, vertex layout, buffer ranges, compute
+  groups, namespace generation, work budget, and a configurable per-frame
+  view-ID range before adapter work. Batched draws share one ordered view and
+  configure their target, viewport, scissor, and clear state once per pass;
+  frame completion remains the sole Present boundary.
+  Typed Uniform and Sampler resources now bind finite Vec4/Mat3/Mat4 arrays,
+  sampled textures, and compute storage images without exposing backend
+  handles. Portable identifier, exact value-shape, usage, namespace,
+  generation, stage-collision, mip, and per-command count checks complete
+  before pass setup or dispatch. The bgfx adapter maps wrap/filter state,
+  uniform updates, texture sampling, and image read/write access, with ARC/ORC
+  mock, C-fixture, and real-NOOP resource coverage.
+  Floating-point R16F/R32F, RG16F/RG32F, and RGBA16F/RGBA32F textures now use
+  exact retained-byte accounting and backend capability checks. Typed compute
+  storage buffers support signed, unsigned, and float 32-bit scalar, vec2, and
+  vec4 elements with explicit read/write access, aligned CPU updates, bounded
+  stage validation, and static/dynamic bgfx bindings. GPU-writable storage
+  buffers reject CPU updates rather than permitting backend-dependent races.
+  Typed texture transfer now copies complete or bounded regions from textures
+  and render targets into dedicated readback textures. Asynchronous readback
+  retains host-owned destination memory until one-time collection, enforces
+  readback/work/pending-request limits, prevents premature resource or
+  namespace release, and invalidates safely on device loss. The bgfx adapter
+  maps this contract to `bgfx_blit` and `bgfx_read_texture`; deterministic C
+  fixtures cover completion and byte transfer under ARC/ORC, while adapters
+  that do not advertise both capabilities fail closed.
+  `GpuCanvasSurface` now turns that transfer boundary into an ordinary retained
+  `RasterSurface`. It owns a bounded multi-frame readback ring, applies
+  non-blocking backpressure, collects frames in submission order, coalesces
+  simultaneously completed frames to the newest image, and normalizes
+  R8/RGBA8/BGRA8 plus straight, premultiplied, or opaque alpha. Existing Box
+  layout, Canvas clipping, transforms, stacking, invalidation, focus,
+  accessibility, and events remain the only UI contract; the GPU path does not
+  create a second widget tree. ARC/ORC tests cover lifecycle, budgets, rollback,
+  conversion, backpressure, publication, and device loss.
+  `ui.gpuCanvas(...)` adds a non-owning UI attachment that publishes completed
+  GPU frames with paint-only subtree invalidation.
+
+- Added retained RGBA8 RasterSurface support for drawing engines, progressive
+  decoders, and generated imagery. Bounds-checked stride-aware updates are
+  copied into bounded pending storage and published atomically as merged dirty
+  regions. Raster surfaces compose through normal Canvas/Box clipping,
+  opacity, transforms, and stacking; the SDL3 backend performs partial texture
+  uploads for consecutive revisions with a safe full-upload fallback, while
+  the deterministic backend provides reference output. The append-only C ABI
+  `0x0001001A` exposes ownership, update, publication, dirty-region, and Canvas
+  drawing contracts.
+
+- Added the standard `crosshair` cursor value for drawing and precision-input
+  surfaces, including authoring, computed-style, and SDL3 cursor mapping.
+
+### Fixed
+
+- The repository test runner now suppresses compiler progress hints while
+  preserving diagnostics and test output, keeping cross-platform CI logs
+  focused on the failing file and assertion.
+
+- CI now runs a shared local/remote preflight before expensive platform and
+  sanitizer jobs. The preflight validates generated contracts, ARC/ORC public
+  imports, and every automatically discovered ordinary example; the pinned
+  official bgfx shader compiler is cached by its source revisions.
+
+- Windows portable CI now partitions the discovered test list across two
+  deterministic release-blocking shards instead of approaching the job limit
+  with one serial compiler process. Native Rust bridge outputs are cached by
+  platform and lockfile, initial cache misses retain explicit timeout
+  headroom, and GitHub-owned checkout/cache actions are pinned to current
+  immutable revisions.
+
+- GPU draw validation now builds managed binding and descriptor results in
+  exception-safe local storage before transferring ownership to the submitted
+  command. Invalid binding and index paths no longer leak temporary sequences
+  under ARC; the GPU-host Valgrind gate reports zero definite or indirect leaks
+  under both ARC and ORC.
+
 ## [0.6.0] - 2026-08-28
 
 ### Added

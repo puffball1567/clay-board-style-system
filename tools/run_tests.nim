@@ -1,6 +1,9 @@
-import std/[algorithm, os, osproc, sequtils, strutils]
+import std/[algorithm, os, osproc, sequtils, strutils, tempfiles]
 
 const excludedTests = [
+  "tests/backends/test_bgfx_adapter_compile.nim",
+  "tests/backends/test_bgfx_host_noop.nim",
+  "tests/backends/test_shaderc_integration.nim",
   "tests/integration/atspi_linux_fixture.nim",
   "tests/integration/test_sdl3_large_paste.nim",
   "tests/integration/test_sdl3_wayland_smoke.nim",
@@ -35,9 +38,20 @@ proc artifactName(path: string): string =
     if not result[index].isAlphaNumeric():
       result[index] = '_'
 
+proc selectTestShard*[T](values: openArray[T]; shardIndex, shardCount: int): seq[T] =
+  if shardCount <= 0:
+    raise newException(ValueError, "test shard count must be positive")
+  if shardIndex < 0 or shardIndex >= shardCount:
+    raise newException(ValueError, "test shard index is outside the shard count")
+  for index, value in values:
+    if index mod shardCount == shardIndex:
+      result.add(value)
+
 proc main() =
   var portable = false
   var memoryModel = "arc"
+  var shardIndex = 0
+  var shardCount = 1
   for argument in commandLineParams():
     case argument
     of "--portable":
@@ -47,17 +61,29 @@ proc main() =
     of "--memory:orc":
       memoryModel = "orc"
     else:
-      stderr.writeLine(
-        "Usage: run_tests [--portable] [--memory:arc|--memory:orc]"
-      )
-      quit(QuitFailure)
+      try:
+        if argument.startsWith("--shard-index:"):
+          shardIndex = argument["--shard-index:".len .. ^1].parseInt()
+        elif argument.startsWith("--shard-count:"):
+          shardCount = argument["--shard-count:".len .. ^1].parseInt()
+        else:
+          raise newException(ValueError, "unknown argument")
+      except ValueError:
+        stderr.writeLine(
+          "Usage: run_tests [--portable] [--memory:arc|--memory:orc] " &
+          "[--shard-index:N --shard-count:N]"
+        )
+        quit(QuitFailure)
+
+  if shardCount <= 0 or shardIndex < 0 or shardIndex >= shardCount:
+    stderr.writeLine("Invalid test shard: index must be in 0 ..< count.")
+    quit(QuitFailure)
 
   let repoRoot = currentSourcePath().parentDir().parentDir()
   let testsRoot = repoRoot / "tests"
-  let runRoot = getTempDir() / ("cbss-tests-" & $getCurrentProcessId())
+  let runRoot = createTempDir("cbss-tests-", "")
   var tests: seq[string]
 
-  createDir(runRoot)
   defer:
     try:
       removeDir(runRoot)
@@ -71,15 +97,18 @@ proc main() =
           (not portable or relative notin portableExcludedTests):
         tests.add(relative)
   tests.sort()
+  tests = tests.selectTestShard(shardIndex, shardCount)
 
   if tests.len == 0:
-    stderr.writeLine("No CBSS tests were discovered.")
+    stderr.writeLine("No CBSS tests were discovered for this shard.")
     quit(QuitFailure)
 
   for relative in tests:
     let name = relative.artifactName()
     var arguments = @[
       "nim", "c", "-r",
+      "--hints:off",
+      "--verbosity:0",
       "--mm:" & memoryModel,
       "--path:" & (repoRoot / "src"),
     ]
@@ -111,7 +140,8 @@ proc main() =
 
   let profile = (if portable: "portable" else: "full") & ", " & memoryModel
   stdout.writeLine(
-    "\nPassed " & $tests.len & " discovered test files (" & profile & " profile)."
+    "\nPassed " & $tests.len & " discovered test files (" & profile &
+    " profile, shard " & $(shardIndex + 1) & "/" & $shardCount & ")."
   )
 
 when isMainModule:

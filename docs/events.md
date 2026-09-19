@@ -94,6 +94,13 @@ dispatched. Retaining `DispatchResult` does not retain `UiRoot`; later calls on
 the stale value return `false`. Pending focus or pointer-capture requests are
 also canceled when their target subtree is disposed.
 
+Pointer capture remains active when the pointer leaves the component or native
+window. The corresponding pointer-up is routed to the captured node with local
+coordinates that may be outside its bounds, then CBSS releases capture and
+emits `onLostPointerCapture`. A platform focus loss or capture failure emits
+pointer-cancel instead, so drag state cannot remain stuck. Releasing outside the
+node does not synthesize a click.
+
 Application hosts should dispatch through `UiRoot.handleEvent`,
 `UiRoot.handleEvents`, or `UiRoot.dispatchEvent`. Calling `EventRegistry`
 directly remains useful for isolated tests, but deliberately provides no

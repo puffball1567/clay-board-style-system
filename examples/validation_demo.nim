@@ -672,6 +672,15 @@ proc main() =
       discard demo.ui.handleEvents(dispatches)
       discard demo.ui.reconcileFocus(interaction)
       markInteractiveDirty()
+    of sekPointerCancel:
+      let input = event.pointerInputEvent()
+      if input.isSome:
+        var dispatches = interaction.processInput(
+          demo.ui.tree, frame.regions, input.get, demo.ui.scroll
+        )
+        demo.ui.normalizeTextControlDispatches(frame.regions, dispatches)
+        discard demo.ui.handleEvents(dispatches)
+      markInteractiveDirty()
     of sekKeyDown:
       if event.key == "Tab" and not event.ctrl and not event.alt and not event.meta:
         let previousFocus = interaction.focusedTarget

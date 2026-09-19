@@ -178,6 +178,7 @@ proc slider*(
     slider.state.dragging = true
     slider.setValueFromLocal(event.local)
     slider.syncVisibleState()
+    discard event.capturePointer()
     ignoredEvent()
   )
   root.events.addInternalEventHandler(slider.container.id, iekPointerMove, proc(event: DispatchResult): EventOutcome =
@@ -193,6 +194,13 @@ proc slider*(
       return stoppedEvent()
     slider.state.dragging = false
     slider.syncVisibleState()
+    discard event.releasePointer()
+    ignoredEvent()
+  )
+  root.events.addInternalEventHandler(slider.container.id, iekPointerCancel, proc(event: DispatchResult): EventOutcome =
+    slider.state.dragging = false
+    slider.syncVisibleState()
+    discard event.releasePointer()
     ignoredEvent()
   )
   root.events.addInternalEventHandler(slider.container.id, iekKeyDown, proc(event: DispatchResult): EventOutcome =

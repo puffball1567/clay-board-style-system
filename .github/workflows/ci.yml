@@ -2,28 +2,95 @@ name: CI
 
 on:
   push:
+    branches:
+      - devel
+    tags:
+      - "v*"
   pull_request:
+    branches:
+      - main
+      - devel
 
 permissions:
+  actions: read
   contents: read
+
+env:
+  CARGO_NET_RETRY: 5
+  CARGO_HTTP_TIMEOUT: 120
 
 concurrency:
   group: cbss-ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  classify_flow:
+    name: Classify protected branch flow
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.classify.outputs.mode }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Test branch flow classification
+        run: sh tools/ci/branch_flow.sh self-test
+
+      - name: Classify this workflow run
+        id: classify
+        env:
+          CBSS_EVENT_NAME: ${{ github.event_name }}
+          CBSS_BASE_REF: ${{ github.base_ref }}
+          CBSS_HEAD_REF: ${{ github.head_ref }}
+          CBSS_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          CBSS_REPOSITORY: ${{ github.repository }}
+        run: |
+          mode=$(sh tools/ci/branch_flow.sh classify \
+            "$CBSS_EVENT_NAME" \
+            "$CBSS_BASE_REF" \
+            "$CBSS_HEAD_REF" \
+            "$CBSS_HEAD_REPOSITORY" \
+            "$CBSS_REPOSITORY")
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "CI flow: $mode"
+
+  preflight:
+    name: Fast contract preflight
+    needs: classify_flow
+    if: ${{ needs.classify_flow.outputs.mode == 'full' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Nim
+        uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
+        with:
+          nim-version: '2.2.10'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Nim dependencies
+        run: nimble install --depsOnly -y
+
+      - name: Check generated contracts, public API, and discovered examples
+        run: nimble ciPreflight -y
+
   nim:
     name: Nim ARC suite
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Nim
-        run: |
-          curl https://nim-lang.org/choosenim/init.sh -sSf | sh -s -- -y 2.2.10
-          echo "$HOME/.nimble/bin" >> "$GITHUB_PATH"
+        uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
+        with:
+          nim-version: '2.2.10'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Toolchain versions
         run: |
@@ -87,16 +154,18 @@ jobs:
 
   nim-orc:
     name: Nim ORC compatibility
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Nim
-        run: |
-          curl https://nim-lang.org/choosenim/init.sh -sSf | sh -s -- -y 2.2.10
-          echo "$HOME/.nimble/bin" >> "$GITHUB_PATH"
+        uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
+        with:
+          nim-version: '2.2.10'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Toolchain versions
         run: |
@@ -118,13 +187,110 @@ jobs:
       - name: Test Rust Craft Driver under ORC
         run: nimble testRustDriverOrc -y
 
+  bgfx-contract:
+    name: Optional bgfxim contract (${{ matrix.platform }})
+    needs: preflight
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux x86_64
+            os: ubuntu-latest
+          - platform: Windows x86_64
+            os: windows-latest
+          - platform: macOS arm64
+            os: macos-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check out the pinned bgfxim binding
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: puffball1567/bgfxim
+          ref: v0.4.0
+          path: bgfxim
+
+      - name: Check out the pinned bgfx headers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: bkaradzic/bgfx
+          ref: 8c8b6b5692be5054e89d2a59640c50b9319c9425
+          path: bgfx
+
+      - name: Check out the pinned bx headers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: bkaradzic/bx
+          ref: 98ad3bec2a7ee1a5cbabdcabc25252572dcb1d88
+          path: bx
+
+      - name: Check out the pinned bimg sources
+        if: runner.os != 'Windows'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: bkaradzic/bimg
+          ref: ddbeeae05779f84f97694553eb41605a60f86f0a
+          path: bimg
+
+      - name: Install Nim
+        uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
+        with:
+          nim-version: '2.2.10'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run the optional adapter contract against bgfxim
+        env:
+          CBSS_BGFXIM_PATH: ${{ github.workspace }}/bgfxim
+          CBSS_BGFX_INCLUDE: ${{ github.workspace }}/bgfx/include
+          CBSS_BX_INCLUDE: ${{ github.workspace }}/bx/include
+        run: nimble checkBgfxAdapter -y
+
+      - name: Cache the pinned official bgfx shader compiler
+        if: runner.os == 'Linux'
+        id: shaderc-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: bgfx/tools/bin/linux/shaderc
+          key: cbss-linux-shaderc-8c8b6b56-98ad3bec-ddbeeae0
+
+      - name: Build the pinned official bgfx shader compiler
+        if: runner.os == 'Linux' && steps.shaderc-cache.outputs.cache-hit != 'true'
+        run: |
+          make -C bgfx -j2 shaderc
+          test -x bgfx/tools/bin/linux/shaderc
+
+      - name: Configure the official bgfx shader compiler
+        if: runner.os == 'Linux'
+        run: |
+          test -x bgfx/tools/bin/linux/shaderc
+          echo "CBSS_SHADERC=${{ github.workspace }}/bgfx/tools/bin/linux/shaderc" >> "$GITHUB_ENV"
+
+      - name: Compile typed shaders with official shaderc
+        if: runner.os == 'Linux'
+        env:
+          CBSS_BGFX_SHADER_INCLUDE: ${{ github.workspace }}/bgfx/src
+        run: nimble testShaderc -y
+
+      - name: Run real bgfx NOOP resource integration
+        if: runner.os != 'Windows'
+        env:
+          CBSS_BGFXIM_PATH: ${{ github.workspace }}/bgfxim
+          CBSS_BGFX_PATH: ${{ github.workspace }}/bgfx
+          CBSS_BX_PATH: ${{ github.workspace }}/bx
+          CBSS_BIMG_PATH: ${{ github.workspace }}/bimg
+        run: nimble testBgfxNoop -y
+
   linux-atspi:
     name: Linux AT-SPI D-Bus integration
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Nim
         uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
@@ -144,22 +310,52 @@ jobs:
         run: dbus-run-session -- nimble testLinuxAtspiValgrind -y
 
   portable:
-    name: Portable core (${{ matrix.platform }})
+    name: Portable core (${{ matrix.platform }}, shard ${{ matrix.shard_number }}/${{ matrix.shard_count }})
+    needs: preflight
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 35
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: Linux x86_64
             os: ubuntu-latest
+            shard_index: 0
+            shard_number: 1
+            shard_count: 2
+          - platform: Linux x86_64
+            os: ubuntu-latest
+            shard_index: 1
+            shard_number: 2
+            shard_count: 2
           - platform: Windows x86_64
             os: windows-latest
+            shard_index: 0
+            shard_number: 1
+            shard_count: 3
+          - platform: Windows x86_64
+            os: windows-latest
+            shard_index: 1
+            shard_number: 2
+            shard_count: 3
+          - platform: Windows x86_64
+            os: windows-latest
+            shard_index: 2
+            shard_number: 3
+            shard_count: 3
           - platform: macOS arm64
             os: macos-latest
+            shard_index: 0
+            shard_number: 1
+            shard_count: 2
+          - platform: macOS arm64
+            os: macos-latest
+            shard_index: 1
+            shard_number: 2
+            shard_count: 2
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Nim
         uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
@@ -186,8 +382,11 @@ jobs:
           "--nimcache:${{ runner.temp }}/cbss-portable-runner-cache"
           "--out:${{ runner.temp }}/cbss-portable-runner"
           tools/run_tests.nim --portable
+          --shard-index:${{ matrix.shard_index }}
+          --shard-count:${{ matrix.shard_count }}
 
       - name: Check portable public modules and examples
+        if: matrix.shard_index == 0
         run: |
           nim check --mm:arc --path:src src/clay_board_style_system.nim
           nim check --mm:arc --path:src examples/paint_demo.nim
@@ -195,12 +394,13 @@ jobs:
           nim check --mm:arc --path:src examples/component_demo.nim
 
       - name: Build shared and static C ABI libraries
+        if: matrix.shard_index == 0
         run: |
           nim c --threads:on --app:lib --mm:arc -d:release --path:src "--nimcache:${{ runner.temp }}/cbss-c-api-shared-cache" "--outdir:${{ runner.temp }}/cbss-c-api" src/cbss_c_api.nim
           nim c --threads:on --app:staticlib --mm:arc -d:release --path:src "--nimcache:${{ runner.temp }}/cbss-c-api-static-cache" "--outdir:${{ runner.temp }}/cbss-c-api" src/cbss_c_api.nim
 
       - name: Check C and C++ public headers (Unix)
-        if: runner.os != 'Windows'
+        if: matrix.shard_index == 0 && runner.os != 'Windows'
         run: |
           cc -std=c11 -Wall -Wextra -Werror -Iinclude -fsyntax-only tests/c_api/header_consumer.c
           c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include -fsyntax-only tests/c_api/header_consumer.cpp
@@ -208,7 +408,7 @@ jobs:
           c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include -fsyntax-only tests/drivers/cpp_reference_application.cpp
 
       - name: Check C and C++ public headers (MSVC-compatible)
-        if: runner.os == 'Windows'
+        if: matrix.shard_index == 0 && runner.os == 'Windows'
         shell: cmd
         run: |
           clang-cl /nologo /W4 /WX /c /TC /Iinclude tests\c_api\header_consumer.c /Fo"${{ runner.temp }}\cbss_header_c.obj"
@@ -217,28 +417,46 @@ jobs:
           clang-cl /nologo /W4 /WX /EHsc /c /TP /std:c++14 /Iinclude /Idrivers\cpp\include tests\drivers\cpp_reference_application.cpp /Fo"${{ runner.temp }}\cbss_cpp_reference_application.obj"
 
       - name: Check portable Rust Craft Driver
+        if: matrix.shard_index == 0
         run: cargo check --locked --all-targets --manifest-path drivers/rust/Cargo.toml
 
       - name: Check Rust reference application
+        if: matrix.shard_index == 0
         run: cargo check --locked --manifest-path tests/drivers/rust_reference_application/Cargo.toml
 
+      - name: Cache native Rust bridge builds
+        if: matrix.shard_index == 0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/cosmic_text_bridge/target
+            native/image_bridge/target
+          key: cbss-${{ runner.os }}-${{ runner.arch }}-native-rust-${{ hashFiles('native/**/Cargo.lock') }}
+          restore-keys: |
+            cbss-${{ runner.os }}-${{ runner.arch }}-native-rust-
+
       - name: Test native Rust bridges
+        if: matrix.shard_index == 0
         run: |
           cargo test --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml
           cargo test --locked --release --manifest-path native/image_bridge/Cargo.toml
 
   linux-valgrind:
     name: Linux Valgrind lifecycle and C ABI checks
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Nim
-        run: |
-          curl https://nim-lang.org/choosenim/init.sh -sSf | sh -s -- -y 2.2.10
-          echo "$HOME/.nimble/bin" >> "$GITHUB_PATH"
+        uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
+        with:
+          nim-version: '2.2.10'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Valgrind
         run: |
@@ -251,6 +469,12 @@ jobs:
       - name: Check ARC event lifecycle
         run: nimble testEventLifecycleValgrind -y
 
+      - name: Check ARC and ORC RasterSurface ownership
+        run: nimble testRasterSurfaceValgrind -y
+
+      - name: Check ARC and ORC GPU host lifecycle
+        run: nimble testGpuHostValgrind -y
+
       - name: Check threaded ARC stream ownership transfer
         run: nimble testStreamMailboxValgrind -y
 
@@ -261,7 +485,8 @@ jobs:
         run: nimble testCAbiValgrind -y
 
   motion-address-sanitizer:
-    name: Motion ASan (${{ matrix.platform }})
+    name: Motion ASan (${{ matrix.platform }}, ${{ matrix.memory_label }})
+    needs: preflight
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     strategy:
@@ -270,13 +495,30 @@ jobs:
         include:
           - platform: Linux x86_64
             os: ubuntu-latest
+            memory_model: arc
+            memory_label: ARC
+          - platform: Linux x86_64
+            os: ubuntu-latest
+            memory_model: orc
+            memory_label: ORC
           - platform: Windows x86_64
             os: windows-latest
+            memory_model: ''
+            memory_label: ARC + ORC
           - platform: macOS arm64
             os: macos-latest
+            memory_model: arc
+            memory_label: ARC
+          - platform: macOS arm64
+            os: macos-latest
+            memory_model: orc
+            memory_label: ORC
+
+    env:
+      CBSS_MEMORY_MODEL: ${{ matrix.memory_model }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Nim
         uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
@@ -289,11 +531,11 @@ jobs:
           nim --version
           nimble --version
 
-      - name: Check motion and Cue lifecycles under ARC and ORC (Unix)
+      - name: Check motion and Cue lifecycles (Unix)
         if: runner.os != 'Windows'
         run: nimble testMotionAsan -y
 
-      - name: Check motion and Cue lifecycles under ARC and ORC (Windows)
+      - name: Check motion and Cue lifecycles (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -313,7 +555,8 @@ jobs:
           nimble testMotionAsan -y
 
   undefined-behavior-sanitizer:
-    name: UBSan (${{ matrix.platform }})
+    name: UBSan (${{ matrix.platform }}, ${{ matrix.memory_label }})
+    needs: preflight
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     strategy:
@@ -323,15 +566,25 @@ jobs:
           - platform: Linux x86_64
             os: ubuntu-latest
             compiler: clang-18
+            memory_model: ''
+            memory_label: ARC + ORC
           - platform: macOS arm64
             os: macos-latest
             compiler: clang
+            memory_model: arc
+            memory_label: ARC
+          - platform: macOS arm64
+            os: macos-latest
+            compiler: clang
+            memory_model: orc
+            memory_label: ORC
 
     env:
       CBSS_CLANG: ${{ matrix.compiler }}
+      CBSS_MEMORY_MODEL: ${{ matrix.memory_model }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Nim
         uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
@@ -354,20 +607,28 @@ jobs:
         run: nimble testUbsan -y
 
   leak-sanitizer:
-    name: LSan (${{ matrix.platform }})
+    name: LSan (${{ matrix.platform }}, ${{ matrix.memory_label }})
+    needs: preflight
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
     env:
       CBSS_CLANG: clang-18
+      CBSS_MEMORY_MODEL: ${{ matrix.memory_model }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: Linux x86_64
             os: ubuntu-latest
+            memory_model: arc
+            memory_label: ARC
+          - platform: Linux x86_64
+            os: ubuntu-latest
+            memory_model: orc
+            memory_label: ORC
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Nim
         uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
@@ -386,11 +647,12 @@ jobs:
           "$CBSS_CLANG" -fsanitize=address "$RUNNER_TEMP/cbss_lsan_probe.c" -o "$RUNNER_TEMP/cbss_lsan_probe"
           ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 "$RUNNER_TEMP/cbss_lsan_probe"
 
-      - name: Check retained lifecycles under ARC and ORC
+      - name: Check retained lifecycles
         run: nimble testLsan -y
 
   thread-sanitizer:
     name: TSan (${{ matrix.platform }})
+    needs: preflight
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -408,7 +670,7 @@ jobs:
       CBSS_CLANG: ${{ matrix.compiler }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Nim
         uses: jiro4989/setup-nim-action@1dba098c77a0e800c96a7d92a0888ac2af26f19f # v2
@@ -432,11 +694,24 @@ jobs:
 
   rust-bridge:
     name: Native Rust bridges
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Cache native Rust bridge builds
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/cosmic_text_bridge/target
+            native/image_bridge/target
+          key: cbss-${{ runner.os }}-${{ runner.arch }}-native-rust-${{ hashFiles('native/**/Cargo.lock') }}
+          restore-keys: |
+            cbss-${{ runner.os }}-${{ runner.arch }}-native-rust-
 
       - name: Check Rust Craft Driver formatting and lints
         run: |
@@ -457,11 +732,12 @@ jobs:
 
   release-hygiene:
     name: Release hygiene
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Verify release metadata
         run: |
@@ -475,3 +751,52 @@ jobs:
           test -L vendor/sdl3/linux-x86_64/libSDL3.so
           test -L vendor/sdl3/linux-x86_64/libSDL3.so.0
           test -L vendor/sdl3/linux-x86_64/libcbss_image_bridge.so
+
+  required-gate:
+    name: CI required gate
+    if: ${{ always() }}
+    needs:
+      - classify_flow
+      - preflight
+      - nim
+      - nim-orc
+      - bgfx-contract
+      - linux-atspi
+      - portable
+      - linux-valgrind
+      - motion-address-sanitizer
+      - undefined-behavior-sanitizer
+      - leak-sanitizer
+      - thread-sanitizer
+      - rust-bridge
+      - release-hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve the required CI result
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CBSS_FLOW_MODE: ${{ needs.classify_flow.outputs.mode }}
+          CBSS_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CBSS_REQUIRED_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          case "$CBSS_FLOW_MODE" in
+            full)
+              if ! jq -e 'all(.[]; .result == "success")' <<< "$CBSS_REQUIRED_RESULTS" >/dev/null; then
+                echo "::error::One or more required CI jobs did not succeed."
+                jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' \
+                  <<< "$CBSS_REQUIRED_RESULTS"
+                exit 1
+              fi
+              ;;
+            promotion)
+              sh tools/ci/branch_flow.sh verify-promotion
+              ;;
+            *)
+              echo "::error::This branch flow is not allowed."
+              exit 1
+              ;;
+          esac

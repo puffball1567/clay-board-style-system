@@ -841,7 +841,12 @@ discard ui.events.handle(inputState.releasePointer().get)
 
 While capture is active, pointer move/down/up dispatches route to the captured
 node even when hit testing would target another node. Capture emits
-`onGotPointerCapture` and `onLostPointerCapture`.
+`onGotPointerCapture` and `onLostPointerCapture`. Pointer-up automatically
+releases capture after routing the release to the captured node. Platform focus
+loss or native capture failure produces pointer-cancel and releases it as well;
+therefore a drag cannot remain active after release outside the native window.
+Click synthesis still uses the physical release target, so captured release
+outside the pressed node does not activate it.
 
 The component dispatch path is still a real firing path:
 

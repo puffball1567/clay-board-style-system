@@ -2403,7 +2403,7 @@ proc eventTrace(event: Sdl3Event): string =
   of sekPointerDown, sekPointerUp:
     result.add " button=" & $event.button &
       " point=(" & $event.buttonX & "," & $event.buttonY & ")"
-  of sekPointerMove:
+  of sekPointerMove, sekPointerCancel:
     result.add " point=(" & $event.x & "," & $event.y & ")"
   else:
     discard
@@ -3352,6 +3352,22 @@ proc main() =
           needsFrame = true
         else:
           paintOnlyDirty = true
+      of sekPointerCancel:
+        let previousPressedTarget = inputState.pressedTarget
+        let previousCaptureTarget = inputState.pointerCaptureTarget
+        let input = event.pointerInputEvent()
+        if input.isSome:
+          var dispatches = inputState.processInput(
+            ui.tree, frame.regions, input.get, ui.scroll
+          )
+          ui.normalizeTextControlDispatches(frame.regions, dispatches)
+          discard ui.handleEvents(dispatches)
+        dirtyStyleRoots.addDirtyRoot(previousPressedTarget)
+        dirtyStyleRoots.addDirtyRoot(previousCaptureTarget)
+        textFocusDiscardMode = tfdNone
+        textFocusQuietPasses = 0
+        staticLayerDirty = true
+        paintOnlyDirty = true
       of sekKeyDown:
         if inputState.focusedTarget.isNone or
             not ui.isTextInputTarget(inputState.focusedTarget.get):

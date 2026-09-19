@@ -95,6 +95,7 @@ probes include:
 | Full cold hit build, 4,000 nodes | 1.358 ms |
 | Flatten 10,000 retained Canvas commands | 2.198 ms average |
 | 1,000,000 idle predicates with 10,000 surfaces | 5.690 ms total |
+| Publish 20,000 one-pixel updates on a 4,096 x 4,096 RasterSurface | 1.165 ms total |
 
 Cold passes are used for initial construction and resize. Interactive updates
 are required to remain proportional to dirty work rather than total tree size.
@@ -102,7 +103,7 @@ The exact workloads, machine-local interpretation, budgets, and regression
 gates are documented in [Performance Model](docs/performance-model.md) and can
 be run with `nimble bench`.
 
-The discovered ARC suite currently covers 142 independently compiled test
+The discovered ARC suite covers more than 140 independently compiled test
 files. The same suite and public examples also run under ORC as a compatibility
 gate, so applications may select either `--mm:arc` or `--mm:orc`. ARC remains
 the stricter ownership baseline. Separate Valgrind gates exercise the complete
@@ -138,6 +139,7 @@ pre-rendered animation:
 ```sh
 nimble componentDemo
 nimble v03CanvasDemo
+nimble rasterSurfaceDemo
 nimble loadingIndicatorDemo
 nimble declarativeMotionDemo
 nimble orchestrationDemo
@@ -147,12 +149,17 @@ nimble cueGeometryMotionDemo
 nimble popInfographicDemo
 nimble kawaiiCompanionDemo
 nimble luxuryHotelDemo
+nimble v07DesignShowcase
 ```
 
 `cueMotionGraphicsDemo` demonstrates kinetic typography and sequenced visual
 stages. `cueGeometryMotionDemo` proves the same public Style and Cue APIs with
 only geometry: a gravity-shaped bounce, synchronized shadow, staggered tiles,
 and a composed final poster.
+
+`rasterSurfaceDemo` is an event-driven mouse and pen drawing surface. It copies
+and uploads only the changed RGBA8 rectangle, uses pressure when the backend
+provides it, and returns to an idle event wait when input stops.
 
 `validationDemo` demonstrates retained reactive validation across text,
 password, checkbox, cross-field, blur, input, and submit flows. Password inputs
@@ -170,6 +177,13 @@ commands rather than a 3D asset.
 CBSS Image fitting and clipping, layered Style content, serif/sans typography,
 reservation details, and concierge panels. Asset provenance is recorded in
 `examples/assets/README.md`.
+
+`v07DesignShowcase` presents five original native design directions in one
+switchable application: an infinite heart parade, candy radio, sticker
+pinboard, tiny-planet monitor, and neon live-visual dashboard. The optional
+`runV07GpuShowcase` adds five real bgfx fragment workloads for fluid, particles,
+mechanical surfaces, image processing, and GPU UI materials. Setup and controls
+are documented in [Version 0.7 Showcases](docs/v07-showcases.md).
 
 [Kawaii companion screenshot](sample/ClayBoardStyleSystem_kawaii_demo.png) |
 [Luxury hotel screenshot](sample/ClayBoardStyleSystem_luxury_hotel_demo.png) |
@@ -204,7 +218,7 @@ cbss_configure system
 The selection is written to the application's ignored `.cbss/` directory.
 CBSS does not ship native runtime binaries inside its Nimble package.
 
-## What Version 0.6.0 Contains
+## What Version 0.7.0 Contains
 
 - Language-neutral Craft Style and Craft Pack contracts with atomic loading,
   replacement, bounded validation, public Style Slots, and versioned C ABI
@@ -254,6 +268,24 @@ CBSS does not ship native runtime binaries inside its Nimble package.
   conversion, and selectable gradient interpolation spaces.
 - Retained `Canvas2D` paths, transforms, clips, layers, text, images, gradients,
   local input, frame requests, and a deterministic headless renderer.
+- Retained RGBA8 `RasterSurface` drawing with bounded stride-aware copy-in,
+  atomic dirty-region publication, SDL3 partial texture uploads, Canvas/Box
+  composition, and deterministic headless output.
+- An optional backend-neutral GPU host with retained textures, buffers, render
+  targets, shaders, graphics/compute pipelines, bounded resource namespaces,
+  device-loss recovery, and an independently distributed bgfx adapter through
+  [bgfxim](https://github.com/puffball1567/bgfxim).
+- Typed GPU drawing and compute submission with floating-point textures,
+  storage images and buffers, partial uploads, GPU transfers, asynchronous
+  readback, and direct or portable-fallback composition through ordinary CBSS
+  layout, clipping, opacity, transforms, input, focus, and accessibility.
+- Bounded typed shader authoring for graphics and Compute workloads, including
+  packed records, bitwise operations, lexical control flow, fixed local arrays,
+  and reusable pure helper functions. Official bgfx `shaderc` compilation stays
+  in build tooling rather than runtime artifacts.
+- A versioned Custom Paint provider boundary, retained path fills and strokes,
+  arcs, cap/join styles, dashed strokes, subpixel coverage, and shared SDL3 and
+  deterministic reference rendering.
 - Typed navigation with `Link`, retained screen roots, history, focus
   restoration, external URLs, and application deep links.
 - Mouse, touch, pen, keyboard, focus, form, clipboard, IME, drag, scroll, and
@@ -263,8 +295,8 @@ CBSS does not ship native runtime binaries inside its Nimble package.
 - An idle-aware reversible Switch transition and deterministic animation clock
   with reduced-motion support.
 - A versioned C ABI for tree, style, layout, paint, input, events, focus,
-  scrolling, accessibility, Canvas, diagnostics, and bounded worker-to-UI Blob
-  streams.
+  scrolling, accessibility, Canvas, RasterSurface, diagnostics, and bounded
+  worker-to-UI Blob streams.
 - Headless unit and E2E tooling, screenshot snapshots, optional real-window
   Wayland scenarios, portable CI, and native memory checks.
 
@@ -273,7 +305,7 @@ Accepting a value as metadata does not mean that layout or paint consumes it.
 
 ## Current Boundaries
 
-Version 0.6.0 is a developer preview. Public APIs may change before 1.0.
+Version 0.7.0 is a developer preview. Public APIs may change before 1.0.
 
 - Linux x86_64 with SDL3 is the only Tier 1 runtime target.
 - Windows and macOS native runtime validation is incomplete.
@@ -283,7 +315,10 @@ Version 0.6.0 is a developer preview. Public APIs may change before 1.0.
   assistive-technology validation remain incomplete.
 - Remaining property-specific percentage and intrinsic-sizing combinations,
   inline rich text, additional declarative motion values, filters, 3D
-  transforms, CPU effects, and GPU Canvas are roadmap work. Paint transitions
+  transforms, rounded/offscreen direct GPU composition, broader real-GPU
+  qualification, and CPU effects are roadmap work. Portable GPU Canvas
+  readback, a backend-neutral direct-surface contract, and final-window
+  same-host composition are implemented. Paint transitions
   and multiple named keyframes support opacity, foreground/background colors,
   and typed 2D transforms with CSS-like longhand list cycling.
 - CBSS intentionally does not reproduce DOM selectors, browser quirks, legacy
@@ -393,6 +428,11 @@ Rust-native ownership and error handling.
 | Events and typed signals | [Events](docs/events.md) |
 | Blob, FormData, and Streams | [UI Data Interchange](docs/data-interchange.md) |
 | Canvas and custom drawing | [Render Surfaces](docs/render-surfaces.md) |
+| Style-owned underlay and overlay materials | [Custom Paint](docs/custom-paint.md) |
+| Optional GPU ownership and budgets | [GPU Host](docs/gpu-host.md) |
+| Direct GPU display and readback fallback | [GPU Display Surfaces](docs/gpu-direct-surfaces.md) |
+| Typed GPU shaders and build-only packaging | [GPU Shaders](docs/gpu-shaders.md) |
+| Version 0.7 design and GPU examples | [Version 0.7 Showcases](docs/v07-showcases.md) |
 | SDL3, CPU vector, bgfx, and color management | [Native Rendering Stack](docs/native-rendering-stack.md) |
 | Optional platform primitive candidates | [Platform Primitives](docs/platform-primitives.md) |
 | Navigation and Link | [Navigation](docs/navigation.md) |
@@ -406,6 +446,7 @@ Rust-native ownership and error handling.
 ## Development
 
 ```sh
+nimble ciPreflight
 nimble test
 nimble testOrc
 nimble checkExamples
@@ -428,6 +469,11 @@ macOS. UndefinedBehaviorSanitizer covers Linux and macOS; ThreadSanitizer covers
 the same two systems. Standalone LeakSanitizer and Valgrind run on Linux. Other
 platform combinations are omitted when their sanitizer runtime cannot be
 reliably linked and maintained with the CI toolchain.
+
+Portable CI tests are deterministically sharded per operating system. Long
+sanitizer tasks accept `CBSS_MEMORY_MODEL=arc` or `CBSS_MEMORY_MODEL=orc` so CI
+can run ownership models independently; leaving it unset runs both models for
+the normal local workflow.
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before changing a public boundary or hot
 path. Properties, elements, backends, and reference controls are separated so
