@@ -1833,6 +1833,14 @@ proc shaderLocalArray(
     raise newException(GpuShaderBuildError, "GPU shader builder handle is invalid")
   handle.builder.localArrayAt(id)
 
+proc shaderFunction(
+    handle: CbssShaderBuilderHandle;
+    id: uint32
+): GpuShaderFunction =
+  if handle.isNil or handle.builder.isNil:
+    raise newException(GpuShaderBuildError, "GPU shader builder handle is invalid")
+  handle.builder.functionAt(id)
+
 proc storeShaderExpression(
     output: ptr uint32;
     expression: GpuShaderExpression
@@ -2653,6 +2661,116 @@ proc cbssShaderBuilderLocalArrayStore(
       handle.shaderExpression(value)
     )
     CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderBeginFunction(
+    handle: CbssShaderBuilderHandle;
+    returnType: uint32;
+    parameterTypes: ptr uint32;
+    parameterCount: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_begin_function", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil or parameterCount > uint32(maxGpuShaderFunctionParameters) or
+      (parameterCount > 0 and parameterTypes.isNil):
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    var valueTypes = newSeq[GpuShaderValueType](int(parameterCount))
+    if parameterCount > 0:
+      let values = cast[ptr UncheckedArray[uint32]](parameterTypes)
+      for index in 0 ..< valueTypes.len:
+        valueTypes[index] = values[index].shaderValueType
+    handle.lastError.setLen(0)
+    output[] = handle.builder.beginFunction(
+      returnType.shaderValueType,
+      valueTypes
+    ).functionId
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderFunctionParameter(
+    handle: CbssShaderBuilderHandle;
+    function, index: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_function_parameter", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil:
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    handle.lastError.setLen(0)
+    storeShaderExpression(
+      output,
+      handle.shaderFunction(function).parameter(index)
+    )
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderFunctionReturn(
+    handle: CbssShaderBuilderHandle;
+    function, value: uint32
+): int32 {.exportc: "cbss_shader_builder_function_return", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  try:
+    handle.lastError.setLen(0)
+    handle.shaderFunction(function).returnValue(handle.shaderExpression(value))
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderEndFunction(
+    handle: CbssShaderBuilderHandle;
+    function: uint32
+): int32 {.exportc: "cbss_shader_builder_end_function", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  try:
+    handle.lastError.setLen(0)
+    handle.shaderFunction(function).endFunction()
+    CbssOk
+  except GpuShaderBuildError as error:
+    handle.shaderBuilderError(error.msg)
+  except CatchableError as error:
+    handle.shaderBuilderError(error.msg, CbssInternalError)
+
+proc cbssShaderBuilderFunctionCall(
+    handle: CbssShaderBuilderHandle;
+    function: uint32;
+    arguments: ptr uint32;
+    argumentCount: uint32;
+    output: ptr uint32
+): int32 {.exportc: "cbss_shader_builder_function_call", cdecl, dynlib.} =
+  if handle.isNil or handle.builder.isNil:
+    return CbssInvalidHandle
+  if output.isNil or argumentCount > uint32(maxGpuShaderFunctionParameters) or
+      (argumentCount > 0 and arguments.isNil):
+    return CbssInvalidArgument
+  output[] = 0
+  try:
+    var values = newSeq[GpuShaderExpression](int(argumentCount))
+    if argumentCount > 0:
+      let ids = cast[ptr UncheckedArray[uint32]](arguments)
+      for index in 0 ..< values.len:
+        values[index] = handle.shaderExpression(ids[index])
+    handle.lastError.setLen(0)
+    storeShaderExpression(
+      output,
+      handle.shaderFunction(function).callFunction(values)
+    )
   except GpuShaderBuildError as error:
     handle.shaderBuilderError(error.msg)
   except CatchableError as error:

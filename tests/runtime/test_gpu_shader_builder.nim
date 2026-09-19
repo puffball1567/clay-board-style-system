@@ -869,6 +869,169 @@ suite "typed GPU compute shader authoring":
     check " | " in first.source
     check first.storageBuffers.len == 4
 
+  test "emits typed pure helper functions once and reuses calls":
+    let builder = newGpuShaderBuilder(gssCompute, "helper-functions")
+    builder.setComputeWorkGroupSize(1, 1, 1)
+    let output = builder.storageBuffer("b_output", 0, gsbfFloat32, gsaWrite)
+
+    let boundedRatio = builder.beginFunction(
+      gsvtFloat,
+      [gsvtFloat, gsvtFloat]
+    )
+    let numerator = boundedRatio.parameter(0)
+    let denominator = boundedRatio.parameter(1)
+    builder.beginIf(greaterThan(denominator, builder.scalar(0)))
+    boundedRatio.returnValue(clamp(
+      numerator / denominator,
+      builder.scalar(0),
+      builder.scalar(1)
+    ))
+    builder.endIf()
+    boundedRatio.returnValue(builder.scalar(0))
+    boundedRatio.endFunction()
+
+    let first = boundedRatio.callFunction([
+      builder.scalar(2), builder.scalar(4)
+    ])
+    let second = boundedRatio.callFunction([
+      builder.scalar(3), builder.scalar(6)
+    ])
+    builder.storeStorage(output, builder.unsignedInteger(0), first + second)
+
+    let source = builder.emitGpuShaderSource().source
+    check source.count("float cbss_f0(float cbss_p0, float cbss_p1)") == 1
+    check source.count("cbss_f0(") == 3
+    check "return cbss_n" in source
+    check source.find("float cbss_f0(") < source.find("void main()")
+
+  test "allows sealed helpers to compose without recursion":
+    let builder = newGpuShaderBuilder(gssCompute, "composed-helpers")
+    builder.setComputeWorkGroupSize(1, 1, 1)
+    let output = builder.storageBuffer("b_output", 0, gsbfFloat32, gsaWrite)
+
+    let square = builder.beginFunction(gsvtFloat, [gsvtFloat])
+    let value = square.parameter(0)
+    square.returnValue(value * value)
+    square.endFunction()
+
+    let fourthPower = builder.beginFunction(gsvtFloat, [gsvtFloat])
+    let nestedValue = fourthPower.parameter(0)
+    let squared = square.callFunction([nestedValue])
+    fourthPower.returnValue(square.callFunction([squared]))
+    fourthPower.endFunction()
+
+    builder.storeStorage(
+      output,
+      builder.unsignedInteger(0),
+      fourthPower.callFunction([builder.scalar(2)])
+    )
+    let source = builder.emitGpuShaderSource().source
+    check "float cbss_f0(float cbss_p0)" in source
+    check "float cbss_f1(float cbss_p0)" in source
+    check source.find("float cbss_f0(") < source.find("float cbss_f1(")
+
+  test "rejects invalid helper function lifecycles and arguments":
+    let fragment = newGpuShaderBuilder(gssFragment)
+    expect GpuShaderBuildError:
+      discard fragment.beginFunction(gsvtFloat, [gsvtFloat])
+
+    let builder = newGpuShaderBuilder(gssCompute)
+    builder.setComputeWorkGroupSize(1, 1, 1)
+    let output = builder.storageBuffer("b_output", 0, gsbfFloat32, gsaWrite)
+    let helper = builder.beginFunction(gsvtFloat, [gsvtFloat])
+    check helper.functionId() == 1
+    check builder.functionAt(helper.functionId()).functionId() == 1
+    expect GpuShaderBuildError:
+      discard builder.functionAt(0)
+    expect GpuShaderBuildError:
+      discard helper.callFunction([helper.parameter(0)])
+    expect GpuShaderBuildError:
+      discard builder.beginFunction(gsvtFloat, [])
+    expect GpuShaderBuildError:
+      discard builder.globalInvocationId()
+    expect GpuShaderBuildError:
+      discard builder.loadStorage(output, builder.unsignedInteger(0))
+    expect GpuShaderBuildError:
+      helper.returnValue(builder.unsignedInteger(0))
+    let parameter = helper.parameter(0)
+    helper.returnValue(parameter)
+    helper.endFunction()
+    expect GpuShaderBuildError:
+      discard helper.parameter(0)
+    expect GpuShaderBuildError:
+      helper.endFunction()
+    expect GpuShaderBuildError:
+      discard helper.callFunction([])
+    expect GpuShaderBuildError:
+      discard helper.callFunction([builder.unsignedInteger(1)])
+
+    let foreign = newGpuShaderBuilder(gssCompute)
+    expect GpuShaderBuildError:
+      discard helper.callFunction([foreign.scalar(1)])
+    expect GpuShaderBuildError:
+      discard foreign.functionAt(helper.functionId())
+
+    let called = helper.callFunction([builder.scalar(1)])
+    builder.storeStorage(output, builder.unsignedInteger(0), called)
+    discard builder.emitGpuShaderSource()
+
+  test "rejects unclosed or incomplete helper functions":
+    block:
+      let builder = newGpuShaderBuilder(gssCompute)
+      builder.setComputeWorkGroupSize(1, 1, 1)
+      discard builder.storageBuffer("b_output", 0, gsbfFloat32, gsaWrite)
+      let helper = builder.beginFunction(gsvtFloat, [gsvtFloat])
+      helper.returnValue(helper.parameter(0))
+      expect GpuShaderBuildError:
+        discard builder.emitGpuShaderSource()
+
+    block:
+      let builder = newGpuShaderBuilder(gssCompute)
+      let helper = builder.beginFunction(gsvtFloat, [gsvtFloat])
+      builder.beginIf(greaterThan(helper.parameter(0), builder.scalar(0)))
+      helper.returnValue(helper.parameter(0))
+      builder.endIf()
+      expect GpuShaderBuildError:
+        helper.endFunction()
+
+    block:
+      let builder = newGpuShaderBuilder(gssCompute)
+      let helper = builder.beginFunction(gsvtFloat, [gsvtFloat])
+      builder.beginIf(greaterThan(helper.parameter(0), builder.scalar(0)))
+      helper.returnValue(helper.parameter(0))
+      expect GpuShaderBuildError:
+        helper.endFunction()
+
+  test "enforces helper function and parameter limits":
+    let parameterBuilder = newGpuShaderBuilder(gssCompute)
+    var excessive = newSeq[GpuShaderValueType](
+      maxGpuShaderFunctionParameters + 1
+    )
+    for valueType in excessive.mitems:
+      valueType = gsvtFloat
+    expect GpuShaderBuildError:
+      discard parameterBuilder.beginFunction(gsvtFloat, excessive)
+
+    let countBuilder = newGpuShaderBuilder(gssCompute)
+    for _ in 0 ..< maxGpuShaderFunctions:
+      let helper = countBuilder.beginFunction(gsvtFloat, [])
+      helper.returnValue(countBuilder.scalar(0))
+      helper.endFunction()
+    expect GpuShaderBuildError:
+      discard countBuilder.beginFunction(gsvtFloat, [])
+
+  test "rejects helper definitions atomically at the node budget":
+    let builder = newGpuShaderBuilder(gssCompute)
+    for _ in 0 ..< maxGpuShaderNodes - 1:
+      discard builder.scalar(0)
+    expect GpuShaderBuildError:
+      discard builder.beginFunction(gsvtFloat, [gsvtFloat])
+    expect GpuShaderBuildError:
+      discard builder.functionAt(1)
+    discard builder.scalar(1)
+    expect GpuShaderBuildError:
+      discard builder.scalar(2)
+
   test "validates local array ownership scope indices and values":
     let fragment = newGpuShaderBuilder(gssFragment)
     expect GpuShaderBuildError:

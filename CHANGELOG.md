@@ -9,6 +9,14 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added typed pure helper functions to Compute shader authoring. Generated
+  backend names, typed parameters and returns, lexical ownership, sealed calls,
+  and bounded function counts let drawing and simulation packages reuse
+  physical formulas without duplicating graph nodes or exposing shader source.
+  Resource access, recursion, forward calls, and unbounded control flow remain
+  rejected. The append-only C API advances the ABI to `0x00010026` and
+  `shader.authoring` capability version 9.
+
 - Added a drawing-engine compatibility qualification for typed Compute shader
   authoring. One public-API-only fixture now combines exact packed physical
   record layouts, an eight-entry local candidate array, bounded neighbourhood
