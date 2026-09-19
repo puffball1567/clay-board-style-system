@@ -1038,10 +1038,9 @@ an enum-only API.
 
 ## GPU Canvas Capability
 
-Status: `Version 0.7 in progress; typed GPU resources, checked dynamic Texture
-and storage-buffer updates, submission, transfer, asynchronous typed readback, portable RasterSurface
-composition, typed graphics and compute authoring, and build-only shader
-packaging with runtime binding-layout validation implemented`
+Status: `Version 0.7.0 GPU foundation released on 2026-09-19; the Version 0.7
+patch line continues rounded/offscreen composition, broader real-GPU
+qualification, CPU filters, and Motion Scene work`
 
 CBSS will support optional GPU-backed drawing inside the standard Canvas
 element. This is a capability for game scenes, charts, visualizations, image
@@ -2193,6 +2192,11 @@ contents may move as the parallel foundation implementation exposes actual
 dependencies and performance costs.
 
 ### Version 0.7 Visual Rendering Release Scope
+
+Status: `The GPU host, drawing-engine compute, Custom Paint, retained vector,
+RasterSurface, direct/fallback display-surface, and typed shader-authoring
+baseline shipped in Version 0.7.0 on 2026-09-19. Remaining items continue in
+Version 0.7 patch releases.`
 
 Version 0.7 combines the CPU and GPU expression tracks so applications and
 component libraries receive one coherent visual release rather than separate
