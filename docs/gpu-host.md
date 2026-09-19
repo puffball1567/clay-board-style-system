@@ -676,11 +676,16 @@ and copies consume one reserved view and one work unit only after the adapter
 accepts the command.
 
 Readback is never a synchronous pointer-event operation. The backend writes
-into host-owned storage retained until `tryTakeGpuReadback` succeeds. Polling
+into stable, reference-owned host storage retained until
+`tryTakeGpuReadback` succeeds. Namespace accounting updates, later frames, and
+other readback requests do not copy or relocate that destination. Polling
 returns `pending`, `ready`, or `invalid`; taking a ready result transfers its
 pixel sequence to the caller exactly once. A readback texture cannot be
 released, its namespace cannot close, and a borrowed host cannot detach while
-a request still owns that texture. Device loss invalidates all requests.
+a request still owns that texture. An owned host releases destinations only
+after its backend close callback has drained or cancelled queued work. A
+backend that reports device loss must stop all outstanding destination writes
+before returning that status; device loss then invalidates all requests.
 
 Readback textures intentionally accept exactly
 `{gtuBlitDestination, gtuReadback}` and no initial data. They are CPU transfer
@@ -802,6 +807,10 @@ var options = defaultBgfxHostOptions()
 options.platformData = bgfxPlatformDataFromSdl3Window(sdlWindow)
 let host = openGpuHost(newBgfxBackend(options), ghoOwned, config)
 ```
+
+`defaultBgfxHostOptions()` leaves the bgfx capability mask unrestricted, which
+matches `bgfx_init_ctor` semantics. Set `options.capabilities` explicitly only
+when the application intends to disable selected optional capabilities.
 
 The SDL3 helper is available on platforms configured by the CBSS SDL backend;
 the current production configuration is Linux x86_64. The portable tagged-handle
