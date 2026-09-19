@@ -5,6 +5,9 @@ import ../runtime/gpu_direct_surface
 import ../runtime/gpu_host
 import ./paint_command
 
+const
+  maxGpuDirectClipMasks* = 8
+
 type
   GpuDirectCompositeStatus* = enum
     gdcsNoFrame,
@@ -18,6 +21,12 @@ type
     gdctWindow,
     gdctOffscreen
 
+  GpuDirectClipMask* = object
+    ## One logical-coordinate rounded rectangle from the active clip stack.
+    ## Backends must apply every retained mask, not only their intersection.
+    bounds*: Rect
+    radius*: float32
+
   GpuDirectCompositeContext* = object
     ## Describes the renderer target active for this synchronous submission.
     ## Backend adapters must return gdcsUnsupported when they cannot preserve
@@ -26,6 +35,9 @@ type
     targetBounds*: Rect
     clipBounds*: Option[Rect]
     requiresClipMask*: bool
+    clipMaskCount*: uint8
+    clipMaskOverflow*: bool
+    clipMasks*: array[maxGpuDirectClipMasks, GpuDirectClipMask]
     pixelScale*: float32
 
   GpuDirectCompositeCapabilities* = object
@@ -57,6 +69,30 @@ proc defaultGpuDirectCompositeContext*(): GpuDirectCompositeContext =
     targetKind: gdctUnspecified,
     pixelScale: 1.0'f32
   )
+
+proc isFinite(value: float32): bool {.inline.} =
+  value.classify notin {fcNan, fcInf, fcNegInf}
+
+proc gpuDirectClipMask*(bounds: Rect; radius: float32): GpuDirectClipMask =
+  if not bounds.x.isFinite or not bounds.y.isFinite or
+      not bounds.w.isFinite or not bounds.h.isFinite or
+      bounds.w <= 0 or bounds.h <= 0 or not radius.isFinite or radius <= 0:
+    raise newException(ValueError, "GPU direct clip mask is invalid")
+  GpuDirectClipMask(bounds: bounds, radius: radius)
+
+proc addGpuDirectClipMask*(
+    context: var GpuDirectCompositeContext;
+    mask: GpuDirectClipMask
+): bool {.discardable.} =
+  ## Retains a bounded clip stack without allocating in the renderer hot path.
+  context.requiresClipMask = true
+  if context.clipMaskOverflow or
+      int(context.clipMaskCount) >= maxGpuDirectClipMasks:
+    context.clipMaskOverflow = true
+    return false
+  context.clipMasks[int(context.clipMaskCount)] = mask
+  inc context.clipMaskCount
+  true
 
 proc gpuDirectCompositeCapabilities*(
     targetKinds: set[GpuDirectCompositeTargetKind];
@@ -135,9 +171,6 @@ proc newGpuDirectCompositor*(
     )
   GpuDirectCompositor(capabilities: capabilities, submit: submit)
 
-proc isFinite(value: float32): bool {.inline.} =
-  value.classify notin {fcNan, fcInf, fcNegInf}
-
 proc isValidBounds(value: Rect; allowEmpty: bool): bool =
   value.x.isFinite and value.y.isFinite and value.w.isFinite and
     value.h.isFinite and value.w >= 0 and value.h >= 0 and
@@ -157,9 +190,20 @@ proc supports*(
     if not capabilities.clipBoundsSupported or
         not context.clipBounds.get.isValidBounds(true):
       return false
-  if context.requiresClipMask and
-      (context.clipBounds.isNone or not capabilities.clipMaskSupported):
+  let maskCount = int(context.clipMaskCount)
+  if maskCount > maxGpuDirectClipMasks or context.clipMaskOverflow:
     return false
+  if context.requiresClipMask:
+    if context.clipBounds.isNone or not capabilities.clipMaskSupported or
+        maskCount == 0:
+      return false
+  elif maskCount != 0:
+    return false
+  for index in 0 ..< maskCount:
+    let mask = context.clipMasks[index]
+    if not mask.bounds.isValidBounds(false) or not mask.radius.isFinite or
+        mask.radius <= 0:
+      return false
   true
 
 proc supports*(

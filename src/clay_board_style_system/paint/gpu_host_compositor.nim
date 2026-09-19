@@ -6,6 +6,9 @@ import ../runtime/gpu_shader_builder
 import ./gpu_direct_compositor
 
 const
+  gpuHostDirectCompositeClipUniformArrayLength* =
+    uint16(1 + maxGpuDirectClipMasks * 2)
+
   gpuHostDirectCompositeVaryingDefinitions* = """
 vec2 v_texcoord0 : TEXCOORD0 = vec2(0.0, 0.0);
 
@@ -30,12 +33,15 @@ type
     ## Resources are retained by their owner and must outlive the compositor.
     ## The shaders consume a full-viewport position/UV vertex stream,
     ## u_cbssComposite = (opacity, alphaMode, 0, 0), and
-    ## u_cbssUvRect = (u0, v0, u1, v1).
+    ## u_cbssUvRect = (u0, v0, u1, v1). Masked pipelines additionally consume
+    ## the fixed-size u_cbssClipMasks array.
     namespace*: GpuNamespaceId
     pipelines*: array[GpuAlphaMode, GpuResourceHandle]
+    maskedPipelines*: array[GpuAlphaMode, GpuResourceHandle]
     vertexBuffer*: GpuResourceHandle
     compositeUniform*: GpuResourceHandle
     uvRectUniform*: GpuResourceHandle
+    clipMasksUniform*: GpuResourceHandle
     sampler*: GpuResourceHandle
     textureStage*: uint8
     vertexCount*: uint32
@@ -94,6 +100,76 @@ proc gpuHostDirectCompositeFragmentSource*(
     ]
   )
 
+proc gpuHostDirectCompositeMaskedFragmentSource*(
+    textureStage = 0'u8
+): GpuShaderSource =
+  ## Emits the bounded rounded-clip variant. Element zero stores
+  ## (maskCount, visibleWidth, visibleHeight, pixelScale); each mask occupies two
+  ## vec4 values: local bounds and (radius, 0, 0, 0). Header w stores the
+  ## physical pixel scale used for one-pixel edge antialiasing.
+  if textureStage >= uint8(maxGpuTextureBindings):
+    raise newException(ValueError, "GPU compositor texture stage is invalid")
+  var source = "$input v_texcoord0\n\n" &
+    "#include \"bgfx_shader.sh\"\n\n" &
+    "SAMPLER2D(s_cbssSurface, " & $textureStage & ");\n" &
+    "uniform vec4 u_cbssComposite;\n" &
+    "uniform vec4 u_cbssUvRect;\n" &
+    "uniform vec4 u_cbssClipMasks[" &
+      $gpuHostDirectCompositeClipUniformArrayLength & "];\n\n" &
+    "float cbssRoundedRectDistance(vec2 point, vec4 bounds, float radius)\n" &
+    "{\n" &
+    "  vec2 halfSize = max((bounds.zw - bounds.xy) * 0.5, vec2(0.0));\n" &
+    "  float boundedRadius = clamp(radius, 0.0, min(halfSize.x, halfSize.y));\n" &
+    "  vec2 center = (bounds.xy + bounds.zw) * 0.5;\n" &
+    "  vec2 delta = abs(point - center) - max(halfSize - vec2(boundedRadius), vec2(0.0));\n" &
+    "  return length(max(delta, vec2(0.0))) + min(max(delta.x, delta.y), 0.0) - boundedRadius;\n" &
+    "}\n\n" &
+    "void main()\n" &
+    "{\n" &
+    "  vec2 point = v_texcoord0 * u_cbssClipMasks[0].yz;\n" &
+    "  float clipCoverage = 1.0;\n"
+  for index in 0 ..< maxGpuDirectClipMasks:
+    let boundsIndex = 1 + index * 2
+    let radiusIndex = boundsIndex + 1
+    source.add "  if (u_cbssClipMasks[0].x > " &
+      $(index.float32 + 0.5'f32) &
+      ")\n" &
+      "  {\n" &
+      "    float distanceToMask = cbssRoundedRectDistance(point, u_cbssClipMasks[" &
+      $boundsIndex & "], u_cbssClipMasks[" & $radiusIndex & "].x);\n" &
+      "    clipCoverage = min(clipCoverage, 1.0 - smoothstep(-0.5, 0.5, " &
+      "distanceToMask * u_cbssClipMasks[0].w));\n" &
+      "  }\n"
+  source.add(
+    "  vec2 uv = mix(u_cbssUvRect.xy, u_cbssUvRect.zw, v_texcoord0);\n" &
+    "  vec4 color = texture2D(s_cbssSurface, uv);\n" &
+    "  float opacity = clamp(u_cbssComposite.x, 0.0, 1.0) * clipCoverage;\n" &
+    "  float alphaMode = u_cbssComposite.y;\n" &
+    "  if (alphaMode < 0.5)\n" &
+    "  {\n" &
+    "    color.a *= opacity;\n" &
+    "  }\n" &
+    "  else if (alphaMode < 1.5)\n" &
+    "  {\n" &
+    "    color *= opacity;\n" &
+    "  }\n" &
+    "  else\n" &
+    "  {\n" &
+    "    color.a = opacity;\n" &
+    "  }\n" &
+    "  gl_FragColor = color;\n" &
+    "}\n"
+  )
+  GpuShaderSource(
+    stage: gssFragment,
+    label: "cbss-direct-composite-masked-fragment-" & $textureStage,
+    source: move(source),
+    varyingDefinitions: gpuHostDirectCompositeVaryingDefinitions,
+    inputs: @[
+      GpuShaderInterfaceEntry(slot: gsisTexCoord0, valueType: gsvtVec2)
+    ]
+  )
+
 proc finite(value: float32): bool {.inline.} =
   value.classify notin {fcNan, fcInf, fcNegInf}
 
@@ -144,6 +220,32 @@ proc validateMaterial(
       raise newException(
         ValueError, "GPU compositor is missing a live pipeline for an alpha mode"
       )
+  let hasClipMasksUniform = material.clipMasksUniform.handlePresent
+  if hasClipMasksUniform:
+    if material.clipMasksUniform.namespace != material.namespace or
+        material.clipMasksUniform.kind != grkUniform or
+        not host.gpuUniformMatches(
+          material.clipMasksUniform,
+          "u_cbssClipMasks",
+          gutVec4,
+          gpuHostDirectCompositeClipUniformArrayLength
+        ):
+      raise newException(
+        ValueError, "GPU compositor clip-mask uniform does not match the standard interface"
+      )
+    for alphaMode in alphaModes:
+      let pipeline = material.maskedPipelines[alphaMode]
+      if not pipeline.handlePresent or pipeline.namespace != material.namespace or
+          pipeline.kind != grkPipeline or not host.isGpuResourceLive(pipeline):
+        raise newException(
+          ValueError, "GPU compositor is missing a clip-mask pipeline for an alpha mode"
+        )
+  else:
+    for alphaMode in alphaModes:
+      if material.maskedPipelines[alphaMode].handlePresent:
+        raise newException(
+          ValueError, "GPU compositor clip-mask pipelines require their uniform"
+        )
 
 proc physicalBounds(
     logical: Rect;
@@ -192,6 +294,26 @@ proc uvRect(
     )
   ]
 
+proc clipMaskUniformValues(
+    context: GpuDirectCompositeContext;
+    visible: Rect
+): seq[float32] =
+  result = newSeq[float32](
+    int(gpuHostDirectCompositeClipUniformArrayLength) * 4
+  )
+  result[0] = float32(context.clipMaskCount)
+  result[1] = visible.w
+  result[2] = visible.h
+  result[3] = context.pixelScale
+  for index in 0 ..< int(context.clipMaskCount):
+    let mask = context.clipMasks[index]
+    let offset = (1 + index * 2) * 4
+    result[offset] = mask.bounds.x - visible.x
+    result[offset + 1] = mask.bounds.y - visible.y
+    result[offset + 2] = mask.bounds.x + mask.bounds.w - visible.x
+    result[offset + 3] = mask.bounds.y + mask.bounds.h - visible.y
+    result[offset + 4] = mask.radius
+
 proc newGpuHostDirectCompositor*(
     host: GpuHost;
     material: GpuHostDirectCompositeMaterial;
@@ -217,11 +339,12 @@ proc newGpuHostDirectCompositor*(
       ValueError, "GPU host has no qualified direct presentation profile"
     )
   host.validateMaterial(material, info.directPresentationAlphaModes)
+  let supportsClipMasks = material.clipMasksUniform.handlePresent
 
   let capabilities = gpuDirectCompositeCapabilities(
     {gdctWindow},
     clipBoundsSupported = clipBoundsSupported,
-    clipMaskSupported = false,
+    clipMaskSupported = supportsClipMasks,
     sourceProviders = {host.provider()},
     sourceKinds = sourceKinds,
     sourceFormats = info.directPresentationFormats,
@@ -235,10 +358,12 @@ proc newGpuHostDirectCompositor*(
     proc(request: GpuDirectCompositeRequest): GpuDirectCompositeStatus =
       if not host.isReady():
         return gdcsFailed
+      if not capabilities.supports(request.context) or
+          not capabilities.supports(request.frame):
+        return gdcsUnsupported
       if not host.hasActiveGpuFrame():
         return gdcsRetry
-      if request.context.targetKind != gdctWindow or
-          request.context.requiresClipMask:
+      if request.context.targetKind != gdctWindow:
         return gdcsUnsupported
       if not request.destination.validRect or
           not request.context.targetBounds.validRect or
@@ -263,7 +388,31 @@ proc newGpuHostDirectCompositor*(
       if bounds.empty:
         return gdcsPresented
 
-      let pipeline = material.pipelines[request.frame.alphaMode]
+      let pipeline =
+        if request.context.requiresClipMask:
+          material.maskedPipelines[request.frame.alphaMode]
+        else:
+          material.pipelines[request.frame.alphaMode]
+      var uniforms = @[
+        GpuUniformBinding(
+          uniform: material.compositeUniform,
+          values: @[
+            request.opacity,
+            float32(ord(request.frame.alphaMode)),
+            0.0'f32,
+            0.0'f32
+          ]
+        ),
+        GpuUniformBinding(
+          uniform: material.uvRectUniform,
+          values: @(request.destination.uvRect(visible))
+        )
+      ]
+      if request.context.requiresClipMask:
+        uniforms.add GpuUniformBinding(
+          uniform: material.clipMasksUniform,
+          values: request.context.clipMaskUniformValues(visible)
+        )
       try:
         host.submitGpuPresentationDraw(
           material.namespace,
@@ -272,23 +421,7 @@ proc newGpuHostDirectCompositor*(
             pipeline: pipeline,
             vertexBuffer: material.vertexBuffer,
             vertexCount: material.vertexCount,
-            bindings: GpuBindingSet(
-              uniforms: @[
-                GpuUniformBinding(
-                  uniform: material.compositeUniform,
-                  values: @[
-                    request.opacity,
-                    float32(ord(request.frame.alphaMode)),
-                    0.0'f32,
-                    0.0'f32
-                  ]
-                ),
-                GpuUniformBinding(
-                  uniform: material.uvRectUniform,
-                  values: @(request.destination.uvRect(visible))
-                )
-              ]
-            )
+            bindings: GpuBindingSet(uniforms: move(uniforms))
           ),
           GpuPresentationTextureBinding(
             stage: material.textureStage,

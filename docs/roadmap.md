@@ -1039,7 +1039,7 @@ an enum-only API.
 ## GPU Canvas Capability
 
 Status: `Version 0.7.0 GPU foundation released on 2026-09-19; the Version 0.7
-patch line continues rounded/offscreen composition, broader real-GPU
+patch line continues offscreen composition, broader real-GPU
 qualification, CPU filters, and Motion Scene work`
 
 CBSS will support optional GPU-backed drawing inside the standard Canvas
@@ -1089,9 +1089,9 @@ resource retention, preserving readback fallback. The bgfx constructor
 requires exact source-kind, format, alpha-mode, and dimension coverage of the
 qualified profile. The standard same-host compositor, restricted
 cross-namespace presentation binding, RenderTarget color-attachment resolution,
-rectangular clip/UV crop, and portable shader source contract are implemented;
-rounded/offscreen composition and real-GPU pixel qualification remain Version
-0.7 work. A later wgpu-native adapter
+rectangular clip/UV crop, bounded nested rounded-mask composition, and portable
+shader source contract are implemented; offscreen composition and real-GPU
+pixel qualification remain Version 0.7 work. A later wgpu-native adapter
 may implement the same CBSS-owned contract, but it is no longer the standard
 provider or a release prerequisite.
 
@@ -2320,15 +2320,16 @@ surface now adds bounded double/triple buffering, presentation retention,
 latest-ready coalescing, paint-only invalidation, capability negotiation, and
 the existing asynchronous readback fallback. Direct submissions now carry a
 backend-neutral composition context containing the final-window versus
-offscreen target kind, target bounds, effective rectangular clip, rounded-mask
-requirement, and pixel scale. This lets a presentation adapter reject a path it
+offscreen target kind, target bounds, effective rectangular clip, bounded
+rounded-mask stack, and pixel scale. This lets a presentation adapter reject a path it
 cannot preserve instead of drawing into the wrong target. Typed compositor
 capabilities now reject unsupported target, clip, and mask combinations before
 acquiring the published GPU frame. Custom Paint declarations now
 retain bounded typed material parameters in cold style storage and deliver them
 to providers without per-frame string parsing. A standard same-host compositor
 now consumes final-window contexts and retained Texture/RenderTarget sources in
-the active presentation frame. Rounded/offscreen direct-GPU composition,
+the active presentation frame, including bounded antialiased nested rounded
+clips. Offscreen direct-GPU composition,
 declarative filter composition, and broader real-GPU qualification remain open Version
 0.7 work. Owned bgfx hosts
 now recreate the backend from their latest validated configuration after
