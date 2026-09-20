@@ -7,6 +7,21 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-09-20
+
+### Fixed
+
+- Fixed asynchronous texture and storage-buffer readback destinations being
+  released when namespace accounting copied and replaced its table entry.
+  Pending destinations now have stable reference-owned storage across budget
+  updates, later frames, multiple requests, polling, and owned-host shutdown.
+  ARC and ORC sanitizer coverage now performs delayed backend writes for both
+  readback kinds instead of relying only on immediate mock writes.
+
+- Restored bgfx's default capability mask for owned hosts. Default options now
+  preserve all capabilities selected by bgfx, while applications can still set
+  an explicit mask to restrict them.
+
 ## [0.7.0] - 2026-09-19
 
 ### Added
