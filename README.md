@@ -315,7 +315,7 @@ Version 0.7.1 is a developer preview. Public APIs may change before 1.0.
   assistive-technology validation remain incomplete.
 - Remaining property-specific percentage and intrinsic-sizing combinations,
   inline rich text, additional declarative motion values, filters, 3D
-  transforms, rounded/offscreen direct GPU composition, broader real-GPU
+  transforms, offscreen direct GPU composition, broader real-GPU
   qualification, and CPU effects are roadmap work. Portable GPU Canvas
   readback, a backend-neutral direct-surface contract, and final-window
   same-host composition are implemented. Paint transitions

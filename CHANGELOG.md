@@ -7,6 +7,14 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+### Added
+
+- Added bounded nested rounded clips to final-window direct GPU Surface
+  composition. The SDL3 bridge now forwards up to eight logical clip masks,
+  the standard GPU host compositor applies them through a separate
+  one-physical-pixel-antialiased shader pipeline, and overflow or malformed
+  contexts fail closed without affecting the unmasked path.
+
 ## [0.7.1] - 2026-09-20
 
 ### Fixed

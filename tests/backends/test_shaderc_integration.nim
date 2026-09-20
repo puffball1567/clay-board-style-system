@@ -172,7 +172,9 @@ suite "official bgfx shaderc integration":
 
     let vertex = gpuHostDirectCompositeVertexSource()
     let fragment = gpuHostDirectCompositeFragmentSource()
+    let maskedFragment = gpuHostDirectCompositeMaskedFragmentSource()
     validateGpuShaderInterface(vertex, fragment)
+    validateGpuShaderInterface(vertex, maskedFragment)
     let config = gpuShaderCompilerConfig(
       shaderc,
       [shaderIncludes],
@@ -182,6 +184,9 @@ suite "official bgfx shaderc integration":
 
     check compileGpuShader(vertex, target, config).artifact.bytecode.len > 0
     check compileGpuShader(fragment, target, config).artifact.bytecode.len > 0
+    check compileGpuShader(
+      maskedFragment, target, config
+    ).artifact.bytecode.len > 0
 
   test "compiles generated graphics shaders and packages SPIR-V":
     let root = createTempDir("cbss-shaderc-integration-", "")

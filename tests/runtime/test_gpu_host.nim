@@ -6283,19 +6283,57 @@ suite "GPU display surface quality matrix":
       clipBoundsSupported = true,
       clipMaskSupported = true
     )
-    check masked.supports(GpuDirectCompositeContext(
+    var maskedContext = GpuDirectCompositeContext(
       targetKind: gdctOffscreen,
       targetBounds: rect(0, 0, 64, 64),
       clipBounds: some(rect(2, 3, 40, 30)),
-      requiresClipMask: true,
       pixelScale: 1.5
-    ))
+    )
+    check maskedContext.addGpuDirectClipMask(
+      gpuDirectClipMask(rect(2, 3, 40, 30), 6)
+    )
+    check masked.supports(maskedContext)
     check not masked.supports(GpuDirectCompositeContext(
       targetKind: gdctWindow,
       targetBounds: rect(0, 0, 64, 64),
       requiresClipMask: true,
       pixelScale: 1
     ))
+
+    var inconsistent = maskedContext
+    inconsistent.requiresClipMask = false
+    check not masked.supports(inconsistent)
+    inconsistent = maskedContext
+    inconsistent.clipMaskCount = 0
+    check not masked.supports(inconsistent)
+    inconsistent = maskedContext
+    inconsistent.clipMasks[0].radius = NaN.float32
+    check not masked.supports(inconsistent)
+
+    var bounded = GpuDirectCompositeContext(
+      targetKind: gdctWindow,
+      targetBounds: rect(0, 0, 64, 64),
+      clipBounds: some(rect(0, 0, 64, 64)),
+      pixelScale: 1
+    )
+    for index in 0 ..< maxGpuDirectClipMasks:
+      check bounded.addGpuDirectClipMask(
+        gpuDirectClipMask(rect(index.float32, 0, 64 - index.float32, 64), 4)
+      )
+    check masked.supports(bounded)
+    check not bounded.addGpuDirectClipMask(
+      gpuDirectClipMask(rect(0, 0, 1, 1), 1)
+    )
+    check bounded.clipMaskOverflow
+    check not masked.supports(bounded)
+
+    for invalid in [
+      GpuDirectClipMask(bounds: rect(0, 0, 0, 1), radius: 1),
+      GpuDirectClipMask(bounds: rect(0, 0, 1, 1), radius: 0),
+      GpuDirectClipMask(bounds: rect(0, 0, 1, 1), radius: Inf.float32)
+    ]:
+      expect ValueError:
+        discard gpuDirectClipMask(invalid.bounds, invalid.radius)
 
     expect ValueError:
       discard gpuDirectCompositeCapabilities({})
@@ -6890,8 +6928,18 @@ suite "GPU host direct compositor":
 
     let stageTwo = gpuHostDirectCompositeFragmentSource(2)
     check "SAMPLER2D(s_cbssSurface, 2);" in stageTwo.source
+    let maskedStageTwo = gpuHostDirectCompositeMaskedFragmentSource(2)
+    check "SAMPLER2D(s_cbssSurface, 2);" in maskedStageTwo.source
+    check "uniform vec4 u_cbssClipMasks[17];" in maskedStageTwo.source
+    check "float clipCoverage = 1.0;" in maskedStageTwo.source
+    check "1.0 - smoothstep(-0.5, 0.5," in maskedStageTwo.source
+    check "distanceToMask * u_cbssClipMasks[0].w" in maskedStageTwo.source
     expect ValueError:
       discard gpuHostDirectCompositeFragmentSource(
+        uint8(maxGpuTextureBindings)
+      )
+    expect ValueError:
+      discard gpuHostDirectCompositeMaskedFragmentSource(
         uint8(maxGpuTextureBindings)
       )
 
@@ -6947,6 +6995,7 @@ suite "GPU host direct compositor":
     check compositor.capabilities.targetKinds == {gdctWindow}
     check compositor.capabilities.sourceKinds == {grkTexture}
     check compositor.capabilities.alphaModes == {gcamStraight}
+    check not compositor.capabilities.clipMaskSupported
 
     var surfaceConfig = defaultGpuDirectSurfaceConfig(8, 8)
     surfaceConfig.alphaMode = gcamStraight
@@ -7181,21 +7230,33 @@ suite "GPU host direct compositor":
         GpuResourceBudget(
           persistentBytes: 8192,
           workUnitsPerFrame: 8,
-          maxResources: 12
+          maxResources: 16
         )
       )
       let drawing = host.createDrawingResources(namespace)
       let wrongCompositeUniform = host.createGpuUniform(
         namespace, uniformDescriptor("u_wrongComposite")
       )
+      let compositeUniform = host.createGpuUniform(
+        namespace, uniformDescriptor("u_cbssComposite")
+      )
       let uvRectUniform = host.createGpuUniform(
         namespace, uniformDescriptor("u_cbssUvRect")
+      )
+      let shortClipMasksUniform = host.createGpuUniform(
+        namespace,
+        uniformDescriptor(
+          "u_cbssClipMasks",
+          arrayLength = gpuHostDirectCompositeClipUniformArrayLength - 1
+        )
       )
       let sampler = host.createGpuSampler(
         namespace, samplerDescriptor("s_cbssSurface")
       )
       var pipelines: array[GpuAlphaMode, GpuResourceHandle]
       pipelines[gcamStraight] = drawing.pipeline
+      var maskedPipelines: array[GpuAlphaMode, GpuResourceHandle]
+      maskedPipelines[gcamStraight] = drawing.pipeline
       expect ValueError:
         discard newGpuHostDirectCompositor(
           host,
@@ -7205,6 +7266,35 @@ suite "GPU host direct compositor":
             vertexBuffer: drawing.vertexBuffer,
             compositeUniform: wrongCompositeUniform,
             uvRectUniform: uvRectUniform,
+            sampler: sampler,
+            vertexCount: 2
+          )
+        )
+      expect ValueError:
+        discard newGpuHostDirectCompositor(
+          host,
+          GpuHostDirectCompositeMaterial(
+            namespace: namespace,
+            pipelines: pipelines,
+            maskedPipelines: maskedPipelines,
+            vertexBuffer: drawing.vertexBuffer,
+            compositeUniform: compositeUniform,
+            uvRectUniform: uvRectUniform,
+            sampler: sampler,
+            vertexCount: 2
+          )
+        )
+      expect ValueError:
+        discard newGpuHostDirectCompositor(
+          host,
+          GpuHostDirectCompositeMaterial(
+            namespace: namespace,
+            pipelines: pipelines,
+            maskedPipelines: maskedPipelines,
+            vertexBuffer: drawing.vertexBuffer,
+            compositeUniform: compositeUniform,
+            uvRectUniform: uvRectUniform,
+            clipMasksUniform: shortClipMasksUniform,
             sampler: sampler,
             vertexCount: 2
           )
@@ -7238,23 +7328,35 @@ suite "GPU host direct compositor":
       let uvRectUniform = host.createGpuUniform(
         compositorNamespace, uniformDescriptor("u_cbssUvRect")
       )
+      let clipMasksUniform = host.createGpuUniform(
+        compositorNamespace,
+        uniformDescriptor(
+          "u_cbssClipMasks",
+          arrayLength = gpuHostDirectCompositeClipUniformArrayLength
+        )
+      )
       let sampler = host.createGpuSampler(
         compositorNamespace, samplerDescriptor("s_cbssSurface")
       )
       var pipelines: array[GpuAlphaMode, GpuResourceHandle]
       pipelines[gcamStraight] = drawing.pipeline
+      var maskedPipelines: array[GpuAlphaMode, GpuResourceHandle]
+      maskedPipelines[gcamStraight] = drawing.pipeline
       let compositor = newGpuHostDirectCompositor(
         host,
         GpuHostDirectCompositeMaterial(
           namespace: compositorNamespace,
           pipelines: pipelines,
+          maskedPipelines: maskedPipelines,
           vertexBuffer: drawing.vertexBuffer,
           compositeUniform: compositeUniform,
           uvRectUniform: uvRectUniform,
+          clipMasksUniform: clipMasksUniform,
           sampler: sampler,
           vertexCount: 2
         )
       )
+      check compositor.capabilities.clipMaskSupported
       let surface = host.newGpuDirectSurface(
         sourceNamespace, defaultGpuDirectSurfaceConfig(8, 8)
       )
@@ -7269,19 +7371,36 @@ suite "GPU host direct compositor":
       let command = drawGpuDirectSurface(
         NodeId(0), surface, rect(0, 0, 8, 8)
       )
+      var roundedContext = GpuDirectCompositeContext(
+        targetKind: gdctWindow,
+        targetBounds: rect(0, 0, 1280, 720),
+        clipBounds: some(rect(0, 0, 8, 8)),
+        pixelScale: 1.5
+      )
+      check roundedContext.addGpuDirectClipMask(
+        gpuDirectClipMask(rect(1, 2, 6, 4), 2)
+      )
+      check roundedContext.addGpuDirectClipMask(
+        gpuDirectClipMask(rect(2, 1, 4, 6), 1)
+      )
       token = host.beginGpuFrame()
       check command.compositeGpuDirectSurface(
-        GpuDirectCompositeContext(
-          targetKind: gdctWindow,
-          targetBounds: rect(0, 0, 1280, 720),
-          clipBounds: some(rect(0, 0, 8, 8)),
-          requiresClipMask: true,
-          pixelScale: 1
-        ),
+        roundedContext,
         compositor
-      ) == gdcsUnsupported
-      check context.graphicsPassBegins == 0
-      check context.drawSubmits == 0
+      ) == gdcsPresented
+      check context.graphicsPassBegins == 1
+      check context.drawSubmits == 1
+      check context.lastBindings.uniforms.len == 3
+      let clipValues = context.lastBindings.uniforms[2].values
+      check clipValues.len ==
+        int(gpuHostDirectCompositeClipUniformArrayLength) * 4
+      check clipValues[0 .. 3] == @[2.0'f32, 8.0'f32, 8.0'f32, 1.5'f32]
+      check clipValues[4 .. 8] == @[
+        1.0'f32, 2.0'f32, 7.0'f32, 6.0'f32, 2.0'f32
+      ]
+      check clipValues[12 .. 16] == @[
+        2.0'f32, 1.0'f32, 6.0'f32, 7.0'f32, 1.0'f32
+      ]
       host.endGpuFrame(token)
       check surface.closeGpuDirectSurface()
       host.close()
