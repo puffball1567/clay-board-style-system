@@ -1,6 +1,7 @@
 # GPU Surface Quality Matrix
 
-Status: `Deterministic contract coverage implemented; visible real-GPU coverage pending`
+Status: `Deterministic contract coverage implemented; opt-in Linux real-GPU
+pixel fixture implemented; broader hardware qualification pending`
 
 This matrix is the release-quality contract for `GpuDirectSurface` and
 `GpuDisplaySurface`. A row is complete only when its normal, failure, and edge
@@ -23,7 +24,7 @@ jobs and must not be replaced by a mock-only success.
 | UI integration | standalone, underlay and overlay layout/paint | foreign or invalid owner, closed surface | safety styles override injected pointer/z-index values | Automated |
 | Invalidation | completed frame invalidates paint owner | incomplete/failed collect does not invalidate | no style/layout invalidation | Automated |
 | Memory models | deterministic ownership and teardown | sanitizer/Valgrind failures are fatal | ARC and ORC | Automated CI |
-| Real compositor | visible direct Texture and RenderTarget through the same-host draw compositor | unsupported adapter falls back or fails closed | resize, DPI, opacity, clip and transform | Pending visible real-GPU qualification |
+| Real compositor | direct Texture and RenderTarget through the same-host offscreen compositor; rectangular UV crop, opacity, rounded mask pixels and top-left row orientation | unsupported adapter falls back or fails closed | resize, DPI, transform and final-window stacking | Opt-in Linux OpenGL pixel fixture; broader qualification pending |
 | Hardware stress | sustained bounded presentation | device loss, cancellation, teardown races | multiple surfaces and GPU-memory pressure | Pending real-GPU CI |
 
 The primary executable matrix lives in
@@ -33,6 +34,15 @@ optional bgfx jobs additionally compile the adapter and run its NOOP resource
 integration. The test observes Texture and RenderTarget attachment resolution,
 callback metadata, rejection paths, and ARC/ORC teardown. NOOP validates backend
 calls and ownership, but it does not count as visible pixel conformance.
+
+`nimble testBgfxPixels` is the opt-in real-renderer lane. It builds the pinned
+bgfx sources, compiles the standard compositor shaders with official `shaderc`,
+draws into compositor-owned offscreen targets, reads RGBA pixels back
+asynchronously, and checks Texture/RenderTarget sources, UV cropping,
+rectangular clipping, opacity, rounded masks, and row orientation for both
+CPU-uploaded textures and RenderTarget output. It deliberately remains
+outside the default hosted CI matrix because a runner without a qualified GPU
+or software OpenGL stack cannot provide meaningful pixel evidence.
 
 ## Real-GPU Release Gate
 

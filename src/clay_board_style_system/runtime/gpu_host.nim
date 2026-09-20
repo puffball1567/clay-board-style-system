@@ -380,6 +380,9 @@ type
     generation*: uint64
 
   GpuReadbackData* = object
+    ## Texture rows are always stored from top to bottom, independently of the
+    ## backend's framebuffer origin. `rowStride` remains explicit because a
+    ## future backend may return padded rows.
     width*, height*: uint32
     format*: GpuTextureFormat
     rowStride*: uint32
@@ -449,6 +452,10 @@ type
     width*, height*: uint32
     format*: GpuTextureFormat
     usage*: set[GpuTextureUsage]
+    ## True when the resource's first physical row represents its logical
+    ## bottom edge. Standard compositors use this without exposing a backend
+    ## handle or coordinate-system branch to application code.
+    rowsBottomUp*: bool
 
   GpuResourceBudget* = object
     persistentBytes*: uint64
@@ -724,6 +731,7 @@ type
     graphicsPipelineDescriptor: GpuGraphicsPipelineDescriptor
     computePipelineDescriptor: GpuComputePipelineDescriptor
     pipelineKind: GpuPipelineKind
+    rowsBottomUp: bool
     dependencies: seq[GpuResourceId]
     dependentCount: uint32
     presentationRetainCount: uint32
@@ -748,6 +756,7 @@ type
     bufferOffsetBytes: uint64
     completionToken: uint64
     data: seq[byte]
+    rowsBottomUp: bool
     ready: bool
 
   GpuNamespaceEntry = object
@@ -1361,6 +1370,7 @@ proc insertGpuResource(
     graphicsPipelineDescriptor = GpuGraphicsPipelineDescriptor();
     computePipelineDescriptor = GpuComputePipelineDescriptor();
     pipelineKind = gplkGraphics;
+    rowsBottomUp = false;
     dependencies: seq[GpuResourceId] = @[]
 ): GpuResourceHandle =
   host.requireNamespaceAccess(namespace)
@@ -1384,6 +1394,7 @@ proc insertGpuResource(
     graphicsPipelineDescriptor: graphicsPipelineDescriptor,
     computePipelineDescriptor: computePipelineDescriptor,
     pipelineKind: pipelineKind,
+    rowsBottomUp: rowsBottomUp,
     dependencies: dependencies
   )
   entry.usage.persistentBytes += bytes
@@ -1710,7 +1721,8 @@ proc createGpuRenderTarget*(
     grkRenderTarget,
     bytes,
     backendResource,
-    renderTargetDescriptor = descriptor
+    renderTargetDescriptor = descriptor,
+    rowsBottomUp = host.infoValue.originBottomLeft
   )
 
 proc createGpuShader*(
@@ -2282,7 +2294,8 @@ proc gpuPresentableResourceInfo*(
     width: shape.width,
     height: shape.height,
     format: shape.format,
-    usage: shape.usage
+    usage: shape.usage,
+    rowsBottomUp: entry.rowsBottomUp
   )
 
 proc retainGpuResourceForPresentation*(
@@ -3233,6 +3246,18 @@ proc copyGpuTexture*(
     destinationShape.width,
     destinationShape.height
   )
+  let copiesWholeResources =
+    region.sourceX == 0 and region.sourceY == 0 and
+    region.destinationX == 0 and region.destinationY == 0 and
+    region.width == sourceShape.width and region.height == sourceShape.height and
+    region.width == destinationShape.width and
+    region.height == destinationShape.height
+  if sourceEntry.rowsBottomUp != destinationEntry.rowsBottomUp and
+      not copiesWholeResources:
+    raise newException(
+      GpuHostError,
+      "GPU partial texture copies require matching row orientation"
+    )
 
   host.ensureGpuViewAvailable()
   host.validateGpuFrameWork(namespace, workUnits = 1)
@@ -3248,6 +3273,11 @@ proc copyGpuTexture*(
   if status == gbsDeviceLost:
     host.enterDeviceLost()
   raiseForStatus(status)
+  if copiesWholeResources:
+    var namespaceEntry = host.namespaces[namespace]
+    namespaceEntry.resources[destination.resource].rowsBottomUp =
+      sourceEntry.rowsBottomUp
+    host.namespaces[namespace] = namespaceEntry
   inc host.nextViewOffset
   host.reserveGpuFrameWork(namespace, workUnits = 1)
 
@@ -3417,6 +3447,7 @@ proc requestGpuReadback*(
     resource: texture.resource,
     kind: grkTexture,
     textureDescriptor: entry.textureDescriptor,
+    rowsBottomUp: entry.rowsBottomUp,
     data: newSeq[byte](int(bytes))
   )
   let status = host.backend.requestReadback(
@@ -3554,6 +3585,21 @@ proc gpuReadbackState*(host: GpuHost; handle: GpuReadbackHandle): GpuReadbackSta
   else:
     grsPending
 
+proc normalizeReadbackRows(readback: GpuReadbackEntry; rowStride: uint32) =
+  if not readback.rowsBottomUp or readback.textureDescriptor.height <= 1:
+    return
+  let stride = int(rowStride)
+  let height = int(readback.textureDescriptor.height)
+  var temporary = newSeq[byte](stride)
+  for top in 0 ..< height div 2:
+    let bottom = height - top - 1
+    let topOffset = top * stride
+    let bottomOffset = bottom * stride
+    copyMem(addr temporary[0], addr readback.data[topOffset], stride)
+    copyMem(addr readback.data[topOffset], addr readback.data[bottomOffset], stride)
+    copyMem(addr readback.data[bottomOffset], addr temporary[0], stride)
+  readback.rowsBottomUp = false
+
 proc tryTakeGpuReadback*(
     host: GpuHost;
     handle: GpuReadbackHandle;
@@ -3565,14 +3611,16 @@ proc tryTakeGpuReadback*(
   var readback = namespaceEntry.readbacks[handle.readback]
   if readback.kind != grkTexture:
     raise newException(GpuHostError, "GPU readback does not contain texture data")
+  let rowStride = uint32(
+    readback.textureDescriptor.textureBytes() div
+      uint64(readback.textureDescriptor.height)
+  )
+  readback.normalizeReadbackRows(rowStride)
   data = GpuReadbackData(
     width: readback.textureDescriptor.width,
     height: readback.textureDescriptor.height,
     format: readback.textureDescriptor.format,
-    rowStride: uint32(
-      readback.textureDescriptor.textureBytes() div
-        uint64(readback.textureDescriptor.height)
-    ),
+    rowStride: rowStride,
     pixels: move(readback.data)
   )
   if readback.resource in namespaceEntry.resources and
