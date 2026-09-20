@@ -180,6 +180,32 @@ proc validRect(value: Rect): bool {.inline.} =
 proc handlePresent(handle: GpuResourceHandle): bool {.inline.} =
   handle.resource.resourceIdValue() != 0
 
+proc floorToInt64Saturated(value: float64): int64 {.inline.} =
+  let rounded = floor(value)
+  if rounded <= float64(low(int64)):
+    low(int64)
+  elif rounded >= float64(high(int64)):
+    high(int64)
+  else:
+    int64(rounded)
+
+proc ceilToInt64Saturated(value: float64): int64 {.inline.} =
+  let rounded = ceil(value)
+  if rounded <= float64(low(int64)):
+    low(int64)
+  elif rounded >= float64(high(int64)):
+    high(int64)
+  else:
+    int64(rounded)
+
+proc matchesPhysicalExtent(
+    logicalExtent, scale: float32;
+    physicalExtent: uint32
+): bool {.inline.} =
+  let expected = ceil(float64(logicalExtent) * float64(scale))
+  expected >= 1.0 and expected <= float64(high(uint32)) and
+    uint64(expected) == uint64(physicalExtent)
+
 proc validateMaterial(
     host: GpuHost;
     material: GpuHostDirectCompositeMaterial;
@@ -253,10 +279,20 @@ proc physicalBounds(
     scale: float32;
     width, height: uint32
 ): tuple[viewport: GpuViewport, empty: bool] =
-  let left = floor((logical.x - target.x) * scale).int64
-  let top = floor((logical.y - target.y) * scale).int64
-  let right = ceil((logical.x + logical.w - target.x) * scale).int64
-  let bottom = ceil((logical.y + logical.h - target.y) * scale).int64
+  let left = floorToInt64Saturated(
+    (float64(logical.x) - float64(target.x)) * float64(scale)
+  )
+  let top = floorToInt64Saturated(
+    (float64(logical.y) - float64(target.y)) * float64(scale)
+  )
+  let right = ceilToInt64Saturated(
+    (float64(logical.x) + float64(logical.w) - float64(target.x)) *
+      float64(scale)
+  )
+  let bottom = ceilToInt64Saturated(
+    (float64(logical.y) + float64(logical.h) - float64(target.y)) *
+      float64(scale)
+  )
   let clippedLeft = clamp(left, 0'i64, int64(width))
   let clippedTop = clamp(top, 0'i64, int64(height))
   let clippedRight = clamp(right, 0'i64, int64(width))
@@ -342,7 +378,7 @@ proc newGpuHostDirectCompositor*(
   let supportsClipMasks = material.clipMasksUniform.handlePresent
 
   let capabilities = gpuDirectCompositeCapabilities(
-    {gdctWindow},
+    {gdctWindow, gdctOffscreen},
     clipBoundsSupported = clipBoundsSupported,
     clipMaskSupported = supportsClipMasks,
     sourceProviders = {host.provider()},
@@ -363,14 +399,50 @@ proc newGpuHostDirectCompositor*(
         return gdcsUnsupported
       if not host.hasActiveGpuFrame():
         return gdcsRetry
-      if request.context.targetKind != gdctWindow:
-        return gdcsUnsupported
       if not request.destination.validRect or
           not request.context.targetBounds.validRect or
           not request.opacity.finite or request.opacity < 0 or
           request.opacity > 1:
         return gdcsFailed
       if request.frame.alphaMode notin info.directPresentationAlphaModes:
+        return gdcsUnsupported
+
+      var passTarget: GpuResourceHandle
+      var targetPixelWidth = config.width
+      var targetPixelHeight = config.height
+      case request.context.targetKind
+      of gdctWindow:
+        if not request.context.offscreenTarget.isEmptyGpuHandle():
+          return gdcsUnsupported
+      of gdctOffscreen:
+        passTarget = request.context.offscreenTarget
+        if passTarget.isEmptyGpuHandle() or
+            passTarget.kind != grkRenderTarget or
+            passTarget.namespace != material.namespace or
+            passTarget == request.frame.resource or
+            not host.isGpuResourceLive(passTarget):
+          return gdcsUnsupported
+        var targetInfo: GpuPresentableResourceInfo
+        try:
+          targetInfo = host.gpuPresentableResourceInfo(passTarget)
+        except GpuHostError:
+          return gdcsUnsupported
+        if gtuRenderTarget notin targetInfo.usage:
+          return gdcsUnsupported
+        targetPixelWidth = targetInfo.width
+        targetPixelHeight = targetInfo.height
+        if not matchesPhysicalExtent(
+              request.context.targetBounds.w,
+              request.context.pixelScale,
+              targetPixelWidth
+            ) or
+            not matchesPhysicalExtent(
+              request.context.targetBounds.h,
+              request.context.pixelScale,
+              targetPixelHeight
+            ):
+          return gdcsUnsupported
+      of gdctUnspecified:
         return gdcsUnsupported
 
       var visible = request.destination.intersection(request.context.targetBounds)
@@ -382,8 +454,8 @@ proc newGpuHostDirectCompositor*(
         visible,
         request.context.targetBounds,
         request.context.pixelScale,
-        config.width,
-        config.height
+        targetPixelWidth,
+        targetPixelHeight
       )
       if bounds.empty:
         return gdcsPresented
@@ -416,7 +488,10 @@ proc newGpuHostDirectCompositor*(
       try:
         host.submitGpuPresentationDraw(
           material.namespace,
-          GpuGraphicsPassDescriptor(viewport: bounds.viewport),
+          GpuGraphicsPassDescriptor(
+            viewport: bounds.viewport,
+            renderTarget: passTarget
+          ),
           GpuDrawCommand(
             pipeline: pipeline,
             vertexBuffer: material.vertexBuffer,

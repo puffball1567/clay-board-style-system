@@ -203,9 +203,18 @@ premultiplied, and opaque sources use distinct material pipelines;
 `alphaGpuBlendState()` and `premultipliedAlphaGpuBlendState()` provide the
 standard blend contracts. Rectangular clips become one physical viewport and
 a cropped UV rectangle, so clipping does not stretch the source image. Empty
-intersections produce no draw. Bounded rounded masks are implemented for the
-final-window path; overflow and offscreen composition still fail closed.
-Offscreen composition remains part of the real-renderer release gate.
+intersections produce no draw. Bounded rounded masks are implemented for both
+final-window and typed same-host offscreen targets; overflow fails closed.
+
+GPU-native renderers may set `offscreenTarget` to a live CBSS `RenderTarget`
+owned by the compositor namespace. The standard compositor checks its kind,
+namespace, generation, dimensions, usage, and source/target feedback before
+placing it in the graphics pass. This is a CBSS handle, not a backend handle,
+and remains valid only for the synchronous composition call. SDL's high-level
+texture-backed layers do not satisfy this contract and therefore remain
+unsupported rather than being redirected to the final window. Visible
+offscreen pixels and mixed SDL/GPU layer integration remain real-renderer
+release gates.
 
 The optional bgfx backend exposes `newBgfxDirectCompositeAdapter(backend,
 submit)` for presentation-backend authors. It binds the callback to one bgfx

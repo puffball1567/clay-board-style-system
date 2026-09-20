@@ -462,8 +462,8 @@ without a second application-side allocation. Portable
 native-window conversion and SDL3 handoff are implemented as well. A
 renderer-facing direct-composition context now distinguishes final-window and
 offscreen targets and carries target bounds, effective clip, a bounded
-eight-entry rounded-mask stack, and pixel scale without exposing a backend
-target handle. Typed
+eight-entry rounded-mask stack, pixel scale, and an optional typed CBSS
+`RenderTarget` without exposing a backend target handle. Typed
 compositor capabilities fail closed before frame acquisition when any of these
 target constraints are unsupported, then reject unsupported source provider,
 Texture/RenderTarget kind, format, alpha mode, or dimensions before backend
@@ -476,8 +476,11 @@ compositor now consumes final-window contexts, resolves retained Texture and
 RenderTarget sources without readback, crops rectangular clips through viewport
 and UV coordinates, applies nested rounded clips through a separate
 antialiased mask pipeline, and submits inside the presentation owner's active
-frame. Rounded-mask overflow fails closed instead of truncating the clip stack.
-Offscreen targets and visible real-GPU conformance remain release gates below.
+frame. GPU-native renderers can direct that pass into a compositor-owned typed
+offscreen `RenderTarget`; foreign, stale, mismatched, or feedback targets fail
+before backend submission. Rounded-mask overflow fails closed instead of
+truncating the clip stack. SDL texture-backed offscreen interop and visible
+real-GPU conformance remain release gates below.
 An owned bgfx adapter now
 recreates its runtime from the latest validated host configuration before
 namespace restoration. A borrowed adapter continues to fail closed because

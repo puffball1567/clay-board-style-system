@@ -6229,6 +6229,17 @@ suite "GPU display surface quality matrix":
       targetBounds: rect(0, 0, 800, 600),
       pixelScale: 1
     ))
+    check not windowOnly.supports(GpuDirectCompositeContext(
+      targetKind: gdctWindow,
+      targetBounds: rect(0, 0, 800, 600),
+      offscreenTarget: GpuResourceHandle(
+        namespace: GpuNamespaceId(1),
+        resource: GpuResourceId(1),
+        generation: 1,
+        kind: grkRenderTarget
+      ),
+      pixelScale: 1
+    ))
     check windowOnly.supports(GpuDirectCompositeContext(
       targetKind: gdctWindow,
       targetBounds: rect(0, 0, 800, 600),
@@ -6293,6 +6304,16 @@ suite "GPU display surface quality matrix":
       gpuDirectClipMask(rect(2, 3, 40, 30), 6)
     )
     check masked.supports(maskedContext)
+    var typedOffscreen = maskedContext
+    typedOffscreen.offscreenTarget = GpuResourceHandle(
+      namespace: GpuNamespaceId(1),
+      resource: GpuResourceId(1),
+      generation: 1,
+      kind: grkRenderTarget
+    )
+    check masked.supports(typedOffscreen)
+    typedOffscreen.offscreenTarget.kind = grkTexture
+    check not masked.supports(typedOffscreen)
     check not masked.supports(GpuDirectCompositeContext(
       targetKind: gdctWindow,
       targetBounds: rect(0, 0, 64, 64),
@@ -6992,7 +7013,7 @@ suite "GPU host direct compositor":
         vertexCount: 2
       )
     )
-    check compositor.capabilities.targetKinds == {gdctWindow}
+    check compositor.capabilities.targetKinds == {gdctWindow, gdctOffscreen}
     check compositor.capabilities.sourceKinds == {grkTexture}
     check compositor.capabilities.alphaModes == {gcamStraight}
     check not compositor.capabilities.clipMaskSupported
@@ -7042,6 +7063,154 @@ suite "GPU host direct compositor":
     check context.presentationTextureResolves == 0
     host.endGpuFrame(token)
 
+    check surface.closeGpuDirectSurface()
+    host.close()
+
+  test "standard compositor draws into a typed same-host offscreen target":
+    let context = newContext()
+    context.enableDirectPresentation(
+      renderTargets = true,
+      computeOutput = false,
+      alphaModes = {gcamStraight}
+    )
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let compositorNamespace = host.createGpuNamespace(
+      "offscreen-compositor",
+      GpuResourceBudget(
+        persistentBytes: 600_000,
+        workUnitsPerFrame: 8,
+        maxResources: 16
+      )
+    )
+    let sourceNamespace = host.createGpuNamespace(
+      "offscreen-source",
+      GpuResourceBudget(persistentBytes: 300_000, maxResources: 4)
+    )
+    let drawing = host.createDrawingResources(compositorNamespace)
+    let compositeUniform = host.createGpuUniform(
+      compositorNamespace, uniformDescriptor("u_cbssComposite")
+    )
+    let uvRectUniform = host.createGpuUniform(
+      compositorNamespace, uniformDescriptor("u_cbssUvRect")
+    )
+    let sampler = host.createGpuSampler(
+      compositorNamespace, samplerDescriptor("s_cbssSurface")
+    )
+    let offscreenTarget = host.createGpuRenderTarget(
+      compositorNamespace,
+      renderTargetDescriptor(320, 180, label = "offscreen-destination")
+    )
+    let foreignTarget = host.createGpuRenderTarget(
+      sourceNamespace,
+      renderTargetDescriptor(320, 180, label = "foreign-destination")
+    )
+    let staleTarget = host.createGpuRenderTarget(
+      compositorNamespace,
+      renderTargetDescriptor(320, 180, label = "stale-destination")
+    )
+    check host.releaseGpuResource(staleTarget)
+    let wrongFormatTarget = host.createGpuRenderTarget(
+      compositorNamespace,
+      renderTargetDescriptor(
+        320, 180, format = gtfBgra8, label = "wrong-format-destination"
+      )
+    )
+    var pipelines: array[GpuAlphaMode, GpuResourceHandle]
+    pipelines[gcamStraight] = drawing.pipeline
+    let compositor = newGpuHostDirectCompositor(
+      host,
+      GpuHostDirectCompositeMaterial(
+        namespace: compositorNamespace,
+        pipelines: pipelines,
+        vertexBuffer: drawing.vertexBuffer,
+        compositeUniform: compositeUniform,
+        uvRectUniform: uvRectUniform,
+        sampler: sampler,
+        vertexCount: 2
+      )
+    )
+    let surface = host.newGpuDirectSurface(
+      sourceNamespace, defaultGpuDirectSurfaceConfig(8, 8)
+    )
+    let source = host.createGpuTexture(
+      sourceNamespace,
+      textureDescriptor(width = 8, height = 8, usage = {gtuSampled})
+    )
+    var token = host.beginGpuFrame()
+    check surface.queueGpuDirectSurfaceFrame(source, token)
+    host.endGpuFrame(token)
+    check surface.collectGpuDirectSurfaceFrame()
+    let command = drawGpuDirectSurface(
+      NodeId(0), surface, rect(10, 20, 100, 50)
+    )
+    var offscreenContext = GpuDirectCompositeContext(
+      targetKind: gdctOffscreen,
+      targetBounds: rect(0, 0, 160, 90),
+      offscreenTarget: offscreenTarget,
+      pixelScale: 2
+    )
+
+    token = host.beginGpuFrame()
+    check command.compositeGpuDirectSurface(
+      offscreenContext, compositor
+    ) == gdcsPresented
+    check context.graphicsPassBegins == 1
+    check context.drawSubmits == 1
+    check context.lastGraphicsPass.renderTarget == offscreenTarget
+    check context.lastGraphicsPass.viewport == GpuViewport(
+      x: 20, y: 40, width: 200, height: 100
+    )
+    check context.lastSubmissionResources[0] != 0
+
+    offscreenContext.offscreenTarget = GpuResourceHandle()
+    check command.compositeGpuDirectSurface(
+      offscreenContext, compositor
+    ) == gdcsUnsupported
+    offscreenContext.offscreenTarget = foreignTarget
+    check command.compositeGpuDirectSurface(
+      offscreenContext, compositor
+    ) == gdcsUnsupported
+    offscreenContext.offscreenTarget = staleTarget
+    check command.compositeGpuDirectSurface(
+      offscreenContext, compositor
+    ) == gdcsUnsupported
+    offscreenContext.offscreenTarget = wrongFormatTarget
+    check command.compositeGpuDirectSurface(
+      offscreenContext, compositor
+    ) == gdcsFailed
+    offscreenContext.offscreenTarget = offscreenTarget
+    offscreenContext.targetBounds = rect(0, 0, 159, 90)
+    check command.compositeGpuDirectSurface(
+      offscreenContext, compositor
+    ) == gdcsUnsupported
+    offscreenContext.targetBounds = rect(0, 0, high(float32), 90)
+    check command.compositeGpuDirectSurface(
+      offscreenContext, compositor
+    ) == gdcsUnsupported
+    check context.graphicsPassBegins == 1
+    check context.drawSubmits == 1
+    host.endGpuFrame(token)
+
+    let feedbackSurface = host.newGpuDirectSurface(
+      compositorNamespace, defaultGpuDirectSurfaceConfig(320, 180)
+    )
+    token = host.beginGpuFrame()
+    check feedbackSurface.queueGpuDirectSurfaceFrame(offscreenTarget, token)
+    host.endGpuFrame(token)
+    check feedbackSurface.collectGpuDirectSurfaceFrame()
+    let feedbackCommand = drawGpuDirectSurface(
+      NodeId(0), feedbackSurface, rect(0, 0, 160, 90)
+    )
+    offscreenContext.targetBounds = rect(0, 0, 160, 90)
+    token = host.beginGpuFrame()
+    check feedbackCommand.compositeGpuDirectSurface(
+      offscreenContext, compositor
+    ) == gdcsUnsupported
+    check context.graphicsPassBegins == 1
+    check context.drawSubmits == 1
+    host.endGpuFrame(token)
+
+    check feedbackSurface.closeGpuDirectSurface()
     check surface.closeGpuDirectSurface()
     host.close()
 

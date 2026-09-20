@@ -2413,7 +2413,7 @@ proc reserveGpuFrameWork*(
   entry.usage.workUnits += workUnits
   host.namespaces[namespace] = entry
 
-proc isEmptyGpuHandle(handle: GpuResourceHandle): bool {.inline.} =
+proc isEmptyGpuHandle*(handle: GpuResourceHandle): bool {.inline.} =
   handle.resource.resourceIdValue() == 0
 
 proc requireGpuResource(

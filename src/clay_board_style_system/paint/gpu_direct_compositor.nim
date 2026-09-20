@@ -33,6 +33,10 @@ type
     ## these composition constraints.
     targetKind*: GpuDirectCompositeTargetKind
     targetBounds*: Rect
+    ## Optional typed destination for GPU-native offscreen renderers. It is a
+    ## CBSS resource handle, never a backend handle, and is consumed only by
+    ## the synchronous composition callback.
+    offscreenTarget*: GpuResourceHandle
     clipBounds*: Option[Rect]
     requiresClipMask*: bool
     clipMaskCount*: uint8
@@ -186,6 +190,14 @@ proc supports*(
   if context.targetKind != gdctUnspecified and
       not context.targetBounds.isValidBounds(false):
     return false
+  case context.targetKind
+  of gdctUnspecified, gdctWindow:
+    if not context.offscreenTarget.isEmptyGpuHandle():
+      return false
+  of gdctOffscreen:
+    if not context.offscreenTarget.isEmptyGpuHandle() and
+        context.offscreenTarget.kind != grkRenderTarget:
+      return false
   if context.clipBounds.isSome:
     if not capabilities.clipBoundsSupported or
         not context.clipBounds.get.isValidBounds(true):
