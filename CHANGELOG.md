@@ -15,6 +15,13 @@ release. Before 1.0, minor releases may contain public API changes.
   one-physical-pixel-antialiased shader pipeline, and overflow or malformed
   contexts fail closed without affecting the unmasked path.
 
+- Added typed same-host offscreen targets to direct GPU Surface composition.
+  GPU-native renderers can provide a retained CBSS `RenderTarget` without
+  exposing backend handles; the standard compositor validates namespace,
+  generation, dimensions, feedback hazards, and target format before drawing.
+  SDL texture-backed layers remain fail-closed because they are not bgfx
+  render targets and cannot be redirected to the final window safely.
+
 ## [0.7.1] - 2026-09-20
 
 ### Fixed

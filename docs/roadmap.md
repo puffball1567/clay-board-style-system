@@ -1039,7 +1039,7 @@ an enum-only API.
 ## GPU Canvas Capability
 
 Status: `Version 0.7.0 GPU foundation released on 2026-09-19; the Version 0.7
-patch line continues offscreen composition, broader real-GPU
+patch line continues SDL/GPU offscreen-layer interop, broader real-GPU
 qualification, CPU filters, and Motion Scene work`
 
 CBSS will support optional GPU-backed drawing inside the standard Canvas
@@ -1089,8 +1089,9 @@ resource retention, preserving readback fallback. The bgfx constructor
 requires exact source-kind, format, alpha-mode, and dimension coverage of the
 qualified profile. The standard same-host compositor, restricted
 cross-namespace presentation binding, RenderTarget color-attachment resolution,
-rectangular clip/UV crop, bounded nested rounded-mask composition, and portable
-shader source contract are implemented; offscreen composition and real-GPU
+rectangular clip/UV crop, bounded nested rounded-mask composition, typed
+same-host offscreen `RenderTarget` composition, and portable shader source
+contract are implemented. SDL texture-backed offscreen interop and real-GPU
 pixel qualification remain Version 0.7 work. A later wgpu-native adapter
 may implement the same CBSS-owned contract, but it is no longer the standard
 provider or a release prerequisite.
@@ -2329,9 +2330,11 @@ retain bounded typed material parameters in cold style storage and deliver them
 to providers without per-frame string parsing. A standard same-host compositor
 now consumes final-window contexts and retained Texture/RenderTarget sources in
 the active presentation frame, including bounded antialiased nested rounded
-clips. Offscreen direct-GPU composition,
-declarative filter composition, and broader real-GPU qualification remain open Version
-0.7 work. Owned bgfx hosts
+clips. GPU-native renderers can provide a typed compositor-owned offscreen
+`RenderTarget`; namespace, generation, dimensions, and feedback hazards are
+validated before submission. SDL texture-backed layer interop, declarative
+filter composition, and broader real-GPU qualification remain open Version 0.7
+work. Owned bgfx hosts
 now recreate the backend from their latest validated configuration after
 device loss before deterministic namespace restoration begins; borrowed hosts
 continue to require recreation by their external owner.
