@@ -109,6 +109,7 @@ proc defaultBgfxHostOptions*(): BgfxHostOptions =
     rendererType: BGFX_RENDERER_TYPE_COUNT,
     vendorId: BGFX_PCI_ID_NONE,
     deviceId: 0,
+    capabilities: high(uint64),
     colorFormat: BGFX_TEXTURE_FORMAT_COUNT,
     depthStencilFormat: BGFX_TEXTURE_FORMAT_COUNT
   )
