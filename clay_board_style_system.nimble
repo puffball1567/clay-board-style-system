@@ -134,6 +134,30 @@ task testBgfxNoop, "Run CBSS resource calls against a real bgfx NOOP runtime":
         )
     exec "tests/backends/run_bgfx_host_noop.sh \"" & bgfximPath & "\" \"" & bgfxPath & "\" \"" & bxPath & "\" \"" & bimgPath & "\""
 
+task testBgfxPixels, "Validate direct composition pixels on a real bgfx OpenGL renderer":
+  when defined(linux):
+    let bgfximPath = getEnv("CBSS_BGFXIM_PATH")
+    let bgfxPath = getEnv("CBSS_BGFX_PATH")
+    let bxPath = getEnv("CBSS_BX_PATH")
+    let bimgPath = getEnv("CBSS_BIMG_PATH")
+    let shaderc = getEnv("CBSS_SHADERC")
+    let shaderInclude = getEnv("CBSS_BGFX_SHADER_INCLUDE")
+    for path in [bgfximPath, bgfxPath, bxPath, bimgPath]:
+      if path.len == 0 or not dirExists(path):
+        raise newException(
+          ValueError,
+          "CBSS_BGFXIM_PATH, CBSS_BGFX_PATH, CBSS_BX_PATH, and CBSS_BIMG_PATH must point to compatible source checkouts"
+        )
+    if shaderc.len == 0 or not fileExists(shaderc) or
+        shaderInclude.len == 0 or not dirExists(shaderInclude):
+      raise newException(
+        ValueError,
+        "CBSS_SHADERC and CBSS_BGFX_SHADER_INCLUDE must point to the official compiler and bgfx shader include directory"
+      )
+    exec "tests/backends/run_bgfx_direct_pixels.sh \"" & bgfximPath & "\" \"" & bgfxPath & "\" \"" & bxPath & "\" \"" & bimgPath & "\""
+  else:
+    echo "The current real-GPU pixel fixture targets Linux SDL3 and OpenGL."
+
 task runBgfxHostDemo, "Build and run the optional visible bgfx GPU-host demo":
   when defined(linux):
     let bgfximPath = getEnv("CBSS_BGFXIM_PATH")

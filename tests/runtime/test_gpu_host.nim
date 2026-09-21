@@ -130,6 +130,7 @@ type MockGpuContext = ref object of GpuBackendContext
   directAlphaModes: set[GpuAlphaMode]
   maxDirectBuffers: uint8
   maxDirectWidth, maxDirectHeight: uint32
+  originBottomLeft: bool
   lastSubmissionResources: seq[uint64]
   destroyedResources: seq[uint64]
   width, height: uint32
@@ -196,6 +197,7 @@ proc openOwned(
     maxDirectPresentationBuffers: state.maxDirectBuffers,
     maxDirectPresentationWidth: state.maxDirectWidth,
     maxDirectPresentationHeight: state.maxDirectHeight,
+    originBottomLeft: state.originBottomLeft,
     maxTextureSize: 8192
   )
   state.openStatus
@@ -222,7 +224,8 @@ proc attachBorrowed(
     directPresentationAlphaModes: state.directAlphaModes,
     maxDirectPresentationBuffers: state.maxDirectBuffers,
     maxDirectPresentationWidth: state.maxDirectWidth,
-    maxDirectPresentationHeight: state.maxDirectHeight
+    maxDirectPresentationHeight: state.maxDirectHeight,
+    originBottomLeft: state.originBottomLeft
   )
   state.openStatus
 
@@ -4268,6 +4271,144 @@ suite "GPU texture transfer and readback":
     check host.releaseGpuResource(target)
     host.close()
 
+  test "texture readback normalizes bottom-origin rows to top-origin data":
+    let context = newContext()
+    context.originBottomLeft = true
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "bottom-origin-readback",
+      GpuResourceBudget(
+        persistentBytes: 32,
+        readbackBytesPerFrame: 16,
+        workUnitsPerFrame: 2,
+        maxResources: 2
+      )
+    )
+    let target = host.createGpuRenderTarget(
+      namespace,
+      GpuRenderTargetDescriptor(
+        width: 2,
+        height: 2,
+        format: gtfRgba8,
+        usage: {gtuRenderTarget, gtuBlitSource}
+      )
+    )
+    let texture = host.createGpuTexture(
+      namespace,
+      textureDescriptor(
+        width = 2,
+        height = 2,
+        usage = {gtuBlitDestination, gtuReadback}
+      )
+    )
+
+    let frame = host.beginGpuFrame()
+    host.copyGpuTexture(namespace, target, texture)
+    let readback = host.requestGpuReadback(namespace, texture)
+    host.endGpuFrame(frame)
+    context.readbackReady = true
+
+    var data: GpuReadbackData
+    check host.tryTakeGpuReadback(readback, data)
+    check data.rowStride == 8
+    check data.pixels == @[
+      8'u8, 9, 10, 11, 12, 13, 14, 15,
+      0, 1, 2, 3, 4, 5, 6, 7
+    ]
+    check host.releaseGpuResource(texture)
+    check host.releaseGpuResource(target)
+    host.close()
+
+  test "bottom-origin normalization leaves a one-row texture unchanged":
+    let context = newContext()
+    context.originBottomLeft = true
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "one-row-readback",
+      GpuResourceBudget(
+        persistentBytes: 16,
+        readbackBytesPerFrame: 8,
+        workUnitsPerFrame: 2,
+        maxResources: 2
+      )
+    )
+    let target = host.createGpuRenderTarget(
+      namespace,
+      GpuRenderTargetDescriptor(
+        width: 2,
+        height: 1,
+        format: gtfRgba8,
+        usage: {gtuRenderTarget, gtuBlitSource}
+      )
+    )
+    let texture = host.createGpuTexture(
+      namespace,
+      textureDescriptor(
+        width = 2,
+        height = 1,
+        usage = {gtuBlitDestination, gtuReadback}
+      )
+    )
+
+    let frame = host.beginGpuFrame()
+    host.copyGpuTexture(namespace, target, texture)
+    let readback = host.requestGpuReadback(namespace, texture)
+    host.endGpuFrame(frame)
+    context.readbackReady = true
+
+    var data: GpuReadbackData
+    check host.tryTakeGpuReadback(readback, data)
+    check data.pixels == @[0'u8, 1, 2, 3, 4, 5, 6, 7]
+    check host.releaseGpuResource(texture)
+    check host.releaseGpuResource(target)
+    host.close()
+
+  test "top-origin texture copies are not flipped by a bottom-origin backend":
+    let context = newContext()
+    context.originBottomLeft = true
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "top-origin-readback",
+      GpuResourceBudget(
+        persistentBytes: 32,
+        readbackBytesPerFrame: 16,
+        workUnitsPerFrame: 2,
+        maxResources: 2
+      )
+    )
+    let source = host.createGpuTexture(
+      namespace,
+      textureDescriptor(
+        width = 2,
+        height = 2,
+        usage = {gtuSampled, gtuBlitSource}
+      )
+    )
+    let texture = host.createGpuTexture(
+      namespace,
+      textureDescriptor(
+        width = 2,
+        height = 2,
+        usage = {gtuBlitDestination, gtuReadback}
+      )
+    )
+
+    let frame = host.beginGpuFrame()
+    host.copyGpuTexture(namespace, source, texture)
+    let readback = host.requestGpuReadback(namespace, texture)
+    host.endGpuFrame(frame)
+    context.readbackReady = true
+
+    var data: GpuReadbackData
+    check host.tryTakeGpuReadback(readback, data)
+    check data.pixels == @[
+      0'u8, 1, 2, 3, 4, 5, 6, 7,
+      8, 9, 10, 11, 12, 13, 14, 15
+    ]
+    check host.releaseGpuResource(texture)
+    check host.releaseGpuResource(source)
+    host.close()
+
   test "deferred texture destinations survive namespace copies and frames":
     let context = newContext()
     context.deferReadbackWrites = true
@@ -4349,6 +4490,7 @@ suite "GPU texture transfer and readback":
 
   test "copy validation finishes before backend work or budget consumption":
     let context = newContext()
+    context.originBottomLeft = true
     let host = openGpuHost(context.backend, ghoOwned)
     let budget = GpuResourceBudget(
       persistentBytes: 2048,
@@ -4398,6 +4540,13 @@ suite "GPU texture transfer and readback":
       host.copyGpuTexture(namespace, foreignSource, destination)
     expect GpuHostError:
       host.copyGpuTexture(namespace, source, target)
+    expect GpuHostError:
+      host.copyGpuTexture(
+        namespace,
+        target,
+        destination,
+        GpuTextureCopyRegion(width: 1, height: 1)
+      )
     check context.textureCopies == 0
     check host.gpuNamespaceUsage(namespace).workUnits == 0
     host.endGpuFrame(frame)
@@ -7280,6 +7429,7 @@ suite "GPU host direct compositor":
 
   test "render targets resolve through the backend only during presentation":
     let context = newContext()
+    context.originBottomLeft = true
     context.enableDirectPresentation(
       textures = false,
       renderTargets = true,
@@ -7352,6 +7502,9 @@ suite "GPU host direct compositor":
     check context.lastBindings.textures.len == 1
     check context.lastBindings.textures[0].texture.backendResourceIdValue() >=
       10_000'u64
+    check context.lastBindings.uniforms[1].values == @[
+      0.0'f32, 1.0'f32, 1.0'f32, 0.0'f32
+    ]
     host.endGpuFrame(token)
 
     check surface.closeGpuDirectSurface()

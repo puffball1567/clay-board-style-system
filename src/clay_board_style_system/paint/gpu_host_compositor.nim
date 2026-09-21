@@ -311,11 +311,12 @@ proc physicalBounds(
 
 proc uvRect(
     destination: Rect;
-    visible: Rect
+    visible: Rect;
+    rowsBottomUp = false
 ): array[4, float32] =
   let inverseWidth = 1.0'f32 / destination.w
   let inverseHeight = 1.0'f32 / destination.h
-  [
+  result = [
     clamp((visible.x - destination.x) * inverseWidth, 0.0'f32, 1.0'f32),
     clamp((visible.y - destination.y) * inverseHeight, 0.0'f32, 1.0'f32),
     clamp(
@@ -329,6 +330,8 @@ proc uvRect(
       1.0'f32
     )
   ]
+  if rowsBottomUp:
+    swap(result[1], result[3])
 
 proc clipMaskUniformValues(
     context: GpuDirectCompositeContext;
@@ -407,6 +410,17 @@ proc newGpuHostDirectCompositor*(
       if request.frame.alphaMode notin info.directPresentationAlphaModes:
         return gdcsUnsupported
 
+      var sourceInfo: GpuPresentableResourceInfo
+      try:
+        sourceInfo = host.gpuPresentableResourceInfo(request.frame.resource)
+      except GpuHostError:
+        return gdcsUnsupported
+      if sourceInfo.kind != request.frame.resource.kind or
+          sourceInfo.width != request.frame.width or
+          sourceInfo.height != request.frame.height or
+          sourceInfo.format != request.frame.format:
+        return gdcsUnsupported
+
       var passTarget: GpuResourceHandle
       var targetPixelWidth = config.width
       var targetPixelHeight = config.height
@@ -477,7 +491,9 @@ proc newGpuHostDirectCompositor*(
         ),
         GpuUniformBinding(
           uniform: material.uvRectUniform,
-          values: @(request.destination.uvRect(visible))
+          values: @(
+            request.destination.uvRect(visible, sourceInfo.rowsBottomUp)
+          )
         )
       ]
       if request.context.requiresClipMask:
@@ -505,6 +521,10 @@ proc newGpuHostDirectCompositor*(
           )
         )
         gdcsPresented
-      except GpuHostError:
+      except GpuHostError as error:
+        when defined(cbssGpuCompositorDiagnostics):
+          stderr.writeLine("CBSS GPU compositor: " & error.msg)
+        else:
+          discard error
         gdcsFailed
   )

@@ -680,7 +680,16 @@ into stable, reference-owned host storage retained until
 `tryTakeGpuReadback` succeeds. Namespace accounting updates, later frames, and
 other readback requests do not copy or relocate that destination. Polling
 returns `pending`, `ready`, or `invalid`; taking a ready result transfers its
-pixel sequence to the caller exactly once. A readback texture cannot be
+pixel sequence to the caller exactly once. `GpuReadbackData` always stores its
+first row at the top of the texture. The host normalizes bottom-origin backend
+output before returning it, so CPU consumers and `RasterSurface` do not need
+renderer-specific row-flip logic. Row order is tracked per resource and
+propagated through texture copies; a CPU-uploaded texture is therefore not
+flipped merely because its renderer uses a bottom-origin framebuffer. A
+whole-resource copy may transfer row orientation with its pixels. A partial
+copy between resources with different row orientations is rejected because a
+single destination texture cannot safely describe mixed row order. A
+readback texture cannot be
 released, its namespace cannot close, and a borrowed host cannot detach while
 a request still owns that texture. An owned host releases destinations only
 after its backend close callback has drained or cancelled queued work. A
