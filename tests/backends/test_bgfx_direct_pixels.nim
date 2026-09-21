@@ -115,7 +115,8 @@ proc createSource(
     namespace: GpuNamespaceId;
     width, height: uint32;
     pixels: sink seq[byte];
-    label: string
+    label: string;
+    alphaMode = gcamStraight
 ): Source =
   result.resource = host.createGpuTexture(
     namespace,
@@ -131,6 +132,7 @@ proc createSource(
   )
   var config = defaultGpuDirectSurfaceConfig(width, height)
   config.bufferCount = 2
+  config.alphaMode = alphaMode
   config.label = label & "-surface"
   result.surface = host.newGpuDirectSurface(namespace, config)
 
@@ -201,11 +203,11 @@ proc readPixels(
     host.endGpuFrame(progress)
   raise newException(IOError, "GPU readback did not complete within 32 frames")
 
-proc solid(red, green, blue: uint8): seq[byte] =
+proc solid(red, green, blue: uint8; alpha = 255'u8): seq[byte] =
   rgbaPixels(1, 1, proc(x, y: int): Pixel =
     discard x
     discard y
-    Pixel(red: red, green: green, blue: blue, alpha: 255)
+    Pixel(red: red, green: green, blue: blue, alpha: alpha)
   )
 
 proc run() =
@@ -233,7 +235,7 @@ proc run() =
       maxBuffers = 2,
       textureSupported = true,
       renderTargetSupported = true,
-      alphaModes = {gcamStraight},
+      alphaModes = {gcamStraight, gcamPremultiplied, gcamOpaque},
       maxWidth = 64,
       maxHeight = 64
     )
@@ -299,6 +301,7 @@ proc run() =
     )
     proc createPipeline(
         fragment: GpuResourceHandle;
+        blend: GpuBlendState;
         label: string
     ): GpuResourceHandle =
       host.createGpuGraphicsPipeline(
@@ -311,13 +314,31 @@ proc run() =
           topology: gptTriangleStrip,
           cullMode: gcmNone,
           frontFace: gffCounterClockwise,
-          blend: alphaGpuBlendState(),
+          blend: blend,
           label: label
         )
       )
-    let pipeline = createPipeline(fragmentShader, "pixel-compositor")
-    let maskedPipeline = createPipeline(
-      maskedShader, "pixel-compositor-masked"
+    let straightPipeline = createPipeline(
+      fragmentShader, alphaGpuBlendState(), "pixel-compositor-straight"
+    )
+    let premultipliedPipeline = createPipeline(
+      fragmentShader,
+      premultipliedAlphaGpuBlendState(),
+      "pixel-compositor-premultiplied"
+    )
+    let opaquePipeline = createPipeline(
+      fragmentShader, alphaGpuBlendState(), "pixel-compositor-opaque"
+    )
+    let maskedStraightPipeline = createPipeline(
+      maskedShader, alphaGpuBlendState(), "pixel-compositor-masked-straight"
+    )
+    let maskedPremultipliedPipeline = createPipeline(
+      maskedShader,
+      premultipliedAlphaGpuBlendState(),
+      "pixel-compositor-masked-premultiplied"
+    )
+    let maskedOpaquePipeline = createPipeline(
+      maskedShader, alphaGpuBlendState(), "pixel-compositor-masked-opaque"
     )
     let compositeUniform = host.createGpuUniform(
       compositorNamespace,
@@ -356,8 +377,12 @@ proc run() =
     )
     var pipelines: array[GpuAlphaMode, GpuResourceHandle]
     var maskedPipelines: array[GpuAlphaMode, GpuResourceHandle]
-    pipelines[gcamStraight] = pipeline
-    maskedPipelines[gcamStraight] = maskedPipeline
+    pipelines[gcamStraight] = straightPipeline
+    pipelines[gcamPremultiplied] = premultipliedPipeline
+    pipelines[gcamOpaque] = opaquePipeline
+    maskedPipelines[gcamStraight] = maskedStraightPipeline
+    maskedPipelines[gcamPremultiplied] = maskedPremultipliedPipeline
+    maskedPipelines[gcamOpaque] = maskedOpaquePipeline
     let compositor = newGpuHostDirectCompositor(
       host,
       GpuHostDirectCompositeMaterial(
@@ -398,7 +423,31 @@ proc run() =
     surfaces.add red.surface
     let cyan = createSource(host, sourceNamespace, 1, 1, solid(0, 255, 255), "cyan")
     surfaces.add cyan.surface
-    publishSources(host, black, pattern, red, cyan)
+    let straightHalf = createSource(
+      host, sourceNamespace, 1, 1, solid(255, 0, 0, 128),
+      "straight-half", gcamStraight
+    )
+    surfaces.add straightHalf.surface
+    let premultipliedHalf = createSource(
+      host, sourceNamespace, 1, 1, solid(128, 0, 0, 128),
+      "premultiplied-half", gcamPremultiplied
+    )
+    surfaces.add premultipliedHalf.surface
+    let opaqueTransparent = createSource(
+      host, sourceNamespace, 1, 1, solid(0, 255, 0, 0),
+      "opaque-transparent", gcamOpaque
+    )
+    surfaces.add opaqueTransparent.surface
+    publishSources(
+      host,
+      black,
+      pattern,
+      red,
+      cyan,
+      straightHalf,
+      premultipliedHalf,
+      opaqueTransparent
+    )
 
     let uploadedRows = host.createGpuTexture(
       sourceNamespace,
@@ -471,6 +520,87 @@ proc run() =
     )
     pixels.requirePixel(
       1, 1, Pixel(green: 255, blue: 255, alpha: 255), "rounded center"
+    )
+
+    let alphaTarget = host.createGpuRenderTarget(
+      compositorNamespace,
+      GpuRenderTargetDescriptor(
+        width: 6,
+        height: 2,
+        format: gtfRgba8,
+        usage: {gtuRenderTarget, gtuSampled, gtuBlitSource},
+        label: "pixel-alpha-target"
+      )
+    )
+    let alphaBounds = rect(0, 0, 6, 2)
+    let alphaFrame = host.beginGpuFrame()
+    host.draw(compositor, alphaTarget, alphaBounds, alphaBounds, black)
+    host.draw(
+      compositor, alphaTarget, alphaBounds, rect(0, 0, 2, 2),
+      straightHalf, opacity = 0.5
+    )
+    host.draw(
+      compositor, alphaTarget, alphaBounds, rect(2, 0, 2, 2),
+      premultipliedHalf, opacity = 0.5
+    )
+    host.draw(
+      compositor, alphaTarget, alphaBounds, rect(4, 0, 2, 2),
+      opaqueTransparent, opacity = 0.5
+    )
+    host.endGpuFrame(alphaFrame)
+    let alphaPixels = host.readPixels(
+      compositorNamespace, alphaTarget, 6, 2
+    )
+    alphaPixels.requirePixel(
+      0, 0, Pixel(red: 64, alpha: 255), "straight alpha and opacity",
+      tolerance = 5
+    )
+    alphaPixels.requirePixel(
+      2, 0, Pixel(red: 64, alpha: 255), "premultiplied alpha and opacity",
+      tolerance = 5
+    )
+    alphaPixels.requirePixel(
+      4, 0, Pixel(green: 128, alpha: 255), "opaque alpha and opacity",
+      tolerance = 5
+    )
+
+    var latestConfig = defaultGpuDirectSurfaceConfig(1, 1)
+    latestConfig.bufferCount = 2
+    latestConfig.label = "latest-ready-surface"
+    let latestSurface = host.newGpuDirectSurface(sourceNamespace, latestConfig)
+    surfaces.add latestSurface
+    let oldFrame = host.beginGpuFrame()
+    doAssert latestSurface.queueGpuDirectSurfaceFrame(red.resource, oldFrame)
+    host.endGpuFrame(oldFrame)
+    let latestFrame = host.beginGpuFrame()
+    doAssert latestSurface.queueGpuDirectSurfaceFrame(cyan.resource, latestFrame)
+    host.endGpuFrame(latestFrame)
+    doAssert latestSurface.collectGpuDirectSurfaceFrame()
+    let latestTarget = host.createGpuRenderTarget(
+      compositorNamespace,
+      GpuRenderTargetDescriptor(
+        width: 1,
+        height: 1,
+        format: gtfRgba8,
+        usage: {gtuRenderTarget, gtuSampled, gtuBlitSource},
+        label: "latest-ready-target"
+      )
+    )
+    let latestCompose = host.beginGpuFrame()
+    host.draw(
+      compositor,
+      latestTarget,
+      rect(0, 0, 1, 1),
+      rect(0, 0, 1, 1),
+      Source(surface: latestSurface, resource: cyan.resource)
+    )
+    host.endGpuFrame(latestCompose)
+    let latestPixels = host.readPixels(
+      compositorNamespace, latestTarget, 1, 1
+    )
+    latestPixels.requirePixel(
+      0, 0, Pixel(green: 255, blue: 255, alpha: 255),
+      "latest-ready surface frame"
     )
 
     let renderTargetSource = host.createGpuRenderTarget(
