@@ -24,7 +24,7 @@ jobs and must not be replaced by a mock-only success.
 | UI integration | standalone, underlay and overlay layout/paint | foreign or invalid owner, closed surface | safety styles override injected pointer/z-index values | Automated |
 | Invalidation | completed frame invalidates paint owner | incomplete/failed collect does not invalidate | no style/layout invalidation | Automated |
 | Memory models | deterministic ownership and teardown | sanitizer/Valgrind failures are fatal | ARC and ORC | Automated CI |
-| Real compositor | direct Texture and RenderTarget through the same-host offscreen compositor; rectangular UV crop, straight/premultiplied/opaque alpha, opacity, rounded mask pixels, latest-ready coalescing and top-left row orientation | unsupported adapter falls back or fails closed | resize, DPI, transform and final-window stacking | Opt-in Linux OpenGL pixel fixture; broader qualification pending |
+| Real compositor | direct Texture and RenderTarget through the same-host offscreen compositor; rectangular UV crop, straight/premultiplied/opaque alpha, opacity, rounded mask pixels, latest-ready coalescing, top-left row orientation, logical target origins, two-times pixel scale and ordered surface composition | unsupported adapter falls back or fails closed | resize, transform and final-window stacking | Opt-in Linux OpenGL pixel fixture; broader qualification pending |
 | Hardware stress | sustained bounded presentation | device loss, cancellation, teardown races | multiple surfaces and GPU-memory pressure | Pending real-GPU CI |
 
 The primary executable matrix lives in
@@ -40,8 +40,9 @@ bgfx sources, compiles the standard compositor shaders with official `shaderc`,
 draws into compositor-owned offscreen targets, reads RGBA pixels back
 asynchronously, and checks Texture/RenderTarget sources, UV cropping,
 rectangular clipping, all three alpha modes, opacity, rounded masks,
-latest-ready surface coalescing, and row orientation for both CPU-uploaded
-textures and RenderTarget output. It deliberately remains
+latest-ready surface coalescing, row orientation for both CPU-uploaded
+textures and RenderTarget output, logical target origins, two-times pixel
+scale, and deterministic draw ordering. It deliberately remains
 outside the default hosted CI matrix because a runner without a qualified GPU
 or software OpenGL stack cannot provide meaningful pixel evidence.
 

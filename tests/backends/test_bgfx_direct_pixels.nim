@@ -151,6 +151,7 @@ proc draw(
     targetBounds, destination: Rect;
     source: Source;
     opacity = 1.0'f32;
+    pixelScale = 1.0'f32;
     clip = none(Rect);
     rounded = none(GpuDirectClipMask)
 ) =
@@ -159,7 +160,7 @@ proc draw(
     targetBounds: targetBounds,
     clipBounds: clip,
     offscreenTarget: target,
-    pixelScale: 1
+    pixelScale: pixelScale
   )
   if rounded.isSome:
     if context.clipBounds.isNone:
@@ -562,6 +563,59 @@ proc run() =
     alphaPixels.requirePixel(
       4, 0, Pixel(green: 128, alpha: 255), "opaque alpha and opacity",
       tolerance = 5
+    )
+
+    let scaledTarget = host.createGpuRenderTarget(
+      compositorNamespace,
+      GpuRenderTargetDescriptor(
+        width: 8,
+        height: 4,
+        format: gtfRgba8,
+        usage: {gtuRenderTarget, gtuSampled, gtuBlitSource},
+        label: "pixel-scale-and-stacking-target"
+      )
+    )
+    let scaledBounds = rect(10, 20, 4, 2)
+    let scaledFrame = host.beginGpuFrame()
+    host.draw(
+      compositor, scaledTarget, scaledBounds, scaledBounds, black,
+      pixelScale = 2
+    )
+    host.draw(
+      compositor, scaledTarget, scaledBounds, rect(11, 20.5, 2, 1), red,
+      pixelScale = 2
+    )
+    host.draw(
+      compositor, scaledTarget, scaledBounds, rect(12, 21, 1, 0.5), cyan,
+      pixelScale = 2
+    )
+    host.draw(
+      compositor, scaledTarget, scaledBounds, rect(12.5, 21, 0.5, 0.5), red,
+      pixelScale = 2
+    )
+    host.endGpuFrame(scaledFrame)
+    let scaledPixels = host.readPixels(
+      compositorNamespace, scaledTarget, 8, 4
+    )
+    scaledPixels.requirePixel(
+      1, 1, Pixel(alpha: 255), "scaled target background before destination"
+    )
+    scaledPixels.requirePixel(
+      2, 1, Pixel(red: 255, alpha: 255), "two-times pixel-scale origin"
+    )
+    scaledPixels.requirePixel(
+      5, 1, Pixel(red: 255, alpha: 255), "two-times pixel-scale extent"
+    )
+    scaledPixels.requirePixel(
+      4, 2, Pixel(green: 255, blue: 255, alpha: 255),
+      "later surface overlays earlier surface"
+    )
+    scaledPixels.requirePixel(
+      5, 2, Pixel(red: 255, alpha: 255),
+      "last surface wins at the same stacking position"
+    )
+    scaledPixels.requirePixel(
+      6, 2, Pixel(alpha: 255), "scaled target background after destination"
     )
 
     var latestConfig = defaultGpuDirectSurfaceConfig(1, 1)
