@@ -37,6 +37,11 @@ proc createWindow(width, height: cint): pointer
   {.importc: "cbss_bgfx_pixel_create_window", cdecl.}
 proc sdlError(): cstring {.importc: "cbss_bgfx_pixel_sdl_error", cdecl.}
 proc pumpWindow() {.importc: "cbss_bgfx_pixel_pump", cdecl.}
+proc resizeWindow(
+    window: pointer;
+    width, height: cint;
+    pixelWidth, pixelHeight: ptr cint
+): bool {.importc: "cbss_bgfx_pixel_resize_window", cdecl.}
 proc destroyWindow(window: pointer)
   {.importc: "cbss_bgfx_pixel_destroy_window", cdecl.}
 
@@ -712,6 +717,63 @@ proc run() =
     rtPixels.requirePixel(
       2, 3, Pixel(green: 255, blue: 255, alpha: 255),
       "render-target bottom row"
+    )
+
+    var resizedWidth, resizedHeight: cint
+    doAssert resizeWindow(
+      window, 40, 30, addr resizedWidth, addr resizedHeight
+    ), "SDL3 window resize failed: " & $sdlError()
+    doAssert resizedWidth > 0 and resizedHeight > 0
+    host.resizeGpuHost(uint32(resizedWidth), uint32(resizedHeight))
+    let windowBounds = rect(
+      0, 0, resizedWidth.float32, resizedHeight.float32
+    )
+    let windowContext = GpuDirectCompositeContext(
+      targetKind: gdctWindow,
+      targetBounds: windowBounds,
+      pixelScale: 1
+    )
+    let windowCommand = drawGpuDirectSurface(
+      NodeId(1), red.surface, windowBounds
+    )
+    let windowFrame = host.beginGpuFrame()
+    doAssert windowCommand.compositeGpuDirectSurface(
+      windowContext, compositor
+    ) == gdcsPresented
+    host.endGpuFrame(windowFrame)
+    let resizedTarget = host.createGpuRenderTarget(
+      compositorNamespace,
+      GpuRenderTargetDescriptor(
+        width: 12,
+        height: 6,
+        format: gtfRgba8,
+        usage: {gtuRenderTarget, gtuSampled, gtuBlitSource},
+        label: "post-window-resize-target"
+      )
+    )
+    let resizedBounds = rect(0, 0, 12, 6)
+    let resizedFrame = host.beginGpuFrame()
+    host.draw(compositor, resizedTarget, resizedBounds, resizedBounds, black)
+    host.draw(
+      compositor, resizedTarget, resizedBounds, rect(3, 2, 5, 2), cyan
+    )
+    host.endGpuFrame(resizedFrame)
+    let resizedPixels = host.readPixels(
+      compositorNamespace, resizedTarget, 12, 6
+    )
+    resizedPixels.requirePixel(
+      2, 2, Pixel(alpha: 255), "post-resize background"
+    )
+    resizedPixels.requirePixel(
+      3, 2, Pixel(green: 255, blue: 255, alpha: 255),
+      "post-resize destination origin"
+    )
+    resizedPixels.requirePixel(
+      7, 3, Pixel(green: 255, blue: 255, alpha: 255),
+      "post-resize destination extent"
+    )
+    resizedPixels.requirePixel(
+      8, 3, Pixel(alpha: 255), "post-resize background after destination"
     )
     echo "CBSS bgfx direct pixel conformance passed (", host.backendInfo.rendererName,
       ")"
