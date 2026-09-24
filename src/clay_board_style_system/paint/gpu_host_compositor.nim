@@ -363,8 +363,7 @@ proc newGpuHostDirectCompositor*(
   ## stream; this callback never presents independently.
   if host.isNil or not host.isReady():
     raise newException(ValueError, "GPU compositor requires a ready host")
-  let config = host.config()
-  if not config.presentation:
+  if not host.config().presentation:
     raise newException(ValueError, "GPU compositor requires a presentation host")
   let info = host.backendInfo()
   var sourceKinds: set[GpuResourceKind]
@@ -422,12 +421,14 @@ proc newGpuHostDirectCompositor*(
         return gdcsUnsupported
 
       var passTarget: GpuResourceHandle
-      var targetPixelWidth = config.width
-      var targetPixelHeight = config.height
+      var targetPixelWidth, targetPixelHeight: uint32
       case request.context.targetKind
       of gdctWindow:
         if not request.context.offscreenTarget.isEmptyGpuHandle():
           return gdcsUnsupported
+        let currentConfig = host.config()
+        targetPixelWidth = currentConfig.width
+        targetPixelHeight = currentConfig.height
       of gdctOffscreen:
         passTarget = request.context.offscreenTarget
         if passTarget.isEmptyGpuHandle() or

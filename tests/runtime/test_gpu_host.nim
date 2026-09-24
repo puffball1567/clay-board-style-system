@@ -7212,6 +7212,43 @@ suite "GPU host direct compositor":
     check context.presentationTextureResolves == 0
     host.endGpuFrame(token)
 
+    host.resizeGpuHost(960, 540)
+    let outsideResizedWindow = drawGpuDirectSurface(
+      NodeId(0), surface, rect(800, 100, 40, 40)
+    )
+    var unclippedWindowContext = compositionContext
+    unclippedWindowContext.clipBounds = none(Rect)
+    token = host.beginGpuFrame()
+    check outsideResizedWindow.compositeGpuDirectSurface(
+      unclippedWindowContext, compositor
+    ) == gdcsPresented
+    check context.drawSubmits == 1
+
+    var resizedContext = unclippedWindowContext
+    resizedContext.targetBounds = rect(0, 0, 768, 432)
+    let insideResizedWindow = drawGpuDirectSurface(
+      NodeId(0), surface, rect(600, 80, 40, 40)
+    )
+    check insideResizedWindow.compositeGpuDirectSurface(
+      resizedContext, compositor
+    ) == gdcsPresented
+    check context.drawSubmits == 2
+    check context.lastGraphicsPass.viewport == GpuViewport(
+      x: 750, y: 100, width: 50, height: 50
+    )
+    host.endGpuFrame(token)
+
+    host.resizeGpuHost(1600, 900)
+    token = host.beginGpuFrame()
+    check outsideResizedWindow.compositeGpuDirectSurface(
+      unclippedWindowContext, compositor
+    ) == gdcsPresented
+    check context.drawSubmits == 3
+    check context.lastGraphicsPass.viewport == GpuViewport(
+      x: 1000, y: 125, width: 50, height: 50
+    )
+    host.endGpuFrame(token)
+
     check surface.closeGpuDirectSurface()
     host.close()
 

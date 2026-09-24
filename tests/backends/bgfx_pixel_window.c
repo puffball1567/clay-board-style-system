@@ -42,6 +42,22 @@ void cbss_bgfx_pixel_pump(void)
     }
 }
 
+bool cbss_bgfx_pixel_resize_window(void* raw_window, int width, int height,
+                                   int* pixel_width, int* pixel_height)
+{
+    SDL_Window* window = (SDL_Window*)raw_window;
+    if (NULL == window || !SDL_SetWindowSize(window, width, height))
+    {
+        return false;
+    }
+    if (!SDL_SyncWindow(window))
+    {
+        return false;
+    }
+    cbss_bgfx_pixel_pump();
+    return SDL_GetWindowSizeInPixels(window, pixel_width, pixel_height);
+}
+
 void cbss_bgfx_pixel_destroy_window(void* raw_window)
 {
     if (NULL != raw_window)
