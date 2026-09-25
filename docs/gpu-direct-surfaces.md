@@ -146,6 +146,10 @@ The compositor must preserve those constraints or return `gdcsUnsupported`.
 In particular, a callback must not redirect an offscreen-layer submission to the
 window or ignore `requiresClipMask`. The surrounding CBSS paint stream remains
 responsible for ordering the command among ordinary UI content.
+The standard same-host compositor also checks that the context's logical target
+size and pixel scale match the current physical window or offscreen target.
+After a window resize or DPI change, a stale context returns `gdcsUnsupported`
+instead of drawing with the old coordinate mapping.
 
 New integrations should wrap their callback with `newGpuDirectCompositor()` and
 declare `GpuDirectCompositeCapabilities`. Target kinds, rectangular clipping,

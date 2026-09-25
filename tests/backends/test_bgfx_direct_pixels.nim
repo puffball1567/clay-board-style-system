@@ -737,6 +737,14 @@ proc run() =
       NodeId(1), red.surface, windowBounds
     )
     let windowFrame = host.beginGpuFrame()
+    let staleWindowContext = GpuDirectCompositeContext(
+      targetKind: gdctWindow,
+      targetBounds: rect(0, 0, 64, 64),
+      pixelScale: 1
+    )
+    doAssert windowCommand.compositeGpuDirectSurface(
+      staleWindowContext, compositor
+    ) == gdcsUnsupported
     doAssert windowCommand.compositeGpuDirectSurface(
       windowContext, compositor
     ) == gdcsPresented
