@@ -7210,6 +7210,12 @@ suite "GPU host direct compositor":
       0.25'f32, 0.125'f32, 0.75'f32, 0.625'f32
     ]
     check context.presentationTextureResolves == 0
+    var wrongScaleContext = compositionContext
+    wrongScaleContext.pixelScale = 1
+    check command.compositeGpuDirectSurface(
+      wrongScaleContext, compositor
+    ) == gdcsUnsupported
+    check context.drawSubmits == 1
     host.endGpuFrame(token)
 
     host.resizeGpuHost(960, 540)
@@ -7221,7 +7227,7 @@ suite "GPU host direct compositor":
     token = host.beginGpuFrame()
     check outsideResizedWindow.compositeGpuDirectSurface(
       unclippedWindowContext, compositor
-    ) == gdcsPresented
+    ) == gdcsUnsupported
     check context.drawSubmits == 1
 
     var resizedContext = unclippedWindowContext
@@ -7667,7 +7673,11 @@ suite "GPU host direct compositor":
         computeOutput = false,
         alphaModes = {gcamStraight}
       )
-      let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+      let host = openGpuHost(
+        context.backend,
+        ghoOwned,
+        GpuHostConfig(width: 1920, height: 1080, presentation: true)
+      )
       let compositorNamespace = host.createGpuNamespace(
         "rounded-compositor",
         GpuResourceBudget(

@@ -429,6 +429,17 @@ proc newGpuHostDirectCompositor*(
         let currentConfig = host.config()
         targetPixelWidth = currentConfig.width
         targetPixelHeight = currentConfig.height
+        if not matchesPhysicalExtent(
+              request.context.targetBounds.w,
+              request.context.pixelScale,
+              targetPixelWidth
+            ) or
+            not matchesPhysicalExtent(
+              request.context.targetBounds.h,
+              request.context.pixelScale,
+              targetPixelHeight
+            ):
+          return gdcsUnsupported
       of gdctOffscreen:
         passTarget = request.context.offscreenTarget
         if passTarget.isEmptyGpuHandle() or
