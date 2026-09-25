@@ -1009,12 +1009,15 @@ not rebuilding unrelated CBSS UI when a scene frame changes.
 
 Three-dimensional rendering uses the same Canvas/RenderSurface placement and UI
 composition boundary, but CBSS does not claim to provide a complete 3D engine.
-A 3D package or application owns meshes, materials, scene graphs, lighting,
-shadows, skeletal animation, physics, visibility, and asset preparation. CBSS
-may host its texture or compatible GPU pass, route bounded input, and compose
-the HUD and application UI above it. Advanced 3D support therefore extends the
-frontend integration surface without making those engine systems mandatory
-CBSS core dependencies.
+For the Version 0.7 boundary, a 3D package or application owns meshes,
+materials, scene graphs, lighting, shadows, skeletal animation, physics,
+visibility, and asset preparation. CBSS hosts its texture or compatible GPU
+pass, routes bounded input, and composes the HUD and application UI above it.
+In a later release, an explicitly imported CBSS 3D module may provide reusable
+camera, scene-transform, geometry, material, lighting, and picking primitives
+for code-authored scenes and modeling viewports. Applications remain free to
+use an external 3D renderer instead. Neither route makes 3D systems mandatory
+CBSS core dependencies; see [Optional 3D Authoring Foundation](roadmap.md#version-08-optional-3d-authoring-foundation).
 
 Release work for this track must include deterministic simulation/snapshot
 fixtures, CPU reference output, GPU/CPU visual conformance for the supported

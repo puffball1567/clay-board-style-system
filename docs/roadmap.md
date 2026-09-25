@@ -2192,6 +2192,37 @@ These later numbers are planning labels, not compatibility promises. Their
 contents may move as the parallel foundation implementation exposes actual
 dependencies and performance costs.
 
+### Version 0.8+ Optional 3D Authoring Foundation
+
+Status: `Proposed for a later release; not part of the Version 0.7 scope`
+
+CBSS should become a UI and visual foundation on which applications can build
+3D modeling tools and game engines. Beyond accepting an external renderer's
+texture, an optional first-party 3D module should make code-authored 3D scenes
+practical without requiring each application to recreate the same viewport
+machinery. The initial scope should include perspective and orthographic
+cameras, camera transforms and viewport controls, scene transforms, basic mesh
+and procedural-geometry authoring, materials and lights, frame submission, and
+coordinate conversion and picking for tools. It should reuse the existing
+Canvas/RenderSurface placement, input routing, clipping, frame scheduling, and
+bgfx host contracts. The camera here is a 3D viewpoint, separate from the
+camera/video-input capability planned for Version 0.8.
+
+This is an opt-in foundation, not a mandatory 3D engine. Applications or
+specialized libraries still own modeling workflows, asset pipelines, physics,
+gameplay, and engine policy. Existing engines can continue to provide their
+own 3D renderer through the same composition boundary; using the first-party
+3D module must not be required to use CBSS as their UI layer.
+
+The module must be imported explicitly and must not be re-exported or imported
+transitively by the standard CBSS entry point. Its bgfx bindings, native
+libraries, shaders, assets, and runtime initialization must be absent from a
+normal 2D/UI build that does not select it. Release gates include comparing
+2D-only and 3D-enabled build dependencies and binary contents, plus viewport,
+input, resize, device-loss, resource-lifetime, and idle-frame tests. The exact
+release number and API shape remain open until the existing GPU composition
+contract is proven in applications.
+
 ### Version 0.7 Visual Rendering Release Scope
 
 Status: `The GPU host, drawing-engine compute, Custom Paint, retained vector,
