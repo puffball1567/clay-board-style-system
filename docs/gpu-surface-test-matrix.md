@@ -1,7 +1,7 @@
 # GPU Surface Quality Matrix
 
-Status: `Deterministic contract coverage implemented; opt-in Linux real-GPU
-pixel fixture implemented; broader hardware qualification pending`
+Status: `Deterministic contract coverage implemented; Linux Mesa OpenGL pixel
+fixture runs in CI under ARC and ORC; broader hardware qualification pending`
 
 This matrix is the release-quality contract for `GpuDirectSurface` and
 `GpuDisplaySurface`. A row is complete only when its normal, failure, and edge
@@ -24,7 +24,8 @@ jobs and must not be replaced by a mock-only success.
 | UI integration | standalone, underlay and overlay layout/paint | foreign or invalid owner, closed surface | safety styles override injected pointer/z-index values | Automated |
 | Invalidation | completed frame invalidates paint owner | incomplete/failed collect does not invalidate | no style/layout invalidation | Automated |
 | Memory models | deterministic ownership and teardown | sanitizer/Valgrind failures are fatal | ARC and ORC | Automated CI |
-| Real compositor | direct Texture and RenderTarget through the same-host offscreen compositor; rectangular UV crop, straight/premultiplied/opaque alpha, opacity, rounded mask pixels, latest-ready coalescing, top-left row orientation, logical target origins, two-times pixel scale, ordered surface composition, a window pass and offscreen pixels after a native-window resize | unsupported adapter falls back or fails closed | transform and final-window pixel stacking | Opt-in Linux OpenGL pixel fixture; broader qualification pending |
+| Real compositor | direct Texture and RenderTarget through the same-host offscreen compositor; rectangular UV crop, straight/premultiplied/opaque alpha, opacity, rounded mask pixels, latest-ready coalescing, top-left row orientation, logical target origins, two-times pixel scale, ordered surface composition, a window pass and offscreen pixels after a native-window resize | unsupported adapter falls back or fails closed | transform and final-window pixel stacking | Linux Mesa OpenGL pixel CI under ARC and ORC; broader qualification pending |
+| Partial texture upload pixels | tight and padded updates preserve row colors and untouched columns | malformed spans are rejected in the adapter contract matrix | unaligned 7-byte pitch; pitches 65534, 65535, 65536; a single row with UINT32_MAX stride | Linux Mesa OpenGL pixel CI under ARC and ORC |
 | Hardware stress | sustained bounded presentation | device loss, cancellation, teardown races | multiple surfaces and GPU-memory pressure | Pending real-GPU CI |
 
 The primary executable matrix lives in
@@ -35,7 +36,7 @@ integration. The test observes Texture and RenderTarget attachment resolution,
 callback metadata, rejection paths, and ARC/ORC teardown. NOOP validates backend
 calls and ownership, but it does not count as visible pixel conformance.
 
-`nimble testBgfxPixels` is the opt-in real-renderer lane. It builds the pinned
+`nimble testBgfxPixels` is the real-renderer lane. It builds the pinned
 bgfx sources, compiles the standard compositor shaders with official `shaderc`,
 draws into compositor-owned offscreen targets, reads RGBA pixels back
 asynchronously, and checks Texture/RenderTarget sources, UV cropping,
@@ -43,9 +44,17 @@ rectangular clipping, all three alpha modes, opacity, rounded masks,
 latest-ready surface coalescing, row orientation for both CPU-uploaded
 textures and RenderTarget output, logical target origins, two-times pixel
 scale, deterministic draw ordering, a direct window pass, and retained-source
-composition after a native-window resize. It deliberately remains
-outside the default hosted CI matrix because a runner without a qualified GPU
-or software OpenGL stack cannot provide meaningful pixel evidence.
+composition after a native-window resize. Padded partial uploads additionally
+check transferred row colors and untouched pixels through asynchronous readback.
+The Linux bgfx CI job runs this fixture under both ARC and ORC with Xvfb,
+Mesa software OpenGL, and the bundled SDL3 runtime. This exercises the actual
+OpenGL renderer and compiled shaders, not a mock or NOOP renderer. It does not
+qualify physical GPU drivers, other graphics APIs, or mixed SDL/GPU layers.
+
+Local runs default to system SDL3 through `pkg-config`. Set
+`CBSS_GPU_PIXEL_SDL_MODE=bundled` to use the repository runtime instead.
+Both modes run ARC and ORC; missing prerequisites and pixel mismatches fail
+the job rather than silently skipping conformance.
 
 ## Real-GPU Release Gate
 
