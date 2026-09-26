@@ -483,6 +483,63 @@ proc run() =
       0, 1, Pixel(blue: 255, alpha: 255), "uploaded bottom row"
     )
 
+    let partialTexture = host.createGpuTexture(
+      sourceNamespace,
+      GpuTextureDescriptor(
+        width: 2, height: 2, format: gtfRgba8,
+        usage: {gtuSampled, gtuBlitSource}, access: gtaDynamic,
+        label: "padded-partial-updates"
+      ),
+      rgbaPixels(2, 2, proc(x, y: int): Pixel =
+        discard x
+        discard y
+        Pixel(green: 255, alpha: 255)
+      )
+    )
+    for stride in [4, 7, 8, 65534, 65535, 65536]:
+      var update = newSeq[byte](stride + 4)
+      for offset in 0 ..< update.len:
+        update[offset] = 123
+      update[0] = 255
+      update[1] = 0
+      update[2] = 0
+      update[3] = 255
+      update[stride] = 0
+      update[stride + 1] = 0
+      update[stride + 2] = 255
+      update[stride + 3] = 255
+      let updateFrame = host.beginGpuFrame()
+      host.updateGpuTexture(
+        partialTexture, GpuTextureUpdateRegion(x: 1, width: 1, height: 2),
+        update, uint32(stride)
+      )
+      host.endGpuFrame(updateFrame)
+      let updated = host.readPixels(sourceNamespace, partialTexture, 2, 2)
+      updated.requirePixel(
+        1, 0, Pixel(red: 255, alpha: 255), "padded upload top " & $stride
+      )
+      updated.requirePixel(
+        1, 1, Pixel(blue: 255, alpha: 255), "padded upload bottom " & $stride
+      )
+      for y in 0 .. 1:
+        updated.requirePixel(
+          0, y, Pixel(green: 255, alpha: 255), "untouched column " & $stride
+        )
+    let singleRowFrame = host.beginGpuFrame()
+    host.updateGpuTexture(
+      partialTexture, GpuTextureUpdateRegion(x: 1, y: 1, width: 1, height: 1),
+      solid(255, 0, 255), high(uint32)
+    )
+    host.endGpuFrame(singleRowFrame)
+    let singleRow = host.readPixels(sourceNamespace, partialTexture, 2, 2)
+    singleRow.requirePixel(
+      1, 1, Pixel(red: 255, blue: 255, alpha: 255), "single-row maximum stride"
+    )
+    singleRow.requirePixel(
+      1, 0, Pixel(red: 255, alpha: 255), "single-row preserves preceding row"
+    )
+    doAssert host.releaseGpuResource(partialTexture)
+
     let target = host.createGpuRenderTarget(
       compositorNamespace,
       GpuRenderTargetDescriptor(
