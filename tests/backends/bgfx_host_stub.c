@@ -59,6 +59,9 @@ static uint16_t cbss_texture_update_y;
 static uint16_t cbss_texture_update_width;
 static uint16_t cbss_texture_update_height;
 static uint16_t cbss_texture_update_pitch;
+static uint32_t cbss_memory_alloc_count;
+static uint32_t cbss_memory_copy_count;
+static bool cbss_fail_memory_alloc;
 static uint32_t cbss_vertex_buffer_create_count;
 static uint32_t cbss_vertex_buffer_destroy_count;
 static uint32_t cbss_index_buffer_create_count;
@@ -93,7 +96,7 @@ static uint32_t cbss_width;
 static uint32_t cbss_height;
 static uint64_t cbss_init_capabilities;
 static bgfx_memory_t cbss_texture_memory;
-static uint8_t cbss_texture_memory_data[4096];
+static uint8_t cbss_texture_memory_data[256 * 1024];
 
 void bgfx_init_ctor(bgfx_init_t* init)
 {
@@ -218,8 +221,22 @@ void bgfx_vertex_layout_end(bgfx_vertex_layout_t* layout)
     (void)layout;
 }
 
+const bgfx_memory_t* bgfx_alloc(uint32_t size)
+{
+    ++cbss_memory_alloc_count;
+    if (cbss_fail_memory_alloc || 0 == size
+        || size > sizeof(cbss_texture_memory_data))
+    {
+        return NULL;
+    }
+    cbss_texture_memory.data = cbss_texture_memory_data;
+    cbss_texture_memory.size = size;
+    return &cbss_texture_memory;
+}
+
 const bgfx_memory_t* bgfx_copy(const void* data, uint32_t size)
 {
+    ++cbss_memory_copy_count;
     if (NULL == data || 0 == size || size > sizeof(cbss_texture_memory_data))
     {
         return NULL;
@@ -934,6 +951,9 @@ void cbss_bgfx_stub_reset_counters(void)
     cbss_texture_update_width = 0;
     cbss_texture_update_height = 0;
     cbss_texture_update_pitch = 0;
+    cbss_memory_alloc_count = 0;
+    cbss_memory_copy_count = 0;
+    cbss_fail_memory_alloc = false;
     cbss_texture_width = 0;
     cbss_texture_height = 0;
     cbss_texture_flags = 0;
@@ -1128,6 +1148,14 @@ uint16_t cbss_bgfx_stub_texture_update_pitch(void)
 {
     return cbss_texture_update_pitch;
 }
+uint8_t cbss_bgfx_stub_texture_update_byte(uint32_t offset)
+{
+    return offset < cbss_texture_update_data_bytes
+        ? cbss_texture_memory_data[offset] : 0;
+}
+uint32_t cbss_bgfx_stub_memory_alloc_count(void) { return cbss_memory_alloc_count; }
+uint32_t cbss_bgfx_stub_memory_copy_count(void) { return cbss_memory_copy_count; }
+void cbss_bgfx_stub_fail_memory_alloc(bool fail) { cbss_fail_memory_alloc = fail; }
 uint16_t cbss_bgfx_stub_texture_width(void) { return cbss_texture_width; }
 uint16_t cbss_bgfx_stub_texture_height(void) { return cbss_texture_height; }
 uint64_t cbss_bgfx_stub_texture_flags(void) { return cbss_texture_flags; }

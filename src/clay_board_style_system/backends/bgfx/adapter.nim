@@ -619,25 +619,50 @@ proc updateTexture(
   let decoded = resource.unpackBackendResource()
   if not value.attached or not decoded.valid or decoded.tag != brtTexture or
       descriptor.access != gtaDynamic or data.len == 0 or
-      uint64(data.len) > uint64(high(uint32)) or
+      region.width == 0 or region.height == 0 or
       region.x > uint32(high(uint16)) or region.y > uint32(high(uint16)) or
       region.width > uint32(high(uint16)) or
-      region.height > uint32(high(uint16)):
+      region.height > uint32(high(uint16)) or
+      region.x > descriptor.width or region.y > descriptor.height or
+      region.width > descriptor.width - region.x or
+      region.height > descriptor.height - region.y:
     return gbsInvalidConfiguration
 
   let tightStride = uint64(region.width) *
     descriptor.format.gpuTextureBytesPerPixel()
+  let sourceBytes = uint64(region.height - 1) * uint64(rowStride) + tightStride
+  if uint64(rowStride) < tightStride or uint64(data.len) != sourceBytes:
+    return gbsInvalidConfiguration
+
+  # bgfx reserves UINT16_MAX for tight rows; larger padded pitches need packing.
+  let packRows = rowStride >= uint32(high(uint16)) and
+    uint64(rowStride) != tightStride and region.height > 1
+  let uploadBytes = if packRows:
+      tightStride * uint64(region.height)
+    else:
+      sourceBytes
+  if uploadBytes > uint64(high(uint32)):
+    return gbsInvalidConfiguration
   var pitch: uint16
-  if uint64(rowStride) == tightStride:
+  if packRows or uint64(rowStride) == tightStride or
+      rowStride >= uint32(high(uint16)):
     pitch = high(uint16)
-  elif rowStride >= uint32(high(uint16)):
-    return gbsUnsupported
   else:
     pitch = uint16(rowStride)
 
-  let memory = BGFX.copy(unsafeAddr data[0], uint32(data.len))
+  let memory = if packRows:
+      BGFX.alloc(uint32(uploadBytes))
+    else:
+      BGFX.copy(unsafeAddr data[0], uint32(uploadBytes))
   if memory.isNil:
     return gbsFailed
+  if packRows:
+    let destination = cast[ptr UncheckedArray[byte]](memory.data)
+    for row in 0 ..< int(region.height):
+      let sourceOffset = int(uint64(row) * uint64(rowStride))
+      let destinationOffset = int(uint64(row) * tightStride)
+      copyMem(addr destination[destinationOffset],
+        unsafeAddr data[sourceOffset], int(tightStride))
   BGFX.updateTexture2D(
     bgfx_texture_handle_t(idx: decoded.handleIndex),
     0,

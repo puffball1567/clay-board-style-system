@@ -15,10 +15,12 @@ when defined(cbssTestSdl3PlatformData):
   import clay_board_style_system/backends/bgfx/sdl3_platform_data
 import clay_board_style_system/core/geometry
 import clay_board_style_system/core/node
+import clay_board_style_system/core/raster_surface
 import clay_board_style_system/paint/gpu_direct_compositor
 import clay_board_style_system/paint/paint_command
 import clay_board_style_system/runtime/gpu_direct_surface
 import clay_board_style_system/runtime/gpu_host
+import clay_board_style_system/runtime/gpu_raster_texture
 
 proc resetCounters() {.importc: "cbss_bgfx_stub_reset_counters", cdecl.}
 when defined(cbssTestSdl3PlatformData):
@@ -127,6 +129,14 @@ proc textureUpdateHeight(): uint16 {.
   importc: "cbss_bgfx_stub_texture_update_height", cdecl.}
 proc textureUpdatePitch(): uint16 {.
   importc: "cbss_bgfx_stub_texture_update_pitch", cdecl.}
+proc textureUpdateByte(offset: uint32): byte {.
+  importc: "cbss_bgfx_stub_texture_update_byte", cdecl.}
+proc memoryAllocCount(): uint32 {.
+  importc: "cbss_bgfx_stub_memory_alloc_count", cdecl.}
+proc memoryCopyCount(): uint32 {.
+  importc: "cbss_bgfx_stub_memory_copy_count", cdecl.}
+proc failMemoryAlloc(fail: bool) {.
+  importc: "cbss_bgfx_stub_fail_memory_alloc", cdecl.}
 proc textureWidth(): uint16 {.
   importc: "cbss_bgfx_stub_texture_width", cdecl.}
 proc textureHeight(): uint16 {.
@@ -1362,6 +1372,183 @@ suite "optional bgfxim adapter":
     check textureDestroyCount() == 6
     host.close()
     check shutdownCount() == 1
+
+  test "texture upload pitch matrix preserves rows across every format":
+    resetCounters()
+    let host = openGpuHost(newBgfxBackend(), ghoOwned, config())
+    let resources = host.createGpuNamespace(
+      "adapter-pitch-matrix",
+      GpuResourceBudget(
+        persistentBytes: 256,
+        transientBytesPerFrame: 256 * 1024,
+        workUnitsPerFrame: 1,
+        maxResources: 1
+      )
+    )
+    for format in GpuTextureFormat:
+      let rowBytes = int(2 * format.gpuTextureBytesPerPixel())
+      let texture = host.createGpuTexture(
+        resources,
+        GpuTextureDescriptor(
+          width: 4, height: 4, format: format,
+          usage: {gtuSampled}, access: gtaDynamic
+        )
+      )
+      for stride in [rowBytes, rowBytes + 3, 65534, 65535, 65536]:
+        var pixels = newSeq[byte](2 * stride + rowBytes)
+        for row in 0 ..< 3:
+          for column in 0 ..< rowBytes:
+            pixels[row * stride + column] = byte(1 + row * rowBytes + column)
+        let copies = memoryCopyCount()
+        let allocations = memoryAllocCount()
+        let frame = host.beginGpuFrame()
+        host.updateGpuTexture(
+          texture,
+          GpuTextureUpdateRegion(x: 1, width: 2, height: 3),
+          pixels,
+          uint32(stride)
+        )
+        host.endGpuFrame(frame)
+        let packed = stride >= int(high(uint16))
+        let uploadedStride = if packed: rowBytes else: stride
+        check textureUpdatePitch() ==
+          (if packed or stride == rowBytes: high(uint16) else: uint16(stride))
+        check textureUpdateDataBytes() == uint32(2 * uploadedStride + rowBytes)
+        check memoryAllocCount() == allocations + (if packed: 1'u32 else: 0'u32)
+        check memoryCopyCount() == copies + (if packed: 0'u32 else: 1'u32)
+        for row in 0 ..< 3:
+          for column in 0 ..< rowBytes:
+            check textureUpdateByte(uint32(row * uploadedStride + column)) ==
+              byte(1 + row * rowBytes + column)
+      let frame = host.beginGpuFrame()
+      let allocations = memoryAllocCount()
+      host.updateGpuTexture(
+        texture,
+        GpuTextureUpdateRegion(width: 2, height: 1),
+        newSeq[byte](rowBytes),
+        high(uint32)
+      )
+      host.endGpuFrame(frame)
+      check textureUpdatePitch() == high(uint16)
+      check textureUpdateDataBytes() == uint32(rowBytes)
+      check memoryAllocCount() == allocations
+      check host.releaseGpuResource(texture)
+    host.close()
+
+  test "wide raster synchronization packs only the published dirty rectangle":
+    resetCounters()
+    let host = openGpuHost(newBgfxBackend(), ghoOwned, config())
+    let resources = host.createGpuNamespace(
+      "wide-raster",
+      GpuResourceBudget(
+        persistentBytes: 128 * 1024,
+        transientBytesPerFrame: 128 * 1024,
+        workUnitsPerFrame: 1,
+        maxResources: 1
+      )
+    )
+    let raster = newRasterSurface(16384, 2)
+    let uploaded = host.newGpuRasterTexture(resources, raster)
+    let texture = uploaded.texture
+    let updates = textureUpdateCount()
+    let allocations = memoryAllocCount()
+    raster.updateRegion(
+      rasterRegion(16383, 0, 1, 2),
+      @[1'u8, 2, 3, 255, 4, 5, 6, 255]
+    )
+    check raster.publish()
+    let frame = host.beginGpuFrame()
+    let sync = uploaded.syncGpuRasterTexture()
+    check sync.kind == grtskPartial
+    check sync.regionCount == 1
+    check sync.uploadedBytes == 65540
+    check uploaded.texture == texture
+    check textureUpdateCount() == updates + 1
+    check memoryAllocCount() == allocations + 1
+    check textureUpdatePitch() == high(uint16)
+    check textureUpdateDataBytes() == 8
+    for offset, expected in [1'u8, 2, 3, 255, 4, 5, 6, 255]:
+      check textureUpdateByte(uint32(offset)) == expected
+    check uploaded.syncGpuRasterTexture().kind == grtskUnchanged
+    check textureUpdateCount() == updates + 1
+    host.endGpuFrame(frame)
+    check uploaded.closeGpuRasterTexture()
+    host.close()
+
+  test "adapter rejects invalid texture spans before allocating or submitting":
+    resetCounters()
+    let backend = newBgfxBackend()
+    let host = openGpuHost(backend, ghoOwned, config())
+    let resources = host.createGpuNamespace(
+      "invalid-texture-spans",
+      GpuResourceBudget(persistentBytes: 16, maxResources: 1)
+    )
+    let descriptor = GpuTextureDescriptor(
+      width: 2, height: 2, format: gtfRgba8,
+      usage: {gtuSampled}, access: gtaDynamic
+    )
+    let texture = host.createGpuTexture(resources, descriptor)
+    let resource = host.gpuPresentableResourceInfo(texture).backendResource
+    let copies = memoryCopyCount()
+    let allocations = memoryAllocCount()
+    for invalid in [
+      (GpuTextureUpdateRegion(width: 0, height: 1), 8'u32, 8),
+      (GpuTextureUpdateRegion(width: 2, height: 0), 8'u32, 8),
+      (GpuTextureUpdateRegion(width: 2, height: 2), 7'u32, 15),
+      (GpuTextureUpdateRegion(width: 2, height: 2), 8'u32, 15),
+      (GpuTextureUpdateRegion(width: 2, height: 2), 8'u32, 17),
+      (GpuTextureUpdateRegion(width: 2, height: 2), high(uint32), 16),
+      (GpuTextureUpdateRegion(x: 1, width: 2, height: 1), 8'u32, 8),
+      (GpuTextureUpdateRegion(y: 1, width: 1, height: 2), 4'u32, 8),
+      (GpuTextureUpdateRegion(x: high(uint32), width: 1, height: 1), 4'u32, 4),
+      (GpuTextureUpdateRegion(width: 1, height: 1), 4'u32, 0)
+    ]:
+      check backend.updateTexture(
+        backend.context, resource, descriptor,
+        invalid[0], invalid[1], newSeq[byte](invalid[2])
+      ) == gbsInvalidConfiguration
+    check textureUpdateCount() == 0
+    check memoryCopyCount() == copies
+    check memoryAllocCount() == allocations
+    host.close()
+
+  test "packed texture allocation failure is atomic and retryable":
+    resetCounters()
+    let host = openGpuHost(newBgfxBackend(), ghoOwned, config())
+    let resources = host.createGpuNamespace(
+      "adapter-pitch-failure",
+      GpuResourceBudget(
+        persistentBytes: 16,
+        transientBytesPerFrame: 128 * 1024,
+        workUnitsPerFrame: 1,
+        maxResources: 1
+      )
+    )
+    let texture = host.createGpuTexture(
+      resources,
+      GpuTextureDescriptor(
+        width: 2, height: 2, format: gtfRgba8,
+        usage: {gtuSampled}, access: gtaDynamic
+      )
+    )
+    let pixels = newSeq[byte](65536 + 8)
+    let frame = host.beginGpuFrame()
+    failMemoryAlloc(true)
+    expect GpuHostError:
+      host.updateGpuTexture(
+        texture, GpuTextureUpdateRegion(width: 2, height: 2), pixels, 65536
+      )
+    check textureUpdateCount() == 0
+    check host.gpuNamespaceUsage(resources).transientBytes == 0
+    check host.gpuNamespaceUsage(resources).workUnits == 0
+    failMemoryAlloc(false)
+    host.updateGpuTexture(
+      texture, GpuTextureUpdateRegion(width: 2, height: 2), pixels, 65536
+    )
+    check textureUpdateCount() == 1
+    check textureUpdateDataBytes() == 16
+    host.endGpuFrame(frame)
+    host.close()
 
   test "borrowed mode detaches without shutting down the runtime":
     resetCounters()
