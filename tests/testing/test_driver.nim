@@ -963,6 +963,18 @@ suite "CBSS headless test driver":
     driver.setViewport(size(480, 320))
     check driver.debugReport().contains("480.0x320.0")
 
+  test "paint snapshots include retained color matrices only when filtered":
+    let driver = initCbssTestDriver(initUiRoot(), size(16, 12))
+    let matrix = [0.0'f32, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0]
+    driver.paintCommands = @[
+      pushLayer(rect(0, 0, 16, 12), colorFilter = colorMatrixFilter(matrix)),
+      popLayer(), pushLayer(rect(0, 0, 16, 12)), popLayer()
+    ]
+    let snapshot = driver.structuredSnapshotJson()["paint"]
+    check snapshot[0]["colorMatrix"] == %matrix
+    check not snapshot[2].hasKey("colorMatrix")
+    check driver.paintSnapshot().contains("color-matrix=")
+
   test "driver can save and compare approved snapshot baselines":
     let driver = initCbssTestDriver(buildControlsUi, size(320, 240))
     let path = getTempDir() / "cbss_test_driver_approved_snapshot.json"

@@ -7,7 +7,7 @@ import ../hit/hit_test
 import ../input/events
 import ../layout/layout
 import ../layout/scroll_state
-import ../paint/[paint, paint_command, path_geometry]
+import ../paint/[layer_color_filter, paint, paint_command, path_geometry]
 import ../runtime/[focus, frame_scheduler, gpu_direct_surface, invalidation,
   text_focus, ui_root]
 
@@ -1004,6 +1004,8 @@ proc paintSnapshot*(driver: CbssTestDriver): string =
       lines.add "push-layer " & rectSnapshot(command.layerBounds) &
         " opacity=" & $command.layerOpacity &
         " composite=" & $command.layerCompositeMode
+      if not command.layerColorFilter.isNil:
+        lines[^1].add " color-matrix=" & $command.layerColorFilter.colorMatrixCoefficients()
     of pcPopLayer:
       lines.add "pop-layer"
     of pcPushClip:
@@ -1152,6 +1154,8 @@ proc structuredSnapshotJson*(driver: CbssTestDriver): JsonNode =
       entry["rect"] = rectJson(command.layerBounds)
       entry["opacity"] = %command.layerOpacity
       entry["compositeMode"] = %($command.layerCompositeMode)
+      if not command.layerColorFilter.isNil:
+        entry["colorMatrix"] = %command.layerColorFilter.colorMatrixCoefficients()
     of pcPopLayer:
       discard
     of pcPushClip:

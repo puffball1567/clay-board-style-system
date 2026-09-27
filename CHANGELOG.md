@@ -9,6 +9,11 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added immutable RGB matrix filters to Nim Canvas layers and paint commands.
+  PPM and SDL3 apply the same straight-sRGB transform before layer opacity,
+  preserve alpha and coverage, and invalidate retained pixels when coefficients
+  change. SDL3 filtering uses bounded CPU readback and upload.
+
 - Added bounded nested rounded clips to final-window direct GPU Surface
   composition. The SDL3 bridge now forwards up to eight logical clip masks,
   the standard GPU host compositor applies them through a separate
@@ -21,6 +26,12 @@ release. Before 1.0, minor releases may contain public API changes.
   generation, dimensions, feedback hazards, and target format before drawing.
   SDL texture-backed layers remain fail-closed because they are not bgfx
   render targets and cannot be redirected to the final window safely.
+
+### Fixed
+
+- Fixed SDL3 software composition darkening translucent nested layers by
+  applying alpha more than once. A bounded CPU fallback now composites
+  premultiplied layer pixels with the requested blend mode and clip.
 
 ## [0.7.1] - 2026-09-20
 
