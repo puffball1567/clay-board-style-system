@@ -2398,8 +2398,10 @@ in retained cache equality. SDL3 software layer composition now preserves
 premultiplied alpha through nested translucent transforms. Typed Nim Custom
 Paint filter providers now connect those matrices to Style-owned visual groups,
 including local overlay ordering, masks, and whole-group subtree repaints.
-Spatial filters, foreign filter providers, GPU filter composition, and the
-broader Motion Scene remain open Version 0.7 work.
+C ABI `0x00010027` now supports copied RGB matrices in retained Canvas and
+Custom Paint command-sink layers, plus a paint-command matrix accessor.
+Spatial filters, foreign Style filter providers, GPU filter composition, and
+the broader Motion Scene remain open Version 0.7 work.
 Backend-neutral named Custom Paint
 materials now connect ordinary Style declarations to bounded underlay and
 overlay command streams without adding nodes. `GpuCanvasSurface` can use that

@@ -12,7 +12,7 @@ import ./generated/default_properties
 import ./hit/hit_test
 import ./input/events
 import ./layout/[layout, presentation, scroll_state]
-import ./paint/[custom_paint_registry, paint, paint_command, path_geometry]
+import ./paint/[custom_paint_registry, layer_color_filter, paint, paint_command, path_geometry]
 import ./runtime/[canvas, declarative_keyframes, declarative_transition,
   frame_scheduler, gpu_host, gpu_shader_builder, invalidation, motion_lifecycle,
   render_surface, validation]
@@ -189,6 +189,9 @@ type
 
   CbssColorC* {.bycopy.} = object
     r*, g*, b*, a*: cfloat
+
+  CbssRgbColorMatrixC* {.bycopy.} = object
+    coefficients*: array[12, cfloat]
 
   CbssAffineTransformC* {.bycopy.} = object
     m11*, m12*, m21*, m22*, tx*, ty*: cfloat
@@ -561,6 +564,7 @@ static:
   doAssert sizeof(CbssLayoutBoxC) == 24
   doAssert sizeof(CbssHitResultC) == 24
   doAssert sizeof(CbssPaintCommandC) == 64
+  doAssert sizeof(CbssRgbColorMatrixC) == 48
   doAssert sizeof(CbssAffineTransformC) == 24
   doAssert sizeof(CbssPathSegmentC) == 28
   doAssert sizeof(CbssTextStyleC) == 24
@@ -5156,6 +5160,24 @@ proc cbssCustomPaintSinkBeginLayer(
   guardedCustomPaintMutation(sink):
     checked.canvas.beginLayer(bounds.toRect, opacity, mode.get)
 
+proc cbssCustomPaintSinkBeginLayerColorMatrix(
+    sink: CbssCustomPaintSinkHandle;
+    bounds: CbssRectC;
+    opacity: cfloat;
+    compositeMode: uint32;
+    matrix: CbssRgbColorMatrixC
+): int32 {.exportc: "cbss_custom_paint_sink_begin_layer_color_matrix", cdecl, dynlib.} =
+  let mode = compositeMode.layerCompositeModeFromC
+  if not bounds.validRect or not opacity.finite or opacity < 0 or opacity > 1 or
+      mode.isNone:
+    return CbssInvalidArgument
+  for coefficient in matrix.coefficients:
+    if not coefficient.finite:
+      return CbssInvalidArgument
+  guardedCustomPaintMutation(sink):
+    checked.canvas.beginLayer(bounds.toRect, opacity, mode.get,
+      colorFilter = colorMatrixFilter(matrix.coefficients))
+
 proc cbssCustomPaintSinkEndLayer(
     sink: CbssCustomPaintSinkHandle
 ): int32 {.exportc: "cbss_custom_paint_sink_end_layer", cdecl, dynlib.} =
@@ -5426,6 +5448,28 @@ proc cbssRenderSurfaceCanvasBeginLayer(
     return CbssInvalidArgument
   guardedCanvasMutation(context):
     checked.binding.canvas.beginLayer(bounds.toRect, opacity, mode.get)
+
+proc cbssRenderSurfaceCanvasBeginLayerColorMatrix(
+    context: CbssContextHandle;
+    surfaceValue: uint64;
+    bounds: CbssRectC;
+    opacity: cfloat;
+    compositeMode: uint32;
+    matrix: CbssRgbColorMatrixC
+): int32 {.exportc: "cbss_render_surface_canvas_begin_layer_color_matrix", cdecl, dynlib.} =
+  let checked = context.checkedSurfaceCanvas(surfaceValue)
+  if checked.status != CbssOk:
+    return checked.status
+  let mode = compositeMode.layerCompositeModeFromC
+  if not bounds.validRect or not opacity.finite or opacity < 0 or opacity > 1 or
+      mode.isNone:
+    return CbssInvalidArgument
+  for coefficient in matrix.coefficients:
+    if not coefficient.finite:
+      return CbssInvalidArgument
+  guardedCanvasMutation(context):
+    checked.binding.canvas.beginLayer(bounds.toRect, opacity, mode.get,
+      colorFilter = colorMatrixFilter(matrix.coefficients))
 
 proc cbssRenderSurfaceCanvasEndLayer(
     context: CbssContextHandle;
@@ -7437,6 +7481,24 @@ proc cbssPaintCommandTransform(
     tx: command.transform.tx,
     ty: command.transform.ty
   )
+  CbssOk
+
+proc cbssPaintCommandLayerColorMatrix(
+    context: CbssContextHandle;
+    index: uint32;
+    output: ptr CbssRgbColorMatrixC
+): int32 {.exportc: "cbss_paint_command_layer_color_matrix", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if output.isNil or not context.computed:
+    return CbssInvalidArgument
+  if uint64(index) >= uint64(context.commands.len):
+    return CbssOutOfRange
+  let command = context.commands[int(index)]
+  if command.kind != pcPushLayer:
+    return CbssInvalidArgument
+  output[] = CbssRgbColorMatrixC(
+    coefficients: command.layerColorFilter.colorMatrixCoefficients())
   CbssOk
 
 proc cbssPaintCommandPathSegmentCount(

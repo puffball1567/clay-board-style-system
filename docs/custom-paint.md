@@ -140,9 +140,12 @@ drawing provider or a filter provider, and explicit replacement can switch
 between them. `registerCustomPaintMaterial` still rejects `cpsFilter`, preventing
 a drawing command callback from being mistaken for a filter.
 
-This RGB filter provider is currently a Nim API. Foreign command-sink providers
-and `GpuCanvasSurface` materials continue to support drawing and masks; spatial
-filters, shader post-processing, and C ABI filter authoring remain follow-ups.
+Style RGB filter providers are currently a Nim API. Foreign command-sink
+providers can author filtered layers with
+`cbss_custom_paint_sink_begin_layer_color_matrix` from ABI `0x00010027`.
+`GpuCanvasSurface` materials continue to support drawing and masks; spatial
+filters, shader post-processing, and foreign Style filter registration remain
+follow-ups.
 
 ## Foreign Provider Boundary
 

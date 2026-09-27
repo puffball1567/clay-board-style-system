@@ -26,7 +26,7 @@ extern "C" {
 #endif
 
 /* CBSS_GENERATED_DRIVER_CONTRACT_BEGIN */
-#define CBSS_ABI_VERSION 0x00010026u
+#define CBSS_ABI_VERSION 0x00010027u
 #define CBSS_DRIVER_CONTRACT_VERSION 0x00010000u
 
 typedef enum CbssCapabilityId {
@@ -649,6 +649,15 @@ typedef enum CbssPaintKind {
   CBSS_PAINT_DRAW_GPU_DIRECT_SURFACE = 14,
   CBSS_PAINT_FILL_PATH = 15
 } CbssPaintKind;
+
+/* Row-major 3x4 RGB matrix: each row is [R, G, B, offset].
+ * Operates on straight encoded sRGB before layer opacity; preserves alpha and
+ * transparent coverage. All 12 coefficients must be finite. Passed by value
+ * and copied into retained storage. Identity rows are [1,0,0,0], [0,1,0,0],
+ * [0,0,1,0]; an all-zero matrix produces black, not identity. */
+typedef struct CbssRgbColorMatrix {
+  float coefficients[12];
+} CbssRgbColorMatrix;
 
 typedef enum CbssLayerCompositeMode {
   CBSS_LAYER_SOURCE_OVER = 0,
@@ -1355,6 +1364,10 @@ CBSS_API CbssStatus cbss_custom_paint_sink_pop_clip(
 CBSS_API CbssStatus cbss_custom_paint_sink_begin_layer(
     CbssCustomPaintSink *sink, CbssRect bounds, float opacity,
     uint32_t composite_mode);
+/* Same scope and callback lifetime as begin_layer, with an RGB filter. */
+CBSS_API CbssStatus cbss_custom_paint_sink_begin_layer_color_matrix(
+    CbssCustomPaintSink *sink, CbssRect bounds, float opacity,
+    uint32_t composite_mode, CbssRgbColorMatrix matrix);
 CBSS_API CbssStatus cbss_custom_paint_sink_end_layer(
     CbssCustomPaintSink *sink);
 CBSS_API CbssStatus cbss_custom_paint_sink_fill_rect(
@@ -1603,6 +1616,10 @@ CBSS_API CbssStatus cbss_render_surface_canvas_pop_clip(
 CBSS_API CbssStatus cbss_render_surface_canvas_begin_layer(
     CbssContext *context, uint64_t surface, CbssRect bounds,
     float opacity, uint32_t composite_mode);
+/* Invalid matrices leave the command list and revision unchanged. */
+CBSS_API CbssStatus cbss_render_surface_canvas_begin_layer_color_matrix(
+    CbssContext *context, uint64_t surface, CbssRect bounds,
+    float opacity, uint32_t composite_mode, CbssRgbColorMatrix matrix);
 CBSS_API CbssStatus cbss_render_surface_canvas_end_layer(
     CbssContext *context, uint64_t surface);
 CBSS_API CbssStatus cbss_render_surface_canvas_fill_rect(
@@ -1838,6 +1855,11 @@ CBSS_API uint32_t cbss_paint_command_string(
     CbssContext *context, uint32_t index, char *buffer, uint32_t capacity);
 CBSS_API CbssStatus cbss_paint_command_transform(
     CbssContext *context, uint32_t index, CbssAffineTransform *output);
+/* Copies a PUSH_LAYER's matrix; unfiltered layers return identity.
+ * Other command kinds return CBSS_INVALID_ARGUMENT. No output is written on
+ * failure. Existing CbssPaintCommand layout and value fields are unchanged. */
+CBSS_API CbssStatus cbss_paint_command_layer_color_matrix(
+    CbssContext *context, uint32_t index, CbssRgbColorMatrix *output);
 CBSS_API uint32_t cbss_paint_command_path_segment_count(
     CbssContext *context, uint32_t index);
 CBSS_API CbssStatus cbss_paint_command_path_segment(

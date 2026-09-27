@@ -19,6 +19,11 @@ release. Before 1.0, minor releases may contain public API changes.
   compose masks before filtering, and apply owner opacity once. Descendant
   subtree repaint requests rebuild the complete enclosing filter group.
 
+- Added copied RGB matrix layers and matrix inspection to C ABI `0x00010027`.
+  Canvas and Custom Paint command sinks validate all coefficients before
+  retaining commands. Existing layer signatures and paint records stay stable;
+  paint, Canvas, and Custom Paint capability versions advance to 4.
+
 - Added bounded nested rounded clips to final-window direct GPU Surface
   composition. The SDL3 bridge now forwards up to eight logical clip masks,
   the standard GPU host compositor applies them through a separate
