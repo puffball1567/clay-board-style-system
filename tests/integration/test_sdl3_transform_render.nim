@@ -1,5 +1,7 @@
 import std/[math, options, os, unittest]
 
+import clay_board_style_system
+import clay_board_style_system/generated/default_properties
 import clay_board_style_system/backends/sdl3/renderer
 import clay_board_style_system/backends/ppm/raster as ppm
 import clay_board_style_system/core/[color, geometry, node, raster_surface]
@@ -441,6 +443,51 @@ suite "SDL3 transform rendering":
     renderer.render(commands, rgb(0, 0, 1))
     check renderer.capturedFrame().get.pixel(4, 4) == (0'u8, 0'u8, 255'u8)
     check renderer.cacheUsage().transformTextureBytes == previousBytes
+
+  test "Style filters compose child overlays through all SDL render paths":
+    let previousDriver = getEnv("SDL_VIDEODRIVER")
+    putEnv("SDL_VIDEODRIVER", "dummy")
+    defer:
+      if previousDriver.len > 0: putEnv("SDL_VIDEODRIVER", previousDriver)
+      else: delEnv("SDL_VIDEODRIVER")
+    var renderer = initSdl3Renderer("CBSS Style filter test", 16, 12, false)
+    defer: renderer.close()
+    let ui = initUiRoot()
+    let panel = ui.box(uiStyle([
+      width(16), height(12), decl("opacity", number(0.5)),
+      decl("background-color", colorValue(rgb(1, 0, 0))),
+      customPaint("swap", cpsFilter)
+    ]))
+    discard ui.box(uiStyle([
+      width(8), height(6), decl("position", keyword("absolute")),
+      decl("left", px(4)), decl("top", px(3)), decl("z-index", number(10)),
+      decl("background-color", colorValue(rgb(1, 0, 0)))
+    ]), parent = some(panel))
+    let filter = colorMatrixFilter([
+      0.0'f32, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0
+    ])
+    check ui.registerCustomPaintFilter("swap",
+      proc(request: CustomPaintRequest): LayerColorFilter = filter)
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(ui.tree, ui.styleSheets(), defaultProperties(), diagnostics)
+    check not diagnostics.hasErrors
+    let layout = computeLayout(ui.tree, styles, size(16, 12))
+    for registered in [true, false]:
+      if not registered:
+        check ui.unregisterCustomPaintMaterial("swap")
+      let commands = ui.buildPaintCommands(styles, layout)
+      let reference = ppm.render(commands, 16, 12, rgb(0, 0, 1))
+      for path in 0 .. 2:
+        renderer.requestFrameCapture()
+        case path
+        of 0: renderer.render(commands, rgb(0, 0, 1))
+        of 1:
+          renderer.render(commands, CosmicTextEngine(), initFontRegistry(), rgb(0, 0, 1))
+        else:
+          renderer.renderLayered(commands, CosmicTextEngine(), initFontRegistry(), rgb(0, 0, 1))
+        let frame = renderer.capturedFrame().get
+        for index in 0 ..< reference.pixels.len:
+          check abs(int(frame.pixels[index]) - int(reference.pixels[index])) <= 3
 
   test "GPU direct commands use the configured compositor on every render path":
     let previousDriver = getEnv("SDL_VIDEODRIVER")

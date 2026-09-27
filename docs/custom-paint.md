@@ -84,6 +84,66 @@ Style. C ABI `0x0001001D` exposes the equivalent values through a fixed-layout
 parameter view and a separate bounded name accessor rather than Nim object or
 closure layout.
 
+## Style Color Filters
+
+Nim applications can register a typed RGB matrix provider for `cpsFilter`:
+
+```nim
+let invert = colorMatrixFilter([
+  -1.0'f32, 0, 0, 1,
+  0.0'f32, -1, 0, 1,
+  0.0'f32, 0, -1, 1
+])
+discard ui.registerCustomPaintFilter(
+  "invert-panel",
+  proc(request: CustomPaintRequest): LayerColorFilter = invert
+)
+let filtered = ui.box(uiStyle([
+  width(240), height(160), customPaint("invert-panel", cpsFilter)
+]))
+```
+
+The callback receives the same owner, resolved bounds, and immutable typed
+parameters as drawing materials. It returns a `LayerColorFilter`, rather than
+paint commands, and must not raise or block. Build immutable matrices outside
+the callback when possible. A nil result is an identity filter; missing and
+stage-mismatched providers leave ordinary content visible and emit the usual
+bounded diagnostics.
+
+A resolved non-identity filter isolates the owner's background, border,
+underlay, RenderSurface content, descendants, overlay, scrollbars, and mask
+within its bounds and border radius. The completed group is color-transformed
+before applying the owner's inherited opacity once. The filter callback receives
+opacity 1 and the owner's content starts at opacity 1 inside the isolated group;
+descendants still apply their own opacity. Alpha and transparent coverage are
+preserved by the RGB matrix.
+The PPM reference and SDL3 use the same retained layer filter contract described
+in [Render Surfaces](render-surfaces.md#layer-color-filters).
+
+A Box with a filter declaration establishes a local paint-order boundary.
+Positive-z descendants are sorted and drawn inside that boundary, including
+when the material is missing or resolves to identity. They cannot escape the
+filter to overlay unrelated higher-level content. Nested filter groups apply
+inside out. `buildPaintCommandsForSubtree` expands a descendant repaint to the
+outermost enclosing filter Box, since filtering only one child's pixels cannot
+reproduce the combined group. Consumers of subtree command streams must treat
+that returned group as one repaint unit. `paintGroupRoot(tree, styles, node)`
+returns its root, allowing dynamic/static partitions to include all of that
+group's descendants. Unfiltered nodes keep their original subtree root.
+
+`registerCustomPaintFilterTracked` returns the same generation-safe registration
+token as drawing materials. Names, replacement, unregister, and consumer-only
+paint invalidation share the existing registry. Call
+`invalidateCustomPaintMaterial(name)` after changing state used by a callback;
+this does not trigger style resolution or layout. A name supports either a
+drawing provider or a filter provider, and explicit replacement can switch
+between them. `registerCustomPaintMaterial` still rejects `cpsFilter`, preventing
+a drawing command callback from being mistaken for a filter.
+
+This RGB filter provider is currently a Nim API. Foreign command-sink providers
+and `GpuCanvasSurface` materials continue to support drawing and masks; spatial
+filters, shader post-processing, and C ABI filter authoring remain follow-ups.
+
 ## Foreign Provider Boundary
 
 Foreign-language Craft Drivers can install a material with
@@ -159,8 +219,9 @@ implementation and its `bgfxim` dependency stay behind the adapter boundary.
   PPM and SDL3 backends. SDL3 renderers with custom blend support stay on the
   accelerated one-pass path; software renderers use a bounded 64 MiB temporary
   working set only for the affected mask region.
-- `cpsFilter` declarations are accepted and retained, but filter transformation
-  is not implemented yet. They report an explicit unsupported-stage diagnostic.
+- `cpsFilter` accepts typed RGB filter providers registered through
+  `registerCustomPaintFilter`. Registering or resolving a provider at a stage
+  it does not support fails explicitly.
 - GPU work and readback remain application-scheduled. Custom Paint does not
   create a second frame loop or take presentation ownership.
 

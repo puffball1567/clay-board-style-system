@@ -14,6 +14,11 @@ release. Before 1.0, minor releases may contain public API changes.
   preserve alpha and coverage, and invalidate retained pixels when coefficients
   change. SDL3 filtering uses bounded CPU readback and upload.
 
+- Added typed Custom Paint RGB filter providers for ordinary Style declarations.
+  Filter owners isolate their visual subtree, retain local overlay ordering,
+  compose masks before filtering, and apply owner opacity once. Descendant
+  subtree repaint requests rebuild the complete enclosing filter group.
+
 - Added bounded nested rounded clips to final-window direct GPU Surface
   composition. The SDL3 bridge now forwards up to eight logical clip masks,
   the standard GPU host compositor applies them through a separate

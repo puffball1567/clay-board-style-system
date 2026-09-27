@@ -2395,9 +2395,11 @@ unavailable. Retained Nim Canvas layers now accept immutable RGB matrix filters
 with one shared straight-sRGB evaluator for PPM and bounded SDL3 readback/upload.
 Filters preserve alpha and coverage, apply before layer opacity, and participate
 in retained cache equality. SDL3 software layer composition now preserves
-premultiplied alpha through nested translucent transforms. Spatial filters,
-Custom Paint filter providers, GPU filter composition, and the broader Motion
-Scene remain open Version 0.7 work.
+premultiplied alpha through nested translucent transforms. Typed Nim Custom
+Paint filter providers now connect those matrices to Style-owned visual groups,
+including local overlay ordering, masks, and whole-group subtree repaints.
+Spatial filters, foreign filter providers, GPU filter composition, and the
+broader Motion Scene remain open Version 0.7 work.
 Backend-neutral named Custom Paint
 materials now connect ordinary Style declarations to bounded underlay and
 overlay command streams without adding nodes. `GpuCanvasSurface` can use that
