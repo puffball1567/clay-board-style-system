@@ -1250,7 +1250,14 @@ contract and do not duplicate the motion engine.
 
 ### CSS-Like Motion Scene
 
-Status: `Planned after Version 0.4`
+Status: `CPU snapshot foundation implemented; timeline and GPU execution planned`
+
+The opt-in CPU reference now stores bounded immutable rounded-rectangle batches
+inside one Canvas, with stable IDs, affine/opacity/z-order properties, viewport
+clipping, inverse-transform picking, deterministic replacement, and cancellable
+latest-request tokens. UI publication dirties only the Canvas's paint; a static
+scene requests no continuous frames. See [CPU Motion Scene snapshots](motion-scene.md)
+for the current API and remaining timeline, primitive, and backend work.
 
 CBSS will provide a retained Motion Scene inside Canvas for motion graphics,
 generative design, high-density charts, particles, sprites, and other visuals

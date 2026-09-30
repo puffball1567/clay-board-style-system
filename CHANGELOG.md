@@ -9,6 +9,12 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added an opt-in CPU Motion Scene snapshot foundation. Stable-ID rounded
+  rectangles share one Canvas with affine transforms, opacity, z-order,
+  viewport clipping, and matching hit testing. Immutable batch replacement and
+  cancellable latest-request tokens support deterministic export and previews;
+  UI publication invalidates only paint and remains idle between changes.
+
 - Added bounded nested rounded clips to final-window direct GPU Surface
   composition. The SDL3 bridge now forwards up to eight logical clip masks,
   the standard GPU host compositor applies them through a separate
