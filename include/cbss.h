@@ -26,7 +26,7 @@ extern "C" {
 #endif
 
 /* CBSS_GENERATED_DRIVER_CONTRACT_BEGIN */
-#define CBSS_ABI_VERSION 0x00010027u
+#define CBSS_ABI_VERSION 0x00010028u
 #define CBSS_DRIVER_CONTRACT_VERSION 0x00010000u
 
 typedef enum CbssCapabilityId {
@@ -1335,6 +1335,10 @@ CBSS_API CbssStatus cbss_style_set_custom_paint(
  * unregister, context reset, or context destruction invokes release_callback
  * exactly once. A release callback must not re-enter the same context.
  * Registration tokens are context-local and never reused.
+ * FILTER must be registered alone; mixing it with drawing stages is invalid.
+ * A FILTER callback may read parameters and set its RGB matrix, but may not
+ * append drawing commands. The request opacity is 1; owner opacity is applied
+ * once after filtering the complete visual group.
  */
 CBSS_API CbssStatus cbss_context_register_custom_paint_provider(
     CbssContext *context, const char *material, uint32_t stages,
@@ -1353,6 +1357,12 @@ CBSS_API CbssStatus cbss_custom_paint_parameter(
 CBSS_API uint32_t cbss_custom_paint_parameter_name(
     CbssCustomPaintSink *sink, uint32_t index,
     char *buffer, uint32_t capacity);
+/* FILTER callbacks only. Copies the matrix; the last successful call wins.
+ * No call (or identity) leaves colors unchanged. A non-OK callback result
+ * discards the matrix and leaves the ordinary content visible. Invalid input
+ * preserves the previous matrix. Expired/drawing sinks return NOT_AVAILABLE. */
+CBSS_API CbssStatus cbss_custom_paint_sink_set_color_matrix(
+    CbssCustomPaintSink *sink, CbssRgbColorMatrix matrix);
 CBSS_API CbssStatus cbss_custom_paint_sink_save(CbssCustomPaintSink *sink);
 CBSS_API CbssStatus cbss_custom_paint_sink_restore(CbssCustomPaintSink *sink);
 CBSS_API CbssStatus cbss_custom_paint_sink_transform(

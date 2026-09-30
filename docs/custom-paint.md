@@ -140,12 +140,11 @@ drawing provider or a filter provider, and explicit replacement can switch
 between them. `registerCustomPaintMaterial` still rejects `cpsFilter`, preventing
 a drawing command callback from being mistaken for a filter.
 
-Style RGB filter providers are currently a Nim API. Foreign command-sink
-providers can author filtered layers with
+C ABI `0x00010028` also supports Style RGB filter registration, as described
+below. Foreign command-sink providers can author filtered layers with
 `cbss_custom_paint_sink_begin_layer_color_matrix` from ABI `0x00010027`.
 `GpuCanvasSurface` materials continue to support drawing and masks; spatial
-filters, shader post-processing, and foreign Style filter registration remain
-follow-ups.
+filters and shader post-processing remain follow-ups.
 
 ## Foreign Provider Boundary
 
@@ -174,6 +173,46 @@ context-local, monotonically allocated, and generation-safe; stale tokens
 cannot remove a replacement. Release callbacks must not re-enter the same
 context; CBSS rejects provider lifecycle changes while a release callback is
 running.
+
+### Foreign Style Filters
+
+Register `CBSS_CUSTOM_PAINT_STAGE_FILTER` alone through the existing provider
+registration function. Combining FILTER with any drawing stage returns
+`CBSS_INVALID_ARGUMENT` without taking ownership of the user data.
+
+```c
+static CbssStatus invert_filter(const CbssCustomPaintRequest *request,
+                               CbssCustomPaintSink *sink, void *user_data) {
+  (void)request;
+  (void)user_data;
+  const CbssRgbColorMatrix invert = {{
+    -1, 0, 0, 1, 0, -1, 0, 1, 0, 0, -1, 1
+  }};
+  return cbss_custom_paint_sink_set_color_matrix(sink, invert);
+}
+
+CbssCustomPaintRegistration registration = 0;
+CbssStatus status = cbss_context_register_custom_paint_provider(
+    context, "invert-panel", CBSS_CUSTOM_PAINT_STAGE_FILTER,
+    invert_filter, NULL, NULL, 0, &registration);
+```
+
+The callback receives the same owner, bounds, and copied typed parameters as a
+drawing provider, with request opacity 1. It may query parameters and call
+`cbss_custom_paint_sink_set_color_matrix`; drawing and scope commands return
+`CBSS_NOT_AVAILABLE` in this stage. The setter copies all 12 finite coefficients,
+and the last successful call wins. Invalid coefficients leave the preceding
+matrix intact. No setter call or an identity matrix leaves the colors unchanged.
+The sink and its parameter views expire when the callback returns.
+
+A non-OK callback result discards its matrix, records a context error, and
+leaves ordinary content visible. CBSS resets the result before every callback,
+so a preceding frame's filter cannot leak into an identity or failed result.
+Successful matrices use the same complete visual group, mask, local overlay,
+and owner-opacity semantics as Nim filter providers. Registration tokens,
+replacement, unregister, reset/destruction release callbacks, and paint-only
+invalidation use the existing provider lifecycle; lifecycle changes during a
+provider callback are rejected.
 
 ## GPU Canvas Material
 

@@ -412,6 +412,8 @@ type
   CbssCustomPaintSinkObj = object
     ownerContext: CbssContextHandle
     active: bool
+    filterMode: bool
+    colorFilter: LayerColorFilter
     canvas: Canvas2D
     parameters: CustomPaintParameters
 
@@ -826,6 +828,8 @@ proc checkedCustomPaintSink(
   if addr(sink.ownerContext.customPaintSink) != sink:
     return (CbssInvalidHandle, nil)
   if not sink.active or sink.canvas.isNil:
+    return (CbssNotAvailable, nil)
+  if requireCapacity and sink.filterMode:
     return (CbssNotAvailable, nil)
   if requireCapacity and sink.canvas.commands.len >= maxCustomPaintCommands:
     return (CbssOutOfRange, nil)
@@ -4184,6 +4188,56 @@ proc cbssContextReset(context: CbssContextHandle): int32 {.
     context.setError(error.msg)
     CbssInternalError
 
+proc invokeCustomPaintProvider(
+    owner: CbssContextHandle;
+    retained: CbssCustomPaintProviderBinding;
+    request: CustomPaintRequest
+): CustomPaintResolution {.raises: [].} =
+  if retained.released or retained.callback.isNil or
+      owner.isNil or owner.customPaintSink.active:
+    if not owner.isNil:
+      owner.setError("custom paint provider re-entry is not available")
+    return
+  let sink = addr owner.customPaintSink
+  if sink.canvas.isNil:
+    sink.canvas = newCanvas2D()
+  sink.active = true
+  sink.filterMode = request.stage == cpsFilter
+  sink.colorFilter = nil
+  sink.canvas.clear()
+  sink.parameters = request.parameters
+  try:
+    var cRequest = CbssCustomPaintRequestC(
+      structSize: uint32(sizeof(CbssCustomPaintRequestC)),
+      apiVersion: CbssCustomPaintApiVersion,
+      stage: uint32(ord(request.stage)),
+      owner: uint32(request.owner.nodeRawValue),
+      bounds: request.bounds.toRect,
+      localBounds: CbssRectC(x: 0, y: 0, w: request.bounds.w,
+        h: request.bounds.h),
+      opacity: request.opacity,
+      parameterCount: uint32(request.parameters.len)
+    )
+    let status = retained.callback(addr cRequest, sink, retained.userData)
+    if status != CbssOk:
+      owner.setError("custom paint provider returned status " & $status)
+      return
+    if sink.filterMode:
+      result.colorFilter = sink.colorFilter
+    else:
+      result.commands = sink.canvas.paintCommands(
+        request.owner, request.bounds, request.opacity,
+        resolveBounds = false
+      )
+  except Exception as error:
+    owner.setError("custom paint provider failed: " & error.msg)
+    result = CustomPaintResolution()
+  finally:
+    sink.parameters = nil
+    sink.colorFilter = nil
+    sink.filterMode = false
+    sink.active = false
+
 proc cbssContextRegisterCustomPaintProvider(
     context: CbssContextHandle;
     material: cstring;
@@ -4207,8 +4261,8 @@ proc cbssContextRegisterCustomPaintProvider(
   let stageSet = customPaintStagesFromC(stages)
   if stageSet.isNone:
     return CbssInvalidArgument
-  if cpsFilter in stageSet.get:
-    return CbssNotAvailable
+  if cpsFilter in stageSet.get and stageSet.get != {cpsFilter}:
+    return CbssInvalidArgument
   let materialName = fromCString(material)
   if not materialName.validCustomPaintMaterial:
     return CbssInvalidArgument
@@ -4224,50 +4278,22 @@ proc cbssContextRegisterCustomPaintProvider(
     )
     let owner = context
     let retained = binding
-    let materialCallback: CustomPaintMaterialProc = proc(
-        request: CustomPaintRequest
-    ): seq[PaintCommand] {.raises: [].} =
-      if retained.released or retained.callback.isNil or
-          owner.isNil or owner.customPaintSink.active:
-        if not owner.isNil:
-          owner.setError("custom paint provider re-entry is not available")
-        return
-      let sink = addr owner.customPaintSink
-      if sink.canvas.isNil:
-        sink.canvas = newCanvas2D()
-      sink.active = true
-      sink.canvas.clear()
-      sink.parameters = request.parameters
-      try:
-        var cRequest = CbssCustomPaintRequestC(
-          structSize: uint32(sizeof(CbssCustomPaintRequestC)),
-          apiVersion: CbssCustomPaintApiVersion,
-          stage: uint32(ord(request.stage)),
-          owner: uint32(request.owner.nodeRawValue),
-          bounds: request.bounds.toRect,
-          localBounds: CbssRectC(x: 0, y: 0, w: request.bounds.w,
-            h: request.bounds.h),
-          opacity: request.opacity,
-          parameterCount: uint32(request.parameters.len)
-        )
-        let status = retained.callback(addr cRequest, sink, retained.userData)
-        if status != CbssOk:
-          owner.setError("custom paint provider returned status " & $status)
-          return
-        result = sink.canvas.paintCommands(
-          request.owner, request.bounds, request.opacity,
-          resolveBounds = false
-        )
-      except Exception as error:
-        owner.setError("custom paint provider failed: " & error.msg)
-        result.setLen(0)
-      finally:
-        sink.parameters = nil
-        sink.active = false
 
-    let registration = context.customPaints.registerCustomPaintMaterialTracked(
-      materialName, materialCallback, stageSet.get, replace != 0
-    )
+    let registration =
+      if stageSet.get == {cpsFilter}:
+        context.customPaints.registerCustomPaintFilterTracked(
+          materialName,
+          proc(request: CustomPaintRequest): LayerColorFilter {.raises: [].} =
+            invokeCustomPaintProvider(owner, retained, request).colorFilter,
+          replace != 0
+        )
+      else:
+        context.customPaints.registerCustomPaintMaterialTracked(
+          materialName,
+          proc(request: CustomPaintRequest): seq[PaintCommand] {.raises: [].} =
+            invokeCustomPaintProvider(owner, retained, request).commands,
+          stageSet.get, replace != 0
+        )
     if registration.isNone:
       return CbssInvalidArgument
 
@@ -5107,6 +5133,25 @@ proc cbssCustomPaintParameterName(
       cast[ptr UncheckedArray[char]](buffer)[0] = '\0'
     return 0
   copyString(sink.parameters[int(index)].name, buffer, capacity)
+
+proc cbssCustomPaintSinkSetColorMatrix(
+    sink: CbssCustomPaintSinkHandle;
+    matrix: CbssRgbColorMatrixC
+): int32 {.exportc: "cbss_custom_paint_sink_set_color_matrix", cdecl, dynlib.} =
+  let checked = checkedCustomPaintSink(sink)
+  if checked.status != CbssOk:
+    return checked.status
+  if not sink.filterMode:
+    return CbssNotAvailable
+  for coefficient in matrix.coefficients:
+    if not coefficient.finite:
+      return CbssInvalidArgument
+  try:
+    sink.colorFilter = colorMatrixFilter(matrix.coefficients)
+    CbssOk
+  except CatchableError as error:
+    sink.ownerContext.setError(error.msg)
+    CbssInternalError
 
 proc cbssCustomPaintSinkSave(
     sink: CbssCustomPaintSinkHandle

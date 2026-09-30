@@ -30,7 +30,7 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x00010027` supports:
+ABI version `0x00010028` supports:
 
 - machine-readable Craft Driver contract metadata and runtime capability
   negotiation through stable numeric identifiers before tree construction;
@@ -469,8 +469,16 @@ These layer functions do not register a Style `cpsFilter` provider.
 `CBSS_PAINT_PUSH_LAYER` command, returning identity for an unfiltered layer.
 Other command kinds fail with `CBSS_INVALID_ARGUMENT`; failures leave the output
 untouched. Existing `CbssPaintCommand` layout and layer value fields are
-unchanged. Capability versions `paint.commands`, `canvas.retained`, and
-`custom-paint.provider` advance to 4.
+unchanged. Capability versions `paint.commands` and `canvas.retained` are 4.
+
+ABI `0x00010028` advances `custom-paint.provider` to 5 and supports registration
+with `CBSS_CUSTOM_PAINT_STAGE_FILTER` alone. These callbacks use
+`cbss_custom_paint_sink_set_color_matrix` to return a copied matrix for the
+owner's complete visual group. They can read typed parameters but cannot append
+drawing commands. No matrix means identity; callback failure discards its
+result and leaves ordinary content visible. See
+[Foreign Style Filters](custom-paint.md#foreign-style-filters) for the full
+lifetime and failure contract.
 
 Paint-command consumers inspect retained dash data through
 `cbss_paint_command_path_dash_count`, `cbss_paint_command_path_dash`, and

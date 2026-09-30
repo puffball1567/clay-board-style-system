@@ -24,6 +24,12 @@ release. Before 1.0, minor releases may contain public API changes.
   retaining commands. Existing layer signatures and paint records stay stable;
   paint, Canvas, and Custom Paint capability versions advance to 4.
 
+- Added foreign Style RGB filter providers in C ABI `0x00010028`. Filter-only
+  callbacks read typed parameters and return copied matrices through the scoped
+  sink. Failed callbacks fall back to ordinary content; replacement, unregister,
+  reset, and destruction share the existing exactly-once release contract.
+  The Custom Paint provider capability advances to 5.
+
 - Added bounded nested rounded clips to final-window direct GPU Surface
   composition. The SDL3 bridge now forwards up to eight logical clip masks,
   the standard GPU host compositor applies them through a separate

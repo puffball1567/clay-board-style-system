@@ -192,11 +192,12 @@ retained layers reuse their cached pixels; a changed matrix invalidates the
 layer's retained command scope.
 
 This establishes RGB matrix filters for Nim Canvas and paint commands. Spatial
-filters such as blur, alpha-changing matrices, GPU shader filtering, and foreign
-Style filter providers remain separate follow-up capabilities. C ABI
+filters such as blur, alpha-changing matrices, and GPU shader filtering remain
+separate follow-up capabilities. C ABI
 `0x00010027` exposes copied matrices through Canvas and Custom Paint layer
-functions, with a matching paint-command accessor. Existing C layer entry
-points retain their signatures and create unfiltered layers; see
+functions, with a matching paint-command accessor. ABI `0x00010028` also
+connects foreign RGB filter providers to ordinary Style declarations. Existing
+C layer entry points retain their signatures and create unfiltered layers; see
 [the C ABI](c-api.md#rendersurface-canvas-adapter).
 
 Ordinary Style declarations can use these matrices through typed

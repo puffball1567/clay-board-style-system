@@ -3,7 +3,7 @@
 #include <cbss/validation_ui.hpp>
 
 static_assert(sizeof(CbssRgbColorMatrix) == 48, "RGB matrix ABI changed");
-static_assert(CBSS_ABI_VERSION == 0x00010027u,
+static_assert(CBSS_ABI_VERSION == 0x00010028u,
               "unexpected CBSS ABI version");
 static_assert(CBSS_DRIVER_CONTRACT_VERSION == 0x00010000u,
               "unexpected Craft Driver contract version");
