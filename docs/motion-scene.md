@@ -1,4 +1,4 @@
-# CPU Motion Scene snapshots
+# CPU Motion Scene
 
 The opt-in `runtime/motion_scene` module keeps many visual objects in one
 retained Canvas. This first CPU reference path supports rounded rectangles,
@@ -79,9 +79,69 @@ cross-thread transfer or a worker queue; applications must use an appropriate
 ownership-transfer mechanism when producing results elsewhere. Tokens retain
 the scene until released and do not retain UI nodes.
 
-This is the snapshot and CPU drawing foundation of Motion Scene. Timeline
-tracks, interpolation, paths/text/images as scene objects, nested effect groups,
-GPU batching, and C ABI authoring remain follow-ups. There is no separate clock
-or animation loop. Future tracks will use the existing monotonic motion clock
-and frame scheduler. `examples/motion_scene_demo.nim` renders a deterministic
-scene to PPM for headless inspection.
+## Typed timelines
+
+Import `runtime/motion_scene_timeline` to animate a whole batch through the
+existing `AnimationClock`, numeric keyframe interpolation, and `FrameScheduler`.
+Each timeline has one clock track, irrespective of its object count. The
+application supplies the same monotonic timestamps it uses for UI motion; the
+module starts no timer, thread, or separate frame loop.
+
+```nim
+import clay_board_style_system/runtime/[motion_scene_timeline,
+  motion_scene_timeline_ui]
+
+let timeline = newMotionTimeline(scene, [
+  motionTrack(MotionObjectId(1), mspX, [
+    FloatKeyframe(offset: 0, value: 30),
+    FloatKeyframe(offset: 1, value: 180)
+  ])
+], durationSeconds = 2, nowSeconds = 10, timing = easeInOutTiming())
+
+var scheduler = initFrameScheduler()
+# In a UI loop, clear consumed deadlines once, then advance all producers.
+discard timeline.advance(view, scheduler, nowSeconds = 11)
+# Headless callers use timeline.advance(scheduler, nowSeconds) instead.
+```
+
+Tracks address existing stable IDs and set absolute `mspX`, `mspY`, `mspWidth`,
+`mspHeight`, `mspOpacity`, `mspRadius`, `mspTranslateX`, or `mspTranslateY` values.
+Translation tracks change the affine transform's translation components while
+preserving its linear components. Unanimated properties come from the snapshot
+captured at construction. Keyframes are copied, offsets must be ordered in
+`[0, 1]`, values must fit finite float32, dimensions must be nonnegative, and
+opacity must stay in `[0, 1]`. Scene validation and radius clamping still apply
+at every sampled frame. Duplicate object/property pairs and unknown IDs fail
+before any scene changes. A timeline accepts at most 65,536 tracks, 1,024 stops
+per track, and 262,144 stops in total.
+
+Timing options use the ordinary motion types: `timing`, `delaySeconds`,
+`direction`, and `fillMode`. `iterations` is a positive integer capped at
+1,000,000. The default is one forward iteration with forwards fill. With no
+forwards fill, completion restores the captured base snapshot. Finite timestamps
+are required; backwards timestamps clamp to the last supplied time. Unchanged
+samples do not dirty paint. Active motion contributes its next deadline without
+overwriting another producer's earlier deadline; delayed motion sleeps until its
+start. Finished, paused, and cancelled timelines contribute no new deadlines.
+
+`pause(nowSeconds)` samples the pause point before freezing. `resume(nowSeconds)`
+excludes the paused interval. `cancel()` freezes the last committed frame;
+`cancel(restoreBase = true)` restores the captured base only while the timeline
+still owns the scene. After directly pausing or restoring, publish attachments
+(or call the UI `advance` overload) to expose any changed revision. Setting
+`reducedMotion = true`, or calling `setReducedMotion(true)`, makes nonessential
+motion finish on its next eligible sample; `essentialMotion = true` keeps it
+running. This follows the existing AnimationClock policy, including delays.
+
+A timeline owns publication only while the scene still has its expected
+snapshot. An external replacement cancels it at the next advance or resume, so
+an old timeline cannot overwrite newer content. Use one active timeline per
+scene. Timeline writes also cancel pending preview tokens. Invalid sampled
+geometry cancels the timeline, raises `ValueError`, and preserves the last
+committed frame. The UI overload checks the scene/view pairing and cancels when
+the attachment is disposed. All timeline operations belong to the UI thread.
+
+Paths/text/images as scene objects, nested effect groups, color and arbitrary
+matrix tracks, seeking/reversing an existing timeline, GPU batching, and C ABI
+authoring remain follow-ups. `examples/motion_scene_demo.nim` renders a
+deterministically sampled timeline to PPM for headless inspection.

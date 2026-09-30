@@ -246,6 +246,8 @@ task testMotionAsan, "Run retained runtime tests under AddressSanitizer":
     for test in [
       ("declarative_transition", "tests/runtime/test_declarative_transition.nim"),
       ("declarative_keyframes", "tests/runtime/test_declarative_keyframes.nim"),
+      ("motion_scene", "tests/runtime/test_motion_scene.nim"),
+      ("motion_scene_timeline", "tests/runtime/test_motion_scene_timeline.nim"),
       ("command", "tests/runtime/test_command.nim"),
       ("cue", "tests/runtime/test_cue.nim"),
       ("cue_canvas", "tests/runtime/test_cue_canvas.nim"),
@@ -293,6 +295,8 @@ task testUbsan, "Run numeric, layout, transform, and motion tests under Undefine
       ("retained_canvas", "tests/paint/test_retained_canvas_raster.nim"),
       ("declarative_transition", "tests/runtime/test_declarative_transition.nim"),
       ("declarative_keyframes", "tests/runtime/test_declarative_keyframes.nim"),
+      ("motion_scene", "tests/runtime/test_motion_scene.nim"),
+      ("motion_scene_timeline", "tests/runtime/test_motion_scene_timeline.nim"),
       ("validation", "tests/runtime/test_validation.nim")
     ]:
       let testName = test[0]
@@ -316,6 +320,8 @@ task testLsan, "Run retained lifecycle tests under LeakSanitizer on Linux":
         ("event_lifecycle", "tests/memory/event_lifecycle.nim"),
         ("declarative_transition", "tests/runtime/test_declarative_transition.nim"),
         ("declarative_keyframes", "tests/runtime/test_declarative_keyframes.nim"),
+        ("motion_scene", "tests/runtime/test_motion_scene.nim"),
+        ("motion_scene_timeline", "tests/runtime/test_motion_scene_timeline.nim"),
         ("command", "tests/runtime/test_command.nim"),
         ("cue", "tests/runtime/test_cue.nim"),
         ("cue_canvas", "tests/runtime/test_cue_canvas.nim"),

@@ -9,11 +9,13 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
-- Added an opt-in CPU Motion Scene snapshot foundation. Stable-ID rounded
+- Added opt-in CPU Motion Scene snapshots and typed numeric timelines. Stable-ID rounded
   rectangles share one Canvas with affine transforms, opacity, z-order,
   viewport clipping, and matching hit testing. Immutable batch replacement and
   cancellable latest-request tokens support deterministic export and previews;
-  UI publication invalidates only paint and remains idle between changes.
+  Timelines reuse AnimationClock and FrameScheduler for easing, delay, repeats,
+  pause/resume, and reduced motion. UI publication invalidates only paint and
+  returns to idle when motion finishes.
 
 - Added bounded nested rounded clips to final-window direct GPU Surface
   composition. The SDL3 bridge now forwards up to eight logical clip masks,

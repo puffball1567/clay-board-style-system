@@ -7,6 +7,7 @@ import clay_board_style_system/paint/gpu_direct_compositor
 import clay_board_style_system/paint/paint_command
 import clay_board_style_system/paint/path_geometry
 import clay_board_style_system/runtime/motion_scene
+import clay_board_style_system/runtime/[motion_scene_timeline, frame_scheduler, animation_clock]
 import clay_board_style_system/runtime/canvas
 import clay_board_style_system/text/[cosmic_text_engine, font_registry]
 
@@ -604,7 +605,7 @@ suite "SDL3 transform rendering":
     check frame.pixel(10, 10).b > 220
     check frame.pixel(106, 10).g > 220
 
-  test "CPU Motion Scene snapshots update every SDL rendering path":
+  test "CPU Motion Scene snapshots and timelines update every SDL rendering path":
     let previousDriver = getEnv("SDL_VIDEODRIVER")
     putEnv("SDL_VIDEODRIVER", "dummy")
     defer:
@@ -631,3 +632,21 @@ suite "SDL3 transform rendering":
         check frame.pixel(9, 8) == (0'u8, 0'u8, 255'u8)
         check frame.pixel(4, 3) == (0'u8, 0'u8, 0'u8)
         check frame.pixel(19, 8) == (0'u8, 0'u8, 0'u8)
+    let timeline = newMotionTimeline(scene, [
+      motionTrack(MotionObjectId(2), mspX, [
+        FloatKeyframe(offset: 0, value: 8), FloatKeyframe(offset: 1, value: 16)
+      ])
+    ], 1, 0)
+    for time in [0.5, 1.0]:
+      var scheduler = initFrameScheduler()
+      discard timeline.advance(scheduler, time)
+      let commands = scene.canvas.paintCommands(NodeId(0), rect(0, 0, 24, 20))
+      for path in 0 .. 2:
+        renderer.requestFrameCapture()
+        case path
+        of 0: renderer.render(commands, rgb(0, 0, 0))
+        of 1: renderer.render(commands, CosmicTextEngine(), initFontRegistry(), rgb(0, 0, 0))
+        else: renderer.renderLayered(commands, CosmicTextEngine(), initFontRegistry(), rgb(0, 0, 0))
+        let frame = renderer.capturedFrame().get
+        check frame.pixel(9, 8) == (0'u8, 255'u8, 0'u8)
+        check frame.pixel(9 + int(8 * time), 8) == (0'u8, 0'u8, 255'u8)

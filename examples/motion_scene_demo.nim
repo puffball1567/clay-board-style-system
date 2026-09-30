@@ -1,9 +1,9 @@
 ## Headless CPU scene example: nim c -r --path:src examples/motion_scene_demo.nim output.ppm
-import std/[math, os]
+import std/[math, options, os]
 
 import clay_board_style_system
 import clay_board_style_system/backends/ppm/raster
-import clay_board_style_system/runtime/motion_scene
+import clay_board_style_system/runtime/[motion_scene, motion_scene_timeline]
 
 proc frame(phase: float32): MotionSceneSnapshot =
   var objects: seq[MotionObject]
@@ -25,6 +25,18 @@ discard cancelled.cancel()
 assert cancelled.complete(frame(1)) == msuStale
 let update = scene.beginUpdate()
 assert update.complete(frame(0.75)) == msuApplied
+var tracks: seq[MotionFloatTrack]
+for index in 0 ..< scene.snapshot.objectCount:
+  let item = scene.snapshot.objectAt(index).get
+  let initialY = item.transform.ty.float64
+  tracks.add motionTrack(item.id, mspTranslateY, [
+    FloatKeyframe(offset: 0, value: initialY),
+    FloatKeyframe(offset: 0.5, value: initialY + 6),
+    FloatKeyframe(offset: 1, value: initialY)
+  ])
+let timeline = newMotionTimeline(scene, tracks, durationSeconds = 2, nowSeconds = 0)
+var scheduler = initFrameScheduler()
+discard timeline.advance(scheduler, nowSeconds = 1)
 let commands = scene.canvas.paintCommands(NodeId(0), rect(0, 0, 460, 284))
 let output = if paramCount() > 0: paramStr(1) else: "motion-scene.ppm"
 render(commands, 460, 284, rgb(0.04, 0.06, 0.1)).writePpm(output)

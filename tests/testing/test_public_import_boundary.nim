@@ -11,6 +11,9 @@ when declared(initSdl3WaylandDriver):
 when declared(newMotionScene):
   {.fatal: "Motion Scene must remain an opt-in import".}
 
+when declared(newMotionTimeline):
+  {.fatal: "Motion Scene timelines must remain an opt-in import".}
+
 suite "public import boundary":
   test "top-level module remains usable without testing APIs":
     let ui = initUiRoot()
