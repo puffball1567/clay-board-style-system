@@ -9,6 +9,13 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added bounded GPU instancing with static and dynamic record buffers, indexed
+  meshes, validated subranges, and up to 65,536 instances per draw. Typed shader
+  inputs expose up to five packed vec4 values per instance; bgfx maps both buffer types directly.
+  GpuHost backend API version is now 19. The OpenGL fixture compares affine
+  rounded rectangles, opacity, and overlapping instances with CPU reference
+  pixels, while shader compilation covers OpenGL and Vulkan.
+
 - Added bounded nested rounded clips to final-window direct GPU Surface
   composition. The SDL3 bridge now forwards up to eight logical clip masks,
   the standard GPU host compositor applies them through a separate
@@ -21,6 +28,11 @@ release. Before 1.0, minor releases may contain public API changes.
   generation, dimensions, feedback hazards, and target format before drawing.
   SDL texture-backed layers remain fail-closed because they are not bgfx
   render targets and cannot be redirected to the final window safely.
+
+### Fixed
+
+- Avoided the reserved HLSL identifier `point` in the rounded-mask compositor
+  shader so official shaderc can compile its Vulkan variant.
 
 ## [0.7.1] - 2026-09-20
 

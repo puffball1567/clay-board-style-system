@@ -128,6 +128,7 @@ proc fillBackendInfo(
   info = GpuBackendInfo(
     rendererName: (if name.isNil: "bgfx" else: $name),
     computeSupported: (caps.supported and BGFX_CAPS_COMPUTE) != 0,
+    instancingSupported: true, # Instancing is baseline in the pinned bgfx API.
     textureCopySupported: caps.limits.maxBlits != 0,
     textureReadbackSupported: true,
     bufferCopySupported: (caps.supported and BGFX_CAPS_COMPUTE) != 0,
@@ -1243,6 +1244,10 @@ proc submitDraw(
        (index.tag != brtStaticIndexBuffer and
         index.tag != brtDynamicIndexBuffer)):
     return gbsInvalidConfiguration
+  let instances = bindings.instances.buffer.unpackBackendResource()
+  if bindings.instances.instanceCount > 0 and
+      (not instances.valid or instances.tag notin {brtStaticVertexBuffer, brtDynamicVertexBuffer}):
+    return gbsInvalidConfiguration
   let bindingStatus = bindings.applyBindings()
   if bindingStatus != gbsOk:
     return bindingStatus
@@ -1278,6 +1283,19 @@ proc submitDraw(
         command.firstIndex,
         command.indexCount
       )
+    else:
+      return gbsInvalidConfiguration
+
+  if bindings.instances.instanceCount > 0:
+    case instances.tag
+    of brtStaticVertexBuffer:
+      BGFX.set_instance_data_from_vertex_buffer(
+        bgfx_vertex_buffer_handle_t(idx: instances.handleIndex),
+        bindings.instances.firstInstance, bindings.instances.instanceCount)
+    of brtDynamicVertexBuffer:
+      BGFX.set_instance_data_from_dynamic_vertex_buffer(
+        bgfx_dynamic_vertex_buffer_handle_t(idx: instances.handleIndex),
+        bindings.instances.firstInstance, bindings.instances.instanceCount)
     else:
       return gbsInvalidConfiguration
 

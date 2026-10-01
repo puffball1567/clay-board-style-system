@@ -116,17 +116,17 @@ proc gpuHostDirectCompositeMaskedFragmentSource*(
     "uniform vec4 u_cbssUvRect;\n" &
     "uniform vec4 u_cbssClipMasks[" &
       $gpuHostDirectCompositeClipUniformArrayLength & "];\n\n" &
-    "float cbssRoundedRectDistance(vec2 point, vec4 bounds, float radius)\n" &
+    "float cbssRoundedRectDistance(vec2 localPoint, vec4 bounds, float radius)\n" &
     "{\n" &
     "  vec2 halfSize = max((bounds.zw - bounds.xy) * 0.5, vec2(0.0));\n" &
     "  float boundedRadius = clamp(radius, 0.0, min(halfSize.x, halfSize.y));\n" &
     "  vec2 center = (bounds.xy + bounds.zw) * 0.5;\n" &
-    "  vec2 delta = abs(point - center) - max(halfSize - vec2(boundedRadius), vec2(0.0));\n" &
+    "  vec2 delta = abs(localPoint - center) - max(halfSize - vec2(boundedRadius), vec2(0.0));\n" &
     "  return length(max(delta, vec2(0.0))) + min(max(delta.x, delta.y), 0.0) - boundedRadius;\n" &
     "}\n\n" &
     "void main()\n" &
     "{\n" &
-    "  vec2 point = v_texcoord0 * u_cbssClipMasks[0].yz;\n" &
+    "  vec2 localPoint = v_texcoord0 * u_cbssClipMasks[0].yz;\n" &
     "  float clipCoverage = 1.0;\n"
   for index in 0 ..< maxGpuDirectClipMasks:
     let boundsIndex = 1 + index * 2
@@ -135,7 +135,7 @@ proc gpuHostDirectCompositeMaskedFragmentSource*(
       $(index.float32 + 0.5'f32) &
       ")\n" &
       "  {\n" &
-      "    float distanceToMask = cbssRoundedRectDistance(point, u_cbssClipMasks[" &
+      "    float distanceToMask = cbssRoundedRectDistance(localPoint, u_cbssClipMasks[" &
       $boundsIndex & "], u_cbssClipMasks[" & $radiusIndex & "].x);\n" &
       "    clipCoverage = min(clipCoverage, 1.0 - smoothstep(-0.5, 0.5, " &
       "distanceToMask * u_cbssClipMasks[0].w));\n" &

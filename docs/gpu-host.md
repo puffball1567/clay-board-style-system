@@ -617,6 +617,60 @@ stages of one command. Binding stage collisions, duplicate
 uniforms, stale or foreign handles, non-finite values, unsupported mip levels,
 and fixed per-command binding limits fail before pass setup or dispatch.
 
+### Instanced drawing
+
+`GpuHost` API version 19 adds bounded instance records to ordinary draws.
+Check `host.backendInfo.instancingSupported` before creating an instanced
+pipeline; custom backends default to unsupported. The pinned bgfx API supports
+instancing as a baseline operation.
+
+Set `GpuGraphicsPipelineDescriptor.instanceDataVec4Count` to 1–5. Each instance
+is that many tightly packed float32 vec4 values (16–80 bytes). Zero retains the
+ordinary non-instanced pipeline contract. Instance records are independent of
+the mesh's vertex layout.
+
+```nim
+let descriptor = gpuInstanceBufferDescriptor(2, 1000, gbaDynamic)
+let instances = host.createGpuBuffer(resources, descriptor, packedInstanceBytes)
+# Before beginGpuFrame, update complete records; offsets are byte offsets.
+host.updateGpuBuffer(instances, 32, replacementRecordBytes)
+# During an active frame, use a pipeline with instanceDataVec4Count = 2.
+host.submitGpuDraw(resources, pass, GpuDrawCommand(
+  pipeline: pipeline,
+  vertexBuffer: quad,
+  vertexCount: 4,
+  instances: GpuInstanceBinding(
+    buffer: instances, firstInstance: 0, instanceCount: 1000
+  )
+))
+```
+
+The descriptor helper creates ordinary static or dynamic vertex-buffer storage
+with a packed vec4 layout. Static storage requires complete initial data;
+dynamic storage may be allocated first, but initialize every record a draw will
+read. `firstInstance` and `instanceCount` count records, not bytes. Draws accept
+1–65,536 instances, including subranges of a larger buffer. Indexed meshes work
+with the same instance binding. One instanced draw consumes one submission work
+unit, and the persistent buffer remains charged to its namespace's byte budget.
+
+The host validates device support, pipeline record width, buffer ownership,
+live generation, packed layout, and the complete range before beginning any
+pass. A malformed command rejects an entire `submitGpuDraws` batch before
+backend submission. Instance buffers follow the existing frame/update,
+namespace, device-loss, and explicit resource-release rules. The adapter binds
+static and dynamic records through their corresponding bgfx APIs and discards
+instance state after each draw.
+
+Typed vertex shaders read `gsisInstance0` through `gsisInstance4` as `gsvtVec4`
+inputs. These emit `i_data0` through `i_data4`; pass needed values to fragment
+shaders through ordinary varyings. Instance slots cannot be used as fragment
+inputs or varying outputs. Match the pipeline record width to the shader's
+highest instance input plus one.
+
+This supplies the GPU batching primitive for Motion Scene. Automatic scene
+snapshot uploads, timeline-driven updates, and scene renderer selection are
+separate integration work.
+
 ## Buffer Readback
 
 Shader-written storage can return a complete buffer or one element-aligned
