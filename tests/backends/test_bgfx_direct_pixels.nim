@@ -623,6 +623,28 @@ proc run() =
       6, 2, Pixel(alpha: 255), "scaled target background after destination"
     )
 
+    let fractionalFrame = host.beginGpuFrame()
+    host.draw(
+      compositor, scaledTarget, scaledBounds, scaledBounds, black,
+      pixelScale = 2
+    )
+    host.draw(
+      compositor, scaledTarget, scaledBounds, rect(10.25, 20, 2, 2), pattern,
+      pixelScale = 2
+    )
+    host.endGpuFrame(fractionalFrame)
+    let fractionalPixels = host.readPixels(
+      compositorNamespace, scaledTarget, 8, 4
+    )
+    for x, colorIndex in [0, 2, 4, 6, 7]:
+      fractionalPixels.requirePixel(
+        x, 1, patternColors[colorIndex],
+        "fractional origin keeps source texels aligned " & $x
+      )
+    fractionalPixels.requirePixel(
+      5, 1, Pixel(alpha: 255), "fractional destination edge"
+    )
+
     var latestConfig = defaultGpuDirectSurfaceConfig(1, 1)
     latestConfig.bufferCount = 2
     latestConfig.label = "latest-ready-surface"

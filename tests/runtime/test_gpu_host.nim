@@ -7206,9 +7206,9 @@ suite "GPU host direct compositor":
     check context.lastBindings.uniforms[0].values == @[
       0.75'f32, float32(ord(gcamStraight)), 0.0'f32, 0.0'f32
     ]
-    check context.lastBindings.uniforms[1].values == @[
-      0.25'f32, 0.125'f32, 0.75'f32, 0.625'f32
-    ]
+    let croppedUv = context.lastBindings.uniforms[1].values
+    for index, expected in [0.25'f32, 0.122'f32, 0.75'f32, 0.626'f32]:
+      check abs(croppedUv[index] - expected) < 0.000001'f32
     check context.presentationTextureResolves == 0
     var wrongScaleContext = compositionContext
     wrongScaleContext.pixelScale = 1
@@ -7253,6 +7253,29 @@ suite "GPU host direct compositor":
     check context.lastGraphicsPass.viewport == GpuViewport(
       x: 1000, y: 125, width: 50, height: 50
     )
+    host.endGpuFrame(token)
+
+    # The viewport is rounded to whole physical pixels. Its UV endpoints must
+    # describe those rounded edges so texels stay aligned at fractional origins.
+    let fractional = drawGpuDirectSurface(
+      NodeId(0), surface, rect(100.2, 50.2, 400, 200)
+    )
+    token = host.beginGpuFrame()
+    check fractional.compositeGpuDirectSurface(
+      unclippedWindowContext, compositor
+    ) == gdcsPresented
+    check context.lastGraphicsPass.viewport == GpuViewport(
+      x: 125, y: 62, width: 501, height: 251
+    )
+    let fractionalUv = context.lastBindings.uniforms[1].values
+    check abs(fractionalUv[0] -
+      ((125.0'f32 / 1.25'f32 - 100.2'f32) / 400.0'f32)) < 0.000001'f32
+    check abs(fractionalUv[1] -
+      ((62.0'f32 / 1.25'f32 - 50.2'f32) / 200.0'f32)) < 0.000001'f32
+    check abs(fractionalUv[2] -
+      ((626.0'f32 / 1.25'f32 - 100.2'f32) / 400.0'f32)) < 0.000001'f32
+    check abs(fractionalUv[3] -
+      ((313.0'f32 / 1.25'f32 - 50.2'f32) / 200.0'f32)) < 0.000001'f32
     host.endGpuFrame(token)
 
     check surface.closeGpuDirectSurface()
@@ -7618,6 +7641,9 @@ suite "GPU host direct compositor":
       let sampler = host.createGpuSampler(
         namespace, samplerDescriptor("s_cbssSurface")
       )
+      var repeating = samplerDescriptor("s_cbssSurface")
+      repeating.addressU = gsamRepeat
+      let repeatingSampler = host.createGpuSampler(namespace, repeating)
       var pipelines: array[GpuAlphaMode, GpuResourceHandle]
       pipelines[gcamStraight] = drawing.pipeline
       var maskedPipelines: array[GpuAlphaMode, GpuResourceHandle]
@@ -7661,6 +7687,19 @@ suite "GPU host direct compositor":
             uvRectUniform: uvRectUniform,
             clipMasksUniform: shortClipMasksUniform,
             sampler: sampler,
+            vertexCount: 2
+          )
+        )
+      expect ValueError:
+        discard newGpuHostDirectCompositor(
+          host,
+          GpuHostDirectCompositeMaterial(
+            namespace: namespace,
+            pipelines: pipelines,
+            vertexBuffer: drawing.vertexBuffer,
+            compositeUniform: compositeUniform,
+            uvRectUniform: uvRectUniform,
+            sampler: repeatingSampler,
             vertexCount: 2
           )
         )
@@ -7771,5 +7810,24 @@ suite "GPU host direct compositor":
         2.0'f32, 1.0'f32, 6.0'f32, 7.0'f32, 1.0'f32
       ]
       host.endGpuFrame(token)
+
+      roundedContext.clipBounds = some(rect(0, 0, 9, 9))
+      let fractional = drawGpuDirectSurface(
+        NodeId(0), surface, rect(0.25, 0.25, 8, 8)
+      )
+      token = host.beginGpuFrame()
+      check fractional.compositeGpuDirectSurface(
+        roundedContext, compositor
+      ) == gdcsPresented
+      check context.lastGraphicsPass.viewport == GpuViewport(
+        x: 0, y: 0, width: 13, height: 13
+      )
+      let fractionalClipValues = context.lastBindings.uniforms[2].values
+      check abs(fractionalClipValues[1] - (13.0'f32 / 1.5'f32)) <
+        0.000001'f32
+      check fractionalClipValues[4] == 1.0'f32
+      check fractionalClipValues[5] == 2.0'f32
+      host.endGpuFrame(token)
+
       check surface.closeGpuDirectSurface()
       host.close()
