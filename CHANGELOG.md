@@ -9,6 +9,11 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Ordinary GPU graphics and compute submissions can sample a same-namespace
+  RenderTarget from an earlier pass through a typed texture binding. The host
+  resolves its color attachment before submission, rejects unsampled targets
+  and same-pass feedback, and checks an entire draw batch before backend work.
+
 - Added bounded nested rounded clips to final-window direct GPU Surface
   composition. The SDL3 bridge now forwards up to eight logical clip masks,
   the standard GPU host compositor applies them through a separate
