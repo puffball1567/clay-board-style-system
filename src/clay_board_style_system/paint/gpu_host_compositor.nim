@@ -34,7 +34,8 @@ type
     ## The shaders consume a full-viewport position/UV vertex stream,
     ## u_cbssComposite = (opacity, alphaMode, 0, 0), and
     ## u_cbssUvRect = (u0, v0, u1, v1). Masked pipelines additionally consume
-    ## the fixed-size u_cbssClipMasks array.
+    ## the fixed-size u_cbssClipMasks array. The sampler must clamp U and V:
+    ## pixel-rounded viewport edges can extend past the source rectangle.
     namespace*: GpuNamespaceId
     pipelines*: array[GpuAlphaMode, GpuResourceHandle]
     maskedPipelines*: array[GpuAlphaMode, GpuResourceHandle]
@@ -235,7 +236,9 @@ proc validateMaterial(
       material.compositeUniform, "u_cbssComposite", gutVec4
     ) or not host.gpuUniformMatches(
       material.uvRectUniform, "u_cbssUvRect", gutVec4
-    ) or not host.gpuSamplerMatches(material.sampler, "s_cbssSurface"):
+    ) or not host.gpuSamplerMatches(
+      material.sampler, "s_cbssSurface", requireClamp = true
+    ):
     raise newException(
       ValueError, "GPU compositor bindings do not match the standard shader interface"
     )
@@ -311,46 +314,52 @@ proc physicalBounds(
 
 proc uvRect(
     destination: Rect;
-    visible: Rect;
+    sampled: Rect;
     rowsBottomUp = false
 ): array[4, float32] =
   let inverseWidth = 1.0'f32 / destination.w
   let inverseHeight = 1.0'f32 / destination.h
   result = [
-    clamp((visible.x - destination.x) * inverseWidth, 0.0'f32, 1.0'f32),
-    clamp((visible.y - destination.y) * inverseHeight, 0.0'f32, 1.0'f32),
-    clamp(
-      (visible.x + visible.w - destination.x) * inverseWidth,
-      0.0'f32,
-      1.0'f32
-    ),
-    clamp(
-      (visible.y + visible.h - destination.y) * inverseHeight,
-      0.0'f32,
-      1.0'f32
-    )
+    (sampled.x - destination.x) * inverseWidth,
+    (sampled.y - destination.y) * inverseHeight,
+    (sampled.x + sampled.w - destination.x) * inverseWidth,
+    (sampled.y + sampled.h - destination.y) * inverseHeight
   ]
   if rowsBottomUp:
     swap(result[1], result[3])
 
+proc sampledLogicalBounds(
+    viewport: GpuViewport;
+    target: Rect;
+    scale: float32
+): Rect =
+  ## The full pixel-aligned viewport is rasterized, even when its edges extend
+  ## past the requested logical rectangle. UVs and masks must use those edges.
+  rect(
+    target.x + viewport.x.float32 / scale,
+    target.y + viewport.y.float32 / scale,
+    viewport.width.float32 / scale,
+    viewport.height.float32 / scale
+  )
+
 proc clipMaskUniformValues(
     context: GpuDirectCompositeContext;
-    visible: Rect
+    sampled: Rect
 ): seq[float32] =
   result = newSeq[float32](
     int(gpuHostDirectCompositeClipUniformArrayLength) * 4
   )
   result[0] = float32(context.clipMaskCount)
-  result[1] = visible.w
-  result[2] = visible.h
+  result[1] = sampled.w
+  result[2] = sampled.h
   result[3] = context.pixelScale
   for index in 0 ..< int(context.clipMaskCount):
     let mask = context.clipMasks[index]
     let offset = (1 + index * 2) * 4
-    result[offset] = mask.bounds.x - visible.x
-    result[offset + 1] = mask.bounds.y - visible.y
-    result[offset + 2] = mask.bounds.x + mask.bounds.w - visible.x
-    result[offset + 3] = mask.bounds.y + mask.bounds.h - visible.y
+    result[offset] = mask.bounds.x - sampled.x
+    result[offset + 1] = mask.bounds.y - sampled.y
+    result[offset + 2] = mask.bounds.x + mask.bounds.w - sampled.x
+    result[offset + 3] = mask.bounds.y + mask.bounds.h - sampled.y
     result[offset + 4] = mask.radius
 
 proc newGpuHostDirectCompositor*(
@@ -485,6 +494,9 @@ proc newGpuHostDirectCompositor*(
       )
       if bounds.empty:
         return gdcsPresented
+      let sampled = bounds.viewport.sampledLogicalBounds(
+        request.context.targetBounds, request.context.pixelScale
+      )
 
       let pipeline =
         if request.context.requiresClipMask:
@@ -504,14 +516,14 @@ proc newGpuHostDirectCompositor*(
         GpuUniformBinding(
           uniform: material.uvRectUniform,
           values: @(
-            request.destination.uvRect(visible, sourceInfo.rowsBottomUp)
+            request.destination.uvRect(sampled, sourceInfo.rowsBottomUp)
           )
         )
       ]
       if request.context.requiresClipMask:
         uniforms.add GpuUniformBinding(
           uniform: material.clipMasksUniform,
-          values: request.context.clipMaskUniformValues(visible)
+          values: request.context.clipMaskUniformValues(sampled)
         )
       try:
         host.submitGpuPresentationDraw(

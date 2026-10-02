@@ -7,6 +7,13 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- Aligned direct GPU Surface texture sampling and rounded masks with the
+  pixel-rounded compositor viewport at fractional logical positions and
+  non-unit pixel scales. The standard compositor now requires clamped sampler
+  edges so fractional coverage cannot repeat or mirror unrelated texels.
+
 ### Added
 
 - Added bounded nested rounded clips to final-window direct GPU Surface
