@@ -682,6 +682,63 @@ proc run() =
       rect(0, 2, 4, 2), cyan
     )
     host.endGpuFrame(renderSourceFrame)
+
+    let multipassTarget = host.createGpuRenderTarget(
+      compositorNamespace,
+      GpuRenderTargetDescriptor(
+        width: 4,
+        height: 4,
+        format: gtfRgba8,
+        usage: {gtuRenderTarget, gtuSampled, gtuBlitSource},
+        label: "ordinary-multipass-target"
+      )
+    )
+    let sourceUv =
+      if host.gpuPresentableResourceInfo(renderTargetSource).rowsBottomUp:
+        @[0.0'f32, 1.0'f32, 1.0'f32, 0.0'f32]
+      else:
+        @[0.0'f32, 0.0'f32, 1.0'f32, 1.0'f32]
+    let multipassFrame = host.beginGpuFrame()
+    host.submitGpuDraw(
+      compositorNamespace,
+      GpuGraphicsPassDescriptor(
+        viewport: GpuViewport(width: 4, height: 4),
+        renderTarget: multipassTarget
+      ),
+      GpuDrawCommand(
+        pipeline: straightPipeline,
+        vertexBuffer: vertexBuffer,
+        vertexCount: uint32(vertices.len),
+        bindings: GpuBindingSet(
+          uniforms: @[
+            GpuUniformBinding(
+              uniform: compositeUniform,
+              values: @[1.0'f32, float32(ord(gcamStraight)), 0.0'f32, 0.0'f32]
+            ),
+            GpuUniformBinding(uniform: uvUniform, values: sourceUv)
+          ],
+          textures: @[
+            GpuTextureBinding(
+              stage: 0,
+              sampler: sampler,
+              texture: renderTargetSource
+            )
+          ]
+        )
+      )
+    )
+    host.endGpuFrame(multipassFrame)
+    let multipassPixels = host.readPixels(
+      compositorNamespace, multipassTarget, 4, 4
+    )
+    multipassPixels.requirePixel(
+      2, 0, Pixel(red: 255, alpha: 255), "ordinary multipass top row"
+    )
+    multipassPixels.requirePixel(
+      2, 3, Pixel(green: 255, blue: 255, alpha: 255),
+      "ordinary multipass bottom row"
+    )
+
     var rtConfig = defaultGpuDirectSurfaceConfig(4, 4)
     rtConfig.bufferCount = 2
     rtConfig.label = "render-target-direct-surface"
