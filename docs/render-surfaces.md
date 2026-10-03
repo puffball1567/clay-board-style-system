@@ -151,10 +151,58 @@ Scopes restore in strict LIFO order with transforms and clips. A dangling layer
 is closed at the paint boundary; an unmatched pop is ignored. SDL3 allocates a
 compact high-DPI render target from the existing transform-texture cache, while
 the PPM backend is the deterministic alpha-correct reference implementation.
-SDL3's software renderer lacks premultiplied texture composition, so it uses
-the closest built-in mode; production hardware renderer paths preserve the
-defined alpha result. Allocation failure suppresses the isolated scope instead
+SDL3's software renderer uses bounded CPU composition for isolated layers to
+preserve premultiplied alpha, including nested translucent transforms. The
+temporary readback, editable pixels, and upload working set is capped at 64 MiB
+per composition. Allocation or budget failure suppresses the isolated scope instead
 of silently drawing it into the parent with different composition semantics.
+
+### Layer Color Filters
+
+Nim Canvas layers accept an optional immutable `colorFilter`. The same filter
+can be shared by multiple retained layers and by low-level `pushLayer` commands:
+
+```nim
+let invert = colorMatrixFilter([
+  -1.0'f32, 0, 0, 1,
+  0.0'f32, -1, 0, 1,
+  0.0'f32, 0, -1, 1
+])
+drawing.beginLayer(rect(0, 0, 240, 160), colorFilter = invert)
+drawing.fillRect(rect(20, 20, 80, 60), rgb(1, 0, 0))
+drawing.endLayer()
+```
+
+The twelve coefficients form three rows of `[R, G, B, offset]`. Each row
+produces one output channel from straight, encoded sRGB input; output RGB is
+clamped to `[0, 1]`. Alpha and geometric coverage remain unchanged, so color
+offsets cannot fill transparent holes. The filter applies once to the completed
+layer, before layer opacity and composition. Nested filters apply inside out.
+Coefficients must be finite and are copied at construction. A nil filter or
+the identity matrix adds no filtering work. `colorMatrixCoefficients` returns
+a value copy for inspection, and retained caches compare coefficient values
+rather than allocation identity.
+
+PPM evaluates the shared matrix during layer composition. SDL3 reads only the
+bounded isolated target, transforms its pixels, and uploads a temporary texture;
+this is a CPU filter path even on accelerated SDL renderers. The target,
+readback, editable pixels, and upload are budgeted at 64 MiB per filtered layer.
+Oversized or unavailable filtered targets suppress that scope. Unchanged
+retained layers reuse their cached pixels; a changed matrix invalidates the
+layer's retained command scope.
+
+This establishes RGB matrix filters for Nim Canvas and paint commands. Spatial
+filters such as blur, alpha-changing matrices, and GPU shader filtering remain
+separate follow-up capabilities. C ABI
+`0x00010027` exposes copied matrices through Canvas and Custom Paint layer
+functions, with a matching paint-command accessor. ABI `0x00010028` also
+connects foreign RGB filter providers to ordinary Style declarations. Existing
+C layer entry points retain their signatures and create unfiltered layers; see
+[the C ABI](c-api.md#rendersurface-canvas-adapter).
+
+Ordinary Style declarations can use these matrices through typed
+[Custom Paint filter providers](custom-paint.md#style-color-filters), with
+bounded subtree isolation and paint-only invalidation.
 
 Every effective mutation increments the Canvas revision. A frame callback may
 replace only the Canvas commands without rebuilding or resolving the
