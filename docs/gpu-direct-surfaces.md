@@ -62,6 +62,16 @@ adapter boundary; ordinary UI code never receives a bgfx or platform-native
 handle. The compositor lease is released in a `finally` path even when drawing
 returns retry, unsupported, or failed.
 
+An unpublished frame can be withdrawn with
+`surface.cancelGpuDirectSurfaceFrame(resource)`. Cancellation prevents that
+frame from becoming visible. Before the backend accepts its frame boundary,
+the resource remains retained and occupies its queue slot. After acceptance,
+`collectGpuDirectSurfaceFrame()` releases a previously cancelled frame, or a
+new cancellation releases it immediately. Cancellation of a presented
+frame returns `false`; closing a surface still waits for the cancelled frame
+boundary. Acceptance preserves same-device ordering; it is not a CPU-visible
+GPU completion fence.
+
 The queue is bounded to two through eight slots. When full, queueing returns
 `false` rather than blocking or allocating. Collection coalesces multiple ready
 frames to the latest revision, retires older resources after active leases end,

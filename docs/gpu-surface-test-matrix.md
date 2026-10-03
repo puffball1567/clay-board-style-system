@@ -13,7 +13,7 @@ jobs and must not be replaced by a mock-only success.
 | --- | --- | --- | --- | --- |
 | Configuration | defaults, 2 and 8 buffers, maximum texture size | zero dimensions, invalid buffer count, oversized label | exact label and texture limits | Automated |
 | Capability negotiation | Texture, RenderTarget, compute output, supported formats and alpha modes; explicit qualified bgfx profile reaches retained direct submission | missing feature, unsupported format or alpha mode, inconsistent backend/profile/compositor declaration; typed limitation reasons drive fallback | independent Texture/RenderTarget support; buffer limits 2 and 8; exact, exceeded, and combined direct-display limits | Automated |
-| Queueing | queue, complete, collect, acquire, release | duplicate resource, foreign namespace, wrong shape/format/usage/token | queue saturation and recovery | Automated |
+| Queueing | queue, complete, collect, acquire, release; cancel unpublished output after frame-boundary acceptance | duplicate resource, foreign namespace, wrong shape/format/usage/token; cancellation never publishes or releases a resource before its ordered frame boundary | queue saturation and recovery | Automated mock; real-GPU cancellation pending |
 | Frame selection | ordered publication and latest-ready coalescing | incomplete frame cannot publish | thousands of monotonic revisions | Automated |
 | Lifetime | presented resources stay retained | write, destroy, namespace close, host close while retained | multiple leases and retirement after last release | Automated |
 | Shutdown | close an idle or completed surface | incomplete work and active leases block close | completed pending work closes without collect; repeated close is harmless | Automated |

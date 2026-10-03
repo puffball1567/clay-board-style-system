@@ -5968,6 +5968,63 @@ suite "GPU direct surface lifecycle":
       check host.releaseGpuResource(resources[index])
     host.close()
 
+  test "cancelled presentation waits for its frame boundary and never publishes":
+    let context = newContext()
+    context.enableDirectPresentation(maxBuffers = 2)
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "direct-cancel",
+      GpuResourceBudget(persistentBytes: 32, maxResources: 2)
+    )
+    var config = defaultGpuDirectSurfaceConfig(2, 2)
+    config.bufferCount = 2
+    let surface = host.newGpuDirectSurface(namespace, config)
+    let cancelled = host.createGpuRenderTarget(
+      namespace, renderTargetDescriptor(2, 2, label = "cancelled")
+    )
+    let visible = host.createGpuRenderTarget(
+      namespace, renderTargetDescriptor(2, 2, label = "visible")
+    )
+
+    let firstToken = host.beginGpuFrame()
+    check surface.queueGpuDirectSurfaceFrame(cancelled, firstToken)
+    check surface.cancelGpuDirectSurfaceFrame(cancelled)
+    check not surface.cancelGpuDirectSurfaceFrame(cancelled)
+    check surface.pendingFrameCount == 1
+    check host.isGpuResourcePresentationRetained(cancelled)
+    check not surface.closeGpuDirectSurface()
+    expect GpuHostError:
+      discard host.releaseGpuResource(cancelled)
+    host.endGpuFrame(firstToken)
+    check not surface.collectGpuDirectSurfaceFrame()
+    check surface.presentedRevision == 0
+    check surface.pendingFrameCount == 0
+    check not host.isGpuResourcePresentationRetained(cancelled)
+
+    let secondToken = host.beginGpuFrame()
+    check surface.queueGpuDirectSurfaceFrame(cancelled, secondToken)
+    check surface.queueGpuDirectSurfaceFrame(visible, secondToken)
+    check surface.cancelGpuDirectSurfaceFrame(cancelled)
+    host.endGpuFrame(secondToken)
+    check surface.collectGpuDirectSurfaceFrame()
+    check surface.presentedRevision == 3
+    var lease = surface.acquireGpuDirectSurfaceFrame().get
+    check lease.resource == visible
+    check not host.isGpuResourcePresentationRetained(cancelled)
+    check not surface.cancelGpuDirectSurfaceFrame(visible)
+    check lease.release()
+    let thirdToken = host.beginGpuFrame()
+    check surface.queueGpuDirectSurfaceFrame(cancelled, thirdToken)
+    host.endGpuFrame(thirdToken)
+    check surface.cancelGpuDirectSurfaceFrame(cancelled)
+    check surface.pendingFrameCount == 0
+    check surface.presentedRevision == 3
+    check not host.isGpuResourcePresentationRetained(cancelled)
+    check host.releaseGpuResource(cancelled)
+    check surface.closeGpuDirectSurface()
+    check host.releaseGpuResource(visible)
+    host.close()
+
   test "invalid resources and completion tokens fail atomically":
     let context = newContext()
     context.enableDirectPresentation(formats = {gtfRgba8}, maxBuffers = 2)
