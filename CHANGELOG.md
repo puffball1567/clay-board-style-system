@@ -7,6 +7,15 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed a clipboard callback ownership cycle in the headless test driver that
+  retained its UI and test state under ARC, including in Cue Canvas and motion
+  validation. Clipboard callbacks now share independent storage, remain valid
+  after the driver is released, and preserve mutable `driver.clipboard` access.
+  Repeated lifecycle checks now run under ARC and ORC sanitizers and strict
+  Valgrind leak checking.
+
 ### Added
 
 - Added immutable RGB matrix filters to Nim Canvas layers and paint commands.
