@@ -2400,8 +2400,19 @@ unbounded scope or text changes retain a full-repaint fallback. Custom Paint
 alpha masks now isolate the complete owner subtree and use shared
 destination-in semantics in the PPM reference and SDL3 renderer; SDL3 software
 renderers use a bounded compatibility fallback when custom blending is
-unavailable. CPU filter composition and the broader Motion Scene remain open
-Version 0.7 work.
+unavailable. Retained Nim Canvas layers now accept immutable RGB matrix filters
+with one shared straight-sRGB evaluator for PPM and bounded SDL3 readback/upload.
+Filters preserve alpha and coverage, apply before layer opacity, and participate
+in retained cache equality. SDL3 software layer composition now preserves
+premultiplied alpha through nested translucent transforms. Typed Nim Custom
+Paint filter providers now connect those matrices to Style-owned visual groups,
+including local overlay ordering, masks, and whole-group subtree repaints.
+C ABI `0x00010027` now supports copied RGB matrices in retained Canvas and
+Custom Paint command-sink layers, plus a paint-command matrix accessor.
+ABI `0x00010028` connects foreign Style filter callbacks to the same complete
+visual groups, with copied matrix results, typed parameters, identity fallback,
+and generation-safe provider lifetime. Spatial filters, GPU filter composition,
+and the broader Motion Scene remain open Version 0.7 work.
 Backend-neutral named Custom Paint
 materials now connect ordinary Style declarations to bounded underlay and
 overlay command streams without adding nodes. `GpuCanvasSurface` can use that

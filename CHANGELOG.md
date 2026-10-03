@@ -17,6 +17,27 @@ release. Before 1.0, minor releases may contain public API changes.
   pause/resume, and reduced motion. UI publication invalidates only paint and
   returns to idle when motion finishes.
 
+- Added immutable RGB matrix filters to Nim Canvas layers and paint commands.
+  PPM and SDL3 apply the same straight-sRGB transform before layer opacity,
+  preserve alpha and coverage, and invalidate retained pixels when coefficients
+  change. SDL3 filtering uses bounded CPU readback and upload.
+
+- Added typed Custom Paint RGB filter providers for ordinary Style declarations.
+  Filter owners isolate their visual subtree, retain local overlay ordering,
+  compose masks before filtering, and apply owner opacity once. Descendant
+  subtree repaint requests rebuild the complete enclosing filter group.
+
+- Added copied RGB matrix layers and matrix inspection to C ABI `0x00010027`.
+  Canvas and Custom Paint command sinks validate all coefficients before
+  retaining commands. Existing layer signatures and paint records stay stable;
+  paint, Canvas, and Custom Paint capability versions advance to 4.
+
+- Added foreign Style RGB filter providers in C ABI `0x00010028`. Filter-only
+  callbacks read typed parameters and return copied matrices through the scoped
+  sink. Failed callbacks fall back to ordinary content; replacement, unregister,
+  reset, and destruction share the existing exactly-once release contract.
+  The Custom Paint provider capability advances to 5.
+
 - Added bounded nested rounded clips to final-window direct GPU Surface
   composition. The SDL3 bridge now forwards up to eight logical clip masks,
   the standard GPU host compositor applies them through a separate
@@ -29,6 +50,12 @@ release. Before 1.0, minor releases may contain public API changes.
   generation, dimensions, feedback hazards, and target format before drawing.
   SDL texture-backed layers remain fail-closed because they are not bgfx
   render targets and cannot be redirected to the final window safely.
+
+### Fixed
+
+- Fixed SDL3 software composition darkening translucent nested layers by
+  applying alpha more than once. A bounded CPU fallback now composites
+  premultiplied layer pixels with the requested blend mode and clip.
 
 ## [0.7.1] - 2026-09-20
 

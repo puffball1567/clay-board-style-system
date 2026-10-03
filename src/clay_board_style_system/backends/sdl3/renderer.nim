@@ -4,7 +4,7 @@ import ../../assets/asset_resolver
 import ../../core/[color, computed_style, geometry, gradient_sampling, node,
     raster_surface]
 import ../../input/events
-import ../../paint/[dirty_tiles, gpu_direct_compositor, paint_command,
+import ../../paint/[dirty_tiles, gpu_direct_compositor, layer_color_filter, paint_command,
     path_geometry, retained_damage]
 import ../../text/[cosmic_text_engine, font_registry, text_engine]
 import ../../vendor/sdl3
@@ -37,7 +37,8 @@ const
   defaultRoundedTextureCacheBytes = 128'u64 * 1024 * 1024
   defaultShadowTextureCacheBytes = 128'u64 * 1024 * 1024
   defaultTransformTextureCacheBytes = 128'u64 * 1024 * 1024
-  maxSoftwareMaskFallbackBytes = 64'u64 * 1024 * 1024
+  maxSoftwareLayerFallbackBytes = 64'u64 * 1024 * 1024
+  maxLayerColorFilterBytes = 64'u64 * 1024 * 1024
   sdl3StreamWakeEventCode = 0x43425353'i32
   maxRetainedDamagePasses = 8
 
@@ -130,6 +131,7 @@ type
     textureCacheIndex: int
     opacity: float32
     compositeMode: LayerCompositeMode
+    colorFilter: LayerColorFilter
     valid: bool
     hasContent: bool
 
@@ -1869,6 +1871,20 @@ proc beginCompositeLayer(
     command: PaintCommand;
     layers: var seq[Sdl3TransformLayer]
 ) =
+  if not command.layerColorFilter.isNil:
+    let scale = target.pixelScale().float64
+    let width = (ceil(command.layerBounds.x.float64 + command.layerBounds.w.float64) -
+      floor(command.layerBounds.x.float64)) * scale
+    let height = (ceil(command.layerBounds.y.float64 + command.layerBounds.h.float64) -
+      floor(command.layerBounds.y.float64)) * scale
+    # Bound the target, readback surface, editable RGBA bytes and upload before
+    # allocating the layer. Invalid/oversized scopes stay isolated and hidden.
+    let bytes = ceil(width) * ceil(height) * 16.0
+    if width <= 0 or height <= 0 or
+        bytes.classify in {fcNan, fcInf, fcNegInf} or
+        bytes > maxLayerColorFilterBytes.float64:
+      layers.add Sdl3TransformLayer(valid: false)
+      return
   target.beginOffscreenLayer(
     command.layerBounds,
     identityAffine2D(),
@@ -1877,6 +1893,7 @@ proc beginCompositeLayer(
     0.0'f32,
     layers
   )
+  layers[^1].colorFilter = command.layerColorFilter
 
 proc markTransformContent(layers: var seq[Sdl3TransformLayer]) =
   for index in countdown(layers.high, 0):
@@ -1943,16 +1960,17 @@ proc resetLayerTexture(texture: pointer) =
   discard SDL3.setTextureAlphaModFloat(texture, 1)
   discard SDL3.setTextureBlendMode(texture, sdlBlendModeBlend)
 
-proc applyDestinationInFallback(
+proc applySoftwareLayerComposite(
     target: var Sdl3Renderer;
     texture: pointer;
     source: SDL_FRect;
     origin, right, down: Vec2;
-    opacity: float32
+    opacity: float32;
+    compositeMode: LayerCompositeMode
 ): bool =
-  ## SDL's software renderer does not provide custom blend modes. Keep that
-  ## compatibility path correct with a bounded readback; hardware renderers
-  ## that accept destination-in never enter this function.
+  ## SDL's software renderer cannot reliably composite premultiplied targets.
+  ## Keep its isolated layers correct with bounded CPU composition. Both
+  ## readbacks and the replacement texture contain premultiplied RGBA bytes.
   let horizontal = vec2(right.x - origin.x, right.y - origin.y)
   let vertical = vec2(down.x - origin.x, down.y - origin.y)
   let determinant = horizontal.x * vertical.y - horizontal.y * vertical.x
@@ -1989,29 +2007,29 @@ proc applyDestinationInFallback(
   if not SDL3.getTextureSize(
       texture, addr textureWidth, addr textureHeight):
     return false
-  let maskWidth = ceil(textureWidth.float32).int
-  let maskHeight = ceil(textureHeight.float32).int
-  if maskWidth <= 0 or maskHeight <= 0:
+  let sourceWidth = ceil(textureWidth.float32).int
+  let sourceHeight = ceil(textureHeight.float32).int
+  if sourceWidth <= 0 or sourceHeight <= 0:
     return false
-  let maskBytes = maskWidth.uint64 * maskHeight.uint64 * 4'u64
+  let sourceBytes = sourceWidth.uint64 * sourceHeight.uint64 * 4'u64
   let destinationBytes = width.uint64 * height.uint64 * 4'u64
   # Account for both readback surfaces, the editable RGBA buffer, and its
   # temporary upload texture before allocating any of them.
-  if maskBytes > maxSoftwareMaskFallbackBytes or
-      destinationBytes > (maxSoftwareMaskFallbackBytes - maskBytes) div 3'u64 or
+  if sourceBytes > maxSoftwareLayerFallbackBytes or
+      destinationBytes > (maxSoftwareLayerFallbackBytes - sourceBytes) div 3'u64 or
       destinationBytes > high(int).uint64:
     return false
 
   let destinationTarget = SDL3.getRenderTarget(target.renderer)
   if not SDL3.setRenderTarget(target.renderer, texture):
     return false
-  let maskSurface = SDL3.renderReadPixels(target.renderer, nil)
+  let sourceSurface = SDL3.renderReadPixels(target.renderer, nil)
   discard SDL3.setRenderTarget(target.renderer, destinationTarget)
   target.renderer.setClip(target.effectiveClipBounds())
-  if maskSurface.isNil:
+  if sourceSurface.isNil:
     return false
   defer:
-    SDL3.destroySurface(maskSurface)
+    SDL3.destroySurface(sourceSurface)
 
   let destinationSurface = SDL3.renderReadPixels(
     target.renderer, addr destinationRect
@@ -2040,28 +2058,48 @@ proc applyDestinationInFallback(
         (x0.float32 + x.float32 + 0.5'f32) / sx,
         (y0.float32 + y.float32 + 0.5'f32) / sy
       )
+      var clipped = false
+      for clip in target.clipStack:
+        var left, right: float32
+        if not roundedSpan(clip.rect, clip.radius, point.y, left, right) or
+            point.x < left or point.x >= right:
+          clipped = true
+          break
+      if clipped:
+        continue
       let delta = vec2(point.x - origin.x, point.y - origin.y)
       let u = (delta.x * vertical.y - delta.y * vertical.x) / determinant
       let v = (horizontal.x * delta.y - horizontal.y * delta.x) / determinant
       if u < 0 or u >= 1 or v < 0 or v >= 1:
         continue
-      let maskX = clamp(
+      let sourceX = clamp(
         floor(source.x.float32 + u * source.w.float32).int,
-        0, maskWidth - 1
+        0, sourceWidth - 1
       )
-      let maskY = clamp(
+      let sourceY = clamp(
         floor(source.y.float32 + v * source.h.float32).int,
-        0, maskHeight - 1
+        0, sourceHeight - 1
       )
-      var maskAlpha: uint8
+      var sourceRed, sourceGreen, sourceBlue, sourceAlpha: uint8
       if not SDL3.readSurfacePixel(
-          maskSurface, cint(maskX), cint(maskY), nil, nil, nil,
-          addr maskAlpha):
+          sourceSurface, cint(sourceX), cint(sourceY), addr sourceRed, addr sourceGreen, addr sourceBlue,
+          addr sourceAlpha):
         return false
-      let factor = maskAlpha.float32 / 255.0'f32 * resolvedOpacity
-      pixels[pixelIndex + 3] = uint8(clamp(
-        round(alpha.float32 * factor).int, 0, 255
-      ))
+      let factor = sourceAlpha.float32 / 255.0'f32 * resolvedOpacity
+      let sourceChannels = [sourceRed, sourceGreen, sourceBlue, sourceAlpha]
+      let destinationChannels = [red, green, blue, alpha]
+      for channel in 0 .. 3:
+        let sourceValue = sourceChannels[channel].float32 * resolvedOpacity
+        let destinationValue = destinationChannels[channel].float32
+        let value =
+          case compositeMode
+          of lcmSourceOver: sourceValue + destinationValue * (1.0'f32 - factor)
+          of lcmCopy: sourceValue
+          of lcmAdditive:
+            if channel == 3: destinationValue
+            else: sourceValue + destinationValue
+          of lcmDestinationIn: destinationValue * factor
+        pixels[pixelIndex + channel] = uint8(clamp(round(value).int, 0, 255))
 
   let combined = SDL3.createTexture(
     target.renderer, SDL_PIXELFORMAT_RGBA32, sdlTextureAccessStatic,
@@ -2092,6 +2130,11 @@ proc renderAffineLayer(
     compositeMode: LayerCompositeMode
 ) =
   let premultiplied = target.supportsPremultipliedBlend()
+  if not premultiplied:
+    discard target.applySoftwareLayerComposite(
+      texture, source, origin, right, down, opacity, compositeMode
+    )
+    return
   if not target.hasRoundedClip():
     var sdlOrigin = SDL_FPoint(x: cfloat(origin.x), y: cfloat(origin.y))
     var sdlRight = SDL_FPoint(x: cfloat(right.x), y: cfloat(right.y))
@@ -2105,8 +2148,8 @@ proc renderAffineLayer(
         addr sdlOrigin, addr sdlRight, addr sdlDown
       )
     elif compositeMode == lcmDestinationIn:
-      discard target.applyDestinationInFallback(
-        texture, source, origin, right, down, opacity
+      discard target.applySoftwareLayerComposite(
+        texture, source, origin, right, down, opacity, compositeMode
       )
     texture.resetLayerTexture()
     return
@@ -2138,8 +2181,8 @@ proc renderAffineLayer(
         addr sdlOrigin, addr sdlRight, addr sdlDown
       )
     elif compositeMode == lcmDestinationIn:
-      discard target.applyDestinationInFallback(
-        texture, source, origin, right, down, opacity
+      discard target.applySoftwareLayerComposite(
+        texture, source, origin, right, down, opacity, compositeMode
       )
     texture.resetLayerTexture()
     return
@@ -2186,15 +2229,55 @@ proc renderAffineLayer(
       clippedTexture, clippedSource, destination, target.clipStack
     )
   elif compositeMode == lcmDestinationIn:
-    discard target.applyDestinationInFallback(
+    discard target.applySoftwareLayerComposite(
       clippedTexture, clippedSource,
       vec2(bounds.x, bounds.y),
       vec2(bounds.x + bounds.w, bounds.y),
       vec2(bounds.x, bounds.y + bounds.h),
-      opacity
+      opacity, compositeMode
     )
   clippedTexture.resetLayerTexture()
   target.releaseTransformTexture(clipped.index)
+
+proc filteredLayerTexture(
+    target: var Sdl3Renderer;
+    layer: Sdl3TransformLayer
+): pointer =
+  # Called while the isolated layer is still the current render target.
+  let surface = SDL3.renderReadPixels(target.renderer, nil)
+  if surface.isNil:
+    return nil
+  defer: SDL3.destroySurface(surface)
+  var pixels = newSeq[uint8](layer.pixelWidth * layer.pixelHeight * 4)
+  for y in 0 ..< layer.pixelHeight:
+    for x in 0 ..< layer.pixelWidth:
+      var red, green, blue, alpha: uint8
+      if not SDL3.readSurfacePixel(
+          surface, cint(x), cint(y), addr red, addr green, addr blue, addr alpha):
+        return nil
+      # Render-target RGB is premultiplied. Convert to straight sRGB for the
+      # shared matrix, then use the encoding expected by the layer compositor.
+      let divisor = max(1.0'f32, alpha.float32)
+      let filtered = layer.colorFilter.applyLayerColorFilter(rgba(
+        red.float32 / divisor, green.float32 / divisor, blue.float32 / divisor,
+        alpha.float32 / 255.0'f32
+      ))
+      let multiplier = alpha.float32
+      let offset = (y * layer.pixelWidth + x) * 4
+      pixels[offset] = uint8(clamp(round(filtered.r * multiplier).int, 0, 255))
+      pixels[offset + 1] = uint8(clamp(round(filtered.g * multiplier).int, 0, 255))
+      pixels[offset + 2] = uint8(clamp(round(filtered.b * multiplier).int, 0, 255))
+      pixels[offset + 3] = alpha
+  result = SDL3.createTexture(
+    target.renderer, SDL_PIXELFORMAT_RGBA32, sdlTextureAccessTarget,
+    cint(layer.pixelWidth), cint(layer.pixelHeight)
+  )
+  if result.isNil:
+    return
+  if not SDL3.updateTexture(result, nil, addr pixels[0], cint(layer.pixelWidth * 4)):
+    SDL3.destroyTexture(result)
+    return nil
+  discard SDL3.setTextureScaleMode(result, SDL_SCALEMODE_LINEAR)
 
 proc endTransformLayer(
     target: var Sdl3Renderer;
@@ -2206,9 +2289,18 @@ proc endTransformLayer(
   if not layer.valid:
     return
 
+  let filtered =
+    if layer.colorFilter.isNil: nil
+    else: target.filteredLayerTexture(layer)
+  defer:
+    if not filtered.isNil:
+      SDL3.destroyTexture(filtered)
+    target.releaseTransformTexture(layer.textureCacheIndex)
   discard SDL3.setRenderTarget(target.renderer, layer.previousTarget)
   target.clipStack = layer.previousClips
   target.renderer.setClip(target.effectiveClipBounds())
+  if not layer.colorFilter.isNil and filtered.isNil:
+    return
   if layer.hasContent or layer.compositeMode in {lcmCopy, lcmDestinationIn}:
     let destinationOffset = layers.activeTransformOffset()
     let topLeft = layer.transform.transformPoint(
@@ -2224,11 +2316,11 @@ proc endTransformLayer(
       x: 0, y: 0, w: cfloat(layer.pixelWidth), h: cfloat(layer.pixelHeight)
     )
     target.renderAffineLayer(
-      layer.texture, source, topLeft, topRight, bottomLeft,
+      (if filtered.isNil: layer.texture else: filtered),
+      source, topLeft, topRight, bottomLeft,
       layer.opacity, layer.compositeMode
     )
     layers.markTransformContent()
-  target.releaseTransformTexture(layer.textureCacheIndex)
 
 proc closeTransformLayers(
     target: var Sdl3Renderer;
