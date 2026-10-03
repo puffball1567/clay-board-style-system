@@ -5512,6 +5512,63 @@ suite "GPU canvas composition bridge":
     check canvas.closeGpuCanvasSurface()
     host.close()
 
+  test "cancelled readbacks drain safely without replacing visible pixels":
+    let context = newContext()
+    context.deferReadbackWrites = true
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "gpu-canvas-cancel",
+      GpuResourceBudget(
+        persistentBytes: 24,
+        readbackBytesPerFrame: 16,
+        workUnitsPerFrame: 4,
+        maxResources: 3
+      )
+    )
+    var config = defaultGpuCanvasConfig(2, 1)
+    config.readbackSlots = 2
+    let canvas = host.newGpuCanvasSurface(namespace, config)
+
+    let firstToken = host.beginGpuFrame()
+    check canvas.queueGpuCanvasFrame()
+    check canvas.queueGpuCanvasFrame()
+    check canvas.cancelGpuCanvasFrame(2)
+    check not canvas.cancelGpuCanvasFrame(2)
+    check not canvas.cancelGpuCanvasFrame(0)
+    host.endGpuFrame(firstToken)
+    check not canvas.collectGpuCanvasFrame()
+    check canvas.pendingFrameCount == 2
+    check not canvas.closeGpuCanvasSurface()
+    context.readbackReady = true
+    check canvas.collectGpuCanvasFrame()
+    check canvas.pendingFrameCount == 0
+    check canvas.completedFrameNumber == 2
+    check canvas.rasterSurface.publish()
+    check canvas.rasterSurface.pixels == @[0'u8, 1, 2, 3, 4, 5, 6, 7]
+
+    let secondToken = host.beginGpuFrame()
+    check canvas.queueGpuCanvasFrame()
+    check canvas.queueGpuCanvasFrame()
+    check canvas.cancelGpuCanvasFrame(3)
+    host.endGpuFrame(secondToken)
+    check canvas.collectGpuCanvasFrame()
+    check canvas.completedFrameNumber == 4
+    check canvas.rasterSurface.publish()
+    check canvas.rasterSurface.pixels == @[3'u8, 4, 5, 6, 7, 8, 9, 10]
+
+    let thirdToken = host.beginGpuFrame()
+    check canvas.queueGpuCanvasFrame()
+    check canvas.cancelGpuCanvasFrame(5)
+    host.endGpuFrame(thirdToken)
+    check not canvas.collectGpuCanvasFrame()
+    check canvas.completedFrameNumber == 5
+    check canvas.pendingFrameCount == 0
+    check canvas.rasterSurface.pendingUpdateCount == 0
+    check canvas.rasterSurface.pixels == @[3'u8, 4, 5, 6, 7, 8, 9, 10]
+    check not canvas.cancelGpuCanvasFrame(5)
+    check canvas.closeGpuCanvasSurface()
+    host.close()
+
   test "readback formats and alpha modes normalize to straight RGBA":
     for format in [gtfRgba8, gtfBgra8, gtfR8]:
       for alphaMode in [gcamStraight, gcamPremultiplied, gcamOpaque]:
