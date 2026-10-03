@@ -9,6 +9,14 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added opt-in CPU Motion Scene snapshots and typed numeric timelines. Stable-ID rounded
+  rectangles share one Canvas with affine transforms, opacity, z-order,
+  viewport clipping, and matching hit testing. Immutable batch replacement and
+  cancellable latest-request tokens support deterministic export and previews;
+  Timelines reuse AnimationClock and FrameScheduler for easing, delay, repeats,
+  pause/resume, and reduced motion. UI publication invalidates only paint and
+  returns to idle when motion finishes.
+
 - Added immutable RGB matrix filters to Nim Canvas layers and paint commands.
   PPM and SDL3 apply the same straight-sRGB transform before layer opacity,
   preserve alpha and coverage, and invalidate retained pixels when coefficients

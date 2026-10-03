@@ -230,3 +230,10 @@ stable-in-process device identity are therefore available to a mounted drawing
 module without bypassing normal CBSS hit testing. The `axes` capability set
 separates an unavailable device axis from a supported axis currently reporting
 zero. The C ABI exposes the same contract through `CbssPointerData`.
+
+## CPU Motion Scene snapshots
+
+The opt-in [Motion Scene](motion-scene.md) CPU reference batches stable-ID
+visual objects inside one retained Canvas. It supports deterministic snapshot
+replacement, cancellable latest-result previews, viewport clipping, transformed
+picking, and paint-only UI publication without a continuous frame loop.
