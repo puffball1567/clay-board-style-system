@@ -1409,7 +1409,8 @@ suite "optional bgfxim adapter":
           uint32(stride)
         )
         host.endGpuFrame(frame)
-        let packed = stride >= int(high(uint16))
+        let packed = stride >= int(high(uint16)) or
+          stride mod int(format.gpuTextureBytesPerPixel()) != 0
         let uploadedStride = if packed: rowBytes else: stride
         check textureUpdatePitch() ==
           (if packed or stride == rowBytes: high(uint16) else: uint16(stride))

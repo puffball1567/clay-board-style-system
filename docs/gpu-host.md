@@ -180,9 +180,9 @@ budgets, and are ordered before later draw or compute submissions in that frame.
 Readback-only textures remain non-updatable.
 
 The bgfx adapter accepts padded row strides even when they exceed bgfx's
-16-bit pitch range. Only that path packs the updated rows directly into
+16-bit pitch range or do not align to a whole pixel. These paths pack the updated rows directly into
 bgfx-owned transfer memory; it does not allocate a second Nim image buffer.
-Tightly packed uploads and representable padded pitches retain the direct-copy
+Tightly packed uploads and representable, pixel-aligned padded pitches retain the direct-copy
 path. A one-row update ignores unused trailing stride and needs no packing.
 Transient-byte accounting still charges the supplied source span, including
 padding, rather than the smaller packed transfer. Invalid spans are rejected

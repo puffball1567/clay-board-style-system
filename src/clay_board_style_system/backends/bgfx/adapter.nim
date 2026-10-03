@@ -628,15 +628,16 @@ proc updateTexture(
       region.height > descriptor.height - region.y:
     return gbsInvalidConfiguration
 
-  let tightStride = uint64(region.width) *
-    descriptor.format.gpuTextureBytesPerPixel()
+  let bytesPerPixel = descriptor.format.gpuTextureBytesPerPixel()
+  let tightStride = uint64(region.width) * bytesPerPixel
   let sourceBytes = uint64(region.height - 1) * uint64(rowStride) + tightStride
   if uint64(rowStride) < tightStride or uint64(data.len) != sourceBytes:
     return gbsInvalidConfiguration
 
-  # bgfx reserves UINT16_MAX for tight rows; larger padded pitches need packing.
-  let packRows = rowStride >= uint32(high(uint16)) and
-    uint64(rowStride) != tightStride and region.height > 1
+  # bgfx's pitch sentinel and pixel-based row lengths cannot encode every byte stride.
+  let packRows = region.height > 1 and
+    (rowStride >= uint32(high(uint16)) and uint64(rowStride) != tightStride or
+      uint64(rowStride) mod bytesPerPixel != 0)
   let uploadBytes = if packRows:
       tightStride * uint64(region.height)
     else:
