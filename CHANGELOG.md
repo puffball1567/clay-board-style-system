@@ -16,6 +16,35 @@ release. Before 1.0, minor releases may contain public API changes.
   rounded rectangles, opacity, and overlapping instances with CPU reference
   pixels, while shader compilation covers OpenGL and Vulkan.
 
+- Added opt-in CPU Motion Scene snapshots and typed numeric timelines. Stable-ID rounded
+  rectangles share one Canvas with affine transforms, opacity, z-order,
+  viewport clipping, and matching hit testing. Immutable batch replacement and
+  cancellable latest-request tokens support deterministic export and previews;
+  Timelines reuse AnimationClock and FrameScheduler for easing, delay, repeats,
+  pause/resume, and reduced motion. UI publication invalidates only paint and
+  returns to idle when motion finishes.
+
+- Added immutable RGB matrix filters to Nim Canvas layers and paint commands.
+  PPM and SDL3 apply the same straight-sRGB transform before layer opacity,
+  preserve alpha and coverage, and invalidate retained pixels when coefficients
+  change. SDL3 filtering uses bounded CPU readback and upload.
+
+- Added typed Custom Paint RGB filter providers for ordinary Style declarations.
+  Filter owners isolate their visual subtree, retain local overlay ordering,
+  compose masks before filtering, and apply owner opacity once. Descendant
+  subtree repaint requests rebuild the complete enclosing filter group.
+
+- Added copied RGB matrix layers and matrix inspection to C ABI `0x00010027`.
+  Canvas and Custom Paint command sinks validate all coefficients before
+  retaining commands. Existing layer signatures and paint records stay stable;
+  paint, Canvas, and Custom Paint capability versions advance to 4.
+
+- Added foreign Style RGB filter providers in C ABI `0x00010028`. Filter-only
+  callbacks read typed parameters and return copied matrices through the scoped
+  sink. Failed callbacks fall back to ordinary content; replacement, unregister,
+  reset, and destruction share the existing exactly-once release contract.
+  The Custom Paint provider capability advances to 5.
+
 - Added bounded nested rounded clips to final-window direct GPU Surface
   composition. The SDL3 bridge now forwards up to eight logical clip masks,
   the standard GPU host compositor applies them through a separate
@@ -33,6 +62,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 - Avoided the reserved HLSL identifier `point` in the rounded-mask compositor
   shader so official shaderc can compile its Vulkan variant.
+
+- Fixed SDL3 software composition darkening translucent nested layers by
+  applying alpha more than once. A bounded CPU fallback now composites
+  premultiplied layer pixels with the requested blend mode and clip.
 
 ## [0.7.1] - 2026-09-20
 

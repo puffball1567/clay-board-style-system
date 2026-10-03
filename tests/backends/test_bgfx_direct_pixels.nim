@@ -282,6 +282,146 @@ proc verifyInstancedRects(host: GpuHost; shaderc, shaderIncludes, workDirectory:
     doAssert host.releaseGpuResource(instances)
   echo "Instanced rounded rectangles: static/dynamic, affine, opacity, order, subrange, update, CPU pixels passed"
 
+proc checkProducerPressure(
+    host: GpuHost;
+    compositor: GpuDirectCompositor;
+    compositorNamespace: GpuNamespaceId;
+    bufferCount: int
+) =
+  const Cycles = 64
+  var namespaces: array[2, GpuNamespaceId]
+  var sources: array[2, Source]
+  var resources: array[2, seq[GpuResourceHandle]]
+  var current: array[2, int]
+  var leases: array[2, GpuDirectSurfaceFrame]
+  var expected: array[2, Pixel]
+  let bounds = rect(0, 0, 4, 2)
+  let target = host.createGpuRenderTarget(
+    compositorNamespace,
+    GpuRenderTargetDescriptor(
+      width: 4, height: 2, format: gtfRgba8,
+      usage: {gtuRenderTarget, gtuSampled, gtuBlitSource},
+      label: "producer-pressure-target"
+    )
+  )
+  try:
+    for producer in 0 .. 1:
+      namespaces[producer] = host.createGpuNamespace(
+        "pressure-" & $bufferCount & "-" & $producer,
+        GpuResourceBudget(
+          persistentBytes: uint64((bufferCount + 1) * 4),
+          transientBytesPerFrame: 64,
+          workUnitsPerFrame: uint32(bufferCount - 1),
+          maxResources: uint32(bufferCount + 1)
+        )
+      )
+      var config = defaultGpuDirectSurfaceConfig(1, 1)
+      config.bufferCount = bufferCount
+      sources[producer].surface = host.newGpuDirectSurface(
+        namespaces[producer], config
+      )
+      # One extra resource probes rejection when every surface slot is occupied.
+      for index in 0 .. bufferCount:
+        resources[producer].add host.createGpuTexture(
+          namespaces[producer],
+          GpuTextureDescriptor(
+            width: 1, height: 1, format: gtfRgba8,
+            usage: {gtuSampled}, access: gtaDynamic,
+            label: "pressure-buffer-" & $index
+          ),
+          solid(0, 0, 0)
+        )
+      sources[producer].resource = resources[producer][0]
+    publishSources(host, sources[0], sources[1])
+
+    for cycle in 1 .. Cycles:
+      for producer in 0 .. 1:
+        leases[producer] = sources[producer].surface
+          .acquireGpuDirectSurfaceFrame().get
+      let token = host.beginGpuFrame()
+      for producer in 0 .. 1:
+        let surface = sources[producer].surface
+        let previous = current[producer]
+        for step in 1 ..< bufferCount:
+          let index = (previous + step) mod resources[producer].len
+          # Each producer and revision has a distinct color, including frames
+          # dropped by latest-ready coalescing in the triple-buffered case.
+          expected[producer] = Pixel(
+            red: uint8(cycle * 3), green: uint8(producer * 160 + step * 30),
+            blue: uint8(255 - cycle * 3), alpha: 255
+          )
+          let color = expected[producer]
+          host.updateGpuTexture(
+            resources[producer][index],
+            solid(color.red, color.green, color.blue)
+          )
+          doAssert surface.queueGpuDirectSurfaceFrame(
+            resources[producer][index], token
+          )
+          current[producer] = index
+        let overflow = resources[producer][
+          (previous + bufferCount) mod resources[producer].len
+        ]
+        doAssert not surface.queueGpuDirectSurfaceFrame(overflow, token)
+        doAssert not host.isGpuResourcePresentationRetained(overflow)
+        doAssert surface.retainedFrameCount == bufferCount
+        doAssert surface.pendingFrameCount == bufferCount - 1
+      host.endGpuFrame(token)
+
+      for producer in 0 .. 1:
+        let surface = sources[producer].surface
+        doAssert surface.collectGpuDirectSurfaceFrame()
+        doAssert surface.presentedRevision == uint64(1 + cycle * (bufferCount - 1))
+        doAssert surface.pendingFrameCount == 0
+        doAssert surface.retainedFrameCount == 2
+        doAssert host.isGpuResourcePresentationRetained(leases[producer].resource)
+        doAssert not surface.closeGpuDirectSurface()
+        let retired = leases[producer].resource
+        doAssert leases[producer].release()
+        doAssert not host.isGpuResourcePresentationRetained(retired)
+        doAssert surface.retainedFrameCount == 1
+        sources[producer].resource = resources[producer][current[producer]]
+        let usage = host.gpuNamespaceUsage(namespaces[producer])
+        doAssert usage.resourceCount == uint32(bufferCount + 1)
+        doAssert usage.persistentBytes == uint64((bufferCount + 1) * 4)
+
+      let compose = host.beginGpuFrame()
+      for producer in 0 .. 1:
+        host.draw(
+          compositor, target, bounds, rect(float32(producer * 2), 0, 2, 2),
+          sources[producer]
+        )
+      host.endGpuFrame(compose)
+      # Reuse the buffers across ordered GPU frames without a CPU readback
+      # wait on each cycle; inspect every pixel at each batch boundary.
+      if cycle mod 8 == 0:
+        let pixels = host.readPixels(compositorNamespace, target, 4, 2)
+        for y in 0 .. 1:
+          for x in 0 .. 3:
+            pixels.requirePixel(
+              x, y, expected[x div 2],
+              "producer pressure buffers=" & $bufferCount & " cycle=" & $cycle
+            )
+
+    # Closing one owner must leave the other owner's retained source usable.
+    doAssert sources[0].surface.closeGpuDirectSurface()
+    doAssert host.closeGpuNamespace(namespaces[0])
+    let survivor = host.beginGpuFrame()
+    host.draw(compositor, target, bounds, bounds, sources[1])
+    host.endGpuFrame(survivor)
+    let pixels = host.readPixels(compositorNamespace, target, 4, 2)
+    for y in 0 .. 1:
+      for x in 0 .. 3:
+        pixels.requirePixel(x, y, expected[1], "surviving producer")
+  finally:
+    for producer in 0 .. 1:
+      discard leases[producer].release()
+      if not sources[producer].surface.isClosed:
+        doAssert sources[producer].surface.closeGpuDirectSurface()
+      if host.hasGpuNamespace(namespaces[producer]):
+        doAssert host.closeGpuNamespace(namespaces[producer])
+    doAssert host.releaseGpuResource(target)
+
 proc run() =
   let shaderc = getEnv("CBSS_SHADERC")
   let shaderIncludes = getEnv("CBSS_BGFX_SHADER_INCLUDE")
@@ -304,7 +444,7 @@ proc run() =
     options.platformData = bgfxPlatformDataFromSdl3Window(window)
     options.directPresentation = newQualifiedBgfxDirectPresentationProfile(
       {gtfRgba8},
-      maxBuffers = 2,
+      maxBuffers = 3,
       textureSupported = true,
       renderTargetSupported = true,
       alphaModes = {gcamStraight, gcamPremultiplied, gcamOpaque},
@@ -549,6 +689,63 @@ proc run() =
     uploadedPixels.requirePixel(
       0, 1, Pixel(blue: 255, alpha: 255), "uploaded bottom row"
     )
+
+    let partialTexture = host.createGpuTexture(
+      sourceNamespace,
+      GpuTextureDescriptor(
+        width: 2, height: 2, format: gtfRgba8,
+        usage: {gtuSampled, gtuBlitSource}, access: gtaDynamic,
+        label: "padded-partial-updates"
+      ),
+      rgbaPixels(2, 2, proc(x, y: int): Pixel =
+        discard x
+        discard y
+        Pixel(green: 255, alpha: 255)
+      )
+    )
+    for stride in [4, 7, 8, 65534, 65535, 65536]:
+      var update = newSeq[byte](stride + 4)
+      for offset in 0 ..< update.len:
+        update[offset] = 123
+      update[0] = 255
+      update[1] = 0
+      update[2] = 0
+      update[3] = 255
+      update[stride] = 0
+      update[stride + 1] = 0
+      update[stride + 2] = 255
+      update[stride + 3] = 255
+      let updateFrame = host.beginGpuFrame()
+      host.updateGpuTexture(
+        partialTexture, GpuTextureUpdateRegion(x: 1, width: 1, height: 2),
+        update, uint32(stride)
+      )
+      host.endGpuFrame(updateFrame)
+      let updated = host.readPixels(sourceNamespace, partialTexture, 2, 2)
+      updated.requirePixel(
+        1, 0, Pixel(red: 255, alpha: 255), "padded upload top " & $stride
+      )
+      updated.requirePixel(
+        1, 1, Pixel(blue: 255, alpha: 255), "padded upload bottom " & $stride
+      )
+      for y in 0 .. 1:
+        updated.requirePixel(
+          0, y, Pixel(green: 255, alpha: 255), "untouched column " & $stride
+        )
+    let singleRowFrame = host.beginGpuFrame()
+    host.updateGpuTexture(
+      partialTexture, GpuTextureUpdateRegion(x: 1, y: 1, width: 1, height: 1),
+      solid(255, 0, 255), high(uint32)
+    )
+    host.endGpuFrame(singleRowFrame)
+    let singleRow = host.readPixels(sourceNamespace, partialTexture, 2, 2)
+    singleRow.requirePixel(
+      1, 1, Pixel(red: 255, blue: 255, alpha: 255), "single-row maximum stride"
+    )
+    singleRow.requirePixel(
+      1, 0, Pixel(red: 255, alpha: 255), "single-row preserves preceding row"
+    )
+    doAssert host.releaseGpuResource(partialTexture)
 
     let target = host.createGpuRenderTarget(
       compositorNamespace,
@@ -850,6 +1047,8 @@ proc run() =
     resizedPixels.requirePixel(
       8, 3, Pixel(alpha: 255), "post-resize background after destination"
     )
+    for bufferCount in [2, 3]:
+      host.checkProducerPressure(compositor, compositorNamespace, bufferCount)
     echo "CBSS bgfx direct pixel conformance passed (", host.backendInfo.rendererName,
       ")"
   finally:

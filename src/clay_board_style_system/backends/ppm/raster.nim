@@ -1,7 +1,7 @@
 import std/[math, options, sequtils]
 import ../../core/[color, computed_style, geometry, gradient_sampling,
     raster_surface]
-import ../../paint/[paint_command, path_geometry]
+import ../../paint/[layer_color_filter, paint_command, path_geometry]
 
 type
   RasterImage* = object
@@ -26,6 +26,7 @@ type
     bounds: Rect
     opacity: float32
     compositeMode: LayerCompositeMode
+    colorFilter: LayerColorFilter
     clipDepth: int
 
 proc clampByte(value: float32): uint8 =
@@ -89,9 +90,10 @@ proc compositePixel(
     source: RasterImage;
     x, y: int;
     opacity: float32;
-    compositeMode: LayerCompositeMode
+    compositeMode: LayerCompositeMode;
+    colorFilter: LayerColorFilter
 ) =
-  var sourceColor = source.pixelColor(x, y)
+  var sourceColor = colorFilter.applyLayerColorFilter(source.pixelColor(x, y))
   sourceColor.a *= opacity
   let destinationColor = destination.pixelColor(x, y)
   case compositeMode
@@ -134,7 +136,7 @@ proc compositeLayer(
       let sample = vec2(x.float32 + 0.5'f32, y.float32 + 0.5'f32)
       if clip.contains(sample):
         destination.compositePixel(
-          source, x, y, layer.opacity, layer.compositeMode
+          source, x, y, layer.opacity, layer.compositeMode, layer.colorFilter
         )
 
 proc intBounds(rect: Rect; width, height: int): tuple[x0, y0, x1, y1: int] =
@@ -690,6 +692,7 @@ proc renderInto*(
         bounds: layerBounds,
         opacity: command.layerOpacity,
         compositeMode: command.layerCompositeMode,
+        colorFilter: command.layerColorFilter,
         clipDepth: clipStack.len
       )
       targets.add initRasterImage(
