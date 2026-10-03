@@ -9,6 +9,13 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added bounded GPU instancing with static and dynamic record buffers, indexed
+  meshes, validated subranges, and up to 65,536 instances per draw. Typed shader
+  inputs expose up to five packed vec4 values per instance; bgfx maps both buffer types directly.
+  GpuHost backend API version is now 19. The OpenGL fixture compares affine
+  rounded rectangles, opacity, and overlapping instances with CPU reference
+  pixels, while shader compilation covers OpenGL and Vulkan.
+
 - Added opt-in CPU Motion Scene snapshots and typed numeric timelines. Stable-ID rounded
   rectangles share one Canvas with affine transforms, opacity, z-order,
   viewport clipping, and matching hit testing. Immutable batch replacement and
@@ -52,6 +59,9 @@ release. Before 1.0, minor releases may contain public API changes.
   render targets and cannot be redirected to the final window safely.
 
 ### Fixed
+
+- Avoided the reserved HLSL identifier `point` in the rounded-mask compositor
+  shader so official shaderc can compile its Vulkan variant.
 
 - Fixed SDL3 software composition darkening translucent nested layers by
   applying alpha more than once. A bounded CPU fallback now composites
