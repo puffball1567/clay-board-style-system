@@ -244,8 +244,11 @@ task testMotionAsan, "Run retained runtime tests under AddressSanitizer":
       ""
   for memoryModel in selectedMemoryModels():
     for test in [
+      ("test_driver_lifecycle", "tests/memory/test_driver_lifecycle.nim"),
       ("declarative_transition", "tests/runtime/test_declarative_transition.nim"),
       ("declarative_keyframes", "tests/runtime/test_declarative_keyframes.nim"),
+      ("motion_scene", "tests/runtime/test_motion_scene.nim"),
+      ("motion_scene_timeline", "tests/runtime/test_motion_scene_timeline.nim"),
       ("command", "tests/runtime/test_command.nim"),
       ("cue", "tests/runtime/test_cue.nim"),
       ("cue_canvas", "tests/runtime/test_cue_canvas.nim"),
@@ -282,6 +285,7 @@ task testUbsan, "Run numeric, layout, transform, and motion tests under Undefine
   let clangExe = getEnv("CBSS_CLANG", "clang")
   for memoryModel in selectedMemoryModels():
     for test in [
+      ("test_driver_lifecycle", "tests/memory/test_driver_lifecycle.nim"),
       ("color_conversion", "tests/core/test_color_conversion.nim"),
       ("flex", "tests/layout/test_flex.nim"),
       ("transform_geometry", "tests/layout/test_transform_geometry.nim"),
@@ -293,6 +297,8 @@ task testUbsan, "Run numeric, layout, transform, and motion tests under Undefine
       ("retained_canvas", "tests/paint/test_retained_canvas_raster.nim"),
       ("declarative_transition", "tests/runtime/test_declarative_transition.nim"),
       ("declarative_keyframes", "tests/runtime/test_declarative_keyframes.nim"),
+      ("motion_scene", "tests/runtime/test_motion_scene.nim"),
+      ("motion_scene_timeline", "tests/runtime/test_motion_scene_timeline.nim"),
       ("validation", "tests/runtime/test_validation.nim")
     ]:
       let testName = test[0]
@@ -314,8 +320,11 @@ task testLsan, "Run retained lifecycle tests under LeakSanitizer on Linux":
       for test in [
         ("widget_lifecycle", "tests/memory/widget_lifecycle.nim"),
         ("event_lifecycle", "tests/memory/event_lifecycle.nim"),
+        ("test_driver_lifecycle", "tests/memory/test_driver_lifecycle.nim"),
         ("declarative_transition", "tests/runtime/test_declarative_transition.nim"),
         ("declarative_keyframes", "tests/runtime/test_declarative_keyframes.nim"),
+        ("motion_scene", "tests/runtime/test_motion_scene.nim"),
+        ("motion_scene_timeline", "tests/runtime/test_motion_scene_timeline.nim"),
         ("command", "tests/runtime/test_command.nim"),
         ("cue", "tests/runtime/test_cue.nim"),
         ("cue_canvas", "tests/runtime/test_cue_canvas.nim"),
@@ -391,10 +400,10 @@ task buildCAbiStatic, "Build the static CBSS C ABI library":
   exec "nim c --threads:on --app:staticlib --mm:arc -d:release --path:src --nimcache:/tmp/clay_board_style_system_c_api_static_nimcache --out:/tmp/libcbss.a src/cbss_c_api.nim"
 
 task testCAbi, "Build and exercise the shared and static C ABI from C":
-  exec "nim c --threads:on --app:lib --mm:arc -d:release --path:src --nimcache:/tmp/clay_board_style_system_c_api_shared_nimcache --out:/tmp/libcbss.so src/cbss_c_api.nim"
+  exec "nim c --threads:on --app:lib --mm:arc -d:release -d:cbssReferenceTestSupport --path:src --nimcache:/tmp/clay_board_style_system_c_api_shared_nimcache --out:/tmp/libcbss.so src/cbss_c_api.nim"
   exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude -fsyntax-only tests/c_api/header_consumer.c"
   exec "c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include -fsyntax-only tests/c_api/header_consumer.cpp"
-  exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/c_consumer.c -L/tmp -Wl,-rpath,/tmp -lcbss -lm -o /tmp/clay_board_style_system_c_consumer_shared"
+  exec "cc -std=c11 -Wall -Wextra -Werror -DCBSS_REFERENCE_TEST_SUPPORT -Iinclude tests/c_api/c_consumer.c -L/tmp -Wl,-rpath,/tmp -lcbss -lm -o /tmp/clay_board_style_system_c_consumer_shared"
   exec "/tmp/clay_board_style_system_c_consumer_shared"
   exec "c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include tests/drivers/cpp_reference.cpp -L/tmp -Wl,-rpath,/tmp -lcbss -lm -o /tmp/clay_board_style_system_cpp_driver_shared"
   exec "/tmp/clay_board_style_system_cpp_driver_shared"
@@ -402,8 +411,8 @@ task testCAbi, "Build and exercise the shared and static C ABI from C":
   exec "/tmp/clay_board_style_system_c_motion_consumer_shared"
   exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/stream_consumer.c -L/tmp -Wl,-rpath,/tmp -lcbss -lm -lpthread -ldl -o /tmp/clay_board_style_system_c_stream_consumer_shared"
   exec "/tmp/clay_board_style_system_c_stream_consumer_shared"
-  exec "nim c --threads:on --app:staticlib --mm:arc -d:release --path:src --nimcache:/tmp/clay_board_style_system_c_api_static_nimcache --out:/tmp/libcbss.a src/cbss_c_api.nim"
-  exec "cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/c_api/c_consumer.c /tmp/libcbss.a -lm -lpthread -ldl -o /tmp/clay_board_style_system_c_consumer_static"
+  exec "nim c --threads:on --app:staticlib --mm:arc -d:release -d:cbssReferenceTestSupport --path:src --nimcache:/tmp/clay_board_style_system_c_api_static_nimcache --out:/tmp/libcbss.a src/cbss_c_api.nim"
+  exec "cc -std=c11 -Wall -Wextra -Werror -DCBSS_REFERENCE_TEST_SUPPORT -Iinclude tests/c_api/c_consumer.c /tmp/libcbss.a -lm -lpthread -ldl -o /tmp/clay_board_style_system_c_consumer_static"
   exec "/tmp/clay_board_style_system_c_consumer_static"
   exec "c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include tests/drivers/cpp_reference.cpp /tmp/libcbss.a -lm -lpthread -ldl -o /tmp/clay_board_style_system_cpp_driver_static"
   exec "/tmp/clay_board_style_system_cpp_driver_static"
@@ -531,7 +540,12 @@ task testStreamMailboxValgrind, "Run the threaded ARC stream mailbox under Valgr
   exec "nim c --threads:on --mm:arc -d:release -d:useMalloc --path:src --nimcache:/tmp/clay_board_style_system_stream_mailbox_nimcache --out:/tmp/clay_board_style_system_stream_mailbox tests/data/test_stream_mailbox_threaded.nim"
   exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 /tmp/clay_board_style_system_stream_mailbox"
 
-task testCueValgrind, "Run ARC Cue lifecycle checks under Valgrind":
+task testCueValgrind, "Run Cue and test-driver lifecycle checks under Valgrind":
+  for memoryModel in ["arc", "orc"]:
+    let artifact = "/tmp/clay_board_style_system_test_driver_" & memoryModel & "_valgrind"
+    exec "nim c --mm:" & memoryModel & " -d:release -d:useMalloc --path:src --nimcache:" & artifact & "_nimcache --out:" & artifact & " tests/memory/test_driver_lifecycle.nim"
+    # This scoped fixture has no unittest globals; every leak kind must fail CI.
+    exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=all --error-exitcode=99 " & artifact
   exec "nim c --mm:arc -d:release -d:cbssFrontendTrace -d:useMalloc --path:src --nimcache:/tmp/clay_board_style_system_frontend_trace_valgrind_nimcache --out:/tmp/clay_board_style_system_frontend_trace_valgrind tests/runtime/test_frontend_trace.nim"
   exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 /tmp/clay_board_style_system_frontend_trace_valgrind"
   exec "nim c --mm:arc -d:release -d:useMalloc --path:src --nimcache:/tmp/clay_board_style_system_command_valgrind_nimcache --out:/tmp/clay_board_style_system_command_valgrind tests/runtime/test_command.nim"

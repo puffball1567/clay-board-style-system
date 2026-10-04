@@ -1114,6 +1114,11 @@ against the actual storage resource stages, formats, and access directions
 before backend work.
 See [GPU Shader Authoring And Packaging](gpu-shaders.md).
 
+Bounded static/dynamic instanced draws now carry 1–5 packed vec4 values per
+instance through the host and bgfx adapter, with typed vertex-shader inputs,
+subrange validation, and up to 65,536 instances per draw. Automatic Motion Scene
+snapshot uploads and timeline-to-GPU synchronization remain subsequent work.
+
 CBSS will not claim exclusive ownership of the machine's GPU. A separate
 backend process may own an independent compute device and return bounded Blob,
 Stream, or immutable snapshot results. An in-process backend using the selected
@@ -1250,7 +1255,16 @@ contract and do not duplicate the motion engine.
 
 ### CSS-Like Motion Scene
 
-Status: `Planned after Version 0.4`
+Status: `CPU snapshots and typed timelines implemented; GPU execution planned`
+
+The opt-in CPU reference now stores bounded immutable rounded-rectangle batches
+inside one Canvas, with stable IDs, affine/opacity/z-order properties, viewport
+clipping, inverse-transform picking, deterministic replacement, and cancellable
+latest-request tokens. UI publication dirties only the Canvas's paint; a static
+scene requests no continuous frames. Typed numeric tracks reuse AnimationClock
+and FrameScheduler for easing, delay, finite repeats, pause/resume, and reduced
+motion. See [CPU Motion Scene](motion-scene.md) for the current API and remaining
+primitive and backend work.
 
 CBSS will provide a retained Motion Scene inside Canvas for motion graphics,
 generative design, high-density charts, particles, sprites, and other visuals
@@ -2391,8 +2405,19 @@ unbounded scope or text changes retain a full-repaint fallback. Custom Paint
 alpha masks now isolate the complete owner subtree and use shared
 destination-in semantics in the PPM reference and SDL3 renderer; SDL3 software
 renderers use a bounded compatibility fallback when custom blending is
-unavailable. CPU filter composition and the broader Motion Scene remain open
-Version 0.7 work.
+unavailable. Retained Nim Canvas layers now accept immutable RGB matrix filters
+with one shared straight-sRGB evaluator for PPM and bounded SDL3 readback/upload.
+Filters preserve alpha and coverage, apply before layer opacity, and participate
+in retained cache equality. SDL3 software layer composition now preserves
+premultiplied alpha through nested translucent transforms. Typed Nim Custom
+Paint filter providers now connect those matrices to Style-owned visual groups,
+including local overlay ordering, masks, and whole-group subtree repaints.
+C ABI `0x00010027` now supports copied RGB matrices in retained Canvas and
+Custom Paint command-sink layers, plus a paint-command matrix accessor.
+ABI `0x00010028` connects foreign Style filter callbacks to the same complete
+visual groups, with copied matrix results, typed parameters, identity fallback,
+and generation-safe provider lifetime. Spatial filters, GPU filter composition,
+and the broader Motion Scene remain open Version 0.7 work.
 Backend-neutral named Custom Paint
 materials now connect ordinary Style declarations to bounded underlay and
 overlay command streams without adding nodes. `GpuCanvasSurface` can use that
