@@ -9,6 +9,11 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Fixed
 
+- Aligned direct GPU Surface texture sampling and rounded masks with the
+  pixel-rounded compositor viewport at fractional logical positions and
+  non-unit pixel scales. The standard compositor now requires clamped sampler
+  edges so fractional coverage cannot repeat or mirror unrelated texels.
+
 - Fixed a clipboard callback ownership cycle in the headless test driver that
   retained its UI and test state under ARC, including in Cue Canvas and motion
   validation. Clipboard callbacks now share independent storage, remain valid

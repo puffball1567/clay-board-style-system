@@ -2304,13 +2304,17 @@ proc gpuUniformMatches*(
 proc gpuSamplerMatches*(
     host: GpuHost;
     handle: GpuResourceHandle;
-    name: string
+    name: string;
+    requireClamp = false
 ): bool =
   if not host.isGpuResourceLive(handle) or handle.kind != grkSampler:
     return false
-  host.namespaces[handle.namespace].resources[
+  let descriptor = host.namespaces[handle.namespace].resources[
     handle.resource
-  ].samplerDescriptor.name == name
+  ].samplerDescriptor
+  descriptor.name == name and
+    (not requireClamp or
+      (descriptor.addressU == gsamClamp and descriptor.addressV == gsamClamp))
 
 proc gpuPresentableResourceInfo*(
     host: GpuHost;

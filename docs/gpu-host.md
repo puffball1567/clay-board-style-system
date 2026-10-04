@@ -507,6 +507,11 @@ budget before calling the adapter. Multiple draw commands submitted through
 target, viewport, scissor, and clear state once for that pass, then receives
 only the validated draw commands; adding draws does not repeat pass setup.
 
+The standard direct Surface compositor derives its texture coordinates and
+rounded masks from the physical pixel-rounded viewport. Its sampler must clamp
+both texture axes so edge pixels at fractional logical positions do not wrap
+into unrelated texels.
+
 `GpuHostConfig.viewIdBase` and `viewIdCount` reserve the backend view range used
 by CBSS. A zero count means the complete 256-view range. Borrowed runtimes can
 assign a smaller non-overlapping range so application-owned bgfx work and CBSS
