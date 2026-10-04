@@ -33,11 +33,14 @@ type
       attrName*: string
       attrValue*: string
 
+  TestClipboardState = ref object
+    text: string
+
   CbssTestDriver* = ref object
     ui*: UiRoot
     viewport*: Size
     input*: InteractionState
-    clipboard*: string
+    clipboardState: TestClipboardState
     diagnostics*: Diagnostics
     styles*: ResolvedTree
     layout*: LayoutResult
@@ -286,19 +289,26 @@ proc setViewport*(driver: CbssTestDriver; viewport: Size) =
   driver.viewport = viewport
   driver.refresh()
 
+proc clipboard*(driver: CbssTestDriver): var string =
+  ## The mutable clipboard shared with the UI's clipboard callbacks.
+  driver.clipboardState.text
+
 proc initCbssTestDriver*(ui: UiRoot; viewport: Size): CbssTestDriver =
+  # Capture only the storage, not the driver: driver -> UI -> callback ->
+  # driver would form an owning cycle under ARC.
+  let clipboardState = TestClipboardState()
   result = CbssTestDriver(
     ui: ui,
     viewport: viewport,
     input: initInteractionState(),
+    clipboardState: clipboardState,
     scheduler: initFrameScheduler()
   )
-  let driver = result
   result.ui.configureClipboardTextProvider(proc(): string =
-    driver.clipboard
+    clipboardState.text
   )
   result.ui.configureClipboardTextWriter(proc(text: string) =
-    driver.clipboard = text
+    clipboardState.text = text
   )
   result.refresh()
 

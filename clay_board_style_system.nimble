@@ -244,6 +244,7 @@ task testMotionAsan, "Run retained runtime tests under AddressSanitizer":
       ""
   for memoryModel in selectedMemoryModels():
     for test in [
+      ("test_driver_lifecycle", "tests/memory/test_driver_lifecycle.nim"),
       ("declarative_transition", "tests/runtime/test_declarative_transition.nim"),
       ("declarative_keyframes", "tests/runtime/test_declarative_keyframes.nim"),
       ("motion_scene", "tests/runtime/test_motion_scene.nim"),
@@ -284,6 +285,7 @@ task testUbsan, "Run numeric, layout, transform, and motion tests under Undefine
   let clangExe = getEnv("CBSS_CLANG", "clang")
   for memoryModel in selectedMemoryModels():
     for test in [
+      ("test_driver_lifecycle", "tests/memory/test_driver_lifecycle.nim"),
       ("color_conversion", "tests/core/test_color_conversion.nim"),
       ("flex", "tests/layout/test_flex.nim"),
       ("transform_geometry", "tests/layout/test_transform_geometry.nim"),
@@ -318,6 +320,7 @@ task testLsan, "Run retained lifecycle tests under LeakSanitizer on Linux":
       for test in [
         ("widget_lifecycle", "tests/memory/widget_lifecycle.nim"),
         ("event_lifecycle", "tests/memory/event_lifecycle.nim"),
+        ("test_driver_lifecycle", "tests/memory/test_driver_lifecycle.nim"),
         ("declarative_transition", "tests/runtime/test_declarative_transition.nim"),
         ("declarative_keyframes", "tests/runtime/test_declarative_keyframes.nim"),
         ("motion_scene", "tests/runtime/test_motion_scene.nim"),
@@ -537,7 +540,12 @@ task testStreamMailboxValgrind, "Run the threaded ARC stream mailbox under Valgr
   exec "nim c --threads:on --mm:arc -d:release -d:useMalloc --path:src --nimcache:/tmp/clay_board_style_system_stream_mailbox_nimcache --out:/tmp/clay_board_style_system_stream_mailbox tests/data/test_stream_mailbox_threaded.nim"
   exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 /tmp/clay_board_style_system_stream_mailbox"
 
-task testCueValgrind, "Run ARC Cue lifecycle checks under Valgrind":
+task testCueValgrind, "Run Cue and test-driver lifecycle checks under Valgrind":
+  for memoryModel in ["arc", "orc"]:
+    let artifact = "/tmp/clay_board_style_system_test_driver_" & memoryModel & "_valgrind"
+    exec "nim c --mm:" & memoryModel & " -d:release -d:useMalloc --path:src --nimcache:" & artifact & "_nimcache --out:" & artifact & " tests/memory/test_driver_lifecycle.nim"
+    # This scoped fixture has no unittest globals; every leak kind must fail CI.
+    exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=all --error-exitcode=99 " & artifact
   exec "nim c --mm:arc -d:release -d:cbssFrontendTrace -d:useMalloc --path:src --nimcache:/tmp/clay_board_style_system_frontend_trace_valgrind_nimcache --out:/tmp/clay_board_style_system_frontend_trace_valgrind tests/runtime/test_frontend_trace.nim"
   exec "valgrind --vgdb=no --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99 /tmp/clay_board_style_system_frontend_trace_valgrind"
   exec "nim c --mm:arc -d:release -d:useMalloc --path:src --nimcache:/tmp/clay_board_style_system_command_valgrind_nimcache --out:/tmp/clay_board_style_system_command_valgrind tests/runtime/test_command.nim"
