@@ -1114,6 +1114,11 @@ against the actual storage resource stages, formats, and access directions
 before backend work.
 See [GPU Shader Authoring And Packaging](gpu-shaders.md).
 
+Bounded static/dynamic instanced draws now carry 1–5 packed vec4 values per
+instance through the host and bgfx adapter, with typed vertex-shader inputs,
+subrange validation, and up to 65,536 instances per draw. Automatic Motion Scene
+snapshot uploads and timeline-to-GPU synchronization remain subsequent work.
+
 CBSS will not claim exclusive ownership of the machine's GPU. A separate
 backend process may own an independent compute device and return bounded Blob,
 Stream, or immutable snapshot results. An in-process backend using the selected

@@ -378,3 +378,14 @@ engine compatibility fixture described above, packages the artifacts, and
 decodes them through the runtime parser.
 This test needs no GPU; real resource creation and submission remain covered by
 the separate bgfx host integration lanes.
+
+
+## Instance inputs
+
+Vertex builders accept `vertexInput(gsisInstance0, gsvtVec4)` through
+`gsisInstance4`. They emit bgfx's `i_data0`–`i_data4` declarations with dedicated
+instance semantics. Each input is a packed float32 vec4; other types and
+instance-slot varyings are rejected. Configure the matching pipeline record
+width and bind its static or dynamic instance buffer as described in
+[Instanced drawing](gpu-host.md#instanced-drawing). The compiler integration
+checks the five-vec4 rounded-rectangle fixture for both OpenGL and Vulkan.

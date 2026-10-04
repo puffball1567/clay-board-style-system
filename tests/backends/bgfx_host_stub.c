@@ -6,6 +6,10 @@
 
 #include <string.h>
 
+static uint32_t cbss_instance_bind_count;
+static uint32_t cbss_dynamic_instance_bind_count;
+static uint32_t cbss_last_instance_start;
+static uint32_t cbss_last_instance_count;
 static bool cbss_initialized;
 static uint32_t cbss_shutdown_count;
 static uint32_t cbss_frame_count;
@@ -898,6 +902,10 @@ uint32_t bgfx_read_buffer(const bgfx_buffer_region_t* src, void* data)
 
 void cbss_bgfx_stub_reset_counters(void)
 {
+    cbss_instance_bind_count = 0;
+    cbss_dynamic_instance_bind_count = 0;
+    cbss_last_instance_start = 0;
+    cbss_last_instance_count = 0;
     cbss_shutdown_count = 0;
     cbss_frame_count = 0;
     cbss_reset_count = 0;
@@ -1267,4 +1275,25 @@ uint32_t cbss_bgfx_stub_frame_buffer_format(void)
 uint64_t cbss_bgfx_stub_init_capabilities(void)
 {
     return cbss_init_capabilities;
+}
+
+uint32_t cbss_bgfx_stub_instance_bind_count(void) { return cbss_instance_bind_count; }
+uint32_t cbss_bgfx_stub_dynamic_instance_bind_count(void) { return cbss_dynamic_instance_bind_count; }
+uint32_t cbss_bgfx_stub_last_instance_start(void) { return cbss_last_instance_start; }
+uint32_t cbss_bgfx_stub_last_instance_count(void) { return cbss_last_instance_count; }
+void bgfx_set_instance_data_from_vertex_buffer(bgfx_vertex_buffer_handle_t handle,
+                                             uint32_t start, uint32_t num)
+{
+    (void)handle;
+    ++cbss_instance_bind_count;
+    cbss_last_instance_start = start;
+    cbss_last_instance_count = num;
+}
+void bgfx_set_instance_data_from_dynamic_vertex_buffer(bgfx_dynamic_vertex_buffer_handle_t handle,
+                                                     uint32_t start, uint32_t num)
+{
+    (void)handle;
+    ++cbss_dynamic_instance_bind_count;
+    cbss_last_instance_start = start;
+    cbss_last_instance_count = num;
 }

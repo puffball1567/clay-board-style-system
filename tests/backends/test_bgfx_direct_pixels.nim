@@ -11,7 +11,10 @@ import bgfx
 import clay_board_style_system/backends/bgfx/[adapter, sdl3_platform_data]
 import clay_board_style_system/backends/sdl3/config
 import clay_board_style_system/build/gpu_shader_compiler
-import clay_board_style_system/core/[geometry, node]
+import clay_board_style_system/core/[color, geometry, node]
+import clay_board_style_system/backends/ppm/raster
+import clay_board_style_system/runtime/canvas
+import ../fixtures/gpu_instanced_rects
 import clay_board_style_system/paint/[gpu_direct_compositor,
     gpu_host_compositor, paint_command]
 import clay_board_style_system/runtime/[gpu_direct_surface, gpu_host,
@@ -216,6 +219,69 @@ proc solid(red, green, blue: uint8; alpha = 255'u8): seq[byte] =
     Pixel(red: red, green: green, blue: blue, alpha: alpha)
   )
 
+proc verifyInstancedRects(host: GpuHost; shaderc, shaderIncludes, workDirectory: string) =
+  doAssert host.backendInfo.instancingSupported
+  let ns = host.createGpuNamespace("instanced-rectangles", budget())
+  let vertexSource = instancedRectVertexSource()
+  let fragmentSource = instancedRectFragmentSource()
+  validateGpuShaderInterface(vertexSource, fragmentSource)
+  let vertex = host.createGpuShader(ns, compileShader(vertexSource, shaderc, shaderIncludes, workDirectory))
+  let fragment = host.createGpuShader(ns, compileShader(fragmentSource, shaderc, shaderIncludes, workDirectory))
+  let layout = @[GpuVertexAttribute(semantic: gvsPosition, components: 2, componentType: gvctFloat)]
+  let pipeline = host.createGpuGraphicsPipeline(ns, GpuGraphicsPipelineDescriptor(
+    vertexShader: vertex, fragmentShader: fragment, vertexLayout: layout,
+    instanceDataVec4Count: 5, colorFormat: gtfRgba8, topology: gptTriangleStrip,
+    cullMode: gcmNone, blend: alphaGpuBlendState()))
+  let quad = [[0'f32, 0], [0'f32, 1], [1'f32, 0], [1'f32, 1]]
+  let vertices = host.createGpuBuffer(ns, GpuBufferDescriptor(byteSize: 32,
+    role: gbrVertex, access: gbaStatic, vertexLayout: layout), quad.bytesOf())
+  let target = host.createGpuRenderTarget(ns, GpuRenderTargetDescriptor(
+    width: 64, height: 64, format: gtfRgba8, usage: {gtuRenderTarget, gtuSampled, gtuBlitSource}))
+  let transforms = [translationAffine2D(6, 5),
+    translationAffine2D(20, 16) * rotationAffine2D(0.2), translationAffine2D(45, 8)]
+  let sizes = [size(24, 22), size(24, 24), size(12, 40)]
+  let colors = [rgba(1, 0, 0, 1), rgba(0, 0, 1, 0.5), rgba(0, 1, 0, 1)]
+  for access in [gbaStatic, gbaDynamic]:
+    # Record zero is deliberately not drawn, exercising the instance offset.
+    var records: array[4, array[5, array[4, float32]]]
+    for index in 0 .. 2:
+      let t = transforms[index]
+      let c = colors[index]
+      records[index + 1] = [[t.m11, t.m21, t.tx, 0'f32],
+        [t.m12, t.m22, t.ty, 0'f32], [sizes[index].w, sizes[index].h, 4'f32, 0'f32],
+        [c.r, c.g, c.b, c.a], [1'f32 / 64, 1'f32 / 64, 0, 0]]
+    let instances = host.createGpuBuffer(ns, gpuInstanceBufferDescriptor(5, 4, access), records.bytesOf())
+    for step in 0 .. (if access == gbaDynamic: 1 else: 0):
+      if step == 1:
+        records[3][0][2] = 50
+        host.updateGpuBuffer(instances, 0, records.bytesOf())
+      let token = host.beginGpuFrame()
+      host.submitGpuDraw(ns, GpuGraphicsPassDescriptor(
+        viewport: GpuViewport(width: 64, height: 64), renderTarget: target,
+        clearColorEnabled: true, clearColor: GpuClearColor(alpha: 1)),
+        GpuDrawCommand(pipeline: pipeline, vertexBuffer: vertices, vertexCount: 4,
+          instances: GpuInstanceBinding(buffer: instances, firstInstance: 1, instanceCount: 3)))
+      host.endGpuFrame(token)
+      let actual = host.readPixels(ns, target, 64, 64)
+      let canvas = newCanvas2D()
+      for index in 0 .. 2:
+        var transform = transforms[index]
+        if index == 2 and step == 1: transform.tx = 50
+        let bounds = rect(0, 0, sizes[index].w, sizes[index].h)
+        canvas.save()
+        canvas.transform(transform)
+        canvas.pushClip(bounds, 4)
+        canvas.fillRect(bounds, colors[index])
+        canvas.restore()
+      let expected = render(canvas.paintCommands(NodeId(0), rect(0, 0, 64, 64)), 64, 64, rgb(0, 0, 0))
+      for point in [(0, 0), (6, 5), (12, 12), (24, 20), (33, 30), (46, 20), (54, 20), (63, 63)]:
+        let index = (point[1] * 64 + point[0]) * 3
+        actual.requirePixel(point[0], point[1], Pixel(red: expected.pixels[index],
+          green: expected.pixels[index + 1], blue: expected.pixels[index + 2], alpha: 255),
+          "instanced rounded rectangles match CPU")
+    doAssert host.releaseGpuResource(instances)
+  echo "Instanced rounded rectangles: static/dynamic, affine, opacity, order, subrange, update, CPU pixels passed"
+
 proc checkProducerPressure(
     host: GpuHost;
     compositor: GpuDirectCompositor;
@@ -397,6 +463,7 @@ proc run() =
       )
     )
     doAssert host.backendInfo.rendererName.toLowerAscii.contains("opengl")
+    host.verifyInstancedRects(shaderc, shaderIncludes, workDirectory)
 
     let compositorNamespace = host.createGpuNamespace(
       "pixel-compositor", budget()
