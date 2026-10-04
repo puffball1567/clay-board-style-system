@@ -30,7 +30,7 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x00010026` supports:
+ABI version `0x00010028` supports:
 
 - machine-readable Craft Driver contract metadata and runtime capability
   negotiation through stable numeric identifiers before tree construction;
@@ -450,6 +450,35 @@ handles, unknown enums, non-finite coordinates, negative dimensions, and
 unusable widths are rejected before they enter the retained list. Scope
 balancing follows the Nim Canvas contract: unmatched closes are safe no-ops
 and dangling scopes are closed at the paint boundary.
+
+ABI `0x00010027` adds `CbssRgbColorMatrix`, a fixed 48-byte value containing
+12 row-major coefficients. Each RGB row is `[R, G, B, offset]`; evaluation uses
+straight encoded sRGB before layer opacity and preserves alpha and transparent
+coverage. All coefficients must be finite. An identity matrix leaves colors
+unchanged; an all-zero matrix produces black.
+
+Use `cbss_render_surface_canvas_begin_layer_color_matrix` for a filtered Canvas
+layer or `cbss_custom_paint_sink_begin_layer_color_matrix` inside a foreign
+material callback. Both retain a copy, accept the same bounds, opacity, and
+composite modes as their existing `begin_layer` counterparts, and close with
+`end_layer`. Invalid input leaves the command list and Canvas revision unchanged.
+Custom Paint sinks retain their callback-only lifetime and command limits.
+These layer functions do not register a Style `cpsFilter` provider.
+
+`cbss_paint_command_layer_color_matrix` copies the matrix for a
+`CBSS_PAINT_PUSH_LAYER` command, returning identity for an unfiltered layer.
+Other command kinds fail with `CBSS_INVALID_ARGUMENT`; failures leave the output
+untouched. Existing `CbssPaintCommand` layout and layer value fields are
+unchanged. Capability versions `paint.commands` and `canvas.retained` are 4.
+
+ABI `0x00010028` advances `custom-paint.provider` to 5 and supports registration
+with `CBSS_CUSTOM_PAINT_STAGE_FILTER` alone. These callbacks use
+`cbss_custom_paint_sink_set_color_matrix` to return a copied matrix for the
+owner's complete visual group. They can read typed parameters but cannot append
+drawing commands. No matrix means identity; callback failure discards its
+result and leaves ordinary content visible. See
+[Foreign Style Filters](custom-paint.md#foreign-style-filters) for the full
+lifetime and failure contract.
 
 Paint-command consumers inspect retained dash data through
 `cbss_paint_command_path_dash_count`, `cbss_paint_command_path_dash`, and

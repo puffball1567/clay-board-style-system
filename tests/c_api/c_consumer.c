@@ -1,6 +1,6 @@
 #include "cbss.h"
 
-_Static_assert(CBSS_ABI_VERSION == 0x00010026u, "unexpected CBSS ABI version");
+_Static_assert(CBSS_ABI_VERSION == 0x00010028u, "unexpected CBSS ABI version");
 _Static_assert(CBSS_ROLE_SWITCH == 22, "unexpected switch role value");
 _Static_assert(CBSS_ROLE_PASSWORD_TEXT == 23,
                "unexpected password text role value");
@@ -12,6 +12,7 @@ _Static_assert(CBSS_ROLE_PASSWORD_TEXT == 23,
 #include <stdlib.h>
 #include <string.h>
 
+_Static_assert(sizeof(CbssRgbColorMatrix) == 48, "RGB matrix ABI changed");
 _Static_assert(sizeof(CbssRect) == 16, "CbssRect ABI changed");
 _Static_assert(sizeof(CbssColor) == 16, "CbssColor ABI changed");
 _Static_assert(sizeof(CbssLayoutBox) == 24, "CbssLayoutBox ABI changed");
@@ -209,12 +210,27 @@ typedef struct CustomPaintState {
   CbssColor color;
 } CustomPaintState;
 
+static const CbssRgbColorMatrix rgb_matrix = {{
+    0.25f, -0.5f, 1.0f, 0.125f,
+    0.75f, 0.375f, -1.0f, 0.625f,
+    -0.25f, 0.5f, 0.875f, -0.125f}};
+static const CbssRgbColorMatrix identity_rgb_matrix = {{
+    1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0}};
+
+static void assert_rgb_matrix(CbssRgbColorMatrix actual,
+                              CbssRgbColorMatrix expected) {
+  for (unsigned i = 0; i < 12; ++i) {
+    assert(actual.coefficients[i] == expected.coefficients[i]);
+  }
+}
+
 static CbssStatus paint_custom_material(
     const CbssCustomPaintRequest *request, CbssCustomPaintSink *sink,
     void *user_data) {
   CustomPaintState *state = user_data;
   ++state->calls;
   state->borrowed_sink = sink;
+  assert(cbss_custom_paint_sink_set_color_matrix(sink, rgb_matrix) == CBSS_NOT_AVAILABLE);
   assert(request != NULL);
   assert(request->struct_size == sizeof(CbssCustomPaintRequest));
   assert(request->api_version == CBSS_CUSTOM_PAINT_API_VERSION);
@@ -268,8 +284,21 @@ static CbssStatus paint_custom_material(
       CBSS_OK);
   assert(cbss_custom_paint_sink_push_clip(
       sink, (CbssRect){0.0f, 0.0f, 48.0f, 24.0f}, 4.0f) == CBSS_OK);
-  assert(cbss_custom_paint_sink_begin_layer(
-      sink, request->local_bounds, 0.75f, CBSS_LAYER_SOURCE_OVER) == CBSS_OK);
+  for (unsigned i = 0; i < 12; ++i) {
+    const float invalid_values[] = {NAN, INFINITY, -INFINITY};
+    for (unsigned j = 0; j < 3; ++j) {
+      CbssRgbColorMatrix invalid = rgb_matrix;
+      invalid.coefficients[i] = invalid_values[j];
+      assert(cbss_custom_paint_sink_begin_layer_color_matrix(
+          sink, request->local_bounds, 0.75f, CBSS_LAYER_SOURCE_OVER,
+          invalid) == CBSS_INVALID_ARGUMENT);
+    }
+  }
+  CbssRgbColorMatrix copied_matrix = rgb_matrix;
+  assert(cbss_custom_paint_sink_begin_layer_color_matrix(
+      sink, request->local_bounds, 0.75f, CBSS_LAYER_SOURCE_OVER,
+      copied_matrix) == CBSS_OK);
+  memset(&copied_matrix, 0, sizeof(copied_matrix));
   assert(cbss_custom_paint_sink_fill_linear_gradient(
       sink, (CbssRect){4.0f, 4.0f, 20.0f, 12.0f}, 90.0f,
       CBSS_COLOR_INTERPOLATE_SRGB, stops, 2, 2.0f) == CBSS_OK);
@@ -381,6 +410,13 @@ static void test_custom_paint_provider(void) {
   assert(cbss_custom_paint_parameter(
       first.borrowed_sink, 0, &expired_parameter) == CBSS_NOT_AVAILABLE);
 
+  assert(cbss_custom_paint_sink_begin_layer_color_matrix(
+      first.borrowed_sink, (CbssRect){0, 0, 8, 8}, 1.0f,
+      CBSS_LAYER_SOURCE_OVER, rgb_matrix) == CBSS_NOT_AVAILABLE);
+  assert(cbss_custom_paint_sink_begin_layer_color_matrix(
+      NULL, (CbssRect){0, 0, 8, 8}, 1.0f,
+      CBSS_LAYER_SOURCE_OVER, rgb_matrix) == CBSS_INVALID_HANDLE);
+  int found_filter = 0;
   int found_fill = 0;
   int found_stroke = 0;
   int found_gradient = 0;
@@ -401,6 +437,13 @@ static void test_custom_paint_provider(void) {
     }
     if (command.kind == CBSS_PAINT_STROKE_RECT && command.owner == root) {
       found_stroke = 1;
+    }
+    if (command.kind == CBSS_PAINT_PUSH_LAYER) {
+      CbssRgbColorMatrix matrix;
+      require_ok(context, cbss_paint_command_layer_color_matrix(
+          context, index, &matrix));
+      assert_rgb_matrix(matrix, rgb_matrix);
+      ++found_filter;
     }
     found_gradient |= command.kind == CBSS_PAINT_FILL_LINEAR_GRADIENT;
     if (command.kind == CBSS_PAINT_STROKE_PATH) {
@@ -431,6 +474,7 @@ static void test_custom_paint_provider(void) {
     found_image |= command.kind == CBSS_PAINT_DRAW_IMAGE;
     found_raster |= command.kind == CBSS_PAINT_DRAW_RASTER_SURFACE;
   }
+  assert(found_filter == 1);
   assert(found_fill && found_stroke && found_gradient && found_path &&
          found_dashed_path &&
          found_fill_path &&
@@ -482,9 +526,9 @@ static void test_custom_paint_provider(void) {
   CustomPaintState filter_state = {.raster = raster};
   CbssCustomPaintRegistration filter_registration = 99;
   assert(cbss_context_register_custom_paint_provider(
-      context, "foreign-filter", CBSS_CUSTOM_PAINT_STAGE_FILTER,
+      context, "foreign-filter", CBSS_CUSTOM_PAINT_STAGE_FILTER | CBSS_CUSTOM_PAINT_STAGE_OVERLAY,
       paint_custom_material, release_custom_material, &filter_state, 0,
-      &filter_registration) == CBSS_NOT_AVAILABLE);
+      &filter_registration) == CBSS_INVALID_ARGUMENT);
   assert(filter_registration == 0);
   assert(filter_state.releases == 0);
 
@@ -1332,7 +1376,315 @@ static void test_compute_shader_builder(void) {
   cbss_shader_builder_destroy(invalid_image);
 }
 
+static void assert_reference_color(CbssContext *context, int red, int green, int blue) {
+#ifdef CBSS_REFERENCE_TEST_SUPPORT
+  /* Test-only raster export checks the complete C -> Canvas -> PPM path. */
+  extern CbssStatus cbss_test_context_write_ppm(
+      CbssContext *, const char *, uint32_t, uint32_t);
+  const char *image_path = "cbss-c-color-filter-test.ppm";
+  require_ok(context, cbss_test_context_write_ppm(context, image_path, 16, 12));
+  FILE *image = fopen(image_path, "rb");
+  assert(image != NULL);
+  char header[32];
+  assert(fgets(header, sizeof(header), image) && strcmp(header, "P6\n") == 0);
+  assert(fgets(header, sizeof(header), image) && strcmp(header, "16 12\n") == 0);
+  assert(fgets(header, sizeof(header), image) && strcmp(header, "255\n") == 0);
+  for (unsigned pixel = 0; pixel < 16 * 12; ++pixel) {
+    assert(abs(fgetc(image) - red) <= 1);
+    assert(abs(fgetc(image) - green) <= 1);
+    assert(abs(fgetc(image) - blue) <= 1);
+  }
+  assert(fgetc(image) == EOF);
+  assert(fclose(image) == 0);
+  assert(remove(image_path) == 0);
+#else
+  (void)context; (void)red; (void)green; (void)blue;
+#endif
+}
+
+static void test_canvas_color_matrix(void) {
+  CbssContext *context = cbss_context_create();
+  CbssStyle *style = cbss_style_create();
+  SurfaceState state = {0};
+  const CbssRect bounds = {0, 0, 16, 12};
+  require_ok(context, cbss_context_register_render_surface(
+      context, "matrix", handle_surface, &state, &state.surface));
+  uint32_t node = cbss_context_add_render_surface(
+      context, CBSS_NODE_NONE, state.surface, "matrix");
+  require_ok(context, cbss_style_set_length(style, "width", CBSS_UNIT_PX, 16));
+  require_ok(context, cbss_style_set_length(style, "height", CBSS_UNIT_PX, 12));
+  require_ok(context, cbss_node_apply_style(context, node, style, 0, 0));
+  require_ok(context, cbss_render_surface_canvas_begin_layer(
+      context, state.surface, bounds, 1, CBSS_LAYER_SOURCE_OVER));
+  require_ok(context, cbss_render_surface_canvas_end_layer(context, state.surface));
+  uint64_t revision = 0;
+  require_ok(context, cbss_render_surface_canvas_commit(context, state.surface, &revision));
+  require_ok(context, cbss_context_compute(context, 16, 12));
+  CbssRgbColorMatrix output = rgb_matrix;
+  assert(cbss_paint_command_layer_color_matrix(NULL, 0, &output) == CBSS_INVALID_HANDLE);
+  assert(cbss_paint_command_layer_color_matrix(context, 0, NULL) == CBSS_INVALID_ARGUMENT);
+  assert(cbss_paint_command_layer_color_matrix(context, UINT32_MAX, &output) == CBSS_OUT_OF_RANGE);
+  assert_rgb_matrix(output, rgb_matrix);
+  unsigned identity_count = 0;
+  for (uint32_t i = 0; i < cbss_context_paint_command_count(context); ++i) {
+    CbssPaintCommand command;
+    require_ok(context, cbss_context_paint_command(context, i, &command));
+    if (command.kind == CBSS_PAINT_PUSH_LAYER) {
+      require_ok(context, cbss_paint_command_layer_color_matrix(context, i, &output));
+      assert_rgb_matrix(output, identity_rgb_matrix);
+      ++identity_count;
+    } else {
+      output = rgb_matrix;
+      assert(cbss_paint_command_layer_color_matrix(context, i, &output) == CBSS_INVALID_ARGUMENT);
+      assert_rgb_matrix(output, rgb_matrix);
+    }
+  }
+  assert(identity_count == 1);
+  assert(cbss_render_surface_canvas_begin_layer_color_matrix(
+      NULL, state.surface, bounds, 1, CBSS_LAYER_SOURCE_OVER, rgb_matrix) == CBSS_INVALID_HANDLE);
+  assert(cbss_render_surface_canvas_begin_layer_color_matrix(
+      context, UINT64_MAX, bounds, 1, CBSS_LAYER_SOURCE_OVER, rgb_matrix) == CBSS_OUT_OF_RANGE);
+  assert(cbss_render_surface_canvas_begin_layer_color_matrix(
+      context, state.surface, bounds, 1, UINT32_MAX, rgb_matrix) == CBSS_INVALID_ARGUMENT);
+  assert(cbss_render_surface_canvas_begin_layer_color_matrix(
+      context, state.surface, bounds, NAN, CBSS_LAYER_SOURCE_OVER, rgb_matrix) == CBSS_INVALID_ARGUMENT);
+  assert(cbss_render_surface_canvas_begin_layer_color_matrix(
+      context, state.surface, (CbssRect){0, 0, -1, 12}, 1,
+      CBSS_LAYER_SOURCE_OVER, rgb_matrix) == CBSS_INVALID_ARGUMENT);
+  for (unsigned i = 0; i < 12; ++i) {
+    const float invalid_values[] = {NAN, INFINITY, -INFINITY};
+    for (unsigned j = 0; j < 3; ++j) {
+      CbssRgbColorMatrix invalid = rgb_matrix;
+      invalid.coefficients[i] = invalid_values[j];
+      assert(cbss_render_surface_canvas_begin_layer_color_matrix(
+          context, state.surface, bounds, 1, CBSS_LAYER_SOURCE_OVER,
+          invalid) == CBSS_INVALID_ARGUMENT);
+    }
+  }
+  uint64_t unchanged = 0;
+  require_ok(context, cbss_render_surface_canvas_commit(context, state.surface, &unchanged));
+  assert(unchanged == revision);
+  uint32_t old_count = cbss_context_paint_command_count(context);
+  require_ok(context, cbss_render_surface_canvas_clear(context, state.surface));
+  CbssRgbColorMatrix copied_matrix = rgb_matrix;
+  require_ok(context, cbss_render_surface_canvas_begin_layer_color_matrix(
+      context, state.surface, bounds, 0.5f, CBSS_LAYER_SOURCE_OVER, copied_matrix));
+  memset(&copied_matrix, 0, sizeof(copied_matrix));
+  require_ok(context, cbss_render_surface_canvas_fill_rect(
+      context, state.surface, bounds, (CbssColor){1, 0, 0, 1}, 0));
+  require_ok(context, cbss_render_surface_canvas_end_layer(context, state.surface));
+  assert(cbss_context_paint_command_count(context) == old_count);
+  require_ok(context, cbss_render_surface_canvas_commit(context, state.surface, &unchanged));
+  assert(unchanged == revision + 1);
+  unsigned filtered_count = 0;
+  for (uint32_t i = 0; i < cbss_context_paint_command_count(context); ++i) {
+    CbssPaintCommand command;
+    require_ok(context, cbss_context_paint_command(context, i, &command));
+    if (command.kind == CBSS_PAINT_PUSH_LAYER) {
+      assert(command.value0 == 0.5f);
+      require_ok(context, cbss_paint_command_layer_color_matrix(context, i, &output));
+      assert_rgb_matrix(output, rgb_matrix);
+      memset(&output, 0, sizeof(output));
+      require_ok(context, cbss_paint_command_layer_color_matrix(context, i, &output));
+      assert_rgb_matrix(output, rgb_matrix);
+      ++filtered_count;
+    }
+  }
+  assert(filtered_count == 1);
+  assert_reference_color(context, 175, 255, 128);
+  cbss_style_destroy(style);
+  cbss_context_destroy(context);
+}
+
+typedef struct FilterProviderState {
+  CbssContext *context;
+  CbssCustomPaintSink *borrowed_sink;
+  CbssCustomPaintRegistration token;
+  uint32_t owner;
+  int calls, releases, mode;
+} FilterProviderState;
+
+static const CbssRgbColorMatrix swap_rgb_matrix = {{
+    0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0}};
+
+static void release_filter_provider(void *user_data) {
+  FilterProviderState *state = user_data;
+  ++state->releases;
+}
+
+static CbssStatus paint_filter_provider(
+    const CbssCustomPaintRequest *request, CbssCustomPaintSink *sink,
+    void *user_data) {
+  FilterProviderState *state = user_data;
+  ++state->calls;
+  state->borrowed_sink = sink;
+  assert(request->stage == CBSS_CUSTOM_PAINT_FILTER);
+  assert(request->owner == state->owner);
+  assert(request->opacity == 1);
+  assert(request->local_bounds.w == 16 && request->local_bounds.h == 12);
+  assert(request->parameter_count == 1);
+  CbssCustomPaintParameter parameter;
+  assert(cbss_custom_paint_parameter(sink, 0, &parameter) == CBSS_OK);
+  assert(parameter.kind == CBSS_CUSTOM_PAINT_PARAMETER_FLOAT);
+  assert(parameter.values[0] == 0.5f);
+  char name[16];
+  assert(cbss_custom_paint_parameter_name(sink, 0, name, sizeof(name)) == 6);
+  assert(strcmp(name, "amount") == 0);
+  assert(cbss_custom_paint_sink_save(sink) == CBSS_NOT_AVAILABLE);
+  assert(cbss_custom_paint_sink_fill_rect(
+      sink, request->local_bounds, (CbssColor){1, 0, 0, 1}, 0) == CBSS_NOT_AVAILABLE);
+  assert(cbss_custom_paint_sink_begin_layer_color_matrix(
+      sink, request->local_bounds, 1, CBSS_LAYER_SOURCE_OVER,
+      swap_rgb_matrix) == CBSS_NOT_AVAILABLE);
+  assert(cbss_context_unregister_custom_paint_provider(
+      state->context, state->token) == CBSS_NOT_AVAILABLE);
+  uint32_t consumers = 99;
+  assert(cbss_context_invalidate_custom_paint_material(
+      state->context, "foreign-filter", &consumers) == CBSS_NOT_AVAILABLE);
+  CbssCustomPaintRegistration nested = 99;
+  assert(cbss_context_register_custom_paint_provider(
+      state->context, "nested-filter", CBSS_CUSTOM_PAINT_STAGE_FILTER,
+      paint_filter_provider, NULL, state, 0, &nested) == CBSS_NOT_AVAILABLE);
+  assert(nested == 0);
+  if (state->mode == 1) return CBSS_OK; /* No result is identity. */
+  CbssRgbColorMatrix matrix = swap_rgb_matrix;
+  assert(cbss_custom_paint_sink_set_color_matrix(sink, matrix) == CBSS_OK);
+  memset(&matrix, 0, sizeof(matrix));
+  for (unsigned i = 0; i < 12; ++i) {
+    const float invalid_values[] = {NAN, INFINITY, -INFINITY};
+    for (unsigned j = 0; j < 3; ++j) {
+      CbssRgbColorMatrix invalid = identity_rgb_matrix;
+      invalid.coefficients[i] = invalid_values[j];
+      assert(cbss_custom_paint_sink_set_color_matrix(sink, invalid) == CBSS_INVALID_ARGUMENT);
+    }
+  }
+  if (state->mode == 2) return CBSS_INTERNAL_ERROR; /* Discard valid result. */
+  if (state->mode == 3) {
+    assert(cbss_custom_paint_sink_set_color_matrix(sink, identity_rgb_matrix) == CBSS_OK);
+  }
+  return CBSS_OK;
+}
+
+static void assert_filter_commands(CbssContext *context, int filtered) {
+  unsigned layers = 0, fills = 0;
+  for (uint32_t i = 0; i < cbss_context_paint_command_count(context); ++i) {
+    CbssPaintCommand command;
+    require_ok(context, cbss_context_paint_command(context, i, &command));
+    if (command.kind == CBSS_PAINT_PUSH_LAYER) {
+      CbssRgbColorMatrix matrix;
+      require_ok(context, cbss_paint_command_layer_color_matrix(context, i, &matrix));
+      assert_rgb_matrix(matrix, swap_rgb_matrix);
+      assert(command.value0 == 0.5f);
+      ++layers;
+    }
+    if (command.kind == CBSS_PAINT_FILL_RECT) {
+      assert(command.color.r == 1);
+      assert(command.color.a == (filtered ? 1 : 0.5f));
+      ++fills;
+    }
+  }
+  assert(layers == (unsigned)filtered);
+  assert(fills == 2);
+  if (filtered) assert_reference_color(context, 128, 255, 128);
+}
+
+static CbssStatus paint_after_filter(
+    const CbssCustomPaintRequest *request, CbssCustomPaintSink *sink,
+    void *user_data) {
+  int *calls = user_data;
+  ++*calls;
+  assert(request->stage == CBSS_CUSTOM_PAINT_OVERLAY);
+  assert(request->parameter_count == 0);
+  CbssCustomPaintParameter parameter;
+  assert(cbss_custom_paint_parameter(sink, 0, &parameter) == CBSS_OUT_OF_RANGE);
+  assert(cbss_custom_paint_sink_set_color_matrix(sink, swap_rgb_matrix) == CBSS_NOT_AVAILABLE);
+  assert(cbss_custom_paint_sink_save(sink) == CBSS_OK);
+  assert(cbss_custom_paint_sink_restore(sink) == CBSS_OK);
+  return CBSS_OK;
+}
+
+static void test_foreign_filter_provider(void) {
+  CbssContext *context = cbss_context_create();
+  CbssStyle *style = cbss_style_create();
+  require_ok(context, cbss_style_set_length(style, "width", CBSS_UNIT_PX, 16));
+  require_ok(context, cbss_style_set_length(style, "height", CBSS_UNIT_PX, 12));
+  require_ok(context, cbss_style_set_number(style, "opacity", 0.5f));
+  require_ok(context, cbss_style_set_color(style, "background-color", (CbssColor){1, 0, 0, 1}));
+  CbssCustomPaintParameterInput parameter = {
+      .name = "amount", .kind = CBSS_CUSTOM_PAINT_PARAMETER_FLOAT, .values = {0.5f}};
+  require_ok(context, cbss_style_set_custom_paint(
+      style, "foreign-filter", CBSS_CUSTOM_PAINT_FILTER, &parameter, 1));
+  parameter.values[0] = 1;
+  require_ok(context, cbss_style_set_custom_paint(
+      style, "after-filter", CBSS_CUSTOM_PAINT_OVERLAY, NULL, 0));
+  int overlay_calls = 0;
+  CbssCustomPaintRegistration overlay_token = 0;
+  require_ok(context, cbss_context_register_custom_paint_provider(
+      context, "after-filter", CBSS_CUSTOM_PAINT_STAGE_OVERLAY,
+      paint_after_filter, NULL, &overlay_calls, 0, &overlay_token));
+  uint32_t owner = cbss_context_add_box(context, CBSS_NODE_NONE, "filtered");
+  require_ok(context, cbss_node_apply_style(context, owner, style, 0, 0));
+  CbssStyle *child_style = cbss_style_create();
+  require_ok(context, cbss_style_set_length(child_style, "width", CBSS_UNIT_PX, 8));
+  require_ok(context, cbss_style_set_length(child_style, "height", CBSS_UNIT_PX, 6));
+  require_ok(context, cbss_style_set_number(child_style, "z-index", 5));
+  require_ok(context, cbss_style_set_color(child_style, "background-color", (CbssColor){1, 0, 0, 1}));
+  uint32_t child = cbss_context_add_box(context, owner, "overlay-child");
+  require_ok(context, cbss_node_apply_style(context, child, child_style, 0, 0));
+  require_ok(context, cbss_context_compute(context, 16, 12));
+  assert_filter_commands(context, 0);
+  assert(cbss_custom_paint_sink_set_color_matrix(NULL, swap_rgb_matrix) == CBSS_INVALID_HANDLE);
+  FilterProviderState first = {.context = context, .owner = owner};
+  require_ok(context, cbss_context_register_custom_paint_provider(
+      context, "foreign-filter", CBSS_CUSTOM_PAINT_STAGE_FILTER,
+      paint_filter_provider, release_filter_provider, &first, 0, &first.token));
+  assert(first.calls == 1 && first.releases == 0);
+  assert(overlay_calls == 2);
+  assert_filter_commands(context, 1);
+  assert(cbss_custom_paint_sink_set_color_matrix(
+      first.borrowed_sink, swap_rgb_matrix) == CBSS_NOT_AVAILABLE);
+  for (int mode = 1; mode <= 3; ++mode) {
+    first.mode = mode;
+    uint32_t consumers = 0;
+    require_ok(context, cbss_context_invalidate_custom_paint_material(
+        context, "foreign-filter", &consumers));
+    assert(consumers == 1 && !cbss_context_needs_compute(context));
+    assert_filter_commands(context, 0);
+    if (mode == 2) {
+      char error[128];
+      cbss_context_last_error(context, error, sizeof(error));
+      assert(strstr(error, "returned status") != NULL);
+    }
+  }
+  FilterProviderState second = {.context = context, .owner = owner};
+  require_ok(context, cbss_context_register_custom_paint_provider(
+      context, "foreign-filter", CBSS_CUSTOM_PAINT_STAGE_FILTER,
+      paint_filter_provider, release_filter_provider, &second, 1, &second.token));
+  assert(first.releases == 1 && second.calls == 1);
+  assert_filter_commands(context, 1);
+  assert(cbss_context_unregister_custom_paint_provider(context, first.token) == CBSS_OUT_OF_RANGE);
+  require_ok(context, cbss_context_unregister_custom_paint_provider(context, second.token));
+  assert(second.releases == 1);
+  assert_filter_commands(context, 0);
+  FilterProviderState reset = {.context = context, .owner = owner};
+  require_ok(context, cbss_context_register_custom_paint_provider(
+      context, "foreign-filter", CBSS_CUSTOM_PAINT_STAGE_FILTER,
+      paint_filter_provider, release_filter_provider, &reset, 0, &reset.token));
+  require_ok(context, cbss_context_reset(context));
+  assert(reset.releases == 1);
+  FilterProviderState destroyed = {.context = context, .owner = owner};
+  require_ok(context, cbss_context_register_custom_paint_provider(
+      context, "foreign-filter", CBSS_CUSTOM_PAINT_STAGE_FILTER,
+      paint_filter_provider, release_filter_provider, &destroyed, 0, &destroyed.token));
+  cbss_style_destroy(child_style);
+  cbss_style_destroy(style);
+  cbss_context_destroy(context);
+  assert(destroyed.releases == 1);
+}
+
 int main(void) {
+  test_foreign_filter_provider();
+  test_canvas_color_matrix();
   test_shader_builder();
   test_compute_shader_builder();
   test_raster_surface();
@@ -1344,14 +1696,14 @@ int main(void) {
   assert(cbss_capability_count() == 22);
   assert(cbss_has_capability(CBSS_CAPABILITY_RETAINED_TREE, 1));
   assert(!cbss_has_capability(CBSS_CAPABILITY_RETAINED_TREE, 2));
-  assert(cbss_has_capability(CBSS_CAPABILITY_PAINT_COMMANDS, 3));
-  assert(!cbss_has_capability(CBSS_CAPABILITY_PAINT_COMMANDS, 4));
-  assert(cbss_has_capability(CBSS_CAPABILITY_RETAINED_CANVAS, 3));
-  assert(!cbss_has_capability(CBSS_CAPABILITY_RETAINED_CANVAS, 4));
+  assert(cbss_has_capability(CBSS_CAPABILITY_PAINT_COMMANDS, 4));
+  assert(!cbss_has_capability(CBSS_CAPABILITY_PAINT_COMMANDS, 5));
+  assert(cbss_has_capability(CBSS_CAPABILITY_RETAINED_CANVAS, 4));
+  assert(!cbss_has_capability(CBSS_CAPABILITY_RETAINED_CANVAS, 5));
   assert(cbss_has_capability(CBSS_CAPABILITY_SHADER_AUTHORING, 9));
   assert(!cbss_has_capability(CBSS_CAPABILITY_SHADER_AUTHORING, 10));
-  assert(cbss_has_capability(CBSS_CAPABILITY_CUSTOM_PAINT_PROVIDER, 3));
-  assert(!cbss_has_capability(CBSS_CAPABILITY_CUSTOM_PAINT_PROVIDER, 4));
+  assert(cbss_has_capability(CBSS_CAPABILITY_CUSTOM_PAINT_PROVIDER, 5));
+  assert(!cbss_has_capability(CBSS_CAPABILITY_CUSTOM_PAINT_PROVIDER, 6));
   assert(!cbss_has_capability(UINT32_MAX, 1));
 
   CbssCapabilityInfo capability = {0};
@@ -1381,7 +1733,7 @@ int main(void) {
   assert(capability.since_abi == 0x0001001Bu);
   assert(cbss_capability_at(21, &capability) == CBSS_OK);
   assert(capability.id == CBSS_CAPABILITY_CUSTOM_PAINT_PROVIDER);
-  assert(capability.version == 3);
+  assert(capability.version == 5);
   assert(capability.since_abi == 0x0001001Du);
   memset(&capability, 0xff, sizeof(capability));
   assert(cbss_capability_at(

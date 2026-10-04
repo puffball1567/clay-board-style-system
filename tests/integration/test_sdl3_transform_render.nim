@@ -1,11 +1,17 @@
 import std/[math, options, os, unittest]
 
+import clay_board_style_system
+import clay_board_style_system/generated/default_properties
 import clay_board_style_system/backends/sdl3/renderer
+import clay_board_style_system/backends/ppm/raster as ppm
 import clay_board_style_system/core/[color, geometry, node, raster_surface]
 import clay_board_style_system/paint/dirty_tiles
 import clay_board_style_system/paint/gpu_direct_compositor
 import clay_board_style_system/paint/paint_command
+import clay_board_style_system/paint/layer_color_filter
 import clay_board_style_system/paint/path_geometry
+import clay_board_style_system/runtime/motion_scene
+import clay_board_style_system/runtime/[motion_scene_timeline, frame_scheduler, animation_clock]
 import clay_board_style_system/runtime/canvas
 import clay_board_style_system/text/[cosmic_text_engine, font_registry]
 
@@ -354,6 +360,137 @@ suite "SDL3 transform rendering":
     check maskFrame.pixel(25, 15).r < 10
     check maskFrame.pixel(25, 15).b > 240
 
+  test "color-filtered layers match CPU pixels on every render path":
+    let previousDriver = getEnv("SDL_VIDEODRIVER")
+    putEnv("SDL_VIDEODRIVER", "dummy")
+    defer:
+      if previousDriver.len > 0: putEnv("SDL_VIDEODRIVER", previousDriver)
+      else: delEnv("SDL_VIDEODRIVER")
+    var renderer = initSdl3Renderer("CBSS layer filter test", 16, 12, false)
+    defer: renderer.close()
+    let filter = colorMatrixFilter([
+      0.0'f32, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0
+    ])
+    var tint = identityColorMatrix
+    tint[3] = 0.25
+    for alpha in [1.0'f32, 0.5'f32]:
+      for mode in [lcmSourceOver, lcmAdditive]:
+        var commands = @[
+          fillRect(rect(0, 0, 16, 12), rgb(0, 0, 1)),
+          pushClip(rect(3, 2, 9, 7)),
+          pushTransform(translationAffine2D(2, 1)),
+          pushLayer(rect(0, 0, 10, 8), opacity = 0.5,
+            compositeMode = mode, colorFilter = filter),
+          fillRect(rect(2, 2, 6, 4), rgba(1, 0, 0, alpha)),
+          popLayer(), popTransform(), popClip()
+        ]
+        if mode == lcmAdditive:
+          # Additive composition targets the parent directly. A transform's
+          # isolated transparent target has no destination alpha to retain.
+          commands.delete(commands.len - 2)
+          commands.delete(2)
+        commands.resolveTransformBounds()
+        let reference = ppm.render(commands, 16, 12, rgb(0, 0, 0))
+        for path in 0 .. 2:
+          renderer.requestFrameCapture()
+          case path
+          of 0: renderer.render(commands, rgb(0, 0, 0))
+          of 1:
+            renderer.render(commands, CosmicTextEngine(), initFontRegistry(), rgb(0, 0, 0))
+          else:
+            renderer.renderLayered(commands, CosmicTextEngine(), initFontRegistry(), rgb(0, 0, 0))
+          let frame = renderer.capturedFrame().get
+          for index in 0 ..< reference.pixels.len:
+            check abs(int(frame.pixels[index]) - int(reference.pixels[index])) <= 3
+
+    let nested = @[
+      pushLayer(rect(0, 0, 16, 12), colorFilter = colorMatrixFilter(tint)),
+      pushLayer(rect(2, 2, 8, 6), colorFilter = filter),
+      fillRect(rect(3, 3, 4, 3), rgb(1, 0, 0)),
+      popLayer(), popLayer()
+    ]
+    renderer.requestFrameCapture()
+    renderer.render(nested, rgb(0, 0, 1))
+    let nestedFrame = renderer.capturedFrame().get
+    check nestedFrame.pixel(4, 4) == (64'u8, 255'u8, 0'u8)
+    check nestedFrame.pixel(2, 2) == (0'u8, 0'u8, 255'u8)
+
+  test "filtered retained layers invalidate by value and suppress oversized scopes":
+    let previousDriver = getEnv("SDL_VIDEODRIVER")
+    putEnv("SDL_VIDEODRIVER", "dummy")
+    defer:
+      if previousDriver.len > 0: putEnv("SDL_VIDEODRIVER", previousDriver)
+      else: delEnv("SDL_VIDEODRIVER")
+    var renderer = initSdl3Renderer("CBSS retained filter test", 16, 12, false)
+    defer: renderer.close()
+    let matrix = [0.0'f32, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0]
+    var commands = @[
+      pushLayer(rect(0, 0, 16, 12), colorFilter = colorMatrixFilter(matrix)),
+      fillRect(rect(0, 0, 16, 12), rgb(1, 0, 0)), popLayer()
+    ]
+    renderer.renderLayered(commands, CosmicTextEngine(), initFontRegistry())
+    let first = renderer.retainedLayerStats()
+    commands[0] = pushLayer(rect(0, 0, 16, 12), colorFilter = colorMatrixFilter(matrix))
+    renderer.renderLayered(commands, CosmicTextEngine(), initFontRegistry())
+    check renderer.retainedLayerStats().skippedRepaints == first.skippedRepaints + 1
+    commands[0] = pushLayer(rect(0, 0, 16, 12))
+    renderer.requestFrameCapture()
+    renderer.renderLayered(commands, CosmicTextEngine(), initFontRegistry())
+    check renderer.retainedLayerStats().fullRepaints == first.fullRepaints + 1
+    check renderer.capturedFrame().get.pixel(4, 4) == (255'u8, 0'u8, 0'u8)
+    let previousBytes = renderer.cacheUsage().transformTextureBytes
+    commands[0] = pushLayer(rect(0, 0, 100000, 100000),
+      colorFilter = colorMatrixFilter(matrix))
+    renderer.requestFrameCapture()
+    renderer.render(commands, rgb(0, 0, 1))
+    check renderer.capturedFrame().get.pixel(4, 4) == (0'u8, 0'u8, 255'u8)
+    check renderer.cacheUsage().transformTextureBytes == previousBytes
+
+  test "Style filters compose child overlays through all SDL render paths":
+    let previousDriver = getEnv("SDL_VIDEODRIVER")
+    putEnv("SDL_VIDEODRIVER", "dummy")
+    defer:
+      if previousDriver.len > 0: putEnv("SDL_VIDEODRIVER", previousDriver)
+      else: delEnv("SDL_VIDEODRIVER")
+    var renderer = initSdl3Renderer("CBSS Style filter test", 16, 12, false)
+    defer: renderer.close()
+    let ui = initUiRoot()
+    let panel = ui.box(uiStyle([
+      width(16), height(12), decl("opacity", number(0.5)),
+      decl("background-color", colorValue(rgb(1, 0, 0))),
+      customPaint("swap", cpsFilter)
+    ]))
+    discard ui.box(uiStyle([
+      width(8), height(6), decl("position", keyword("absolute")),
+      decl("left", px(4)), decl("top", px(3)), decl("z-index", number(10)),
+      decl("background-color", colorValue(rgb(1, 0, 0)))
+    ]), parent = some(panel))
+    let filter = colorMatrixFilter([
+      0.0'f32, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0
+    ])
+    check ui.registerCustomPaintFilter("swap",
+      proc(request: CustomPaintRequest): LayerColorFilter = filter)
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(ui.tree, ui.styleSheets(), defaultProperties(), diagnostics)
+    check not diagnostics.hasErrors
+    let layout = computeLayout(ui.tree, styles, size(16, 12))
+    for registered in [true, false]:
+      if not registered:
+        check ui.unregisterCustomPaintMaterial("swap")
+      let commands = ui.buildPaintCommands(styles, layout)
+      let reference = ppm.render(commands, 16, 12, rgb(0, 0, 1))
+      for path in 0 .. 2:
+        renderer.requestFrameCapture()
+        case path
+        of 0: renderer.render(commands, rgb(0, 0, 1))
+        of 1:
+          renderer.render(commands, CosmicTextEngine(), initFontRegistry(), rgb(0, 0, 1))
+        else:
+          renderer.renderLayered(commands, CosmicTextEngine(), initFontRegistry(), rgb(0, 0, 1))
+        let frame = renderer.capturedFrame().get
+        for index in 0 ..< reference.pixels.len:
+          check abs(int(frame.pixels[index]) - int(reference.pixels[index])) <= 3
+
   test "GPU direct commands use the configured compositor on every render path":
     let previousDriver = getEnv("SDL_VIDEODRIVER")
     putEnv("SDL_VIDEODRIVER", "dummy")
@@ -602,3 +739,49 @@ suite "SDL3 transform rendering":
     let frame = renderer.capturedFrame().get
     check frame.pixel(10, 10).b > 220
     check frame.pixel(106, 10).g > 220
+
+  test "CPU Motion Scene snapshots and timelines update every SDL rendering path":
+    let previousDriver = getEnv("SDL_VIDEODRIVER")
+    putEnv("SDL_VIDEODRIVER", "dummy")
+    defer:
+      if previousDriver.len > 0: putEnv("SDL_VIDEODRIVER", previousDriver)
+      else: delEnv("SDL_VIDEODRIVER")
+    var renderer = initSdl3Renderer("CBSS scene test", 24, 20, false)
+    defer: renderer.close()
+    let scene = newMotionScene(motionSceneSnapshot(size(24, 20), []))
+    for color in [rgb(1, 0, 0), rgb(0, 1, 0)]:
+      discard scene.replaceSnapshot(motionSceneSnapshot(size(24, 20), [
+        motionRect(MotionObjectId(1), rect(0, 0, 12, 12), color,
+          transform = translationAffine2D(4, 3), radius = 3),
+        motionRect(MotionObjectId(2), rect(8, 6, 4, 4), rgb(0, 0, 1), zIndex = 1)
+      ]))
+      let commands = scene.canvas.paintCommands(NodeId(0), rect(0, 0, 24, 20))
+      for path in 0 .. 2:
+        renderer.requestFrameCapture()
+        case path
+        of 0: renderer.render(commands, rgb(0, 0, 0))
+        of 1: renderer.render(commands, CosmicTextEngine(), initFontRegistry(), rgb(0, 0, 0))
+        else: renderer.renderLayered(commands, CosmicTextEngine(), initFontRegistry(), rgb(0, 0, 0))
+        let frame = renderer.capturedFrame().get
+        check frame.pixel(6, 8) == (uint8(color.r * 255), uint8(color.g * 255), 0'u8)
+        check frame.pixel(9, 8) == (0'u8, 0'u8, 255'u8)
+        check frame.pixel(4, 3) == (0'u8, 0'u8, 0'u8)
+        check frame.pixel(19, 8) == (0'u8, 0'u8, 0'u8)
+    let timeline = newMotionTimeline(scene, [
+      motionTrack(MotionObjectId(2), mspX, [
+        FloatKeyframe(offset: 0, value: 8), FloatKeyframe(offset: 1, value: 16)
+      ])
+    ], 1, 0)
+    for time in [0.5, 1.0]:
+      var scheduler = initFrameScheduler()
+      discard timeline.advance(scheduler, time)
+      let commands = scene.canvas.paintCommands(NodeId(0), rect(0, 0, 24, 20))
+      for path in 0 .. 2:
+        renderer.requestFrameCapture()
+        case path
+        of 0: renderer.render(commands, rgb(0, 0, 0))
+        of 1: renderer.render(commands, CosmicTextEngine(), initFontRegistry(), rgb(0, 0, 0))
+        else: renderer.renderLayered(commands, CosmicTextEngine(), initFontRegistry(), rgb(0, 0, 0))
+        let frame = renderer.capturedFrame().get
+        check frame.pixel(9, 8) == (0'u8, 255'u8, 0'u8)
+        check frame.pixel(9 + int(8 * time), 8) == (0'u8, 0'u8, 255'u8)

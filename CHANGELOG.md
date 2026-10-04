@@ -7,12 +7,62 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- Aligned direct GPU Surface texture sampling and rounded masks with the
+  pixel-rounded compositor viewport at fractional logical positions and
+  non-unit pixel scales. The standard compositor now requires clamped sampler
+  edges so fractional coverage cannot repeat or mirror unrelated texels.
+
+- Fixed a clipboard callback ownership cycle in the headless test driver that
+  retained its UI and test state under ARC, including in Cue Canvas and motion
+  validation. Clipboard callbacks now share independent storage, remain valid
+  after the driver is released, and preserve mutable `driver.clipboard` access.
+  Repeated lifecycle checks now run under ARC and ORC sanitizers and strict
+  Valgrind leak checking.
+
 ### Added
 
 - Ordinary GPU graphics and compute submissions can sample a same-namespace
   RenderTarget from an earlier pass through a typed texture binding. The host
   resolves its color attachment before submission, rejects unsampled targets
   and same-pass feedback, and checks an entire draw batch before backend work.
+
+- Added bounded GPU instancing with static and dynamic record buffers, indexed
+  meshes, validated subranges, and up to 65,536 instances per draw. Typed shader
+  inputs expose up to five packed vec4 values per instance; bgfx maps both buffer types directly.
+  GpuHost backend API version is now 19. The OpenGL fixture compares affine
+  rounded rectangles, opacity, and overlapping instances with CPU reference
+  pixels, while shader compilation covers OpenGL and Vulkan.
+
+- Added opt-in CPU Motion Scene snapshots and typed numeric timelines. Stable-ID rounded
+  rectangles share one Canvas with affine transforms, opacity, z-order,
+  viewport clipping, and matching hit testing. Immutable batch replacement and
+  cancellable latest-request tokens support deterministic export and previews;
+  Timelines reuse AnimationClock and FrameScheduler for easing, delay, repeats,
+  pause/resume, and reduced motion. UI publication invalidates only paint and
+  returns to idle when motion finishes.
+
+- Added immutable RGB matrix filters to Nim Canvas layers and paint commands.
+  PPM and SDL3 apply the same straight-sRGB transform before layer opacity,
+  preserve alpha and coverage, and invalidate retained pixels when coefficients
+  change. SDL3 filtering uses bounded CPU readback and upload.
+
+- Added typed Custom Paint RGB filter providers for ordinary Style declarations.
+  Filter owners isolate their visual subtree, retain local overlay ordering,
+  compose masks before filtering, and apply owner opacity once. Descendant
+  subtree repaint requests rebuild the complete enclosing filter group.
+
+- Added copied RGB matrix layers and matrix inspection to C ABI `0x00010027`.
+  Canvas and Custom Paint command sinks validate all coefficients before
+  retaining commands. Existing layer signatures and paint records stay stable;
+  paint, Canvas, and Custom Paint capability versions advance to 4.
+
+- Added foreign Style RGB filter providers in C ABI `0x00010028`. Filter-only
+  callbacks read typed parameters and return copied matrices through the scoped
+  sink. Failed callbacks fall back to ordinary content; replacement, unregister,
+  reset, and destruction share the existing exactly-once release contract.
+  The Custom Paint provider capability advances to 5.
 
 - Added bounded nested rounded clips to final-window direct GPU Surface
   composition. The SDL3 bridge now forwards up to eight logical clip masks,
@@ -26,6 +76,15 @@ release. Before 1.0, minor releases may contain public API changes.
   generation, dimensions, feedback hazards, and target format before drawing.
   SDL texture-backed layers remain fail-closed because they are not bgfx
   render targets and cannot be redirected to the final window safely.
+
+### Fixed
+
+- Avoided the reserved HLSL identifier `point` in the rounded-mask compositor
+  shader so official shaderc can compile its Vulkan variant.
+
+- Fixed SDL3 software composition darkening translucent nested layers by
+  applying alpha more than once. A bounded CPU fallback now composites
+  premultiplied layer pixels with the requested blend mode and clip.
 
 ## [0.7.1] - 2026-09-20
 

@@ -4,7 +4,7 @@ import clay_board_style_system/build/gpu_shader_compiler
 import clay_board_style_system/paint/gpu_host_compositor
 import clay_board_style_system/runtime/[gpu_host, gpu_shader_builder,
     gpu_shader_package, gpu_shader_records]
-import ../fixtures/gpu_wet_supply_compatibility
+import ../fixtures/[gpu_wet_supply_compatibility, gpu_instanced_rects]
 
 proc vertexSource(): GpuShaderSource =
   let builder = newGpuShaderBuilder(gssVertex, "shaderc-vertex")
@@ -371,3 +371,17 @@ suite "official bgfx shaderc integration":
 
     check compileGpuShader(vertex, target, config).artifact.bytecode.len > 0
     check compileGpuShader(fragment, target, config).artifact.bytecode.len > 0
+
+
+suite "official bgfx instancing shader integration":
+  test "compiles five instance vec4 records for OpenGL and Vulkan":
+    let root = createTempDir("cbss-instancing-shaderc-", "")
+    defer: removeDir(root)
+    let vertex = instancedRectVertexSource()
+    let fragment = instancedRectFragmentSource()
+    validateGpuShaderInterface(vertex, fragment)
+    let config = gpuShaderCompilerConfig(shaderc, [shaderIncludes], workDirectory = root)
+    for target in [gpuShaderCompileTarget(gsbtOpenGL, gscpLinux, "330"),
+        gpuShaderCompileTarget(gsbtVulkan, gscpLinux, "spirv")]:
+      check compileGpuShader(vertex, target, config).artifact.bytecode.len > 0
+      check compileGpuShader(fragment, target, config).artifact.bytecode.len > 0

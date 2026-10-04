@@ -1409,7 +1409,8 @@ suite "optional bgfxim adapter":
           uint32(stride)
         )
         host.endGpuFrame(frame)
-        let packed = stride >= int(high(uint16))
+        let packed = stride >= int(high(uint16)) or
+          stride mod int(format.gpuTextureBytesPerPixel()) != 0
         let uploadedStride = if packed: rowBytes else: stride
         check textureUpdatePitch() ==
           (if packed or stride == rowBytes: high(uint16) else: uint16(stride))
@@ -1588,3 +1589,42 @@ suite "optional bgfxim adapter":
 
     host.close()
     check shutdownCount() == 0
+
+
+proc instanceBindCount(): uint32 {.importc: "cbss_bgfx_stub_instance_bind_count", cdecl.}
+proc dynamicInstanceBindCount(): uint32 {.importc: "cbss_bgfx_stub_dynamic_instance_bind_count", cdecl.}
+proc lastInstanceStart(): uint32 {.importc: "cbss_bgfx_stub_last_instance_start", cdecl.}
+proc lastInstanceCount(): uint32 {.importc: "cbss_bgfx_stub_last_instance_count", cdecl.}
+
+suite "bgfx instancing adapter":
+  test "static and dynamic records map to the matching native instance binding":
+    for access in [gbaStatic, gbaDynamic]:
+      resetCounters()
+      let host = openGpuHost(newBgfxBackend(defaultBgfxHostOptions()), ghoOwned, config())
+      check host.backendInfo.instancingSupported
+      let ns = host.createGpuNamespace("instances", GpuResourceBudget(
+        persistentBytes: 4096, workUnitsPerFrame: 4, maxResources: 10))
+      let layout = @[GpuVertexAttribute(semantic: gvsPosition, components: 2, componentType: gvctFloat)]
+      let vertex = host.createGpuShader(ns, GpuShaderDescriptor(stage: gssVertex), @[1'u8])
+      let fragment = host.createGpuShader(ns, GpuShaderDescriptor(stage: gssFragment), @[2'u8])
+      let pipeline = host.createGpuGraphicsPipeline(ns, GpuGraphicsPipelineDescriptor(
+        vertexShader: vertex, fragmentShader: fragment, vertexLayout: layout,
+        colorFormat: gtfRgba8, topology: gptTriangleList, blend: alphaGpuBlendState(),
+        instanceDataVec4Count: 2))
+      let vertices = host.createGpuBuffer(ns, GpuBufferDescriptor(
+        byteSize: 24, role: gbrVertex, access: gbaStatic, vertexLayout: layout), newSeq[byte](24))
+      let instances = host.createGpuBuffer(ns, gpuInstanceBufferDescriptor(2, 4, access), newSeq[byte](128))
+      if access == gbaDynamic:
+        host.updateGpuBuffer(instances, 32, newSeq[byte](32))
+        check lastBufferUpdateStart() == 1
+      let token = host.beginGpuFrame()
+      host.submitGpuDraw(ns, GpuGraphicsPassDescriptor(viewport: GpuViewport(width: 16, height: 8)),
+        GpuDrawCommand(pipeline: pipeline, vertexBuffer: vertices, vertexCount: 3,
+          instances: GpuInstanceBinding(buffer: instances, firstInstance: 1, instanceCount: 3)))
+      check lastInstanceStart() == 1
+      check lastInstanceCount() == 3
+      check instanceBindCount() == (if access == gbaStatic: 1'u32 else: 0'u32)
+      check dynamicInstanceBindCount() == (if access == gbaDynamic: 1'u32 else: 0'u32)
+      check submitCount() == 1
+      host.endGpuFrame(token)
+      host.close()

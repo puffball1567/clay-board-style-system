@@ -61,7 +61,8 @@ type
     gsisTexCoord4,
     gsisTexCoord5,
     gsisTexCoord6,
-    gsisTexCoord7
+    gsisTexCoord7,
+    gsisInstance0, gsisInstance1, gsisInstance2, gsisInstance3, gsisInstance4
 
   GpuShaderUnaryOperation* = enum
     gsuNegate,
@@ -738,6 +739,8 @@ proc interfaceName(
 ): string =
   let prefix = if varying: "v_" else: "a_"
   case slot
+  of gsisInstance0 .. gsisInstance4:
+    "i_data" & $(ord(slot) - ord(gsisInstance0))
   of gsisPosition: prefix & "position"
   of gsisNormal: prefix & "normal"
   of gsisTangent: prefix & "tangent"
@@ -749,6 +752,8 @@ proc interfaceName(
 
 proc interfaceSemantic(slot: GpuShaderInterfaceSlot): string =
   case slot
+  of gsisInstance0 .. gsisInstance4:
+    "TEXCOORD" & $(31 - (ord(slot) - ord(gsisInstance0)))
   of gsisPosition: "POSITION"
   of gsisNormal: "NORMAL"
   of gsisTangent: "TANGENT"
@@ -769,6 +774,8 @@ proc vertexInput*(
     raise newException(GpuShaderBuildError, "vertex inputs require a vertex shader")
   if not valueType.isScalarOrVector:
     raise newException(GpuShaderBuildError, "vertex input type is not portable")
+  if slot in {gsisInstance0 .. gsisInstance4} and valueType != gsvtVec4:
+    raise newException(GpuShaderBuildError, "instance inputs require float32 vec4 values")
   builder.addNode(GpuShaderNode(
     kind: gsnVertexInput,
     valueType: valueType,
@@ -783,6 +790,8 @@ proc varyingInput*(
 ): GpuShaderExpression =
   builder.requireOpen()
   builder.requireMainBody("GPU varying input")
+  if slot in {gsisInstance0 .. gsisInstance4}:
+    raise newException(GpuShaderBuildError, "instance slots cannot be fragment varyings")
   if builder.stageValue != gssFragment:
     raise newException(GpuShaderBuildError, "varying inputs require a fragment shader")
   if not valueType.isScalarOrVector:
@@ -2019,6 +2028,8 @@ proc setVaryingOutput*(
 ) =
   builder.requireOpen()
   builder.requireMainBody("GPU varying output")
+  if slot in {gsisInstance0 .. gsisInstance4}:
+    raise newException(GpuShaderBuildError, "instance slots cannot be varying outputs")
   if builder.stageValue != gssVertex:
     raise newException(GpuShaderBuildError, "varying output requires a vertex shader")
   let node = builder.requireExpression(value)

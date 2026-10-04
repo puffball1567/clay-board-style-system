@@ -1376,6 +1376,26 @@ proc registerCustomPaintMaterialTracked*(
   if result.isSome:
     discard root.invalidateCustomPaintMaterial(material)
 
+proc registerCustomPaintFilterTracked*(
+    root: UiRoot;
+    material: string;
+    callback: CustomPaintFilterProc;
+    replace = false
+): Option[CustomPaintRegistration] =
+  if root.isNil:
+    raise newException(ValueError, "custom paint UiRoot cannot be nil")
+  result = root.customPaints.registerCustomPaintFilterTracked(material, callback, replace)
+  if result.isSome:
+    discard root.invalidateCustomPaintMaterial(material)
+
+proc registerCustomPaintFilter*(
+    root: UiRoot;
+    material: string;
+    callback: CustomPaintFilterProc;
+    replace = false
+): bool {.discardable.} =
+  root.registerCustomPaintFilterTracked(material, callback, replace).isSome
+
 proc unregisterCustomPaintMaterial*(
     root: UiRoot;
     material: string

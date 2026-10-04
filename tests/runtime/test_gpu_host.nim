@@ -31,6 +31,7 @@ type MockPendingReadbackWrite = object
   firstByte: int
 
 type MockGpuContext = ref object of GpuBackendContext
+  instancingSupported: bool
   openStatus: GpuBackendStatus
   beginStatus: GpuBackendStatus
   endStatus: GpuBackendStatus
@@ -185,6 +186,7 @@ proc openOwned(
   info = GpuBackendInfo(
     rendererName: "mock-owned",
     computeSupported: true,
+    instancingSupported: state.instancingSupported,
     textureCopySupported: state.copySupported,
     textureReadbackSupported: state.readbackSupported,
     bufferCopySupported: state.bufferCopySupported,
@@ -648,7 +650,7 @@ proc backend(state: MockGpuContext): GpuBackendVTable =
 
 proc newContext(): MockGpuContext =
   MockGpuContext(
-    openStatus: gbsOk,
+    instancingSupported: true,    openStatus: gbsOk,
     beginStatus: gbsOk,
     endStatus: gbsOk,
     resizeStatus: gbsOk,
@@ -847,7 +849,8 @@ proc graphicsPass(
 
 proc createDrawingResources(
     host: GpuHost;
-    namespace: GpuNamespaceId
+    namespace: GpuNamespaceId;
+    instanceVec4Count = 0'u8
 ): tuple[
     pipeline, vertexBuffer, indexBuffer: GpuResourceHandle
   ] =
@@ -861,10 +864,9 @@ proc createDrawingResources(
     shaderDescriptor(gssFragment, "draw-fragment"),
     @[2'u8]
   )
-  result.pipeline = host.createGpuGraphicsPipeline(
-    namespace,
-    graphicsPipelineDescriptor(vertexShader, fragmentShader)
-  )
+  var pipeline = graphicsPipelineDescriptor(vertexShader, fragmentShader)
+  pipeline.instanceDataVec4Count = instanceVec4Count
+  result.pipeline = host.createGpuGraphicsPipeline(namespace, pipeline)
   result.vertexBuffer = host.createGpuBuffer(
     namespace,
     vertexBufferDescriptor(),
@@ -7300,9 +7302,9 @@ suite "GPU host direct compositor":
     check context.lastBindings.uniforms[0].values == @[
       0.75'f32, float32(ord(gcamStraight)), 0.0'f32, 0.0'f32
     ]
-    check context.lastBindings.uniforms[1].values == @[
-      0.25'f32, 0.125'f32, 0.75'f32, 0.625'f32
-    ]
+    let croppedUv = context.lastBindings.uniforms[1].values
+    for index, expected in [0.25'f32, 0.122'f32, 0.75'f32, 0.626'f32]:
+      check abs(croppedUv[index] - expected) < 0.000001'f32
     check context.presentationTextureResolves == 0
     var wrongScaleContext = compositionContext
     wrongScaleContext.pixelScale = 1
@@ -7347,6 +7349,29 @@ suite "GPU host direct compositor":
     check context.lastGraphicsPass.viewport == GpuViewport(
       x: 1000, y: 125, width: 50, height: 50
     )
+    host.endGpuFrame(token)
+
+    # The viewport is rounded to whole physical pixels. Its UV endpoints must
+    # describe those rounded edges so texels stay aligned at fractional origins.
+    let fractional = drawGpuDirectSurface(
+      NodeId(0), surface, rect(100.2, 50.2, 400, 200)
+    )
+    token = host.beginGpuFrame()
+    check fractional.compositeGpuDirectSurface(
+      unclippedWindowContext, compositor
+    ) == gdcsPresented
+    check context.lastGraphicsPass.viewport == GpuViewport(
+      x: 125, y: 62, width: 501, height: 251
+    )
+    let fractionalUv = context.lastBindings.uniforms[1].values
+    check abs(fractionalUv[0] -
+      ((125.0'f32 / 1.25'f32 - 100.2'f32) / 400.0'f32)) < 0.000001'f32
+    check abs(fractionalUv[1] -
+      ((62.0'f32 / 1.25'f32 - 50.2'f32) / 200.0'f32)) < 0.000001'f32
+    check abs(fractionalUv[2] -
+      ((626.0'f32 / 1.25'f32 - 100.2'f32) / 400.0'f32)) < 0.000001'f32
+    check abs(fractionalUv[3] -
+      ((313.0'f32 / 1.25'f32 - 50.2'f32) / 200.0'f32)) < 0.000001'f32
     host.endGpuFrame(token)
 
     check surface.closeGpuDirectSurface()
@@ -7712,6 +7737,9 @@ suite "GPU host direct compositor":
       let sampler = host.createGpuSampler(
         namespace, samplerDescriptor("s_cbssSurface")
       )
+      var repeating = samplerDescriptor("s_cbssSurface")
+      repeating.addressU = gsamRepeat
+      let repeatingSampler = host.createGpuSampler(namespace, repeating)
       var pipelines: array[GpuAlphaMode, GpuResourceHandle]
       pipelines[gcamStraight] = drawing.pipeline
       var maskedPipelines: array[GpuAlphaMode, GpuResourceHandle]
@@ -7755,6 +7783,19 @@ suite "GPU host direct compositor":
             uvRectUniform: uvRectUniform,
             clipMasksUniform: shortClipMasksUniform,
             sampler: sampler,
+            vertexCount: 2
+          )
+        )
+      expect ValueError:
+        discard newGpuHostDirectCompositor(
+          host,
+          GpuHostDirectCompositeMaterial(
+            namespace: namespace,
+            pipelines: pipelines,
+            vertexBuffer: drawing.vertexBuffer,
+            compositeUniform: compositeUniform,
+            uvRectUniform: uvRectUniform,
+            sampler: repeatingSampler,
             vertexCount: 2
           )
         )
@@ -7865,5 +7906,140 @@ suite "GPU host direct compositor":
         2.0'f32, 1.0'f32, 6.0'f32, 7.0'f32, 1.0'f32
       ]
       host.endGpuFrame(token)
+
+      roundedContext.clipBounds = some(rect(0, 0, 9, 9))
+      let fractional = drawGpuDirectSurface(
+        NodeId(0), surface, rect(0.25, 0.25, 8, 8)
+      )
+      token = host.beginGpuFrame()
+      check fractional.compositeGpuDirectSurface(
+        roundedContext, compositor
+      ) == gdcsPresented
+      check context.lastGraphicsPass.viewport == GpuViewport(
+        x: 0, y: 0, width: 13, height: 13
+      )
+      let fractionalClipValues = context.lastBindings.uniforms[2].values
+      check abs(fractionalClipValues[1] - (13.0'f32 / 1.5'f32)) <
+        0.000001'f32
+      check fractionalClipValues[4] == 1.0'f32
+      check fractionalClipValues[5] == 2.0'f32
+      host.endGpuFrame(token)
+
       check surface.closeGpuDirectSurface()
       host.close()
+
+
+suite "GPU instanced draws":
+  test "static and dynamic instance records resolve once for an indexed draw":
+    for access in [gbaStatic, gbaDynamic]:
+      let context = newContext()
+      let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+      let namespace = host.createGpuNamespace("instances", GpuResourceBudget(
+        persistentBytes: 4096, workUnitsPerFrame: 2, maxResources: 10))
+      let drawing = host.createDrawingResources(namespace, 2)
+      let descriptor = gpuInstanceBufferDescriptor(2, 4, access)
+      let instances = host.createGpuBuffer(namespace, descriptor, newSeq[byte](128))
+      if access == gbaDynamic:
+        host.updateGpuBuffer(instances, 32, newSeq[byte](32))
+        check context.lastBufferUpdateOffset == 32
+      let token = host.beginGpuFrame()
+      host.submitGpuDraw(namespace, graphicsPass(), GpuDrawCommand(
+        pipeline: drawing.pipeline, vertexBuffer: drawing.vertexBuffer, vertexCount: 1,
+        indexBuffer: drawing.indexBuffer, indexCount: 3,
+        instances: GpuInstanceBinding(buffer: instances, firstInstance: 1, instanceCount: 3)))
+      check context.drawSubmits == 1
+      check context.graphicsPassBegins == 1
+      check context.lastBindings.instances.buffer.backendResourceIdValue() != 0
+      check context.lastBindings.instances.descriptor == descriptor
+      check context.lastBindings.instances.firstInstance == 1
+      check context.lastBindings.instances.instanceCount == 3
+      check host.gpuNamespaceUsage(namespace).workUnits == 1
+      expect GpuHostError: host.updateGpuBuffer(instances, 0, newSeq[byte](32))
+      host.endGpuFrame(token)
+      check host.releaseGpuResource(instances)
+      host.close()
+
+  test "malformed instance ranges layouts and ownership reject the whole batch":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let budget = GpuResourceBudget(persistentBytes: 4096, workUnitsPerFrame: 32, maxResources: 20)
+    let namespace = host.createGpuNamespace("instances", budget)
+    let foreign = host.createGpuNamespace("foreign", budget)
+    let drawing = host.createDrawingResources(namespace, 2)
+    let plain = host.createDrawingResources(namespace)
+    let instances = host.createGpuBuffer(namespace, gpuInstanceBufferDescriptor(2, 4))
+    let other = host.createGpuBuffer(foreign, gpuInstanceBufferDescriptor(2, 4))
+    let narrow = host.createGpuBuffer(namespace, gpuInstanceBufferDescriptor(1, 4))
+    var packed = gpuInstanceBufferDescriptor(2, 4)
+    packed.vertexLayout[0].componentType = gvctInt16
+    packed.vertexLayout[0].asInteger = true
+    packed.byteSize = 96
+    let integer = host.createGpuBuffer(namespace, packed)
+    let stale = host.createGpuBuffer(namespace, gpuInstanceBufferDescriptor(2, 4))
+    check host.releaseGpuResource(stale)
+    let valid = GpuDrawCommand(pipeline: drawing.pipeline, vertexBuffer: drawing.vertexBuffer,
+      vertexCount: 1, instances: GpuInstanceBinding(buffer: instances, instanceCount: 4))
+    let token = host.beginGpuFrame()
+    for binding in [
+        GpuInstanceBinding(),
+        GpuInstanceBinding(buffer: instances),
+        GpuInstanceBinding(buffer: instances, firstInstance: 1, instanceCount: 4),
+        GpuInstanceBinding(buffer: instances, firstInstance: high(uint32), instanceCount: 1),
+        GpuInstanceBinding(buffer: instances, instanceCount: maxGpuInstancesPerDraw + 1),
+        GpuInstanceBinding(buffer: other, instanceCount: 1),
+        GpuInstanceBinding(buffer: narrow, instanceCount: 1),
+        GpuInstanceBinding(buffer: integer, instanceCount: 1),
+        GpuInstanceBinding(buffer: drawing.indexBuffer, instanceCount: 1),
+        GpuInstanceBinding(buffer: stale, instanceCount: 1)]:
+      var invalid = valid
+      invalid.instances = binding
+      expect GpuHostError: host.submitGpuDraws(namespace, graphicsPass(), [valid, invalid])
+    var unexpected = valid
+    unexpected.pipeline = plain.pipeline
+    expect GpuHostError: host.submitGpuDraw(namespace, graphicsPass(), unexpected)
+    unexpected.instances = GpuInstanceBinding(firstInstance: 1)
+    expect GpuHostError: host.submitGpuDraw(namespace, graphicsPass(), unexpected)
+    check context.drawSubmits == 0
+    check context.graphicsPassBegins == 0
+    check host.gpuNamespaceUsage(namespace).workUnits == 0
+    host.endGpuFrame(token)
+    host.close()
+
+  test "unsupported devices and excessive record sizes fail before pipeline creation":
+    let context = newContext()
+    context.instancingSupported = false
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let namespace = host.createGpuNamespace("unsupported", GpuResourceBudget(
+      persistentBytes: 4096, workUnitsPerFrame: 2, maxResources: 20))
+    expect GpuHostError: discard host.createDrawingResources(namespace, 1)
+    expect GpuHostError: discard host.createDrawingResources(namespace, maxGpuInstanceVec4Count + 1)
+    check context.graphicsPipelineCreates == 0
+    discard host.createDrawingResources(namespace)
+    check context.graphicsPipelineCreates == 1
+    host.close()
+    for count in [0'u8, maxGpuInstanceVec4Count + 1]:
+      expect GpuHostError: discard gpuInstanceBufferDescriptor(count, 1)
+    for count in [0'u32, maxGpuInstancesPerDraw + 1]:
+      expect GpuHostError: discard gpuInstanceBufferDescriptor(1, count)
+
+  test "maximum batch remains one draw and released instance buffers cannot be reused":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let namespace = host.createGpuNamespace("bounded", GpuResourceBudget(
+      persistentBytes: 2 * 1024 * 1024, workUnitsPerFrame: 1, maxResources: 10))
+    let drawing = host.createDrawingResources(namespace, 1)
+    let instances = host.createGpuBuffer(namespace, gpuInstanceBufferDescriptor(1, maxGpuInstancesPerDraw))
+    let command = GpuDrawCommand(pipeline: drawing.pipeline, vertexBuffer: drawing.vertexBuffer,
+      vertexCount: 1, instances: GpuInstanceBinding(buffer: instances, instanceCount: maxGpuInstancesPerDraw))
+    let token = host.beginGpuFrame()
+    host.submitGpuDraw(namespace, graphicsPass(), command)
+    check context.drawSubmits == 1
+    expect GpuHostError: host.submitGpuDraw(namespace, graphicsPass(), command)
+    check context.drawSubmits == 1
+    host.endGpuFrame(token)
+    check host.releaseGpuResource(instances)
+    let next = host.beginGpuFrame()
+    expect GpuHostError: host.submitGpuDraw(namespace, graphicsPass(), command)
+    check context.drawSubmits == 1
+    host.endGpuFrame(next)
+    host.close()

@@ -35,10 +35,29 @@ test -n "${CBSS_BGFX_SHADER_INCLUDE:-}" && \
   echo "CBSS_BGFX_SHADER_INCLUDE must point to the bgfx shader include directory" >&2
   exit 2
 }
-pkg-config --exists sdl3 || {
-  echo "SDL3 development files were not found through pkg-config" >&2
-  exit 2
-}
+sdl_mode=${CBSS_GPU_PIXEL_SDL_MODE:-system}
+case "$sdl_mode" in
+  system)
+    pkg-config --exists sdl3 || {
+      echo "SDL3 development files were not found through pkg-config" >&2
+      exit 2
+    }
+    sdl_cflags=$(pkg-config --cflags sdl3)
+    sdl_libs=$(pkg-config --libs sdl3)
+    ;;
+  bundled)
+    sdl_cflags=
+    sdl_libs=
+    test -f vendor/sdl3/linux-x86_64/libSDL3.a || {
+      echo "bundled SDL3 runtime is missing" >&2
+      exit 2
+    }
+    ;;
+  *)
+    echo "CBSS_GPU_PIXEL_SDL_MODE must be system or bundled" >&2
+    exit 2
+    ;;
+esac
 
 build_dir=$(mktemp -d "${TMPDIR:-/tmp}/cbss-bgfx-pixels.XXXXXX")
 trap 'rm -rf -- "$build_dir"' EXIT HUP INT TERM
@@ -49,8 +68,6 @@ simd_flag=
 case $(uname -m) in
   x86_64|amd64) simd_flag=-msse4.1 ;;
 esac
-sdl_cflags=$(pkg-config --cflags sdl3)
-sdl_libs=$(pkg-config --libs sdl3)
 
 echo "Building the CBSS bgfx OpenGL pixel-conformance fixture..."
 
@@ -83,13 +100,17 @@ done
 "$archiver" rcs "$build_dir/libbimg.a" "$build_dir/bimg.o" \
   "$build_dir"/astcenc_*.o
 
-nim c -r --mm:arc -d:release -d:cbssGpuBgfx \
+for memory_model in arc orc; do
+nim c -r --mm:"$memory_model" -d:release -d:cbssGpuBgfx \
   -d:cbssGpuCompositorDiagnostics \
-  -d:cbssSdl3LinkMode=system --path:src --path:"$bgfxim_dir" \
-  --nimcache:"$build_dir/nim" --out:"$build_dir/cbss-bgfx-pixels" \
+  -d:cbssSdl3LinkMode="$sdl_mode" --path:src --path:"$bgfxim_dir" \
+  -d:cbssRuntimeRoot="$PWD/vendor/sdl3" \
+  --nimcache:"$build_dir/nim-$memory_model" \
+  --out:"$build_dir/cbss-bgfx-pixels-$memory_model" \
   --passC:"-I$bgfx_dir/include" --passC:"-I$bx_dir/include" \
   --passC:"$sdl_cflags" \
   --passL:"$build_dir/bgfx.o" --passL:"$build_dir/libbimg.a" \
   --passL:"$build_dir/bx.o" --passL:-lstdc++ --passL:-pthread \
   --passL:-ldl --passL:-lm --passL:"$sdl_libs" \
   tests/backends/test_bgfx_direct_pixels.nim
+done
