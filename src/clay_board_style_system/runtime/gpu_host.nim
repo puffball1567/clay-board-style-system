@@ -2607,21 +2607,44 @@ proc validateGpuBindings(
       grkSampler,
       "GPU sampler binding is stale invalid or belongs to another namespace"
     )
-    let texture = host.requireGpuResource(
-      namespace,
-      binding.texture,
-      grkTexture,
-      "GPU texture binding is stale invalid or belongs to another namespace"
-    )
+    if binding.texture.namespace != namespace or
+        binding.texture.kind notin {grkTexture, grkRenderTarget} or
+        not host.isGpuResourceLive(binding.texture):
+      raise newException(
+        GpuHostError,
+        "GPU texture binding is stale invalid or belongs to another namespace"
+      )
+    let texture = host.namespaces[namespace].resources[
+      binding.texture.resource
+    ]
     if sampler.backendResource.backendResourceIdValue() == 0 or
         texture.backendResource.backendResourceIdValue() == 0:
       raise newException(GpuHostError, "GPU texture binding is not backend-mapped")
-    if gtuSampled notin texture.textureDescriptor.usage:
+    if gtuSampled notin texture.textureShape().usage:
       raise newException(GpuHostError, "GPU texture binding requires sampled usage")
+    var textureResource = texture.backendResource
+    if binding.texture.kind == grkRenderTarget:
+      if host.backend.resolvePresentationTexture.isNil:
+        raise newException(
+          GpuHostError, "GPU backend cannot resolve a sampled RenderTarget texture"
+        )
+      let status = host.backend.resolvePresentationTexture(
+        host.backend.context,
+        texture.backendResource,
+        grkRenderTarget,
+        textureResource
+      )
+      if status == gbsDeviceLost:
+        host.enterDeviceLost()
+      raiseForStatus(status)
+      if textureResource.backendResourceIdValue() == 0:
+        raise newException(
+          GpuHostError, "GPU backend returned an invalid sampled RenderTarget texture"
+        )
     resolved.textures.add GpuBackendTextureBinding(
       stage: binding.stage,
       sampler: sampler.backendResource,
-      texture: texture.backendResource,
+      texture: textureResource,
       samplerDescriptor: sampler.samplerDescriptor
     )
 
@@ -2874,6 +2897,12 @@ proc validateDrawCommand(
     indexBackend = index.backendResource
     indexDescriptor = index.bufferDescriptor
 
+  if not pass.renderTarget.isEmptyGpuHandle():
+    for binding in command.bindings.textures:
+      if binding.texture == pass.renderTarget:
+        raise newException(
+          GpuHostError, "GPU draw cannot sample its active render target"
+        )
   var resolvedBindings = host.validateGpuBindings(
     namespace,
     command.bindings,
@@ -3009,6 +3038,15 @@ proc submitGpuDraws*(
     raise newException(GpuHostError, "GPU backend does not support draw submission")
 
   let target = host.validateGraphicsPass(namespace, pass)
+  # Reject feedback across the entire batch before resolving any source
+  # RenderTarget through the backend callback.
+  if not pass.renderTarget.isEmptyGpuHandle():
+    for command in commands:
+      for binding in command.bindings.textures:
+        if binding.texture == pass.renderTarget:
+          raise newException(
+            GpuHostError, "GPU draw cannot sample its active render target"
+          )
   var resolvedCommands = newSeqOfCap[GpuResolvedDrawCommand](commands.len)
   for command in commands:
     resolvedCommands.add host.validateDrawCommand(namespace, pass, command)

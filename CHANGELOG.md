@@ -23,6 +23,11 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Ordinary GPU graphics and compute submissions can sample a same-namespace
+  RenderTarget from an earlier pass through a typed texture binding. The host
+  resolves its color attachment before submission, rejects unsampled targets
+  and same-pass feedback, and checks an entire draw batch before backend work.
+
 - Added bounded GPU instancing with static and dynamic record buffers, indexed
   meshes, validated subranges, and up to 65,536 instances per draw. Typed shader
   inputs expose up to five packed vec4 values per instance; bgfx maps both buffer types directly.

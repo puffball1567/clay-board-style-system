@@ -507,6 +507,14 @@ budget before calling the adapter. Multiple draw commands submitted through
 target, viewport, scissor, and clear state once for that pass, then receives
 only the validated draw commands; adding draws does not repeat pass setup.
 
+A sampled `GpuTextureBinding` may name a Texture or a RenderTarget in the same
+namespace. For a RenderTarget, the host resolves its sampled color attachment
+through the backend before graphics or compute submission. The target must
+declare sampled usage, and a graphics pass cannot sample its own render target.
+The host checks the whole draw batch for this feedback hazard before resolving
+any target or beginning a pass. Backends without attachment resolution reject
+the binding before submission.
+
 The standard direct Surface compositor derives its texture coordinates and
 rounded masks from the physical pixel-rounded viewport. Its sampler must clamp
 both texture axes so edge pixels at fractional logical positions do not wrap

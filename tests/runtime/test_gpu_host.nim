@@ -3176,6 +3176,100 @@ suite "GPU command bindings":
     host.endGpuFrame(token)
     host.close()
 
+  test "graphics and compute can sample earlier RenderTargets without feedback":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let namespace = host.createGpuNamespace(
+      "multipass-graphics",
+      GpuResourceBudget(
+        persistentBytes: 8192,
+        workUnitsPerFrame: 8,
+        maxResources: 12
+      )
+    )
+    let drawing = host.createDrawingResources(namespace)
+    let sampler = host.createGpuSampler(namespace, samplerDescriptor())
+    let source = host.createGpuRenderTarget(
+      namespace, renderTargetDescriptor(label = "previous-pass")
+    )
+    let target = host.createGpuRenderTarget(
+      namespace, renderTargetDescriptor(label = "next-pass")
+    )
+    let unsampled = host.createGpuRenderTarget(
+      namespace, renderTargetDescriptor(
+        usage = {gtuRenderTarget}, label = "unsampled-pass"
+      )
+    )
+    let computeShader = host.createGpuShader(
+      namespace, shaderDescriptor(gssCompute), @[3'u8]
+    )
+    let computePipeline = host.createGpuComputePipeline(
+      namespace, computePipelineDescriptor(computeShader)
+    )
+    let pass = graphicsPass(width = 8, height = 8, renderTarget = target)
+    let command = GpuDrawCommand(
+      pipeline: drawing.pipeline,
+      vertexBuffer: drawing.vertexBuffer,
+      vertexCount: 2,
+      bindings: GpuBindingSet(textures: @[
+        GpuTextureBinding(stage: 0, sampler: sampler, texture: source)
+      ])
+    )
+    let token = host.beginGpuFrame()
+    host.submitGpuDraw(
+      namespace,
+      graphicsPass(width = 8, height = 8, renderTarget = source),
+      GpuDrawCommand(
+        pipeline: drawing.pipeline,
+        vertexBuffer: drawing.vertexBuffer,
+        vertexCount: 2
+      )
+    )
+    host.submitGpuDraw(namespace, pass, command)
+    check context.graphicsPassBegins == 2
+    check context.drawSubmits == 2
+    check context.presentationTextureResolves == 1
+    check context.lastBindings.textures[0].texture.backendResourceIdValue() >=
+      10_000'u64
+
+    var invalid = command
+    invalid.bindings.textures = @[
+      GpuTextureBinding(stage: 0, sampler: sampler, texture: target)
+    ]
+    expect GpuHostError:
+      host.submitGpuDraws(namespace, pass, [command, invalid])
+    invalid.bindings.textures = @[
+      GpuTextureBinding(stage: 0, sampler: sampler, texture: unsampled)
+    ]
+    expect GpuHostError:
+      host.submitGpuDraw(namespace, pass, invalid)
+    check context.graphicsPassBegins == 2
+    check context.drawSubmits == 2
+    check context.presentationTextureResolves == 1
+
+    context.resolvePresentationTextureStatus = gbsUnsupported
+    expect GpuHostError:
+      host.submitGpuDraw(namespace, pass, command)
+    check context.graphicsPassBegins == 2
+    check context.drawSubmits == 2
+    context.resolvePresentationTextureStatus = gbsOk
+    host.dispatchGpuCompute(
+      namespace,
+      GpuComputeCommand(
+        pipeline: computePipeline,
+        groupsX: 1,
+        groupsY: 1,
+        groupsZ: 1,
+        bindings: GpuBindingSet(textures: @[
+          GpuTextureBinding(stage: 0, sampler: sampler, texture: source)
+        ])
+      )
+    )
+    check context.computeDispatches == 1
+    check context.presentationTextureResolves == 3
+    host.endGpuFrame(token)
+    host.close()
+
   test "invalid command bindings never reach a graphics pass or dispatch":
     let context = newContext()
     let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
