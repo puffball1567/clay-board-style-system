@@ -141,6 +141,16 @@ proc drawable(entry: MotionSceneEntry): bool =
   entry.value.visible and entry.value.opacity > 0 and entry.value.color.a > 0 and
     entry.value.bounds.w > 0 and entry.value.bounds.h > 0 and entry.inverse.isSome
 
+proc paintObjectAt*(
+    snapshot: MotionSceneSnapshot; index: int
+): Option[MotionObject] =
+  ## Returns a drawable value copy in paint order. Hidden or degenerate objects
+  ## occupy their stable position but return none, preserving authoring IDs.
+  if snapshot.isNil or index < 0 or index >= snapshot.order.len:
+    return none(MotionObject)
+  let entry = snapshot.entries[snapshot.order[index]]
+  if entry.drawable: some(entry.value) else: none(MotionObject)
+
 proc sameSnapshot(a, b: MotionSceneSnapshot): bool =
   if a == b: return true
   if a.isNil or b.isNil or a.viewport != b.viewport or a.entries.len != b.entries.len:
