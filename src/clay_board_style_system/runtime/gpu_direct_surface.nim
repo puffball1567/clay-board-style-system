@@ -31,7 +31,8 @@ type
     gdssFree,
     gdssPending,
     gdssPresented,
-    gdssRetired
+    gdssRetired,
+    gdssCancelled
 
   GpuDirectSurfaceSlot = object
     state: GpuDirectSurfaceSlotState
@@ -164,7 +165,7 @@ proc pendingFrameCount*(surface: GpuDirectSurface): int =
   if surface.isNil:
     return 0
   for slot in surface.slots:
-    if slot.state == gdssPending:
+    if slot.state in {gdssPending, gdssCancelled}:
       inc result
 
 proc retainedFrameCount*(surface: GpuDirectSurface): int =
@@ -266,11 +267,31 @@ proc queueGpuDirectSurfaceFrame*(
   )
   true
 
+proc cancelGpuDirectSurfaceFrame*(
+    surface: GpuDirectSurface;
+    resource: GpuResourceHandle
+): bool {.discardable.} =
+  if surface.invalidateIfStale():
+    return false
+  for index in 0 ..< surface.slots.len:
+    let slot = surface.slots[index]
+    if slot.state == gdssPending and slot.resource == resource:
+      if surface.host.isGpuFrameComplete(slot.completion):
+        surface.releaseSlot(index)
+      else:
+        surface.slots[index].state = gdssCancelled
+      return true
+  false
+
 proc collectGpuDirectSurfaceFrame*(surface: GpuDirectSurface): bool {.discardable.} =
   if surface.invalidateIfStale():
     return false
   var newest = -1
   for index, slot in surface.slots:
+    if slot.state == gdssCancelled:
+      if surface.host.isGpuFrameComplete(slot.completion):
+        surface.releaseSlot(index)
+      continue
     if slot.state == gdssPending and
         surface.host.isGpuFrameComplete(slot.completion):
       if newest < 0 or slot.revision > surface.slots[newest].revision:
@@ -292,6 +313,8 @@ proc collectGpuDirectSurfaceFrame*(surface: GpuDirectSurface): bool {.discardabl
     of gdssRetired:
       if surface.slots[index].leaseCount == 0:
         surface.releaseSlot(index)
+    of gdssCancelled:
+      discard
     of gdssFree:
       discard
 
@@ -348,7 +371,7 @@ proc closeGpuDirectSurface*(surface: GpuDirectSurface): bool {.discardable.} =
   for slot in surface.slots:
     if slot.leaseCount != 0:
       return false
-    if slot.state == gdssPending and
+    if slot.state in {gdssPending, gdssCancelled} and
         not surface.host.isGpuFrameComplete(slot.completion):
       return false
   for index in 0 ..< surface.slots.len:
