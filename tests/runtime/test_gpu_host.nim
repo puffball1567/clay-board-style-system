@@ -6548,6 +6548,67 @@ suite "GPU display surface negotiation and UI":
     check host.releaseGpuResource(source)
     host.close()
 
+  test "SDL texture layers can require readback despite direct support":
+    let context = newContext()
+    context.enableDirectPresentation(maxBuffers = 2)
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "display-sdl-layer",
+      GpuResourceBudget(
+        persistentBytes: 64,
+        readbackBytesPerFrame: 8,
+        workUnitsPerFrame: 2,
+        maxResources: 4
+      )
+    )
+    var config = defaultGpuDisplaySurfaceConfig(2, 1)
+    config.bufferCount = 2
+    check host.gpuDisplaySurfaceCapabilities(config).direct
+    check host.gpuDisplaySurfaceCapabilities(config).readbackFallback
+    config.fallback = gdsfRequireReadback
+    let display = host.newGpuDisplaySurface(namespace, config)
+    check display.path == gdspReadback
+    check display.directSurface().isNil
+    let source = host.createGpuTexture(
+      namespace,
+      textureDescriptor(
+        2, 1, usage = {gtuBlitSource}, label = "sdl-layer-source"
+      )
+    )
+    let ui = initUiRoot()
+    let handle = ui.gpuDisplaySurface(display)
+    let token = host.beginGpuFrame()
+    check handle.queueGpuFrame(source, token)
+    host.endGpuFrame(token)
+    context.readbackReady = true
+    check handle.collectGpuFrame()
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(
+      ui.tree, ui.styleSheets(), defaultProperties(), diagnostics
+    )
+    let layout = computeLayout(ui.tree, styles, size(10, 10))
+    ui.syncRenderSurfaces(styles, layout)
+    let commands = ui.buildPaintCommands(styles, layout)
+    check commands.anyIt(it.kind == pcDrawRasterSurface)
+    check commands.allIt(it.kind != pcDrawGpuDirectSurface)
+    check display.closeGpuDisplaySurface()
+    check host.releaseGpuResource(source)
+    host.close()
+
+    let noReadback = newContext()
+    noReadback.enableDirectPresentation(maxBuffers = 2)
+    noReadback.readbackSupported = false
+    let directOnlyHost = openGpuHost(noReadback.backend, ghoOwned)
+    let directOnlyNamespace = directOnlyHost.createGpuNamespace(
+      "display-no-sdl-layer-path",
+      GpuResourceBudget(persistentBytes: 64, maxResources: 4)
+    )
+    check directOnlyHost.gpuDisplaySurfaceCapabilities(config).direct
+    check not directOnlyHost.gpuDisplaySurfaceCapabilities(config).readbackFallback
+    expect GpuHostError:
+      discard directOnlyHost.newGpuDisplaySurface(directOnlyNamespace, config)
+    directOnlyHost.close()
+
   test "required direct mode and unsupported fallback formats fail closed":
     let context = newContext()
     let host = openGpuHost(context.backend, ghoOwned)
@@ -6671,6 +6732,24 @@ suite "GPU display surface quality matrix":
       kind: grkRenderTarget
     )
     check masked.supports(typedOffscreen)
+    let typedTargetOnly = gpuDirectCompositeCapabilities(
+      {gdctWindow, gdctOffscreen}, typedOffscreenTargetRequired = true
+    )
+    check not typedTargetOnly.supports(GpuDirectCompositeContext(
+      targetKind: gdctOffscreen,
+      targetBounds: rect(0, 0, 64, 64),
+      pixelScale: 1
+    ))
+    check typedTargetOnly.supports(GpuDirectCompositeContext(
+      targetKind: gdctOffscreen,
+      targetBounds: rect(0, 0, 64, 64),
+      offscreenTarget: typedOffscreen.offscreenTarget,
+      pixelScale: 1
+    ))
+    expect ValueError:
+      discard gpuDirectCompositeCapabilities(
+        {gdctWindow}, typedOffscreenTargetRequired = true
+      )
     typedOffscreen.offscreenTarget.kind = grkTexture
     check not masked.supports(typedOffscreen)
     check not masked.supports(GpuDirectCompositeContext(
@@ -7588,6 +7667,8 @@ suite "GPU host direct compositor":
     check context.lastSubmissionResources[0] != 0
 
     offscreenContext.offscreenTarget = GpuResourceHandle()
+    check compositor.capabilities.typedOffscreenTargetRequired
+    check not compositor.capabilities.supports(offscreenContext)
     check command.compositeGpuDirectSurface(
       offscreenContext, compositor
     ) == gdcsUnsupported

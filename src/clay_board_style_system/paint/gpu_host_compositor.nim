@@ -397,7 +397,8 @@ proc newGpuHostDirectCompositor*(
     sourceFormats = info.directPresentationFormats,
     alphaModes = info.directPresentationAlphaModes,
     maxSourceWidth = info.maxDirectPresentationWidth,
-    maxSourceHeight = info.maxDirectPresentationHeight
+    maxSourceHeight = info.maxDirectPresentationHeight,
+    typedOffscreenTargetRequired = true
   )
 
   newGpuDirectCompositor(

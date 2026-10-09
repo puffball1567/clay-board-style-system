@@ -76,6 +76,32 @@ suite "SDL3 transform rendering":
     renderer.render(commands, rgb(0, 0, 0))
     check renderer.cacheUsage().transformTextureBytes == cachedBytes
 
+  test "readback raster pixels survive an SDL texture-backed transform":
+    let previousDriver = getEnv("SDL_VIDEODRIVER")
+    putEnv("SDL_VIDEODRIVER", "dummy")
+    defer:
+      if previousDriver.len > 0:
+        putEnv("SDL_VIDEODRIVER", previousDriver)
+      else:
+        delEnv("SDL_VIDEODRIVER")
+
+    let surface = newRasterSurface(2, 2, [255'u8, 0'u8, 0'u8, 255'u8])
+    var commands = @[
+      pushTransform(translationAffine2D(10, 8)),
+      drawRasterSurface(NodeId(1), surface, rect(0, 0, 12, 12)),
+      popTransform()
+    ]
+    commands.resolveTransformBounds()
+    var renderer = initSdl3Renderer("CBSS GPU fallback layer test", 32, 32, false)
+    defer: renderer.close()
+    renderer.requestFrameCapture()
+    renderer.render(commands, rgb(0, 0, 0))
+    check renderer.capturedFrame().isSome
+    let frame = renderer.capturedFrame().get
+    check frame.pixel(14, 12).r > 220
+    check frame.pixel(14, 12).g < 25
+    check frame.pixel(4, 4).r < 25
+
   test "layered rendering preserves affine transform scopes":
     let previousDriver = getEnv("SDL_VIDEODRIVER")
     putEnv("SDL_VIDEODRIVER", "dummy")

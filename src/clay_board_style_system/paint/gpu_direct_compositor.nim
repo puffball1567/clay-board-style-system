@@ -46,6 +46,7 @@ type
 
   GpuDirectCompositeCapabilities* = object
     targetKinds*: set[GpuDirectCompositeTargetKind]
+    typedOffscreenTargetRequired*: bool
     clipBoundsSupported*: bool
     clipMaskSupported*: bool
     sourceProviders*: set[GpuProviderKind]
@@ -112,11 +113,16 @@ proc gpuDirectCompositeCapabilities*(
       gcamStraight, gcamPremultiplied, gcamOpaque
     };
     maxSourceWidth = 0'u32;
-    maxSourceHeight = 0'u32
+    maxSourceHeight = 0'u32;
+    typedOffscreenTargetRequired = false
 ): GpuDirectCompositeCapabilities =
   if targetKinds == {}:
     raise newException(
       ValueError, "GPU direct compositor must support at least one target kind"
+    )
+  if typedOffscreenTargetRequired and gdctOffscreen notin targetKinds:
+    raise newException(
+      ValueError, "typed offscreen targets require offscreen compositor support"
     )
   if clipMaskSupported and not clipBoundsSupported:
     raise newException(
@@ -142,6 +148,7 @@ proc gpuDirectCompositeCapabilities*(
     )
   GpuDirectCompositeCapabilities(
     targetKinds: targetKinds,
+    typedOffscreenTargetRequired: typedOffscreenTargetRequired,
     clipBoundsSupported: clipBoundsSupported,
     clipMaskSupported: clipMaskSupported,
     sourceProviders: sourceProviders,
@@ -161,6 +168,11 @@ proc newGpuDirectCompositor*(
   if capabilities.targetKinds == {}:
     raise newException(
       ValueError, "GPU direct compositor capabilities are required"
+    )
+  if capabilities.typedOffscreenTargetRequired and
+      gdctOffscreen notin capabilities.targetKinds:
+    raise newException(
+      ValueError, "typed offscreen targets require offscreen compositor support"
     )
   if capabilities.clipMaskSupported and not capabilities.clipBoundsSupported:
     raise newException(
@@ -195,6 +207,9 @@ proc supports*(
     if not context.offscreenTarget.isEmptyGpuHandle():
       return false
   of gdctOffscreen:
+    if capabilities.typedOffscreenTargetRequired and
+        context.offscreenTarget.isEmptyGpuHandle():
+      return false
     if not context.offscreenTarget.isEmptyGpuHandle() and
         context.offscreenTarget.kind != grkRenderTarget:
       return false

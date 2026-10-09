@@ -4,7 +4,8 @@ import ./[gpu_canvas, gpu_direct_surface, gpu_host]
 type
   GpuDisplaySurfaceFallback* = enum
     gdsfRequireDirect,
-    gdsfAllowReadback
+    gdsfAllowReadback,
+    gdsfRequireReadback
 
   GpuDisplaySurfacePath* = enum
     gdspDirect,
@@ -133,12 +134,12 @@ proc newGpuDisplaySurface*(
     namespace: namespace,
     configValue: resolved
   )
-  if capabilities.direct:
+  if capabilities.direct and resolved.fallback != gdsfRequireReadback:
     result.pathValue = gdspDirect
     result.directValue = host.newGpuDirectSurface(
       namespace, resolved.directConfig()
     )
-  elif resolved.fallback == gdsfAllowReadback and capabilities.readbackFallback:
+  elif resolved.fallback != gdsfRequireDirect and capabilities.readbackFallback:
     result.pathValue = gdspReadback
     var fallbackConfig = defaultGpuCanvasConfig(
       resolved.width, resolved.height

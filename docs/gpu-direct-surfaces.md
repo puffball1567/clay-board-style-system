@@ -34,6 +34,14 @@ capabilities disabled until its same-device compositor is qualified. With the
 default policy, these adapters select `gdspReadback` instead of silently
 displaying nothing.
 
+When a Canvas may be painted inside an SDL texture-backed transform, opacity,
+filter, or cached layer, set `config.fallback = gdsfRequireReadback` before
+creating the display surface. This selects the asynchronous `RasterSurface`
+path even if the host advertises direct presentation, so the ordinary SDL
+renderer can include the pixels in its layer. Construction fails if readback is
+unavailable for the requested format or byte budget. This is an explicit CPU
+transfer, not zero-copy SDL/bgfx texture sharing.
+
 ## Publishing Frames
 
 Producers rotate two or more sampled Texture or RenderTarget resources. A frame
@@ -224,11 +232,11 @@ GPU-native renderers may set `offscreenTarget` to a live CBSS `RenderTarget`
 owned by the compositor namespace. The standard compositor checks its kind,
 namespace, generation, dimensions, usage, and source/target feedback before
 placing it in the graphics pass. This is a CBSS handle, not a backend handle,
-and remains valid only for the synchronous composition call. SDL's high-level
-texture-backed layers do not satisfy this contract and therefore remain
-unsupported rather than being redirected to the final window. Visible
-offscreen pixels and mixed SDL/GPU layer integration remain real-renderer
-release gates.
+and remains valid only for the synchronous composition call. The standard
+same-host compositor requires this typed target for offscreen drawing and
+rejects an SDL texture-backed target before acquiring a frame lease. The
+explicit readback path above can paint those SDL layers; zero-copy mixed
+SDL/GPU layer integration remains a separate real-renderer release gate.
 
 The optional bgfx backend exposes `newBgfxDirectCompositeAdapter(backend,
 submit)` for presentation-backend authors. It binds the callback to one bgfx
