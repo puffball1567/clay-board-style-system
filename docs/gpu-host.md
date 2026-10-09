@@ -840,6 +840,15 @@ preserving ordered resource release. R8 expands to opaque grayscale, BGRA8 is
 swizzled, and straight, premultiplied, or opaque source alpha is normalized to
 the canonical straight-alpha surface.
 
+An obsolete queued readback can be withdrawn with
+`gpuCanvas.cancelGpuCanvasFrame(gpuCanvas.queuedFrameNumber())` before it is
+collected. The frame number identifies one pending request; cancellation does
+not free its destination buffer while the backend may still write to it. A
+cancelled request continues to occupy a ring slot until collection observes
+completion, then counts as completed without replacing the visible pixels.
+Other ready frames in the same collection may still publish. A frame already
+collected or cancelled returns `false`.
+
 Closing a canvas with current pending work returns `false`; callers collect the
 work and retry. Device loss invalidates the GPU generation, permits stale
 canvas teardown without touching invalid resources, and requires recreation
