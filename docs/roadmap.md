@@ -1255,7 +1255,8 @@ contract and do not duplicate the motion engine.
 
 ### CSS-Like Motion Scene
 
-Status: `CPU snapshots and typed timelines implemented; GPU execution planned`
+Status: `CPU snapshots and typed timelines implemented; rounded-rectangle GPU
+instance encoding implemented; automatic GPU execution planned`
 
 The opt-in CPU reference now stores bounded immutable rounded-rectangle batches
 inside one Canvas, with stable IDs, affine/opacity/z-order properties, viewport

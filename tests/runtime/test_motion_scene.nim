@@ -3,7 +3,8 @@ import std/[math, options, unittest]
 import clay_board_style_system
 import clay_board_style_system/generated/default_properties
 import clay_board_style_system/backends/ppm/raster
-import clay_board_style_system/runtime/[motion_scene, motion_scene_ui]
+import clay_board_style_system/runtime/[motion_scene, motion_scene_gpu,
+    motion_scene_ui]
 
 proc item(id: uint64; bounds = rect(0, 0, 12, 12);
     color = rgb(1, 0, 0); zIndex = 0'i32): MotionObject =
@@ -45,6 +46,42 @@ suite "CPU Motion Scene snapshots":
     discard scene.replaceSnapshot(snap([item(3, color = rgb(0, 1, 0)), item(1)]))
     check scene.pixels.pixel(3, 3) == (255'u8, 0'u8, 0'u8)
     check scene.hitTest(vec2(3, 3)).get.id == MotionObjectId(1)
+
+  test "GPU records preserve CPU paint order geometry and alpha":
+    let high = motionRect(
+      MotionObjectId(1), rect(3, 4, 10, 8), rgba(1, 0, 0, 0.8),
+      transform = Affine2D(m11: 2, m12: 0, m21: 0, m22: 3, tx: 5, ty: 7),
+      opacity = 0.5, radius = 3, zIndex = 5
+    )
+    let low = motionRect(
+      MotionObjectId(2), rect(1, 2, 6, 4), rgb(0, 0, 1), zIndex = -1
+    )
+    let hidden = motionRect(
+      MotionObjectId(3), rect(0, 0, 2, 2), rgb(0, 1, 0), visible = false
+    )
+    let snapshot = snap([high, hidden, low])
+    check snapshot.paintObjectAt(0).get.id == MotionObjectId(2)
+    check snapshot.paintObjectAt(1).isNone
+    check snapshot.paintObjectAt(2).get.id == MotionObjectId(1)
+    check snapshot.paintObjectAt(-1).isNone
+    check snapshot.paintObjectAt(3).isNone
+    let records = gpuMotionRectRecords(snapshot)
+    check records.len == 2
+    check records[0][0] == [1'f32, 0, 1, 0]
+    check records[0][1] == [0'f32, 1, 2, 0]
+    check records[1][0] == [2'f32, 0, 11, 0]
+    check records[1][1] == [0'f32, 3, 19, 0]
+    check records[1][2] == [10'f32, 8, 3, 0]
+    check abs(records[1][3][3] - 0.4'f32) < 0.0001
+    check records[0][4] == [1'f32 / 32, 1'f32 / 24, 0, 0]
+    check gpuMotionRectBytes(records).len == 2 * 5 * 4 * sizeof(float32)
+    check gpuMotionRectBytes([]).len == 0
+    expect ValueError:
+      discard gpuMotionRectRecords(nil)
+    expect ValueError:
+      discard gpuMotionRectRecords(motionSceneSnapshot(
+        size(1.0e-40'f32, 24), [item(7)]
+      ))
 
   test "rounded transformed rectangles agree with inverse-space hit testing":
     var shape = item(1, rect(0, 0, 10, 10))

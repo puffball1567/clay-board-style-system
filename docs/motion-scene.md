@@ -79,6 +79,36 @@ cross-thread transfer or a worker queue; applications must use an appropriate
 ownership-transfer mechanism when producing results elsewhere. Tokens retain
 the scene until released and do not retain UI nodes.
 
+## GPU rectangle batches
+
+Import `runtime/motion_scene_gpu` explicitly to pack the drawable rounded
+rectangles of a snapshot into five-vec4 GPU instance records:
+
+```nim
+import clay_board_style_system/runtime/motion_scene_gpu
+
+let records = gpuMotionRectRecords(scene.snapshot)
+if records.len > 0:
+  let instances = host.createGpuBuffer(resources,
+    gpuInstanceBufferDescriptor(gpuMotionRectVec4Count,
+      uint32(records.len), gbaDynamic),
+    gpuMotionRectBytes(records))
+```
+
+The records follow the CPU's z-index and authoring order, omit hidden and
+degenerate objects, combine the authored bounds with each affine transform,
+and preserve color alpha times object opacity. Use
+`gpuMotionRectVertexSource()` and `gpuMotionRectFragmentSource()` with a
+four-corner unit quad and an instanced graphics pipeline whose
+`instanceDataVec4Count` is `gpuMotionRectVec4Count`. Submit one draw inside the
+ordinary `GpuHost` frame, with its viewport and scissor set to the snapshot's
+viewport. The same shader pair is compiled for OpenGL and Vulkan, and the
+OpenGL pixel fixture compares its output with CPU Motion Scene rendering.
+
+The caller still owns shader compilation, pipeline and buffer lifetime,
+frame submission, and snapshot-to-buffer updates. Automatic revision tracking,
+batch uploads, and GPU execution for other scene primitives remain follow-ups.
+
 ## Typed timelines
 
 Import `runtime/motion_scene_timeline` to animate a whole batch through the
