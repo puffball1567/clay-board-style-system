@@ -909,7 +909,10 @@ proc run() =
       pixelScale = 2
     )
     host.draw(
-      compositor, scaledTarget, scaledBounds, rect(10.25, 20, 2, 2), pattern,
+      # A quarter physical-pixel offset maps the probed destination centers
+      # onto source texel centers. A half-pixel offset lands exactly between
+      # nearest-filter texels, where hardware may choose either neighbor.
+      compositor, scaledTarget, scaledBounds, rect(10.125, 20, 2, 2), pattern,
       pixelScale = 2
     )
     host.endGpuFrame(fractionalFrame)
