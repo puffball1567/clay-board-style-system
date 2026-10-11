@@ -1,6 +1,6 @@
 import std/[math, options, sequtils, strutils, unittest]
 
-import clay_board_style_system/core/[computed_style, custom_paint, declaration,
+import clay_board_style_system/core/[color, computed_style, custom_paint, declaration,
     diagnostics, geometry, node, raster_surface, style_resolver, style_value]
 import clay_board_style_system/generated/default_properties
 import clay_board_style_system/hit/hit_test
@@ -15,6 +15,7 @@ import clay_board_style_system/runtime/gpu_direct_surface
 import clay_board_style_system/runtime/gpu_display_surface
 import clay_board_style_system/runtime/gpu_display_surface_ui
 import clay_board_style_system/runtime/gpu_host
+import clay_board_style_system/runtime/[motion_scene, motion_scene_gpu]
 import clay_board_style_system/runtime/gpu_raster_texture
 import clay_board_style_system/runtime/[invalidation, ui_root]
 
@@ -8125,6 +8126,70 @@ suite "GPU host direct compositor":
 
 
 suite "GPU instanced draws":
+  test "Motion Scene batches create, update changed spans, and resize":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let namespace = host.createGpuNamespace("motion-batch", GpuResourceBudget(
+      persistentBytes: 4096, workUnitsPerFrame: 2, maxResources: 4))
+    let scene = newMotionScene(motionSceneSnapshot(size(64, 64), []))
+    let batch = newGpuMotionRectBatch()
+    check not batch.sync(host, namespace, scene)
+    check batch.instanceBinding.instanceCount == 0
+    check context.bufferCreates == 0
+
+    proc frame(lastX: float32; count: int): MotionSceneSnapshot =
+      var objects: seq[MotionObject]
+      for index in 0 ..< count:
+        objects.add motionRect(MotionObjectId(uint64(index + 1)),
+          rect(if index == 2: lastX else: index.float32 * 10, 0, 8, 8),
+          rgb(1, 0, 0))
+      motionSceneSnapshot(size(64, 64), objects)
+
+    discard scene.replaceSnapshot(frame(20, 3))
+    check batch.sync(host, namespace, scene)
+    check batch.instanceBinding.instanceCount == 3
+    check context.bufferCreates == 1
+    check context.lastBufferDataBytes == 3 * sizeof(GpuMotionRectRecord)
+    check not batch.sync(host, namespace, scene)
+    check context.bufferUpdates == 0
+
+    discard scene.replaceSnapshot(frame(25, 3))
+    check batch.sync(host, namespace, scene)
+    check context.bufferUpdates == 1
+    check context.lastBufferUpdateOffset == 2 * uint64(sizeof(GpuMotionRectRecord))
+    check context.lastBufferUpdateBytes == sizeof(GpuMotionRectRecord)
+
+    discard scene.replaceSnapshot(frame(26, 3))
+    context.updateBufferStatus = gbsFailed
+    expect GpuHostError:
+      discard batch.sync(host, namespace, scene)
+    context.updateBufferStatus = gbsOk
+    check batch.sync(host, namespace, scene)
+    check context.bufferUpdates == 3
+    check context.lastBufferUpdateOffset == 2 * uint64(sizeof(GpuMotionRectRecord))
+
+    discard scene.replaceSnapshot(frame(25, 1))
+    check batch.sync(host, namespace, scene)
+    check batch.instanceBinding.instanceCount == 1
+    check context.bufferUpdates == 3
+
+    discard scene.replaceSnapshot(frame(25, 4))
+    check batch.sync(host, namespace, scene)
+    check batch.instanceBinding.instanceCount == 4
+    check context.bufferCreates == 2
+    check context.resourceDestroys == 1
+
+    let foreign = host.createGpuNamespace("other-motion-batch", GpuResourceBudget(
+      persistentBytes: 4096, workUnitsPerFrame: 2, maxResources: 4))
+    expect ValueError:
+      discard batch.sync(host, foreign, scene)
+    batch.release()
+    check context.resourceDestroys == 2
+    check batch.sync(host, foreign, scene)
+    check batch.instanceBinding.instanceCount == 4
+    batch.release()
+    host.close()
+
   test "static and dynamic instance records resolve once for an indexed draw":
     for access in [gbaStatic, gbaDynamic]:
       let context = newContext()
