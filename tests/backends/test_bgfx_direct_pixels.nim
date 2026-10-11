@@ -252,29 +252,37 @@ proc verifyInstancedRects(host: GpuHost; shaderc, shaderIncludes, workDirectory:
         colors[2], transform = translationAffine2D(thirdX, 8), radius = 4)
     ])
   for access in [gbaStatic, gbaDynamic]:
+    let scene = newMotionScene(snapshotFor(45))
+    let batch = newGpuMotionRectBatch()
     # Record zero is deliberately not drawn, exercising the instance offset.
     var records: array[4, GpuMotionRectRecord]
     let initial = gpuMotionRectRecords(snapshotFor(45))
     doAssert initial.len == 3
     for index in 0 .. 2:
       records[index + 1] = initial[index]
-    let instances = host.createGpuBuffer(
-      ns, gpuInstanceBufferDescriptor(gpuMotionRectVec4Count, 4, access),
-      gpuMotionRectBytes(records)
-    )
+    var instances: GpuResourceHandle
+    if access == gbaDynamic:
+      doAssert batch.sync(host, ns, scene)
+    else:
+      instances = host.createGpuBuffer(
+        ns, gpuInstanceBufferDescriptor(gpuMotionRectVec4Count, 4, access),
+        gpuMotionRectBytes(records)
+      )
     for step in 0 .. (if access == gbaDynamic: 1 else: 0):
       if step == 1:
-        records[3] = gpuMotionRectRecords(snapshotFor(50))[2]
-        host.updateGpuBuffer(instances, 0, gpuMotionRectBytes(records))
+        discard scene.replaceSnapshot(snapshotFor(50))
+        doAssert batch.sync(host, ns, scene)
+      let binding = if access == gbaDynamic: batch.instanceBinding else:
+        GpuInstanceBinding(buffer: instances, firstInstance: 1,
+          instanceCount: 3)
       let token = host.beginGpuFrame()
       host.submitGpuDraw(ns, GpuGraphicsPassDescriptor(
         viewport: GpuViewport(width: 64, height: 64), renderTarget: target,
         clearColorEnabled: true, clearColor: GpuClearColor(alpha: 1)),
         GpuDrawCommand(pipeline: pipeline, vertexBuffer: vertices, vertexCount: 4,
-          instances: GpuInstanceBinding(buffer: instances, firstInstance: 1, instanceCount: 3)))
+          instances: binding))
       host.endGpuFrame(token)
       let actual = host.readPixels(ns, target, 64, 64)
-      let scene = newMotionScene(snapshotFor(if step == 1: 50 else: 45))
       let expected = render(
         scene.canvas.paintCommands(NodeId(0), rect(0, 0, 64, 64)),
         64, 64, rgb(0, 0, 0)
@@ -284,8 +292,11 @@ proc verifyInstancedRects(host: GpuHost; shaderc, shaderIncludes, workDirectory:
         actual.requirePixel(point[0], point[1], Pixel(red: expected.pixels[index],
           green: expected.pixels[index + 1], blue: expected.pixels[index + 2], alpha: 255),
           "instanced rounded rectangles match CPU")
-    doAssert host.releaseGpuResource(instances)
-  echo "Instanced rounded rectangles: static/dynamic, affine, opacity, order, subrange, update, CPU pixels passed"
+    if access == gbaDynamic:
+      batch.release()
+    else:
+      doAssert host.releaseGpuResource(instances)
+  echo "Instanced rounded rectangles: static/dynamic scene sync, affine, opacity, order, subrange, update, CPU pixels passed"
 
 proc checkProducerPressure(
     host: GpuHost;

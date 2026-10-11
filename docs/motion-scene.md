@@ -87,12 +87,12 @@ rectangles of a snapshot into five-vec4 GPU instance records:
 ```nim
 import clay_board_style_system/runtime/motion_scene_gpu
 
-let records = gpuMotionRectRecords(scene.snapshot)
-if records.len > 0:
-  let instances = host.createGpuBuffer(resources,
-    gpuInstanceBufferDescriptor(gpuMotionRectVec4Count,
-      uint32(records.len), gbaDynamic),
-    gpuMotionRectBytes(records))
+let batch = newGpuMotionRectBatch()
+discard batch.sync(host, resources, scene) # Before beginGpuFrame.
+let binding = batch.instanceBinding
+# If binding.instanceCount > 0, pass it to a GpuDrawCommand.
+# After the final frame, while the host remains open:
+batch.release()
 ```
 
 The records follow the CPU's z-index and authoring order, omit hidden and
@@ -105,9 +105,14 @@ ordinary `GpuHost` frame, with its viewport and scissor set to the snapshot's
 viewport. The same shader pair is compiled for OpenGL and Vulkan, and the
 OpenGL pixel fixture compares its output with CPU Motion Scene rendering.
 
-The caller still owns shader compilation, pipeline and buffer lifetime,
-frame submission, and snapshot-to-buffer updates. Automatic revision tracking,
-batch uploads, and GPU execution for other scene primitives remain follow-ups.
+`GpuMotionRectBatch.sync` follows the scene revision, skips unchanged frames,
+updates only contiguous changed instance records, and recreates the buffer when
+the drawable count exceeds its capacity. It keeps the prior CPU record cache if
+an update fails, so the next sync retries the affected records. Sync and release
+belong outside an active GPU frame. Release the batch before changing its host
+or namespace; the application still owns shader compilation, pipeline lifetime,
+and frame submission. GPU execution for other scene primitives remains a
+follow-up.
 
 ## Typed timelines
 
