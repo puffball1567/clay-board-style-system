@@ -20,7 +20,7 @@ jobs and must not be replaced by a mock-only success.
 | Device loss | stale frames disappear and resources invalidate | stale generation cannot queue or acquire | loss with pending/presented resources | Automated mock; real GPU pending |
 | Direct compositor | all compositor statuses propagate; SDL normal, text and layered paths invoke the bridge; standard same-host draw accepts retained Texture and RenderTarget sources across producer/compositor namespaces; bgfx resolves both to sampled textures; nested rounded clips use the masked pipeline; typed compositor-owned offscreen RenderTargets receive direct passes | callback exception releases lease; unretained source, duplicate stage, detached host, wrong provider, mismatched resource tag, invalid attachment, malformed masks, incomplete masked materials, foreign/stale offscreen targets, dimension mismatch, and source/target feedback fail closed | no active frame returns retry; rectangular clipping crops viewport and UV; exactly eight rounded masks are accepted and the ninth fails closed; nil compositor or submit, mismatched backend API; per-frame bounded status counters | Automated |
 | Native-window data | X11, Wayland, Win32 and Cocoa map to typed bgfx platform data | missing window or required display fails before bgfx initialization | display is optional only for Win32 and Cocoa; non-Wayland systems use the default bgfx handle type | Automated portable mapping on Linux, Windows and macOS; SDL3 acquisition compiled on configured Linux backend |
-| Readback fallback | R8, RGBA8 and BGRA8 paths; cancelled readbacks drain without publishing | missing copy/readback support, unsupported float format; cancelled destinations remain alive until backend completion | byte limit, label limit, dimension multiplication overflow | Automated mock; real-GPU cancellation pending |
+| Readback fallback | R8, RGBA8 and BGRA8 paths; cancelled readbacks drain without publishing | missing copy/readback support, unsupported float format; cancelled destinations remain alive until backend completion | byte limit, label limit, dimension multiplication overflow; cancelled slot reuse | Automated mock; OpenGL GPU Canvas cancellation and slot reuse pixels under ARC/ORC; other hardware pending |
 | UI integration | standalone, underlay and overlay layout/paint; explicit readback selection for SDL texture-backed layers even when direct presentation is available | foreign or invalid owner, closed surface; required readback fails if unsupported | safety styles override injected pointer/z-index values | Automated |
 | Invalidation | completed frame invalidates paint owner | incomplete/failed collect does not invalidate | no style/layout invalidation | Automated |
 | Memory models | deterministic ownership and teardown | sanitizer/Valgrind failures are fatal | ARC and ORC | Automated CI |
@@ -49,6 +49,9 @@ textures and RenderTarget output, logical target origins, two-times pixel
 scale, deterministic draw ordering, a direct window pass, and retained-source
 composition after a native-window resize. Padded partial uploads additionally
 check transferred row colors and untouched pixels through asynchronous readback.
+GPU Canvas cancellation checks that an in-flight readback drains without
+publishing its pixels, blocks early close, and leaves its slot reusable for a
+later frame. A cancelled newer frame cannot replace an older completed frame.
 Two independent producer namespaces additionally cycle double and triple buffers
 through 64 updates each. Eight frames are submitted between pixel readbacks so
 buffer reuse does not depend on a CPU wait every frame. The fixture verifies

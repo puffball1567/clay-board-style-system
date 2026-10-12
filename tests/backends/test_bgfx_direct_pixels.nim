@@ -12,9 +12,11 @@ import clay_board_style_system/backends/bgfx/[adapter, sdl3_platform_data]
 import clay_board_style_system/backends/sdl3/config
 import clay_board_style_system/build/gpu_shader_compiler
 import clay_board_style_system/core/[color, geometry, node]
+import clay_board_style_system/core/raster_surface
 import clay_board_style_system/backends/ppm/raster
 import clay_board_style_system/runtime/canvas
-import clay_board_style_system/runtime/[motion_scene, motion_scene_gpu]
+import clay_board_style_system/runtime/[gpu_canvas, motion_scene,
+    motion_scene_gpu]
 import clay_board_style_system/paint/[gpu_direct_compositor,
     gpu_host_compositor, paint_command]
 import clay_board_style_system/runtime/[gpu_direct_surface, gpu_host,
@@ -218,6 +220,74 @@ proc solid(red, green, blue: uint8; alpha = 255'u8): seq[byte] =
     discard y
     Pixel(red: red, green: green, blue: blue, alpha: alpha)
   )
+
+proc verifyCanvasReadbackCancellation(host: GpuHost) =
+  let ns = host.createGpuNamespace("canvas-readback-cancel", budget())
+  var config = defaultGpuCanvasConfig(2, 2)
+  config.readbackSlots = 2
+  let canvas = host.newGpuCanvasSurface(ns, config)
+  proc source(color: Pixel; label: string): GpuResourceHandle =
+    host.createGpuTexture(ns, GpuTextureDescriptor(
+      width: 2, height: 2, format: gtfRgba8,
+      usage: {gtuBlitSource}, access: gtaStatic, label: label),
+      rgbaPixels(2, 2, proc(x, y: int): Pixel =
+        discard x
+        discard y
+        color))
+  let red = source(Pixel(red: 255, alpha: 255), "canvas-red")
+  let blue = source(Pixel(blue: 255, alpha: 255), "canvas-blue")
+
+  proc drain(): bool =
+    for attempt in 0 ..< 32:
+      discard attempt
+      pumpWindow()
+      if canvas.collectGpuCanvasFrame():
+        result = true
+      if canvas.pendingFrameCount == 0:
+        return
+      let progress = host.beginGpuFrame()
+      host.endGpuFrame(progress)
+    raise newException(IOError, "cancelled GPU canvas readback did not drain")
+
+  let first = host.beginGpuFrame()
+  doAssert canvas.queueGpuCanvasFrameFrom(red)
+  doAssert canvas.queueGpuCanvasFrameFrom(blue)
+  doAssert canvas.cancelGpuCanvasFrame(2)
+  host.endGpuFrame(first)
+  doAssert not canvas.closeGpuCanvasSurface()
+  doAssert drain()
+  doAssert canvas.completedFrameNumber == 2
+  doAssert canvas.rasterSurface.publish()
+  let redPixels = rgbaPixels(2, 2, proc(x, y: int): Pixel =
+    discard x
+    discard y
+    Pixel(red: 255, alpha: 255))
+  doAssert canvas.rasterSurface.pixels == redPixels
+
+  let second = host.beginGpuFrame()
+  doAssert canvas.queueGpuCanvasFrameFrom(blue)
+  doAssert canvas.cancelGpuCanvasFrame(3)
+  host.endGpuFrame(second)
+  doAssert not drain()
+  doAssert canvas.completedFrameNumber == 3
+  doAssert not canvas.rasterSurface.publish()
+  doAssert canvas.rasterSurface.pixels == redPixels
+
+  let third = host.beginGpuFrame()
+  doAssert canvas.queueGpuCanvasFrameFrom(blue)
+  host.endGpuFrame(third)
+  doAssert drain()
+  doAssert canvas.completedFrameNumber == 4
+  doAssert canvas.rasterSurface.publish()
+  doAssert canvas.rasterSurface.pixels == rgbaPixels(2, 2, proc(x, y: int): Pixel =
+    discard x
+    discard y
+    Pixel(blue: 255, alpha: 255))
+  doAssert canvas.closeGpuCanvasSurface()
+  doAssert host.releaseGpuResource(red)
+  doAssert host.releaseGpuResource(blue)
+  doAssert host.closeGpuNamespace(ns)
+  echo "GPU canvas: cancelled readbacks drain without publication; slots reuse cleanly"
 
 proc verifyInstancedRects(host: GpuHost; shaderc, shaderIncludes, workDirectory: string) =
   doAssert host.backendInfo.instancingSupported
@@ -479,6 +549,7 @@ proc run() =
       )
     )
     doAssert host.backendInfo.rendererName.toLowerAscii.contains("opengl")
+    host.verifyCanvasReadbackCancellation()
     host.verifyInstancedRects(shaderc, shaderIncludes, workDirectory)
 
     let compositorNamespace = host.createGpuNamespace(
