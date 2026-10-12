@@ -7,7 +7,7 @@ import ../hit/hit_test
 import ../input/events
 import ../layout/layout
 import ../layout/scroll_state
-import ../paint/[paint, paint_command, path_geometry]
+import ../paint/[layer_color_filter, paint, paint_command, path_geometry]
 import ../runtime/[focus, frame_scheduler, gpu_direct_surface, invalidation,
   text_focus, ui_root]
 
@@ -33,11 +33,14 @@ type
       attrName*: string
       attrValue*: string
 
+  TestClipboardState = ref object
+    text: string
+
   CbssTestDriver* = ref object
     ui*: UiRoot
     viewport*: Size
     input*: InteractionState
-    clipboard*: string
+    clipboardState: TestClipboardState
     diagnostics*: Diagnostics
     styles*: ResolvedTree
     layout*: LayoutResult
@@ -286,19 +289,26 @@ proc setViewport*(driver: CbssTestDriver; viewport: Size) =
   driver.viewport = viewport
   driver.refresh()
 
+proc clipboard*(driver: CbssTestDriver): var string =
+  ## The mutable clipboard shared with the UI's clipboard callbacks.
+  driver.clipboardState.text
+
 proc initCbssTestDriver*(ui: UiRoot; viewport: Size): CbssTestDriver =
+  # Capture only the storage, not the driver: driver -> UI -> callback ->
+  # driver would form an owning cycle under ARC.
+  let clipboardState = TestClipboardState()
   result = CbssTestDriver(
     ui: ui,
     viewport: viewport,
     input: initInteractionState(),
+    clipboardState: clipboardState,
     scheduler: initFrameScheduler()
   )
-  let driver = result
   result.ui.configureClipboardTextProvider(proc(): string =
-    driver.clipboard
+    clipboardState.text
   )
   result.ui.configureClipboardTextWriter(proc(text: string) =
-    driver.clipboard = text
+    clipboardState.text = text
   )
   result.refresh()
 
@@ -1004,6 +1014,8 @@ proc paintSnapshot*(driver: CbssTestDriver): string =
       lines.add "push-layer " & rectSnapshot(command.layerBounds) &
         " opacity=" & $command.layerOpacity &
         " composite=" & $command.layerCompositeMode
+      if not command.layerColorFilter.isNil:
+        lines[^1].add " color-matrix=" & $command.layerColorFilter.colorMatrixCoefficients()
     of pcPopLayer:
       lines.add "pop-layer"
     of pcPushClip:
@@ -1152,6 +1164,8 @@ proc structuredSnapshotJson*(driver: CbssTestDriver): JsonNode =
       entry["rect"] = rectJson(command.layerBounds)
       entry["opacity"] = %command.layerOpacity
       entry["compositeMode"] = %($command.layerCompositeMode)
+      if not command.layerColorFilter.isNil:
+        entry["colorMatrix"] = %command.layerColorFilter.colorMatrixCoefficients()
     of pcPopLayer:
       discard
     of pcPushClip:

@@ -352,6 +352,96 @@ proc addScrollbars(
     output.add fillRect(horizontal.track, trackColor, radius, some(owner))
     output.add fillRect(horizontal.thumb, thumbColor, radius, some(owner))
 
+proc collectOverlayRoots(
+    tree: Tree;
+    styles: ResolvedTree;
+    id: NodeId;
+    output: var seq[NodeId]
+) =
+  let node = tree.nodes[id.nodeIndex]
+  let style {.cursor.} = styles.styles[id.nodeIndex]
+  if style.layout.display == dkNone or not style.visual.visible:
+    return
+  if node.parent.isSome and style.layout.zIndex > 0:
+    output.add id
+    return
+  if node.kind == nkBox and
+      style.customPaintMaterial(cpsFilter).isSome:
+    # Filter owners keep their positive-z descendants inside the visual group,
+    # including while a material is missing or resolves to identity.
+    return
+  if style.hidesContents:
+    return
+  for child in node.children:
+    collectOverlayRoots(tree, styles, child, output)
+
+type
+  AncestorPaintScope = object
+    clipCount: int
+    transformed: bool
+
+  AncestorPaintContext = object
+    opacity: float32
+    translation: Vec2
+    scopes: seq[AncestorPaintScope]
+
+proc pushAncestorPaintContext(
+    tree: Tree;
+    styles: ResolvedTree;
+    layout: LayoutResult;
+    boxIndices: openArray[int];
+    scroll: ScrollState;
+    id: NodeId;
+    output: var seq[PaintCommand];
+    hasTransform: var bool;
+    scopeRoot = none(NodeId);
+    inheritedOpacity = 1.0'f32
+): AncestorPaintContext =
+  let presentation = ancestorPresentationContext(
+    tree, layout, boxIndices, styles, scroll, id
+  )
+  result.opacity =
+    if scopeRoot.isNone: presentation.opacity
+    else: inheritedOpacity
+  result.translation = presentation.translation
+  var insideScope = scopeRoot.isNone
+  for ancestor in presentation.ancestors:
+    if not insideScope:
+      if some(ancestor.node) == scopeRoot:
+        insideScope = true
+      continue
+    let style {.cursor.} = styles.styles[ancestor.node.nodeIndex]
+    if scopeRoot.isSome:
+      result.opacity *= style.visual.opacity
+    var scope: AncestorPaintScope
+    if not ancestor.ownTransform.isIdentity:
+      output.add pushTransform(ancestor.ownTransform)
+      scope.transformed = true
+      hasTransform = true
+    let visualClip = insetClipRect(ancestor.sourceBounds, style.visual.clipPath)
+    if visualClip.isSome:
+      output.add pushClip(visualClip.get, style.box.borderRadius)
+      inc scope.clipCount
+    if tree.nodes[ancestor.node.nodeIndex].kind == nkBox and
+        style.clipsOverflow():
+      output.add pushClip(
+        overflowClipRect(ancestor.sourceBounds, style, ancestor.padding),
+        style.box.borderRadius
+      )
+      inc scope.clipCount
+    result.scopes.add scope
+
+proc popAncestorPaintContext(
+    context: AncestorPaintContext;
+    output: var seq[PaintCommand]
+) =
+  for index in countdown(context.scopes.high, 0):
+    for _ in 0 ..< context.scopes[index].clipCount:
+      output.add popClip()
+    if context.scopes[index].transformed:
+      output.add popTransform()
+
+
 proc paintNode(
     tree: Tree;
     styles: ResolvedTree;
@@ -383,7 +473,7 @@ proc paintNode(
     return
   if not style.visual.visible:
     return
-  let opacity = inheritedOpacity * style.visual.opacity
+  var opacity = inheritedOpacity * style.visual.opacity
   if opacity <= 0.0'f32:
     return
 
@@ -398,6 +488,24 @@ proc paintNode(
     output.add pushClip(visualClip.get, style.box.borderRadius)
 
   let needsClip = node.kind == nkBox and style.clipsOverflow()
+  let filterBoundary = node.kind == nkBox and
+    style.customPaintMaterial(cpsFilter).isSome
+  let filterResolution =
+    if filterBoundary:
+      customPaintProvider.resolveCustomPaintStage(
+        style, cpsFilter, id, nodeRect, 1.0'f32
+      )
+    else:
+      none(CustomPaintResolution)
+  let appliesFilter = filterResolution.isSome and
+    filterResolution.get.status == cprsResolved and
+    not filterResolution.get.colorFilter.isNil
+  if appliesFilter:
+    output.add pushLayer(nodeRect, opacity = opacity,
+      colorFilter = filterResolution.get.colorFilter)
+    output.add pushClip(nodeRect, style.box.borderRadius)
+    # The completed visual group receives the owner's inherited opacity once.
+    opacity = 1.0'f32
   let maskResolution =
     if node.kind == nkBox:
       customPaintProvider.resolveCustomPaintStage(
@@ -525,9 +633,6 @@ proc paintNode(
     output.addCustomPaint(
       customPaintProvider, style, cpsUnderlay, id, nodeRect, opacity
     )
-    output.addCustomPaint(
-      customPaintProvider, style, cpsFilter, id, nodeRect, opacity
-    )
 
   if node.renderSurfaceId.isSome and not surfaceProvider.isNil:
     let contentRect = presentedContentBounds(nodeRect, style, item.padding)
@@ -549,8 +654,23 @@ proc paintNode(
         scroll, childTranslation,
         surfaceProvider,
         customPaintProvider,
-        overlayPass = overlayPass
+        overlayPass = overlayPass and not filterBoundary
       )
+    if filterBoundary:
+      var overlays: seq[NodeId]
+      for child in node.children:
+        collectOverlayRoots(tree, styles, child, overlays)
+      for overlay in overlays.overlayRootsInPaintOrder(styles):
+        let context = pushAncestorPaintContext(
+          tree, styles, layout, boxIndices, scroll, overlay, output, hasTransform,
+          scopeRoot = some(id), inheritedOpacity = opacity
+        )
+        paintNode(
+          tree, styles, layout, boxIndices, overlay, context.opacity, output,
+          hasTransform, scroll, context.translation, surfaceProvider,
+          customPaintProvider, overlayPass = true
+        )
+        popAncestorPaintContext(context, output)
 
   if node.kind == nkBox:
     output.addCustomPaint(
@@ -574,79 +694,16 @@ proc paintNode(
     output.add popLayer()
     output.add popLayer()
 
+  if appliesFilter:
+    output.add popClip()
+    output.add popLayer()
+
   if visualClip.isSome:
     output.add popClip()
 
   if transformed:
     output.add popTransform()
 
-proc collectOverlayRoots(
-    tree: Tree;
-    styles: ResolvedTree;
-    id: NodeId;
-    output: var seq[NodeId]
-) =
-  let node = tree.nodes[id.nodeIndex]
-  if node.parent.isSome and styles.styles[id.nodeIndex].layout.zIndex > 0:
-    output.add id
-    return
-  for child in node.children:
-    collectOverlayRoots(tree, styles, child, output)
-
-type
-  AncestorPaintScope = object
-    clipCount: int
-    transformed: bool
-
-  AncestorPaintContext = object
-    opacity: float32
-    translation: Vec2
-    scopes: seq[AncestorPaintScope]
-
-proc pushAncestorPaintContext(
-    tree: Tree;
-    styles: ResolvedTree;
-    layout: LayoutResult;
-    boxIndices: openArray[int];
-    scroll: ScrollState;
-    id: NodeId;
-    output: var seq[PaintCommand];
-    hasTransform: var bool
-): AncestorPaintContext =
-  let presentation = ancestorPresentationContext(
-    tree, layout, boxIndices, styles, scroll, id
-  )
-  result.opacity = presentation.opacity
-  result.translation = presentation.translation
-  for ancestor in presentation.ancestors:
-    let style {.cursor.} = styles.styles[ancestor.node.nodeIndex]
-    var scope: AncestorPaintScope
-    if not ancestor.ownTransform.isIdentity:
-      output.add pushTransform(ancestor.ownTransform)
-      scope.transformed = true
-      hasTransform = true
-    let visualClip = insetClipRect(ancestor.sourceBounds, style.visual.clipPath)
-    if visualClip.isSome:
-      output.add pushClip(visualClip.get, style.box.borderRadius)
-      inc scope.clipCount
-    if tree.nodes[ancestor.node.nodeIndex].kind == nkBox and
-        style.clipsOverflow():
-      output.add pushClip(
-        overflowClipRect(ancestor.sourceBounds, style, ancestor.padding),
-        style.box.borderRadius
-      )
-      inc scope.clipCount
-    result.scopes.add scope
-
-proc popAncestorPaintContext(
-    context: AncestorPaintContext;
-    output: var seq[PaintCommand]
-) =
-  for index in countdown(context.scopes.high, 0):
-    for _ in 0 ..< context.scopes[index].clipCount:
-      output.add popClip()
-    if context.scopes[index].transformed:
-      output.add popTransform()
 
 proc buildPaintCommands*(
     tree: Tree;
@@ -682,6 +739,21 @@ proc buildPaintCommands*(
 proc buildPaintCommands*(tree: Tree; styles: ResolvedTree; layout: LayoutResult): seq[PaintCommand] =
   buildPaintCommands(tree, styles, layout, initScrollState())
 
+proc paintGroupRoot*(tree: Tree; styles: ResolvedTree; root: NodeId): NodeId =
+  ## Returns the complete paint unit for a subtree update. Dynamic/static
+  ## partitioning must include this root's descendants when a filter encloses
+  ## the requested node. Unfiltered trees retain the requested root.
+  result = root
+  if not tree.isValid(root):
+    return
+  var ancestor = tree.nodes[root.nodeIndex].parent
+  while ancestor.isSome:
+    let candidate = ancestor.get
+    if tree.nodes[candidate.nodeIndex].kind == nkBox and
+        styles.styles[candidate.nodeIndex].customPaintMaterial(cpsFilter).isSome:
+      result = candidate
+    ancestor = tree.nodes[candidate.nodeIndex].parent
+
 proc buildPaintCommandsForSubtree*(
     tree: Tree;
     styles: ResolvedTree;
@@ -694,6 +766,13 @@ proc buildPaintCommandsForSubtree*(
   var hasTransform = false
   if root.nodeIndex < 0 or root.nodeIndex >= tree.nodes.len:
     return
+  let paintRoot = tree.paintGroupRoot(styles, root)
+  # A partial stream cannot reproduce a filter applied to combined sibling
+  # pixels. Rebuild the outermost enclosing filter group as one paint unit.
+  if paintRoot != root:
+    return buildPaintCommandsForSubtree(
+      tree, styles, layout, paintRoot, scroll, surfaceProvider, customPaintProvider
+    )
   let overlayPass =
     tree.nodes[root.nodeIndex].parent.isSome and
       styles.styles[root.nodeIndex].layout.zIndex > 0
@@ -722,8 +801,10 @@ proc buildPaintCommandsForSubtree*(
     # retained subtree repaint must replay those overlays just like a full-tree
     # paint or focused controls lose popups, carets, and scrollbar children.
     var overlays: seq[NodeId]
-    for child in tree.nodes[root.nodeIndex].children:
-      collectOverlayRoots(tree, styles, child, overlays)
+    if tree.nodes[root.nodeIndex].kind != nkBox or
+        styles.styles[root.nodeIndex].customPaintMaterial(cpsFilter).isNone:
+      for child in tree.nodes[root.nodeIndex].children:
+        collectOverlayRoots(tree, styles, child, overlays)
     for overlay in overlays.overlayRootsInPaintOrder(styles):
       let overlayContext = pushAncestorPaintContext(
         tree, styles, layout, boxIndices, scroll, overlay, result, hasTransform

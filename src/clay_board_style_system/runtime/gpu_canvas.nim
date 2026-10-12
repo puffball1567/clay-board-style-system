@@ -18,6 +18,8 @@ type
   GpuCanvasReadbackSlot = object
     texture: GpuResourceHandle
     pending: bool
+    cancelled: bool
+    frameNumber: uint64
     readback: GpuReadbackHandle
 
   GpuCanvasSurface* = ref object
@@ -215,12 +217,26 @@ proc queueGpuCanvasFrameFrom*(
   let readback = canvas.host.requestGpuReadback(canvas.namespace, texture)
   canvas.slots[slotIndex].readback = readback
   canvas.slots[slotIndex].pending = true
+  canvas.slots[slotIndex].cancelled = false
+  canvas.slots[slotIndex].frameNumber = canvas.queuedFrameNumber + 1'u64
   canvas.pendingOrder.add slotIndex
   inc canvas.queuedFrameNumber
   true
 
 proc queueGpuCanvasFrame*(canvas: GpuCanvasSurface): bool {.discardable.} =
   canvas.queueGpuCanvasFrameFrom(canvas.target)
+
+proc cancelGpuCanvasFrame*(
+    canvas: GpuCanvasSurface;
+    frameNumber: uint64
+): bool {.discardable.} =
+  canvas.requireOpen()
+  for index in canvas.pendingOrder:
+    if canvas.slots[index].frameNumber == frameNumber and
+        not canvas.slots[index].cancelled:
+      canvas.slots[index].cancelled = true
+      return true
+  false
 
 proc unpremultiply(channel, alpha: uint8): uint8 {.inline.} =
   if alpha == 0:
@@ -284,6 +300,7 @@ proc collectGpuCanvasFrame*(canvas: GpuCanvasSurface): bool {.discardable.} =
     raise newException(ValueError, "GPU canvas frame number space exhausted")
   var latest: GpuReadbackData
   var completed = 0
+  var publishable = false
   while canvas.pendingOrder.len > 0:
     let slotIndex = canvas.pendingOrder[0]
     let state = canvas.host.gpuReadbackState(canvas.slots[slotIndex].readback)
@@ -306,10 +323,15 @@ proc collectGpuCanvasFrame*(canvas: GpuCanvasSurface): bool {.discardable.} =
         break
       canvas.slots[slotIndex].pending = false
       canvas.pendingOrder.delete(0)
-      latest = move(data)
+      if not canvas.slots[slotIndex].cancelled:
+        latest = move(data)
+        publishable = true
       inc completed
 
   if completed == 0:
+    return false
+  if not publishable:
+    canvas.completedFrameNumber += uint64(completed)
     return false
   if latest.width != canvas.configValue.width or
       latest.height != canvas.configValue.height or

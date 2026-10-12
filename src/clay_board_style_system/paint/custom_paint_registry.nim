@@ -2,6 +2,7 @@ import std/[algorithm, options, sets, tables]
 
 import ../core/[custom_paint, custom_paint_parameter, geometry, node]
 import ./paint_command
+import ./layer_color_filter
 
 const
   maxCustomPaintDiagnostics* = 256
@@ -33,10 +34,15 @@ type
   CustomPaintResolution* = object
     status*: CustomPaintResolutionStatus
     commands*: seq[PaintCommand]
+    colorFilter*: LayerColorFilter
 
   CustomPaintMaterialProc* = proc(
     request: CustomPaintRequest
   ): seq[PaintCommand] {.closure, raises: [].}
+
+  CustomPaintFilterProc* = proc(
+    request: CustomPaintRequest
+  ): LayerColorFilter {.closure, raises: [].}
 
   CustomPaintProvider* = proc(
     request: CustomPaintRequest
@@ -44,6 +50,7 @@ type
 
   CustomPaintMaterialEntry = object
     callback: CustomPaintMaterialProc
+    filterCallback: CustomPaintFilterProc
     stages: set[CustomPaintStage]
     generation: uint64
 
@@ -90,6 +97,28 @@ proc addDiagnostic(
     message: message
   )
 
+proc registerEntry(
+    registry: CustomPaintRegistry;
+    material: string;
+    entry: sink CustomPaintMaterialEntry;
+    replace: bool
+): Option[CustomPaintRegistration] =
+  if registry.isNil:
+    raise newException(ValueError, "custom paint registry cannot be nil")
+  if not material.validCustomPaintMaterial:
+    raise newException(ValueError, "custom paint material name is invalid")
+  if material in registry.materials and not replace:
+    return none(CustomPaintRegistration)
+  if registry.nextGeneration == high(uint64):
+    raise newException(ValueError, "custom paint registration space exhausted")
+  inc registry.nextGeneration
+  entry.generation = registry.nextGeneration
+  registry.materials[material] = move(entry)
+  some(CustomPaintRegistration(
+    material: material,
+    generation: registry.nextGeneration
+  ))
+
 proc registerCustomPaintMaterialTracked*(
     registry: CustomPaintRegistry;
     material: string;
@@ -97,33 +126,33 @@ proc registerCustomPaintMaterialTracked*(
     stages: set[CustomPaintStage] = {cpsUnderlay, cpsOverlay};
     replace = false
 ): Option[CustomPaintRegistration] =
-  if registry.isNil:
-    raise newException(ValueError, "custom paint registry cannot be nil")
-  if not material.validCustomPaintMaterial:
-    raise newException(ValueError, "custom paint material name is invalid")
   if callback.isNil:
     raise newException(ValueError, "custom paint material callback cannot be nil")
   if stages == {}:
     raise newException(ValueError, "custom paint material requires a paint stage")
   if cpsFilter in stages:
-    raise newException(
-      ValueError,
-      "filter custom paint composition is not implemented"
-    )
-  if material in registry.materials and not replace:
-    return none(CustomPaintRegistration)
-  if registry.nextGeneration == high(uint64):
-    raise newException(ValueError, "custom paint registration space exhausted")
-  inc registry.nextGeneration
-  registry.materials[material] = CustomPaintMaterialEntry(
-    callback: callback,
-    stages: stages,
-    generation: registry.nextGeneration
-  )
-  some(CustomPaintRegistration(
-    material: material,
-    generation: registry.nextGeneration
-  ))
+    raise newException(ValueError, "use registerCustomPaintFilter for filter materials")
+  registry.registerEntry(material,
+    CustomPaintMaterialEntry(callback: callback, stages: stages), replace)
+
+proc registerCustomPaintFilterTracked*(
+    registry: CustomPaintRegistry;
+    material: string;
+    callback: CustomPaintFilterProc;
+    replace = false
+): Option[CustomPaintRegistration] =
+  if callback.isNil:
+    raise newException(ValueError, "custom paint filter callback cannot be nil")
+  registry.registerEntry(material,
+    CustomPaintMaterialEntry(filterCallback: callback, stages: {cpsFilter}), replace)
+
+proc registerCustomPaintFilter*(
+    registry: CustomPaintRegistry;
+    material: string;
+    callback: CustomPaintFilterProc;
+    replace = false
+): bool {.discardable.} =
+  registry.registerCustomPaintFilterTracked(material, callback, replace).isSome
 
 proc registerCustomPaintMaterial*(
     registry: CustomPaintRegistry;
@@ -259,15 +288,6 @@ proc resolveCustomPaint*(
     return CustomPaintResolution(status: cprsInvalidRequest)
   if not registry.isNil:
     registry.noteConsumer(request.material, request.owner)
-  if request.stage == cpsFilter:
-    if not registry.isNil:
-      registry.addDiagnostic(
-        request,
-        cprsUnsupportedStage,
-        "custom paint filter composition is not implemented"
-      )
-    return CustomPaintResolution(status: cprsUnsupportedStage)
-
   if registry.isNil or request.material notin registry.materials:
     if not registry.isNil:
       registry.addDiagnostic(
@@ -286,6 +306,10 @@ proc resolveCustomPaint*(
     )
     return CustomPaintResolution(status: cprsUnsupportedStage)
 
+  if request.stage == cpsFilter:
+    return CustomPaintResolution(
+      status: cprsResolved, colorFilter: entry.filterCallback(request)
+    )
   let commands = entry.callback(request)
   if commands.len > maxCustomPaintCommands:
     registry.addDiagnostic(

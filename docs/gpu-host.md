@@ -179,6 +179,16 @@ a frame is inactive, consume the namespace's transient-byte and work-unit
 budgets, and are ordered before later draw or compute submissions in that frame.
 Readback-only textures remain non-updatable.
 
+The bgfx adapter accepts padded row strides even when they exceed bgfx's
+16-bit pitch range or do not align to a whole pixel. These paths pack the updated rows directly into
+bgfx-owned transfer memory; it does not allocate a second Nim image buffer.
+Tightly packed uploads and representable, pixel-aligned padded pitches retain the direct-copy
+path. A one-row update ignores unused trailing stride and needs no packing.
+Transient-byte accounting still charges the supplied source span, including
+padding, rather than the smaller packed transfer. Invalid spans are rejected
+before allocation or submission, and allocation failures leave the update
+unsubmitted so it can be retried.
+
 `GpuRasterTexture` mirrors a retained `RasterSurface` into one dynamic RGBA8
 GPU texture. It is the standard bridge for CPU image processing, camera frames,
 drawing buffers, and other producers that publish pixels before GPU sampling or
@@ -497,6 +507,19 @@ budget before calling the adapter. Multiple draw commands submitted through
 target, viewport, scissor, and clear state once for that pass, then receives
 only the validated draw commands; adding draws does not repeat pass setup.
 
+A sampled `GpuTextureBinding` may name a Texture or a RenderTarget in the same
+namespace. For a RenderTarget, the host resolves its sampled color attachment
+through the backend before graphics or compute submission. The target must
+declare sampled usage, and a graphics pass cannot sample its own render target.
+The host checks the whole draw batch for this feedback hazard before resolving
+any target or beginning a pass. Backends without attachment resolution reject
+the binding before submission.
+
+The standard direct Surface compositor derives its texture coordinates and
+rounded masks from the physical pixel-rounded viewport. Its sampler must clamp
+both texture axes so edge pixels at fractional logical positions do not wrap
+into unrelated texels.
+
 `GpuHostConfig.viewIdBase` and `viewIdCount` reserve the backend view range used
 by CBSS. A zero count means the complete 256-view range. Borrowed runtimes can
 assign a smaller non-overlapping range so application-owned bgfx work and CBSS
@@ -607,6 +630,60 @@ stages of one command. Binding stage collisions, duplicate
 uniforms, stale or foreign handles, non-finite values, unsupported mip levels,
 and fixed per-command binding limits fail before pass setup or dispatch.
 
+### Instanced drawing
+
+`GpuHost` API version 19 adds bounded instance records to ordinary draws.
+Check `host.backendInfo.instancingSupported` before creating an instanced
+pipeline; custom backends default to unsupported. The pinned bgfx API supports
+instancing as a baseline operation.
+
+Set `GpuGraphicsPipelineDescriptor.instanceDataVec4Count` to 1–5. Each instance
+is that many tightly packed float32 vec4 values (16–80 bytes). Zero retains the
+ordinary non-instanced pipeline contract. Instance records are independent of
+the mesh's vertex layout.
+
+```nim
+let descriptor = gpuInstanceBufferDescriptor(2, 1000, gbaDynamic)
+let instances = host.createGpuBuffer(resources, descriptor, packedInstanceBytes)
+# Before beginGpuFrame, update complete records; offsets are byte offsets.
+host.updateGpuBuffer(instances, 32, replacementRecordBytes)
+# During an active frame, use a pipeline with instanceDataVec4Count = 2.
+host.submitGpuDraw(resources, pass, GpuDrawCommand(
+  pipeline: pipeline,
+  vertexBuffer: quad,
+  vertexCount: 4,
+  instances: GpuInstanceBinding(
+    buffer: instances, firstInstance: 0, instanceCount: 1000
+  )
+))
+```
+
+The descriptor helper creates ordinary static or dynamic vertex-buffer storage
+with a packed vec4 layout. Static storage requires complete initial data;
+dynamic storage may be allocated first, but initialize every record a draw will
+read. `firstInstance` and `instanceCount` count records, not bytes. Draws accept
+1–65,536 instances, including subranges of a larger buffer. Indexed meshes work
+with the same instance binding. One instanced draw consumes one submission work
+unit, and the persistent buffer remains charged to its namespace's byte budget.
+
+The host validates device support, pipeline record width, buffer ownership,
+live generation, packed layout, and the complete range before beginning any
+pass. A malformed command rejects an entire `submitGpuDraws` batch before
+backend submission. Instance buffers follow the existing frame/update,
+namespace, device-loss, and explicit resource-release rules. The adapter binds
+static and dynamic records through their corresponding bgfx APIs and discards
+instance state after each draw.
+
+Typed vertex shaders read `gsisInstance0` through `gsisInstance4` as `gsvtVec4`
+inputs. These emit `i_data0` through `i_data4`; pass needed values to fragment
+shaders through ordinary varyings. Instance slots cannot be used as fragment
+inputs or varying outputs. Match the pipeline record width to the shader's
+highest instance input plus one.
+
+This supplies the GPU batching primitive for Motion Scene. Automatic scene
+snapshot uploads, timeline-driven updates, and scene renderer selection are
+separate integration work.
+
 ## Buffer Readback
 
 Shader-written storage can return a complete buffer or one element-aligned
@@ -680,7 +757,16 @@ into stable, reference-owned host storage retained until
 `tryTakeGpuReadback` succeeds. Namespace accounting updates, later frames, and
 other readback requests do not copy or relocate that destination. Polling
 returns `pending`, `ready`, or `invalid`; taking a ready result transfers its
-pixel sequence to the caller exactly once. A readback texture cannot be
+pixel sequence to the caller exactly once. `GpuReadbackData` always stores its
+first row at the top of the texture. The host normalizes bottom-origin backend
+output before returning it, so CPU consumers and `RasterSurface` do not need
+renderer-specific row-flip logic. Row order is tracked per resource and
+propagated through texture copies; a CPU-uploaded texture is therefore not
+flipped merely because its renderer uses a bottom-origin framebuffer. A
+whole-resource copy may transfer row orientation with its pixels. A partial
+copy between resources with different row orientations is rejected because a
+single destination texture cannot safely describe mixed row order. A
+readback texture cannot be
 released, its namespace cannot close, and a borrowed host cannot detach while
 a request still owns that texture. An owned host releases destinations only
 after its backend close callback has drained or cancelled queued work. A
@@ -753,6 +839,15 @@ only the newest pixels are staged, avoiding redundant UI invalidation while
 preserving ordered resource release. R8 expands to opaque grayscale, BGRA8 is
 swizzled, and straight, premultiplied, or opaque source alpha is normalized to
 the canonical straight-alpha surface.
+
+An obsolete queued readback can be withdrawn with
+`gpuCanvas.cancelGpuCanvasFrame(gpuCanvas.queuedFrameNumber())` before it is
+collected. The frame number identifies one pending request; cancellation does
+not free its destination buffer while the backend may still write to it. A
+cancelled request continues to occupy a ring slot until collection observes
+completion, then counts as completed without replacing the visible pixels.
+Other ready frames in the same collection may still publish. A frame already
+collected or cancelled returns `false`.
 
 Closing a canvas with current pending work returns `false`; callers collect the
 work and retry. Device loss invalidates the GPU generation, permits stale
@@ -872,9 +967,13 @@ fallback when direct presentation is incompatible. The standard compositor
 submits a retained source Texture or RenderTarget color attachment from its
 producer namespace through a compositor-owned sampler and pipeline in the
 active host frame. It provides portable shader source, opacity/alpha uniforms,
-and rectangular viewport/UV clipping without a CPU readback. Rounded masks,
-offscreen composition, visible real-GPU conformance, and in-place restoration
-in a production GPU adapter remain release work. The host provides deterministic
+rectangular viewport/UV clipping, and a separate bounded antialiased pipeline
+for nested rounded clips without a CPU readback. A GPU-native renderer may also
+provide a live compositor-owned CBSS `RenderTarget` for direct offscreen
+composition; raw backend handles never enter the context. SDL texture-backed
+layers still fail closed because they are not same-host targets. Visible
+real-GPU conformance, SDL/GPU layer interop, and in-place restoration in a
+production GPU adapter remain release work. The host provides deterministic
 namespace restoration and failed-owner rollback.
 
 Direct Surface negotiation exposes typed limitation reasons for unavailable

@@ -433,7 +433,7 @@ suite "declarative custom paint":
     check diagnostics.len == 1
     check diagnostics[0].status == cprsMissingMaterial
 
-  test "filter declarations remain explicitly unsupported":
+  test "missing filter declarations emit a missing-material diagnostic":
     let ui = initUiRoot()
     discard ui.box(uiStyle([
       decl("width", px(40)),
@@ -446,7 +446,245 @@ suite "declarative custom paint":
 
     check diagnostics.len == 1
     for diagnostic in diagnostics:
-      check diagnostic.status == cprsUnsupportedStage
+      check diagnostic.status == cprsMissingMaterial
+
+  test "typed filters receive parameters and compose the complete owner once":
+    let ui = initUiRoot()
+    let panel = ui.box(uiStyle([
+      width(40), height(20), decl("opacity", number(0.5)),
+      decl("background-color", colorValue(rgb(1, 0, 0))),
+      customPaint("swap", cpsFilter, parameters = [customPaintBoolean("enabled", true)]),
+      customPaint("accent", cpsUnderlay), customPaint("accent", cpsOverlay)
+    ]))
+    let child = ui.box(uiStyle([
+      width(8), height(8), decl("position", keyword("absolute")),
+      decl("left", px(4)), decl("top", px(4)), decl("z-index", number(10)),
+      decl("background-color", colorValue(rgb(1, 0, 0)))
+    ]), parent = some(panel))
+    let drawing = newCanvas2D()
+    drawing.fillRect(rect(0, 0, 6, 6), rgb(1, 0, 0))
+    discard ui.canvas(drawing, uiStyle([
+      width(6), height(6), decl("position", keyword("absolute")),
+      decl("left", px(16)), decl("top", px(4))
+    ]), parent = some(panel))
+    let filter = colorMatrixFilter([
+      0.0'f32, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0
+    ])
+    var calls = 0
+    var captured: CustomPaintRequest
+    check ui.registerCustomPaintFilter("swap",
+      proc(request: CustomPaintRequest): LayerColorFilter =
+        inc calls
+        captured = request
+        filter
+    )
+    check ui.registerCustomPaintMaterial("accent",
+      proc(request: CustomPaintRequest): seq[PaintCommand] =
+        @[fillRect(rect(26, 4, 6, 6), rgba(1, 0, 0, request.opacity))]
+    )
+    let resolved = ui.resolvedUi()
+    let commands = ui.buildPaintCommands(resolved.styles, resolved.layout)
+    let image = render(commands, 48, 24, rgb(0, 0, 1))
+    check calls == 1
+    check captured.owner == panel.id
+    check captured.stage == cpsFilter
+    check captured.opacity == 1
+    check captured.bounds == rect(0, 0, 40, 20)
+    check captured.parameters[0].booleanValue
+    for x in [2, 6, 18, 28]:
+      let pixel = image.rasterPixel(x, 6)
+      check pixel.r == 0
+      check abs(pixel.g - 0.5) < 0.01
+      check abs(pixel.b - 0.5) < 0.01
+    var childDraws = 0
+    for command in commands:
+      if command.kind == pcFillRect and command.owner == some(child.id):
+        inc childDraws
+    check childDraws == 1
+    check ui.takeCustomPaintDiagnostics().len == 0
+
+  test "filters preserve rounded owner clips and masks":
+    let ui = initUiRoot()
+    discard ui.box(uiStyle([
+      width(40), height(20), decl("border-radius", px(6)),
+      decl("background-color", colorValue(rgb(1, 0, 0))),
+      customPaint("swap", cpsFilter), customPaint("left", cpsMask)
+    ]))
+    let filter = colorMatrixFilter([
+      0.0'f32, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0
+    ])
+    check ui.registerCustomPaintFilter("swap",
+      proc(request: CustomPaintRequest): LayerColorFilter = filter)
+    check ui.registerCustomPaintMaterial("left",
+      proc(request: CustomPaintRequest): seq[PaintCommand] =
+        @[fillRect(rect(0, 0, 20, 20), rgb(1, 1, 1))], {cpsMask})
+    let resolved = ui.resolvedUi()
+    let image = render(ui.buildPaintCommands(resolved.styles, resolved.layout),
+      48, 24, rgb(0, 0, 1))
+    check image.rasterPixel(10, 10).g > 0.99
+    check image.rasterPixel(30, 10).b > 0.99
+    check image.rasterPixel(0, 0).b > 0.99
+
+  test "subtree paint expands to the outer filter group and keeps overlays once":
+    let ui = initUiRoot()
+    let outer = ui.box(uiStyle([
+      width(40), height(20), customPaint("swap", cpsFilter),
+      decl("background-color", colorValue(rgb(1, 0, 0)))
+    ]))
+    let inner = ui.box(uiStyle([
+      width(20), height(20), customPaint("swap", cpsFilter),
+      decl("z-index", number(5)),
+      decl("background-color", colorValue(rgb(1, 0, 0)))
+    ]), parent = some(outer))
+    let leaf = ui.box(uiStyle([
+      width(5), height(5), decl("z-index", number(10)),
+      decl("background-color", colorValue(rgb(1, 0, 0)))
+    ]), parent = some(inner))
+    let filter = colorMatrixFilter([
+      0.0'f32, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0
+    ])
+    check ui.registerCustomPaintFilter("swap",
+      proc(request: CustomPaintRequest): LayerColorFilter = filter)
+    let resolved = ui.resolvedUi()
+    let full = ui.buildPaintCommands(resolved.styles, resolved.layout)
+    check ui.tree.paintGroupRoot(resolved.styles, leaf.id) == outer.id
+    check ui.tree.paintGroupRoot(resolved.styles, outer.id) == outer.id
+    let partial = buildPaintCommandsForSubtree(
+      ui.tree, resolved.styles, resolved.layout, leaf.id, ui.scroll,
+      ui.canvasPaintProvider(), ui.customPaintProvider())
+    check full.len == partial.len
+    for index in 0 ..< min(full.len, partial.len):
+      check samePaintCommand(full[index], partial[index])
+    let image = render(full, 48, 24)
+    check image.rasterPixel(2, 2).r > 0.99
+    check image.rasterPixel(30, 2).g > 0.99
+
+  test "filter groups order descendant overlays above later ordinary siblings":
+    let ui = initUiRoot()
+    let root = ui.box(uiStyle([
+      width(80), height(40), decl("background-color", colorValue(rgb(0, 0, 1)))
+    ]))
+    let panel = ui.box(uiStyle([
+      width(40), height(20), decl("position", keyword("absolute")),
+      decl("left", px(8)), decl("top", px(4)),
+      decl("z-index", number(1)), decl("opacity", number(0.5)),
+      customPaint("swap", cpsFilter)
+    ]), parent = some(root))
+    let container = ui.box(uiStyle([width(40), height(20)]), parent = some(panel))
+    discard ui.box(uiStyle([
+      width(40), height(20), decl("position", keyword("absolute")),
+      decl("left", px(0)), decl("top", px(0)), decl("z-index", number(10)),
+      decl("background-color", colorValue(rgb(1, 0, 0)))
+    ]), parent = some(container))
+    discard ui.box(uiStyle([
+      width(40), height(20), decl("position", keyword("absolute")),
+      decl("left", px(0)), decl("top", px(0)),
+      decl("background-color", colorValue(rgb(0, 0, 1)))
+    ]), parent = some(panel))
+    discard ui.box(uiStyle([
+      width(8), height(8), decl("position", keyword("absolute")),
+      decl("left", px(36)), decl("top", px(8)), decl("z-index", number(2)),
+      decl("background-color", colorValue(rgb(1, 0, 0)))
+    ]), parent = some(root))
+    let filter = colorMatrixFilter([
+      0.0'f32, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0
+    ])
+    check ui.registerCustomPaintFilter("swap",
+      proc(request: CustomPaintRequest): LayerColorFilter = filter)
+    let resolved = ui.resolvedUi()
+    let image = render(ui.buildPaintCommands(resolved.styles, resolved.layout), 80, 40)
+    let groupPixel = image.rasterPixel(12, 8)
+    check groupPixel.r == 0
+    check abs(groupPixel.g - 0.5) < 0.01
+    check abs(groupPixel.b - 0.5) < 0.01
+    check image.rasterPixel(38, 10).r > 0.99
+
+  test "identity and missing filters keep positive-z children visible once":
+    for registered in [false, true]:
+      let ui = initUiRoot()
+      let panel = ui.box(uiStyle([
+        width(20), height(20), customPaint("identity", cpsFilter)
+      ]))
+      let child = ui.box(uiStyle([
+        width(10), height(10), decl("z-index", number(10)),
+        decl("background-color", colorValue(rgb(1, 0, 0)))
+      ]), parent = some(panel))
+      if registered:
+        check ui.registerCustomPaintFilter("identity",
+          proc(request: CustomPaintRequest): LayerColorFilter = nil)
+      let resolved = ui.resolvedUi()
+      let commands = ui.buildPaintCommands(resolved.styles, resolved.layout)
+      check commands.len == 1
+      check commands[0].owner == some(child.id)
+      check commands[0].color == rgb(1, 0, 0)
+
+  test "filter overlay collection respects hidden ancestor subtrees":
+    for hidden in [decl("display", keyword("none")),
+        decl("visibility", keyword("hidden")),
+        decl("content-visibility", keyword("hidden"))]:
+      let ui = initUiRoot()
+      let panel = ui.box(uiStyle([
+        width(20), height(20), customPaint("identity", cpsFilter),
+        decl("background-color", colorValue(rgb(0, 0, 1)))
+      ]))
+      let hiddenParent = ui.box(uiStyle([width(20), height(20), hidden]), parent = some(panel))
+      discard ui.box(uiStyle([
+        width(10), height(10), decl("z-index", number(10)),
+        decl("background-color", colorValue(rgb(1, 0, 0)))
+      ]), parent = some(hiddenParent))
+      check ui.registerCustomPaintFilter("identity",
+        proc(request: CustomPaintRequest): LayerColorFilter = nil)
+      let resolved = ui.resolvedUi()
+      let image = render(ui.buildPaintCommands(resolved.styles, resolved.layout), 24, 24)
+      check image.rasterPixel(2, 2).b > 0.99
+
+  test "filter registrations share generation-safe lifecycle and paint invalidation":
+    let ui = initUiRoot()
+    let panel = ui.box(uiStyle([
+      width(20), height(20), customPaint("dynamic", cpsFilter)
+    ]))
+    discard ui.box(uiStyle([width(20), height(20)]))
+    let resolved = ui.resolvedUi()
+    discard ui.buildPaintCommands(resolved.styles, resolved.layout)
+    discard ui.consumeInvalidation()
+    let callback = proc(request: CustomPaintRequest): LayerColorFilter = nil
+    let first = ui.registerCustomPaintFilterTracked("dynamic", callback).get
+    check ui.hasCustomPaintRegistration(first)
+    check not ui.registerCustomPaintFilter("dynamic", callback)
+    var invalidation = ui.consumeInvalidation()
+    check invalidation.domains == {ddPaint}
+    check invalidation.roots == @[panel.id]
+    let second = ui.registerCustomPaintFilterTracked("dynamic", callback, replace = true).get
+    check not ui.unregisterCustomPaintMaterial(first)
+    check ui.hasCustomPaintRegistration(second)
+    check ui.unregisterCustomPaintMaterial(second)
+    invalidation = ui.consumeInvalidation()
+    check invalidation.domains == {ddPaint}
+    check invalidation.roots == @[panel.id]
+
+  test "filter and drawing callbacks cannot be invoked at the wrong stage":
+    let registry = initCustomPaintRegistry()
+    var calls = 0
+    let callback = proc(request: CustomPaintRequest): LayerColorFilter =
+      inc calls
+      nil
+    expect ValueError:
+      discard registry.registerCustomPaintFilter("invalid", nil)
+    expect ValueError:
+      discard registry.registerCustomPaintFilter(" invalid ", callback)
+    expect ValueError:
+      discard CustomPaintRegistry(nil).registerCustomPaintFilter("invalid", callback)
+    check registry.registerCustomPaintFilter("material", callback)
+    check registry.resolveCustomPaint(CustomPaintRequest(
+      material: "material", stage: cpsOverlay)).status == cprsUnsupportedStage
+    check calls == 0
+    let drawing = proc(request: CustomPaintRequest): seq[PaintCommand] = @[]
+    expect ValueError:
+      discard registry.registerCustomPaintMaterial("paint-filter", drawing, {cpsFilter})
+    check registry.registerCustomPaintMaterial("material", drawing, replace = true)
+    check registry.resolveCustomPaint(CustomPaintRequest(
+      material: "material", stage: cpsFilter)).status == cprsUnsupportedStage
+    check calls == 0
 
   test "unbalanced material commands are rejected before composition":
     let markerColor = rgb(0.2, 0.8, 0.4)

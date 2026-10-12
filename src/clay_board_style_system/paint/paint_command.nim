@@ -2,6 +2,7 @@ import std/[math, options, strutils, unicode]
 import ../core/[color, computed_style, geometry, node, raster_surface]
 import ../runtime/gpu_direct_surface
 import ./path_geometry
+import ./layer_color_filter
 
 type
   LayerCompositeMode* = enum
@@ -40,6 +41,7 @@ type
       layerBounds*: Rect
       layerOpacity*: float32
       layerCompositeMode*: LayerCompositeMode
+      layerColorFilter*: LayerColorFilter
     of pcPopLayer:
       discard
     of pcPushClip:
@@ -117,13 +119,15 @@ proc popTransform*(): PaintCommand =
 proc pushLayer*(
     bounds: Rect;
     opacity = 1.0'f32;
-    compositeMode = lcmSourceOver
+    compositeMode = lcmSourceOver;
+    colorFilter: LayerColorFilter = nil
 ): PaintCommand =
   PaintCommand(
     kind: pcPushLayer,
     layerBounds: bounds,
     layerOpacity: clamp(opacity, 0.0'f32, 1.0'f32),
-    layerCompositeMode: compositeMode
+    layerCompositeMode: compositeMode,
+    layerColorFilter: colorFilter
   )
 
 proc popLayer*(): PaintCommand =
@@ -239,7 +243,8 @@ proc samePaintCommand*(first, second: PaintCommand): bool =
   of pcPushLayer:
     first.layerBounds == second.layerBounds and
       first.layerOpacity == second.layerOpacity and
-      first.layerCompositeMode == second.layerCompositeMode
+      first.layerCompositeMode == second.layerCompositeMode and
+      sameLayerColorFilter(first.layerColorFilter, second.layerColorFilter)
   of pcPushClip:
     first.clipRect == second.clipRect and first.clipRadius == second.clipRadius
   of pcBoxShadow:

@@ -1361,3 +1361,27 @@ suite "typed GPU compute shader authoring":
       discard builder.computeBuiltin(gscbGlobalInvocationId)
     expect GpuShaderBuildError:
       builder.setComputeWorkGroupSize(2, 1, 1)
+
+
+suite "typed GPU instance inputs":
+  test "instance records emit portable bgfx inputs without consuming vertex slots":
+    let builder = newGpuShaderBuilder(gssVertex, "instanced")
+    let position = builder.vertexInput(gsisPosition, gsvtVec4)
+    let offset = builder.vertexInput(gsisInstance0, gsvtVec4)
+    let color = builder.vertexInput(gsisInstance4, gsvtVec4)
+    builder.setPositionOutput(position + offset)
+    builder.setVaryingOutput(gsisColor0, color)
+    let source = builder.emitGpuShaderSource()
+    check "i_data0" in source.source and "i_data4" in source.source
+    check "vec4 i_data0 : TEXCOORD31" in source.varyingDefinitions
+    check "vec4 i_data4 : TEXCOORD27" in source.varyingDefinitions
+    check source.inputs.len == 3
+
+  test "instance slots only accept vertex vec4 inputs":
+    let vertex = newGpuShaderBuilder(gssVertex, "invalid-instance")
+    for kind in [gsvtFloat, gsvtVec2, gsvtVec3, gsvtUVec4, gsvtMat4]:
+      expect GpuShaderBuildError: discard vertex.vertexInput(gsisInstance0, kind)
+    expect GpuShaderBuildError:
+      vertex.setVaryingOutput(gsisInstance0, vertex.vector([0'f32, 0, 0, 1]))
+    let fragment = newGpuShaderBuilder(gssFragment, "invalid-fragment-instance")
+    expect GpuShaderBuildError: discard fragment.varyingInput(gsisInstance0, gsvtVec4)

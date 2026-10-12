@@ -283,6 +283,25 @@ jobs:
           CBSS_BIMG_PATH: ${{ github.workspace }}/bimg
         run: nimble testBgfxNoop -y
 
+      - name: Install the Linux software OpenGL pixel-test environment
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y xvfb xauth libgl1-mesa-dri libglx-mesa0
+
+      - name: Validate rendered GPU pixels under ARC and ORC
+        if: runner.os == 'Linux'
+        env:
+          CBSS_BGFXIM_PATH: ${{ github.workspace }}/bgfxim
+          CBSS_BGFX_PATH: ${{ github.workspace }}/bgfx
+          CBSS_BX_PATH: ${{ github.workspace }}/bx
+          CBSS_BIMG_PATH: ${{ github.workspace }}/bimg
+          CBSS_BGFX_SHADER_INCLUDE: ${{ github.workspace }}/bgfx/src
+          CBSS_GPU_PIXEL_SDL_MODE: bundled
+          SDL_VIDEODRIVER: x11
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: xvfb-run -a -s '-screen 0 1280x720x24' nimble testBgfxPixels -y
+
   linux-atspi:
     name: Linux AT-SPI D-Bus integration
     needs: preflight
@@ -447,7 +466,7 @@ jobs:
     name: Linux Valgrind lifecycle and C ABI checks
     needs: preflight
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

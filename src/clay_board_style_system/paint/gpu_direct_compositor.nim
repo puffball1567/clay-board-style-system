@@ -5,6 +5,9 @@ import ../runtime/gpu_direct_surface
 import ../runtime/gpu_host
 import ./paint_command
 
+const
+  maxGpuDirectClipMasks* = 8
+
 type
   GpuDirectCompositeStatus* = enum
     gdcsNoFrame,
@@ -18,18 +21,32 @@ type
     gdctWindow,
     gdctOffscreen
 
+  GpuDirectClipMask* = object
+    ## One logical-coordinate rounded rectangle from the active clip stack.
+    ## Backends must apply every retained mask, not only their intersection.
+    bounds*: Rect
+    radius*: float32
+
   GpuDirectCompositeContext* = object
     ## Describes the renderer target active for this synchronous submission.
     ## Backend adapters must return gdcsUnsupported when they cannot preserve
     ## these composition constraints.
     targetKind*: GpuDirectCompositeTargetKind
     targetBounds*: Rect
+    ## Optional typed destination for GPU-native offscreen renderers. It is a
+    ## CBSS resource handle, never a backend handle, and is consumed only by
+    ## the synchronous composition callback.
+    offscreenTarget*: GpuResourceHandle
     clipBounds*: Option[Rect]
     requiresClipMask*: bool
+    clipMaskCount*: uint8
+    clipMaskOverflow*: bool
+    clipMasks*: array[maxGpuDirectClipMasks, GpuDirectClipMask]
     pixelScale*: float32
 
   GpuDirectCompositeCapabilities* = object
     targetKinds*: set[GpuDirectCompositeTargetKind]
+    typedOffscreenTargetRequired*: bool
     clipBoundsSupported*: bool
     clipMaskSupported*: bool
     sourceProviders*: set[GpuProviderKind]
@@ -58,6 +75,30 @@ proc defaultGpuDirectCompositeContext*(): GpuDirectCompositeContext =
     pixelScale: 1.0'f32
   )
 
+proc isFinite(value: float32): bool {.inline.} =
+  value.classify notin {fcNan, fcInf, fcNegInf}
+
+proc gpuDirectClipMask*(bounds: Rect; radius: float32): GpuDirectClipMask =
+  if not bounds.x.isFinite or not bounds.y.isFinite or
+      not bounds.w.isFinite or not bounds.h.isFinite or
+      bounds.w <= 0 or bounds.h <= 0 or not radius.isFinite or radius <= 0:
+    raise newException(ValueError, "GPU direct clip mask is invalid")
+  GpuDirectClipMask(bounds: bounds, radius: radius)
+
+proc addGpuDirectClipMask*(
+    context: var GpuDirectCompositeContext;
+    mask: GpuDirectClipMask
+): bool {.discardable.} =
+  ## Retains a bounded clip stack without allocating in the renderer hot path.
+  context.requiresClipMask = true
+  if context.clipMaskOverflow or
+      int(context.clipMaskCount) >= maxGpuDirectClipMasks:
+    context.clipMaskOverflow = true
+    return false
+  context.clipMasks[int(context.clipMaskCount)] = mask
+  inc context.clipMaskCount
+  true
+
 proc gpuDirectCompositeCapabilities*(
     targetKinds: set[GpuDirectCompositeTargetKind];
     clipBoundsSupported = false;
@@ -72,11 +113,16 @@ proc gpuDirectCompositeCapabilities*(
       gcamStraight, gcamPremultiplied, gcamOpaque
     };
     maxSourceWidth = 0'u32;
-    maxSourceHeight = 0'u32
+    maxSourceHeight = 0'u32;
+    typedOffscreenTargetRequired = false
 ): GpuDirectCompositeCapabilities =
   if targetKinds == {}:
     raise newException(
       ValueError, "GPU direct compositor must support at least one target kind"
+    )
+  if typedOffscreenTargetRequired and gdctOffscreen notin targetKinds:
+    raise newException(
+      ValueError, "typed offscreen targets require offscreen compositor support"
     )
   if clipMaskSupported and not clipBoundsSupported:
     raise newException(
@@ -102,6 +148,7 @@ proc gpuDirectCompositeCapabilities*(
     )
   GpuDirectCompositeCapabilities(
     targetKinds: targetKinds,
+    typedOffscreenTargetRequired: typedOffscreenTargetRequired,
     clipBoundsSupported: clipBoundsSupported,
     clipMaskSupported: clipMaskSupported,
     sourceProviders: sourceProviders,
@@ -122,6 +169,11 @@ proc newGpuDirectCompositor*(
     raise newException(
       ValueError, "GPU direct compositor capabilities are required"
     )
+  if capabilities.typedOffscreenTargetRequired and
+      gdctOffscreen notin capabilities.targetKinds:
+    raise newException(
+      ValueError, "typed offscreen targets require offscreen compositor support"
+    )
   if capabilities.clipMaskSupported and not capabilities.clipBoundsSupported:
     raise newException(
       ValueError, "GPU direct clip masks require rectangular clip support"
@@ -134,9 +186,6 @@ proc newGpuDirectCompositor*(
       ValueError, "GPU direct compositor source capabilities are invalid"
     )
   GpuDirectCompositor(capabilities: capabilities, submit: submit)
-
-proc isFinite(value: float32): bool {.inline.} =
-  value.classify notin {fcNan, fcInf, fcNegInf}
 
 proc isValidBounds(value: Rect; allowEmpty: bool): bool =
   value.x.isFinite and value.y.isFinite and value.w.isFinite and
@@ -153,13 +202,35 @@ proc supports*(
   if context.targetKind != gdctUnspecified and
       not context.targetBounds.isValidBounds(false):
     return false
+  case context.targetKind
+  of gdctUnspecified, gdctWindow:
+    if not context.offscreenTarget.isEmptyGpuHandle():
+      return false
+  of gdctOffscreen:
+    if capabilities.typedOffscreenTargetRequired and
+        context.offscreenTarget.isEmptyGpuHandle():
+      return false
+    if not context.offscreenTarget.isEmptyGpuHandle() and
+        context.offscreenTarget.kind != grkRenderTarget:
+      return false
   if context.clipBounds.isSome:
     if not capabilities.clipBoundsSupported or
         not context.clipBounds.get.isValidBounds(true):
       return false
-  if context.requiresClipMask and
-      (context.clipBounds.isNone or not capabilities.clipMaskSupported):
+  let maskCount = int(context.clipMaskCount)
+  if maskCount > maxGpuDirectClipMasks or context.clipMaskOverflow:
     return false
+  if context.requiresClipMask:
+    if context.clipBounds.isNone or not capabilities.clipMaskSupported or
+        maskCount == 0:
+      return false
+  elif maskCount != 0:
+    return false
+  for index in 0 ..< maskCount:
+    let mask = context.clipMasks[index]
+    if not mask.bounds.isValidBounds(false) or not mask.radius.isFinite or
+        mask.radius <= 0:
+      return false
   true
 
 proc supports*(

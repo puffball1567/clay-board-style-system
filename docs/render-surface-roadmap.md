@@ -461,8 +461,9 @@ borrowed byte spans, allowing staging-buffer slices to cross the host boundary
 without a second application-side allocation. Portable
 native-window conversion and SDL3 handoff are implemented as well. A
 renderer-facing direct-composition context now distinguishes final-window and
-offscreen targets and carries target bounds, effective clip, rounded-mask
-requirements, and pixel scale without exposing a backend target handle. Typed
+offscreen targets and carries target bounds, effective clip, a bounded
+eight-entry rounded-mask stack, pixel scale, and an optional typed CBSS
+`RenderTarget` without exposing a backend target handle. Typed
 compositor capabilities fail closed before frame acquisition when any of these
 target constraints are unsupported, then reject unsupported source provider,
 Texture/RenderTarget kind, format, alpha mode, or dimensions before backend
@@ -473,9 +474,14 @@ exactly match its qualified direct-presentation profile, preventing the host
 from advertising a path the compositor cannot draw. The standard same-host
 compositor now consumes final-window contexts, resolves retained Texture and
 RenderTarget sources without readback, crops rectangular clips through viewport
-and UV coordinates, and submits inside the presentation owner's active frame.
-Rounded masks, offscreen targets, and visible real-GPU conformance remain
-release gates below. An owned bgfx adapter now
+and UV coordinates, applies nested rounded clips through a separate
+antialiased mask pipeline, and submits inside the presentation owner's active
+frame. GPU-native renderers can direct that pass into a compositor-owned typed
+offscreen `RenderTarget`; foreign, stale, mismatched, or feedback targets fail
+before backend submission. Rounded-mask overflow fails closed instead of
+truncating the clip stack. SDL texture-backed offscreen interop and visible
+real-GPU conformance remain release gates below.
+An owned bgfx adapter now
 recreates its runtime from the latest validated host configuration before
 namespace restoration. A borrowed adapter continues to fail closed because
 only its external owner may recreate and reattach that runtime.
@@ -1003,12 +1009,15 @@ not rebuilding unrelated CBSS UI when a scene frame changes.
 
 Three-dimensional rendering uses the same Canvas/RenderSurface placement and UI
 composition boundary, but CBSS does not claim to provide a complete 3D engine.
-A 3D package or application owns meshes, materials, scene graphs, lighting,
-shadows, skeletal animation, physics, visibility, and asset preparation. CBSS
-may host its texture or compatible GPU pass, route bounded input, and compose
-the HUD and application UI above it. Advanced 3D support therefore extends the
-frontend integration surface without making those engine systems mandatory
-CBSS core dependencies.
+For the Version 0.7 boundary, a 3D package or application owns meshes,
+materials, scene graphs, lighting, shadows, skeletal animation, physics,
+visibility, and asset preparation. CBSS hosts its texture or compatible GPU
+pass, routes bounded input, and composes the HUD and application UI above it.
+In a later release, an explicitly imported CBSS 3D module may provide reusable
+camera, scene-transform, geometry, material, lighting, and picking primitives
+for code-authored scenes and modeling viewports. Applications remain free to
+use an external 3D renderer instead. Neither route makes 3D systems mandatory
+CBSS core dependencies; see [Optional 3D Authoring Foundation](roadmap.md#version-08-optional-3d-authoring-foundation).
 
 Release work for this track must include deterministic simulation/snapshot
 fixtures, CPU reference output, GPU/CPU visual conformance for the supported

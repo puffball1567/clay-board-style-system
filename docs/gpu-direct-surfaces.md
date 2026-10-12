@@ -34,6 +34,14 @@ capabilities disabled until its same-device compositor is qualified. With the
 default policy, these adapters select `gdspReadback` instead of silently
 displaying nothing.
 
+When a Canvas may be painted inside an SDL texture-backed transform, opacity,
+filter, or cached layer, set `config.fallback = gdsfRequireReadback` before
+creating the display surface. This selects the asynchronous `RasterSurface`
+path even if the host advertises direct presentation, so the ordinary SDL
+renderer can include the pixels in its layer. Construction fails if readback is
+unavailable for the requested format or byte budget. This is an explicit CPU
+transfer, not zero-copy SDL/bgfx texture sharing.
+
 ## Publishing Frames
 
 Producers rotate two or more sampled Texture or RenderTarget resources. A frame
@@ -61,6 +69,16 @@ retired. A compositor receives only the generic `GpuBackendResourceId` at its
 adapter boundary; ordinary UI code never receives a bgfx or platform-native
 handle. The compositor lease is released in a `finally` path even when drawing
 returns retry, unsupported, or failed.
+
+An unpublished frame can be withdrawn with
+`surface.cancelGpuDirectSurfaceFrame(resource)`. Cancellation prevents that
+frame from becoming visible. Before the backend accepts its frame boundary,
+the resource remains retained and occupies its queue slot. After acceptance,
+`collectGpuDirectSurfaceFrame()` releases a previously cancelled frame, or a
+new cancellation releases it immediately. Cancellation of a presented
+frame returns `false`; closing a surface still waits for the cancelled frame
+boundary. Acceptance preserves same-device ordering; it is not a CPU-visible
+GPU completion fence.
 
 The queue is bounded to two through eight slots. When full, queueing returns
 `false` rather than blocking or allocating. Collection coalesces multiple ready
@@ -137,13 +155,19 @@ current frame for the duration of one callback and supplies its provider,
 opaque backend resource ID, dimensions, format, destination rectangle, opacity,
 alpha mode, revision, and the active composition context. That context identifies
 whether the current target is the final window or an offscreen layer and carries
-the target bounds, effective rectangular clip, rounded-mask requirement, and
-pixel scale without copying the renderer's clip stack.
+the target bounds, effective rectangular clip, a bounded copy of the active
+rounded-mask stack, and pixel scale. The fixed-capacity stack avoids renderer
+hot-path allocation and fails closed when more than eight rounded clips are
+active.
 
 The compositor must preserve those constraints or return `gdcsUnsupported`.
 In particular, a callback must not redirect an offscreen-layer submission to the
 window or ignore `requiresClipMask`. The surrounding CBSS paint stream remains
 responsible for ordering the command among ordinary UI content.
+The standard same-host compositor also checks that the context's logical target
+size and pixel scale match the current physical window or offscreen target.
+After a window resize or DPI change, a stale context returns `gdcsUnsupported`
+instead of drawing with the old coordinate mapping.
 
 New integrations should wrap their callback with `newGpuDirectCompositor()` and
 declare `GpuDirectCompositeCapabilities`. Target kinds, rectangular clipping,
@@ -179,12 +203,21 @@ namespace isolation.
 
 CBSS publishes the matching portable shader sources through
 `gpuHostDirectCompositeVertexSource()` and
-`gpuHostDirectCompositeFragmentSource()`. They use this interface:
+`gpuHostDirectCompositeFragmentSource()`. Rounded composition uses the separate
+`gpuHostDirectCompositeMaskedFragmentSource()` variant, so an unmasked draw does
+not pay the rounded-mask branch cost. They use this interface:
 
 - a full-viewport `POSITION` and `TEXCOORD0` vertex stream;
 - sampler `s_cbssSurface` at the material's configured texture stage;
 - `u_cbssComposite = (opacity, alphaMode, 0, 0)`; and
 - `u_cbssUvRect = (u0, v0, u1, v1)`.
+
+The masked variant additionally consumes the fixed `u_cbssClipMasks[17]`
+array. Its header is `(maskCount, visibleWidth, visibleHeight, pixelScale)`;
+each of the eight bounded entries uses one local-bounds `vec4` and one radius
+`vec4`. Every active nested rounded clip participates in fragment coverage with
+a one-physical-pixel antialiased edge. Materials opt in by providing the typed
+array uniform and one masked pipeline per advertised alpha mode.
 
 The sources use the build-only shader pipeline described in
 [GPU Shader Authoring And Packaging](gpu-shaders.md). Straight,
@@ -192,8 +225,18 @@ premultiplied, and opaque sources use distinct material pipelines;
 `alphaGpuBlendState()` and `premultipliedAlphaGpuBlendState()` provide the
 standard blend contracts. Rectangular clips become one physical viewport and
 a cropped UV rectangle, so clipping does not stretch the source image. Empty
-intersections produce no draw. Rounded clip masks and offscreen composition
-currently fail closed and remain part of the real-renderer release gate.
+intersections produce no draw. Bounded rounded masks are implemented for both
+final-window and typed same-host offscreen targets; overflow fails closed.
+
+GPU-native renderers may set `offscreenTarget` to a live CBSS `RenderTarget`
+owned by the compositor namespace. The standard compositor checks its kind,
+namespace, generation, dimensions, usage, and source/target feedback before
+placing it in the graphics pass. This is a CBSS handle, not a backend handle,
+and remains valid only for the synchronous composition call. The standard
+same-host compositor requires this typed target for offscreen drawing and
+rejects an SDL texture-backed target before acquiring a frame lease. The
+explicit readback path above can paint those SDL layers; zero-copy mixed
+SDL/GPU layer integration remains a separate real-renderer release gate.
 
 The optional bgfx backend exposes `newBgfxDirectCompositeAdapter(backend,
 submit)` for presentation-backend authors. It binds the callback to one bgfx

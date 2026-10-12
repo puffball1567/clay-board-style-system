@@ -1,7 +1,7 @@
 import std/[math, options, tables]
 
 import ../core/[color, computed_style, geometry, node, raster_surface]
-import ../paint/[paint_command, path_geometry]
+import ../paint/[layer_color_filter, paint_command, path_geometry]
 import ./gpu_direct_surface
 import ./render_surface
 
@@ -34,6 +34,7 @@ type
       layerBounds*: Rect
       layerOpacity*: float32
       layerCompositeMode*: LayerCompositeMode
+      layerColorFilter*: LayerColorFilter
     of cckPopLayer:
       discard
     of cckPushClip:
@@ -317,7 +318,8 @@ proc beginLayer*(
     canvas: Canvas2D;
     bounds: Rect;
     opacity = 1.0'f32;
-    compositeMode = lcmSourceOver
+    compositeMode = lcmSourceOver;
+    colorFilter: LayerColorFilter = nil
 ) =
   ## Begins a bounded offscreen composition scope. Invalid or empty bounds do
   ## not allocate a retained layer command.
@@ -327,7 +329,8 @@ proc beginLayer*(
     kind: cckPushLayer,
     layerBounds: bounds,
     layerOpacity: clamp(opacity, 0.0'f32, 1.0'f32),
-    layerCompositeMode: compositeMode
+    layerCompositeMode: compositeMode,
+    layerColorFilter: colorFilter
   )
   canvas.touch()
 
@@ -339,9 +342,10 @@ proc saveLayer*(
     canvas: Canvas2D;
     bounds: Rect;
     opacity = 1.0'f32;
-    compositeMode = lcmSourceOver
+    compositeMode = lcmSourceOver;
+    colorFilter: LayerColorFilter = nil
 ) =
-  canvas.beginLayer(bounds, opacity, compositeMode)
+  canvas.beginLayer(bounds, opacity, compositeMode, colorFilter)
 
 proc restoreLayer*(canvas: Canvas2D) =
   canvas.endLayer()
@@ -661,7 +665,8 @@ proc paintCommands*(
       result.add pushLayer(
         command.layerBounds.translated(offset),
         command.layerOpacity,
-        command.layerCompositeMode
+        command.layerCompositeMode,
+        command.layerColorFilter
       )
       scopes.add cpsLayer
     of cckPopLayer:

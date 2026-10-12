@@ -1,7 +1,9 @@
 import std/[algorithm, hashes, math, tables]
 
 const
-  gpuHostApiVersion* = 18'u32
+  gpuHostApiVersion* = 19'u32
+  maxGpuInstanceVec4Count* = 5'u8
+  maxGpuInstancesPerDraw* = 65_536'u32
   maxGpuNamespaceNameBytes* = 128
   maxGpuResourceLabelBytes* = 128
   maxGpuViewCount* = 256'u16
@@ -284,6 +286,7 @@ type
     writeMask*: set[GpuColorChannel]
 
   GpuGraphicsPipelineDescriptor* = object
+    instanceDataVec4Count*: uint8
     vertexShader*, fragmentShader*: GpuResourceHandle
     vertexLayout*: seq[GpuVertexAttribute]
     colorFormat*: GpuTextureFormat
@@ -346,7 +349,12 @@ type
     storageImages*: seq[GpuStorageImageBinding]
     storageBuffers*: seq[GpuStorageBufferBinding]
 
+  GpuInstanceBinding* = object
+    buffer*: GpuResourceHandle
+    firstInstance*, instanceCount*: uint32
+
   GpuDrawCommand* = object
+    instances*: GpuInstanceBinding
     pipeline*: GpuResourceHandle
     vertexBuffer*: GpuResourceHandle
     firstVertex*, vertexCount*: uint32
@@ -380,6 +388,9 @@ type
     generation*: uint64
 
   GpuReadbackData* = object
+    ## Texture rows are always stored from top to bottom, independently of the
+    ## backend's framebuffer origin. `rowStride` remains explicit because a
+    ## future backend may return padded rows.
     width*, height*: uint32
     format*: GpuTextureFormat
     rowStride*: uint32
@@ -413,7 +424,13 @@ type
     descriptor*: GpuBufferDescriptor
     access*: GpuStorageAccess
 
+  GpuBackendInstanceBinding* = object
+    buffer*: GpuBackendResourceId
+    descriptor*: GpuBufferDescriptor
+    firstInstance*, instanceCount*: uint32
+
   GpuBackendBindingSet* = object
+    instances*: GpuBackendInstanceBinding
     uniforms*: seq[GpuBackendUniformBinding]
     textures*: seq[GpuBackendTextureBinding]
     storageImages*: seq[GpuBackendStorageImageBinding]
@@ -428,6 +445,7 @@ type
   GpuBackendInfo* = object
     rendererName*: string
     computeSupported*: bool
+    instancingSupported*: bool
     textureCopySupported*: bool
     textureReadbackSupported*: bool
     bufferCopySupported*: bool
@@ -449,6 +467,10 @@ type
     width*, height*: uint32
     format*: GpuTextureFormat
     usage*: set[GpuTextureUsage]
+    ## True when the resource's first physical row represents its logical
+    ## bottom edge. Standard compositors use this without exposing a backend
+    ## handle or coordinate-system branch to application code.
+    rowsBottomUp*: bool
 
   GpuResourceBudget* = object
     persistentBytes*: uint64
@@ -724,6 +746,7 @@ type
     graphicsPipelineDescriptor: GpuGraphicsPipelineDescriptor
     computePipelineDescriptor: GpuComputePipelineDescriptor
     pipelineKind: GpuPipelineKind
+    rowsBottomUp: bool
     dependencies: seq[GpuResourceId]
     dependentCount: uint32
     presentationRetainCount: uint32
@@ -748,6 +771,7 @@ type
     bufferOffsetBytes: uint64
     completionToken: uint64
     data: seq[byte]
+    rowsBottomUp: bool
     ready: bool
 
   GpuNamespaceEntry = object
@@ -1361,6 +1385,7 @@ proc insertGpuResource(
     graphicsPipelineDescriptor = GpuGraphicsPipelineDescriptor();
     computePipelineDescriptor = GpuComputePipelineDescriptor();
     pipelineKind = gplkGraphics;
+    rowsBottomUp = false;
     dependencies: seq[GpuResourceId] = @[]
 ): GpuResourceHandle =
   host.requireNamespaceAccess(namespace)
@@ -1384,6 +1409,7 @@ proc insertGpuResource(
     graphicsPipelineDescriptor: graphicsPipelineDescriptor,
     computePipelineDescriptor: computePipelineDescriptor,
     pipelineKind: pipelineKind,
+    rowsBottomUp: rowsBottomUp,
     dependencies: dependencies
   )
   entry.usage.persistentBytes += bytes
@@ -1446,6 +1472,21 @@ proc vertexComponentBytes(value: GpuVertexComponentType): uint64 =
   of gvctUint8: 1'u64
   of gvctInt16, gvctHalf: 2'u64
   of gvctFloat: 4'u64
+
+proc gpuInstanceBufferDescriptor*(
+    vec4Count: uint8; capacity: uint32;
+    access = gbaDynamic; label = "instances"
+): GpuBufferDescriptor =
+  ## Packed float32 vec4 records for a pipeline's i_data0..i_data4 inputs.
+  if vec4Count == 0 or vec4Count > maxGpuInstanceVec4Count or
+      capacity == 0 or capacity > maxGpuInstancesPerDraw:
+    raise newException(GpuHostError, "GPU instance buffer dimensions are outside the limits")
+  result = GpuBufferDescriptor(byteSize: uint64(vec4Count) * 16 * uint64(capacity),
+    role: gbrVertex, access: access, label: label)
+  for index in 0 ..< int(vec4Count):
+    result.vertexLayout.add GpuVertexAttribute(
+      semantic: GpuVertexSemantic(ord(gvsTexCoord0) + index),
+      components: 4, componentType: gvctFloat)
 
 proc vertexStride*(descriptor: GpuBufferDescriptor): uint64 =
   if descriptor.role != gbrVertex:
@@ -1710,7 +1751,8 @@ proc createGpuRenderTarget*(
     grkRenderTarget,
     bytes,
     backendResource,
-    renderTargetDescriptor = descriptor
+    renderTargetDescriptor = descriptor,
+    rowsBottomUp = host.infoValue.originBottomLeft
   )
 
 proc createGpuShader*(
@@ -1977,6 +2019,10 @@ proc createGpuGraphicsPipeline*(
   if descriptor.blend.writeMask == {}:
     raise newException(GpuHostError, "GPU graphics pipeline writes no color channels")
   discard descriptor.vertexLayout.validateVertexLayout()
+  if descriptor.instanceDataVec4Count > maxGpuInstanceVec4Count:
+    raise newException(GpuHostError, "GPU instance record exceeds the portable vec4 limit")
+  if descriptor.instanceDataVec4Count > 0 and not host.backendInfo.instancingSupported:
+    raise newException(GpuHostError, "GPU backend does not support instancing")
   let vertex = host.pipelineShader(
     namespace,
     descriptor.vertexShader,
@@ -2258,13 +2304,17 @@ proc gpuUniformMatches*(
 proc gpuSamplerMatches*(
     host: GpuHost;
     handle: GpuResourceHandle;
-    name: string
+    name: string;
+    requireClamp = false
 ): bool =
   if not host.isGpuResourceLive(handle) or handle.kind != grkSampler:
     return false
-  host.namespaces[handle.namespace].resources[
+  let descriptor = host.namespaces[handle.namespace].resources[
     handle.resource
-  ].samplerDescriptor.name == name
+  ].samplerDescriptor
+  descriptor.name == name and
+    (not requireClamp or
+      (descriptor.addressU == gsamClamp and descriptor.addressV == gsamClamp))
 
 proc gpuPresentableResourceInfo*(
     host: GpuHost;
@@ -2282,7 +2332,8 @@ proc gpuPresentableResourceInfo*(
     width: shape.width,
     height: shape.height,
     format: shape.format,
-    usage: shape.usage
+    usage: shape.usage,
+    rowsBottomUp: entry.rowsBottomUp
   )
 
 proc retainGpuResourceForPresentation*(
@@ -2413,7 +2464,7 @@ proc reserveGpuFrameWork*(
   entry.usage.workUnits += workUnits
   host.namespaces[namespace] = entry
 
-proc isEmptyGpuHandle(handle: GpuResourceHandle): bool {.inline.} =
+proc isEmptyGpuHandle*(handle: GpuResourceHandle): bool {.inline.} =
   handle.resource.resourceIdValue() == 0
 
 proc requireGpuResource(
@@ -2556,21 +2607,44 @@ proc validateGpuBindings(
       grkSampler,
       "GPU sampler binding is stale invalid or belongs to another namespace"
     )
-    let texture = host.requireGpuResource(
-      namespace,
-      binding.texture,
-      grkTexture,
-      "GPU texture binding is stale invalid or belongs to another namespace"
-    )
+    if binding.texture.namespace != namespace or
+        binding.texture.kind notin {grkTexture, grkRenderTarget} or
+        not host.isGpuResourceLive(binding.texture):
+      raise newException(
+        GpuHostError,
+        "GPU texture binding is stale invalid or belongs to another namespace"
+      )
+    let texture = host.namespaces[namespace].resources[
+      binding.texture.resource
+    ]
     if sampler.backendResource.backendResourceIdValue() == 0 or
         texture.backendResource.backendResourceIdValue() == 0:
       raise newException(GpuHostError, "GPU texture binding is not backend-mapped")
-    if gtuSampled notin texture.textureDescriptor.usage:
+    if gtuSampled notin texture.textureShape().usage:
       raise newException(GpuHostError, "GPU texture binding requires sampled usage")
+    var textureResource = texture.backendResource
+    if binding.texture.kind == grkRenderTarget:
+      if host.backend.resolvePresentationTexture.isNil:
+        raise newException(
+          GpuHostError, "GPU backend cannot resolve a sampled RenderTarget texture"
+        )
+      let status = host.backend.resolvePresentationTexture(
+        host.backend.context,
+        texture.backendResource,
+        grkRenderTarget,
+        textureResource
+      )
+      if status == gbsDeviceLost:
+        host.enterDeviceLost()
+      raiseForStatus(status)
+      if textureResource.backendResourceIdValue() == 0:
+        raise newException(
+          GpuHostError, "GPU backend returned an invalid sampled RenderTarget texture"
+        )
     resolved.textures.add GpuBackendTextureBinding(
       stage: binding.stage,
       sampler: sampler.backendResource,
-      texture: texture.backendResource,
+      texture: textureResource,
       samplerDescriptor: sampler.samplerDescriptor
     )
 
@@ -2823,11 +2897,47 @@ proc validateDrawCommand(
     indexBackend = index.backendResource
     indexDescriptor = index.bufferDescriptor
 
+  if not pass.renderTarget.isEmptyGpuHandle():
+    for binding in command.bindings.textures:
+      if binding.texture == pass.renderTarget:
+        raise newException(
+          GpuHostError, "GPU draw cannot sample its active render target"
+        )
   var resolvedBindings = host.validateGpuBindings(
     namespace,
     command.bindings,
     allowStorageResources = false
   )
+  let instanceCount = pipeline.graphicsPipelineDescriptor.instanceDataVec4Count
+  if instanceCount == 0:
+    if not command.instances.buffer.isEmptyGpuHandle() or
+        command.instances.firstInstance != 0 or command.instances.instanceCount != 0:
+      raise newException(GpuHostError, "GPU pipeline does not accept instance data")
+  else:
+    if not host.backendInfo.instancingSupported:
+      raise newException(GpuHostError, "GPU backend does not support instancing")
+    if command.instances.instanceCount == 0 or
+        command.instances.instanceCount > maxGpuInstancesPerDraw:
+      raise newException(GpuHostError, "GPU instance count is outside the limits")
+    let instances = host.requireGpuResource(namespace, command.instances.buffer, grkBuffer,
+      "GPU instance buffer is stale invalid or belongs to another namespace")
+    let descriptor = instances.bufferDescriptor
+    if descriptor.role != gbrVertex or
+        descriptor.vertexLayout.len != int(instanceCount) or
+        instances.backendResource.backendResourceIdValue() == 0:
+      raise newException(GpuHostError, "GPU instance buffer does not match the pipeline")
+    for attribute in descriptor.vertexLayout:
+      if attribute.components != 4 or attribute.componentType != gvctFloat or
+          attribute.normalized or attribute.asInteger:
+        raise newException(GpuHostError, "GPU instance data must contain packed float32 vec4 values")
+    let capacity = descriptor.byteSize div (uint64(instanceCount) * 16)
+    if uint64(command.instances.firstInstance) > capacity or
+        uint64(command.instances.instanceCount) > capacity - uint64(command.instances.firstInstance):
+      raise newException(GpuHostError, "GPU instance range exceeds its buffer")
+    resolvedBindings.instances = GpuBackendInstanceBinding(
+      buffer: instances.backendResource, descriptor: descriptor,
+      firstInstance: command.instances.firstInstance,
+      instanceCount: command.instances.instanceCount)
   result = GpuResolvedDrawCommand(
     pipeline: pipeline.backendResource,
     vertexBuffer: vertex.backendResource,
@@ -2928,6 +3038,15 @@ proc submitGpuDraws*(
     raise newException(GpuHostError, "GPU backend does not support draw submission")
 
   let target = host.validateGraphicsPass(namespace, pass)
+  # Reject feedback across the entire batch before resolving any source
+  # RenderTarget through the backend callback.
+  if not pass.renderTarget.isEmptyGpuHandle():
+    for command in commands:
+      for binding in command.bindings.textures:
+        if binding.texture == pass.renderTarget:
+          raise newException(
+            GpuHostError, "GPU draw cannot sample its active render target"
+          )
   var resolvedCommands = newSeqOfCap[GpuResolvedDrawCommand](commands.len)
   for command in commands:
     resolvedCommands.add host.validateDrawCommand(namespace, pass, command)
@@ -3233,6 +3352,18 @@ proc copyGpuTexture*(
     destinationShape.width,
     destinationShape.height
   )
+  let copiesWholeResources =
+    region.sourceX == 0 and region.sourceY == 0 and
+    region.destinationX == 0 and region.destinationY == 0 and
+    region.width == sourceShape.width and region.height == sourceShape.height and
+    region.width == destinationShape.width and
+    region.height == destinationShape.height
+  if sourceEntry.rowsBottomUp != destinationEntry.rowsBottomUp and
+      not copiesWholeResources:
+    raise newException(
+      GpuHostError,
+      "GPU partial texture copies require matching row orientation"
+    )
 
   host.ensureGpuViewAvailable()
   host.validateGpuFrameWork(namespace, workUnits = 1)
@@ -3248,6 +3379,11 @@ proc copyGpuTexture*(
   if status == gbsDeviceLost:
     host.enterDeviceLost()
   raiseForStatus(status)
+  if copiesWholeResources:
+    var namespaceEntry = host.namespaces[namespace]
+    namespaceEntry.resources[destination.resource].rowsBottomUp =
+      sourceEntry.rowsBottomUp
+    host.namespaces[namespace] = namespaceEntry
   inc host.nextViewOffset
   host.reserveGpuFrameWork(namespace, workUnits = 1)
 
@@ -3417,6 +3553,7 @@ proc requestGpuReadback*(
     resource: texture.resource,
     kind: grkTexture,
     textureDescriptor: entry.textureDescriptor,
+    rowsBottomUp: entry.rowsBottomUp,
     data: newSeq[byte](int(bytes))
   )
   let status = host.backend.requestReadback(
@@ -3554,6 +3691,21 @@ proc gpuReadbackState*(host: GpuHost; handle: GpuReadbackHandle): GpuReadbackSta
   else:
     grsPending
 
+proc normalizeReadbackRows(readback: GpuReadbackEntry; rowStride: uint32) =
+  if not readback.rowsBottomUp or readback.textureDescriptor.height <= 1:
+    return
+  let stride = int(rowStride)
+  let height = int(readback.textureDescriptor.height)
+  var temporary = newSeq[byte](stride)
+  for top in 0 ..< height div 2:
+    let bottom = height - top - 1
+    let topOffset = top * stride
+    let bottomOffset = bottom * stride
+    copyMem(addr temporary[0], addr readback.data[topOffset], stride)
+    copyMem(addr readback.data[topOffset], addr readback.data[bottomOffset], stride)
+    copyMem(addr readback.data[bottomOffset], addr temporary[0], stride)
+  readback.rowsBottomUp = false
+
 proc tryTakeGpuReadback*(
     host: GpuHost;
     handle: GpuReadbackHandle;
@@ -3565,14 +3717,16 @@ proc tryTakeGpuReadback*(
   var readback = namespaceEntry.readbacks[handle.readback]
   if readback.kind != grkTexture:
     raise newException(GpuHostError, "GPU readback does not contain texture data")
+  let rowStride = uint32(
+    readback.textureDescriptor.textureBytes() div
+      uint64(readback.textureDescriptor.height)
+  )
+  readback.normalizeReadbackRows(rowStride)
   data = GpuReadbackData(
     width: readback.textureDescriptor.width,
     height: readback.textureDescriptor.height,
     format: readback.textureDescriptor.format,
-    rowStride: uint32(
-      readback.textureDescriptor.textureBytes() div
-        uint64(readback.textureDescriptor.height)
-    ),
+    rowStride: rowStride,
     pixels: move(readback.data)
   )
   if readback.resource in namespaceEntry.resources and

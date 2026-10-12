@@ -1039,7 +1039,7 @@ an enum-only API.
 ## GPU Canvas Capability
 
 Status: `Version 0.7.0 GPU foundation released on 2026-09-19; the Version 0.7
-patch line continues rounded/offscreen composition, broader real-GPU
+patch line continues SDL/GPU offscreen-layer interop, broader real-GPU
 qualification, CPU filters, and Motion Scene work`
 
 CBSS will support optional GPU-backed drawing inside the standard Canvas
@@ -1089,9 +1089,10 @@ resource retention, preserving readback fallback. The bgfx constructor
 requires exact source-kind, format, alpha-mode, and dimension coverage of the
 qualified profile. The standard same-host compositor, restricted
 cross-namespace presentation binding, RenderTarget color-attachment resolution,
-rectangular clip/UV crop, and portable shader source contract are implemented;
-rounded/offscreen composition and real-GPU pixel qualification remain Version
-0.7 work. A later wgpu-native adapter
+rectangular clip/UV crop, bounded nested rounded-mask composition, typed
+same-host offscreen `RenderTarget` composition, and portable shader source
+contract are implemented. SDL texture-backed offscreen interop and real-GPU
+pixel qualification remain Version 0.7 work. A later wgpu-native adapter
 may implement the same CBSS-owned contract, but it is no longer the standard
 provider or a release prerequisite.
 
@@ -1112,6 +1113,11 @@ checksums, and trailing data. Compute dispatch matches that retained layout
 against the actual storage resource stages, formats, and access directions
 before backend work.
 See [GPU Shader Authoring And Packaging](gpu-shaders.md).
+
+Bounded static/dynamic instanced draws now carry 1–5 packed vec4 values per
+instance through the host and bgfx adapter, with typed vertex-shader inputs,
+subrange validation, and up to 65,536 instances per draw. Automatic Motion Scene
+snapshot uploads and timeline-to-GPU synchronization remain subsequent work.
 
 CBSS will not claim exclusive ownership of the machine's GPU. A separate
 backend process may own an independent compute device and return bounded Blob,
@@ -1249,7 +1255,17 @@ contract and do not duplicate the motion engine.
 
 ### CSS-Like Motion Scene
 
-Status: `Planned after Version 0.4`
+Status: `CPU snapshots and typed timelines implemented; rounded-rectangle GPU
+instance encoding implemented; automatic GPU execution planned`
+
+The opt-in CPU reference now stores bounded immutable rounded-rectangle batches
+inside one Canvas, with stable IDs, affine/opacity/z-order properties, viewport
+clipping, inverse-transform picking, deterministic replacement, and cancellable
+latest-request tokens. UI publication dirties only the Canvas's paint; a static
+scene requests no continuous frames. Typed numeric tracks reuse AnimationClock
+and FrameScheduler for easing, delay, finite repeats, pause/resume, and reduced
+motion. See [CPU Motion Scene](motion-scene.md) for the current API and remaining
+primitive and backend work.
 
 CBSS will provide a retained Motion Scene inside Canvas for motion graphics,
 generative design, high-density charts, particles, sprites, and other visuals
@@ -2191,6 +2207,37 @@ These later numbers are planning labels, not compatibility promises. Their
 contents may move as the parallel foundation implementation exposes actual
 dependencies and performance costs.
 
+### Version 0.8+ Optional 3D Authoring Foundation
+
+Status: `Proposed for a later release; not part of the Version 0.7 scope`
+
+CBSS should become a UI and visual foundation on which applications can build
+3D modeling tools and game engines. Beyond accepting an external renderer's
+texture, an optional first-party 3D module should make code-authored 3D scenes
+practical without requiring each application to recreate the same viewport
+machinery. The initial scope should include perspective and orthographic
+cameras, camera transforms and viewport controls, scene transforms, basic mesh
+and procedural-geometry authoring, materials and lights, frame submission, and
+coordinate conversion and picking for tools. It should reuse the existing
+Canvas/RenderSurface placement, input routing, clipping, frame scheduling, and
+bgfx host contracts. The camera here is a 3D viewpoint, separate from the
+camera/video-input capability planned for Version 0.8.
+
+This is an opt-in foundation, not a mandatory 3D engine. Applications or
+specialized libraries still own modeling workflows, asset pipelines, physics,
+gameplay, and engine policy. Existing engines can continue to provide their
+own 3D renderer through the same composition boundary; using the first-party
+3D module must not be required to use CBSS as their UI layer.
+
+The module must be imported explicitly and must not be re-exported or imported
+transitively by the standard CBSS entry point. Its bgfx bindings, native
+libraries, shaders, assets, and runtime initialization must be absent from a
+normal 2D/UI build that does not select it. Release gates include comparing
+2D-only and 3D-enabled build dependencies and binary contents, plus viewport,
+input, resize, device-loss, resource-lifetime, and idle-frame tests. The exact
+release number and API shape remain open until the existing GPU composition
+contract is proven in applications.
+
 ### Version 0.7 Visual Rendering Release Scope
 
 Status: `The GPU host, drawing-engine compute, Custom Paint, retained vector,
@@ -2320,17 +2367,20 @@ surface now adds bounded double/triple buffering, presentation retention,
 latest-ready coalescing, paint-only invalidation, capability negotiation, and
 the existing asynchronous readback fallback. Direct submissions now carry a
 backend-neutral composition context containing the final-window versus
-offscreen target kind, target bounds, effective rectangular clip, rounded-mask
-requirement, and pixel scale. This lets a presentation adapter reject a path it
+offscreen target kind, target bounds, effective rectangular clip, bounded
+rounded-mask stack, and pixel scale. This lets a presentation adapter reject a path it
 cannot preserve instead of drawing into the wrong target. Typed compositor
 capabilities now reject unsupported target, clip, and mask combinations before
 acquiring the published GPU frame. Custom Paint declarations now
 retain bounded typed material parameters in cold style storage and deliver them
 to providers without per-frame string parsing. A standard same-host compositor
 now consumes final-window contexts and retained Texture/RenderTarget sources in
-the active presentation frame. Rounded/offscreen direct-GPU composition,
-declarative filter composition, and broader real-GPU qualification remain open Version
-0.7 work. Owned bgfx hosts
+the active presentation frame, including bounded antialiased nested rounded
+clips. GPU-native renderers can provide a typed compositor-owned offscreen
+`RenderTarget`; namespace, generation, dimensions, and feedback hazards are
+validated before submission. SDL texture-backed layer interop, declarative
+filter composition, and broader real-GPU qualification remain open Version 0.7
+work. Owned bgfx hosts
 now recreate the backend from their latest validated configuration after
 device loss before deterministic namespace restoration begins; borrowed hosts
 continue to require recreation by their external owner.
@@ -2356,8 +2406,19 @@ unbounded scope or text changes retain a full-repaint fallback. Custom Paint
 alpha masks now isolate the complete owner subtree and use shared
 destination-in semantics in the PPM reference and SDL3 renderer; SDL3 software
 renderers use a bounded compatibility fallback when custom blending is
-unavailable. CPU filter composition and the broader Motion Scene remain open
-Version 0.7 work.
+unavailable. Retained Nim Canvas layers now accept immutable RGB matrix filters
+with one shared straight-sRGB evaluator for PPM and bounded SDL3 readback/upload.
+Filters preserve alpha and coverage, apply before layer opacity, and participate
+in retained cache equality. SDL3 software layer composition now preserves
+premultiplied alpha through nested translucent transforms. Typed Nim Custom
+Paint filter providers now connect those matrices to Style-owned visual groups,
+including local overlay ordering, masks, and whole-group subtree repaints.
+C ABI `0x00010027` now supports copied RGB matrices in retained Canvas and
+Custom Paint command-sink layers, plus a paint-command matrix accessor.
+ABI `0x00010028` connects foreign Style filter callbacks to the same complete
+visual groups, with copied matrix results, typed parameters, identity fallback,
+and generation-safe provider lifetime. Spatial filters, GPU filter composition,
+and the broader Motion Scene remain open Version 0.7 work.
 Backend-neutral named Custom Paint
 materials now connect ordinary Style declarations to bounded underlay and
 overlay command streams without adding nodes. `GpuCanvasSurface` can use that
