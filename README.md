@@ -218,7 +218,7 @@ cbss_configure system
 The selection is written to the application's ignored `.cbss/` directory.
 CBSS does not ship native runtime binaries inside its Nimble package.
 
-## What Version 0.7.1 Contains
+## What Version 0.7.2 Contains
 
 - Language-neutral Craft Style and Craft Pack contracts with atomic loading,
   replacement, bounded validation, public Style Slots, and versioned C ABI
@@ -268,6 +268,10 @@ CBSS does not ship native runtime binaries inside its Nimble package.
   conversion, and selectable gradient interpolation spaces.
 - Retained `Canvas2D` paths, transforms, clips, layers, text, images, gradients,
   local input, frame requests, and a deterministic headless renderer.
+- Opt-in CPU Motion Scene snapshots and numeric timelines for stable-ID rounded
+  rectangles, affine transforms, opacity, z-order, and deterministic previews.
+- RGB matrix filters for Canvas layers, Custom Paint, and foreign Style providers,
+  with matching reference and SDL3 rendering.
 - Retained RGBA8 `RasterSurface` drawing with bounded stride-aware copy-in,
   atomic dirty-region publication, SDL3 partial texture uploads, Canvas/Box
   composition, and deterministic headless output.
@@ -279,6 +283,9 @@ CBSS does not ship native runtime binaries inside its Nimble package.
   storage images and buffers, partial uploads, GPU transfers, asynchronous
   readback, and direct or portable-fallback composition through ordinary CBSS
   layout, clipping, opacity, transforms, input, focus, and accessibility.
+- GPU instanced drawing with bounded static and dynamic records, changed-span
+  updates from Motion Scene, and typed same-host offscreen targets for direct
+  composition. OpenGL pixel fixtures cover instancing and rounded clipping.
 - Bounded typed shader authoring for graphics and Compute workloads, including
   packed records, bitwise operations, lexical control flow, fixed local arrays,
   and reusable pure helper functions. Official bgfx `shaderc` compilation stays
@@ -305,7 +312,7 @@ Accepting a value as metadata does not mean that layout or paint consumes it.
 
 ## Current Boundaries
 
-Version 0.7.1 is a developer preview. Public APIs may change before 1.0.
+Version 0.7.2 is a developer preview. Public APIs may change before 1.0.
 
 - Linux x86_64 with SDL3 is the only Tier 1 runtime target.
 - Windows and macOS native runtime validation is incomplete.

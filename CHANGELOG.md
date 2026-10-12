@@ -7,6 +7,8 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-10-12
+
 ### Fixed
 
 - Aligned direct GPU Surface texture sampling and rounded masks with the
