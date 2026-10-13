@@ -19,6 +19,13 @@ type GpuMotionRectBatch* = ref object
   capacity: int
   records: seq[GpuMotionRectRecord]
 
+type GpuMotionRectMaterial* = ref object
+  ## Owns the built-in rectangle shaders, instanced pipeline, and unit quad.
+  host: GpuHost
+  namespace: GpuNamespaceId
+  vertexShader, fragmentShader: GpuResourceHandle
+  pipeline, vertexBuffer: GpuResourceHandle
+
 static:
   doAssert sizeof(GpuMotionRectRecord) == 80
 
@@ -183,3 +190,90 @@ vec4 v_color0 : COLOR0;
       GpuShaderInterfaceEntry(slot: gsisTexCoord1, valueType: gsvtVec3),
       GpuShaderInterfaceEntry(slot: gsisColor0, valueType: gsvtVec4)
     ])
+
+proc isClosed*(material: GpuMotionRectMaterial): bool =
+  material.isNil or material.host.isNil
+
+proc release*(material: GpuMotionRectMaterial) =
+  ## Release outside an active frame, after all submissions using this material.
+  if material.isClosed:
+    return
+  for handle in [material.pipeline, material.vertexBuffer,
+      material.vertexShader, material.fragmentShader]:
+    if material.host.isGpuResourceLive(handle):
+      discard material.host.releaseGpuResource(handle)
+  material.host = nil
+  material.vertexShader = GpuResourceHandle()
+  material.fragmentShader = GpuResourceHandle()
+  material.pipeline = GpuResourceHandle()
+  material.vertexBuffer = GpuResourceHandle()
+
+proc newGpuMotionRectMaterial*(
+    host: GpuHost; namespace: GpuNamespaceId;
+    vertexArtifact, fragmentArtifact: GpuShaderArtifact
+): GpuMotionRectMaterial =
+  ## Use artifacts compiled from the built-in shader pair for the selected
+  ## backend. Shader compilation remains a build-time responsibility.
+  if host.isNil:
+    raise newException(ValueError, "motion scene GPU material requires a host")
+  if vertexArtifact.descriptor.stage != gssVertex or
+      vertexArtifact.sourceHash != gpuMotionRectVertexSource().gpuShaderSourceHash() or
+      fragmentArtifact.descriptor.stage != gssFragment or
+      fragmentArtifact.sourceHash != gpuMotionRectFragmentSource().gpuShaderSourceHash():
+    raise newException(ValueError, "motion scene GPU shader artifacts do not match the built-in shaders")
+  result = GpuMotionRectMaterial(host: host, namespace: namespace)
+  let layout = @[GpuVertexAttribute(
+    semantic: gvsPosition, components: 2, componentType: gvctFloat)]
+  let quad = [[0'f32, 0'f32], [0'f32, 1'f32],
+    [1'f32, 0'f32], [1'f32, 1'f32]]
+  var quadBytes = newSeq[byte](sizeof(quad))
+  copyMem(addr quadBytes[0], unsafeAddr quad[0], quadBytes.len)
+  try:
+    result.vertexShader = host.createGpuShader(namespace, vertexArtifact)
+    result.fragmentShader = host.createGpuShader(namespace, fragmentArtifact)
+    result.pipeline = host.createGpuGraphicsPipeline(namespace,
+      GpuGraphicsPipelineDescriptor(
+        vertexShader: result.vertexShader,
+        fragmentShader: result.fragmentShader,
+        vertexLayout: layout,
+        instanceDataVec4Count: gpuMotionRectVec4Count,
+        colorFormat: gtfRgba8,
+        topology: gptTriangleStrip,
+        cullMode: gcmNone,
+        blend: alphaGpuBlendState(),
+        label: "motion-scene-rect-pipeline"))
+    result.vertexBuffer = host.createGpuBuffer(namespace,
+      GpuBufferDescriptor(byteSize: uint64(quadBytes.len),
+        role: gbrVertex, access: gbaStatic, vertexLayout: layout,
+        label: "motion-scene-unit-quad"), quadBytes)
+  except CatchableError:
+    result.release()
+    raise
+
+proc submit*(
+    material: GpuMotionRectMaterial; binding: GpuInstanceBinding;
+    pass: GpuGraphicsPassDescriptor
+): bool =
+  ## Submit static or dynamic records in an active frame. Empty bindings submit
+  ## nothing; the caller retains pass clear ownership.
+  if material.isClosed:
+    raise newException(ValueError, "motion scene GPU material is closed")
+  if binding.instanceCount == 0:
+    return false
+  material.host.submitGpuDraw(material.namespace, pass,
+    GpuDrawCommand(pipeline: material.pipeline,
+      vertexBuffer: material.vertexBuffer, vertexCount: 4,
+      instances: binding))
+  true
+
+proc submit*(
+    material: GpuMotionRectMaterial; batch: GpuMotionRectBatch;
+    pass: GpuGraphicsPassDescriptor
+): bool =
+  ## Sync the batch before beginning the frame. Refuse a stale scene revision.
+  if material.isClosed or batch.isNil or batch.host != material.host or
+      batch.namespace != material.namespace or batch.scene.isNil:
+    raise newException(ValueError, "motion scene GPU material and batch do not share an owner")
+  if batch.revision != batch.scene.revision:
+    raise newException(ValueError, "motion scene GPU batch must be synchronized before submission")
+  material.submit(batch.instanceBinding(), pass)

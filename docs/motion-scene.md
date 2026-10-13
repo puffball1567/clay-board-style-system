@@ -89,30 +89,37 @@ import clay_board_style_system/runtime/motion_scene_gpu
 
 let batch = newGpuMotionRectBatch()
 discard batch.sync(host, resources, scene) # Before beginGpuFrame.
-let binding = batch.instanceBinding
-# If binding.instanceCount > 0, pass it to a GpuDrawCommand.
+let material = host.newGpuMotionRectMaterial(
+  resources, vertexArtifact, fragmentArtifact)
+let frame = host.beginGpuFrame()
+discard material.submit(batch, pass)
+host.endGpuFrame(frame)
 # After the final frame, while the host remains open:
 batch.release()
+material.release()
 ```
 
 The records follow the CPU's z-index and authoring order, omit hidden and
 degenerate objects, combine the authored bounds with each affine transform,
-and preserve color alpha times object opacity. Use
-`gpuMotionRectVertexSource()` and `gpuMotionRectFragmentSource()` with a
-four-corner unit quad and an instanced graphics pipeline whose
-`instanceDataVec4Count` is `gpuMotionRectVec4Count`. Submit one draw inside the
-ordinary `GpuHost` frame, with its viewport and scissor set to the snapshot's
-viewport. The same shader pair is compiled for OpenGL and Vulkan, and the
-OpenGL pixel fixture compares its output with CPU Motion Scene rendering.
+and preserve color alpha times object opacity. Compile
+`gpuMotionRectVertexSource()` and `gpuMotionRectFragmentSource()` into the
+`vertexArtifact` and `fragmentArtifact` for the selected backend. The material
+owns those shaders, its instanced pipeline, and a four-corner unit quad. The
+application supplies a graphics `pass` with viewport and scissor set to the
+snapshot's viewport and owns its frame and render target. `submit` returns
+`false` for an empty batch and submits no pass, so clearing an empty scene is
+the application's responsibility. The same shader pair is compiled for OpenGL
+and Vulkan, and the OpenGL pixel fixture compares its output with CPU Motion
+Scene rendering.
 
 `GpuMotionRectBatch.sync` follows the scene revision, skips unchanged frames,
 updates only contiguous changed instance records, and recreates the buffer when
 the drawable count exceeds its capacity. It keeps the prior CPU record cache if
 an update fails, so the next sync retries the affected records. Sync and release
 belong outside an active GPU frame. Release the batch before changing its host
-or namespace; the application still owns shader compilation, pipeline lifetime,
-and frame submission. GPU execution for other scene primitives remains a
-follow-up.
+or namespace; the application still owns shader compilation, material lifetime,
+and frame submission. A material can also submit a static `GpuInstanceBinding`.
+GPU execution for other scene primitives remains a follow-up.
 
 ## Typed timelines
 

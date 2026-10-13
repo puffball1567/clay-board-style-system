@@ -295,17 +295,9 @@ proc verifyInstancedRects(host: GpuHost; shaderc, shaderIncludes, workDirectory:
   let vertexSource = gpuMotionRectVertexSource()
   let fragmentSource = gpuMotionRectFragmentSource()
   validateGpuShaderInterface(vertexSource, fragmentSource)
-  let vertex = host.createGpuShader(ns, compileShader(vertexSource, shaderc, shaderIncludes, workDirectory))
-  let fragment = host.createGpuShader(ns, compileShader(fragmentSource, shaderc, shaderIncludes, workDirectory))
-  let layout = @[GpuVertexAttribute(semantic: gvsPosition, components: 2, componentType: gvctFloat)]
-  let pipeline = host.createGpuGraphicsPipeline(ns, GpuGraphicsPipelineDescriptor(
-    vertexShader: vertex, fragmentShader: fragment, vertexLayout: layout,
-    instanceDataVec4Count: gpuMotionRectVec4Count,
-    colorFormat: gtfRgba8, topology: gptTriangleStrip,
-    cullMode: gcmNone, blend: alphaGpuBlendState()))
-  let quad = [[0'f32, 0], [0'f32, 1], [1'f32, 0], [1'f32, 1]]
-  let vertices = host.createGpuBuffer(ns, GpuBufferDescriptor(byteSize: 32,
-    role: gbrVertex, access: gbaStatic, vertexLayout: layout), quad.bytesOf())
+  let material = host.newGpuMotionRectMaterial(ns,
+    compileShader(vertexSource, shaderc, shaderIncludes, workDirectory),
+    compileShader(fragmentSource, shaderc, shaderIncludes, workDirectory))
   let target = host.createGpuRenderTarget(ns, GpuRenderTargetDescriptor(
     width: 64, height: 64, format: gtfRgba8, usage: {gtuRenderTarget, gtuSampled, gtuBlitSource}))
   let transforms = [translationAffine2D(6, 5),
@@ -346,11 +338,13 @@ proc verifyInstancedRects(host: GpuHost; shaderc, shaderIncludes, workDirectory:
         GpuInstanceBinding(buffer: instances, firstInstance: 1,
           instanceCount: 3)
       let token = host.beginGpuFrame()
-      host.submitGpuDraw(ns, GpuGraphicsPassDescriptor(
+      let pass = GpuGraphicsPassDescriptor(
         viewport: GpuViewport(width: 64, height: 64), renderTarget: target,
-        clearColorEnabled: true, clearColor: GpuClearColor(alpha: 1)),
-        GpuDrawCommand(pipeline: pipeline, vertexBuffer: vertices, vertexCount: 4,
-          instances: binding))
+        clearColorEnabled: true, clearColor: GpuClearColor(alpha: 1))
+      if access == gbaDynamic:
+        doAssert material.submit(batch, pass)
+      else:
+        doAssert material.submit(binding, pass)
       host.endGpuFrame(token)
       let actual = host.readPixels(ns, target, 64, 64)
       let expected = render(
@@ -366,6 +360,9 @@ proc verifyInstancedRects(host: GpuHost; shaderc, shaderIncludes, workDirectory:
       batch.release()
     else:
       doAssert host.releaseGpuResource(instances)
+  doAssert host.releaseGpuResource(target)
+  material.release()
+  doAssert host.closeGpuNamespace(ns)
   echo "Instanced rounded rectangles: static/dynamic scene sync, affine, opacity, order, subrange, update, CPU pixels passed"
 
 proc checkProducerPressure(
