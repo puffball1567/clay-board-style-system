@@ -15,6 +15,7 @@ import clay_board_style_system/runtime/gpu_direct_surface
 import clay_board_style_system/runtime/gpu_display_surface
 import clay_board_style_system/runtime/gpu_display_surface_ui
 import clay_board_style_system/runtime/gpu_host
+import clay_board_style_system/runtime/gpu_shader_builder
 import clay_board_style_system/runtime/[motion_scene, motion_scene_gpu]
 import clay_board_style_system/runtime/gpu_raster_texture
 import clay_board_style_system/runtime/[invalidation, ui_root]
@@ -8126,6 +8127,82 @@ suite "GPU host direct compositor":
 
 
 suite "GPU instanced draws":
+  test "Motion Scene material owns its pipeline and submits synchronized batches":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let namespace = host.createGpuNamespace("motion-material", GpuResourceBudget(
+      persistentBytes: 65536, workUnitsPerFrame: 2, maxResources: 8))
+    let vertexSource = gpuMotionRectVertexSource()
+    let fragmentSource = gpuMotionRectFragmentSource()
+    proc artifact(source: GpuShaderSource): GpuShaderArtifact =
+      GpuShaderArtifact(
+        descriptor: GpuShaderDescriptor(stage: source.stage),
+        bindingLayout: source.gpuShaderBindingLayout(),
+        bytecode: @[1'u8],
+        sourceHash: source.gpuShaderSourceHash())
+    let vertex = artifact(vertexSource)
+    let fragment = artifact(fragmentSource)
+    var wrong = vertex
+    inc wrong.sourceHash
+    expect ValueError:
+      discard host.newGpuMotionRectMaterial(namespace, wrong, fragment)
+    check context.shaderCreates == 0
+
+    context.createGraphicsPipelineStatus = gbsFailed
+    expect GpuHostError:
+      discard host.newGpuMotionRectMaterial(namespace, vertex, fragment)
+    check host.gpuNamespaceUsage(namespace).resourceCount == 0
+    check context.resourceDestroys == 2
+    context.createGraphicsPipelineStatus = gbsOk
+
+    let material = host.newGpuMotionRectMaterial(namespace, vertex, fragment)
+    check context.shaderCreates == 4
+    check context.graphicsPipelineCreates == 2
+    check context.bufferCreates == 1
+    check context.lastGraphicsPipeline.instanceDataVec4Count ==
+      gpuMotionRectVec4Count
+    let target = host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(width = 64, height = 64))
+    let scene = newMotionScene(motionSceneSnapshot(size(64, 64), [
+      motionRect(MotionObjectId(1), rect(3, 4, 12, 10), rgb(1, 0, 0))]))
+    let batch = newGpuMotionRectBatch()
+    check batch.sync(host, namespace, scene)
+    let pass = graphicsPass(64, 64, target)
+    let first = host.beginGpuFrame()
+    check material.submit(batch, pass)
+    check context.lastDrawCommand.instances.instanceCount == 1
+    check context.lastDrawCommand.vertexCount == 4
+    host.endGpuFrame(first)
+
+    discard scene.replaceSnapshot(motionSceneSnapshot(size(64, 64), [
+      motionRect(MotionObjectId(1), rect(8, 4, 12, 10), rgb(1, 0, 0))]))
+    let stale = host.beginGpuFrame()
+    expect ValueError:
+      discard material.submit(batch, pass)
+    host.endGpuFrame(stale)
+    check batch.sync(host, namespace, scene)
+    let second = host.beginGpuFrame()
+    check material.submit(batch, pass)
+    host.endGpuFrame(second)
+    check context.drawSubmits == 2
+
+    let empty = newMotionScene(motionSceneSnapshot(size(64, 64), []))
+    let emptyBatch = newGpuMotionRectBatch()
+    check not emptyBatch.sync(host, namespace, empty)
+    let idle = host.beginGpuFrame()
+    check not material.submit(emptyBatch, pass)
+    host.endGpuFrame(idle)
+    check context.drawSubmits == 2
+    emptyBatch.release()
+    batch.release()
+    check host.releaseGpuResource(target)
+    material.release()
+    check material.isClosed
+    material.release()
+    check host.gpuNamespaceUsage(namespace).resourceCount == 0
+    check host.closeGpuNamespace(namespace)
+    host.close()
+
   test "Motion Scene batches create, update changed spans, and resize":
     let context = newContext()
     let host = openGpuHost(context.backend, ghoOwned, presentationConfig())

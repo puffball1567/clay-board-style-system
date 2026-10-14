@@ -1116,8 +1116,10 @@ See [GPU Shader Authoring And Packaging](gpu-shaders.md).
 
 Bounded static/dynamic instanced draws now carry 1–5 packed vec4 values per
 instance through the host and bgfx adapter, with typed vertex-shader inputs,
-subrange validation, and up to 65,536 instances per draw. Automatic Motion Scene
-snapshot uploads and timeline-to-GPU synchronization remain subsequent work.
+subrange validation, and up to 65,536 instances per draw. Motion Scene rectangle
+batches upload changed snapshot records and a reusable material owns their
+shader, pipeline, and quad resources. Automatic UI frame submission and
+timeline-to-GPU synchronization remain subsequent work.
 
 CBSS will not claim exclusive ownership of the machine's GPU. A separate
 backend process may own an independent compute device and return bounded Blob,
@@ -1256,7 +1258,7 @@ contract and do not duplicate the motion engine.
 ### CSS-Like Motion Scene
 
 Status: `CPU snapshots and typed timelines implemented; rounded-rectangle GPU
-instance encoding implemented; automatic GPU execution planned`
+instance upload and material submission implemented; automatic UI GPU execution planned`
 
 The opt-in CPU reference now stores bounded immutable rounded-rectangle batches
 inside one Canvas, with stable IDs, affine/opacity/z-order properties, viewport
