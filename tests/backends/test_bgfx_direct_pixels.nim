@@ -16,7 +16,7 @@ import clay_board_style_system/core/raster_surface
 import clay_board_style_system/backends/ppm/raster
 import clay_board_style_system/runtime/canvas
 import clay_board_style_system/runtime/[gpu_canvas, motion_scene,
-    motion_scene_gpu, motion_scene_gpu_canvas]
+    motion_scene_gpu, motion_scene_gpu_canvas, motion_scene_gpu_direct]
 import clay_board_style_system/paint/[gpu_direct_compositor,
     gpu_host_compositor, paint_command]
 import clay_board_style_system/runtime/[gpu_direct_surface, gpu_host,
@@ -427,6 +427,48 @@ proc verifyMotionSceneCanvas(host: GpuHost;
   doAssert host.closeGpuNamespace(ns)
   echo "Motion Scene GPU canvas: changed and empty revisions publish expected pixels"
 
+proc verifyMotionSceneDirect(host: GpuHost;
+    shaderc, shaderIncludes, workDirectory: string) =
+  let ns = host.createGpuNamespace("motion-scene-direct", budget())
+  let scene = newMotionScene(motionSceneSnapshot(size(16, 16), [
+    motionRect(MotionObjectId(1), rect(4, 4, 8, 8), rgba(1, 0, 0, 1))]))
+  var config = defaultGpuDirectSurfaceConfig(16, 16)
+  config.bufferCount = 2
+  let renderer = host.newGpuMotionSceneDirect(ns, scene, config,
+    compileShader(gpuMotionRectVertexSource(), shaderc,
+      shaderIncludes, workDirectory),
+    compileShader(gpuMotionRectFragmentSource(), shaderc,
+      shaderIncludes, workDirectory))
+  proc drain() =
+    for attempt in 0 ..< 32:
+      discard attempt
+      pumpWindow()
+      if renderer.collectFrame():
+        return
+      let progress = host.beginGpuFrame()
+      host.endGpuFrame(progress)
+    raise newException(IOError, "Motion Scene GPU direct frame did not complete")
+  doAssert renderer.queueFrame()
+  drain()
+  var first = renderer.surface().acquireGpuDirectSurfaceFrame().get
+  let pixels = host.readPixels(ns, first.resource, 16, 16)
+  pixels.requirePixel(5, 5, Pixel(red: 255, alpha: 255),
+    "direct Motion Scene rectangle")
+  pixels.requirePixel(0, 0, Pixel(), "direct Motion Scene background")
+  doAssert first.release()
+  discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), []))
+  doAssert renderer.queueFrame()
+  drain()
+  var empty = renderer.surface().acquireGpuDirectSurfaceFrame().get
+  let emptyPixels = host.readPixels(ns, empty.resource, 16, 16)
+  for point in [(0, 0), (5, 5), (15, 15)]:
+    emptyPixels.requirePixel(point[0], point[1], Pixel(),
+      "direct Motion Scene empty revision")
+  doAssert empty.release()
+  doAssert renderer.close()
+  doAssert host.closeGpuNamespace(ns)
+  echo "Motion Scene GPU direct: changed and empty revisions publish expected pixels"
+
 proc checkProducerPressure(
     host: GpuHost;
     compositor: GpuDirectCompositor;
@@ -611,6 +653,7 @@ proc run() =
     host.verifyCanvasReadbackCancellation()
     host.verifyInstancedRects(shaderc, shaderIncludes, workDirectory)
     host.verifyMotionSceneCanvas(shaderc, shaderIncludes, workDirectory)
+    host.verifyMotionSceneDirect(shaderc, shaderIncludes, workDirectory)
 
     let compositorNamespace = host.createGpuNamespace(
       "pixel-compositor", budget()
