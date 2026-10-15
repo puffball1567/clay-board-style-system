@@ -1220,6 +1220,15 @@ proc beginGraphicsPass(
     BGFX.setViewClear(viewId, BGFX_CLEAR_NONE, 0, 1'f32, 0)
   gbsOk
 
+proc touchGraphicsPass(
+    rawContext: GpuBackendContext;
+    viewId: uint16
+): GpuBackendStatus {.raises: [].} =
+  if not rawContext.context.attached:
+    return gbsInvalidConfiguration
+  BGFX.touch(viewId)
+  gbsOk
+
 proc submitDraw(
     rawContext: GpuBackendContext;
     viewId: uint16;
@@ -1580,6 +1589,7 @@ proc newBgfxBackend*(
     createGraphicsPipeline: createGraphicsPipeline,
     createComputePipeline: createComputePipeline,
     beginGraphicsPass: beginGraphicsPass,
+    touchGraphicsPass: touchGraphicsPass,
     submitDraw: submitDraw,
     dispatch: dispatch,
     copyTexture: copyTexture,

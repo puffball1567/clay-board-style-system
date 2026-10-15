@@ -121,6 +121,34 @@ or namespace; the application still owns shader compilation, material lifetime,
 and frame submission. A material can also submit a static `GpuInstanceBinding`.
 GPU execution for other scene primitives remains a follow-up.
 
+For an ordinary UI Canvas attachment, `motion_scene_gpu_canvas` owns the
+material, batch, and GPU readback surface together. The UI wrapper queues a
+frame only when the scene revision changes:
+
+```nim
+import clay_board_style_system/runtime/[gpu_canvas, motion_scene_gpu_canvas,
+  motion_scene_gpu_canvas_ui]
+
+let renderer = host.newGpuMotionSceneCanvas(resources, scene,
+  defaultGpuCanvasConfig(320, 200), vertexArtifact, fragmentArtifact)
+let gpuView = ui.gpuMotionScene(renderer)
+discard gpuView.publish()          # Queue the current scene revision.
+# In the UI loop, collect completed readbacks and publish changed revisions.
+discard gpuView.collectGpuFrame()
+# After draining pending readbacks, release the renderer before closing host.
+discard renderer.close()
+```
+
+The scene viewport must match the canvas dimensions, and this path uses
+straight RGBA8 pixels. `publish` submits one instanced rectangle draw, or a
+clear-only pass when no rectangles remain. It cancels an obsolete queued
+readback and applies backpressure when the ring is full; `collectGpuFrame`
+retries the newest revision once a slot becomes available. Collection
+invalidates only the attached Canvas paint. No continuous frame loop is
+started. Compile the built-in shader artifacts for the selected backend before
+constructing the renderer. The CPU Motion Scene attachment remains available
+for hosts without compatible GPU support.
+
 ## Typed timelines
 
 Import `runtime/motion_scene_timeline` to animate a whole batch through the

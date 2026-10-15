@@ -17,6 +17,8 @@ import clay_board_style_system/runtime/gpu_display_surface_ui
 import clay_board_style_system/runtime/gpu_host
 import clay_board_style_system/runtime/gpu_shader_builder
 import clay_board_style_system/runtime/[motion_scene, motion_scene_gpu]
+import clay_board_style_system/runtime/[motion_scene_gpu_canvas,
+  motion_scene_gpu_canvas_ui]
 import clay_board_style_system/runtime/gpu_raster_texture
 import clay_board_style_system/runtime/[invalidation, ui_root]
 
@@ -50,6 +52,7 @@ type MockGpuContext = ref object of GpuBackendContext
   createGraphicsPipelineStatus: GpuBackendStatus
   createComputePipelineStatus: GpuBackendStatus
   beginGraphicsPassStatus: GpuBackendStatus
+  touchGraphicsPassStatus: GpuBackendStatus
   submitDrawStatus: GpuBackendStatus
   dispatchStatus: GpuBackendStatus
   copyTextureStatus: GpuBackendStatus
@@ -77,6 +80,7 @@ type MockGpuContext = ref object of GpuBackendContext
   graphicsPipelineCreates: int
   computePipelineCreates: int
   graphicsPassBegins: int
+  graphicsPassTouches: int
   drawSubmits: int
   computeDispatches: int
   textureCopies: int
@@ -447,6 +451,15 @@ proc beginGraphicsPass(
   state.lastSubmissionResources = @[renderTarget.backendResourceIdValue()]
   state.beginGraphicsPassStatus
 
+proc touchGraphicsPass(
+    context: GpuBackendContext;
+    viewId: uint16
+): GpuBackendStatus {.raises: [].} =
+  let state = context.mock
+  inc state.graphicsPassTouches
+  state.lastViewId = viewId
+  state.touchGraphicsPassStatus
+
 proc submitDraw(
     context: GpuBackendContext;
     viewId: uint16;
@@ -637,6 +650,7 @@ proc backend(state: MockGpuContext): GpuBackendVTable =
     createGraphicsPipeline: createGraphicsPipeline,
     createComputePipeline: createComputePipeline,
     beginGraphicsPass: beginGraphicsPass,
+    touchGraphicsPass: touchGraphicsPass,
     submitDraw: submitDraw,
     dispatch: dispatch,
     copyTexture: copyTexture,
@@ -668,6 +682,7 @@ proc newContext(): MockGpuContext =
     createGraphicsPipelineStatus: gbsOk,
     createComputePipelineStatus: gbsOk,
     beginGraphicsPassStatus: gbsOk,
+    touchGraphicsPassStatus: gbsOk,
     submitDrawStatus: gbsOk,
     dispatchStatus: gbsOk,
     copyTextureStatus: gbsOk,
@@ -3856,6 +3871,66 @@ suite "GPU command bindings":
     host.close()
 
 suite "GPU bounded submission":
+  test "clear-only pass touches one bounded view without drawing":
+    let context = newContext()
+    var config = presentationConfig()
+    config.viewIdBase = 60
+    config.viewIdCount = 1
+    let host = openGpuHost(context.backend, ghoOwned, config)
+    let namespace = host.createGpuNamespace("clear-only",
+      GpuResourceBudget(persistentBytes: 1024, workUnitsPerFrame: 1,
+        maxResources: 2))
+    let foreign = host.createGpuNamespace("foreign-clear",
+      GpuResourceBudget(persistentBytes: 1024, workUnitsPerFrame: 1,
+        maxResources: 2))
+    let target = host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(width = 8, height = 8))
+    let otherTarget = host.createGpuRenderTarget(foreign,
+      renderTargetDescriptor(width = 8, height = 8))
+    var pass = graphicsPass(8, 8, target)
+    pass.clearColorEnabled = true
+    pass.clearColor = GpuClearColor(red: 0.25, alpha: 1)
+    let frame = host.beginGpuFrame()
+    var invalid = pass
+    invalid.clearColorEnabled = false
+    expect GpuHostError:
+      host.clearGpuGraphicsPass(namespace, invalid)
+    invalid = pass
+    invalid.renderTarget = otherTarget
+    expect GpuHostError:
+      host.clearGpuGraphicsPass(namespace, invalid)
+    check context.graphicsPassBegins == 0
+    check host.gpuNamespaceUsage(namespace).workUnits == 0
+
+    context.beginGraphicsPassStatus = gbsFailed
+    expect GpuHostError:
+      host.clearGpuGraphicsPass(namespace, pass)
+    check context.graphicsPassTouches == 0
+    check host.gpuNamespaceUsage(namespace).workUnits == 0
+    context.beginGraphicsPassStatus = gbsOk
+    host.clearGpuGraphicsPass(namespace, pass)
+    check context.graphicsPassTouches == 1
+    check context.drawSubmits == 0
+    check context.lastViewId == 60
+    check context.lastGraphicsPass == pass
+    check host.gpuNamespaceUsage(namespace).workUnits == 1
+    expect GpuHostError:
+      host.clearGpuGraphicsPass(namespace, pass)
+    check context.graphicsPassBegins == 2
+    host.endGpuFrame(frame)
+    context.touchGraphicsPassStatus = gbsFailed
+    let failedTouch = host.beginGpuFrame()
+    expect GpuHostError:
+      host.clearGpuGraphicsPass(namespace, pass)
+    check context.graphicsPassTouches == 2
+    check host.gpuNamespaceUsage(namespace).workUnits == 1
+    expect GpuHostError:
+      host.clearGpuGraphicsPass(namespace, pass)
+    host.endGpuFrame(failedTouch)
+    check host.releaseGpuResource(target)
+    check host.releaseGpuResource(otherTarget)
+    host.close()
+
   test "draw and compute commands map resources onto reserved view identifiers":
     let context = newContext()
     var config = presentationConfig()
@@ -8127,6 +8202,59 @@ suite "GPU host direct compositor":
 
 
 suite "GPU instanced draws":
+  test "GPU Motion Scene UI publishes changed and empty revisions":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let namespace = host.createGpuNamespace("motion-canvas",
+      GpuResourceBudget(persistentBytes: 65536,
+        readbackBytesPerFrame: 256, workUnitsPerFrame: 6,
+        maxResources: 10))
+    proc artifact(source: GpuShaderSource): GpuShaderArtifact =
+      GpuShaderArtifact(
+        descriptor: GpuShaderDescriptor(stage: source.stage),
+        bindingLayout: source.gpuShaderBindingLayout(),
+        bytecode: @[1'u8], sourceHash: source.gpuShaderSourceHash())
+    let scene = newMotionScene(motionSceneSnapshot(size(8, 8), [
+      motionRect(MotionObjectId(1), rect(1, 1, 4, 4), rgb(1, 0, 0))]))
+    var config = defaultGpuCanvasConfig(8, 8)
+    config.readbackSlots = 1
+    var wrongSize = config
+    wrongSize.width = 7
+    expect ValueError:
+      discard host.newGpuMotionSceneCanvas(namespace, scene, wrongSize,
+        artifact(gpuMotionRectVertexSource()),
+        artifact(gpuMotionRectFragmentSource()))
+    check host.gpuNamespaceUsage(namespace).resourceCount == 0
+    let renderer = host.newGpuMotionSceneCanvas(namespace, scene, config,
+      artifact(gpuMotionRectVertexSource()),
+      artifact(gpuMotionRectFragmentSource()))
+    let ui = initUiRoot()
+    let handle = ui.gpuMotionScene(renderer)
+    discard ui.consumeInvalidation()
+    check handle.publish()
+    check context.drawSubmits == 1
+    check context.graphicsPassTouches == 0
+    check not handle.publish()
+    check not renderer.close() # Pending readback retains its slot.
+
+    discard scene.replaceSnapshot(motionSceneSnapshot(size(8, 8), []))
+    check not handle.publish() # Backpressure cancels the old publication.
+    context.readbackReady = true
+    check not handle.collectGpuFrame()
+    check context.graphicsPassTouches == 1
+    check context.drawSubmits == 1
+    check not ui.hasPendingInvalidation
+    check handle.collectGpuFrame()
+    let invalidation = ui.consumeInvalidation()
+    check invalidation.domains == {ddPaint}
+    check invalidation.roots == @[handle.nodeHandle.id]
+    check not handle.publish()
+    check renderer.close()
+    check not handle.valid
+    check host.gpuNamespaceUsage(namespace).resourceCount == 0
+    check host.closeGpuNamespace(namespace)
+    host.close()
+
   test "Motion Scene material owns its pipeline and submits synchronized batches":
     let context = newContext()
     let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
