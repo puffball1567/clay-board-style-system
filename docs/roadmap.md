@@ -1120,7 +1120,9 @@ subrange validation, and up to 65,536 instances per draw. Motion Scene rectangle
 batches upload changed snapshot records and a reusable material owns their
 shader, pipeline, and quad resources. A revision-driven GPU Canvas attachment
 submits changed scenes, clears empty scenes, and publishes completed readbacks
-to ordinary UI paint. Timeline-to-GPU scheduling remains subsequent work.
+to ordinary UI paint. Typed Motion Timeline samples now share the UI frame
+scheduler with GPU readback polling, and paint invalidation waits for completed
+pixels.
 
 CBSS will not claim exclusive ownership of the machine's GPU. A separate
 backend process may own an independent compute device and return bounded Blob,
@@ -1259,7 +1261,7 @@ contract and do not duplicate the motion engine.
 ### CSS-Like Motion Scene
 
 Status: `CPU snapshots and typed timelines implemented; rounded-rectangle GPU
-instance upload, material submission, and revision-driven UI Canvas implemented`
+instance upload, UI Canvas, and timeline scheduling implemented`
 
 The opt-in CPU reference now stores bounded immutable rounded-rectangle batches
 inside one Canvas, with stable IDs, affine/opacity/z-order properties, viewport
