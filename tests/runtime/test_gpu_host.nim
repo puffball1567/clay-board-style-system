@@ -8,6 +8,7 @@ import clay_board_style_system/layout/layout
 import clay_board_style_system/paint/[paint, paint_command]
 import clay_board_style_system/paint/gpu_direct_compositor
 import clay_board_style_system/paint/gpu_host_compositor
+import clay_board_style_system/runtime/animation_clock
 import clay_board_style_system/runtime/button
 import clay_board_style_system/runtime/gpu_canvas
 import clay_board_style_system/runtime/gpu_canvas_ui
@@ -16,9 +17,11 @@ import clay_board_style_system/runtime/gpu_display_surface
 import clay_board_style_system/runtime/gpu_display_surface_ui
 import clay_board_style_system/runtime/gpu_host
 import clay_board_style_system/runtime/gpu_shader_builder
+import clay_board_style_system/runtime/frame_scheduler
 import clay_board_style_system/runtime/[motion_scene, motion_scene_gpu]
 import clay_board_style_system/runtime/[motion_scene_gpu_canvas,
-  motion_scene_gpu_canvas_ui]
+  motion_scene_gpu_canvas_ui, motion_scene_timeline,
+  motion_scene_timeline_gpu_ui]
 import clay_board_style_system/runtime/gpu_raster_texture
 import clay_board_style_system/runtime/[invalidation, ui_root]
 
@@ -8202,6 +8205,71 @@ suite "GPU host direct compositor":
 
 
 suite "GPU instanced draws":
+  test "Motion Timeline schedules GPU publication only after readback":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let namespace = host.createGpuNamespace("motion-timeline-gpu",
+      GpuResourceBudget(persistentBytes: 65536,
+        readbackBytesPerFrame: 256, workUnitsPerFrame: 6,
+        maxResources: 10))
+    proc artifact(source: GpuShaderSource): GpuShaderArtifact =
+      GpuShaderArtifact(
+        descriptor: GpuShaderDescriptor(stage: source.stage),
+        bindingLayout: source.gpuShaderBindingLayout(),
+        bytecode: @[1'u8], sourceHash: source.gpuShaderSourceHash())
+    let scene = newMotionScene(motionSceneSnapshot(size(8, 8), [
+      motionRect(MotionObjectId(1), rect(1, 1, 2, 2), rgb(1, 0, 0))]))
+    let timeline = newMotionTimeline(scene, [motionTrack(MotionObjectId(1),
+      mspX, [FloatKeyframe(offset: 0, value: 1),
+        FloatKeyframe(offset: 1, value: 5)])], 1, 0)
+    var config = defaultGpuCanvasConfig(8, 8)
+    config.readbackSlots = 1
+    let renderer = host.newGpuMotionSceneCanvas(namespace, scene, config,
+      artifact(gpuMotionRectVertexSource()),
+      artifact(gpuMotionRectFragmentSource()))
+    let ui = initUiRoot()
+    let view = ui.gpuMotionScene(renderer)
+    discard ui.consumeInvalidation()
+    var scheduler = initFrameScheduler()
+    scheduler.requestDeadline(0.6)
+    check timeline.advance(view, scheduler, 0.5)
+    check context.drawSubmits == 1
+    check scheduler.consumeDirty() == {}
+    check not ui.hasPendingInvalidation
+    check scheduler.nextDeadline.get < 0.6
+    scheduler.clearDeadline()
+    check not view.collectGpuFrame(scheduler, 0.51)
+    check scheduler.nextDeadline.isSome
+    check scheduler.consumeDirty() == {}
+
+    scheduler.clearDeadline()
+    check not timeline.advance(view, scheduler, 0.75)
+    check context.drawSubmits == 1
+    check scheduler.consumeDirty() == {}
+    context.readbackReady = true
+    check not view.collectGpuFrame(scheduler, 0.76)
+    check context.drawSubmits == 2
+    check not ui.hasPendingInvalidation
+    check view.collectGpuFrame(scheduler, 0.78)
+    check scheduler.consumeDirty() == {ddPaint}
+    check ui.consumeInvalidation().domains == {ddPaint}
+
+    scheduler.clearDeadline()
+    check timeline.advance(view, scheduler, 1.0)
+    check timeline.state == mtsFinished
+    check scheduler.nextDeadline.isSome
+    check scheduler.consumeDirty() == {}
+    check view.collectGpuFrame(scheduler, 1.02)
+    check scheduler.consumeDirty() == {ddPaint}
+    discard ui.consumeInvalidation()
+    scheduler.clearDeadline()
+    check not timeline.advance(view, scheduler, 1.1)
+    check scheduler.nextDeadline.isNone
+    check scheduler.consumeDirty() == {}
+    check renderer.close()
+    check host.closeGpuNamespace(namespace)
+    host.close()
+
   test "GPU Motion Scene UI publishes changed and empty revisions":
     let context = newContext()
     let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
