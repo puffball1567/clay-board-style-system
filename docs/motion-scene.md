@@ -149,6 +149,28 @@ started. Compile the built-in shader artifacts for the selected backend before
 constructing the renderer. The CPU Motion Scene attachment remains available
 for hosts without compatible GPU support.
 
+On a host that supports direct render-target presentation, the Motion Scene can
+also stay on the GPU through UI composition:
+
+```nim
+import clay_board_style_system/runtime/[gpu_direct_surface,
+  motion_scene_gpu_direct, motion_scene_gpu_direct_ui]
+
+let renderer = host.newGpuMotionSceneDirect(resources, scene,
+  defaultGpuDirectSurfaceConfig(320, 200), vertexArtifact, fragmentArtifact)
+let gpuView = ui.gpuMotionSceneDirect(renderer)
+discard gpuView.publish()
+discard gpuView.collectGpuFrame() # Invalidates paint when the frame completes.
+discard renderer.close()
+```
+
+This path requires straight RGBA8 and direct render-target presentation. It
+owns one target per presentation buffer and never redraws a target while the
+surface retains it. A full ring applies backpressure; `collectGpuFrame` retries
+the latest scene revision when a target becomes free. Outstanding presentation
+leases must be released before closing the renderer. Unlike the GPU Canvas
+path, normal presentation does not copy pixels back to the CPU.
+
 ## Typed timelines
 
 Import `runtime/motion_scene_timeline` to animate a whole batch through the

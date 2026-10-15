@@ -20,7 +20,8 @@ import clay_board_style_system/runtime/gpu_shader_builder
 import clay_board_style_system/runtime/frame_scheduler
 import clay_board_style_system/runtime/[motion_scene, motion_scene_gpu]
 import clay_board_style_system/runtime/[motion_scene_gpu_canvas,
-  motion_scene_gpu_canvas_ui, motion_scene_timeline,
+  motion_scene_gpu_canvas_ui, motion_scene_gpu_direct,
+  motion_scene_gpu_direct_ui, motion_scene_timeline,
   motion_scene_timeline_gpu_ui]
 import clay_board_style_system/runtime/gpu_raster_texture
 import clay_board_style_system/runtime/[invalidation, ui_root]
@@ -8205,6 +8206,77 @@ suite "GPU host direct compositor":
 
 
 suite "GPU instanced draws":
+  test "direct Motion Scene UI presents revisions without readback or target reuse":
+    let context = newContext()
+    context.enableDirectPresentation(maxBuffers = 2)
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let namespace = host.createGpuNamespace("motion-direct",
+      GpuResourceBudget(persistentBytes: 65536,
+        workUnitsPerFrame: 6, maxResources: 10))
+    proc artifact(source: GpuShaderSource): GpuShaderArtifact =
+      GpuShaderArtifact(
+        descriptor: GpuShaderDescriptor(stage: source.stage),
+        bindingLayout: source.gpuShaderBindingLayout(),
+        bytecode: @[1'u8], sourceHash: source.gpuShaderSourceHash())
+    let vertex = artifact(gpuMotionRectVertexSource())
+    let fragment = artifact(gpuMotionRectFragmentSource())
+    let scene = newMotionScene(motionSceneSnapshot(size(8, 8), [
+      motionRect(MotionObjectId(1), rect(1, 1, 4, 4), rgb(1, 0, 0))]))
+    var config = defaultGpuDirectSurfaceConfig(8, 8)
+    config.bufferCount = 2
+    var wrongSize = config
+    wrongSize.width = 7
+    expect ValueError:
+      discard host.newGpuMotionSceneDirect(namespace, scene, wrongSize,
+        vertex, fragment)
+    check host.gpuNamespaceUsage(namespace).resourceCount == 0
+    let tightNamespace = host.createGpuNamespace("motion-direct-budget",
+      GpuResourceBudget(persistentBytes: 65536,
+        workUnitsPerFrame: 6, maxResources: 5))
+    expect GpuHostError:
+      discard host.newGpuMotionSceneDirect(tightNamespace, scene, config,
+        vertex, fragment)
+    check host.gpuNamespaceUsage(tightNamespace).resourceCount == 0
+    check host.closeGpuNamespace(tightNamespace)
+    let targetCreatesBefore = context.renderTargetCreates
+    let renderer = host.newGpuMotionSceneDirect(namespace, scene, config,
+      vertex, fragment)
+    let ui = initUiRoot()
+    let view = ui.gpuMotionSceneDirect(renderer)
+    discard ui.consumeInvalidation()
+    check view.publish()
+    check not view.publish()
+    check context.drawSubmits == 1
+    check context.renderTargetCreates == targetCreatesBefore + 2
+    check context.readbackRequests == 0
+    check context.textureCopies == 0
+    check view.collectGpuFrame()
+    check ui.consumeInvalidation().domains == {ddPaint}
+    var first = renderer.surface().acquireGpuDirectSurfaceFrame().get
+    check not renderer.close()
+
+    discard scene.replaceSnapshot(motionSceneSnapshot(size(8, 8), []))
+    check view.publish()
+    check context.graphicsPassTouches == 1
+    check view.collectGpuFrame()
+    check ui.consumeInvalidation().domains == {ddPaint}
+    check renderer.surface().retainedFrameCount() == 2
+    discard scene.replaceSnapshot(motionSceneSnapshot(size(8, 8), [
+      motionRect(MotionObjectId(1), rect(2, 2, 3, 3), rgb(0, 1, 0))]))
+    check not view.publish() # A leased older target prevents reuse.
+    check context.drawSubmits == 1
+    check first.release()
+    check not view.collectGpuFrame() # Collection retries the newest revision.
+    check context.drawSubmits == 2
+    check view.collectGpuFrame()
+    check ui.consumeInvalidation().domains == {ddPaint}
+    check renderer.surface().presentedRevision == 3
+    check renderer.close()
+    check not view.valid
+    check host.gpuNamespaceUsage(namespace).resourceCount == 0
+    check host.closeGpuNamespace(namespace)
+    host.close()
+
   test "Motion Timeline schedules GPU publication only after readback":
     let context = newContext()
     let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
