@@ -1,7 +1,7 @@
 import std/[algorithm, hashes, math, tables]
 
 const
-  gpuHostApiVersion* = 19'u32
+  gpuHostApiVersion* = 20'u32
   maxGpuInstanceVec4Count* = 5'u8
   maxGpuInstancesPerDraw* = 65_536'u32
   maxGpuNamespaceNameBytes* = 128
@@ -621,6 +621,11 @@ type
     renderTarget: GpuBackendResourceId
   ): GpuBackendStatus {.nimcall, raises: [].}
 
+  GpuBackendTouchGraphicsPassProc* = proc(
+    context: GpuBackendContext;
+    viewId: uint16
+  ): GpuBackendStatus {.nimcall, raises: [].}
+
   GpuBackendSubmitDrawProc* = proc(
     context: GpuBackendContext;
     viewId: uint16;
@@ -718,6 +723,7 @@ type
     createGraphicsPipeline*: GpuBackendCreateGraphicsPipelineProc
     createComputePipeline*: GpuBackendCreateComputePipelineProc
     beginGraphicsPass*: GpuBackendBeginGraphicsPassProc
+    touchGraphicsPass*: GpuBackendTouchGraphicsPassProc
     submitDraw*: GpuBackendSubmitDrawProc
     dispatch*: GpuBackendDispatchProc
     copyTexture*: GpuBackendCopyTextureProc
@@ -3018,6 +3024,40 @@ proc appendPresentationTextureBinding(
     texture: textureResource,
     samplerDescriptor: sampler.samplerDescriptor
   )
+
+proc clearGpuGraphicsPass*(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    pass: GpuGraphicsPassDescriptor
+) =
+  ## Execute a clear-only pass in an active frame, including when a scene has
+  ## no drawable objects. The backend must explicitly touch the view.
+  host.requireHost()
+  if host.stateValue != ghsReady or not host.activeFrame:
+    raise newException(GpuHostError, "GPU clear pass requires an active frame")
+  if namespace notin host.namespaces:
+    raise newException(GpuHostError, "unknown GPU namespace")
+  if not pass.clearColorEnabled:
+    raise newException(GpuHostError, "GPU clear pass requires a clear color")
+  if host.backend.beginGraphicsPass.isNil or
+      host.backend.touchGraphicsPass.isNil:
+    raise newException(GpuHostError, "GPU backend does not support clear-only passes")
+  let target = host.validateGraphicsPass(namespace, pass)
+  host.ensureGpuViewAvailable()
+  host.validateGpuFrameWork(namespace, workUnits = 1)
+  let viewId = host.configValue.viewIdBase + host.nextViewOffset
+  let passStatus = host.backend.beginGraphicsPass(
+    host.backend.context, viewId, pass, target)
+  if passStatus == gbsDeviceLost:
+    host.enterDeviceLost()
+  raiseForStatus(passStatus)
+  inc host.nextViewOffset
+  host.reserveGpuFrameWork(namespace, workUnits = 1)
+  let touchStatus = host.backend.touchGraphicsPass(
+    host.backend.context, viewId)
+  if touchStatus == gbsDeviceLost:
+    host.enterDeviceLost()
+  raiseForStatus(touchStatus)
 
 proc submitGpuDraws*(
     host: GpuHost;

@@ -21,6 +21,11 @@ invalidates every retained resource handle from the previous generation.
 Successful restoration refreshes backend capability information before the
 host becomes ready again.
 
+`clearGpuGraphicsPass` executes a clear-only pass inside an active frame. It
+validates the render target, viewport, clear color, view range, and frame work
+budget before asking the backend to touch the view. This also clears a Motion
+Scene canvas when its latest snapshot has no drawable objects.
+
 Dynamic buffer and texture updates accept borrowed byte spans. CBSS validates
 the span synchronously and the backend must consume or copy it before returning;
 neither layer may retain the caller's memory. This permits a worker-produced

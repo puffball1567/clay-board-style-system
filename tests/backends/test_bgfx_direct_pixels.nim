@@ -16,7 +16,7 @@ import clay_board_style_system/core/raster_surface
 import clay_board_style_system/backends/ppm/raster
 import clay_board_style_system/runtime/canvas
 import clay_board_style_system/runtime/[gpu_canvas, motion_scene,
-    motion_scene_gpu]
+    motion_scene_gpu, motion_scene_gpu_canvas]
 import clay_board_style_system/paint/[gpu_direct_compositor,
     gpu_host_compositor, paint_command]
 import clay_board_style_system/runtime/[gpu_direct_surface, gpu_host,
@@ -360,10 +360,72 @@ proc verifyInstancedRects(host: GpuHost; shaderc, shaderIncludes, workDirectory:
       batch.release()
     else:
       doAssert host.releaseGpuResource(instances)
+  let clearFrame = host.beginGpuFrame()
+  host.clearGpuGraphicsPass(ns, GpuGraphicsPassDescriptor(
+    viewport: GpuViewport(width: 64, height: 64), renderTarget: target,
+    clearColorEnabled: true,
+    clearColor: GpuClearColor(red: 0.2, green: 0.4, blue: 0.6, alpha: 1)))
+  host.endGpuFrame(clearFrame)
+  let cleared = host.readPixels(ns, target, 64, 64)
+  for point in [(0, 0), (12, 12), (33, 30), (63, 63)]:
+    cleared.requirePixel(point[0], point[1], Pixel(
+      red: 51, green: 102, blue: 153, alpha: 255),
+      "clear-only pass replaces prior scene pixels")
+  let emptyFrame = host.beginGpuFrame()
+  host.clearGpuGraphicsPass(ns, GpuGraphicsPassDescriptor(
+    viewport: GpuViewport(width: 64, height: 64), renderTarget: target,
+    clearColorEnabled: true, clearColor: GpuClearColor()))
+  host.endGpuFrame(emptyFrame)
+  let transparent = host.readPixels(ns, target, 64, 64)
+  for point in [(0, 0), (12, 12), (33, 30), (63, 63)]:
+    transparent.requirePixel(point[0], point[1], Pixel(),
+      "empty Motion Scene clears to transparent pixels")
   doAssert host.releaseGpuResource(target)
   material.release()
   doAssert host.closeGpuNamespace(ns)
-  echo "Instanced rounded rectangles: static/dynamic scene sync, affine, opacity, order, subrange, update, CPU pixels passed"
+  echo "Instanced rounded rectangles and clear-only pass: CPU pixels passed"
+
+proc verifyMotionSceneCanvas(host: GpuHost;
+    shaderc, shaderIncludes, workDirectory: string) =
+  let ns = host.createGpuNamespace("motion-scene-canvas", budget())
+  let scene = newMotionScene(motionSceneSnapshot(size(16, 16), [
+    motionRect(MotionObjectId(1), rect(4, 4, 8, 8), rgba(1, 0, 0, 1))]))
+  var config = defaultGpuCanvasConfig(16, 16)
+  config.readbackSlots = 2
+  let renderer = host.newGpuMotionSceneCanvas(ns, scene, config,
+    compileShader(gpuMotionRectVertexSource(), shaderc,
+      shaderIncludes, workDirectory),
+    compileShader(gpuMotionRectFragmentSource(), shaderc,
+      shaderIncludes, workDirectory))
+  proc drain() =
+    for attempt in 0 ..< 32:
+      discard attempt
+      pumpWindow()
+      discard renderer.collectFrame()
+      if renderer.canvas.pendingFrameCount == 0:
+        return
+      let progress = host.beginGpuFrame()
+      host.endGpuFrame(progress)
+    raise newException(IOError, "Motion Scene GPU canvas readback did not drain")
+  doAssert renderer.queueFrame()
+  drain()
+  let pixels = renderer.canvas.rasterSurface.pixels
+  doAssert pixels[(5 * 16 + 5) * 4] == 255
+  doAssert pixels[(5 * 16 + 5) * 4 + 3] == 255
+  doAssert pixels[3] == 0
+  discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), []))
+  doAssert renderer.queueFrame()
+  drain()
+  let emptyPixels = renderer.canvas.rasterSurface.pixels
+  for point in [(0, 0), (5, 5), (15, 15)]:
+    let offset = (point[1] * 16 + point[0]) * 4
+    doAssert emptyPixels[offset] == 0
+    doAssert emptyPixels[offset + 1] == 0
+    doAssert emptyPixels[offset + 2] == 0
+    doAssert emptyPixels[offset + 3] == 0
+  doAssert renderer.close()
+  doAssert host.closeGpuNamespace(ns)
+  echo "Motion Scene GPU canvas: changed and empty revisions publish expected pixels"
 
 proc checkProducerPressure(
     host: GpuHost;
@@ -548,6 +610,7 @@ proc run() =
     doAssert host.backendInfo.rendererName.toLowerAscii.contains("opengl")
     host.verifyCanvasReadbackCancellation()
     host.verifyInstancedRects(shaderc, shaderIncludes, workDirectory)
+    host.verifyMotionSceneCanvas(shaderc, shaderIncludes, workDirectory)
 
     let compositorNamespace = host.createGpuNamespace(
       "pixel-compositor", budget()
