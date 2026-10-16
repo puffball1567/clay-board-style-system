@@ -8222,12 +8222,17 @@ suite "GPU instanced draws":
     let fragment = artifact(gpuMotionRectFragmentSource())
     let scene = newMotionScene(motionSceneSnapshot(size(8, 8), [
       motionRect(MotionObjectId(1), rect(1, 1, 4, 4), rgb(1, 0, 0))]))
-    var config = defaultGpuDirectSurfaceConfig(8, 8)
+    var config = defaultGpuMotionSceneDirectConfig(8, 8)
     config.bufferCount = 2
     var wrongSize = config
     wrongSize.width = 7
     expect ValueError:
       discard host.newGpuMotionSceneDirect(namespace, scene, wrongSize,
+        vertex, fragment)
+    var wrongAlpha = config
+    wrongAlpha.alphaMode = gcamStraight
+    expect ValueError:
+      discard host.newGpuMotionSceneDirect(namespace, scene, wrongAlpha,
         vertex, fragment)
     check host.gpuNamespaceUsage(namespace).resourceCount == 0
     let tightNamespace = host.createGpuNamespace("motion-direct-budget",
@@ -8294,7 +8299,7 @@ suite "GPU instanced draws":
     let timeline = newMotionTimeline(scene, [motionTrack(MotionObjectId(1),
       mspX, [FloatKeyframe(offset: 0, value: 1),
         FloatKeyframe(offset: 1, value: 5)])], 1, 0)
-    var config = defaultGpuDirectSurfaceConfig(8, 8)
+    var config = defaultGpuMotionSceneDirectConfig(8, 8)
     config.bufferCount = 2
     let renderer = host.newGpuMotionSceneDirect(namespace, scene, config,
       artifact(gpuMotionRectVertexSource()),
@@ -8367,7 +8372,7 @@ suite "GPU instanced draws":
     let timeline = newMotionTimeline(scene, [motionTrack(MotionObjectId(1),
       mspX, [FloatKeyframe(offset: 0, value: 1),
         FloatKeyframe(offset: 1, value: 5)])], 1, 0)
-    var config = defaultGpuCanvasConfig(8, 8)
+    var config = defaultGpuMotionSceneCanvasConfig(8, 8)
     config.readbackSlots = 1
     let renderer = host.newGpuMotionSceneCanvas(namespace, scene, config,
       artifact(gpuMotionRectVertexSource()),
@@ -8429,12 +8434,18 @@ suite "GPU instanced draws":
         bytecode: @[1'u8], sourceHash: source.gpuShaderSourceHash())
     let scene = newMotionScene(motionSceneSnapshot(size(8, 8), [
       motionRect(MotionObjectId(1), rect(1, 1, 4, 4), rgb(1, 0, 0))]))
-    var config = defaultGpuCanvasConfig(8, 8)
+    var config = defaultGpuMotionSceneCanvasConfig(8, 8)
     config.readbackSlots = 1
     var wrongSize = config
     wrongSize.width = 7
     expect ValueError:
       discard host.newGpuMotionSceneCanvas(namespace, scene, wrongSize,
+        artifact(gpuMotionRectVertexSource()),
+        artifact(gpuMotionRectFragmentSource()))
+    var wrongAlpha = config
+    wrongAlpha.alphaMode = gcamStraight
+    expect ValueError:
+      discard host.newGpuMotionSceneCanvas(namespace, scene, wrongAlpha,
         artifact(gpuMotionRectVertexSource()),
         artifact(gpuMotionRectFragmentSource()))
     check host.gpuNamespaceUsage(namespace).resourceCount == 0
@@ -8502,6 +8513,8 @@ suite "GPU instanced draws":
     check context.bufferCreates == 1
     check context.lastGraphicsPipeline.instanceDataVec4Count ==
       gpuMotionRectVec4Count
+    check context.lastGraphicsPipeline.blend ==
+      premultipliedAlphaGpuBlendState()
     let target = host.createGpuRenderTarget(namespace,
       renderTargetDescriptor(width = 64, height = 64))
     let scene = newMotionScene(motionSceneSnapshot(size(64, 64), [

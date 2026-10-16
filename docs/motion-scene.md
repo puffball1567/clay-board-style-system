@@ -112,6 +112,12 @@ the application's responsibility. The same shader pair is compiled for OpenGL
 and Vulkan, and the OpenGL pixel fixture compares its output with CPU Motion
 Scene rendering.
 
+The material writes premultiplied RGBA into its target, including when
+translucent rectangles overlap. Use a transparent clear for a scene layer and
+declare that target as premultiplied when presenting it directly. The GPU Canvas
+attachment converts its premultiplied readback to straight RGBA for ordinary
+Canvas paint.
+
 `GpuMotionRectBatch.sync` follows the scene revision, skips unchanged frames,
 updates only contiguous changed instance records, and recreates the buffer when
 the drawable count exceeds its capacity. It keeps the prior CPU record cache if
@@ -130,7 +136,8 @@ import clay_board_style_system/runtime/[gpu_canvas, motion_scene_gpu_canvas,
   motion_scene_gpu_canvas_ui]
 
 let renderer = host.newGpuMotionSceneCanvas(resources, scene,
-  defaultGpuCanvasConfig(320, 200), vertexArtifact, fragmentArtifact)
+  defaultGpuMotionSceneCanvasConfig(320, 200),
+  vertexArtifact, fragmentArtifact)
 let gpuView = ui.gpuMotionScene(renderer)
 discard gpuView.publish()          # Queue the current scene revision.
 # In the UI loop, collect completed readbacks and publish changed revisions.
@@ -139,10 +146,11 @@ discard gpuView.collectGpuFrame()
 discard renderer.close()
 ```
 
-The scene viewport must match the canvas dimensions, and this path uses
-straight RGBA8 pixels. `publish` submits one instanced rectangle draw, or a
-clear-only pass when no rectangles remain. It cancels an obsolete queued
-readback and applies backpressure when the ring is full; `collectGpuFrame`
+The scene viewport must match the canvas dimensions. This path renders
+premultiplied RGBA8 internally and converts completed readback to straight
+RGBA8 pixels for the ordinary Canvas. `publish` submits one instanced
+rectangle draw, or a clear-only pass when no rectangles remain. It cancels an
+obsolete queued readback and applies backpressure when the ring is full; `collectGpuFrame`
 retries the newest revision once a slot becomes available. Collection
 invalidates only the attached Canvas paint. No continuous frame loop is
 started. Compile the built-in shader artifacts for the selected backend before
@@ -157,14 +165,15 @@ import clay_board_style_system/runtime/[gpu_direct_surface,
   motion_scene_gpu_direct, motion_scene_gpu_direct_ui]
 
 let renderer = host.newGpuMotionSceneDirect(resources, scene,
-  defaultGpuDirectSurfaceConfig(320, 200), vertexArtifact, fragmentArtifact)
+  defaultGpuMotionSceneDirectConfig(320, 200),
+  vertexArtifact, fragmentArtifact)
 let gpuView = ui.gpuMotionSceneDirect(renderer)
 discard gpuView.publish()
 discard gpuView.collectGpuFrame() # Invalidates paint when the frame completes.
 discard renderer.close()
 ```
 
-This path requires straight RGBA8 and direct render-target presentation. It
+This path requires premultiplied RGBA8 and direct render-target presentation. It
 owns one target per presentation buffer and never redraws a target while the
 surface retains it. A full ring applies backpressure; `collectGpuFrame` retries
 the latest scene revision when a target becomes free. Outstanding presentation

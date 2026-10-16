@@ -15,6 +15,10 @@ type GpuMotionSceneCanvas* = ref object
   queuedFrameNumber: uint64
   closedValue: bool
 
+proc defaultGpuMotionSceneCanvasConfig*(width, height: uint32): GpuCanvasConfig =
+  result = defaultGpuCanvasConfig(width, height)
+  result.alphaMode = gcamPremultiplied
+
 proc isClosed*(renderer: GpuMotionSceneCanvas): bool =
   renderer.isNil or renderer.closedValue or renderer.canvasValue.isClosed
 
@@ -37,9 +41,9 @@ proc newGpuMotionSceneCanvas*(
   if viewport.w != float32(config.width) or
       viewport.h != float32(config.height):
     raise newException(ValueError, "Motion Scene and GPU canvas dimensions differ")
-  if config.format != gtfRgba8 or config.alphaMode != gcamStraight:
+  if config.format != gtfRgba8 or config.alphaMode != gcamPremultiplied:
     raise newException(ValueError,
-      "Motion Scene GPU canvas requires straight RGBA8 pixels")
+      "Motion Scene GPU canvas requires premultiplied RGBA8 input")
   result = GpuMotionSceneCanvas(host: host, namespace: namespace,
     sceneValue: scene, batch: newGpuMotionRectBatch())
   result.canvasValue = host.newGpuCanvasSurface(namespace, config)
