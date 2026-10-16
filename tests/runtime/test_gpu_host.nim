@@ -8277,6 +8277,79 @@ suite "GPU instanced draws":
     check host.closeGpuNamespace(namespace)
     host.close()
 
+  test "Motion Timeline retries direct presentation after a leased frame retires":
+    let context = newContext()
+    context.enableDirectPresentation(maxBuffers = 2)
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let namespace = host.createGpuNamespace("motion-timeline-direct",
+      GpuResourceBudget(persistentBytes: 65536,
+        workUnitsPerFrame: 6, maxResources: 10))
+    proc artifact(source: GpuShaderSource): GpuShaderArtifact =
+      GpuShaderArtifact(
+        descriptor: GpuShaderDescriptor(stage: source.stage),
+        bindingLayout: source.gpuShaderBindingLayout(),
+        bytecode: @[1'u8], sourceHash: source.gpuShaderSourceHash())
+    let scene = newMotionScene(motionSceneSnapshot(size(8, 8), [
+      motionRect(MotionObjectId(1), rect(1, 1, 2, 2), rgb(1, 0, 0))]))
+    let timeline = newMotionTimeline(scene, [motionTrack(MotionObjectId(1),
+      mspX, [FloatKeyframe(offset: 0, value: 1),
+        FloatKeyframe(offset: 1, value: 5)])], 1, 0)
+    var config = defaultGpuDirectSurfaceConfig(8, 8)
+    config.bufferCount = 2
+    let renderer = host.newGpuMotionSceneDirect(namespace, scene, config,
+      artifact(gpuMotionRectVertexSource()),
+      artifact(gpuMotionRectFragmentSource()))
+    let ui = initUiRoot()
+    let view = ui.gpuMotionSceneDirect(renderer)
+    discard ui.consumeInvalidation()
+    var scheduler = initFrameScheduler()
+    scheduler.requestDeadline(0.6)
+    check timeline.advance(view, scheduler, 0.5)
+    check scheduler.nextDeadline.get < 0.6
+    check scheduler.consumeDirty() == {}
+    check not ui.hasPendingInvalidation
+    check view.collectGpuFrame(scheduler, 0.51)
+    check scheduler.consumeDirty() == {ddPaint}
+    check ui.consumeInvalidation().domains == {ddPaint}
+    var first = renderer.surface().acquireGpuDirectSurfaceFrame().get
+
+    scheduler.clearDeadline()
+    check timeline.advance(view, scheduler, 0.75)
+    check view.collectGpuFrame(scheduler, 0.76)
+    check scheduler.consumeDirty() == {ddPaint}
+    check ui.consumeInvalidation().domains == {ddPaint}
+    check renderer.surface().retainedFrameCount() == 2
+
+    scheduler.clearDeadline()
+    check not timeline.advance(view, scheduler, 1.0)
+    check timeline.state == mtsFinished
+    check renderer.hasUnqueuedRevision()
+    check scheduler.nextDeadline.isSome
+    check scheduler.consumeDirty() == {}
+    scheduler.clearDeadline()
+    check not view.collectGpuFrame(scheduler, 1.01)
+    check scheduler.nextDeadline.isSome
+    check not ui.hasPendingInvalidation
+    check context.drawSubmits == 2
+
+    check first.release()
+    scheduler.clearDeadline()
+    check not view.collectGpuFrame(scheduler, 1.02)
+    check context.drawSubmits == 3
+    check scheduler.nextDeadline.isSome
+    scheduler.clearDeadline()
+    check view.collectGpuFrame(scheduler, 1.03)
+    check scheduler.consumeDirty() == {ddPaint}
+    check ui.consumeInvalidation().domains == {ddPaint}
+    check not renderer.hasUnqueuedRevision()
+    check scheduler.nextDeadline.isNone
+    check context.readbackRequests == 0
+    check not timeline.advance(view, scheduler, 1.1)
+    check scheduler.nextDeadline.isNone
+    check renderer.close()
+    check host.closeGpuNamespace(namespace)
+    host.close()
+
   test "Motion Timeline schedules GPU publication only after readback":
     let context = newContext()
     let host = openGpuHost(context.backend, ghoOwned, presentationConfig())

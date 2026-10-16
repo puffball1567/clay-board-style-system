@@ -196,10 +196,10 @@ discard timeline.advance(view, scheduler, nowSeconds = 11)
 # Headless callers use timeline.advance(scheduler, nowSeconds) instead.
 ```
 
-With the GPU Canvas attachment, import
-`runtime/motion_scene_timeline_gpu_ui` and pass `gpuView` from the example
-above. In each UI-loop wake-up, clear the consumed deadline, then sample and
-collect using the same monotonic time:
+With either GPU Canvas or GPU direct attachment, import
+`runtime/motion_scene_timeline_gpu_ui` and pass its `gpuView`. In each UI-loop
+wake-up, clear the consumed deadline, then sample and collect using the same
+monotonic time:
 
 ```nim
 import clay_board_style_system/runtime/motion_scene_timeline_gpu_ui
@@ -209,13 +209,14 @@ discard timeline.advance(gpuView, scheduler, nowSeconds)
 discard gpuView.collectGpuFrame(scheduler, nowSeconds)
 ```
 
-The GPU overload keeps the timeline's next sample deadline in the shared
-`FrameScheduler`. While a readback is pending, it also requests a bounded
-polling wake-up. Sampling can queue a new GPU frame without dirtying UI paint;
-only a completed readback marks `ddPaint` and invalidates the Canvas node.
-Backpressure leaves the newest scene revision pending for a later collection.
-Once the timeline finishes and its final readback is collected, it requests no
-further wake-up. The application still owns its UI loop and GPU host.
+The GPU overloads keep the timeline's next sample deadline in the shared
+`FrameScheduler`. Canvas requests a bounded poll while readback is pending;
+direct presentation polls while a frame is pending or the newest revision is
+blocked by a retained presentation target. Sampling can queue a GPU frame
+without dirtying UI paint. Only a completed frame marks `ddPaint` and
+invalidates its attachment node. Once the timeline finishes and its final
+frame is collected, it requests no further wake-up. The application still
+owns its UI loop and GPU host.
 
 Tracks address existing stable IDs and set absolute `mspX`, `mspY`, `mspWidth`,
 `mspHeight`, `mspOpacity`, `mspRadius`, `mspTranslateX`, or `mspTranslateY` values.

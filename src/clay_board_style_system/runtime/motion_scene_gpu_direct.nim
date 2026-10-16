@@ -28,6 +28,11 @@ proc surface*(renderer: GpuMotionSceneDirect): GpuDirectSurface =
 proc scene*(renderer: GpuMotionSceneDirect): MotionScene =
   if renderer.isNil: nil else: renderer.sceneValue
 
+proc hasUnqueuedRevision*(renderer: GpuMotionSceneDirect): bool =
+  not renderer.isClosed and
+    (not renderer.hasQueuedFrame or
+      renderer.queuedRevision != renderer.sceneValue.revision)
+
 proc newGpuMotionSceneDirect*(
     host: GpuHost; namespace: GpuNamespaceId; scene: MotionScene;
     config: GpuDirectSurfaceConfig;
