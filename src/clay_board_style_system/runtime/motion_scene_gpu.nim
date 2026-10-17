@@ -20,7 +20,7 @@ type GpuMotionRectBatch* = ref object
   records: seq[GpuMotionRectRecord]
 
 type GpuMotionRectMaterial* = ref object
-  ## Owns the built-in rectangle shaders, instanced pipeline, and unit quad.
+  ## Owns the built-in shape shaders, instanced pipeline, and unit quad.
   host: GpuHost
   namespace: GpuNamespaceId
   vertexShader, fragmentShader: GpuResourceHandle
@@ -30,7 +30,7 @@ static:
   doAssert sizeof(GpuMotionRectRecord) == 80
 
 proc gpuMotionRectRecords*(snapshot: MotionSceneSnapshot): seq[GpuMotionRectRecord] =
-  ## Packs drawable rounded rectangles in CPU paint order. The five vec4 rows
+  ## Packs drawable rectangles and ellipses in CPU paint order. The five vec4 rows
   ## match gpuMotionRectVertexSource and one host instanced draw.
   if snapshot.isNil:
     raise newException(ValueError, "motion scene snapshot must not be nil")
@@ -51,7 +51,8 @@ proc gpuMotionRectRecords*(snapshot: MotionSceneSnapshot): seq[GpuMotionRectReco
     result.add [
       [item.transform.m11, item.transform.m21, origin.x, 0'f32],
       [item.transform.m12, item.transform.m22, origin.y, 0'f32],
-      [item.bounds.w, item.bounds.h, item.radius, 0'f32],
+      [item.bounds.w, item.bounds.h, item.radius,
+        (if item.shape == msEllipse: 1'f32 else: 0'f32)],
       [item.color.r, item.color.g, item.color.b,
         item.color.a * item.opacity],
       [inverseWidth, inverseHeight, 0'f32, 0'f32]
@@ -163,7 +164,7 @@ proc gpuMotionRectVertexSource*(): GpuShaderSource =
     x, y, builder.scalar(0), builder.scalar(1)
   ]))
   builder.setVaryingOutput(gsisTexCoord0, point)
-  builder.setVaryingOutput(gsisTexCoord1, builder.swizzle(shape, "xyz"))
+  builder.setVaryingOutput(gsisTexCoord1, shape)
   builder.setVaryingOutput(gsisColor0, color)
   builder.emitGpuShaderSource()
 
@@ -174,20 +175,25 @@ proc gpuMotionRectFragmentSource*(): GpuShaderSource =
 void main()
 {
   vec2 halfSize = v_texcoord1.xy * 0.5;
-  float radius = clamp(v_texcoord1.z, 0.0, min(halfSize.x, halfSize.y));
-  vec2 q = abs(v_texcoord0 - halfSize) - halfSize + vec2(radius);
-  float distance = length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - radius;
-  if (distance > 0.0) { discard; }
+  if (v_texcoord1.w > 0.5) {
+    vec2 normalized = (v_texcoord0 - halfSize) / halfSize;
+    if (dot(normalized, normalized) > 1.0) { discard; }
+  } else {
+    float radius = clamp(v_texcoord1.z, 0.0, min(halfSize.x, halfSize.y));
+    vec2 q = abs(v_texcoord0 - halfSize) - halfSize + vec2(radius);
+    float distance = length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - radius;
+    if (distance > 0.0) { discard; }
+  }
   gl_FragColor = vec4(v_color0.rgb * v_color0.a, v_color0.a);
 }
 """,
     varyingDefinitions: """vec2 v_texcoord0 : TEXCOORD0;
-vec3 v_texcoord1 : TEXCOORD1;
+vec4 v_texcoord1 : TEXCOORD1;
 vec4 v_color0 : COLOR0;
 """,
     inputs: @[
       GpuShaderInterfaceEntry(slot: gsisTexCoord0, valueType: gsvtVec2),
-      GpuShaderInterfaceEntry(slot: gsisTexCoord1, valueType: gsvtVec3),
+      GpuShaderInterfaceEntry(slot: gsisTexCoord1, valueType: gsvtVec4),
       GpuShaderInterfaceEntry(slot: gsisColor0, valueType: gsvtVec4)
     ])
 

@@ -3,6 +3,7 @@
 import std/[algorithm, math, options, tables]
 
 import ../core/[color, geometry]
+import ../paint/path_geometry
 import ./canvas
 
 const maxMotionSceneObjects* = 65_536
@@ -10,9 +11,13 @@ const maxMotionSceneObjects* = 65_536
 type
   MotionObjectId* = distinct uint64
 
+  MotionShape* = enum
+    msRoundedRect, msEllipse
+
   MotionObject* = object
-    ## A value-type rounded rectangle. IDs are application-owned and nonzero.
+    ## A value-type scene shape. IDs are application-owned and nonzero.
     id*: MotionObjectId
+    shape*: MotionShape
     bounds*: Rect
     color*: Color
     transform*: Affine2D
@@ -71,8 +76,18 @@ proc motionRect*(
 ): MotionObject =
   ## Validation happens atomically when a snapshot is constructed.
   MotionObject(id: id, bounds: bounds, color: color, transform: transform,
-    opacity: opacity, radius: radius, zIndex: zIndex,
+    shape: msRoundedRect, opacity: opacity, radius: radius, zIndex: zIndex,
     visible: visible, hitTestable: hitTestable)
+
+proc motionEllipse*(
+    id: MotionObjectId; bounds: Rect; color: Color;
+    transform = identityAffine2D(); opacity = 1.0'f32;
+    zIndex = 0'i32; visible = true; hitTestable = true
+): MotionObject =
+  ## Bounds enclose a filled ellipse in local scene coordinates.
+  MotionObject(id: id, shape: msEllipse, bounds: bounds, color: color,
+    transform: transform, opacity: opacity, radius: 0.0'f32,
+    zIndex: zIndex, visible: visible, hitTestable: hitTestable)
 
 proc motionSceneSnapshot*(
     viewport: Size; objects: openArray[MotionObject]
@@ -100,6 +115,8 @@ proc motionSceneSnapshot*(
     if value.transform.isIdentity:
       value.transform = identityAffine2D()
     value.radius = min(value.radius, min(value.bounds.w, value.bounds.h) * 0.5'f32)
+    if value.shape == msEllipse:
+      value.radius = 0.0'f32
     for corner in [vec2(value.bounds.x, value.bounds.y),
         vec2(value.bounds.x + value.bounds.w, value.bounds.y),
         vec2(value.bounds.x, value.bounds.y + value.bounds.h),
@@ -168,11 +185,22 @@ proc compile(snapshot: MotionSceneSnapshot): seq[CanvasCommand] =
     let value = entry.value
     target.save()
     target.transform(value.transform)
-    if value.radius > 0:
-      target.pushClip(value.bounds, value.radius)
     var color = value.color
     color.a *= value.opacity
-    target.fillRect(value.bounds, color)
+    case value.shape
+    of msRoundedRect:
+      if value.radius > 0:
+        target.pushClip(value.bounds, value.radius)
+      target.fillRect(value.bounds, color)
+    of msEllipse:
+      var path = initPath2D()
+      path.ellipse(
+        vec2(value.bounds.x + value.bounds.w * 0.5'f32,
+          value.bounds.y + value.bounds.h * 0.5'f32),
+        value.bounds.w * 0.5'f32, value.bounds.h * 0.5'f32,
+        0.0'f32, 0.0'f32, PI.float32 * 2.0'f32)
+      path.closePath()
+      target.fillPath(path, color)
     target.restore()
   target.popClip()
   target.commands
@@ -241,13 +269,19 @@ proc hitTest*(snapshot: MotionSceneSnapshot; position: Vec2): Option[MotionScene
     let point = entry.inverse.get.transformPoint(position)
     let bounds = entry.value.bounds
     if not bounds.contains(point): continue
-    let radius = entry.value.radius
-    if radius > 0:
-      let x = clamp(point.x, bounds.x + radius, bounds.x + bounds.w - radius)
-      let y = clamp(point.y, bounds.y + radius, bounds.y + bounds.h - radius)
-      let dx = point.x.float64 - x.float64
-      let dy = point.y.float64 - y.float64
-      if dx * dx + dy * dy > radius.float64 * radius.float64: continue
+    case entry.value.shape
+    of msRoundedRect:
+      let radius = entry.value.radius
+      if radius > 0:
+        let x = clamp(point.x, bounds.x + radius, bounds.x + bounds.w - radius)
+        let y = clamp(point.y, bounds.y + radius, bounds.y + bounds.h - radius)
+        let dx = point.x.float64 - x.float64
+        let dy = point.y.float64 - y.float64
+        if dx * dx + dy * dy > radius.float64 * radius.float64: continue
+    of msEllipse:
+      let x = (point.x.float64 - bounds.x.float64) / bounds.w.float64 * 2.0 - 1.0
+      let y = (point.y.float64 - bounds.y.float64) / bounds.h.float64 * 2.0 - 1.0
+      if x * x + y * y > 1.0: continue
     return some(MotionSceneHit(id: entry.value.id,
       localPosition: vec2(point.x - bounds.x, point.y - bounds.y)))
 

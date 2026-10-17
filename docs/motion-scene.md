@@ -1,9 +1,10 @@
 # CPU Motion Scene
 
 The opt-in `runtime/motion_scene` module keeps many visual objects in one
-retained Canvas. This first CPU reference path supports rounded rectangles,
-affine transforms, opacity, z-order, viewport clipping, stable application IDs,
-and inverse-transform hit testing. It runs without a GPU or window.
+retained Canvas. The CPU reference path supports rounded rectangles and
+ellipses, affine transforms, opacity, z-order, viewport clipping, stable
+application IDs, and inverse-transform hit testing. It runs without a GPU or
+window.
 
 ```nim
 import clay_board_style_system
@@ -12,7 +13,7 @@ import clay_board_style_system/runtime/[motion_scene, motion_scene_ui]
 let initial = motionSceneSnapshot(size(320, 200), [
   motionRect(MotionObjectId(1), rect(20, 20, 80, 40), rgb(1, 0.3, 0.1),
     radius = 8),
-  motionRect(MotionObjectId(2), rect(60, 40, 80, 40), rgb(0.1, 0.4, 1),
+  motionEllipse(MotionObjectId(2), rect(60, 40, 80, 40), rgb(0.1, 0.4, 1),
     opacity = 0.8, zIndex = 1)
 ])
 let scene = newMotionScene(initial)
@@ -41,12 +42,14 @@ application-controlled across replacement, reordering, and removal. A snapshot
 accepts at most 65,536 objects; oversized input, invalid colors, negative sizes,
 non-finite values, and overflowing transformed geometry fail before publication.
 Colors and opacity must be in `[0, 1]`. Radius is clamped to half the shortest
-side. Hidden, empty, fully transparent, and singular-transform objects retain
-their identity but produce no pixels or hits.
+side for rectangles; ellipses use their full bounds. Hidden, empty, fully
+transparent, and singular-transform objects retain their identity but produce
+no pixels or hits.
 
 Paint order is ascending z-index, with authoring order breaking ties. Picking
-walks the same order backwards, respects rounded corners and the scene viewport,
-and returns coordinates relative to the object's untransformed top-left corner.
+walks the same order backwards, respects rounded corners, ellipse boundaries,
+and the scene viewport, and returns coordinates relative to the object's
+untransformed top-left corner.
 `hitTestable = false` keeps an object visible while allowing hits to pass through.
 Pass Canvas-local positions from RenderSurface input to `hitTest`; the scene does
 not synthesize ordinary UI events or accessibility nodes for its objects.
@@ -79,10 +82,10 @@ cross-thread transfer or a worker queue; applications must use an appropriate
 ownership-transfer mechanism when producing results elsewhere. Tokens retain
 the scene until released and do not retain UI nodes.
 
-## GPU rectangle batches
+## GPU shape batches
 
-Import `runtime/motion_scene_gpu` explicitly to pack the drawable rounded
-rectangles of a snapshot into five-vec4 GPU instance records:
+Import `runtime/motion_scene_gpu` explicitly to pack drawable rounded rectangles
+and ellipses of a snapshot into five-vec4 GPU instance records:
 
 ```nim
 import clay_board_style_system/runtime/motion_scene_gpu
@@ -101,7 +104,8 @@ material.release()
 
 The records follow the CPU's z-index and authoring order, omit hidden and
 degenerate objects, combine the authored bounds with each affine transform,
-and preserve color alpha times object opacity. Compile
+encode each shape in the existing instance record, and preserve color alpha
+times object opacity. Compile
 `gpuMotionRectVertexSource()` and `gpuMotionRectFragmentSource()` into the
 `vertexArtifact` and `fragmentArtifact` for the selected backend. The material
 owns those shaders, its instanced pipeline, and a four-corner unit quad. The
@@ -113,7 +117,7 @@ and Vulkan, and the OpenGL pixel fixture compares its output with CPU Motion
 Scene rendering.
 
 The material writes premultiplied RGBA into its target, including when
-translucent rectangles overlap. Use a transparent clear for a scene layer and
+translucent shapes overlap. Use a transparent clear for a scene layer and
 declare that target as premultiplied when presenting it directly. The GPU Canvas
 attachment converts its premultiplied readback to straight RGBA for ordinary
 Canvas paint.
@@ -125,7 +129,8 @@ an update fails, so the next sync retries the affected records. Sync and release
 belong outside an active GPU frame. Release the batch before changing its host
 or namespace; the application still owns shader compilation, material lifetime,
 and frame submission. A material can also submit a static `GpuInstanceBinding`.
-GPU execution for other scene primitives remains a follow-up.
+GPU execution for paths, text, images, and other scene primitives remains a
+follow-up.
 
 For an ordinary UI Canvas attachment, `motion_scene_gpu_canvas` owns the
 material, batch, and GPU readback surface together. The UI wrapper queues a
@@ -149,7 +154,7 @@ discard renderer.close()
 The scene viewport must match the canvas dimensions. This path renders
 premultiplied RGBA8 internally and converts completed readback to straight
 RGBA8 pixels for the ordinary Canvas. `publish` submits one instanced
-rectangle draw, or a clear-only pass when no rectangles remain. It cancels an
+shape draw, or a clear-only pass when no shapes remain. It cancels an
 obsolete queued readback and applies backpressure when the ring is full; `collectGpuFrame`
 retries the newest revision once a slot becomes available. Collection
 invalidates only the attached Canvas paint. No continuous frame loop is
