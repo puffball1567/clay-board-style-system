@@ -80,6 +80,11 @@ proc pixel(data: GpuReadbackData; x, y: int): Pixel =
     alpha: data.pixels[offset + 3]
   )
 
+proc rasterPixel(data: openArray[byte]; width, x, y: int): Pixel =
+  let offset = (y * width + x) * 4
+  Pixel(red: data[offset], green: data[offset + 1],
+    blue: data[offset + 2], alpha: data[offset + 3])
+
 proc closeEnough(actual, expected: uint8; tolerance: int): bool {.inline.} =
   abs(int(actual) - int(expected)) <= tolerance
 
@@ -91,6 +96,18 @@ proc requirePixel(
     tolerance = 3
 ) =
   let actual = data.pixel(x, y)
+  doAssert actual.red.closeEnough(expected.red, tolerance) and
+      actual.green.closeEnough(expected.green, tolerance) and
+      actual.blue.closeEnough(expected.blue, tolerance) and
+      actual.alpha.closeEnough(expected.alpha, tolerance),
+    label & " at (" & $x & ", " & $y & "): expected " & $expected &
+      ", got " & $actual
+
+proc requireRasterPixel(
+    data: openArray[byte]; width, x, y: int;
+    expected: Pixel; label: string; tolerance = 3
+) =
+  let actual = data.rasterPixel(width, x, y)
   doAssert actual.red.closeEnough(expected.red, tolerance) and
       actual.green.closeEnough(expected.green, tolerance) and
       actual.blue.closeEnough(expected.blue, tolerance) and
@@ -390,7 +407,7 @@ proc verifyMotionSceneCanvas(host: GpuHost;
   let ns = host.createGpuNamespace("motion-scene-canvas", budget())
   let scene = newMotionScene(motionSceneSnapshot(size(16, 16), [
     motionRect(MotionObjectId(1), rect(4, 4, 8, 8), rgba(1, 0, 0, 1))]))
-  var config = defaultGpuCanvasConfig(16, 16)
+  var config = defaultGpuMotionSceneCanvasConfig(16, 16)
   config.readbackSlots = 2
   let renderer = host.newGpuMotionSceneCanvas(ns, scene, config,
     compileShader(gpuMotionRectVertexSource(), shaderc,
@@ -413,6 +430,19 @@ proc verifyMotionSceneCanvas(host: GpuHost;
   doAssert pixels[(5 * 16 + 5) * 4] == 255
   doAssert pixels[(5 * 16 + 5) * 4 + 3] == 255
   doAssert pixels[3] == 0
+  discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), [
+    motionRect(MotionObjectId(1), rect(2, 2, 8, 8), rgba(1, 0, 0, 0.5)),
+    motionRect(MotionObjectId(2), rect(6, 2, 8, 8), rgba(0, 0, 1, 0.5))]))
+  doAssert renderer.queueFrame()
+  drain()
+  let blended = renderer.canvas.rasterSurface.pixels
+  blended.requireRasterPixel(16, 3, 4, Pixel(red: 255, alpha: 128),
+    "GPU Canvas straight-alpha red")
+  blended.requireRasterPixel(16, 8, 4,
+    Pixel(red: 85, blue: 170, alpha: 191),
+    "GPU Canvas straight-alpha overlap")
+  blended.requireRasterPixel(16, 12, 4, Pixel(blue: 255, alpha: 128),
+    "GPU Canvas straight-alpha blue")
   discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), []))
   doAssert renderer.queueFrame()
   drain()
@@ -432,7 +462,7 @@ proc verifyMotionSceneDirect(host: GpuHost;
   let ns = host.createGpuNamespace("motion-scene-direct", budget())
   let scene = newMotionScene(motionSceneSnapshot(size(16, 16), [
     motionRect(MotionObjectId(1), rect(4, 4, 8, 8), rgba(1, 0, 0, 1))]))
-  var config = defaultGpuDirectSurfaceConfig(16, 16)
+  var config = defaultGpuMotionSceneDirectConfig(16, 16)
   config.bufferCount = 2
   let renderer = host.newGpuMotionSceneDirect(ns, scene, config,
     compileShader(gpuMotionRectVertexSource(), shaderc,
@@ -456,6 +486,22 @@ proc verifyMotionSceneDirect(host: GpuHost;
     "direct Motion Scene rectangle")
   pixels.requirePixel(0, 0, Pixel(), "direct Motion Scene background")
   doAssert first.release()
+  discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), [
+    motionRect(MotionObjectId(1), rect(2, 2, 8, 8), rgba(1, 0, 0, 0.5)),
+    motionRect(MotionObjectId(2), rect(6, 2, 8, 8), rgba(0, 0, 1, 0.5))]))
+  doAssert renderer.queueFrame()
+  drain()
+  var blended = renderer.surface().acquireGpuDirectSurfaceFrame().get
+  doAssert blended.alphaMode == gcamPremultiplied
+  let blendedPixels = host.readPixels(ns, blended.resource, 16, 16)
+  blendedPixels.requirePixel(3, 4, Pixel(red: 128, alpha: 128),
+    "direct Motion Scene premultiplied red")
+  blendedPixels.requirePixel(8, 4,
+    Pixel(red: 64, blue: 128, alpha: 191),
+    "direct Motion Scene premultiplied overlap")
+  blendedPixels.requirePixel(12, 4, Pixel(blue: 128, alpha: 128),
+    "direct Motion Scene premultiplied blue")
+  doAssert blended.release()
   discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), []))
   doAssert renderer.queueFrame()
   drain()

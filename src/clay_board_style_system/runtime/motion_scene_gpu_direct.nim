@@ -17,6 +17,12 @@ type GpuMotionSceneDirect* = ref object
   hasQueuedFrame: bool
   closedValue: bool
 
+proc defaultGpuMotionSceneDirectConfig*(
+    width, height: uint32
+): GpuDirectSurfaceConfig =
+  result = defaultGpuDirectSurfaceConfig(width, height)
+  result.alphaMode = gcamPremultiplied
+
 proc isClosed*(renderer: GpuMotionSceneDirect): bool =
   renderer.isNil or renderer.closedValue or renderer.surfaceValue.isClosed
 
@@ -44,9 +50,9 @@ proc newGpuMotionSceneDirect*(
   if viewport.w != float32(config.width) or
       viewport.h != float32(config.height):
     raise newException(ValueError, "Motion Scene and GPU direct surface dimensions differ")
-  if config.format != gtfRgba8 or config.alphaMode != gcamStraight:
+  if config.format != gtfRgba8 or config.alphaMode != gcamPremultiplied:
     raise newException(ValueError,
-      "Motion Scene GPU direct surface requires straight RGBA8 pixels")
+      "Motion Scene GPU direct surface requires premultiplied RGBA8 pixels")
   if host.isNil or not host.isReady() or
       not host.backendInfo().directRenderTargetPresentationSupported:
     raise newException(GpuHostError,

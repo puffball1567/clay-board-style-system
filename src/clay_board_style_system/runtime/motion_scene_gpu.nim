@@ -178,7 +178,7 @@ void main()
   vec2 q = abs(v_texcoord0 - halfSize) - halfSize + vec2(radius);
   float distance = length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - radius;
   if (distance > 0.0) { discard; }
-  gl_FragColor = v_color0;
+  gl_FragColor = vec4(v_color0.rgb * v_color0.a, v_color0.a);
 }
 """,
     varyingDefinitions: """vec2 v_texcoord0 : TEXCOORD0;
@@ -240,7 +240,7 @@ proc newGpuMotionRectMaterial*(
         colorFormat: gtfRgba8,
         topology: gptTriangleStrip,
         cullMode: gcmNone,
-        blend: alphaGpuBlendState(),
+        blend: premultipliedAlphaGpuBlendState(),
         label: "motion-scene-rect-pipeline"))
     result.vertexBuffer = host.createGpuBuffer(namespace,
       GpuBufferDescriptor(byteSize: uint64(quadBytes.len),
