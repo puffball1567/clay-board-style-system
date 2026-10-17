@@ -105,6 +105,10 @@ Status: `Planned expansion of the existing pointer drag lifecycle`
 
 CBSS already synthesizes the basic pointer-driven `onDragStart`, `onDrag`,
 `onDragEnter`, `onDragOver`, `onDragLeave`, `onDrop`, and `onDragEnd` lifecycle.
+Drop-target events begin only after the drag threshold is crossed. Release uses
+the current physical hit target even while the source holds pointer capture;
+release outside a target and pointer cancellation clear the prior hover target
+without sending `onDrop`.
 The candidate is a complete platform primitive above those events, not a second
 drag implementation.
 

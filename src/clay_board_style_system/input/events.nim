@@ -1491,6 +1491,35 @@ proc localForTarget(
       return some(vec2(point.x - origin.x, point.y - origin.y))
   none(Vec2)
 
+proc updateDragOver(
+    state: var InteractionState;
+    target: Option[NodeId];
+    targetLocal: Option[Vec2];
+    position: Option[Vec2];
+    events: var seq[DispatchResult]
+) =
+  if target != state.dragOverTarget:
+    if state.dragOverTarget.isSome:
+      for kind in [iekDragLeave, iekDragExit]:
+        events.add DispatchResult(
+          target: state.dragOverTarget,
+          local: none(Vec2),
+          event: InputEvent(kind: kind, position: position)
+        )
+    if target.isSome:
+      events.add DispatchResult(
+        target: target,
+        local: targetLocal,
+        event: InputEvent(kind: iekDragEnter, position: position)
+      )
+    state.dragOverTarget = target
+  if target.isSome:
+    events.add DispatchResult(
+      target: target,
+      local: targetLocal,
+      event: InputEvent(kind: iekDragOver, position: position)
+    )
+
 proc disabledTarget(tree: Tree; target: Option[NodeId]): bool =
   var current = target
   while current.isSome:
@@ -1703,6 +1732,9 @@ proc processInputImpl(
   let physicalTarget =
     if hit.isSome: some(hit.get.node)
     else: none(NodeId)
+  let physicalLocal =
+    if hit.isSome: some(hit.get.local)
+    else: none(Vec2)
   var dispatch = dispatchInput(hit, event)
   case event.kind
   of iekPointerMove, iekPointerDown, iekPointerUp, iekPointerCancel:
@@ -1759,31 +1791,8 @@ proc processInputImpl(
           local: localForTarget(regions, state.dragTarget, event.position),
           event: InputEvent(kind: iekDrag, position: event.position)
         )
-      if dispatch.target != state.dragOverTarget:
-        if state.dragOverTarget.isSome:
-          result.add DispatchResult(
-            target: state.dragOverTarget,
-            local: none(Vec2),
-            event: InputEvent(kind: iekDragLeave, position: event.position)
-          )
-          result.add DispatchResult(
-            target: state.dragOverTarget,
-            local: none(Vec2),
-            event: InputEvent(kind: iekDragExit, position: event.position)
-          )
-        if dispatch.target.isSome:
-          result.add DispatchResult(
-            target: dispatch.target,
-            local: dispatch.local,
-            event: InputEvent(kind: iekDragEnter, position: event.position)
-          )
-        state.dragOverTarget = dispatch.target
-      if state.dragOverTarget.isSome:
-        result.add DispatchResult(
-          target: state.dragOverTarget,
-          local: dispatch.local,
-          event: InputEvent(kind: iekDragOver, position: event.position)
-        )
+        state.updateDragOver(physicalTarget, physicalLocal,
+          event.position, result)
     result.add dispatch
   of iekPointerDown:
     let targetDisabled = tree.disabledTarget(dispatch.target)
@@ -1812,6 +1821,9 @@ proc processInputImpl(
     result.add dispatch
     let pressed = state.pressedTarget
     let dragTarget = state.dragTarget
+    if dragTarget.isSome and physicalTarget != state.dragOverTarget:
+      state.updateDragOver(physicalTarget, physicalLocal,
+        event.position, result)
     let dragOverTarget = state.dragOverTarget
     state.pressedTarget = none(NodeId)
     state.pointerDownPosition = none(Vec2)
@@ -1822,7 +1834,7 @@ proc processInputImpl(
       if dragOverTarget.isSome:
         result.add DispatchResult(
           target: dragOverTarget,
-          local: dispatch.local,
+          local: physicalLocal,
           event: InputEvent(kind: iekDrop, position: event.position)
         )
       result.add DispatchResult(
@@ -1868,6 +1880,8 @@ proc processInputImpl(
       result.add released.get
   of iekPointerCancel:
     let dragTarget = state.dragTarget
+    if dragTarget.isSome:
+      state.updateDragOver(none(NodeId), none(Vec2), event.position, result)
     state.pressedTarget = none(NodeId)
     state.pointerDownPosition = none(Vec2)
     state.dragTarget = none(NodeId)
