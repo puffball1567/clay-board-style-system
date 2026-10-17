@@ -896,8 +896,53 @@ suite "input events":
     let move = state.processInput(tree, regions, pointerMoveEvent(vec2(14, 11)))
     let up = state.processInput(tree, regions, pointerUpEvent(vec2(14, 11)))
 
-    check move.allIt(it.event.kind notin {iekDragStart, iekDrag})
+    check move.allIt(it.event.kind notin {
+      iekDragStart, iekDrag, iekDragEnter, iekDragOver,
+      iekDragLeave, iekDragExit
+    })
+    check state.dragOverTarget.isNone
     check up.anyIt(it.event.kind == iekClick)
+
+  test "release uses the current physical drop target and clears the old one":
+    var tree = initTree()
+    let root = tree.addBox(id = "root")
+    let source = tree.addBox(parent = some(root), id = "source")
+    let oldTarget = tree.addBox(parent = some(root), id = "old")
+    let newTarget = tree.addBox(parent = some(root), id = "new")
+    let regions = @[
+      HitRegion(node: root, rect: rect(0, 0, 160, 40), zIndex: 0),
+      HitRegion(node: source, rect: rect(10, 8, 30, 20), zIndex: 1),
+      HitRegion(node: oldTarget, rect: rect(60, 8, 30, 20), zIndex: 1),
+      HitRegion(node: newTarget, rect: rect(110, 8, 30, 20), zIndex: 1)
+    ]
+    var state = initInteractionState()
+    discard state.processInput(tree, regions, pointerDownEvent(vec2(12, 10)))
+    discard state.capturePointer(source)
+    discard state.processInput(tree, regions, pointerMoveEvent(vec2(65, 10)))
+    check state.dragOverTarget == some(oldTarget)
+    let released = state.processInput(tree, regions,
+      pointerUpEvent(vec2(115, 10)))
+    check released.anyIt(it.event.kind == iekDragLeave and
+      it.target == some(oldTarget))
+    check released.anyIt(it.event.kind == iekDragEnter and
+      it.target == some(newTarget))
+    check released.anyIt(it.event.kind == iekDrop and
+      it.target == some(newTarget) and it.local == some(vec2(5, 2)))
+    check released.allIt(it.event.kind != iekDrop or
+      it.target != some(oldTarget))
+    check released.anyIt(it.event.kind == iekDragEnd and
+      it.target == some(source))
+    check state.dragOverTarget.isNone
+
+    discard state.processInput(tree, regions, pointerDownEvent(vec2(12, 10)))
+    discard state.processInput(tree, regions, pointerMoveEvent(vec2(65, 10)))
+    let outside = state.processInput(tree, regions,
+      pointerUpEvent(vec2(180, 10)))
+    check outside.anyIt(it.event.kind == iekDragLeave and
+      it.target == some(oldTarget))
+    check outside.allIt(it.event.kind != iekDrop)
+    check outside.anyIt(it.event.kind == iekDragEnd and
+      it.target == some(source))
 
   test "pointer cancel releases pressed drag and capture state":
     var tree = initTree()
@@ -918,6 +963,13 @@ suite "input events":
     check state.dragTarget.isNone
     check state.dragOverTarget.isNone
     check state.pointerCaptureTarget.isNone
+    check cancelled.anyIt(it.event.kind == iekDragLeave and
+      it.target == some(source))
+    check cancelled.anyIt(it.event.kind == iekDragExit and
+      it.target == some(source))
+    check cancelled.anyIt(it.event.kind == iekDragEnd and
+      it.target == some(source))
+    check cancelled.allIt(it.event.kind != iekDrop)
     check cancelled.anyIt(it.event.kind == iekLostPointerCapture)
 
   test "pointer capture routes pointer events to captured target":
