@@ -109,6 +109,10 @@ Drop-target events begin only after the drag threshold is crossed. Release uses
 the current physical hit target even while the source holds pointer capture;
 release outside a target and pointer cancellation clear the prior hover target
 without sending `onDrop`.
+The default threshold is four layout pixels of Manhattan movement and can be
+configured per `InteractionState` with `setDragStartDistance`. Only a primary
+pointer-button press starts this drag lifecycle; secondary-button movement
+remains available for context-menu interactions.
 The candidate is a complete platform primitive above those events, not a second
 drag implementation.
 
