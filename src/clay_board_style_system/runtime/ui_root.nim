@@ -939,6 +939,7 @@ proc clearInteractionTargets(
       interaction.pressedTarget.get in removed:
     interaction.pressedTarget = none(NodeId)
     interaction.pointerDownPosition = none(Vec2)
+    interaction.pressedButton = none(int)
   clearTarget(interaction.hoveredTarget)
   clearTarget(interaction.pointerCaptureTarget)
   clearTarget(interaction.lastClickTarget)

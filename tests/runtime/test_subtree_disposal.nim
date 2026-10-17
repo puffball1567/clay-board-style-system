@@ -96,6 +96,7 @@ suite "dynamic subtree disposal":
     )
     interaction.pressedTarget = some(action.container.id)
     interaction.pointerDownPosition = some(vec2(4, 5))
+    interaction.pressedButton = some(1)
     interaction.hoveredTarget = some(action.container.id)
     interaction.pointerCaptureTarget = some(action.container.id)
     interaction.lastClickTarget = some(action.container.id)
@@ -120,6 +121,7 @@ suite "dynamic subtree disposal":
     check interaction.focusedTarget.isNone
     check interaction.pressedTarget.isNone
     check interaction.pointerDownPosition.isNone
+    check interaction.pressedButton.isNone
     check interaction.hoveredTarget.isNone
     check interaction.pointerCaptureTarget.isNone
     check interaction.lastClickTarget.isNone
