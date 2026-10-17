@@ -443,6 +443,16 @@ proc verifyMotionSceneCanvas(host: GpuHost;
     "GPU Canvas straight-alpha overlap")
   blended.requireRasterPixel(16, 12, 4, Pixel(blue: 255, alpha: 128),
     "GPU Canvas straight-alpha blue")
+  discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), [
+    motionEllipse(MotionObjectId(3), rect(2, 2, 12, 12),
+      rgba(0, 1, 0, 1))]))
+  doAssert renderer.queueFrame()
+  drain()
+  let ellipsePixels = renderer.canvas.rasterSurface.pixels
+  ellipsePixels.requireRasterPixel(16, 8, 8, Pixel(green: 255, alpha: 255),
+    "GPU Canvas ellipse center")
+  ellipsePixels.requireRasterPixel(16, 3, 3, Pixel(),
+    "GPU Canvas ellipse outside")
   discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), []))
   doAssert renderer.queueFrame()
   drain()
@@ -502,6 +512,18 @@ proc verifyMotionSceneDirect(host: GpuHost;
   blendedPixels.requirePixel(12, 4, Pixel(blue: 128, alpha: 128),
     "direct Motion Scene premultiplied blue")
   doAssert blended.release()
+  discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), [
+    motionEllipse(MotionObjectId(3), rect(2, 2, 12, 12),
+      rgba(0, 1, 0, 1))]))
+  doAssert renderer.queueFrame()
+  drain()
+  var ellipse = renderer.surface().acquireGpuDirectSurfaceFrame().get
+  let ellipsePixels = host.readPixels(ns, ellipse.resource, 16, 16)
+  ellipsePixels.requirePixel(8, 8, Pixel(green: 255, alpha: 255),
+    "direct Motion Scene ellipse center")
+  ellipsePixels.requirePixel(3, 3, Pixel(),
+    "direct Motion Scene ellipse outside")
+  doAssert ellipse.release()
   discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), []))
   doAssert renderer.queueFrame()
   drain()

@@ -83,6 +83,24 @@ suite "CPU Motion Scene snapshots":
         size(1.0e-40'f32, 24), [item(7)]
       ))
 
+  test "ellipses share snapshot ordering, transformed picking, and GPU records":
+    let ellipse = motionEllipse(MotionObjectId(2), rect(4, 4, 16, 12),
+      rgb(0, 1, 0), transform = translationAffine2D(3, 2), zIndex = 1)
+    let scene = newMotionScene(snap([
+      item(1, rect(0, 0, 32, 24)), ellipse]))
+    check scene.snapshot.objectById(MotionObjectId(2)).get.shape == msEllipse
+    check scene.pixels.pixel(15, 12) == (0'u8, 255'u8, 0'u8)
+    check scene.pixels.pixel(8, 7) == (255'u8, 0'u8, 0'u8)
+    check scene.hitTest(vec2(15, 12)).get.id == MotionObjectId(2)
+    check scene.hitTest(vec2(8, 7)).get.id == MotionObjectId(1)
+    check scene.hitTest(vec2(15, 12)).get.localPosition == vec2(8, 6)
+    let records = gpuMotionRectRecords(scene.snapshot)
+    check records.len == 2
+    check records[0][2][3] == 0
+    check records[1][2] == [16'f32, 12, 0, 1]
+    check records[1][0][2] == 7
+    check records[1][1][2] == 6
+
   test "rounded transformed rectangles agree with inverse-space hit testing":
     var shape = item(1, rect(0, 0, 10, 10))
     shape.radius = 5
