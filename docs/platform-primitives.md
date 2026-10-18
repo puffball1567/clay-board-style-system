@@ -113,6 +113,12 @@ The default threshold is four layout pixels of Manhattan movement and can be
 configured per `InteractionState` with `setDragStartDistance`. Only a primary
 pointer-button press starts this drag lifecycle; secondary-button movement
 remains available for context-menu interactions.
+After pointer down, the pressed source can call `setDragData(source, data)` on
+the `InteractionState` before the threshold is crossed. `data` is an immutable
+`FormData` snapshot containing typed text or `Blob` entries. Drag, hover, drop,
+and end handlers read it with `dispatch.dragData()`; the interaction releases
+its reference on pointer up, cancellation, a new press, or source disposal.
+Events already returned to a caller keep their own snapshot.
 The candidate is a complete platform primitive above those events, not a second
 drag implementation.
 

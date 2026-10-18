@@ -155,7 +155,8 @@ type
     epfPointer,
     epfFocusOwnership,
     epfFormData,
-    epfMotion
+    epfMotion,
+    epfDragData
 
   EventDefinition* = object
     producer*: EventDispatchMode
@@ -213,6 +214,7 @@ type
     ## Uncommon managed payloads stay behind one pointer so pointer, keyboard,
     ## and animation events remain compact on the dispatch hot path.
     formData: FormData
+    dragData: FormData
     motionName: string
     motionElapsedSeconds: float64
     motionIteration: uint64
@@ -250,6 +252,7 @@ type
     pointerDownPosition*: Option[Vec2]
     pressedButton*: Option[int]
     dragThreshold: float32
+    dragPayload: InputEventPayload
     focusedTarget*: Option[NodeId]
     focusSerial*: int
     hoveredTarget*: Option[NodeId]
@@ -559,6 +562,11 @@ func buildEventDefinitions(): array[InputEventKind, EventDefinition] =
   }:
     result[kind].payload = {epfText, epfFocusOwnership}
   result[iekSubmit].payload = {epfFormData}
+  for kind in {
+    iekDrag, iekDragEnd, iekDragEnter, iekDragExit, iekDragLeave,
+    iekDragOver, iekDragStart, iekDrop
+  }:
+    result[kind].payload.incl epfDragData
 
   template aliases(kind: InputEventKind; first, second: InputEventKind) =
     result[kind].aliases = [first, second]
@@ -627,7 +635,7 @@ proc formData*(event: InputEvent): Option[FormData] =
   ## Returns `some` even for an intentionally empty submitted form. Synthetic
   ## submit events built only from `iekSubmit` retain their legacy no-payload
   ## behavior and return `none`.
-  if event.payload.isNil:
+  if event.kind != iekSubmit or event.payload.isNil:
     none(FormData)
   else:
     some(event.payload.formData)
@@ -635,6 +643,19 @@ proc formData*(event: InputEvent): Option[FormData] =
 proc formData*(dispatch: DispatchResult): Option[FormData] {.inline.} =
   ## Convenience access for `onSubmit` and additive submit listeners.
   dispatch.event.formData()
+
+proc dragData*(event: InputEvent): Option[FormData] =
+  ## Text and Blob entries supplied by the pressed drag source. An empty
+  ## FormData is still a present payload; ordinary drags return `none`.
+  if event.kind notin {
+      iekDrag, iekDragEnd, iekDragEnter, iekDragExit, iekDragLeave,
+      iekDragOver, iekDragStart, iekDrop
+  } or event.payload.isNil:
+    return none(FormData)
+  some(event.payload.dragData)
+
+proc dragData*(dispatch: DispatchResult): Option[FormData] {.inline.} =
+  dispatch.event.dragData()
 
 proc motionEvent*(
     kind: InputEventKind;
@@ -934,6 +955,7 @@ proc initInteractionState*(): InteractionState =
     pressedTarget: none(NodeId),
     pressedButton: none(int),
     dragThreshold: dragStartThreshold,
+    dragPayload: nil,
     focusedTarget: none(NodeId),
     focusSerial: 0,
     hoveredTarget: none(NodeId),
@@ -959,6 +981,26 @@ proc setDragStartDistance*(state: var InteractionState; distance: float32) =
   if not (distance > 0 and distance < Inf.float32):
     raise newException(ValueError, "drag start distance must be finite and positive")
   state.dragThreshold = distance
+
+proc setDragData*(
+    state: var InteractionState; source: NodeId; data: FormData
+): bool {.discardable.} =
+  ## Arm an immutable text/Blob payload after pointer down and before the
+  ## gesture crosses the drag threshold. Only the pressed source may arm it.
+  if state.pressedTarget != some(source) or state.dragTarget.isSome:
+    return false
+  state.dragPayload = InputEventPayload(dragData: data)
+  true
+
+proc clearDragData*(state: var InteractionState) =
+  ## Revoke data for subsequent events. Already synthesized events retain it.
+  state.dragPayload = nil
+
+proc dragData*(state: InteractionState): Option[FormData] =
+  if state.dragPayload.isNil:
+    none(FormData)
+  else:
+    some(state.dragPayload.dragData)
 
 proc setFocusedTarget*(state: var InteractionState; target: Option[NodeId]): bool =
   if state.focusedTarget == target:
@@ -1506,6 +1548,13 @@ proc localForTarget(
       return some(vec2(point.x - origin.x, point.y - origin.y))
   none(Vec2)
 
+proc dragEvent(
+    kind: InputEventKind;
+    position: Option[Vec2];
+    payload: InputEventPayload
+): InputEvent =
+  InputEvent(kind: kind, position: position, payload: payload)
+
 proc updateDragOver(
     state: var InteractionState;
     target: Option[NodeId];
@@ -1519,20 +1568,20 @@ proc updateDragOver(
         events.add DispatchResult(
           target: state.dragOverTarget,
           local: none(Vec2),
-          event: InputEvent(kind: kind, position: position)
+          event: dragEvent(kind, position, state.dragPayload)
         )
     if target.isSome:
       events.add DispatchResult(
         target: target,
         local: targetLocal,
-        event: InputEvent(kind: iekDragEnter, position: position)
+        event: dragEvent(iekDragEnter, position, state.dragPayload)
       )
     state.dragOverTarget = target
   if target.isSome:
     events.add DispatchResult(
       target: target,
       local: targetLocal,
-      event: InputEvent(kind: iekDragOver, position: position)
+      event: dragEvent(iekDragOver, position, state.dragPayload)
     )
 
 proc disabledTarget(tree: Tree; target: Option[NodeId]): bool =
@@ -1716,6 +1765,7 @@ proc restrictToFocusScope(state: var InteractionState; tree: var Tree) =
   if hadOutsidePress:
     state.pointerDownPosition = none(Vec2)
     state.pressedButton = none(int)
+    state.clearDragData()
     tree.updateActiveState(none(NodeId))
 
 proc processInputImpl(
@@ -1805,18 +1855,19 @@ proc processInputImpl(
         result.add DispatchResult(
           target: state.dragTarget,
           local: localForTarget(regions, state.dragTarget, event.position),
-          event: InputEvent(kind: iekDragStart, position: event.position)
+          event: dragEvent(iekDragStart, event.position, state.dragPayload)
         )
       if state.dragTarget.isSome:
         result.add DispatchResult(
           target: state.dragTarget,
           local: localForTarget(regions, state.dragTarget, event.position),
-          event: InputEvent(kind: iekDrag, position: event.position)
+          event: dragEvent(iekDrag, event.position, state.dragPayload)
         )
         state.updateDragOver(physicalTarget, physicalLocal,
           event.position, result)
     result.add dispatch
   of iekPointerDown:
+    state.clearDragData()
     let targetDisabled = tree.disabledTarget(dispatch.target)
     let focusTarget =
       if blockedByFocusScope: state.focusedTarget
@@ -1850,23 +1901,25 @@ proc processInputImpl(
       state.updateDragOver(physicalTarget, physicalLocal,
         event.position, result)
     let dragOverTarget = state.dragOverTarget
+    let payload = state.dragPayload
     state.pressedTarget = none(NodeId)
     state.pointerDownPosition = none(Vec2)
     state.pressedButton = none(int)
     state.dragTarget = none(NodeId)
     state.dragOverTarget = none(NodeId)
+    state.clearDragData()
     tree.updateActiveState(none(NodeId))
     if dragTarget.isSome:
       if dragOverTarget.isSome:
         result.add DispatchResult(
           target: dragOverTarget,
           local: physicalLocal,
-          event: InputEvent(kind: iekDrop, position: event.position)
+          event: dragEvent(iekDrop, event.position, payload)
         )
       result.add DispatchResult(
         target: dragTarget,
         local: localForTarget(regions, dragTarget, event.position),
-        event: InputEvent(kind: iekDragEnd, position: event.position)
+        event: dragEvent(iekDragEnd, event.position, payload)
       )
     if dragTarget.isNone and pressed.isSome and physicalTarget == pressed and
         event.position.isSome:
@@ -1906,6 +1959,7 @@ proc processInputImpl(
       result.add released.get
   of iekPointerCancel:
     let dragTarget = state.dragTarget
+    let payload = state.dragPayload
     if dragTarget.isSome:
       state.updateDragOver(none(NodeId), none(Vec2), event.position, result)
     state.pressedTarget = none(NodeId)
@@ -1913,13 +1967,14 @@ proc processInputImpl(
     state.pressedButton = none(int)
     state.dragTarget = none(NodeId)
     state.dragOverTarget = none(NodeId)
+    state.clearDragData()
     tree.updateActiveState(none(NodeId))
     result.add dispatch
     if dragTarget.isSome:
       result.add DispatchResult(
         target: dragTarget,
         local: localForTarget(regions, dragTarget, event.position),
-        event: InputEvent(kind: iekDragEnd, position: event.position)
+        event: dragEvent(iekDragEnd, event.position, payload)
       )
     let released = state.releasePointer()
     if released.isSome:
