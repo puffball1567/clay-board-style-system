@@ -706,6 +706,8 @@ suite "input events":
     check iekTextInput.eventDefinition.payload ==
       {epfText, epfFocusOwnership}
     check iekSubmit.eventDefinition.payload == {epfFormData}
+    check iekDrop.eventDefinition.payload ==
+      {epfPosition, epfButton, epfPointer, epfDragData}
     check iekPointerDown.eventDefinition.aliasCount == 2
     check iekPointerDown.eventDefinition.aliases ==
       [iekMouseDown, iekPointerDown]
@@ -881,6 +883,86 @@ suite "input events":
     check dragLocal.isSome
     check dragLocal.get.x == 65
     check dragLocal.get.y == 2
+
+  test "pressed source data reaches drag and drop events and then clears":
+    var tree = initTree()
+    let root = tree.addBox(id = "root")
+    let source = tree.addBox(parent = some(root), id = "source")
+    let target = tree.addBox(parent = some(root), id = "target")
+    let regions = @[
+      HitRegion(node: root, rect: rect(0, 0, 140, 40), zIndex: 0),
+      HitRegion(node: source, rect: rect(10, 8, 40, 20), zIndex: 1),
+      HitRegion(node: target, rect: rect(70, 8, 40, 20), zIndex: 1)
+    ]
+    var builder = initFormDataBuilder()
+    builder.addText("text/plain", "card-7")
+    builder.addBlob("application/octet-stream", newBlob([byte 1, 2, 3]))
+    let data = builder.finish()
+    var state = initInteractionState()
+
+    check not state.setDragData(source, data)
+    discard state.processInput(tree, regions, pointerDownEvent(vec2(12, 10)))
+    check not state.setDragData(target, data)
+    check state.setDragData(source, data)
+    let moved = state.processInput(tree, regions, pointerMoveEvent(vec2(75, 10)))
+    check not state.setDragData(source, FormData())
+    let released = state.processInput(tree, regions, pointerUpEvent(vec2(75, 10)))
+    check state.dragData.isNone
+    var registry = initEventRegistry()
+    var dropSeen = false
+    registry.onDrop(target, proc(event: DispatchResult): EventOutcome =
+      dropSeen = event.dragData.isSome and
+        event.dragData.get.values("text/plain")[0].text == "card-7"
+      handledEvent()
+    )
+    discard registry.handle(released)
+    check dropSeen
+
+    var kinds: seq[InputEventKind] = @[]
+    for dispatch in moved & released:
+      if dispatch.event.kind in {
+          iekDragStart, iekDrag, iekDragEnter, iekDragOver,
+          iekDrop, iekDragEnd
+      }:
+        kinds.add dispatch.event.kind
+        check dispatch.dragData.isSome
+        check dispatch.formData.isNone
+        let snapshot = dispatch.dragData.get
+        check snapshot.values("text/plain")[0].text == "card-7"
+        check snapshot.values("application/octet-stream")[0].blob.readAll(3) ==
+          @[byte 1, 2, 3]
+    check kinds == @[
+      iekDragStart, iekDrag, iekDragEnter, iekDragOver,
+      iekDrop, iekDragEnd
+    ]
+
+    discard state.processInput(tree, regions, pointerDownEvent(vec2(12, 10)))
+    let withoutData = state.processInput(tree, regions, pointerMoveEvent(vec2(75, 10)))
+    check withoutData.anyIt(it.event.kind == iekDragStart)
+    check withoutData.allIt(it.dragData.isNone)
+
+  test "canceled drag retains data on exit and end but releases it from state":
+    var tree = initTree()
+    let source = tree.addBox(id = "source")
+    let regions = @[HitRegion(
+      node: source, rect: rect(0, 0, 100, 40), zIndex: 0
+    )]
+    var state = initInteractionState()
+    var builder = initFormDataBuilder()
+    let emptyData = builder.finish()
+    discard state.processInput(tree, regions, pointerDownEvent(vec2(10, 10)))
+    check state.setDragData(source, emptyData)
+    discard state.processInput(tree, regions, pointerMoveEvent(vec2(20, 10)))
+    let canceled = state.processInput(tree, regions,
+      positionedEvent(iekPointerCancel, vec2(20, 10)))
+    check state.dragData.isNone
+    check canceled.anyIt(it.event.kind == iekDragLeave and it.dragData.isSome)
+    check canceled.anyIt(it.event.kind == iekDragExit and it.dragData.isSome)
+    check canceled.anyIt(it.event.kind == iekDragEnd and it.dragData.isSome)
+    check canceled.allIt(it.event.kind != iekDrop)
+    for dispatch in canceled:
+      if dispatch.dragData.isSome:
+        check dispatch.dragData.get.len == 0
 
   test "small pointer jitter keeps a click and does not start dragging":
     var tree = initTree()

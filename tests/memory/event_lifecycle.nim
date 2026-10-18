@@ -46,7 +46,23 @@ proc exerciseEventLifecycle() =
         {ddStyle, ddLayout, ddPaint, ddHit, ddAnimation}
       doAssert ui.takeFrameRequest()
 
+      let regions = @[HitRegion(
+        node: target.id, rect: rect(0, 0, 40, 20), zIndex: 0
+      )]
+      var dragBuilder = initFormDataBuilder()
+      dragBuilder.addBlob("application/octet-stream", newBlob([byte 1, 2, 3]))
+      discard interaction.processInput(
+        ui.tree, regions, pointerDownEvent(vec2(2, 2))
+      )
+      doAssert interaction.setDragData(target.id, dragBuilder.finish())
+      let dragDispatches = interaction.processInput(
+        ui.tree, regions, pointerMoveEvent(vec2(12, 2))
+      )
+      doAssert dragDispatches.len > 0
+      doAssert interaction.dragData.isSome
+
       doAssert ui.disposeSubtree(host, interaction)
+      doAssert interaction.dragData.isNone
       doAssert ui.events.bindings.len == 0
 
 exerciseEventLifecycle()
