@@ -1,4 +1,4 @@
-import std/[options, sequtils, strutils, unittest]
+import std/[math, options, sequtils, strutils, unittest]
 
 import clay_board_style_system
 
@@ -902,6 +902,56 @@ suite "input events":
     })
     check state.dragOverTarget.isNone
     check up.anyIt(it.event.kind == iekClick)
+
+  test "drag threshold can be tuned per interaction state":
+    var tree = initTree()
+    let source = tree.addBox(id = "source")
+    let regions = @[HitRegion(
+      node: source, rect: rect(0, 0, 100, 40), zIndex: 0
+    )]
+    var state = initInteractionState()
+    check state.dragStartDistance == dragStartThreshold
+    expect ValueError:
+      state.setDragStartDistance(0)
+    expect ValueError:
+      state.setDragStartDistance(-1)
+    expect ValueError:
+      state.setDragStartDistance(Inf.float32)
+    expect ValueError:
+      state.setDragStartDistance(NaN.float32)
+    check state.dragStartDistance == dragStartThreshold
+
+    state.setDragStartDistance(8)
+    discard state.processInput(tree, regions, pointerDownEvent(vec2(10, 10)))
+    let below = state.processInput(tree, regions, pointerMoveEvent(vec2(14, 13)))
+    check below.allIt(it.event.kind != iekDragStart)
+    let boundary = state.processInput(tree, regions, pointerMoveEvent(vec2(14, 14)))
+    check boundary.anyIt(it.event.kind == iekDragStart and it.target == some(source))
+    let released = state.processInput(tree, regions, pointerUpEvent(vec2(14, 14)))
+    check released.anyIt(it.event.kind == iekDragEnd)
+
+    state.setDragStartDistance(2)
+    discard state.processInput(tree, regions, pointerDownEvent(vec2(10, 10)))
+    let shorter = state.processInput(tree, regions, pointerMoveEvent(vec2(11, 11)))
+    check shorter.anyIt(it.event.kind == iekDragStart)
+
+  test "secondary button movement does not start a drag":
+    var tree = initTree()
+    let source = tree.addBox(id = "source")
+    let regions = @[HitRegion(
+      node: source, rect: rect(0, 0, 100, 40), zIndex: 0
+    )]
+    var state = initInteractionState()
+    discard state.processInput(tree, regions, pointerDownEvent(vec2(10, 10), 3))
+    let moved = state.processInput(tree, regions, pointerMoveEvent(vec2(30, 10)))
+    let released = state.processInput(tree, regions, pointerUpEvent(vec2(30, 10), 3))
+    check moved.allIt(it.event.kind notin {iekDragStart, iekDrag, iekDragOver})
+    check released.allIt(it.event.kind notin {iekDrop, iekDragEnd})
+    check state.dragTarget.isNone
+
+    discard state.processInput(tree, regions, pointerDownEvent(vec2(10, 10), 1))
+    let primary = state.processInput(tree, regions, pointerMoveEvent(vec2(30, 10)))
+    check primary.anyIt(it.event.kind == iekDragStart)
 
   test "release uses the current physical drop target and clears the old one":
     var tree = initTree()

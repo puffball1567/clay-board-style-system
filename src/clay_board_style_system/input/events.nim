@@ -248,6 +248,8 @@ type
   InteractionState* = object
     pressedTarget*: Option[NodeId]
     pointerDownPosition*: Option[Vec2]
+    pressedButton*: Option[int]
+    dragThreshold: float32
     focusedTarget*: Option[NodeId]
     focusSerial*: int
     hoveredTarget*: Option[NodeId]
@@ -930,6 +932,8 @@ proc lostPointerCaptureEvent*(target: NodeId): DispatchResult =
 proc initInteractionState*(): InteractionState =
   InteractionState(
     pressedTarget: none(NodeId),
+    pressedButton: none(int),
+    dragThreshold: dragStartThreshold,
     focusedTarget: none(NodeId),
     focusSerial: 0,
     hoveredTarget: none(NodeId),
@@ -944,6 +948,17 @@ proc initInteractionState*(): InteractionState =
     lastClickButton: 0,
     clickCount: 0
   )
+
+proc dragStartDistance*(state: InteractionState): float32 {.inline.} =
+  ## The minimum Manhattan pointer movement before a drag starts.
+  state.dragThreshold
+
+proc setDragStartDistance*(state: var InteractionState; distance: float32) =
+  ## Configure the gesture threshold in layout pixels. Existing active drags
+  ## continue, while a pending press uses the new distance on its next move.
+  if not (distance > 0 and distance < Inf.float32):
+    raise newException(ValueError, "drag start distance must be finite and positive")
+  state.dragThreshold = distance
 
 proc setFocusedTarget*(state: var InteractionState; target: Option[NodeId]): bool =
   if state.focusedTarget == target:
@@ -1531,12 +1546,14 @@ proc disabledTarget(tree: Tree; target: Option[NodeId]): bool =
     current = tree.nodes[id.nodeIndex].parent
   false
 
-proc exceededDragThreshold(start, current: Option[Vec2]): bool =
+proc exceededDragThreshold(
+    start, current: Option[Vec2]; threshold: float32
+): bool =
   if start.isNone or current.isNone:
     return false
   let dx = abs(current.get.x - start.get.x)
   let dy = abs(current.get.y - start.get.y)
-  dx + dy >= dragStartThreshold
+  dx + dy >= threshold
 
 proc finishScroll*(state: var InteractionState): seq[DispatchResult] =
   if state.scrollTarget.isSome:
@@ -1698,6 +1715,7 @@ proc restrictToFocusScope(state: var InteractionState; tree: var Tree) =
     tree.updateHoverState(none(NodeId))
   if hadOutsidePress:
     state.pointerDownPosition = none(Vec2)
+    state.pressedButton = none(int)
     tree.updateActiveState(none(NodeId))
 
 proc processInputImpl(
@@ -1778,7 +1796,11 @@ proc processInputImpl(
       state.hoveredTarget = dispatch.target
     tree.updateHoverState(dispatch.target)
     if state.pressedTarget.isSome:
-      if state.dragTarget.isNone and state.pointerDownPosition.exceededDragThreshold(event.position):
+      if state.dragTarget.isNone and state.pressedButton.isSome and
+          state.pressedButton.get in {0, 1} and
+          state.pointerDownPosition.exceededDragThreshold(
+            event.position, state.dragThreshold
+          ):
         state.dragTarget = state.pressedTarget
         result.add DispatchResult(
           target: state.dragTarget,
@@ -1806,6 +1828,9 @@ proc processInputImpl(
     state.pointerDownPosition =
       if targetDisabled: none(Vec2)
       else: event.position
+    state.pressedButton =
+      if targetDisabled: none(int)
+      else: some(if event.button.isSome: event.button.get else: 0)
     state.dragTarget = none(NodeId)
     state.dragOverTarget = none(NodeId)
     tree.updateActiveState(if targetDisabled: none(NodeId) else: dispatch.target)
@@ -1827,6 +1852,7 @@ proc processInputImpl(
     let dragOverTarget = state.dragOverTarget
     state.pressedTarget = none(NodeId)
     state.pointerDownPosition = none(Vec2)
+    state.pressedButton = none(int)
     state.dragTarget = none(NodeId)
     state.dragOverTarget = none(NodeId)
     tree.updateActiveState(none(NodeId))
@@ -1884,6 +1910,7 @@ proc processInputImpl(
       state.updateDragOver(none(NodeId), none(Vec2), event.position, result)
     state.pressedTarget = none(NodeId)
     state.pointerDownPosition = none(Vec2)
+    state.pressedButton = none(int)
     state.dragTarget = none(NodeId)
     state.dragOverTarget = none(NodeId)
     tree.updateActiveState(none(NodeId))
