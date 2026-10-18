@@ -55,14 +55,18 @@ proc exerciseEventLifecycle() =
         ui.tree, regions, pointerDownEvent(vec2(2, 2))
       )
       doAssert interaction.setDragData(target.id, dragBuilder.finish())
+      doAssert interaction.setDragOperations(target.id, {dgoCopy})
       let dragDispatches = interaction.processInput(
         ui.tree, regions, pointerMoveEvent(vec2(12, 2))
       )
       doAssert dragDispatches.len > 0
       doAssert interaction.dragData.isSome
+      doAssert interaction.acceptDropOperation(target.id, dgoCopy)
 
       doAssert ui.disposeSubtree(host, interaction)
       doAssert interaction.dragData.isNone
+      doAssert interaction.dragOperations.isNone
+      doAssert interaction.dropOperation.isNone
       doAssert ui.events.bindings.len == 0
 
 exerciseEventLifecycle()

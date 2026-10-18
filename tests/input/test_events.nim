@@ -707,7 +707,8 @@ suite "input events":
       {epfText, epfFocusOwnership}
     check iekSubmit.eventDefinition.payload == {epfFormData}
     check iekDrop.eventDefinition.payload ==
-      {epfPosition, epfButton, epfPointer, epfDragData}
+      {epfPosition, epfButton, epfPointer, epfDragData,
+       epfDragOperations, epfDropOperation}
     check iekPointerDown.eventDefinition.aliasCount == 2
     check iekPointerDown.eventDefinition.aliases ==
       [iekMouseDown, iekPointerDown]
@@ -952,10 +953,14 @@ suite "input events":
     let emptyData = builder.finish()
     discard state.processInput(tree, regions, pointerDownEvent(vec2(10, 10)))
     check state.setDragData(source, emptyData)
+    check state.setDragOperations(source, {dgoCopy})
     discard state.processInput(tree, regions, pointerMoveEvent(vec2(20, 10)))
+    check state.acceptDropOperation(source, dgoCopy)
     let canceled = state.processInput(tree, regions,
       positionedEvent(iekPointerCancel, vec2(20, 10)))
     check state.dragData.isNone
+    check state.dragOperations.isNone
+    check state.dropOperation.isNone
     check canceled.anyIt(it.event.kind == iekDragLeave and it.dragData.isSome)
     check canceled.anyIt(it.event.kind == iekDragExit and it.dragData.isSome)
     check canceled.anyIt(it.event.kind == iekDragEnd and it.dragData.isSome)
@@ -963,6 +968,163 @@ suite "input events":
     for dispatch in canceled:
       if dispatch.dragData.isSome:
         check dispatch.dragData.get.len == 0
+      if dispatch.event.kind == iekDragEnd:
+        check dispatch.dropOperation.isNone
+
+  test "drop target negotiates a source offered operation":
+    var tree = initTree()
+    let root = tree.addBox(id = "root")
+    let source = tree.addBox(parent = some(root), id = "source")
+    let target = tree.addBox(parent = some(root), id = "target")
+    let regions = @[
+      HitRegion(node: root, rect: rect(0, 0, 140, 40), zIndex: 0),
+      HitRegion(node: source, rect: rect(10, 8, 40, 20), zIndex: 1),
+      HitRegion(node: target, rect: rect(70, 8, 40, 20), zIndex: 1)
+    ]
+    var state = initInteractionState()
+    var builder = initFormDataBuilder()
+    builder.addText("text/plain", "card-7")
+    let data = builder.finish()
+    var registry = initEventRegistry()
+    var overSeen = false
+    var dropSeen = false
+    registry.onDragOver(target, proc(event: DispatchResult): EventOutcome =
+      overSeen = true
+      check event.dragOperations == some({dgoCopy, dgoMove})
+      check event.dragData.isSome
+      check not state.acceptDropOperation(target, dgoLink)
+      check not state.acceptDropOperation(source, dgoMove)
+      check state.acceptDropOperation(target, dgoMove)
+      handledEvent()
+    )
+    registry.onDrop(target, proc(event: DispatchResult): EventOutcome =
+      dropSeen = true
+      check event.dropOperation == some(dgoMove)
+      handledEvent()
+    )
+
+    check not state.setDragOperations(source, {dgoCopy})
+    discard state.processInput(tree, regions, pointerDownEvent(vec2(12, 10)))
+    check state.setDragOperations(source, {dgoCopy, dgoMove})
+    check state.setDragData(source, data)
+    check not state.acceptDropOperation(target, dgoMove)
+    let moved = state.processInput(tree, regions, pointerMoveEvent(vec2(75, 10)))
+    check moved.anyIt(it.event.kind == iekDragStart and
+      it.dragOperations == some({dgoCopy, dgoMove}))
+    check not state.setDragOperations(source, {dgoLink})
+    discard registry.handle(moved)
+    check overSeen
+    check state.dropOperation == some(dgoMove)
+
+    let released = state.processInput(tree, regions, pointerUpEvent(vec2(75, 10)))
+    check released.anyIt(it.event.kind == iekDrop and
+      it.target == some(target) and it.dropOperation == some(dgoMove) and
+      it.dragData.isSome)
+    check released.anyIt(it.event.kind == iekDragEnd and
+      it.target == some(source) and it.dropOperation == some(dgoMove))
+    discard registry.handle(released)
+    check dropSeen
+    check state.dragOperations.isNone
+    check state.dropOperation.isNone
+
+  test "negotiated drops require current target acceptance":
+    var tree = initTree()
+    let root = tree.addBox(id = "root")
+    let source = tree.addBox(parent = some(root), id = "source")
+    let oldTarget = tree.addBox(parent = some(root), id = "old")
+    let newTarget = tree.addBox(parent = some(root), id = "new")
+    let regions = @[
+      HitRegion(node: root, rect: rect(0, 0, 160, 40), zIndex: 0),
+      HitRegion(node: source, rect: rect(10, 8, 30, 20), zIndex: 1),
+      HitRegion(node: oldTarget, rect: rect(60, 8, 30, 20), zIndex: 1),
+      HitRegion(node: newTarget, rect: rect(110, 8, 30, 20), zIndex: 1)
+    ]
+    var state = initInteractionState()
+    discard state.processInput(tree, regions, pointerDownEvent(vec2(12, 10)))
+    check state.setDragOperations(source, {dgoCopy})
+    discard state.processInput(tree, regions, pointerMoveEvent(vec2(65, 10)))
+    check state.acceptDropOperation(oldTarget, dgoCopy)
+    check state.declineDropOperation(oldTarget)
+    check state.dropOperation.isNone
+    check state.acceptDropOperation(oldTarget, dgoCopy)
+    let releasedElsewhere = state.processInput(tree, regions,
+      pointerUpEvent(vec2(115, 10)))
+    check releasedElsewhere.anyIt(it.event.kind == iekDragEnter and
+      it.target == some(newTarget))
+    check releasedElsewhere.allIt(it.event.kind != iekDrop)
+    check releasedElsewhere.anyIt(it.event.kind == iekDragEnd and
+      it.dropOperation.isNone)
+
+    discard state.processInput(tree, regions, pointerDownEvent(vec2(12, 10)))
+    check state.setDragOperations(source, {})
+    discard state.processInput(tree, regions, pointerMoveEvent(vec2(65, 10)))
+    check not state.acceptDropOperation(oldTarget, dgoCopy)
+    let emptyOffer = state.processInput(tree, regions,
+      pointerUpEvent(vec2(65, 10)))
+    check emptyOffer.allIt(it.event.kind != iekDrop)
+
+    discard state.processInput(tree, regions, pointerDownEvent(vec2(12, 10)))
+    check state.setDragOperations(source, {dgoCopy})
+    discard state.processInput(tree, regions, pointerMoveEvent(vec2(65, 10)))
+    check state.acceptDropOperation(oldTarget, dgoCopy)
+    discard state.processInput(tree, regions, pointerMoveEvent(vec2(66, 10)))
+    check state.dropOperation.isNone
+    let notRenewed = state.processInput(tree, regions,
+      pointerUpEvent(vec2(66, 10)))
+    check notRenewed.allIt(it.event.kind != iekDrop)
+
+    var builder = initFormDataBuilder()
+    builder.addText("text/plain", "card-7")
+    let data = builder.finish()
+    discard state.processInput(tree, regions, pointerDownEvent(vec2(12, 10)))
+    check state.setDragData(source, data)
+    check state.setDragOperations(source, {dgoCopy})
+    check state.clearDragOperations(source)
+    discard state.processInput(tree, regions, pointerMoveEvent(vec2(65, 10)))
+    let legacy = state.processInput(tree, regions, pointerUpEvent(vec2(65, 10)))
+    check legacy.anyIt(it.event.kind == iekDrop and
+      it.dropOperation.isNone and it.dragData.isSome)
+
+    discard state.processInput(tree, regions, pointerDownEvent(vec2(12, 10)))
+    check state.setDragData(source, data)
+    check state.setDragOperations(source, {dgoCopy})
+    state.clearDragData()
+    check state.dragData.isNone
+    check state.dragOperations == some({dgoCopy})
+    discard state.processInput(tree, regions, pointerMoveEvent(vec2(65, 10)))
+    check state.acceptDropOperation(oldTarget, dgoCopy)
+    let withoutData = state.processInput(tree, regions,
+      pointerUpEvent(vec2(65, 10)))
+    check withoutData.anyIt(it.event.kind == iekDrop and
+      it.dropOperation == some(dgoCopy) and it.dragData.isNone)
+
+  test "disabled and inert targets cannot complete a negotiated drop":
+    var tree = initTree()
+    let root = tree.addBox(id = "root")
+    let source = tree.addBox(parent = some(root), id = "source")
+    let target = tree.addBox(parent = some(root), id = "target")
+    let regions = @[
+      HitRegion(node: root, rect: rect(0, 0, 140, 40), zIndex: 0),
+      HitRegion(node: source, rect: rect(10, 8, 40, 20), zIndex: 1),
+      HitRegion(node: target, rect: rect(70, 8, 40, 20), zIndex: 1)
+    ]
+    var state = initInteractionState()
+    for inert in [false, true]:
+      discard state.processInput(tree, regions, pointerDownEvent(vec2(12, 10)))
+      check state.setDragOperations(source, {dgoMove})
+      discard state.processInput(tree, regions, pointerMoveEvent(vec2(75, 10)))
+      check state.acceptDropOperation(target, dgoMove)
+      if inert:
+        tree.setInert(target)
+      else:
+        tree.setState(target, esDisabled, true)
+      let released = state.processInput(tree, regions,
+        pointerUpEvent(vec2(75, 10)))
+      check released.allIt(it.event.kind != iekDrop)
+      check released.anyIt(it.event.kind == iekDragEnd and
+        it.dropOperation.isNone)
+      tree.setInert(target, false)
+      tree.setState(target, esDisabled, false)
 
   test "small pointer jitter keeps a click and does not start dragging":
     var tree = initTree()

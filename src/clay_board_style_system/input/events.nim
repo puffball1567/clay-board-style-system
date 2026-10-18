@@ -156,7 +156,14 @@ type
     epfFocusOwnership,
     epfFormData,
     epfMotion,
-    epfDragData
+    epfDragData,
+    epfDragOperations,
+    epfDropOperation
+
+  DragOperation* = enum
+    dgoCopy,
+    dgoMove,
+    dgoLink
 
   EventDefinition* = object
     producer*: EventDispatchMode
@@ -215,6 +222,9 @@ type
     ## and animation events remain compact on the dispatch hot path.
     formData: FormData
     dragData: FormData
+    hasDragData: bool
+    dragOperations: Option[set[DragOperation]]
+    dropOperation: Option[DragOperation]
     motionName: string
     motionElapsedSeconds: float64
     motionIteration: uint64
@@ -253,6 +263,7 @@ type
     pressedButton*: Option[int]
     dragThreshold: float32
     dragPayload: InputEventPayload
+    acceptedDropOperation: Option[DragOperation]
     focusedTarget*: Option[NodeId]
     focusSerial*: int
     hoveredTarget*: Option[NodeId]
@@ -567,6 +578,9 @@ func buildEventDefinitions(): array[InputEventKind, EventDefinition] =
     iekDragOver, iekDragStart, iekDrop
   }:
     result[kind].payload.incl epfDragData
+    result[kind].payload.incl epfDragOperations
+  for kind in {iekDrop, iekDragEnd}:
+    result[kind].payload.incl epfDropOperation
 
   template aliases(kind: InputEventKind; first, second: InputEventKind) =
     result[kind].aliases = [first, second]
@@ -650,12 +664,35 @@ proc dragData*(event: InputEvent): Option[FormData] =
   if event.kind notin {
       iekDrag, iekDragEnd, iekDragEnter, iekDragExit, iekDragLeave,
       iekDragOver, iekDragStart, iekDrop
-  } or event.payload.isNil:
+  } or event.payload.isNil or not event.payload.hasDragData:
     return none(FormData)
   some(event.payload.dragData)
 
 proc dragData*(dispatch: DispatchResult): Option[FormData] {.inline.} =
   dispatch.event.dragData()
+
+proc dragOperations*(event: InputEvent): Option[set[DragOperation]] =
+  ## `none` means the legacy unconditional drop lifecycle. `some({})`
+  ## explicitly offers no acceptable operation.
+  if event.kind notin {
+      iekDrag, iekDragEnd, iekDragEnter, iekDragExit, iekDragLeave,
+      iekDragOver, iekDragStart, iekDrop
+  } or event.payload.isNil:
+    return none(set[DragOperation])
+  event.payload.dragOperations
+
+proc dragOperations*(dispatch: DispatchResult): Option[set[DragOperation]] {.inline.} =
+  dispatch.event.dragOperations()
+
+proc dropOperation*(event: InputEvent): Option[DragOperation] =
+  ## The negotiated operation of a completed drop. A canceled or rejected
+  ## drag end, and a legacy drop without negotiation, return `none`.
+  if event.kind notin {iekDrop, iekDragEnd} or event.payload.isNil:
+    return none(DragOperation)
+  event.payload.dropOperation
+
+proc dropOperation*(dispatch: DispatchResult): Option[DragOperation] {.inline.} =
+  dispatch.event.dropOperation()
 
 proc motionEvent*(
     kind: InputEventKind;
@@ -956,6 +993,7 @@ proc initInteractionState*(): InteractionState =
     pressedButton: none(int),
     dragThreshold: dragStartThreshold,
     dragPayload: nil,
+    acceptedDropOperation: none(DragOperation),
     focusedTarget: none(NodeId),
     focusSerial: 0,
     hoveredTarget: none(NodeId),
@@ -989,18 +1027,98 @@ proc setDragData*(
   ## gesture crosses the drag threshold. Only the pressed source may arm it.
   if state.pressedTarget != some(source) or state.dragTarget.isSome:
     return false
-  state.dragPayload = InputEventPayload(dragData: data)
+  let operations =
+    if state.dragPayload.isNil: none(set[DragOperation])
+    else: state.dragPayload.dragOperations
+  state.dragPayload = InputEventPayload(
+    dragData: data,
+    hasDragData: true,
+    dragOperations: operations
+  )
   true
 
 proc clearDragData*(state: var InteractionState) =
   ## Revoke data for subsequent events. Already synthesized events retain it.
-  state.dragPayload = nil
+  if state.dragPayload.isNil:
+    return
+  let operations = state.dragPayload.dragOperations
+  state.dragPayload =
+    if operations.isSome: InputEventPayload(dragOperations: operations)
+    else: nil
+  state.acceptedDropOperation = none(DragOperation)
 
 proc dragData*(state: InteractionState): Option[FormData] =
-  if state.dragPayload.isNil:
+  if state.dragPayload.isNil or not state.dragPayload.hasDragData:
     none(FormData)
   else:
     some(state.dragPayload.dragData)
+
+proc setDragOperations*(
+    state: var InteractionState;
+    source: NodeId;
+    operations: set[DragOperation]
+): bool {.discardable.} =
+  ## Opt into negotiated drops. Call after pointer down and before drag start.
+  ## An empty offer deliberately prevents any negotiated drop.
+  if state.pressedTarget != some(source) or state.dragTarget.isSome:
+    return false
+  let data = state.dragData()
+  state.dragPayload = InputEventPayload(
+    dragData: if data.isSome: data.get else: FormData(),
+    hasDragData: data.isSome,
+    dragOperations: some(operations)
+  )
+  true
+
+proc clearDragOperations*(
+    state: var InteractionState; source: NodeId
+): bool {.discardable.} =
+  ## Return a pending drag to the legacy drop lifecycle.
+  if state.pressedTarget != some(source) or state.dragTarget.isSome:
+    return false
+  let data = state.dragData()
+  state.dragPayload =
+    if data.isSome: InputEventPayload(
+      dragData: data.get, hasDragData: true
+    )
+    else: nil
+  true
+
+proc dragOperations*(state: InteractionState): Option[set[DragOperation]] =
+  if state.dragPayload.isNil:
+    none(set[DragOperation])
+  else:
+    state.dragPayload.dragOperations
+
+proc acceptDropOperation*(
+    state: var InteractionState;
+    target: NodeId;
+    operation: DragOperation
+): bool {.discardable.} =
+  ## Called by the current drop target after handling `onDragOver`.
+  let offered = state.dragOperations()
+  if state.dragTarget.isNone or state.dragOverTarget != some(target) or
+      offered.isNone or operation notin offered.get:
+    return false
+  state.acceptedDropOperation = some(operation)
+  true
+
+proc declineDropOperation*(
+    state: var InteractionState; target: NodeId
+): bool {.discardable.} =
+  if state.dragTarget.isNone or state.dragOverTarget != some(target) or
+      state.dragOperations().isNone:
+    return false
+  state.acceptedDropOperation = none(DragOperation)
+  true
+
+proc dropOperation*(state: InteractionState): Option[DragOperation] {.inline.} =
+  state.acceptedDropOperation
+
+proc clearDragTransfer*(state: var InteractionState) =
+  ## Release data, offered operations, and the current target's acceptance.
+  state.dragPayload = nil
+  state.acceptedDropOperation = none(DragOperation)
 
 proc setFocusedTarget*(state: var InteractionState; target: Option[NodeId]): bool =
   if state.focusedTarget == target:
@@ -1551,9 +1669,20 @@ proc localForTarget(
 proc dragEvent(
     kind: InputEventKind;
     position: Option[Vec2];
-    payload: InputEventPayload
+    payload: InputEventPayload;
+    operation = none(DragOperation)
 ): InputEvent =
-  InputEvent(kind: kind, position: position, payload: payload)
+  var eventPayload = payload
+  if operation.isSome:
+    eventPayload = InputEventPayload(
+      dragData: if payload.isNil: FormData() else: payload.dragData,
+      hasDragData: not payload.isNil and payload.hasDragData,
+      dragOperations:
+        if payload.isNil: none(set[DragOperation])
+        else: payload.dragOperations,
+      dropOperation: operation
+    )
+  InputEvent(kind: kind, position: position, payload: eventPayload)
 
 proc updateDragOver(
     state: var InteractionState;
@@ -1562,6 +1691,9 @@ proc updateDragOver(
     position: Option[Vec2];
     events: var seq[DispatchResult]
 ) =
+  # A target must renew its acceptance for each drag-over sample. A release
+  # without a new sample keeps the latest accepted operation.
+  state.acceptedDropOperation = none(DragOperation)
   if target != state.dragOverTarget:
     if state.dragOverTarget.isSome:
       for kind in [iekDragLeave, iekDragExit]:
@@ -1765,7 +1897,7 @@ proc restrictToFocusScope(state: var InteractionState; tree: var Tree) =
   if hadOutsidePress:
     state.pointerDownPosition = none(Vec2)
     state.pressedButton = none(int)
-    state.clearDragData()
+    state.clearDragTransfer()
     tree.updateActiveState(none(NodeId))
 
 proc processInputImpl(
@@ -1867,7 +1999,7 @@ proc processInputImpl(
           event.position, result)
     result.add dispatch
   of iekPointerDown:
-    state.clearDragData()
+    state.clearDragTransfer()
     let targetDisabled = tree.disabledTarget(dispatch.target)
     let focusTarget =
       if blockedByFocusScope: state.focusedTarget
@@ -1902,24 +2034,32 @@ proc processInputImpl(
         event.position, result)
     let dragOverTarget = state.dragOverTarget
     let payload = state.dragPayload
+    let offered = state.dragOperations()
+    let selected = state.acceptedDropOperation
+    let canDrop = dragOverTarget.isSome and
+      tree.isValid(dragOverTarget.get) and
+      not tree.disabledTarget(dragOverTarget) and
+      not tree.isInert(dragOverTarget.get) and
+      (offered.isNone or selected.isSome)
     state.pressedTarget = none(NodeId)
     state.pointerDownPosition = none(Vec2)
     state.pressedButton = none(int)
     state.dragTarget = none(NodeId)
     state.dragOverTarget = none(NodeId)
-    state.clearDragData()
+    state.clearDragTransfer()
     tree.updateActiveState(none(NodeId))
     if dragTarget.isSome:
-      if dragOverTarget.isSome:
+      if canDrop:
         result.add DispatchResult(
           target: dragOverTarget,
           local: physicalLocal,
-          event: dragEvent(iekDrop, event.position, payload)
+          event: dragEvent(iekDrop, event.position, payload, selected)
         )
       result.add DispatchResult(
         target: dragTarget,
         local: localForTarget(regions, dragTarget, event.position),
-        event: dragEvent(iekDragEnd, event.position, payload)
+        event: dragEvent(iekDragEnd, event.position, payload,
+          if canDrop: selected else: none(DragOperation))
       )
     if dragTarget.isNone and pressed.isSome and physicalTarget == pressed and
         event.position.isSome:
@@ -1967,7 +2107,7 @@ proc processInputImpl(
     state.pressedButton = none(int)
     state.dragTarget = none(NodeId)
     state.dragOverTarget = none(NodeId)
-    state.clearDragData()
+    state.clearDragTransfer()
     tree.updateActiveState(none(NodeId))
     result.add dispatch
     if dragTarget.isSome:
