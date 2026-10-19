@@ -158,7 +158,8 @@ type
     epfMotion,
     epfDragData,
     epfDragOperations,
-    epfDropOperation
+    epfDropOperation,
+    epfDropDataEntry
 
   DragOperation* = enum
     dgoCopy,
@@ -225,6 +226,7 @@ type
     hasDragData: bool
     dragOperations: Option[set[DragOperation]]
     dropOperation: Option[DragOperation]
+    dropDataEntry: Option[FormDataEntry]
     motionName: string
     motionElapsedSeconds: float64
     motionIteration: uint64
@@ -264,6 +266,7 @@ type
     dragThreshold: float32
     dragPayload: InputEventPayload
     acceptedDropOperation: Option[DragOperation]
+    acceptedDropDataEntry: Option[FormDataEntry]
     focusedTarget*: Option[NodeId]
     focusSerial*: int
     hoveredTarget*: Option[NodeId]
@@ -581,6 +584,7 @@ func buildEventDefinitions(): array[InputEventKind, EventDefinition] =
     result[kind].payload.incl epfDragOperations
   for kind in {iekDrop, iekDragEnd}:
     result[kind].payload.incl epfDropOperation
+    result[kind].payload.incl epfDropDataEntry
 
   template aliases(kind: InputEventKind; first, second: InputEventKind) =
     result[kind].aliases = [first, second]
@@ -693,6 +697,15 @@ proc dropOperation*(event: InputEvent): Option[DragOperation] =
 
 proc dropOperation*(dispatch: DispatchResult): Option[DragOperation] {.inline.} =
   dispatch.event.dropOperation()
+
+proc dropDataEntry*(event: InputEvent): Option[FormDataEntry] =
+  ## The entry selected by a data-aware drop target, if one completed the drop.
+  if event.kind notin {iekDrop, iekDragEnd} or event.payload.isNil:
+    return none(FormDataEntry)
+  event.payload.dropDataEntry
+
+proc dropDataEntry*(dispatch: DispatchResult): Option[FormDataEntry] {.inline.} =
+  dispatch.event.dropDataEntry()
 
 proc motionEvent*(
     kind: InputEventKind;
@@ -994,6 +1007,7 @@ proc initInteractionState*(): InteractionState =
     dragThreshold: dragStartThreshold,
     dragPayload: nil,
     acceptedDropOperation: none(DragOperation),
+    acceptedDropDataEntry: none(FormDataEntry),
     focusedTarget: none(NodeId),
     focusSerial: 0,
     hoveredTarget: none(NodeId),
@@ -1046,6 +1060,7 @@ proc clearDragData*(state: var InteractionState) =
     if operations.isSome: InputEventPayload(dragOperations: operations)
     else: nil
   state.acceptedDropOperation = none(DragOperation)
+  state.acceptedDropDataEntry = none(FormDataEntry)
 
 proc dragData*(state: InteractionState): Option[FormData] =
   if state.dragPayload.isNil or not state.dragPayload.hasDragData:
@@ -1101,7 +1116,29 @@ proc acceptDropOperation*(
       offered.isNone or operation notin offered.get:
     return false
   state.acceptedDropOperation = some(operation)
+  state.acceptedDropDataEntry = none(FormDataEntry)
   true
+
+proc acceptDropDataEntry*(
+    state: var InteractionState;
+    target: NodeId;
+    operation: DragOperation;
+    name: string;
+    kind: FormDataValueKind
+): bool {.discardable.} =
+  ## Accept an offered operation only when the transfer contains a matching
+  ## field. The first matching entry is retained as the selected drop value.
+  let offered = state.dragOperations()
+  let data = state.dragData()
+  if state.dragTarget.isNone or state.dragOverTarget != some(target) or
+      offered.isNone or operation notin offered.get or data.isNone:
+    return false
+  for entry in data.get.items:
+    if entry.name == name and entry.kind == kind:
+      state.acceptedDropOperation = some(operation)
+      state.acceptedDropDataEntry = some(entry)
+      return true
+  false
 
 proc declineDropOperation*(
     state: var InteractionState; target: NodeId
@@ -1110,15 +1147,20 @@ proc declineDropOperation*(
       state.dragOperations().isNone:
     return false
   state.acceptedDropOperation = none(DragOperation)
+  state.acceptedDropDataEntry = none(FormDataEntry)
   true
 
 proc dropOperation*(state: InteractionState): Option[DragOperation] {.inline.} =
   state.acceptedDropOperation
 
+proc dropDataEntry*(state: InteractionState): Option[FormDataEntry] {.inline.} =
+  state.acceptedDropDataEntry
+
 proc clearDragTransfer*(state: var InteractionState) =
   ## Release data, offered operations, and the current target's acceptance.
   state.dragPayload = nil
   state.acceptedDropOperation = none(DragOperation)
+  state.acceptedDropDataEntry = none(FormDataEntry)
 
 proc setFocusedTarget*(state: var InteractionState; target: Option[NodeId]): bool =
   if state.focusedTarget == target:
@@ -1670,7 +1712,8 @@ proc dragEvent(
     kind: InputEventKind;
     position: Option[Vec2];
     payload: InputEventPayload;
-    operation = none(DragOperation)
+    operation = none(DragOperation);
+    entry = none(FormDataEntry)
 ): InputEvent =
   var eventPayload = payload
   if operation.isSome:
@@ -1680,7 +1723,8 @@ proc dragEvent(
       dragOperations:
         if payload.isNil: none(set[DragOperation])
         else: payload.dragOperations,
-      dropOperation: operation
+      dropOperation: operation,
+      dropDataEntry: entry
     )
   InputEvent(kind: kind, position: position, payload: eventPayload)
 
@@ -1694,6 +1738,7 @@ proc updateDragOver(
   # A target must renew its acceptance for each drag-over sample. A release
   # without a new sample keeps the latest accepted operation.
   state.acceptedDropOperation = none(DragOperation)
+  state.acceptedDropDataEntry = none(FormDataEntry)
   if target != state.dragOverTarget:
     if state.dragOverTarget.isSome:
       for kind in [iekDragLeave, iekDragExit]:
@@ -2036,6 +2081,7 @@ proc processInputImpl(
     let payload = state.dragPayload
     let offered = state.dragOperations()
     let selected = state.acceptedDropOperation
+    let selectedEntry = state.acceptedDropDataEntry
     let canDrop = dragOverTarget.isSome and
       tree.isValid(dragOverTarget.get) and
       not tree.disabledTarget(dragOverTarget) and
@@ -2053,13 +2099,15 @@ proc processInputImpl(
         result.add DispatchResult(
           target: dragOverTarget,
           local: physicalLocal,
-          event: dragEvent(iekDrop, event.position, payload, selected)
+          event: dragEvent(iekDrop, event.position, payload, selected,
+            selectedEntry)
         )
       result.add DispatchResult(
         target: dragTarget,
         local: localForTarget(regions, dragTarget, event.position),
         event: dragEvent(iekDragEnd, event.position, payload,
-          if canDrop: selected else: none(DragOperation))
+          if canDrop: selected else: none(DragOperation),
+          if canDrop: selectedEntry else: none(FormDataEntry))
       )
     if dragTarget.isNone and pressed.isSome and physicalTarget == pressed and
         event.position.isSome:

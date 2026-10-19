@@ -128,6 +128,12 @@ offered operation; `onDrop` and `onDragEnd` report it through
 `dispatch.dropOperation()`. Each `onDragOver` sample requires fresh acceptance,
 so moving or canceling cannot reuse an earlier decision. Drags without an
 operation offer keep the earlier drop behavior.
+For transfers containing several fields, a target may use
+`acceptDropDataEntry(target, dgoCopy, "image/png", fdvBlob)` to accept only when
+the offered data has that name and value kind. The first matching entry is
+available through `dispatch.dropDataEntry()` on `onDrop` and `onDragEnd`.
+Operation-only acceptance leaves that entry absent. Selection is cleared on
+the next drag-over sample, decline, cancellation, and completion.
 The candidate is a complete platform primitive above those events, not a second
 drag implementation.
 
