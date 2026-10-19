@@ -119,6 +119,15 @@ the `InteractionState` before the threshold is crossed. `data` is an immutable
 and end handlers read it with `dispatch.dragData()`; the interaction releases
 its reference on pointer up, cancellation, a new press, or source disposal.
 Events already returned to a caller keep their own snapshot.
+The source may opt into operation negotiation with
+`setDragOperations(source, {dgoCopy, dgoMove})` before drag start. A target
+checks `dispatch.dragOperations()` in `onDragOver`, then calls
+`acceptDropOperation(target, operation)` on the same `InteractionState`. The
+release produces `onDrop` only when the current physical target accepted an
+offered operation; `onDrop` and `onDragEnd` report it through
+`dispatch.dropOperation()`. Each `onDragOver` sample requires fresh acceptance,
+so moving or canceling cannot reuse an earlier decision. Drags without an
+operation offer keep the earlier drop behavior.
 The candidate is a complete platform primitive above those events, not a second
 drag implementation.
 

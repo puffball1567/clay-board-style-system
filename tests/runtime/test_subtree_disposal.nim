@@ -100,11 +100,13 @@ suite "dynamic subtree disposal":
     var dragBuilder = initFormDataBuilder()
     dragBuilder.addText("text/plain", "stale")
     check interaction.setDragData(action.container.id, dragBuilder.finish())
+    check interaction.setDragOperations(action.container.id, {dgoMove})
     interaction.hoveredTarget = some(action.container.id)
     interaction.pointerCaptureTarget = some(action.container.id)
     interaction.lastClickTarget = some(action.container.id)
     interaction.dragTarget = some(action.container.id)
     interaction.dragOverTarget = some(action.container.id)
+    check interaction.acceptDropOperation(action.container.id, dgoMove)
     interaction.scrollTarget = some(action.container.id)
     interaction.scrollbarPointerTarget = some(action.container.id)
     interaction.scrollbarDragging = true
@@ -126,6 +128,8 @@ suite "dynamic subtree disposal":
     check interaction.pointerDownPosition.isNone
     check interaction.pressedButton.isNone
     check interaction.dragData.isNone
+    check interaction.dragOperations.isNone
+    check interaction.dropOperation.isNone
     check interaction.hoveredTarget.isNone
     check interaction.pointerCaptureTarget.isNone
     check interaction.lastClickTarget.isNone
