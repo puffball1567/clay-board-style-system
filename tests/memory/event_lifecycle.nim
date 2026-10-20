@@ -56,11 +56,18 @@ proc exerciseEventLifecycle() =
       )
       doAssert interaction.setDragData(target.id, dragBuilder.finish())
       doAssert interaction.setDragOperations(target.id, {dgoCopy})
+      ui.scroll.entries.setLen(ui.tree.nodes.len)
+      ui.scroll.entries[target.id.nodeIndex] = ScrollMetrics(
+        active: true, node: some(target.id),
+        viewport: size(40, 20), content: size(40, 80),
+        enabledY: true, overscrollY: obAuto
+      )
       let dragDispatches = interaction.processInput(
-        ui.tree, regions, pointerMoveEvent(vec2(12, 2))
+        ui.tree, regions, pointerMoveEvent(vec2(12, 18)), ui.scroll
       )
       doAssert dragDispatches.len > 0
       doAssert interaction.dragData.isSome
+      doAssert interaction.dragAutoScrollTarget == some(target.id)
       doAssert interaction.acceptDropDataEntry(
         target.id, dgoCopy, "application/octet-stream", fdvBlob
       )
@@ -71,6 +78,7 @@ proc exerciseEventLifecycle() =
       doAssert interaction.dragOperations.isNone
       doAssert interaction.dropOperation.isNone
       doAssert interaction.dropDataEntry.isNone
+      doAssert interaction.dragAutoScrollTarget.isNone
       doAssert ui.events.bindings.len == 0
 
 exerciseEventLifecycle()

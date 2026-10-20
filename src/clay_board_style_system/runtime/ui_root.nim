@@ -935,6 +935,14 @@ proc clearInteractionTargets(
     if field.isSome and field.get in removed:
       field = none(NodeId)
 
+  if (interaction.dragTarget.isSome and
+      interaction.dragTarget.get in removed) or
+      (interaction.dragAutoScrollTarget.isSome and
+      interaction.dragAutoScrollTarget.get in removed):
+    for dispatch in interaction.finishDragAutoScroll(root.scroll):
+      if dispatch.target.isSome and dispatch.target.get notin removed:
+        discard root.events.handle(root.tree, dispatch)
+
   if interaction.pressedTarget.isSome and
       interaction.pressedTarget.get in removed:
     interaction.pressedTarget = none(NodeId)
