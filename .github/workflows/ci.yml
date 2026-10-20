@@ -583,7 +583,7 @@ jobs:
       matrix:
         include:
           - platform: Linux x86_64
-            os: ubuntu-latest
+            os: ubuntu-24.04
             compiler: clang-18
             memory_model: ''
             memory_label: ARC + ORC
@@ -638,11 +638,11 @@ jobs:
       matrix:
         include:
           - platform: Linux x86_64
-            os: ubuntu-latest
+            os: ubuntu-24.04
             memory_model: arc
             memory_label: ARC
           - platform: Linux x86_64
-            os: ubuntu-latest
+            os: ubuntu-24.04
             memory_model: orc
             memory_label: ORC
 
@@ -679,7 +679,7 @@ jobs:
       matrix:
         include:
           - platform: Linux x86_64
-            os: ubuntu-latest
+            os: ubuntu-24.04
             compiler: clang-18
           - platform: macOS arm64
             os: macos-latest
