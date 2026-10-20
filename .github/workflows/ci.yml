@@ -305,7 +305,7 @@ jobs:
   linux-atspi:
     name: Linux AT-SPI D-Bus integration
     needs: preflight
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     steps:
