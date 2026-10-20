@@ -708,7 +708,7 @@ suite "input events":
     check iekSubmit.eventDefinition.payload == {epfFormData}
     check iekDrop.eventDefinition.payload ==
       {epfPosition, epfButton, epfPointer, epfDragData,
-       epfDragOperations, epfDropOperation}
+       epfDragOperations, epfDropOperation, epfDropDataEntry}
     check iekPointerDown.eventDefinition.aliasCount == 2
     check iekPointerDown.eventDefinition.aliases ==
       [iekMouseDown, iekPointerDown]
@@ -961,6 +961,7 @@ suite "input events":
     check state.dragData.isNone
     check state.dragOperations.isNone
     check state.dropOperation.isNone
+    check state.dropDataEntry.isNone
     check canceled.anyIt(it.event.kind == iekDragLeave and it.dragData.isSome)
     check canceled.anyIt(it.event.kind == iekDragExit and it.dragData.isSome)
     check canceled.anyIt(it.event.kind == iekDragEnd and it.dragData.isSome)
@@ -970,6 +971,68 @@ suite "input events":
         check dispatch.dragData.get.len == 0
       if dispatch.event.kind == iekDragEnd:
         check dispatch.dropOperation.isNone
+        check dispatch.dropDataEntry.isNone
+
+  test "drop target selects a matching typed drag data entry":
+    var tree = initTree()
+    let root = tree.addBox(id = "root")
+    let source = tree.addBox(parent = some(root), id = "source")
+    let target = tree.addBox(parent = some(root), id = "target")
+    let regions = @[
+      HitRegion(node: root, rect: rect(0, 0, 140, 40), zIndex: 0),
+      HitRegion(node: source, rect: rect(10, 8, 40, 20), zIndex: 1),
+      HitRegion(node: target, rect: rect(70, 8, 40, 20), zIndex: 1)
+    ]
+    var state = initInteractionState()
+    var builder = initFormDataBuilder()
+    builder.addText("text/plain", "label")
+    builder.addBlob("image/png", newBlob([byte 1, 2, 3], "image/png"))
+    let data = builder.finish()
+
+    discard state.processInput(tree, regions, pointerDownEvent(vec2(12, 10)))
+    check state.setDragOperations(source, {dgoCopy})
+    check not state.acceptDropDataEntry(target, dgoCopy, "image/png", fdvBlob)
+    check state.setDragData(source, data)
+    discard state.processInput(tree, regions, pointerMoveEvent(vec2(75, 10)))
+    check not state.acceptDropDataEntry(source, dgoCopy, "image/png", fdvBlob)
+    check not state.acceptDropDataEntry(target, dgoMove, "image/png", fdvBlob)
+    check not state.acceptDropDataEntry(target, dgoCopy, "image/jpeg", fdvBlob)
+    check not state.acceptDropDataEntry(target, dgoCopy, "image/png", fdvText)
+    check state.dropOperation.isNone
+    check state.acceptDropDataEntry(target, dgoCopy, "image/png", fdvBlob)
+    check state.dropOperation == some(dgoCopy)
+    check state.dropDataEntry.isSome
+    check state.dropDataEntry.get.name == "image/png"
+    check state.dropDataEntry.get.kind == fdvBlob
+    check state.dropDataEntry.get.blob.readAll(3) == @[byte 1, 2, 3]
+    check state.declineDropOperation(target)
+    check state.dropDataEntry.isNone
+    check state.acceptDropDataEntry(target, dgoCopy, "image/png", fdvBlob)
+    discard state.processInput(tree, regions, pointerMoveEvent(vec2(76, 10)))
+    check state.dropDataEntry.isNone
+    check state.acceptDropDataEntry(target, dgoCopy, "image/png", fdvBlob)
+
+    let released = state.processInput(tree, regions, pointerUpEvent(vec2(76, 10)))
+    for dispatch in released:
+      if dispatch.event.kind in {iekDrop, iekDragEnd}:
+        check dispatch.dropOperation == some(dgoCopy)
+        check dispatch.dropDataEntry.isSome
+        check dispatch.dropDataEntry.get.name == "image/png"
+        check dispatch.dropDataEntry.get.kind == fdvBlob
+        check dispatch.dropDataEntry.get.blob.readAll(3) == @[byte 1, 2, 3]
+    check state.dropDataEntry.isNone
+
+    discard state.processInput(tree, regions, pointerDownEvent(vec2(12, 10)))
+    check state.setDragOperations(source, {dgoCopy})
+    check state.setDragData(source, data)
+    discard state.processInput(tree, regions, pointerMoveEvent(vec2(75, 10)))
+    check state.acceptDropDataEntry(target, dgoCopy, "image/png", fdvBlob)
+    check state.acceptDropOperation(target, dgoCopy)
+    check state.dropDataEntry.isNone
+    let operationOnly = state.processInput(tree, regions,
+      pointerUpEvent(vec2(75, 10)))
+    check operationOnly.anyIt(it.event.kind == iekDrop and
+      it.dropOperation == some(dgoCopy) and it.dropDataEntry.isNone)
 
   test "drop target negotiates a source offered operation":
     var tree = initTree()

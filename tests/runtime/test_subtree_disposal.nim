@@ -106,7 +106,10 @@ suite "dynamic subtree disposal":
     interaction.lastClickTarget = some(action.container.id)
     interaction.dragTarget = some(action.container.id)
     interaction.dragOverTarget = some(action.container.id)
-    check interaction.acceptDropOperation(action.container.id, dgoMove)
+    check interaction.acceptDropDataEntry(
+      action.container.id, dgoMove, "text/plain", fdvText
+    )
+    check interaction.dropDataEntry.isSome
     interaction.scrollTarget = some(action.container.id)
     interaction.scrollbarPointerTarget = some(action.container.id)
     interaction.scrollbarDragging = true
@@ -130,6 +133,7 @@ suite "dynamic subtree disposal":
     check interaction.dragData.isNone
     check interaction.dragOperations.isNone
     check interaction.dropOperation.isNone
+    check interaction.dropDataEntry.isNone
     check interaction.hoveredTarget.isNone
     check interaction.pointerCaptureTarget.isNone
     check interaction.lastClickTarget.isNone

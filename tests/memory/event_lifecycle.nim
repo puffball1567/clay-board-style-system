@@ -61,12 +61,16 @@ proc exerciseEventLifecycle() =
       )
       doAssert dragDispatches.len > 0
       doAssert interaction.dragData.isSome
-      doAssert interaction.acceptDropOperation(target.id, dgoCopy)
+      doAssert interaction.acceptDropDataEntry(
+        target.id, dgoCopy, "application/octet-stream", fdvBlob
+      )
+      doAssert interaction.dropDataEntry.isSome
 
       doAssert ui.disposeSubtree(host, interaction)
       doAssert interaction.dragData.isNone
       doAssert interaction.dragOperations.isNone
       doAssert interaction.dropOperation.isNone
+      doAssert interaction.dropDataEntry.isNone
       doAssert ui.events.bindings.len == 0
 
 exerciseEventLifecycle()
