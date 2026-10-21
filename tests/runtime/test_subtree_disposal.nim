@@ -179,6 +179,63 @@ suite "dynamic subtree disposal":
     check styles.styles[replacement.id.nodeIndex].layout.width.isNone
     check styles.styles[replacement.id.nodeIndex].layout.height == some(44.0'f32)
 
+  test "disposing a keyboard drag source leaves its surviving target":
+    let ui = initUiRoot()
+    let app = ui.box()
+    let source = ui.box(parent = some(app))
+    let target = ui.box(parent = some(app))
+    source.setFocusable()
+    target.setFocusable()
+    var interaction = initInteractionState()
+    var leaves = 0
+    var exits = 0
+    target.onDragLeave = proc(event: DispatchResult): EventOutcome =
+      check event.dragInputMethod == some(dimKeyboard)
+      inc leaves
+      handledEvent()
+    target.onDragExit = proc(event: DispatchResult): EventOutcome =
+      inc exits
+      handledEvent()
+
+    check ui.setFocus(interaction, some(source.id))
+    check interaction.startKeyboardDrag(ui.tree, source.id, {dgoMove}).isSome
+    check ui.setFocus(interaction, some(target.id))
+    discard interaction.advanceKeyboardDrag(ui.tree)
+    check interaction.acceptDropOperation(target.id, dgoMove)
+
+    check ui.disposeSubtree(source, interaction)
+    check leaves == 1
+    check exits == 1
+    check not interaction.keyboardDragging
+    check interaction.dragData.isNone
+    check interaction.dragOperations.isNone
+    check interaction.dropOperation.isNone
+    check interaction.dragOverTarget.isNone
+    check interaction.finishKeyboardDrag(ui.tree).len == 0
+
+  test "disposing a keyboard drop target clears its acceptance":
+    let ui = initUiRoot()
+    let app = ui.box()
+    let source = ui.box(parent = some(app))
+    let target = ui.box(parent = some(app))
+    source.setFocusable()
+    target.setFocusable()
+    var interaction = initInteractionState()
+
+    check ui.setFocus(interaction, some(source.id))
+    check interaction.startKeyboardDrag(ui.tree, source.id, {dgoCopy}).isSome
+    check ui.setFocus(interaction, some(target.id))
+    discard interaction.advanceKeyboardDrag(ui.tree)
+    check interaction.acceptDropOperation(target.id, dgoCopy)
+
+    check ui.disposeSubtree(target, interaction)
+    check interaction.keyboardDragging
+    check interaction.dragOverTarget.isNone
+    check interaction.dropOperation.isNone
+    let completed = interaction.finishKeyboardDrag(ui.tree)
+    check completed.len == 1
+    check completed[0].event.kind == iekDragEnd
+
   test "disposed declarative parents cannot capture later nodes":
     let ui = initUiRoot()
     let app = ui.box()

@@ -708,7 +708,8 @@ suite "input events":
     check iekSubmit.eventDefinition.payload == {epfFormData}
     check iekDrop.eventDefinition.payload ==
       {epfPosition, epfButton, epfPointer, epfDragData,
-       epfDragOperations, epfDropOperation, epfDropDataEntry}
+       epfDragOperations, epfDropOperation, epfDropDataEntry,
+       epfDragInputMethod}
     check iekPointerDown.eventDefinition.aliasCount == 2
     check iekPointerDown.eventDefinition.aliases ==
       [iekMouseDown, iekPointerDown]
@@ -881,6 +882,12 @@ suite "input events":
       iekDrop,
       iekDragEnd
     ]
+    for dispatch in move & up:
+      if dispatch.event.kind in {
+          iekDragStart, iekDrag, iekDragEnter, iekDragOver,
+          iekDrop, iekDragEnd
+      }:
+        check dispatch.dragInputMethod == some(dimPointer)
     check dragLocal.isSome
     check dragLocal.get.x == 65
     check dragLocal.get.y == 2
@@ -1033,6 +1040,109 @@ suite "input events":
       pointerUpEvent(vec2(75, 10)))
     check operationOnly.anyIt(it.event.kind == iekDrop and
       it.dropOperation == some(dgoCopy) and it.dropDataEntry.isNone)
+
+  test "keyboard drag follows focus and completes an accepted typed drop":
+    var tree = initTree()
+    let root = tree.addBox(id = "root")
+    let source = tree.addBox(parent = some(root), id = "source")
+    let target = tree.addBox(parent = some(root), id = "target")
+    var state = initInteractionState()
+    var builder = initFormDataBuilder()
+    builder.addText("text/plain", "card-9")
+    let data = builder.finish()
+    check state.startKeyboardDrag(tree, source, {dgoMove}, some(data)).isNone
+    discard state.setFocusedTarget(some(source))
+    let started = state.startKeyboardDrag(tree, source, {dgoMove}, some(data))
+    check started.isSome
+    check started.get.event.kind == iekDragStart
+    check started.get.dragInputMethod == some(dimKeyboard)
+    check started.get.dragData.isSome
+    check started.get.event.position.isNone
+    check state.keyboardDragging
+    check state.startKeyboardDrag(tree, source, {dgoCopy}).isNone
+
+    discard state.setFocusedTarget(some(target))
+    var registry = initEventRegistry()
+    registry.onDragOver(target, proc(event: DispatchResult): EventOutcome =
+      check event.dragInputMethod == some(dimKeyboard)
+      check event.dragOperations == some({dgoMove})
+      check state.acceptDropDataEntry(
+        target, dgoMove, "text/plain", fdvText
+      )
+      handledEvent()
+    )
+    let moved = state.advanceKeyboardDrag(tree)
+    check moved.mapIt(it.event.kind) ==
+      @[iekDrag, iekDragEnter, iekDragOver]
+    discard registry.handle(moved)
+    let completed = state.finishKeyboardDrag(tree)
+    check completed.mapIt(it.event.kind) == @[iekDrop, iekDragEnd]
+    check completed[0].target == some(target)
+    check completed[1].target == some(source)
+    for dispatch in completed:
+      check dispatch.dragInputMethod == some(dimKeyboard)
+      check dispatch.dropOperation == some(dgoMove)
+      check dispatch.dropDataEntry.isSome
+      check dispatch.dropDataEntry.get.text == "card-9"
+    check not state.keyboardDragging
+    check state.dragData.isNone
+    check state.dragOperations.isNone
+    check state.dropOperation.isNone
+    check state.finishKeyboardDrag(tree).len == 0
+
+  test "keyboard drag rejects stale focus and pointer input cancels it":
+    var tree = initTree()
+    let root = tree.addBox(id = "root")
+    let source = tree.addBox(parent = some(root), id = "source")
+    let target = tree.addBox(parent = some(root), id = "target")
+    let regions = @[
+      HitRegion(node: root, rect: rect(0, 0, 120, 40), zIndex: 0),
+      HitRegion(node: source, rect: rect(5, 5, 40, 30), zIndex: 1),
+      HitRegion(node: target, rect: rect(70, 5, 40, 30), zIndex: 1)
+    ]
+    var state = initInteractionState()
+    discard state.setFocusedTarget(some(source))
+    check state.startKeyboardDrag(tree, source, {dgoCopy}).isSome
+    discard state.setFocusedTarget(some(target))
+    discard state.advanceKeyboardDrag(tree)
+    check state.acceptDropOperation(target, dgoCopy)
+    discard state.setFocusedTarget(some(source))
+    let stale = state.finishKeyboardDrag(tree)
+    check stale.len == 1
+    check stale[0].event.kind == iekDragEnd
+    check stale[0].dropOperation.isNone
+
+    check state.startKeyboardDrag(tree, source, {dgoCopy}).isSome
+    discard state.setFocusedTarget(some(target))
+    discard state.advanceKeyboardDrag(tree)
+    check state.acceptDropOperation(target, dgoCopy)
+    let interrupted = state.processInput(
+      tree, regions, pointerDownEvent(vec2(75, 10))
+    )
+    check interrupted.anyIt(it.event.kind == iekDragLeave and
+      it.dragInputMethod == some(dimKeyboard))
+    check interrupted.anyIt(it.event.kind == iekDragEnd and
+      it.dropOperation.isNone and it.dragInputMethod == some(dimKeyboard))
+    check interrupted.anyIt(it.event.kind == iekPointerDown)
+    check interrupted.allIt(it.event.kind != iekDrop)
+    check not state.keyboardDragging
+    check state.dragOperations.isNone
+    discard state.processInput(tree, regions, pointerUpEvent(vec2(75, 10)))
+
+    tree.setInert(target)
+    discard state.setFocusedTarget(some(source))
+    check state.startKeyboardDrag(tree, source, {dgoCopy}).isSome
+    discard state.setFocusedTarget(some(target))
+    let inert = state.advanceKeyboardDrag(tree)
+    check inert.allIt(it.event.kind != iekDragOver)
+    check state.finishKeyboardDrag(tree).allIt(it.event.kind != iekDrop)
+
+    discard state.setFocusedTarget(some(source))
+    check state.startKeyboardDrag(tree, source, {dgoCopy}).isSome
+    tree.addState(source, esDisabled)
+    let disabledSource = state.advanceKeyboardDrag(tree)
+    check disabledSource.anyIt(it.event.kind == iekDragEnd)
+    check not state.keyboardDragging
 
   test "drop target negotiates a source offered operation":
     var tree = initTree()

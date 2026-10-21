@@ -935,6 +935,12 @@ proc clearInteractionTargets(
     if field.isSome and field.get in removed:
       field = none(NodeId)
 
+  if interaction.keyboardDragging and interaction.dragTarget.isSome and
+      interaction.dragTarget.get in removed:
+    for dispatch in interaction.cancelKeyboardDrag():
+      if dispatch.target.isSome and dispatch.target.get notin removed:
+        discard root.events.handle(root.tree, dispatch)
+
   if (interaction.dragTarget.isSome and
       interaction.dragTarget.get in removed) or
       (interaction.dragAutoScrollTarget.isSome and
@@ -949,6 +955,9 @@ proc clearInteractionTargets(
     interaction.pointerDownPosition = none(Vec2)
     interaction.pressedButton = none(int)
     interaction.clearDragTransfer()
+  if interaction.dragOverTarget.isSome and
+      interaction.dragOverTarget.get in removed:
+    discard interaction.declineDropOperation(interaction.dragOverTarget.get)
   clearTarget(interaction.hoveredTarget)
   clearTarget(interaction.pointerCaptureTarget)
   clearTarget(interaction.lastClickTarget)

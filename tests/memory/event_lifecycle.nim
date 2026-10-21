@@ -81,4 +81,27 @@ proc exerciseEventLifecycle() =
       doAssert interaction.dragAutoScrollTarget.isNone
       doAssert ui.events.bindings.len == 0
 
+    if iteration mod 5 == 0:
+      let ui = initUiRoot()
+      let host = ui.box()
+      let source = ui.box(parent = some(host))
+      let target = ui.box(parent = some(host))
+      var interaction = initInteractionState()
+      var dragBuilder = initFormDataBuilder()
+      dragBuilder.addBlob("application/octet-stream", newBlob([byte 4, 5, 6]))
+      discard interaction.setFocusedTarget(some(source.id))
+      doAssert interaction.startKeyboardDrag(
+        ui.tree, source.id, {dgoCopy}, some(dragBuilder.finish())
+      ).isSome
+      discard interaction.setFocusedTarget(some(target.id))
+      doAssert interaction.advanceKeyboardDrag(ui.tree).len > 0
+      doAssert interaction.acceptDropDataEntry(
+        target.id, dgoCopy, "application/octet-stream", fdvBlob
+      )
+      doAssert ui.disposeSubtree(source, interaction)
+      doAssert not interaction.keyboardDragging
+      doAssert interaction.dragData.isNone
+      doAssert interaction.dragOperations.isNone
+      doAssert interaction.dropDataEntry.isNone
+
 exerciseEventLifecycle()
