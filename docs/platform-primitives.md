@@ -142,6 +142,16 @@ pixels per pointer sample; `setDragAutoScroll(margin, step)` adjusts them, and
 zero disables the behavior. Leaving the edge, releasing, canceling, or removing
 the drag source ends the scroll session. This path changes retained scroll
 offsets without recomputing layout for each pointer sample.
+Keyboard-driven drags use the same operation and typed-data negotiation. A host
+maps its drag command to `startKeyboardDrag` on the focused source, moves focus
+with the normal navigation system, and calls `advanceKeyboardDrag` to dispatch
+`onDragEnter`/`onDragOver` to the focused target. After the target accepts an
+offered operation, `finishKeyboardDrag` produces `onDrop` and `onDragEnd`;
+`cancelKeyboardDrag` produces leave and end events without a drop. Drag events
+report `dimKeyboard` through `dispatch.dragInputMethod()`. Pointer presses or
+releases cancel a keyboard drag before starting their own gesture. The host
+chooses key bindings and accessibility announcements for its platform.
+
 The candidate is a complete platform primitive above those events, not a second
 drag implementation.
 

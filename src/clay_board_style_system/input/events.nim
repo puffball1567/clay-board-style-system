@@ -159,12 +159,17 @@ type
     epfDragData,
     epfDragOperations,
     epfDropOperation,
-    epfDropDataEntry
+    epfDropDataEntry,
+    epfDragInputMethod
 
   DragOperation* = enum
     dgoCopy,
     dgoMove,
     dgoLink
+
+  DragInputMethod* = enum
+    dimPointer,
+    dimKeyboard
 
   EventDefinition* = object
     producer*: EventDispatchMode
@@ -227,6 +232,7 @@ type
     dragOperations: Option[set[DragOperation]]
     dropOperation: Option[DragOperation]
     dropDataEntry: Option[FormDataEntry]
+    dragInputMethod: DragInputMethod
     motionName: string
     motionElapsedSeconds: float64
     motionIteration: uint64
@@ -267,6 +273,7 @@ type
     dragAutoScrollMargin: float32
     dragAutoScrollStep: float32
     dragAutoScrollTarget*: Option[NodeId]
+    keyboardDragActive: bool
     dragPayload: InputEventPayload
     acceptedDropOperation: Option[DragOperation]
     acceptedDropDataEntry: Option[FormDataEntry]
@@ -587,6 +594,7 @@ func buildEventDefinitions(): array[InputEventKind, EventDefinition] =
   }:
     result[kind].payload.incl epfDragData
     result[kind].payload.incl epfDragOperations
+    result[kind].payload.incl epfDragInputMethod
   for kind in {iekDrop, iekDragEnd}:
     result[kind].payload.incl epfDropOperation
     result[kind].payload.incl epfDropDataEntry
@@ -692,6 +700,17 @@ proc dragOperations*(event: InputEvent): Option[set[DragOperation]] =
 
 proc dragOperations*(dispatch: DispatchResult): Option[set[DragOperation]] {.inline.} =
   dispatch.event.dragOperations()
+
+proc dragInputMethod*(event: InputEvent): Option[DragInputMethod] =
+  if event.kind notin {
+      iekDrag, iekDragEnd, iekDragEnter, iekDragExit, iekDragLeave,
+      iekDragOver, iekDragStart, iekDrop
+  }:
+    return none(DragInputMethod)
+  some(if event.payload.isNil: dimPointer else: event.payload.dragInputMethod)
+
+proc dragInputMethod*(dispatch: DispatchResult): Option[DragInputMethod] {.inline.} =
+  dispatch.event.dragInputMethod()
 
 proc dropOperation*(event: InputEvent): Option[DragOperation] =
   ## The negotiated operation of a completed drop. A canceled or rejected
@@ -1013,6 +1032,7 @@ proc initInteractionState*(): InteractionState =
     dragAutoScrollMargin: dragAutoScrollMargin,
     dragAutoScrollStep: dragAutoScrollStep,
     dragAutoScrollTarget: none(NodeId),
+    keyboardDragActive: false,
     dragPayload: nil,
     acceptedDropOperation: none(DragOperation),
     acceptedDropDataEntry: none(FormDataEntry),
@@ -1076,7 +1096,10 @@ proc clearDragData*(state: var InteractionState) =
     return
   let operations = state.dragPayload.dragOperations
   state.dragPayload =
-    if operations.isSome: InputEventPayload(dragOperations: operations)
+    if operations.isSome: InputEventPayload(
+      dragOperations: operations,
+      dragInputMethod: state.dragPayload.dragInputMethod
+    )
     else: nil
   state.acceptedDropOperation = none(DragOperation)
   state.acceptedDropDataEntry = none(FormDataEntry)
@@ -1174,6 +1197,9 @@ proc dropOperation*(state: InteractionState): Option[DragOperation] {.inline.} =
 
 proc dropDataEntry*(state: InteractionState): Option[FormDataEntry] {.inline.} =
   state.acceptedDropDataEntry
+
+proc keyboardDragging*(state: InteractionState): bool {.inline.} =
+  state.keyboardDragActive
 
 proc clearDragTransfer*(state: var InteractionState) =
   ## Release data, offered operations, and the current target's acceptance.
@@ -1743,7 +1769,9 @@ proc dragEvent(
         if payload.isNil: none(set[DragOperation])
         else: payload.dragOperations,
       dropOperation: operation,
-      dropDataEntry: entry
+      dropDataEntry: entry,
+      dragInputMethod:
+        if payload.isNil: dimPointer else: payload.dragInputMethod
     )
   InputEvent(kind: kind, position: position, payload: eventPayload)
 
@@ -1790,6 +1818,116 @@ proc disabledTarget(tree: Tree; target: Option[NodeId]): bool =
       return true
     current = tree.nodes[id.nodeIndex].parent
   false
+
+proc cancelKeyboardDrag*(state: var InteractionState): seq[DispatchResult] =
+  ## Cancel an active keyboard drag and retain its immutable payload on the
+  ## returned events, even after the interaction releases it.
+  if not state.keyboardDragActive:
+    return
+  let source = state.dragTarget
+  let payload = state.dragPayload
+  state.updateDragOver(none(NodeId), none(Vec2), none(Vec2), result)
+  state.keyboardDragActive = false
+  state.dragTarget = none(NodeId)
+  state.dragOverTarget = none(NodeId)
+  state.clearDragTransfer()
+  if source.isSome:
+    result.add DispatchResult(
+      target: source,
+      local: none(Vec2),
+      event: dragEvent(iekDragEnd, none(Vec2), payload)
+    )
+
+proc startKeyboardDrag*(
+    state: var InteractionState;
+    tree: Tree;
+    source: NodeId;
+    operations: set[DragOperation];
+    data = none(FormData)
+): Option[DispatchResult] =
+  ## Begin a drag from the focused source. The host maps its chosen keyboard
+  ## command to this API, then dispatches the returned DragStart event.
+  if state.keyboardDragActive or state.dragTarget.isSome or
+      state.pressedTarget.isSome or state.focusedTarget != some(source) or
+      not tree.isValid(source) or not tree.isWithinFocusScope(source) or
+      tree.isInert(source) or tree.disabledTarget(some(source)):
+    return none(DispatchResult)
+  state.dragPayload = InputEventPayload(
+    dragData: if data.isSome: data.get else: FormData(),
+    hasDragData: data.isSome,
+    dragOperations: some(operations),
+    dragInputMethod: dimKeyboard
+  )
+  state.keyboardDragActive = true
+  state.dragTarget = some(source)
+  state.dragOverTarget = none(NodeId)
+  some(DispatchResult(
+    target: some(source),
+    local: none(Vec2),
+    event: dragEvent(iekDragStart, none(Vec2), state.dragPayload)
+  ))
+
+proc advanceKeyboardDrag*(
+    state: var InteractionState; tree: Tree
+): seq[DispatchResult] =
+  ## Re-evaluate the focused target after keyboard focus navigation. The
+  ## target accepts an operation while handling the returned DragOver event.
+  if not state.keyboardDragActive:
+    return
+  let source = state.dragTarget
+  if source.isNone or not tree.isValid(source.get) or
+      not tree.isWithinFocusScope(source.get) or tree.isInert(source.get) or
+      tree.disabledTarget(source):
+    return state.cancelKeyboardDrag()
+  var target = state.focusedTarget
+  if target.isSome and (not tree.isValid(target.get) or
+      not tree.isWithinFocusScope(target.get) or tree.isInert(target.get) or
+      tree.disabledTarget(target)):
+    target = none(NodeId)
+  result.add DispatchResult(
+    target: source,
+    local: none(Vec2),
+    event: dragEvent(iekDrag, none(Vec2), state.dragPayload)
+  )
+  state.updateDragOver(target, none(Vec2), none(Vec2), result)
+
+proc finishKeyboardDrag*(
+    state: var InteractionState; tree: Tree
+): seq[DispatchResult] =
+  ## Complete only when the current focused target accepted an offered
+  ## operation on its latest DragOver event.
+  if not state.keyboardDragActive:
+    return
+  let source = state.dragTarget
+  if source.isNone or not tree.isValid(source.get) or
+      not tree.isWithinFocusScope(source.get) or tree.isInert(source.get) or
+      tree.disabledTarget(source):
+    return state.cancelKeyboardDrag()
+  let target = state.dragOverTarget
+  let operation = state.acceptedDropOperation
+  let selectedEntry = state.acceptedDropDataEntry
+  let payload = state.dragPayload
+  let canDrop = target.isSome and target == state.focusedTarget and
+    tree.isValid(target.get) and tree.isWithinFocusScope(target.get) and
+    not tree.isInert(target.get) and not tree.disabledTarget(target) and
+    operation.isSome
+  state.keyboardDragActive = false
+  state.dragTarget = none(NodeId)
+  state.dragOverTarget = none(NodeId)
+  state.clearDragTransfer()
+  if canDrop:
+    result.add DispatchResult(
+      target: target,
+      local: none(Vec2),
+      event: dragEvent(iekDrop, none(Vec2), payload, operation, selectedEntry)
+    )
+  result.add DispatchResult(
+    target: source,
+    local: none(Vec2),
+    event: dragEvent(iekDragEnd, none(Vec2), payload,
+      if canDrop: operation else: none(DragOperation),
+      if canDrop: selectedEntry else: none(FormDataEntry))
+  )
 
 proc exceededDragThreshold(
     start, current: Option[Vec2]; threshold: float32
@@ -2066,6 +2204,14 @@ proc processInputImpl(
     return
   else:
     discard
+
+  if state.keyboardDragActive and
+      (event.kind in {iekPointerDown, iekPointerUp, iekPointerCancel} or
+      state.dragTarget.isNone or not tree.isValid(state.dragTarget.get) or
+      not tree.isWithinFocusScope(state.dragTarget.get) or
+      tree.isInert(state.dragTarget.get) or
+      tree.disabledTarget(state.dragTarget)):
+    result.add state.cancelKeyboardDrag()
 
   state.restrictToFocusScope(tree)
   if scroll != nil and (state.dragTarget.isNone or
