@@ -86,18 +86,27 @@ proc exerciseEventLifecycle() =
       let host = ui.box()
       let source = ui.box(parent = some(host))
       let target = ui.box(parent = some(host))
+      source.setFocusable()
+      target.setFocusable()
       var interaction = initInteractionState()
+      let targetId = target.id
+      target.onDragOver = proc(event: DispatchResult): EventOutcome =
+        doAssert interaction.acceptDropDataEntry(
+          targetId, dgoCopy, "application/octet-stream", fdvBlob
+        )
+        handledEvent()
       var dragBuilder = initFormDataBuilder()
       dragBuilder.addBlob("application/octet-stream", newBlob([byte 4, 5, 6]))
-      discard interaction.setFocusedTarget(some(source.id))
-      doAssert interaction.startKeyboardDrag(
-        ui.tree, source.id, {dgoCopy}, some(dragBuilder.finish())
-      ).isSome
-      discard interaction.setFocusedTarget(some(target.id))
-      doAssert interaction.advanceKeyboardDrag(ui.tree).len > 0
-      doAssert interaction.acceptDropDataEntry(
-        target.id, dgoCopy, "application/octet-stream", fdvBlob
+      doAssert ui.setFocus(interaction, some(source.id))
+      doAssert ui.handleKeyboardDragKey(
+        interaction, keyDownEvent(" "), source.id,
+        {dgoCopy}, some(dragBuilder.finish())
       )
+      doAssert ui.handleKeyboardDragKey(
+        interaction, keyDownEvent("Tab"), source.id, {dgoCopy}
+      )
+      doAssert interaction.focusedTarget == some(target.id)
+      doAssert interaction.dropDataEntry.isSome
       doAssert ui.disposeSubtree(source, interaction)
       doAssert not interaction.keyboardDragging
       doAssert interaction.dragData.isNone
