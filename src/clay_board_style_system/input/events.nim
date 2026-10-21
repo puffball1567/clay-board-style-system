@@ -1,5 +1,5 @@
 import std/[math, options, sets, tables]
-import ../core/[dirty_domain, geometry, node]
+import ../core/[computed_style, dirty_domain, geometry, node]
 import ../data/form_data
 import ../hit/hit_test
 import ../layout/scroll_state
@@ -264,6 +264,9 @@ type
     pointerDownPosition*: Option[Vec2]
     pressedButton*: Option[int]
     dragThreshold: float32
+    dragAutoScrollMargin: float32
+    dragAutoScrollStep: float32
+    dragAutoScrollTarget*: Option[NodeId]
     dragPayload: InputEventPayload
     acceptedDropOperation: Option[DragOperation]
     acceptedDropDataEntry: Option[FormDataEntry]
@@ -313,6 +316,8 @@ type
 
 const maxPasteEventBytes* = 8_192
 const dragStartThreshold* = 4.0'f32
+const dragAutoScrollMargin* = 24.0'f32
+const dragAutoScrollStep* = 12.0'f32
 
 proc ignoredEvent*(): EventOutcome =
   EventOutcome()
@@ -1005,6 +1010,9 @@ proc initInteractionState*(): InteractionState =
     pressedTarget: none(NodeId),
     pressedButton: none(int),
     dragThreshold: dragStartThreshold,
+    dragAutoScrollMargin: dragAutoScrollMargin,
+    dragAutoScrollStep: dragAutoScrollStep,
+    dragAutoScrollTarget: none(NodeId),
     dragPayload: nil,
     acceptedDropOperation: none(DragOperation),
     acceptedDropDataEntry: none(FormDataEntry),
@@ -1033,6 +1041,17 @@ proc setDragStartDistance*(state: var InteractionState; distance: float32) =
   if not (distance > 0 and distance < Inf.float32):
     raise newException(ValueError, "drag start distance must be finite and positive")
   state.dragThreshold = distance
+
+proc setDragAutoScroll*(
+    state: var InteractionState; margin, step: float32
+) =
+  ## Set the edge band and scroll distance per drag pointer sample in layout
+  ## pixels. Zero for either value disables automatic scrolling.
+  if not (margin >= 0 and margin < Inf.float32 and
+      step >= 0 and step < Inf.float32):
+    raise newException(ValueError, "drag auto-scroll values must be finite and nonnegative")
+  state.dragAutoScrollMargin = margin
+  state.dragAutoScrollStep = step
 
 proc setDragData*(
     state: var InteractionState; source: NodeId; data: FormData
@@ -1809,6 +1828,92 @@ proc scrollDispatch(target: NodeId): DispatchResult =
     event: InputEvent(kind: iekScroll)
   )
 
+proc finishDragAutoScroll*(
+    state: var InteractionState; scroll: var ScrollState
+): seq[DispatchResult] =
+  ## End a drag's scroll session, including when its source is disposed.
+  if state.dragAutoScrollTarget.isSome:
+    let target = state.dragAutoScrollTarget.get
+    state.dragAutoScrollTarget = none(NodeId)
+    if scroll.metricsFor(target).isSome:
+      discard scroll.setScrolling(target, false)
+      result.add DispatchResult(
+        target: some(target),
+        local: none(Vec2),
+        event: InputEvent(kind: iekScrollEnd)
+      )
+
+proc dragEdgeDelta(
+    point: Vec2; viewport: Rect; margin, step: float32
+): Vec2 =
+  if margin <= 0 or step <= 0 or viewport.w <= 0 or viewport.h <= 0 or
+      point.x < viewport.x or point.x >= viewport.x + viewport.w or
+      point.y < viewport.y or point.y >= viewport.y + viewport.h:
+    return vec2(0, 0)
+  let edgeX = min(margin, viewport.w * 0.5'f32)
+  let edgeY = min(margin, viewport.h * 0.5'f32)
+  if point.x < viewport.x + edgeX:
+    result.x = -step
+  elif point.x > viewport.x + viewport.w - edgeX:
+    result.x = step
+  if point.y < viewport.y + edgeY:
+    result.y = -step
+  elif point.y > viewport.y + viewport.h - edgeY:
+    result.y = step
+
+proc updateDragAutoScroll(
+    state: var InteractionState;
+    tree: Tree;
+    regions: openArray[HitRegion];
+    target: Option[NodeId];
+    position: Option[Vec2];
+    scroll: var ScrollState;
+    output: var seq[DispatchResult]
+) =
+  if state.dragTarget.isSome and target.isSome and position.isSome and
+      state.dragAutoScrollMargin > 0 and state.dragAutoScrollStep > 0 and
+      tree.isValid(target.get) and not tree.isInert(target.get) and
+      not tree.disabledTarget(target):
+    var current = target
+    while current.isSome:
+      let id = current.get
+      if not tree.isValid(id):
+        break
+      let metrics = scroll.metricsFor(id)
+      if metrics.isSome:
+        for region in regions:
+          if region.node != id or region.kind != hrContent:
+            continue
+          var edgePoint = position.get
+          var viewport = region.rect
+          if region.shape.isSome and
+              not region.shape.get.transform.isIdentity and
+              region.shape.get.inverseTransform.isSome:
+            edgePoint = region.shape.get.inverseTransform.get.transformPoint(
+              edgePoint
+            )
+            viewport = region.shape.get.source
+          let delta = dragEdgeDelta(edgePoint, viewport,
+            state.dragAutoScrollMargin, state.dragAutoScrollStep)
+          if delta.x == 0 and delta.y == 0:
+            break
+          if scroll.scrollBy(id, delta):
+            if state.dragAutoScrollTarget != some(id):
+              output.add state.finishDragAutoScroll(scroll)
+            state.dragAutoScrollTarget = some(id)
+            output.add scrollDispatch(id)
+            return
+          let item = metrics.get
+          if (delta.x != 0 and item.enabledX and
+              item.overscrollX != obAuto) or
+              (delta.y != 0 and item.enabledY and
+              item.overscrollY != obAuto):
+            output.add state.finishDragAutoScroll(scroll)
+            return
+          break
+      current = tree.nodes[id.nodeIndex].parent
+  output.add state.finishDragAutoScroll(scroll)
+
 proc updateScrollbarDrag(
     state: InteractionState;
     position: Vec2;
@@ -1963,6 +2068,9 @@ proc processInputImpl(
     discard
 
   state.restrictToFocusScope(tree)
+  if scroll != nil and (state.dragTarget.isNone or
+      event.kind in {iekPointerDown, iekPointerUp, iekPointerCancel}):
+    result.add state.finishDragAutoScroll(scroll[])
 
   var hit =
     if event.position.isSome: hitTest(regions, event.position.get)
@@ -2042,6 +2150,9 @@ proc processInputImpl(
         )
         state.updateDragOver(physicalTarget, physicalLocal,
           event.position, result)
+        if scroll != nil:
+          state.updateDragAutoScroll(tree, regions, physicalTarget,
+            event.position, scroll[], result)
     result.add dispatch
   of iekPointerDown:
     state.clearDragTransfer()

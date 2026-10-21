@@ -1,4 +1,4 @@
-import std/[math, options, unittest]
+import std/[math, options, sequtils, unittest]
 
 import clay_board_style_system
 import clay_board_style_system/generated/default_properties
@@ -368,6 +368,137 @@ suite "retained scroll state":
     check secondWheel[0].event.kind == iekWheel
     check secondWheel[1].target == some(outer)
     check secondWheel[1].event.kind == iekScroll
+
+  test "dragging near a viewport edge scrolls and ends its scroll session":
+    var tree = initTree()
+    let viewport = tree.addBox(id = "viewport")
+    let source = tree.addBox(parent = some(viewport), id = "source")
+    let target = tree.addBox(parent = some(viewport), id = "target")
+    let regions = @[
+      HitRegion(node: viewport, rect: rect(0, 0, 100, 100), zIndex: 0),
+      HitRegion(node: target, rect: rect(0, 0, 100, 100), zIndex: 1),
+      HitRegion(node: source, rect: rect(5, 5, 20, 20), zIndex: 2)
+    ]
+    var scroll = initScrollState()
+    scroll.entries.setLen(tree.nodes.len)
+    scroll.entries[viewport.nodeIndex] = ScrollMetrics(
+      active: true, node: some(viewport),
+      viewport: size(100, 100), content: size(100, 180),
+      enabledY: true, overscrollY: obAuto
+    )
+    var input = initInteractionState()
+    discard input.processInput(tree, regions, pointerDownEvent(vec2(10, 10)), scroll)
+    let moved = input.processInput(
+      tree, regions, pointerMoveEvent(vec2(50, 90)), scroll
+    )
+    check input.dragTarget == some(source)
+    check input.dragAutoScrollTarget == some(viewport)
+    check scroll.scrollOffset(viewport) == vec2(0, dragAutoScrollStep)
+    check moved.anyIt(it.event.kind == iekScroll and it.target == some(viewport))
+
+    let centered = input.processInput(
+      tree, regions, pointerMoveEvent(vec2(50, 50)), scroll
+    )
+    check centered.anyIt(it.event.kind == iekScrollEnd and
+      it.target == some(viewport))
+    check input.dragAutoScrollTarget.isNone
+    check not scroll.metricsFor(viewport).get.scrolling
+    discard input.processInput(tree, regions,
+      pointerMoveEvent(vec2(50, 90)), scroll)
+    check scroll.scrollOffset(viewport) == vec2(0, dragAutoScrollStep * 2)
+
+    let released = input.processInput(
+      tree, regions, pointerUpEvent(vec2(50, 90)), scroll
+    )
+    check released.anyIt(it.event.kind == iekScrollEnd and
+      it.target == some(viewport))
+    check released.anyIt(it.event.kind == iekDrop and it.target == some(target))
+    check input.dragAutoScrollTarget.isNone
+    check not scroll.metricsFor(viewport).get.scrolling
+
+  test "nested drag edge scrolling honors containment and can be disabled":
+    var tree = initTree()
+    let outer = tree.addBox(id = "outer")
+    let inner = tree.addBox(parent = some(outer), id = "inner")
+    let source = tree.addBox(parent = some(inner), id = "source")
+    let regions = @[
+      HitRegion(node: outer, rect: rect(0, 0, 100, 100), zIndex: 0),
+      HitRegion(node: inner, rect: rect(10, 10, 80, 80), zIndex: 1),
+      HitRegion(node: source, rect: rect(20, 20, 20, 20), zIndex: 2)
+    ]
+    var scroll = initScrollState()
+    scroll.entries.setLen(tree.nodes.len)
+    scroll.entries[outer.nodeIndex] = ScrollMetrics(
+      active: true, node: some(outer),
+      viewport: size(100, 100), content: size(100, 180),
+      enabledY: true, overscrollY: obAuto
+    )
+    scroll.entries[inner.nodeIndex] = ScrollMetrics(
+      active: true, node: some(inner), offset: vec2(0, 20),
+      viewport: size(80, 80), content: size(80, 100),
+      enabledY: true, overscrollY: obAuto
+    )
+    var input = initInteractionState()
+    discard input.processInput(tree, regions, pointerDownEvent(vec2(25, 25)), scroll)
+    let chained = input.processInput(
+      tree, regions, pointerMoveEvent(vec2(50, 85)), scroll
+    )
+    check scroll.scrollOffset(inner) == vec2(0, 20)
+    check scroll.scrollOffset(outer) == vec2(0, dragAutoScrollStep)
+    check chained.anyIt(it.event.kind == iekScroll and it.target == some(outer))
+    discard input.processInput(tree, regions,
+      positionedEvent(iekPointerCancel, vec2(50, 85)), scroll)
+    check input.dragAutoScrollTarget.isNone
+    check not scroll.metricsFor(outer).get.scrolling
+
+    discard scroll.setScrollOffset(outer, vec2(0, 0))
+    scroll.entries[inner.nodeIndex].overscrollY = obContain
+    discard input.processInput(tree, regions, pointerDownEvent(vec2(25, 25)), scroll)
+    let contained = input.processInput(
+      tree, regions, pointerMoveEvent(vec2(50, 85)), scroll
+    )
+    check scroll.scrollOffset(outer) == vec2(0, 0)
+    check contained.allIt(it.event.kind != iekScroll)
+    discard input.processInput(tree, regions,
+      positionedEvent(iekPointerCancel, vec2(50, 85)), scroll)
+
+    input.setDragAutoScroll(0, 0)
+    scroll.entries[inner.nodeIndex].overscrollY = obAuto
+    discard input.processInput(tree, regions, pointerDownEvent(vec2(25, 25)), scroll)
+    let disabled = input.processInput(
+      tree, regions, pointerMoveEvent(vec2(50, 85)), scroll
+    )
+    check scroll.scrollOffset(outer) == vec2(0, 0)
+    check disabled.allIt(it.event.kind != iekScroll)
+    expect ValueError:
+      input.setDragAutoScroll(-1, 12)
+    expect ValueError:
+      input.setDragAutoScroll(24, Inf.float32)
+
+  test "drag edge direction follows a transformed viewport":
+    var tree = initTree()
+    let viewport = tree.addBox(id = "viewport")
+    let source = tree.addBox(parent = some(viewport), id = "source")
+    let flipped = transformedRect(
+      rect(0, 0, 100, 100),
+      translationAffine2D(100, 100) * scaleAffine2D(-1, -1)
+    )
+    let regions = @[
+      HitRegion(node: viewport, rect: flipped.bounds,
+        shape: some(flipped), zIndex: 0),
+      HitRegion(node: source, rect: rect(40, 40, 20, 20), zIndex: 1)
+    ]
+    var scroll = initScrollState()
+    scroll.entries.setLen(tree.nodes.len)
+    scroll.entries[viewport.nodeIndex] = ScrollMetrics(
+      active: true, node: some(viewport), offset: vec2(0, 40),
+      viewport: size(100, 100), content: size(100, 200),
+      enabledY: true, overscrollY: obAuto
+    )
+    var input = initInteractionState()
+    discard input.processInput(tree, regions, pointerDownEvent(vec2(50, 50)), scroll)
+    discard input.processInput(tree, regions, pointerMoveEvent(vec2(50, 10)), scroll)
+    check scroll.scrollOffset(viewport) == vec2(0, 40 + dragAutoScrollStep)
 
   test "overscroll containment stops wheel chaining at a boundary":
     var tree = initTree()

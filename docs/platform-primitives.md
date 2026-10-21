@@ -134,6 +134,14 @@ the offered data has that name and value kind. The first matching entry is
 available through `dispatch.dropDataEntry()` on `onDrop` and `onDragEnd`.
 Operation-only acceptance leaves that entry absent. Selection is cleared on
 the next drag-over sample, decline, cancellation, and completion.
+When input is processed with retained `ScrollState`, moving an active drag
+inside the edge band of a scrollable hit region advances its offset and emits
+`onScroll`. Nested viewports chain at a boundary unless overscroll behavior
+contains them. The default edge band is 24 layout pixels and the step is 12
+pixels per pointer sample; `setDragAutoScroll(margin, step)` adjusts them, and
+zero disables the behavior. Leaving the edge, releasing, canceling, or removing
+the drag source ends the scroll session. This path changes retained scroll
+offsets without recomputing layout for each pointer sample.
 The candidate is a complete platform primitive above those events, not a second
 drag implementation.
 
