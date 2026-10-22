@@ -151,6 +151,12 @@ offered operation, `finishKeyboardDrag` produces `onDrop` and `onDragEnd`;
 report `dimKeyboard` through `dispatch.dragInputMethod()`. Pointer presses or
 releases cancel a keyboard drag before starting their own gesture. The host
 chooses key bindings and accessibility announcements for its platform.
+For screens that opt into the conventional key sequence,
+`ui.handleKeyboardDragKey(state, event, source, operations, data)` dispatches the
+drag events directly for that source: Space begins when it is focused, Tab and
+Shift+Tab move focus and refresh target acceptance, Enter or Space completes,
+and Escape cancels. Call it before normal key dispatch and skip that dispatch
+when it returns `true`. Other nodes retain their existing key behavior.
 
 The candidate is a complete platform primitive above those events, not a second
 drag implementation.
