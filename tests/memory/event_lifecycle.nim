@@ -89,6 +89,10 @@ proc exerciseEventLifecycle() =
       source.setFocusable()
       target.setFocusable()
       var interaction = initInteractionState()
+      var announcements = 0
+      let announce: KeyboardDragAnnounceProc =
+        proc(item: KeyboardDragAnnouncement) =
+          inc announcements
       let targetId = target.id
       target.onDragOver = proc(event: DispatchResult): EventOutcome =
         doAssert interaction.acceptDropDataEntry(
@@ -100,11 +104,13 @@ proc exerciseEventLifecycle() =
       doAssert ui.setFocus(interaction, some(source.id))
       doAssert ui.handleKeyboardDragKey(
         interaction, keyDownEvent(" "), source.id,
-        {dgoCopy}, some(dragBuilder.finish())
+        {dgoCopy}, some(dragBuilder.finish()), announce
       )
       doAssert ui.handleKeyboardDragKey(
-        interaction, keyDownEvent("Tab"), source.id, {dgoCopy}
+        interaction, keyDownEvent("Tab"), source.id, {dgoCopy},
+        announce = announce
       )
+      doAssert announcements == 2
       doAssert interaction.focusedTarget == some(target.id)
       doAssert interaction.dropDataEntry.isSome
       doAssert ui.disposeSubtree(source, interaction)

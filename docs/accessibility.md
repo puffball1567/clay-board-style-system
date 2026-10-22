@@ -61,6 +61,12 @@ hidden, cannot receive accessibility actions through the UI event path, and do
 not participate in focus traversal. Reactivation restores semantics without
 reconstructing the screen subtree.
 
+The opt-in keyboard drag binding emits typed status through its per-call
+`announce` callback. The status contains accessible source/target names and the
+negotiated operation, allowing a host to localize and publish start, target,
+drop, rejection, and cancellation announcements through its platform
+accessibility transport. No fixed-language strings are embedded in the runtime.
+
 ## Virtual Collections
 
 Viewport virtualization must not make a bounded materialized window appear to
