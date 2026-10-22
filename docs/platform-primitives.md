@@ -164,6 +164,12 @@ operation when present. The callback is per key event and is not retained by
 CBSS; the host formats localized speech and sends it through its accessibility
 transport. Cancellations caused by pointer input or subtree disposal still
 produce `onDragEnd`; hosts observing those paths can announce them there.
+`UiRoot` also applies `esDragging` to the source and `esDragOver` to the current
+target while it dispatches either pointer or keyboard drag events. These states
+can be used with `applyStateStyle` for a preview or drop indicator. Both are
+cleared on completion, cancellation, and source disposal, including a rejected
+pointer release that has no `onDragLeave` event. State changes invalidate the
+affected style nodes.
 
 The candidate is a complete platform primitive above those events, not a second
 drag implementation.

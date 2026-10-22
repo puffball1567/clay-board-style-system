@@ -998,6 +998,8 @@ pub enum NodeState {
     Selected = 6,
     Open = 7,
     Invalid = 8,
+    Dragging = 9,
+    DragOver = 10,
 }
 
 #[repr(u32)]

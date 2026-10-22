@@ -467,6 +467,8 @@ enum class NodeState : std::uint32_t {
   selected = CBSS_STATE_SELECTED,
   open = CBSS_STATE_OPEN,
   invalid = CBSS_STATE_INVALID,
+  dragging = CBSS_STATE_DRAGGING,
+  dragOver = CBSS_STATE_DRAG_OVER,
 };
 
 enum class AccessibleRole : std::uint32_t {

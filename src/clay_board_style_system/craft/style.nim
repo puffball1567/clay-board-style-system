@@ -655,6 +655,8 @@ proc parseState(
   of "selected": some(esSelected)
   of "open": some(esOpen)
   of "invalid": some(esInvalid)
+  of "dragging": some(esDragging)
+  of "drag-over": some(esDragOver)
   else: none(ElementState)
   if result.isNone:
     parsed.addDiagnostic(csdcInvalidValue, path, "unknown element state '" &

@@ -62,7 +62,7 @@ declarations:
 Supported elements are `box`, `text`, and `image`. Attribute strings require
 an exact value; `null` means that the attribute only needs to exist. Supported
 states are `hover`, `active`, `focus`, `focus-visible`, `disabled`, `checked`,
-`selected`, `open`, and `invalid`.
+`selected`, `open`, `invalid`, `dragging`, and `drag-over`.
 
 `component` and `slot` are a pair: specifying either without the other is an
 error. They address a public component contract rather than a node identifier.
