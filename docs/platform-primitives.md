@@ -157,6 +157,13 @@ drag events directly for that source: Space begins when it is focused, Tab and
 Shift+Tab move focus and refresh target acceptance, Enter or Space completes,
 and Escape cancels. Call it before normal key dispatch and skip that dispatch
 when it returns `true`. Other nodes retain their existing key behavior.
+An optional `announce` callback receives `KeyboardDragAnnouncement` values for
+start, target change, successful drop, rejected drop, and cancellation. Each
+value includes the source and target accessible names and the accepted
+operation when present. The callback is per key event and is not retained by
+CBSS; the host formats localized speech and sends it through its accessibility
+transport. Cancellations caused by pointer input or subtree disposal still
+produce `onDragEnd`; hosts observing those paths can announce them there.
 
 The candidate is a complete platform primitive above those events, not a second
 drag implementation.
