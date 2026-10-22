@@ -103,6 +103,8 @@ type
     pendingInvalidation: InvalidationState
     pendingInvalidationRoots: seq[NodeId]
     eventActionPool: seq[EventActionQueue]
+    styledDragSource: Option[NodeId]
+    styledDragTarget: Option[NodeId]
     focusRequestPending*: bool
     focusRequestTarget*: Option[NodeId]
     pointerRequestPending: bool
@@ -165,6 +167,8 @@ proc initUiRoot*(): UiRoot =
     pendingInvalidation: initInvalidationState(),
     pendingInvalidationRoots: @[],
     eventActionPool: @[],
+    styledDragSource: none(NodeId),
+    styledDragTarget: none(NodeId),
     focusRequestPending: false,
     focusRequestTarget: none(NodeId),
     pointerRequestPending: false,
@@ -246,12 +250,49 @@ proc applyEventActions(root: UiRoot; snapshot: EventActionSnapshot) =
     root.frameRequestPending = true
     root.invalidate(ddAnimation)
 
+proc setDragVisualState(
+    root: UiRoot;
+    current: var Option[NodeId];
+    next: Option[NodeId];
+    state: ElementState
+) =
+  if current == next:
+    return
+  if current.isSome and root.tree.isValid(current.get):
+    root.tree.removeState(current.get, state)
+    root.invalidate(current.get, {ddStyle})
+  current = none(NodeId)
+  if next.isSome and root.tree.isValid(next.get):
+    root.tree.addState(next.get, state)
+    root.invalidate(next.get, {ddStyle})
+    current = next
+
+proc updateDragVisualState(root: UiRoot; dispatch: DispatchResult) =
+  case dispatch.event.kind
+  of iekDragStart:
+    root.setDragVisualState(root.styledDragTarget, none(NodeId), esDragOver)
+    root.setDragVisualState(root.styledDragSource, dispatch.target, esDragging)
+  of iekDragEnter, iekDragOver:
+    if root.styledDragSource.isSome:
+      root.setDragVisualState(root.styledDragTarget, dispatch.target, esDragOver)
+  of iekDragLeave, iekDragExit:
+    if root.styledDragTarget == dispatch.target:
+      root.setDragVisualState(root.styledDragTarget, none(NodeId), esDragOver)
+  of iekDrop:
+    root.setDragVisualState(root.styledDragTarget, none(NodeId), esDragOver)
+  of iekDragEnd:
+    root.setDragVisualState(root.styledDragTarget, none(NodeId), esDragOver)
+    root.setDragVisualState(root.styledDragSource, none(NodeId), esDragging)
+  else:
+    discard
+
 proc dispatchEvent*(
     root: UiRoot;
     dispatch: DispatchResult
 ): EventOutcome =
   if root.isNil:
     return ignoredEvent()
+  root.updateDragVisualState(dispatch)
   let scope = root.acquireEventActions()
   let scopedDispatch = dispatch.withEventActions(
     scope.actions,
@@ -925,6 +966,18 @@ proc clearInteractionTargets(
     interaction: var InteractionState;
     removed: HashSet[NodeId]
 ) =
+  if root.styledDragSource.isSome and root.styledDragSource.get in removed:
+    root.styledDragSource = none(NodeId)
+    if root.styledDragTarget.isSome:
+      if root.styledDragTarget.get in removed:
+        root.styledDragTarget = none(NodeId)
+      else:
+        root.setDragVisualState(
+          root.styledDragTarget, none(NodeId), esDragOver
+        )
+  elif root.styledDragTarget.isSome and root.styledDragTarget.get in removed:
+    root.styledDragTarget = none(NodeId)
+
   if interaction.focusedTarget.isSome and
       interaction.focusedTarget.get in removed:
     let focused = interaction.focusedTarget.get

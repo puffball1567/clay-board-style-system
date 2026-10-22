@@ -221,7 +221,8 @@
           "items": {
             "enum": [
               "hover", "active", "focus", "focus-visible", "disabled",
-              "checked", "selected", "open", "invalid"
+              "checked", "selected", "open", "invalid", "dragging",
+              "drag-over"
             ]
           }
         }

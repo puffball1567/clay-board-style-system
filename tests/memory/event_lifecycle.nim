@@ -113,8 +113,11 @@ proc exerciseEventLifecycle() =
       doAssert announcements == 2
       doAssert interaction.focusedTarget == some(target.id)
       doAssert interaction.dropDataEntry.isSome
+      doAssert esDragging in ui.tree.nodes[source.id.nodeIndex].states
+      doAssert esDragOver in ui.tree.nodes[target.id.nodeIndex].states
       doAssert ui.disposeSubtree(source, interaction)
       doAssert not interaction.keyboardDragging
+      doAssert esDragOver notin ui.tree.nodes[target.id.nodeIndex].states
       doAssert interaction.dragData.isNone
       doAssert interaction.dragOperations.isNone
       doAssert interaction.dropDataEntry.isNone

@@ -203,6 +203,15 @@ suite "dynamic subtree disposal":
     discard interaction.advanceKeyboardDrag(ui.tree)
     check interaction.acceptDropOperation(target.id, dgoMove)
 
+    discard ui.handleEvent(DispatchResult(
+      target: some(source.id), event: InputEvent(kind: iekDragStart)
+    ))
+    discard ui.handleEvent(DispatchResult(
+      target: some(target.id), event: InputEvent(kind: iekDragEnter)
+    ))
+    check esDragging in ui.tree.nodes[source.id.nodeIndex].states
+    check esDragOver in ui.tree.nodes[target.id.nodeIndex].states
+
     check ui.disposeSubtree(source, interaction)
     check leaves == 1
     check exits == 1
@@ -211,6 +220,7 @@ suite "dynamic subtree disposal":
     check interaction.dragOperations.isNone
     check interaction.dropOperation.isNone
     check interaction.dragOverTarget.isNone
+    check esDragOver notin ui.tree.nodes[target.id.nodeIndex].states
     check interaction.finishKeyboardDrag(ui.tree).len == 0
 
   test "disposing a keyboard drop target clears its acceptance":
@@ -228,13 +238,24 @@ suite "dynamic subtree disposal":
     discard interaction.advanceKeyboardDrag(ui.tree)
     check interaction.acceptDropOperation(target.id, dgoCopy)
 
+    discard ui.handleEvent(DispatchResult(
+      target: some(source.id), event: InputEvent(kind: iekDragStart)
+    ))
+    discard ui.handleEvent(DispatchResult(
+      target: some(target.id), event: InputEvent(kind: iekDragEnter)
+    ))
+    check esDragOver in ui.tree.nodes[target.id.nodeIndex].states
+
     check ui.disposeSubtree(target, interaction)
     check interaction.keyboardDragging
     check interaction.dragOverTarget.isNone
     check interaction.dropOperation.isNone
+    check esDragging in ui.tree.nodes[source.id.nodeIndex].states
     let completed = interaction.finishKeyboardDrag(ui.tree)
     check completed.len == 1
     check completed[0].event.kind == iekDragEnd
+    discard ui.handleEvents(completed)
+    check esDragging notin ui.tree.nodes[source.id.nodeIndex].states
 
   test "disposed declarative parents cannot capture later nodes":
     let ui = initUiRoot()
