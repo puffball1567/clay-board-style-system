@@ -57,7 +57,8 @@ type
     esOpen,
     esInvalid,
     esDragging,
-    esDragOver
+    esDragOver,
+    esDropAccepted
 
   SemanticInfo* = object
     role*: AccessibleRole

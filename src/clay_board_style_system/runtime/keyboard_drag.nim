@@ -74,7 +74,7 @@ proc handleKeyboardDragKey*(
       let previousTarget = state.dragOverTarget
       let previousOperation = state.dropOperation
       discard ui.moveFocus(state, if event.shiftKey: -1 else: 1)
-      discard ui.dispatchEvents(state.advanceKeyboardDrag(ui.tree))
+      discard ui.dispatchEvents(state, state.advanceKeyboardDrag(ui.tree))
       if not state.keyboardDragging:
         ui.announceDrag(announce, kdaCanceled, source)
       elif state.dragOverTarget != previousTarget or
@@ -97,7 +97,7 @@ proc handleKeyboardDragKey*(
       let sourceName = ui.tree.resolvedAccessibleName(source)
       let targetName =
         if target.isSome: ui.tree.resolvedAccessibleName(target.get) else: ""
-      discard ui.dispatchEvents(completed)
+      discard ui.dispatchEvents(state, completed)
       if announce != nil:
         announce(KeyboardDragAnnouncement(
           kind: if dropped: kdaDropped else: kdaRejected,
@@ -111,7 +111,7 @@ proc handleKeyboardDragKey*(
     of "Escape":
       if event.shiftKey:
         return false
-      discard ui.dispatchEvents(state.cancelKeyboardDrag())
+      discard ui.dispatchEvents(state, state.cancelKeyboardDrag())
       ui.announceDrag(announce, kdaCanceled, source)
       return true
     else:

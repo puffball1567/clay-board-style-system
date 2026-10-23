@@ -582,7 +582,7 @@ proc handleDispatches(driver: CbssTestDriver; dispatches: var seq[DispatchResult
         driver.refresh()
         return true
       discard driver.ui.normalizeFocus(driver.input, dispatch.target)
-  result = driver.ui.handleEvents(dispatches)
+  result = driver.ui.handleEvents(driver.input, dispatches)
   discard driver.ui.reconcilePointerCapture(driver.input)
   discard driver.ui.reconcileFocus(driver.input)
   driver.refresh()

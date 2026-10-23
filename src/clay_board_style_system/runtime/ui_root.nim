@@ -105,6 +105,7 @@ type
     eventActionPool: seq[EventActionQueue]
     styledDragSource: Option[NodeId]
     styledDragTarget: Option[NodeId]
+    styledDropAcceptedTarget: Option[NodeId]
     focusRequestPending*: bool
     focusRequestTarget*: Option[NodeId]
     pointerRequestPending: bool
@@ -169,6 +170,7 @@ proc initUiRoot*(): UiRoot =
     eventActionPool: @[],
     styledDragSource: none(NodeId),
     styledDragTarget: none(NodeId),
+    styledDropAcceptedTarget: none(NodeId),
     focusRequestPending: false,
     focusRequestTarget: none(NodeId),
     pointerRequestPending: false,
@@ -270,17 +272,33 @@ proc setDragVisualState(
 proc updateDragVisualState(root: UiRoot; dispatch: DispatchResult) =
   case dispatch.event.kind
   of iekDragStart:
+    root.setDragVisualState(
+      root.styledDropAcceptedTarget, none(NodeId), esDropAccepted
+    )
     root.setDragVisualState(root.styledDragTarget, none(NodeId), esDragOver)
     root.setDragVisualState(root.styledDragSource, dispatch.target, esDragging)
   of iekDragEnter, iekDragOver:
     if root.styledDragSource.isSome:
+      if root.styledDragTarget != dispatch.target:
+        root.setDragVisualState(
+          root.styledDropAcceptedTarget, none(NodeId), esDropAccepted
+        )
       root.setDragVisualState(root.styledDragTarget, dispatch.target, esDragOver)
   of iekDragLeave, iekDragExit:
     if root.styledDragTarget == dispatch.target:
+      root.setDragVisualState(
+        root.styledDropAcceptedTarget, none(NodeId), esDropAccepted
+      )
       root.setDragVisualState(root.styledDragTarget, none(NodeId), esDragOver)
   of iekDrop:
+    root.setDragVisualState(
+      root.styledDropAcceptedTarget, none(NodeId), esDropAccepted
+    )
     root.setDragVisualState(root.styledDragTarget, none(NodeId), esDragOver)
   of iekDragEnd:
+    root.setDragVisualState(
+      root.styledDropAcceptedTarget, none(NodeId), esDropAccepted
+    )
     root.setDragVisualState(root.styledDragTarget, none(NodeId), esDragOver)
     root.setDragVisualState(root.styledDragSource, none(NodeId), esDragging)
   else:
@@ -316,6 +334,32 @@ proc dispatchEvents*(
   for dispatch in dispatches:
     result.mergeOutcome(root.dispatchEvent(dispatch))
 
+proc syncDropAcceptance*(root: UiRoot; state: InteractionState) =
+  ## Reflect the target's decision after its drag-over handler has run.
+  if root.isNil:
+    return
+  let accepted =
+    if root.styledDragSource.isSome and root.styledDragTarget.isSome and
+        state.dragTarget == root.styledDragSource and
+        state.dragOverTarget == root.styledDragTarget and
+        state.dropOperation.isSome:
+      root.styledDragTarget
+    else:
+      none(NodeId)
+  root.setDragVisualState(
+    root.styledDropAcceptedTarget, accepted, esDropAccepted
+  )
+
+proc dispatchEvents*(
+    root: UiRoot;
+    state: var InteractionState;
+    dispatches: openArray[DispatchResult]
+): EventOutcome =
+  for dispatch in dispatches:
+    result.mergeOutcome(root.dispatchEvent(dispatch))
+    if dispatch.event.kind == iekDragOver:
+      root.syncDropAcceptance(state)
+
 proc handleEvent*(root: UiRoot; dispatch: DispatchResult): bool =
   root.dispatchEvent(dispatch).handled
 
@@ -324,6 +368,13 @@ proc handleEvents*(
     dispatches: openArray[DispatchResult]
 ): bool =
   root.dispatchEvents(dispatches).handled
+
+proc handleEvents*(
+    root: UiRoot;
+    state: var InteractionState;
+    dispatches: openArray[DispatchResult]
+): bool =
+  root.dispatchEvents(state, dispatches).handled
 
 proc takeFrameRequest*(root: UiRoot): bool =
   if root.isNil:
@@ -968,6 +1019,13 @@ proc clearInteractionTargets(
 ) =
   if root.styledDragSource.isSome and root.styledDragSource.get in removed:
     root.styledDragSource = none(NodeId)
+    if root.styledDropAcceptedTarget.isSome:
+      if root.styledDropAcceptedTarget.get in removed:
+        root.styledDropAcceptedTarget = none(NodeId)
+      else:
+        root.setDragVisualState(
+          root.styledDropAcceptedTarget, none(NodeId), esDropAccepted
+        )
     if root.styledDragTarget.isSome:
       if root.styledDragTarget.get in removed:
         root.styledDragTarget = none(NodeId)
@@ -977,6 +1035,7 @@ proc clearInteractionTargets(
         )
   elif root.styledDragTarget.isSome and root.styledDragTarget.get in removed:
     root.styledDragTarget = none(NodeId)
+    root.styledDropAcceptedTarget = none(NodeId)
 
   if interaction.focusedTarget.isSome and
       interaction.focusedTarget.get in removed:

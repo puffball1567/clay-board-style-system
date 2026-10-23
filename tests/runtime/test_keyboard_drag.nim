@@ -57,6 +57,7 @@ suite "keyboard drag binding":
     )
     check state.focusedTarget == some(target.id)
     check esDragOver in ui.tree.nodes[target.id.nodeIndex].states
+    check esDropAccepted in ui.tree.nodes[target.id.nodeIndex].states
     check ui.handleKeyboardDragKey(
       state, keyDownEvent("Enter"), source.id, {dgoMove}, announce = announce
     )
@@ -67,6 +68,7 @@ suite "keyboard drag binding":
     check state.dragData.isNone
     check esDragging notin ui.tree.nodes[source.id.nodeIndex].states
     check esDragOver notin ui.tree.nodes[target.id.nodeIndex].states
+    check esDropAccepted notin ui.tree.nodes[target.id.nodeIndex].states
     check announcements.len == 3
     check announcements[0].kind == kdaStarted
     check announcements[0].sourceName == "Card 42"
@@ -128,6 +130,7 @@ suite "keyboard drag binding":
     check not state.keyboardDragging
     check esDragging notin ui.tree.nodes[source.id.nodeIndex].states
     check esDragOver notin ui.tree.nodes[target.id.nodeIndex].states
+    check esDropAccepted notin ui.tree.nodes[target.id.nodeIndex].states
     check announcements == @[kdaStarted, kdaTargetChanged, kdaCanceled]
     check not ui.handleKeyboardDragKey(
       state, keyDownEvent("Enter"), source.id, {dgoCopy}

@@ -2199,7 +2199,11 @@ int main(void) {
   assert(cbss_node_set_state(
       context, child, CBSS_STATE_DRAG_OVER, 0) == CBSS_OK);
   assert(cbss_node_set_state(
-      context, child, CBSS_STATE_DRAG_OVER + 1, 1) == CBSS_INVALID_ARGUMENT);
+      context, child, CBSS_STATE_DROP_ACCEPTED, 1) == CBSS_OK);
+  assert(cbss_node_set_state(
+      context, child, CBSS_STATE_DROP_ACCEPTED, 0) == CBSS_OK);
+  assert(cbss_node_set_state(
+      context, child, CBSS_STATE_DROP_ACCEPTED + 1, 1) == CBSS_INVALID_ARGUMENT);
   char identifier[32];
   assert(cbss_node_identifier(
       context, child, identifier, sizeof(identifier)) == 5);

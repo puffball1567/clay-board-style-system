@@ -375,7 +375,8 @@ typedef enum CbssNodeState {
   CBSS_STATE_OPEN = 7,
   CBSS_STATE_INVALID = 8,
   CBSS_STATE_DRAGGING = 9,
-  CBSS_STATE_DRAG_OVER = 10
+  CBSS_STATE_DRAG_OVER = 10,
+  CBSS_STATE_DROP_ACCEPTED = 11
 } CbssNodeState;
 
 typedef enum CbssNodeKind {

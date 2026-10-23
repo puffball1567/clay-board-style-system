@@ -209,8 +209,10 @@ suite "dynamic subtree disposal":
     discard ui.handleEvent(DispatchResult(
       target: some(target.id), event: InputEvent(kind: iekDragEnter)
     ))
+    ui.syncDropAcceptance(interaction)
     check esDragging in ui.tree.nodes[source.id.nodeIndex].states
     check esDragOver in ui.tree.nodes[target.id.nodeIndex].states
+    check esDropAccepted in ui.tree.nodes[target.id.nodeIndex].states
 
     check ui.disposeSubtree(source, interaction)
     check leaves == 1
@@ -221,6 +223,7 @@ suite "dynamic subtree disposal":
     check interaction.dropOperation.isNone
     check interaction.dragOverTarget.isNone
     check esDragOver notin ui.tree.nodes[target.id.nodeIndex].states
+    check esDropAccepted notin ui.tree.nodes[target.id.nodeIndex].states
     check interaction.finishKeyboardDrag(ui.tree).len == 0
 
   test "disposing a keyboard drop target clears its acceptance":
