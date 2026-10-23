@@ -110,13 +110,13 @@ suite "Craft Style exchange format":
   test "drag visual states are accepted in Craft selectors":
     var document = parseJson(readFile(fixturePath))
     document["rules"][0]["selector"]["states"] = %* [
-      "dragging", "drag-over"
+      "dragging", "drag-over", "drop-accepted"
     ]
     let parsed = parseCraftStyle($document)
 
     require parsed.isOk
     check parsed.value.get.sheet.rules[0].selector.requiredStates ==
-      {esDragging, esDragOver}
+      {esDragging, esDragOver, esDropAccepted}
 
   test "all public length units have a stable serialized spelling":
     let units = [

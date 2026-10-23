@@ -1000,6 +1000,7 @@ pub enum NodeState {
     Invalid = 8,
     Dragging = 9,
     DragOver = 10,
+    DropAccepted = 11,
 }
 
 #[repr(u32)]

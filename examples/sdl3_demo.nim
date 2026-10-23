@@ -3166,7 +3166,7 @@ proc main() =
           pointerMoveEvent(point, event.pointer, event.timestamp), ui.scroll
         )
         ui.normalizeTextControlDispatches(frame.regions, dispatches)
-        discard ui.handleEvents(dispatches)
+        discard ui.handleEvents(inputState, dispatches)
         if ui.scroll.revision != scrollRevision:
           retainedScrollPaintPending = true
           frameDirty = true
@@ -3223,7 +3223,7 @@ proc main() =
               point, event.button, event.pointer, event.timestamp
             ), ui.scroll
           )
-          discard ui.handleEvents(dispatches)
+          discard ui.handleEvents(inputState, dispatches)
           if ui.scroll.revision != scrollRevision:
             retainedScrollPaintPending = true
             frameDirty = true
@@ -3247,7 +3247,7 @@ proc main() =
           ), ui.scroll
         )
         ui.normalizeTextControlDispatches(frame.regions, dispatches)
-        discard ui.handleEvents(dispatches)
+        discard ui.handleEvents(inputState, dispatches)
         ui.normalizeTextControlFocus(inputState, normalizedHitTarget)
         dirtyStyleRoots.addDirtyRoot(inputState.focusedTarget)
         if textHit.isSome:
@@ -3342,7 +3342,7 @@ proc main() =
           ), ui.scroll
         )
         ui.normalizeTextControlDispatches(frame.regions, dispatches)
-        discard ui.handleEvents(dispatches)
+        discard ui.handleEvents(inputState, dispatches)
         if scrollbarPointer:
           continue
         staticLayerDirty = true
@@ -3361,7 +3361,7 @@ proc main() =
             ui.tree, frame.regions, input.get, ui.scroll
           )
           ui.normalizeTextControlDispatches(frame.regions, dispatches)
-          discard ui.handleEvents(dispatches)
+          discard ui.handleEvents(inputState, dispatches)
         dirtyStyleRoots.addDirtyRoot(previousPressedTarget)
         dirtyStyleRoots.addDirtyRoot(previousCaptureTarget)
         textFocusDiscardMode = tfdNone
@@ -3817,7 +3817,7 @@ proc main() =
             inputState.processInput(ui.tree, frame.regions, wheel)
           else:
             inputState.processInput(ui.tree, frame.regions, wheel, ui.scroll)
-        let handled = ui.handleEvents(dispatches)
+        let handled = ui.handleEvents(inputState, dispatches)
         if ui.scroll.revision != scrollRevision:
           retainedScrollPaintPending = true
           frameDirty = true
@@ -3833,7 +3833,7 @@ proc main() =
         let input = event.pointerInputEvent()
         if input.isSome:
           let dispatches = inputState.processInput(ui.tree, frame.regions, input.get)
-          discard ui.handleEvents(dispatches)
+          discard ui.handleEvents(inputState, dispatches)
         paintOnlyDirty = true
       of sekTouchMove:
         staticLayerDirty = true
@@ -3842,21 +3842,21 @@ proc main() =
           let dispatches = inputState.processInput(
             ui.tree, frame.regions, input.get
           )
-          discard ui.handleEvents(dispatches)
+          discard ui.handleEvents(inputState, dispatches)
         paintOnlyDirty = true
       of sekTouchEnd:
         staticLayerDirty = true
         let input = event.pointerInputEvent()
         if input.isSome:
           let dispatches = inputState.processInput(ui.tree, frame.regions, input.get)
-          discard ui.handleEvents(dispatches)
+          discard ui.handleEvents(inputState, dispatches)
         paintOnlyDirty = true
       of sekTouchCancel:
         staticLayerDirty = true
         let input = event.pointerInputEvent()
         if input.isSome:
           let dispatches = inputState.processInput(ui.tree, frame.regions, input.get)
-          discard ui.handleEvents(dispatches)
+          discard ui.handleEvents(inputState, dispatches)
         paintOnlyDirty = true
       of sekPenProximityIn, sekPenProximityOut,
          sekPenButtonDown, sekPenButtonUp:
@@ -3865,7 +3865,7 @@ proc main() =
           let dispatches = inputState.processInput(
             ui.tree, frame.regions, input.get, ui.scroll
           )
-          discard ui.handleEvents(dispatches)
+          discard ui.handleEvents(inputState, dispatches)
         paintOnlyDirty = true
       of sekStreamWake:
         # The full demo does not own a stream binding. Applications route this
@@ -3900,7 +3900,7 @@ proc main() =
       let scrollRevision = ui.scroll.revision
       let scrollEndDispatches = inputState.finishScroll(ui.scroll)
       if scrollEndDispatches.len > 0:
-        discard ui.handleEvents(scrollEndDispatches)
+        discard ui.handleEvents(inputState, scrollEndDispatches)
       if ui.scroll.revision != scrollRevision:
         finishScrollFrame(ui, frame)
         staticLayerDirty = true
