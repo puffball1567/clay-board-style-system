@@ -187,6 +187,18 @@ legacy drags keep host cursor policy. The SDL3 demo uses a no-drop cursor for
 ordinary styled cursor on release or cancellation. Hosts can map the typed
 operation to their own platform cursor and refresh it after dispatching the
 target handler.
+For an optional paint-only preview, capture visual bounds covering the source
+paint and the original grab point with
+`initDragPreview(source, bounds, grabPoint)`. Append
+`preview.dragPreviewCommands(state, pointer, sourceCommands)` after normal UI
+commands in the host's dynamic paint pass. The caller supplies a balanced
+source paint stream in the original window coordinates, for example from
+`buildPaintCommandsForSubtree`. CBSS translates and composites it as one
+translucent layer while that pointer drag is active. It adds no layout box or
+hit region, keeps the grab point under the pointer, and returns no commands
+after release, cancellation, or source disposal. The caller owns the source
+commands and may replace them between frames; `dragPreviewBounds` gives the
+current painted rectangle for damage tracking.
 
 The candidate is a complete platform primitive above those events, not a second
 drag implementation.
