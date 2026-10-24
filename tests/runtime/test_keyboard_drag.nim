@@ -3,6 +3,87 @@ import std/[options, unittest]
 import clay_board_style_system
 
 suite "keyboard drag binding":
+  test "arrow keys traverse targets and refresh drop acceptance":
+    let ui = initUiRoot()
+    let root = ui.box()
+    let source = ui.box(parent = some(root))
+    let first = ui.box(parent = some(root))
+    let second = ui.box(parent = some(root))
+    source.setFocusable()
+    first.setFocusable()
+    second.setFocusable()
+    var state = initInteractionState()
+    var announcements: seq[KeyboardDragAnnouncement]
+    let announce: KeyboardDragAnnounceProc =
+      proc(item: KeyboardDragAnnouncement) =
+        announcements.add item
+    first.onDragOver = proc(event: DispatchResult): EventOutcome =
+      check state.acceptDropOperation(first.id, dgoCopy)
+      handledEvent()
+    second.onDragOver = proc(event: DispatchResult): EventOutcome =
+      handledEvent()
+
+    check ui.setFocus(state, some(source.id))
+    check not ui.handleKeyboardDragKey(
+      state, keyDownEvent("ArrowDown"), source.id, {dgoCopy},
+      announce = announce
+    )
+    check ui.handleKeyboardDragKey(
+      state, keyDownEvent("Space"), source.id, {dgoCopy},
+      announce = announce
+    )
+    check not ui.handleKeyboardDragKey(
+      state, keyDownEvent("ArrowDown", shiftKey = true),
+      source.id, {dgoCopy}, announce = announce
+    )
+    check state.focusedTarget == some(source.id)
+
+    check ui.handleKeyboardDragKey(
+      state, keyDownEvent("ArrowDown"), source.id, {dgoCopy},
+      announce = announce
+    )
+    check state.focusedTarget == some(first.id)
+    check state.dropOperation == some(dgoCopy)
+    check esDropAccepted in ui.tree.nodes[first.id.nodeIndex].states
+
+    check ui.handleKeyboardDragKey(
+      state, keyDownEvent("ArrowRight"), source.id, {dgoCopy},
+      announce = announce
+    )
+    check state.focusedTarget == some(second.id)
+    check state.dropOperation.isNone
+    check esDropAccepted notin ui.tree.nodes[first.id.nodeIndex].states
+    check esDragOver in ui.tree.nodes[second.id.nodeIndex].states
+
+    check ui.handleKeyboardDragKey(
+      state, keyDownEvent("ArrowUp"), source.id, {dgoCopy},
+      announce = announce
+    )
+    check state.focusedTarget == some(first.id)
+    check state.dropOperation == some(dgoCopy)
+    check esDropAccepted in ui.tree.nodes[first.id.nodeIndex].states
+    check ui.handleKeyboardDragKey(
+      state, keyDownEvent("ArrowLeft"), source.id, {dgoCopy},
+      announce = announce
+    )
+    check state.focusedTarget == some(source.id)
+    check state.dropOperation.isNone
+    check esDropAccepted notin ui.tree.nodes[first.id.nodeIndex].states
+
+    check ui.handleKeyboardDragKey(
+      state, keyDownEvent("Escape"), source.id, {dgoCopy},
+      announce = announce
+    )
+    check announcements.len == 6
+    check announcements[0].kind == kdaStarted
+    check announcements[1].target == some(first.id)
+    check announcements[1].operation == some(dgoCopy)
+    check announcements[2].target == some(second.id)
+    check announcements[2].operation.isNone
+    check announcements[3].target == some(first.id)
+    check announcements[4].target == some(source.id)
+    check announcements[5].kind == kdaCanceled
+
   test "Space Tab and Enter dispatch a negotiated drop":
     let ui = initUiRoot()
     let root = ui.box()

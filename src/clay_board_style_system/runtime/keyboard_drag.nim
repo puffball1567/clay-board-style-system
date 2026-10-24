@@ -58,9 +58,10 @@ proc handleKeyboardDragKey*(
 ): bool =
   ## Opt-in keyboard binding for a drag-enabled source. Call before ordinary
   ## key dispatch and skip that dispatch when this returns true. Space starts
-  ## a drag from the focused node; Tab moves focus; Enter or Space drops;
-  ## Escape cancels. The optional callback carries typed, localization-ready
-  ## status; the host sends announcements to its platform accessibility API.
+  ## a drag from the focused node; Tab or arrow keys move focus; Enter or Space
+  ## drops; Escape cancels. The optional callback carries typed,
+  ## localization-ready status; the host sends announcements to its platform
+  ## accessibility API.
   if event.kind != iekKeyDown or event.key.isNone or
       event.ctrlKey or event.altKey or event.metaKey:
     return false
@@ -70,10 +71,16 @@ proc handleKeyboardDragKey*(
     if state.dragTarget != some(source):
       return false
     case key
-    of "Tab":
+    of "Tab", "ArrowLeft", "ArrowUp", "ArrowRight", "ArrowDown":
+      if event.shiftKey and key != "Tab":
+        return false
       let previousTarget = state.dragOverTarget
       let previousOperation = state.dropOperation
-      discard ui.moveFocus(state, if event.shiftKey: -1 else: 1)
+      let direction =
+        if key in ["ArrowLeft", "ArrowUp"] or
+            (key == "Tab" and event.shiftKey): -1
+        else: 1
+      discard ui.moveFocus(state, direction)
       discard ui.dispatchEvents(state, state.advanceKeyboardDrag(ui.tree))
       if not state.keyboardDragging:
         ui.announceDrag(announce, kdaCanceled, source)

@@ -153,10 +153,12 @@ releases cancel a keyboard drag before starting their own gesture. The host
 chooses key bindings and accessibility announcements for its platform.
 For screens that opt into the conventional key sequence,
 `ui.handleKeyboardDragKey(state, event, source, operations, data)` dispatches the
-drag events directly for that source: Space begins when it is focused, Tab and
-Shift+Tab move focus and refresh target acceptance, Enter or Space completes,
-and Escape cancels. Call it before normal key dispatch and skip that dispatch
-when it returns `true`. Other nodes retain their existing key behavior.
+drag events directly for that source: Space begins when it is focused, Tab,
+Shift+Tab, and the arrow keys move through focusable targets and refresh target
+acceptance, Enter or Space completes, and Escape cancels. Arrow directions use
+focus order (left/up move backward; right/down move forward), not spatial
+geometry. Call it before normal key dispatch and skip that dispatch when it
+returns `true`. Other nodes retain their existing key behavior.
 An optional `announce` callback receives `KeyboardDragAnnouncement` values for
 start, target change, successful drop, rejected drop, and cancellation. Each
 value includes the source and target accessible names and the accepted
