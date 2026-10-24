@@ -179,6 +179,14 @@ declined, the target changes, or the drag ends. Drag visual states are also
 cleared on cancellation and source disposal, including a rejected pointer
 release that has no `onDragLeave` event. State changes invalidate the affected
 style nodes.
+After dispatching a drag-over sample, `state.dragFeedback()` reports `dgfNoDrop`
+until the current target accepts an offered operation, then `dgfCopy`,
+`dgfMove`, or `dgfLink`. It returns `dgfNone` outside a negotiated drag, so
+legacy drags keep host cursor policy. The SDL3 demo uses a no-drop cursor for
+`dgfNoDrop` and a generic drag cursor for accepted operations, restoring the
+ordinary styled cursor on release or cancellation. Hosts can map the typed
+operation to their own platform cursor and refresh it after dispatching the
+target handler.
 
 The candidate is a complete platform primitive above those events, not a second
 drag implementation.

@@ -167,6 +167,13 @@ type
     dgoMove,
     dgoLink
 
+  DragFeedback* = enum
+    dgfNone,
+    dgfNoDrop,
+    dgfCopy,
+    dgfMove,
+    dgfLink
+
   DragInputMethod* = enum
     dimPointer,
     dimKeyboard
@@ -1194,6 +1201,18 @@ proc declineDropOperation*(
 
 proc dropOperation*(state: InteractionState): Option[DragOperation] {.inline.} =
   state.acceptedDropOperation
+
+proc dragFeedback*(state: InteractionState): DragFeedback =
+  ## Read after dispatching drag-over handlers. Legacy drags have no
+  ## negotiated operation and leave cursor policy to the host.
+  if state.dragTarget.isNone or state.dragOperations().isNone:
+    return dgfNone
+  if state.dragOverTarget.isNone or state.acceptedDropOperation.isNone:
+    return dgfNoDrop
+  case state.acceptedDropOperation.get
+  of dgoCopy: dgfCopy
+  of dgoMove: dgfMove
+  of dgoLink: dgfLink
 
 proc dropDataEntry*(state: InteractionState): Option[FormDataEntry] {.inline.} =
   state.acceptedDropDataEntry

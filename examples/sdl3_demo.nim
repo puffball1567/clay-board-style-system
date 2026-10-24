@@ -2643,7 +2643,20 @@ proc moveTextControlFocus(
 proc normalizeTextControlFocus(ui: UiRoot; inputState: var InteractionState; hitTarget: Option[NodeId]) =
   discard ui.normalizeFocus(inputState, hitTarget)
 
-proc cursorForPoint(ui: UiRoot; regions: openArray[HitRegion]; point: Vec2): CursorKind =
+proc cursorForPoint(
+    ui: UiRoot;
+    inputState: InteractionState;
+    regions: openArray[HitRegion];
+    point: Vec2
+): CursorKind =
+  if not inputState.keyboardDragging:
+    case inputState.dragFeedback
+    of dgfNoDrop:
+      return ckNotAllowed
+    of dgfCopy, dgfMove, dgfLink:
+      return ckMove
+    of dgfNone:
+      discard
   let hit = hitTest(regions, point)
   let hitTarget =
     if hit.isSome: some(hit.get.node)
@@ -3156,7 +3169,6 @@ proc main() =
         paintOnlyDirty = true
       of sekPointerMove:
         let point = vec2(event.x, event.y)
-        app.setCursor(ui.cursorForPoint(frame.regions, point))
         let previousHover = inputState.hoveredTarget
         let dragging = inputState.pressedTarget.isSome
         let scrollbarPointer = inputState.scrollbarPointerTarget.isSome
@@ -3167,6 +3179,7 @@ proc main() =
         )
         ui.normalizeTextControlDispatches(frame.regions, dispatches)
         discard ui.handleEvents(inputState, dispatches)
+        app.setCursor(ui.cursorForPoint(inputState, frame.regions, point))
         if ui.scroll.revision != scrollRevision:
           retainedScrollPaintPending = true
           frameDirty = true
@@ -3343,6 +3356,7 @@ proc main() =
         )
         ui.normalizeTextControlDispatches(frame.regions, dispatches)
         discard ui.handleEvents(inputState, dispatches)
+        app.setCursor(ui.cursorForPoint(inputState, frame.regions, point))
         if scrollbarPointer:
           continue
         staticLayerDirty = true
@@ -3362,6 +3376,9 @@ proc main() =
           )
           ui.normalizeTextControlDispatches(frame.regions, dispatches)
           discard ui.handleEvents(inputState, dispatches)
+          app.setCursor(ui.cursorForPoint(
+            inputState, frame.regions, vec2(event.x, event.y)
+          ))
         dirtyStyleRoots.addDirtyRoot(previousPressedTarget)
         dirtyStyleRoots.addDirtyRoot(previousCaptureTarget)
         textFocusDiscardMode = tfdNone

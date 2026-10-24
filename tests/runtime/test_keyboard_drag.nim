@@ -137,6 +137,7 @@ suite "keyboard drag binding":
       state, keyDownEvent("Tab"), source.id, {dgoMove}, announce = announce
     )
     check state.focusedTarget == some(target.id)
+    check state.dragFeedback == dgfMove
     check esDragOver in ui.tree.nodes[target.id.nodeIndex].states
     check esDropAccepted in ui.tree.nodes[target.id.nodeIndex].states
     check ui.handleKeyboardDragKey(
@@ -146,6 +147,7 @@ suite "keyboard drag binding":
       iekDragStart, iekDragEnter, iekDragOver, iekDrop, iekDragEnd
     ]
     check not state.keyboardDragging
+    check state.dragFeedback == dgfNone
     check state.dragData.isNone
     check esDragging notin ui.tree.nodes[source.id.nodeIndex].states
     check esDragOver notin ui.tree.nodes[target.id.nodeIndex].states
@@ -244,6 +246,7 @@ suite "keyboard drag binding":
       state, keyDownEvent("Tab"), source.id, {dgoCopy},
       announce = announce
     )
+    check state.dragFeedback == dgfNoDrop
     check ui.handleKeyboardDragKey(
       state, keyDownEvent("Enter"), source.id, {dgoCopy},
       announce = announce
