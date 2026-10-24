@@ -980,6 +980,40 @@ suite "input events":
         check dispatch.dropOperation.isNone
         check dispatch.dropDataEntry.isNone
 
+  test "drag feedback follows negotiated operations and clears on exit":
+    var tree = initTree()
+    let root = tree.addBox(id = "root")
+    let source = tree.addBox(parent = some(root), id = "source")
+    let target = tree.addBox(parent = some(root), id = "target")
+    let regions = @[
+      HitRegion(node: source, rect: rect(0, 0, 40, 30), zIndex: 1),
+      HitRegion(node: target, rect: rect(70, 0, 40, 30), zIndex: 1)
+    ]
+    var state = initInteractionState()
+    check state.dragFeedback == dgfNone
+    discard state.processInput(tree, regions, pointerDownEvent(vec2(10, 10)))
+    check state.setDragOperations(source, {dgoCopy, dgoMove, dgoLink})
+    discard state.processInput(tree, regions, pointerMoveEvent(vec2(80, 10)))
+    check state.dragFeedback == dgfNoDrop
+    check state.acceptDropOperation(target, dgoCopy)
+    check state.dragFeedback == dgfCopy
+    check state.acceptDropOperation(target, dgoMove)
+    check state.dragFeedback == dgfMove
+    check state.acceptDropOperation(target, dgoLink)
+    check state.dragFeedback == dgfLink
+    check state.declineDropOperation(target)
+    check state.dragFeedback == dgfNoDrop
+    check state.acceptDropOperation(target, dgoCopy)
+    discard state.processInput(tree, regions, pointerMoveEvent(vec2(150, 10)))
+    check state.dragFeedback == dgfNoDrop
+    discard state.processInput(tree, regions, pointerUpEvent(vec2(150, 10)))
+    check state.dragFeedback == dgfNone
+
+    discard state.processInput(tree, regions, pointerDownEvent(vec2(10, 10)))
+    discard state.processInput(tree, regions, pointerMoveEvent(vec2(80, 10)))
+    check state.dragFeedback == dgfNone
+    discard state.processInput(tree, regions, pointerUpEvent(vec2(80, 10)))
+
   test "drop target selects a matching typed drag data entry":
     var tree = initTree()
     let root = tree.addBox(id = "root")
