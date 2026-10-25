@@ -40,3 +40,27 @@ proc moveChildForDrop*(
   result = root.tree.reorderChildren(parent, ordered)
   if result:
     root.invalidate(parent, {ddLayout, ddPaint, ddHit})
+
+proc moveChildByStep*(
+    root: UiRoot;
+    parent, source: NodeId;
+    direction: int
+): bool {.discardable.} =
+  ## Move a direct child one sibling backward (-1) or forward (+1).
+  ## A keyboard handler can map its own shortcuts to these two directions.
+  if root.isNil or direction notin [-1, 1] or
+      not root.tree.isValid(parent) or not root.tree.isValid(source) or
+      root.tree.nodes[source.nodeIndex].parent != some(parent):
+    return false
+
+  let siblings = root.tree.nodes[parent.nodeIndex].children
+  for index, child in siblings:
+    if child != source:
+      continue
+    let neighborIndex = index + direction
+    if neighborIndex < 0 or neighborIndex >= siblings.len:
+      return false
+    return root.moveChildForDrop(
+      parent, source, siblings[neighborIndex],
+      if direction < 0: disBefore else: disAfter
+    )

@@ -219,6 +219,12 @@ Focusable siblings with equal `tabIndex` now follow the current tree order, so
 keyboard drag navigation and normal Tab traversal agree with a reordered list.
 The application still owns item data, persistence, and any accessibility set
 position metadata it publishes.
+For direct keyboard reorder shortcuts, `ui.moveChildByStep(parent, source, -1)`
+moves a focused item one sibling earlier and `+1` moves it one sibling later.
+The helper leaves the focused node intact and returns `false` at list edges,
+for invalid nodes, or for directions other than `-1` and `+1`. Hosts choose
+their own shortcut mapping and announce the new position through their
+accessibility transport.
 
 The candidate is a complete platform primitive above those events, not a second
 drag implementation.
