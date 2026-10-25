@@ -72,3 +72,38 @@ suite "drop child reordering":
     check ui.tree.nodes[host.id.nodeIndex].children ==
       @[target.id, source.id]
     check ui.focusTargets(host.id) == @[target.id, source.id]
+
+  test "keyboard steps keep the same focused node and stop at list edges":
+    let ui = initUiRoot()
+    let host = ui.box()
+    let first = ui.box(parent = some(host))
+    let middle = ui.box(parent = some(host))
+    let last = ui.box(parent = some(host))
+    let otherHost = ui.box()
+    let outsider = ui.box(parent = some(otherHost))
+    first.setFocusable()
+    middle.setFocusable()
+    last.setFocusable()
+    var interaction = initInteractionState()
+    check ui.setFocus(interaction, some(middle.id))
+    discard ui.consumeInvalidation()
+
+    check ui.moveChildByStep(host.id, middle.id, -1)
+    check ui.tree.nodes[host.id.nodeIndex].children ==
+      @[middle.id, first.id, last.id]
+    check ui.focusTargets(host.id) == @[middle.id, first.id, last.id]
+    check interaction.focusedTarget == some(middle.id)
+    check ui.consumeInvalidation().roots == @[host.id]
+
+    check not ui.moveChildByStep(host.id, middle.id, -1)
+    check not ui.moveChildByStep(host.id, middle.id, 0)
+    check not ui.moveChildByStep(host.id, middle.id, 2)
+    check not ui.moveChildByStep(host.id, outsider.id, 1)
+    check ui.consumeInvalidation().domains == {}
+
+    check ui.moveChildByStep(host.id, middle.id, 1)
+    check ui.moveChildByStep(host.id, middle.id, 1)
+    check ui.tree.nodes[host.id.nodeIndex].children ==
+      @[first.id, last.id, middle.id]
+    check not ui.moveChildByStep(host.id, middle.id, 1)
+    check interaction.focusedTarget == some(middle.id)
