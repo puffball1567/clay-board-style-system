@@ -199,6 +199,17 @@ hit region, keeps the grab point under the pointer, and returns no commands
 after release, cancellation, or source disposal. The caller owns the source
 commands and may replace them between frames; `dragPreviewBounds` gives the
 current painted rectangle for damage tracking.
+For insertion feedback, `initDropInsertionIndicator(target, bounds, color)`
+creates a paint-only marker for a vertical list; `diaHorizontal` selects a
+horizontal list. Set `reversed = true` when list order runs upward or leftward.
+`dropInsertionSide(pointer)` returns `disBefore` or `disAfter` in list order
+from the target midpoint and remains usable while handling `onDrop` after the
+interaction has cleared its accepted operation. Append
+`indicator.dropInsertionCommands(state, side)` to the host's dynamic paint pass;
+it emits a marker only while that target has accepted the active drag. Bounds,
+thickness, and inset are explicit, so the marker does not alter layout or hit
+testing. For keyboard reordering, the application chooses the insertion side
+and uses the same marker.
 
 The candidate is a complete platform primitive above those events, not a second
 drag implementation.
