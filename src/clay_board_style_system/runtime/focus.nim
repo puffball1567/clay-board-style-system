@@ -8,6 +8,7 @@ type
   FocusOrderEntry = object
     node: NodeId
     tabIndex: int
+    treeOrder: int
 
 proc compareFocusOrder(a, b: FocusOrderEntry): int {.nimcall.} =
   let aPositive = a.tabIndex > 0
@@ -18,27 +19,14 @@ proc compareFocusOrder(a, b: FocusOrderEntry): int {.nimcall.} =
     result = cmp(a.tabIndex, b.tabIndex)
     if result != 0:
       return
-  result = cmp(a.node.nodeIndex, b.node.nodeIndex)
+  result = cmp(a.treeOrder, b.treeOrder)
 
-proc focusTargets*(ui: UiRoot): seq[NodeId] =
-  var entries: seq[FocusOrderEntry]
-  for index in 0 ..< ui.tree.nodes.len:
-    let activeId = ui.tree.nodeIdAt(index)
-    if activeId.isNone:
-      continue
-    let id = activeId.get
-    if ui.tree.isFocusable(id, forTraversal = true):
-      entries.add FocusOrderEntry(node: id, tabIndex: ui.tree.nodes[index].tabIndex)
-  entries.sort(compareFocusOrder)
-  result = newSeqOfCap[NodeId](entries.len)
-  for entry in entries:
-    result.add entry.node
-
-proc focusTargets*(ui: UiRoot; within: NodeId): seq[NodeId] =
-  if not ui.tree.isValid(within):
-    return @[]
-  var entries: seq[FocusOrderEntry]
-  var pending = @[within]
+proc appendFocusEntries(
+    ui: UiRoot;
+    root: NodeId;
+    entries: var seq[FocusOrderEntry]
+) =
+  var pending = @[root]
   while pending.len > 0:
     let id = pending.pop()
     if not ui.tree.isValid(id):
@@ -46,16 +34,34 @@ proc focusTargets*(ui: UiRoot; within: NodeId): seq[NodeId] =
     if ui.tree.isFocusable(id, forTraversal = true):
       entries.add FocusOrderEntry(
         node: id,
-        tabIndex: ui.tree.nodes[id.nodeIndex].tabIndex
+        tabIndex: ui.tree.nodes[id.nodeIndex].tabIndex,
+        treeOrder: entries.len
       )
     let children = ui.tree.nodes[id.nodeIndex].children
     if children.len > 0:
       for index in countdown(children.high, 0):
         pending.add children[index]
+
+proc orderedFocusTargets(entries: var seq[FocusOrderEntry]): seq[NodeId] =
   entries.sort(compareFocusOrder)
   result = newSeqOfCap[NodeId](entries.len)
   for entry in entries:
     result.add entry.node
+
+proc focusTargets*(ui: UiRoot): seq[NodeId] =
+  var entries: seq[FocusOrderEntry]
+  for index in 0 ..< ui.tree.nodes.len:
+    let activeId = ui.tree.nodeIdAt(index)
+    if activeId.isSome and ui.tree.nodes[index].parent.isNone:
+      ui.appendFocusEntries(activeId.get, entries)
+  entries.orderedFocusTargets()
+
+proc focusTargets*(ui: UiRoot; within: NodeId): seq[NodeId] =
+  if not ui.tree.isValid(within):
+    return @[]
+  var entries: seq[FocusOrderEntry]
+  ui.appendFocusEntries(within, entries)
+  entries.orderedFocusTargets()
 
 proc setFocus*(
     ui: UiRoot;

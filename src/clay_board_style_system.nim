@@ -46,7 +46,8 @@ import clay_board_style_system/runtime/[accessibility, button, checkbox,
     gpu_canvas, gpu_canvas_ui, gpu_direct_surface, gpu_direct_surface_ui,
     gpu_display_surface, gpu_display_surface_ui,
     gpu_raster_texture,
-    invalidation, drag_preview, drop_indicator, keyboard_drag, label, link,
+    invalidation, drag_preview, drop_indicator, drop_reorder,
+    keyboard_drag, label, link,
     navigation, navigation_focus,
     navigation_transition, navigation_screen_host, platform_links, progress,
     providers, radio, render_surface, select_box, signal, slider, state_runtime,
@@ -139,6 +140,7 @@ export image
 export invalidation
 export drag_preview
 export drop_indicator
+export drop_reorder
 export keyboard_drag
 export label
 export link
