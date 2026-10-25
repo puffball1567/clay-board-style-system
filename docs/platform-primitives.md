@@ -215,6 +215,8 @@ After a successful `dgoMove` drop within one parent, applications can call
 It preserves the existing node IDs and component instances, changes direct
 sibling order, and invalidates the parent's layout, paint, and hit regions only
 when the order actually changes. Invalid or cross-parent targets are ignored.
+The current child sequence is the tie breaker for default Flex placement and
+equal `z-index` paint order, so the visible order follows a committed move.
 Focusable siblings with equal `tabIndex` now follow the current tree order, so
 keyboard drag navigation and normal Tab traversal agree with a reordered list.
 The application still owns item data, persistence, and any accessibility set

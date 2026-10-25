@@ -459,7 +459,7 @@ suite "flex layout":
     check secondRect.get.x == 0
     check firstRect.get.x == 20
 
-  test "default order remains node creation order when child storage is reordered":
+  test "default order follows the current child order":
     var tree = initTree()
     let root = tree.addBox(id = "root")
     let first = tree.addBox(parent = some(root), id = "first")
@@ -481,8 +481,36 @@ suite "flex layout":
     let layout = computeLayout(tree, styles, size(100, 30))
 
     check not diagnostics.hasErrors
-    check layout.rectFor(first).get.x == 0
+    check layout.rectFor(second).get.x == 0
+    check layout.rectFor(first).get.x == 20
+
+  test "equal explicit order values keep current child order":
+    var tree = initTree()
+    let root = tree.addBox(id = "root")
+    let first = tree.addBox(parent = some(root), id = "first")
+    let second = tree.addBox(parent = some(root), id = "second")
+    let third = tree.addBox(parent = some(root), id = "third")
+    check tree.reorderChildren(root, [second, first, third])
+
+    let sheet = styleSheet([
+      rule(id("root"), [
+        decl("width", px(100)),
+        decl("height", px(30)),
+        decl("flex-direction", keyword("row"))
+      ]),
+      rule(id("first"), [decl("width", px(20)), decl("order", number(1))]),
+      rule(id("second"), [decl("width", px(20)), decl("order", number(1))]),
+      rule(id("third"), [decl("width", px(20))])
+    ])
+
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(tree, [sheet], defaultProperties(), diagnostics)
+    let layout = computeLayout(tree, styles, size(100, 30))
+
+    check not diagnostics.hasErrors
+    check layout.rectFor(third).get.x == 0
     check layout.rectFor(second).get.x == 20
+    check layout.rectFor(first).get.x == 40
 
   test "align-self overrides parent align-items":
     var tree = initTree()

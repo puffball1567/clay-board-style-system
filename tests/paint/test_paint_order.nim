@@ -41,7 +41,7 @@ suite "paint ordering":
     check commands[1].kind == pcFillRect
     check commands[1].color == rgb(1, 0, 0)
 
-  test "default paint order remains node creation order when child storage is reordered":
+  test "default paint order follows the current child order":
     var tree = initTree()
     let root = tree.addBox(id = "root")
     let first = tree.addBox(parent = some(root), id = "first")
@@ -67,8 +67,39 @@ suite "paint ordering":
 
     check not diagnostics.hasErrors
     check commands.len == 2
-    check commands[0].color == rgb(1, 0, 0)
-    check commands[1].color == rgb(0, 0, 1)
+    check commands[0].color == rgb(0, 0, 1)
+    check commands[1].color == rgb(1, 0, 0)
+
+  test "equal positive z-index overlays follow current child order":
+    var tree = initTree()
+    let root = tree.addBox(id = "root")
+    let first = tree.addBox(parent = some(root), id = "first")
+    let second = tree.addBox(parent = some(root), id = "second")
+    check tree.reorderChildren(root, [second, first])
+
+    let sheet = styleSheet([
+      rule(id("root"), [decl("width", px(100)), decl("height", px(60))]),
+      rule(id("first"), [
+        decl("width", px(20)), decl("height", px(20)),
+        decl("z-index", number(1)),
+        decl("background-color", colorValue(rgb(1, 0, 0)))
+      ]),
+      rule(id("second"), [
+        decl("width", px(20)), decl("height", px(20)),
+        decl("z-index", number(1)),
+        decl("background-color", colorValue(rgb(0, 0, 1)))
+      ])
+    ])
+
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(tree, [sheet], defaultProperties(), diagnostics)
+    let layout = computeLayout(tree, styles, size(100, 60))
+    let commands = buildPaintCommands(tree, styles, layout)
+
+    check not diagnostics.hasErrors
+    check commands.len == 2
+    check commands[0].color == rgb(0, 0, 1)
+    check commands[1].color == rgb(1, 0, 0)
 
   test "z-index subtree paints above later sibling content":
     var tree = initTree()

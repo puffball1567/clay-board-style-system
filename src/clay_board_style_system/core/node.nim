@@ -263,7 +263,8 @@ proc reorderChildren*(
 ): bool {.discardable.} =
   ## Reorder every direct child of `parent` without changing node identity.
   ## The complete child set is required so callers cannot accidentally detach
-  ## nodes or move a node across parents while changing paint/focus order.
+  ## nodes or move a node across parents while changing layout, paint, hit,
+  ## and focus order.
   if not tree.isValid(parent):
     raise newException(ValueError, "child-order parent is not active")
   let current = tree.nodes[parent.nodeIndex].children
