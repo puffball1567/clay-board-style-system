@@ -210,6 +210,15 @@ it emits a marker only while that target has accepted the active drag. Bounds,
 thickness, and inset are explicit, so the marker does not alter layout or hit
 testing. For keyboard reordering, the application chooses the insertion side
 and uses the same marker.
+After a successful `dgoMove` drop within one parent, applications can call
+`ui.moveChildForDrop(parent, source, target, side)` to commit that insertion.
+It preserves the existing node IDs and component instances, changes direct
+sibling order, and invalidates the parent's layout, paint, and hit regions only
+when the order actually changes. Invalid or cross-parent targets are ignored.
+Focusable siblings with equal `tabIndex` now follow the current tree order, so
+keyboard drag navigation and normal Tab traversal agree with a reordered list.
+The application still owns item data, persistence, and any accessibility set
+position metadata it publishes.
 
 The candidate is a complete platform primitive above those events, not a second
 drag implementation.

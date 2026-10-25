@@ -73,6 +73,29 @@ suite "general focus runtime":
       zero.nodeId
     ]
 
+  test "equal tab indexes follow current child order after reordering":
+    let ui = initUiRoot()
+    let host = ui.box()
+    let first = ui.box(parent = some(host))
+    let nested = ui.box(parent = some(first))
+    let middle = ui.box(parent = some(host))
+    let last = ui.box(parent = some(host))
+    first.setFocusable(tabIndex = 1)
+    nested.setFocusable(tabIndex = 0)
+    middle.setFocusable(tabIndex = 0)
+    last.setFocusable(tabIndex = 1)
+
+    check ui.focusTargets() == @[
+      first.id, last.id, nested.id, middle.id
+    ]
+    check ui.tree.reorderChildren(host.id, [last.id, first.id, middle.id])
+    check ui.focusTargets() == @[
+      last.id, first.id, nested.id, middle.id
+    ]
+    check ui.focusTargets(host.id) == @[
+      last.id, first.id, nested.id, middle.id
+    ]
+
   test "focus movement emits blur and focus and marks keyboard focus visible":
     let ui = initUiRoot()
     let first = ui.box()
