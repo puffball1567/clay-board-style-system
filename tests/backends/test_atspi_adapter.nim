@@ -31,6 +31,33 @@ proc hasChange(
   false
 
 suite "AT-SPI platform-neutral adapter":
+  test "reordered siblings update child paths and emit one parent reorder":
+    let ui = initUiRoot()
+    let host = ui.box(fixedStyle(200, 100))
+    host.setAccessibleRole(arListBox)
+    let first = ui.box(fixedStyle(80, 20), parent = some(host))
+    first.setAccessibleRole(arListItem)
+    let second = ui.box(fixedStyle(80, 20), parent = some(host))
+    second.setAccessibleRole(arListItem)
+    let hostPath = objectPathFor(host.id)
+    let firstPath = objectPathFor(first.id)
+    let secondPath = objectPathFor(second.id)
+
+    let before = ui.buildAtspiSnapshot(ui.layoutFor(), "Reorder")
+    check before.nodeAt(hostPath).get.childPaths == @[firstPath, secondPath]
+    check ui.moveChildForDrop(host.id, first.id, second.id, disAfter)
+    let after = ui.buildAtspiSnapshot(ui.layoutFor(), "Reorder")
+    check after.nodeAt(hostPath).get.childPaths == @[secondPath, firstPath]
+    let changes = diffAtspiSnapshots(before, after)
+    check changes.hasChange(ackChildren, hostPath)
+    var reorderCount = 0
+    for change in changes:
+      if change.kind == ackChildren and change.objectPath == hostPath:
+        inc reorderCount
+    check reorderCount == 1
+    check not changes.hasChange(ackAdded, firstPath)
+    check not changes.hasChange(ackRemoved, firstPath)
+
   test "snapshot uses stable official root and exposes roles, relations, and geometry":
     let ui = initUiRoot()
     let app = ui.box(fixedStyle(400, 240), id = "app")

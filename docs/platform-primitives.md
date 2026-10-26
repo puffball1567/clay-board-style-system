@@ -219,6 +219,8 @@ The current child sequence is the tie breaker for default Flex placement and
 equal `z-index` paint order, so the visible order follows a committed move.
 Focusable siblings with equal `tabIndex` now follow the current tree order, so
 keyboard drag navigation and normal Tab traversal agree with a reordered list.
+Accessibility snapshots use that child order as well; the Linux AT-SPI adapter
+reports a parent child-order change without replacing the accessible items.
 The application still owns item data, persistence, and any accessibility set
 position metadata it publishes.
 For direct keyboard reorder shortcuts, `ui.moveChildByStep(parent, source, -1)`

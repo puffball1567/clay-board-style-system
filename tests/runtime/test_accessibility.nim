@@ -9,6 +9,28 @@ proc accessibleNodeFor(nodes: openArray[AccessibleNode]; id: NodeId): Option[Acc
   none(AccessibleNode)
 
 suite "accessibility semantics":
+  test "semantic traversal follows reordered children through presentational nodes":
+    let ui = initUiRoot()
+    let host = ui.box()
+    host.setAccessibleRole(arListBox)
+    let first = ui.box(parent = some(host))
+    first.setAccessibleRole(arListItem)
+    let wrapper = ui.box(parent = some(first))
+    let detail = ui.box(parent = some(wrapper))
+    detail.setAccessibleRole(arButton)
+    let second = ui.box(parent = some(host))
+    second.setAccessibleRole(arListItem)
+
+    check ui.moveChildForDrop(host.id, first.id, second.id, disAfter)
+    let semantics = ui.accessibilityTree()
+    check semantics.len == 4
+    check semantics[0].node == host.id
+    check semantics[1].node == second.id
+    check semantics[2].node == first.id
+    check semantics[3].node == detail.id
+    check semantics[1].parent == some(host.id)
+    check semantics[3].parent == some(first.id)
+
   test "standard controls expose typed roles without ids or style groups":
     let ui = initUiRoot()
     let button = ui.button("Save", groups = [])
