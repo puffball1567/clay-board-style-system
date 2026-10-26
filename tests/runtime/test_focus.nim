@@ -96,6 +96,23 @@ suite "general focus runtime":
       last.id, first.id, nested.id, middle.id
     ]
 
+  test "reused node slots do not precede retained focusable siblings":
+    let ui = initUiRoot()
+    let host = ui.box()
+    let removed = ui.box(parent = some(host))
+    let retained = ui.box(parent = some(host))
+    removed.setFocusable()
+    retained.setFocusable()
+    var state = initInteractionState()
+    check ui.disposeSubtree(removed, state)
+    let appended = ui.box(parent = some(host))
+    appended.setFocusable()
+
+    check ui.focusTargets(host.id) == @[retained.id, appended.id]
+    check ui.setFocus(state, some(retained.id))
+    check ui.moveFocus(state, 1)
+    check state.focusedTarget == some(appended.id)
+
   test "focus movement emits blur and focus and marks keyboard focus visible":
     let ui = initUiRoot()
     let first = ui.box()

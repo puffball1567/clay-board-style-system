@@ -1,67 +1,15 @@
-import std/[algorithm, options]
+import std/options
 
+import ../core/focus_order
 import ../core/node
 import ../input/events
 import ./ui_root
 
-type
-  FocusOrderEntry = object
-    node: NodeId
-    tabIndex: int
-    treeOrder: int
-
-proc compareFocusOrder(a, b: FocusOrderEntry): int {.nimcall.} =
-  let aPositive = a.tabIndex > 0
-  let bPositive = b.tabIndex > 0
-  if aPositive != bPositive:
-    return if aPositive: -1 else: 1
-  if aPositive:
-    result = cmp(a.tabIndex, b.tabIndex)
-    if result != 0:
-      return
-  result = cmp(a.treeOrder, b.treeOrder)
-
-proc appendFocusEntries(
-    ui: UiRoot;
-    root: NodeId;
-    entries: var seq[FocusOrderEntry]
-) =
-  var pending = @[root]
-  while pending.len > 0:
-    let id = pending.pop()
-    if not ui.tree.isValid(id):
-      continue
-    if ui.tree.isFocusable(id, forTraversal = true):
-      entries.add FocusOrderEntry(
-        node: id,
-        tabIndex: ui.tree.nodes[id.nodeIndex].tabIndex,
-        treeOrder: entries.len
-      )
-    let children = ui.tree.nodes[id.nodeIndex].children
-    if children.len > 0:
-      for index in countdown(children.high, 0):
-        pending.add children[index]
-
-proc orderedFocusTargets(entries: var seq[FocusOrderEntry]): seq[NodeId] =
-  entries.sort(compareFocusOrder)
-  result = newSeqOfCap[NodeId](entries.len)
-  for entry in entries:
-    result.add entry.node
-
 proc focusTargets*(ui: UiRoot): seq[NodeId] =
-  var entries: seq[FocusOrderEntry]
-  for index in 0 ..< ui.tree.nodes.len:
-    let activeId = ui.tree.nodeIdAt(index)
-    if activeId.isSome and ui.tree.nodes[index].parent.isNone:
-      ui.appendFocusEntries(activeId.get, entries)
-  entries.orderedFocusTargets()
+  ui.tree.focusTargets()
 
 proc focusTargets*(ui: UiRoot; within: NodeId): seq[NodeId] =
-  if not ui.tree.isValid(within):
-    return @[]
-  var entries: seq[FocusOrderEntry]
-  ui.appendFocusEntries(within, entries)
-  entries.orderedFocusTargets()
+  ui.tree.focusTargets(within)
 
 proc setFocus*(
     ui: UiRoot;
