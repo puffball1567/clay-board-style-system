@@ -93,6 +93,35 @@ suite "hit testing":
     check hit.isSome
     check hit.get.node == back
 
+  test "reordered overlapping siblings change the topmost hit target":
+    var tree = initTree()
+    let root = tree.addBox(id = "root")
+    let first = tree.addBox(parent = some(root), id = "first")
+    let second = tree.addBox(parent = some(root), id = "second")
+    check tree.reorderChildren(root, [second, first])
+
+    let sheet = styleSheet([
+      rule(id("root"), [decl("width", px(100)), decl("height", px(100))]),
+      rule(id("first"), [
+        decl("position", keyword("absolute")),
+        decl("left", px(0)), decl("top", px(0)),
+        decl("width", px(40)), decl("height", px(40))
+      ]),
+      rule(id("second"), [
+        decl("position", keyword("absolute")),
+        decl("left", px(0)), decl("top", px(0)),
+        decl("width", px(40)), decl("height", px(40))
+      ])
+    ])
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(tree, [sheet], defaultProperties(), diagnostics)
+    let layout = computeLayout(tree, styles, size(100, 100))
+    let hit = hitTest(buildHitRegions(tree, layout, styles), vec2(10, 10))
+
+    check not diagnostics.hasErrors
+    check hit.isSome
+    check hit.get.node == first
+
   test "explicit z-index overlay is preferred over smaller underlying regions":
     var layout: LayoutResult
     let under = NodeId(0)

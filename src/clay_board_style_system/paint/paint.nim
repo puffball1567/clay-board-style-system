@@ -23,33 +23,30 @@ type
   PaintOrderNode = object
     node: NodeId
     zIndex: int
+    treeOrder: int
 
 proc comparePaintOrderNode(a, b: PaintOrderNode): int {.nimcall.} =
   result = cmp(a.zIndex, b.zIndex)
   if result != 0:
     return
-  result = cmp(a.node.nodeIndex, b.node.nodeIndex)
+  result = cmp(a.treeOrder, b.treeOrder)
 
 proc childrenInPaintOrder(node: Node; styles: ResolvedTree): seq[NodeId] =
   ## Extract compact keys before sorting so ResolvedTree is never captured.
   var needsSort = false
-  var previousNodeIndex = -1
   for child in node.children:
     if styles.styles[child.nodeIndex].layout.zIndex != 0:
       needsSort = true
       break
-    if child.nodeIndex < previousNodeIndex:
-      needsSort = true
-      break
-    previousNodeIndex = child.nodeIndex
   if not needsSort:
     return node.children
 
   var ordered = newSeqOfCap[PaintOrderNode](node.children.len)
-  for child in node.children:
+  for position, child in node.children:
     ordered.add PaintOrderNode(
       node: child,
-      zIndex: styles.styles[child.nodeIndex].layout.zIndex
+      zIndex: styles.styles[child.nodeIndex].layout.zIndex,
+      treeOrder: position
     )
   ordered.sort(comparePaintOrderNode)
   result = newSeqOfCap[NodeId](ordered.len)
@@ -58,10 +55,11 @@ proc childrenInPaintOrder(node: Node; styles: ResolvedTree): seq[NodeId] =
 
 proc overlayRootsInPaintOrder(overlays: seq[NodeId]; styles: ResolvedTree): seq[NodeId] =
   var ordered = newSeqOfCap[PaintOrderNode](overlays.len)
-  for overlay in overlays:
+  for position, overlay in overlays:
     ordered.add PaintOrderNode(
       node: overlay,
-      zIndex: styles.styles[overlay.nodeIndex].layout.zIndex
+      zIndex: styles.styles[overlay.nodeIndex].layout.zIndex,
+      treeOrder: position
     )
   ordered.sort(comparePaintOrderNode)
   result = newSeqOfCap[NodeId](ordered.len)

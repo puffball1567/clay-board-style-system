@@ -46,6 +46,7 @@ type
   OrderedChild = object
     node: NodeId
     order: int
+    treeOrder: int
 
   IntrinsicSizes = object
     minSize: Size
@@ -118,28 +119,24 @@ proc boxIndexFor*(indices: openArray[int]; id: NodeId): int =
 proc compareOrderedChild(a, b: OrderedChild): int {.nimcall.} =
   result = cmp(a.order, b.order)
   if result == 0:
-    result = cmp(a.node.nodeIndex, b.node.nodeIndex)
+    result = cmp(a.treeOrder, b.treeOrder)
 
 proc childrenInLayoutOrder(node: Node; styles: ResolvedTree): seq[NodeId] =
   ## Avoid capturing ResolvedTree in a sort closure: under ARC that can copy it.
   var needsSort = false
-  var previousNodeIndex = -1
   for child in node.children:
     if styles.styles[child.nodeIndex].layout.order != 0:
       needsSort = true
       break
-    if child.nodeIndex < previousNodeIndex:
-      needsSort = true
-      break
-    previousNodeIndex = child.nodeIndex
   if not needsSort:
     return node.children
 
   var ordered = newSeqOfCap[OrderedChild](node.children.len)
-  for child in node.children:
+  for position, child in node.children:
     ordered.add OrderedChild(
       node: child,
-      order: styles.styles[child.nodeIndex].layout.order
+      order: styles.styles[child.nodeIndex].layout.order,
+      treeOrder: position
     )
   ordered.sort(compareOrderedChild)
   result = newSeqOfCap[NodeId](ordered.len)

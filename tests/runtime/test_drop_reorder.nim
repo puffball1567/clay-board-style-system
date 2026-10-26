@@ -1,8 +1,45 @@
 import std/[options, sequtils, unittest]
 
 import clay_board_style_system
+import clay_board_style_system/generated/default_properties
 
 suite "drop child reordering":
+  test "a committed drop changes layout and paint order":
+    let ui = initUiRoot()
+    let host = ui.box(id = "host")
+    let first = ui.box(parent = some(host), id = "first")
+    let second = ui.box(parent = some(host), id = "second")
+    check ui.moveChildForDrop(host.id, first.id, second.id, disAfter)
+
+    let sheet = styleSheet([
+      rule(id("host"), [
+        decl("width", px(100)),
+        decl("height", px(30)),
+        decl("flex-direction", keyword("row"))
+      ]),
+      rule(id("first"), [
+        decl("width", px(20)), decl("height", px(20)),
+        decl("background-color", colorValue(rgb(1, 0, 0)))
+      ]),
+      rule(id("second"), [
+        decl("width", px(20)), decl("height", px(20)),
+        decl("background-color", colorValue(rgb(0, 0, 1)))
+      ])
+    ])
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(
+      ui.tree, [sheet], defaultProperties(), diagnostics
+    )
+    let layout = computeLayout(ui.tree, styles, size(100, 30))
+    let commands = buildPaintCommands(ui.tree, styles, layout)
+
+    check not diagnostics.hasErrors
+    check layout.boxes.filterIt(it.node == second.id)[0].rect.x == 0
+    check layout.boxes.filterIt(it.node == first.id)[0].rect.x == 20
+    check commands.len == 2
+    check commands[0].color == rgb(0, 0, 1)
+    check commands[1].color == rgb(1, 0, 0)
+
   test "moving a sibling preserves handles and invalidates its parent":
     let ui = initUiRoot()
     let host = ui.box()
