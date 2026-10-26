@@ -64,34 +64,45 @@ proc nearestAccessibleParent(tree: Tree; id: NodeId): Option[NodeId] =
     current = tree.nodes[parent.nodeIndex].parent
   none(NodeId)
 
-proc accessibilityTree*(tree: Tree): seq[AccessibleNode] =
-  for index, source in tree.nodes:
-    let activeId = tree.nodeIdAt(index)
-    if activeId.isNone:
-      continue
-    let id = activeId.get
+proc appendAccessibleNodes(
+    tree: Tree;
+    root: NodeId;
+    output: var seq[AccessibleNode]
+) =
+  var pending = @[root]
+  while pending.len > 0:
+    let id = pending.pop()
     if tree.isFlowCollapsed(id):
       continue
     let info = tree.semanticInfo(id)
-    if info.role == arNone:
-      continue
-    result.add AccessibleNode(
-      node: id,
-      parent: tree.nearestAccessibleParent(id),
-      role: info.role,
-      name: tree.resolvedAccessibleName(id),
-      description: tree.resolvedAccessibleDescription(id),
-      value: info.value,
-      valueNow: info.valueNow,
-      valueMin: info.valueMin,
-      valueMax: info.valueMax,
-      positionInSet: info.positionInSet,
-      setSize: info.setSize,
-      states: source.states,
-      focusable: tree.isFocusable(id),
-      hidden: tree.isAccessibleHidden(id),
-      bounds: none(Rect)
-    )
+    if info.role != arNone:
+      output.add AccessibleNode(
+        node: id,
+        parent: tree.nearestAccessibleParent(id),
+        role: info.role,
+        name: tree.resolvedAccessibleName(id),
+        description: tree.resolvedAccessibleDescription(id),
+        value: info.value,
+        valueNow: info.valueNow,
+        valueMin: info.valueMin,
+        valueMax: info.valueMax,
+        positionInSet: info.positionInSet,
+        setSize: info.setSize,
+        states: tree.nodes[id.nodeIndex].states,
+        focusable: tree.isFocusable(id),
+        hidden: tree.isAccessibleHidden(id),
+        bounds: none(Rect)
+      )
+    let children = tree.nodes[id.nodeIndex].children
+    if children.len > 0:
+      for index in countdown(children.high, 0):
+        pending.add children[index]
+
+proc accessibilityTree*(tree: Tree): seq[AccessibleNode] =
+  for index in 0 ..< tree.nodes.len:
+    let activeId = tree.nodeIdAt(index)
+    if activeId.isSome and tree.nodes[index].parent.isNone:
+      tree.appendAccessibleNodes(activeId.get, result)
 
 proc accessibilityTree*(ui: UiRoot): seq[AccessibleNode] =
   ui.tree.accessibilityTree()
