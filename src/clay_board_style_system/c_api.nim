@@ -1,8 +1,8 @@
-import std/[algorithm, atomics, locks, math, options, sets, strutils, tables]
+import std/[atomics, locks, math, options, sets, strutils, tables]
 
 import ./core/[color, color_conversion, color_mix, color_mix_parser,
   color_parser, color_value, custom_paint, custom_paint_parameter, declaration,
-  diagnostics, geometry, node, rule, raster_surface, selector, style_resolver,
+  diagnostics, focus_order, geometry, node, rule, raster_surface, selector, style_resolver,
   style_value]
 import ./data/[blob, form_data, stream_bridge, stream_mailbox]
 import ./core/computed_style as computed_style_types
@@ -1555,38 +1555,8 @@ proc dispatchAll(
     if context.invokeRenderSurface(dispatch):
       result.outcome.handled = true
 
-type
-  FocusOrderEntry = object
-    node: NodeId
-    tabIndex: int
-
-proc compareFocusOrder(a, b: FocusOrderEntry): int {.nimcall.} =
-  let aPositive = a.tabIndex > 0
-  let bPositive = b.tabIndex > 0
-  if aPositive != bPositive:
-    return if aPositive: -1 else: 1
-  if aPositive:
-    result = cmp(a.tabIndex, b.tabIndex)
-    if result != 0:
-      return
-  result = cmp(a.node.nodeIndex, b.node.nodeIndex)
-
 proc focusTargets(context: CbssContextHandle): seq[NodeId] =
-  var entries: seq[FocusOrderEntry]
-  for index in 0 ..< context.tree.nodes.len:
-    let activeId = context.tree.nodeIdAt(index)
-    if activeId.isNone:
-      continue
-    let id = activeId.get
-    if context.tree.isFocusable(id, forTraversal = true):
-      entries.add FocusOrderEntry(
-        node: id,
-        tabIndex: context.tree.nodes[index].tabIndex
-      )
-  entries.sort(compareFocusOrder)
-  result = newSeqOfCap[NodeId](entries.len)
-  for entry in entries:
-    result.add entry.node
+  context.tree.focusTargets()
 
 proc setContextFocus(
     context: CbssContextHandle;

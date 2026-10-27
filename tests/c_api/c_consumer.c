@@ -3149,6 +3149,41 @@ int main(void) {
   cbss_style_destroy(scroll_style);
   cbss_context_destroy(scroll_context);
 
+  {
+    CbssContext *focus_context = cbss_context_create();
+    assert(focus_context != NULL);
+    uint32_t focus_root = cbss_context_add_box(
+        focus_context, CBSS_NODE_NONE, "focus-root");
+    uint32_t removed_first = cbss_context_add_box(
+        focus_context, focus_root, "removed-first");
+    uint32_t retained_second = cbss_context_add_box(
+        focus_context, focus_root, "retained-second");
+    assert(focus_root != CBSS_NODE_NONE);
+    assert(removed_first != CBSS_NODE_NONE);
+    assert(retained_second != CBSS_NODE_NONE);
+    require_ok(focus_context, cbss_node_set_focusable(
+        focus_context, removed_first, 1, 0));
+    require_ok(focus_context, cbss_node_set_focusable(
+        focus_context, retained_second, 1, 0));
+    assert(cbss_context_first_focusable(focus_context, focus_root) == removed_first);
+
+    uint32_t removed_count = 0;
+    require_ok(focus_context, cbss_context_remove_subtree(
+        focus_context, removed_first, &removed_count));
+    assert(removed_count == 1);
+    uint32_t appended_last = cbss_context_add_box(
+        focus_context, focus_root, "appended-last");
+    assert(appended_last != CBSS_NODE_NONE);
+    require_ok(focus_context, cbss_node_set_focusable(
+        focus_context, appended_last, 1, 0));
+    assert(cbss_context_first_focusable(focus_context, focus_root) == retained_second);
+    require_ok(focus_context, cbss_context_set_focus(
+        focus_context, retained_second, 1));
+    require_ok(focus_context, cbss_context_move_focus(focus_context, 1));
+    assert(cbss_context_focused_node(focus_context) == appended_last);
+    cbss_context_destroy(focus_context);
+  }
+
   for (int i = 0; i < 100; ++i) {
     CbssContext *short_lived = cbss_context_create();
     CbssStyle *short_style = cbss_style_create();
