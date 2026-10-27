@@ -30,8 +30,12 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x00010029` supports:
+ABI version `0x0001002A` supports:
 
+- direct sibling insertion and one-position keyboard moves through
+  `cbss_context_move_child_relative` and `cbss_context_move_child_by_step`.
+  Both report whether the order changed; invalid or cross-parent nodes leave
+  the tree unchanged, while list-edge moves succeed as no-ops;
 - atomic direct-child reordering through `cbss_context_reorder_children`. The
   caller supplies every current child once; a successful change preserves node
   handles and updates layout, paint, hit, and focus order. Invalid lists leave

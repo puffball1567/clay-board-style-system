@@ -26,7 +26,7 @@ extern "C" {
 #endif
 
 /* CBSS_GENERATED_DRIVER_CONTRACT_BEGIN */
-#define CBSS_ABI_VERSION 0x00010029u
+#define CBSS_ABI_VERSION 0x0001002Au
 #define CBSS_DRIVER_CONTRACT_VERSION 0x00010000u
 
 typedef enum CbssCapabilityId {
@@ -1594,6 +1594,28 @@ CBSS_API CbssStatus cbss_context_remove_subtree(
 CBSS_API CbssStatus cbss_context_reorder_children(
     CbssContext *context, uint32_t parent, const uint32_t *ordered,
     uint32_t ordered_count, uint8_t *output_changed);
+enum {
+  CBSS_CHILD_BEFORE = 0,
+  CBSS_CHILD_AFTER = 1
+};
+/*
+ * Moves a direct child before or after a sibling. A source equal to target,
+ * or a move that already matches the order, succeeds with output_changed=0.
+ * Invalid nodes, cross-parent moves, or invalid sides leave the tree unchanged.
+ * output_changed is required and receives zero on rejection when context is valid.
+ */
+CBSS_API CbssStatus cbss_context_move_child_relative(
+    CbssContext *context, uint32_t parent, uint32_t source, uint32_t target,
+    uint32_t side, uint8_t *output_changed);
+/*
+ * Moves a direct child one position in tree order (-1 earlier, +1 later).
+ * Moving at a list edge succeeds with output_changed=0. Invalid directions
+ * or nodes leave the tree unchanged. output_changed is required and receives
+ * zero on rejection when context is valid.
+ */
+CBSS_API CbssStatus cbss_context_move_child_by_step(
+    CbssContext *context, uint32_t parent, uint32_t source,
+    int32_t direction, uint8_t *output_changed);
 
 CBSS_API uint32_t cbss_context_add_box(
     CbssContext *context, uint32_t parent, const char *identifier);

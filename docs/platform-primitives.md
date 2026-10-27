@@ -225,6 +225,10 @@ The application still owns item data, persistence, and any accessibility set
 position metadata it publishes.
 Foreign-language drivers can reorder the same direct-child sequence with
 `cbss_context_reorder_children`, supplying every current child once.
+They can also commit a single insertion with `cbss_context_move_child_relative`
+or a one-position keyboard move with `cbss_context_move_child_by_step` without
+copying the full child list. Both retain node identities and report whether
+the order changed.
 For direct keyboard reorder shortcuts, `ui.moveChildByStep(parent, source, -1)`
 moves a focused item one sibling earlier and `+1` moves it one sibling later.
 The helper leaves the focused node intact and returns `false` at list edges,

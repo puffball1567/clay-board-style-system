@@ -4843,6 +4843,66 @@ proc cbssContextReorderChildren(
     context.setError(error.msg)
     CbssInvalidArgument
 
+proc cbssContextMoveChildRelative(
+    context: CbssContextHandle;
+    parent, source, target, side: uint32;
+    outputChanged: ptr uint8
+): int32 {.exportc: "cbss_context_move_child_relative", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if outputChanged.isNil:
+    return CbssInvalidArgument
+  outputChanged[] = 0
+  if side > 1 or not context.validNode(parent) or
+      not context.validNode(source) or not context.validNode(target) or
+      context.tree.nodes[source.nodeId.nodeIndex].parent != some(parent.nodeId) or
+      context.tree.nodes[target.nodeId.nodeIndex].parent != some(parent.nodeId):
+    context.setError("child move requires direct siblings and a valid side")
+    return CbssInvalidArgument
+  try:
+    let changed = context.tree.moveChildRelative(
+      parent.nodeId, source.nodeId, target.nodeId, side == 1
+    )
+    outputChanged[] = uint8(changed)
+    if changed:
+      context.invalidate()
+    else:
+      context.lastError = ""
+    CbssOk
+  except ValueError as error:
+    context.setError(error.msg)
+    CbssInvalidArgument
+
+proc cbssContextMoveChildByStep(
+    context: CbssContextHandle;
+    parent, source: uint32;
+    direction: int32;
+    outputChanged: ptr uint8
+): int32 {.exportc: "cbss_context_move_child_by_step", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if outputChanged.isNil:
+    return CbssInvalidArgument
+  outputChanged[] = 0
+  if direction notin [-1'i32, 1'i32] or
+      not context.validNode(parent) or not context.validNode(source) or
+      context.tree.nodes[source.nodeId.nodeIndex].parent != some(parent.nodeId):
+    context.setError("child step requires a direct child and direction -1 or 1")
+    return CbssInvalidArgument
+  try:
+    let changed = context.tree.moveChildByStep(
+      parent.nodeId, source.nodeId, int(direction)
+    )
+    outputChanged[] = uint8(changed)
+    if changed:
+      context.invalidate()
+    else:
+      context.lastError = ""
+    CbssOk
+  except ValueError as error:
+    context.setError(error.msg)
+    CbssInvalidArgument
+
 proc cbssContextAddBox(
     context: CbssContextHandle;
     parent: uint32;
