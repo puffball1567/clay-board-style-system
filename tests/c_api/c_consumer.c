@@ -1,6 +1,6 @@
 #include "cbss.h"
 
-_Static_assert(CBSS_ABI_VERSION == 0x00010028u, "unexpected CBSS ABI version");
+_Static_assert(CBSS_ABI_VERSION == 0x00010029u, "unexpected CBSS ABI version");
 _Static_assert(CBSS_ROLE_SWITCH == 22, "unexpected switch role value");
 _Static_assert(CBSS_ROLE_PASSWORD_TEXT == 23,
                "unexpected password text role value");
@@ -3181,6 +3181,90 @@ int main(void) {
         focus_context, retained_second, 1));
     require_ok(focus_context, cbss_context_move_focus(focus_context, 1));
     assert(cbss_context_focused_node(focus_context) == appended_last);
+
+    CbssStyle *focus_root_style = cbss_style_create();
+    CbssStyle *focus_child_style = cbss_style_create();
+    assert(focus_root_style != NULL);
+    assert(focus_child_style != NULL);
+    assert(cbss_style_set_length(
+        focus_root_style, "width", CBSS_UNIT_PX, 100.0f) == CBSS_OK);
+    assert(cbss_style_set_length(
+        focus_root_style, "height", CBSS_UNIT_PX, 30.0f) == CBSS_OK);
+    assert(cbss_style_set_keyword(
+        focus_root_style, "flex-direction", "row") == CBSS_OK);
+    assert(cbss_style_set_length(
+        focus_child_style, "width", CBSS_UNIT_PX, 20.0f) == CBSS_OK);
+    assert(cbss_style_set_length(
+        focus_child_style, "height", CBSS_UNIT_PX, 20.0f) == CBSS_OK);
+    require_ok(focus_context, cbss_node_apply_style(
+        focus_context, focus_root, focus_root_style, 0, 0));
+    require_ok(focus_context, cbss_node_apply_style(
+        focus_context, retained_second, focus_child_style, 0, 0));
+    require_ok(focus_context, cbss_node_apply_style(
+        focus_context, appended_last, focus_child_style, 0, 0));
+    require_ok(focus_context, cbss_context_compute(
+        focus_context, 100.0f, 30.0f));
+    CbssRect retained_rect;
+    CbssRect appended_rect;
+    require_ok(focus_context, cbss_node_layout_rect(
+        focus_context, retained_second, &retained_rect));
+    require_ok(focus_context, cbss_node_layout_rect(
+        focus_context, appended_last, &appended_rect));
+    assert(fabsf(retained_rect.x - 0.0f) < 0.01f);
+    assert(fabsf(appended_rect.x - 20.0f) < 0.01f);
+    assert(!cbss_context_needs_compute(focus_context));
+
+    uint8_t changed = 99;
+    uint32_t reversed_children[] = {appended_last, retained_second};
+    require_ok(focus_context, cbss_context_reorder_children(
+        focus_context, focus_root, reversed_children, 2, &changed));
+    assert(changed == 1);
+    assert(cbss_context_needs_compute(focus_context));
+    assert(cbss_node_child(focus_context, focus_root, 0) == appended_last);
+    assert(cbss_node_child(focus_context, focus_root, 1) == retained_second);
+    assert(cbss_context_first_focusable(focus_context, focus_root) == appended_last);
+    require_ok(focus_context, cbss_context_recompute(focus_context));
+    require_ok(focus_context, cbss_node_layout_rect(
+        focus_context, retained_second, &retained_rect));
+    require_ok(focus_context, cbss_node_layout_rect(
+        focus_context, appended_last, &appended_rect));
+    assert(fabsf(appended_rect.x - 0.0f) < 0.01f);
+    assert(fabsf(retained_rect.x - 20.0f) < 0.01f);
+    require_ok(focus_context, cbss_context_reorder_children(
+        focus_context, focus_root, reversed_children, 2, &changed));
+    assert(changed == 0);
+    assert(!cbss_context_needs_compute(focus_context));
+
+    require_ok(focus_context, cbss_context_set_focus(
+        focus_context, appended_last, 1));
+    require_ok(focus_context, cbss_context_move_focus(focus_context, 1));
+    assert(cbss_context_focused_node(focus_context) == retained_second);
+
+    uint32_t duplicate_children[] = {appended_last, appended_last};
+    assert(cbss_context_reorder_children(
+        focus_context, focus_root, duplicate_children, 2, &changed) ==
+        CBSS_INVALID_ARGUMENT);
+    assert(changed == 0);
+    assert(cbss_context_reorder_children(
+        focus_context, focus_root, reversed_children, 1, &changed) ==
+        CBSS_INVALID_ARGUMENT);
+    assert(changed == 0);
+    assert(cbss_context_reorder_children(
+        focus_context, focus_root, NULL, 2, &changed) ==
+        CBSS_INVALID_ARGUMENT);
+    assert(changed == 0);
+    uint32_t stale_children[] = {removed_first, retained_second};
+    assert(cbss_context_reorder_children(
+        focus_context, focus_root, stale_children, 2, &changed) ==
+        CBSS_INVALID_ARGUMENT);
+    assert(changed == 0);
+    assert(cbss_context_reorder_children(
+        focus_context, focus_root, reversed_children, 2, NULL) ==
+        CBSS_INVALID_ARGUMENT);
+    assert(cbss_node_child(focus_context, focus_root, 0) == appended_last);
+    assert(cbss_node_child(focus_context, focus_root, 1) == retained_second);
+    cbss_style_destroy(focus_child_style);
+    cbss_style_destroy(focus_root_style);
     cbss_context_destroy(focus_context);
   }
 

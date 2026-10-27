@@ -26,7 +26,7 @@ extern "C" {
 #endif
 
 /* CBSS_GENERATED_DRIVER_CONTRACT_BEGIN */
-#define CBSS_ABI_VERSION 0x00010028u
+#define CBSS_ABI_VERSION 0x00010029u
 #define CBSS_DRIVER_CONTRACT_VERSION 0x00010000u
 
 typedef enum CbssCapabilityId {
@@ -1584,6 +1584,16 @@ CBSS_API uint32_t cbss_node_image_source(
  */
 CBSS_API CbssStatus cbss_context_remove_subtree(
     CbssContext *context, uint32_t node, uint32_t *output_removed_count);
+/*
+ * Reorders the complete direct-child set without replacing nodes. The input
+ * array is borrowed for this call and may be NULL only when count is zero.
+ * Invalid, missing, duplicate, or foreign children leave the tree unchanged.
+ * output_changed is required and receives zero on rejection or a no-op when
+ * context is valid. The output pointer must not alias the input array.
+ */
+CBSS_API CbssStatus cbss_context_reorder_children(
+    CbssContext *context, uint32_t parent, const uint32_t *ordered,
+    uint32_t ordered_count, uint8_t *output_changed);
 
 CBSS_API uint32_t cbss_context_add_box(
     CbssContext *context, uint32_t parent, const char *identifier);

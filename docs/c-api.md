@@ -30,8 +30,12 @@ The installed header is `include/cbss.h`.
 
 ## Current Pipeline
 
-ABI version `0x00010028` supports:
+ABI version `0x00010029` supports:
 
+- atomic direct-child reordering through `cbss_context_reorder_children`. The
+  caller supplies every current child once; a successful change preserves node
+  handles and updates layout, paint, hit, and focus order. Invalid lists leave
+  the tree unchanged;
 - machine-readable Craft Driver contract metadata and runtime capability
   negotiation through stable numeric identifiers before tree construction;
 - bounded compiled validation patterns and canonical string-format checks for
