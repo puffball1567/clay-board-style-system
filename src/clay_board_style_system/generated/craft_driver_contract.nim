@@ -9,7 +9,7 @@ type
   ]
 
 const
-  CbssAbiVersion* = 0x00010028'u32
+  CbssAbiVersion* = 0x00010029'u32
   CbssDriverContractVersion* = 0x00010000'u32
   CbssCapabilityAvailable* = 1'u32 shl 0
   CbssCapabilityRetainedTree* = 1'u32

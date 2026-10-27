@@ -223,6 +223,8 @@ Accessibility snapshots use that child order as well; the Linux AT-SPI adapter
 reports a parent child-order change without replacing the accessible items.
 The application still owns item data, persistence, and any accessibility set
 position metadata it publishes.
+Foreign-language drivers can reorder the same direct-child sequence with
+`cbss_context_reorder_children`, supplying every current child once.
 For direct keyboard reorder shortcuts, `ui.moveChildByStep(parent, source, -1)`
 moves a focused item one sibling earlier and `+1` moves it one sibling later.
 The helper leaves the focused node intact and returns `false` at list edges,

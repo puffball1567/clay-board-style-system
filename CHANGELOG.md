@@ -7,6 +7,12 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+### Added
+
+- C ABI `0x00010029` adds atomic direct-child reordering. Foreign-language
+  drivers can commit list moves without replacing nodes, and invalid child
+  lists leave the retained tree unchanged.
+
 ## [0.7.2] - 2026-10-12
 
 ### Fixed

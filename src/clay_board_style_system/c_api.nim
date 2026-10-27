@@ -4805,6 +4805,44 @@ proc cbssContextRemoveSubtree(
     context.setError(error.msg)
     CbssInternalError
 
+proc cbssContextReorderChildren(
+    context: CbssContextHandle;
+    parent: uint32;
+    ordered: ptr uint32;
+    orderedCount: uint32;
+    outputChanged: ptr uint8
+): int32 {.exportc: "cbss_context_reorder_children", cdecl, dynlib.} =
+  if context.isNil:
+    return CbssInvalidHandle
+  if outputChanged.isNil:
+    return CbssInvalidArgument
+  outputChanged[] = 0
+  if not context.validNode(parent):
+    context.setError("invalid child-order parent")
+    return CbssInvalidArgument
+  let childCount = context.tree.nodes[parent.nodeId.nodeIndex].children.len
+  if orderedCount != uint32(childCount) or
+      (orderedCount > 0 and ordered.isNil):
+    context.setError("child order must contain every direct child exactly once")
+    return CbssInvalidArgument
+
+  var ids = newSeq[NodeId](childCount)
+  if childCount > 0:
+    let supplied = cast[ptr UncheckedArray[uint32]](ordered)
+    for index in 0 ..< childCount:
+      ids[index] = supplied[index].nodeId
+  try:
+    let changed = context.tree.reorderChildren(parent.nodeId, ids)
+    outputChanged[] = uint8(changed)
+    if changed:
+      context.invalidate()
+    else:
+      context.lastError = ""
+    CbssOk
+  except ValueError as error:
+    context.setError(error.msg)
+    CbssInvalidArgument
+
 proc cbssContextAddBox(
     context: CbssContextHandle;
     parent: uint32;
