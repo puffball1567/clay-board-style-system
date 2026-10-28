@@ -177,6 +177,7 @@ type
   Sdl3Event* = object
     timestamp*: uint64
     pointer*: Option[PointerData]
+    pointerButtonsDown*: bool
     case kind*: Sdl3EventKind
     of sekQuit, sekExpose:
       discard
@@ -461,6 +462,17 @@ proc pointerInputEvent*(event: Sdl3Event): Option[InputEvent] =
     var converted = result.get
     converted.timestamp = event.timestamp
     result = some(converted)
+
+proc canCoalesceHoverMotion*(
+    event: Sdl3Event;
+    state: InteractionState
+): bool =
+  ## Keep every active mouse and pen sample; only idle mouse hover is lossy.
+  event.kind == sekPointerMove and event.pointer.isSome and
+    event.pointer.get.device == pdkMouse and not event.pointerButtonsDown and
+    state.pressedTarget.isNone and state.pointerCaptureTarget.isNone and
+    state.dragTarget.isNone and state.scrollbarPointerTarget.isNone and
+    not state.keyboardDragging()
 
 proc sdlError(message: string): ref CatchableError =
   let err = $SDL3.getError()
@@ -1127,6 +1139,7 @@ proc pollEventFromRaw(
         timestamp: raw.motion.timestamp,
         x: raw.motion.x.float32,
         y: raw.motion.y.float32,
+        pointerButtonsDown: raw.motion.state != 0'u32,
         pointer: some(PointerData(device: pdkMouse, primary: true))
       )
       return true

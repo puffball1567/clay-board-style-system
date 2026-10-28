@@ -71,6 +71,7 @@ type
 
 const
   maxDemoClipboardBytes = maxPasteEventBytes
+  maxHoverMovesPerFrame = 64
   maxWheelEventsPerFrame = 8
   scrollIndicatorIdleDelaySeconds = 0.10
 
@@ -2910,13 +2911,15 @@ proc coalescePointerMove(
     app: var Sdl3Renderer;
     queuedEvents: var seq[Sdl3Event];
     event: var Sdl3Event;
-    processedEvents: var int
+    processedEvents: var int;
+    inputState: InteractionState
 ) =
-  if event.kind != sekPointerMove:
+  if not event.canCoalesceHoverMotion(inputState):
     return
   var next: Sdl3Event
-  while app.pollDemoEvent(queuedEvents, next):
-    if next.kind == sekPointerMove:
+  while processedEvents < maxHoverMovesPerFrame and
+      app.pollDemoEvent(queuedEvents, next):
+    if next.canCoalesceHoverMotion(inputState):
       event = next
       inc processedEvents
     else:
@@ -3125,7 +3128,7 @@ proc main() =
     pendingFrame = false
     while app.pollDemoEvent(queuedEvents, event):
       inc processedEvents
-      app.coalescePointerMove(queuedEvents, event, processedEvents)
+      app.coalescePointerMove(queuedEvents, event, processedEvents, inputState)
       app.coalesceWheel(queuedEvents, event, processedEvents)
       app.coalesceTextEditKeyRepeat(queuedEvents, event, processedEvents)
       if event.isStaleTextControlEvent(textFocusChangedAt):
