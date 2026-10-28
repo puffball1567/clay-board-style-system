@@ -292,6 +292,52 @@ proc reorderChildren*(
     tree.nodes[parent.nodeIndex].children = @ordered
   changed
 
+proc moveChildRelative*(
+    tree: var Tree;
+    parent, source, target: NodeId;
+    after: bool
+): bool {.discardable.} =
+  ## Move one direct child before or after another, preserving node identities.
+  if source == target or not tree.isValid(parent) or
+      not tree.isValid(source) or not tree.isValid(target) or
+      tree.nodes[source.nodeIndex].parent != some(parent) or
+      tree.nodes[target.nodeIndex].parent != some(parent):
+    return false
+
+  let current = tree.nodes[parent.nodeIndex].children
+  var ordered = newSeqOfCap[NodeId](current.len)
+  for child in current:
+    if child == source:
+      continue
+    if child == target and not after:
+      ordered.add source
+    ordered.add child
+    if child == target and after:
+      ordered.add source
+  tree.reorderChildren(parent, ordered)
+
+proc moveChildByStep*(
+    tree: var Tree;
+    parent, source: NodeId;
+    direction: int
+): bool {.discardable.} =
+  ## Move a direct child one position backward or forward in tree order.
+  if direction notin [-1, 1] or not tree.isValid(parent) or
+      not tree.isValid(source) or
+      tree.nodes[source.nodeIndex].parent != some(parent):
+    return false
+
+  let siblings = tree.nodes[parent.nodeIndex].children
+  for index, child in siblings:
+    if child != source:
+      continue
+    let neighborIndex = index + direction
+    if neighborIndex < 0 or neighborIndex >= siblings.len:
+      return false
+    return tree.moveChildRelative(
+      parent, source, siblings[neighborIndex], direction > 0
+    )
+
 proc addBox*(tree: var Tree; parent = none(NodeId); id = ""; code = ""; groups: openArray[string] = []): NodeId =
   result = tree.addNode(nkBox, parent)
   tree.nodes[result.nodeIndex].id = id

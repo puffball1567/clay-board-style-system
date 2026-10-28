@@ -9,6 +9,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- C ABI `0x0001002A` adds direct sibling insertion and one-position child
+  moves for pointer drops and keyboard reordering. Both preserve node handles,
+  report no-op moves, and reject cross-parent or stale nodes without mutation.
+
 - C ABI `0x00010029` adds atomic direct-child reordering. Foreign-language
   drivers can commit list moves without replacing nodes, and invalid child
   lists leave the retained tree unchanged.
