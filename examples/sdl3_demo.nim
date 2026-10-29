@@ -2937,12 +2937,7 @@ proc coalesceWheel(
   var next: Sdl3Event
   while processedEvents < maxWheelEventsPerFrame and
       app.pollDemoEvent(queuedEvents, next):
-    if next.kind == sekWheel:
-      event.wheelX += next.wheelX
-      event.wheelY += next.wheelY
-      event.wheelMouseX = next.wheelMouseX
-      event.wheelMouseY = next.wheelMouseY
-      event.timestamp = next.timestamp
+    if event.mergeWheelEvent(next):
       inc processedEvents
     else:
       queuedEvents.insert(next, 0)
