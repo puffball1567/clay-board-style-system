@@ -113,6 +113,10 @@ The default threshold is four layout pixels of Manhattan movement and can be
 configured per `InteractionState` with `setDragStartDistance`. Only a primary
 pointer-button press starts this drag lifecycle; secondary-button movement
 remains available for context-menu interactions.
+The SDL3 demo coalesces consecutive idle mouse-hover moves within its bounded
+event budget. Pen-axis samples and mouse movement with a held button, pointer
+capture, or active drag are dispatched individually so stroke and drag paths
+retain their intermediate positions.
 After pointer down, the pressed source can call `setDragData(source, data)` on
 the `InteractionState` before the threshold is crossed. `data` is an immutable
 `FormData` snapshot containing typed text or `Blob` entries. Drag, hover, drop,

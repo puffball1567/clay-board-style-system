@@ -1,10 +1,44 @@
-import std/[math, unittest]
+import std/[math, options, unittest]
 
 import clay_board_style_system/backends/sdl3/renderer
+import clay_board_style_system/core/node
 import clay_board_style_system/input/events
 import clay_board_style_system/vendor/sdl3
 
 suite "SDL3 pen input conversion":
+  test "only idle mouse hover motion may discard intermediate samples":
+    let mouse = Sdl3Event(
+      kind: sekPointerMove,
+      x: 10,
+      y: 20,
+      pointer: some(PointerData(device: pdkMouse, primary: true))
+    )
+    var state = initInteractionState()
+    check mouse.canCoalesceHoverMotion(state)
+
+    var heldMouse = mouse
+    heldMouse.pointerButtonsDown = true
+    check not heldMouse.canCoalesceHoverMotion(state)
+
+    let pen = Sdl3Event(
+      kind: sekPointerMove,
+      x: 10,
+      y: 20,
+      pointer: some(PointerData(
+        device: pdkPenUnknown, axes: {paPressure}, pressure: 0.4
+      ))
+    )
+    check not pen.canCoalesceHoverMotion(state)
+
+    state.pressedTarget = some(NodeId(1))
+    check not mouse.canCoalesceHoverMotion(state)
+    state.pressedTarget = none(NodeId)
+    state.pointerCaptureTarget = some(NodeId(1))
+    check not mouse.canCoalesceHoverMotion(state)
+    state.pointerCaptureTarget = none(NodeId)
+    state.scrollbarPointerTarget = some(NodeId(1))
+    check not mouse.canCoalesceHoverMotion(state)
+
   test "every SDL pen axis is capability marked and normalized":
     var pointer = PointerData(device: pdkPenUnknown)
 

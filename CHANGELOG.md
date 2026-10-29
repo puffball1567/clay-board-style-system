@@ -7,6 +7,12 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- The SDL3 demo now preserves intermediate pen-axis and active mouse movement
+  samples during drags and pointer capture. It coalesces only idle mouse hover
+  motion, keeping stroke input and drag auto-scroll sample accurate.
+
 ### Added
 
 - C ABI `0x0001002A` adds direct sibling insertion and one-position child
