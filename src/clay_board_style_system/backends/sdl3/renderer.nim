@@ -394,6 +394,18 @@ proc scrollDelta*(event: Sdl3Event; pixelsPerStep = DefaultWheelStepPixels): Vec
   # offsets grow toward the document end, so the coordinate is inverted once.
   vec2(-event.wheelX * pixelsPerStep, -event.wheelY * pixelsPerStep)
 
+proc mergeWheelEvent*(aggregate: var Sdl3Event; next: Sdl3Event): bool =
+  ## Wheel deltas can share one dispatch only while their hit position is stable.
+  ## A changed position may select a different nested scroll container.
+  if aggregate.kind != sekWheel or next.kind != sekWheel or
+      aggregate.wheelMouseX != next.wheelMouseX or
+      aggregate.wheelMouseY != next.wheelMouseY:
+    return false
+  aggregate.wheelX += next.wheelX
+  aggregate.wheelY += next.wheelY
+  aggregate.timestamp = next.timestamp
+  true
+
 proc pointerInputEvent*(event: Sdl3Event): Option[InputEvent] =
   ## Converts SDL pointer-family events without losing optional device axes.
   ## Keyboard, text, window, and wheel events remain explicit at the host.

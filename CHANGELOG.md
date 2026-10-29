@@ -9,6 +9,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Fixed
 
+- SDL3 wheel coalescing now keeps samples at different cursor positions as
+  separate dispatches, so a move between nested scroll regions cannot send
+  earlier wheel deltas to the later target.
+
 - The SDL3 demo now preserves intermediate pen-axis and active mouse movement
   samples during drags and pointer capture. It coalesces only idle mouse hover
   motion, keeping stroke input and drag auto-scroll sample accurate.
