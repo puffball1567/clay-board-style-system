@@ -1260,10 +1260,10 @@ contract and do not duplicate the motion engine.
 
 ### CSS-Like Motion Scene
 
-Status: `CPU snapshots and typed timelines implemented; rounded-rectangle and
-ellipse GPU instance upload, UI Canvas, and timeline scheduling implemented`
+Status: `CPU snapshots and typed timelines implemented; rounded-rectangle,
+ellipse, and line GPU instance upload, UI Canvas, and timeline scheduling implemented`
 
-The opt-in CPU reference now stores bounded immutable rectangle and ellipse batches
+The opt-in CPU reference now stores bounded immutable rectangle, ellipse, and line batches
 inside one Canvas, with stable IDs, affine/opacity/z-order properties, viewport
 clipping, inverse-transform picking, deterministic replacement, and cancellable
 latest-request tokens. UI publication dirties only the Canvas's paint; a static

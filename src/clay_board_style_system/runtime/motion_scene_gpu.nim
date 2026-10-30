@@ -30,7 +30,7 @@ static:
   doAssert sizeof(GpuMotionRectRecord) == 80
 
 proc gpuMotionRectRecords*(snapshot: MotionSceneSnapshot): seq[GpuMotionRectRecord] =
-  ## Packs drawable rectangles and ellipses in CPU paint order. The five vec4 rows
+  ## Packs drawable rectangles, ellipses, and lines in CPU paint order. The five vec4 rows
   ## match gpuMotionRectVertexSource and one host instanced draw.
   if snapshot.isNil:
     raise newException(ValueError, "motion scene snapshot must not be nil")
