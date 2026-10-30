@@ -16,7 +16,8 @@ import clay_board_style_system/core/raster_surface
 import clay_board_style_system/backends/ppm/raster
 import clay_board_style_system/runtime/canvas
 import clay_board_style_system/runtime/[gpu_canvas, motion_scene,
-    motion_scene_gpu, motion_scene_gpu_canvas, motion_scene_gpu_direct]
+    gpu_display_surface, motion_scene_gpu, motion_scene_gpu_canvas,
+    motion_scene_gpu_direct]
 import clay_board_style_system/paint/[gpu_direct_compositor,
     gpu_host_compositor, paint_command]
 import clay_board_style_system/runtime/[gpu_direct_surface, gpu_host,
@@ -305,6 +306,76 @@ proc verifyCanvasReadbackCancellation(host: GpuHost) =
   doAssert host.releaseGpuResource(blue)
   doAssert host.closeGpuNamespace(ns)
   echo "GPU canvas: cancelled readbacks drain without publication; slots reuse cleanly"
+
+proc verifyHybridDisplayPixels(host: GpuHost) =
+  let ns = host.createGpuNamespace("hybrid-display-pixels", budget())
+  var config = defaultGpuDisplaySurfaceConfig(4, 2)
+  config.bufferCount = 2
+  config.fallback = gdsfRequireHybrid
+  let display = host.newGpuDisplaySurface(ns, config)
+  doAssert display.path == gdspHybrid
+  let rows = host.createGpuTexture(ns, GpuTextureDescriptor(
+    width: 4, height: 2, format: gtfRgba8,
+    usage: {gtuSampled, gtuBlitSource}, access: gtaStatic,
+    label: "hybrid-row-source"),
+    rgbaPixels(4, 2, proc(x, y: int): Pixel =
+      discard x
+      if y == 0: Pixel(red: 255, alpha: 255)
+      else: Pixel(blue: 255, alpha: 255)))
+  let target = host.createGpuRenderTarget(ns, GpuRenderTargetDescriptor(
+    width: 4, height: 2, format: gtfRgba8,
+    usage: {gtuRenderTarget, gtuSampled, gtuBlitSource},
+    label: "hybrid-target-source"))
+
+  proc drain(expected: uint64) =
+    for attempt in 0 ..< 32:
+      discard attempt
+      pumpWindow()
+      discard display.collectGpuDisplayFrame()
+      if display.readbackSurface().completedFrameNumber == expected and
+          display.readbackSurface().pendingFrameCount == 0 and
+          display.directSurface().presentedRevision == expected:
+        return
+      let progress = host.beginGpuFrame()
+      host.endGpuFrame(progress)
+    raise newException(IOError, "hybrid GPU display readback did not drain")
+
+  let first = host.beginGpuFrame()
+  doAssert display.queueGpuDisplayFrame(rows, first)
+  host.endGpuFrame(first)
+  drain(1)
+  doAssert display.readbackSurface().rasterSurface.publish()
+  let rowPixels = display.readbackSurface().rasterSurface.pixels
+  rowPixels.requireRasterPixel(4, 0, 0, Pixel(red: 255, alpha: 255),
+    "hybrid top row")
+  rowPixels.requireRasterPixel(4, 3, 1, Pixel(blue: 255, alpha: 255),
+    "hybrid bottom row")
+  var rowFrame = display.directSurface().acquireGpuDirectSurfaceFrame().get
+  doAssert rowFrame.resource == rows
+  doAssert rowFrame.release()
+
+  let second = host.beginGpuFrame()
+  host.clearGpuGraphicsPass(ns, GpuGraphicsPassDescriptor(
+    viewport: GpuViewport(width: 4, height: 2), renderTarget: target,
+    clearColorEnabled: true,
+    clearColor: GpuClearColor(green: 1, alpha: 1)))
+  doAssert display.queueGpuDisplayFrame(target, second)
+  host.endGpuFrame(second)
+  drain(2)
+  doAssert display.readbackSurface().rasterSurface.publish()
+  let targetPixels = display.readbackSurface().rasterSurface.pixels
+  targetPixels.requireRasterPixel(4, 0, 0, Pixel(green: 255, alpha: 255),
+    "hybrid RenderTarget top row")
+  targetPixels.requireRasterPixel(4, 3, 1, Pixel(green: 255, alpha: 255),
+    "hybrid RenderTarget bottom row")
+  var targetFrame = display.directSurface().acquireGpuDirectSurfaceFrame().get
+  doAssert targetFrame.resource == target
+  doAssert targetFrame.release()
+  doAssert display.closeGpuDisplaySurface()
+  doAssert host.releaseGpuResource(rows)
+  doAssert host.releaseGpuResource(target)
+  doAssert host.closeGpuNamespace(ns)
+  echo "Hybrid GPU display: Texture and RenderTarget direct/readback pixels passed"
 
 proc verifyInstancedRects(host: GpuHost; shaderc, shaderIncludes, workDirectory: string) =
   doAssert host.backendInfo.instancingSupported
@@ -741,6 +812,7 @@ proc run() =
     )
     doAssert host.backendInfo.rendererName.toLowerAscii.contains("opengl")
     host.verifyCanvasReadbackCancellation()
+    host.verifyHybridDisplayPixels()
     host.verifyInstancedRects(shaderc, shaderIncludes, workDirectory)
     host.verifyMotionSceneCanvas(shaderc, shaderIncludes, workDirectory)
     host.verifyMotionSceneDirect(shaderc, shaderIncludes, workDirectory)
