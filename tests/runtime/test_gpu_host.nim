@@ -2,6 +2,7 @@ import std/[math, options, sequtils, strutils, unittest]
 
 import clay_board_style_system/core/[color, computed_style, custom_paint, declaration,
     diagnostics, geometry, node, raster_surface, style_resolver, style_value]
+import clay_board_style_system/backends/ppm/raster
 import clay_board_style_system/generated/default_properties
 import clay_board_style_system/hit/hit_test
 import clay_board_style_system/layout/layout
@@ -6689,6 +6690,111 @@ suite "GPU display surface negotiation and UI":
     expect GpuHostError:
       discard directOnlyHost.newGpuDisplaySurface(directOnlyNamespace, config)
     directOnlyHost.close()
+
+  test "hybrid display keeps direct frames and a raster fallback for SDL layers":
+    let context = newContext()
+    context.enableDirectPresentation(maxBuffers = 2)
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "display-hybrid",
+      GpuResourceBudget(
+        persistentBytes: 64,
+        readbackBytesPerFrame: 8,
+        workUnitsPerFrame: 2,
+        maxResources: 4
+      )
+    )
+    var config = defaultGpuDisplaySurfaceConfig(2, 1)
+    config.bufferCount = 2
+    config.fallback = gdsfRequireHybrid
+    let display = host.newGpuDisplaySurface(namespace, config)
+    check display.path == gdspHybrid
+    check display.directSurface() != nil
+    check display.readbackSurface() != nil
+    let source = host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(2, 1,
+        usage = {gtuRenderTarget, gtuSampled, gtuBlitSource},
+        label = "hybrid-source"))
+    let ui = initUiRoot()
+    let handle = ui.gpuDisplaySurface(display)
+    discard ui.consumeInvalidation()
+    let token = host.beginGpuFrame()
+    check handle.queueGpuFrame(source, token)
+    host.endGpuFrame(token)
+    check handle.collectGpuFrame()
+    check display.directSurface().presentedRevision == 1
+    context.readbackReady = true
+    check handle.collectGpuFrame()
+    check display.readbackSurface().rasterSurface().revision == 2
+    check ddPaint in ui.consumeInvalidation().domains
+
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(
+      ui.tree, ui.styleSheets(), defaultProperties(), diagnostics)
+    let layout = computeLayout(ui.tree, styles, size(10, 10))
+    ui.syncRenderSurfaces(styles, layout)
+    let commands = ui.buildPaintCommands(styles, layout)
+    let gpuCommands = commands.filterIt(it.kind == pcDrawGpuDirectSurface)
+    check gpuCommands.len == 1
+    check gpuCommands[0].gpuFallbackSurface ==
+      display.readbackSurface().rasterSurface()
+    let offscreen = GpuDirectCompositeContext(
+      targetKind: gdctOffscreen, targetBounds: rect(0, 0, 2, 1),
+      pixelScale: 1)
+    let windowOnly = newGpuDirectCompositor(
+      gpuDirectCompositeCapabilities({gdctWindow}),
+      proc(request: GpuDirectCompositeRequest): GpuDirectCompositeStatus =
+        discard request
+        gdcsPresented)
+    check gpuCommands[0].compositeGpuDirectSurface(offscreen, windowOnly) ==
+      gdcsUnsupported
+    display.readbackSurface().rasterSurface().replacePixels(
+      @[255'u8, 0, 0, 255, 0, 255, 0, 255])
+    discard display.readbackSurface().rasterSurface().publish()
+    let image = render(gpuCommands, 2, 1, rgb(0, 0, 0))
+    check image.pixels[0 .. 5] == @[255'u8, 0, 0, 0, 255, 0]
+
+    check display.closeGpuDisplaySurface()
+    check host.releaseGpuResource(source)
+    host.close()
+
+    let noReadback = newContext()
+    noReadback.enableDirectPresentation(maxBuffers = 2)
+    noReadback.readbackSupported = false
+    let directOnlyHost = openGpuHost(noReadback.backend, ghoOwned)
+    let directOnlyNamespace = directOnlyHost.createGpuNamespace(
+      "hybrid-no-readback", GpuResourceBudget(persistentBytes: 64,
+        maxResources: 4))
+    expect GpuHostError:
+      discard directOnlyHost.newGpuDisplaySurface(directOnlyNamespace, config)
+    directOnlyHost.close()
+
+  test "hybrid readback rejection cancels the retained direct frame":
+    let context = newContext()
+    context.enableDirectPresentation(maxBuffers = 2)
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace(
+      "hybrid-rejection",
+      GpuResourceBudget(persistentBytes: 64,
+        readbackBytesPerFrame: 8, workUnitsPerFrame: 1,
+        maxResources: 4))
+    var config = defaultGpuDisplaySurfaceConfig(2, 1)
+    config.bufferCount = 2
+    config.fallback = gdsfRequireHybrid
+    let display = host.newGpuDisplaySurface(namespace, config)
+    let source = host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(2, 1,
+        usage = {gtuRenderTarget, gtuSampled, gtuBlitSource}))
+    let token = host.beginGpuFrame()
+    expect GpuHostError:
+      discard display.queueGpuDisplayFrame(source, token)
+    check display.directSurface().pendingFrameCount() == 1
+    host.endGpuFrame(token)
+    check not display.collectGpuDisplayFrame()
+    check display.directSurface().pendingFrameCount() == 0
+    check display.closeGpuDisplaySurface()
+    check host.releaseGpuResource(source)
+    host.close()
 
   test "required direct mode and unsupported fallback formats fail closed":
     let context = newContext()

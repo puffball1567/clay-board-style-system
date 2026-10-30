@@ -1039,7 +1039,7 @@ an enum-only API.
 ## GPU Canvas Capability
 
 Status: `Version 0.7.0 GPU foundation released on 2026-09-19; the Version 0.7
-patch line continues SDL/GPU offscreen-layer interop, broader real-GPU
+patch line continues native SDL/GPU offscreen-layer interop, broader real-GPU
 qualification, CPU filters, and Motion Scene work`
 
 CBSS will support optional GPU-backed drawing inside the standard Canvas
@@ -1091,8 +1091,10 @@ qualified profile. The standard same-host compositor, restricted
 cross-namespace presentation binding, RenderTarget color-attachment resolution,
 rectangular clip/UV crop, bounded nested rounded-mask composition, typed
 same-host offscreen `RenderTarget` composition, and portable shader source
-contract are implemented. SDL texture-backed offscreen interop and real-GPU
-pixel qualification remain Version 0.7 work. A later wgpu-native adapter
+contract are implemented. An opt-in hybrid direct/readback display path now
+paints SDL texture-backed layers with completed raster pixels when direct
+offscreen composition is unsupported. Native texture sharing and broader
+real-GPU pixel qualification remain Version 0.7 work. A later wgpu-native adapter
 may implement the same CBSS-owned contract, but it is no longer the standard
 provider or a release prerequisite.
 

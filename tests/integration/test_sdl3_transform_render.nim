@@ -102,6 +102,43 @@ suite "SDL3 transform rendering":
     check frame.pixel(14, 12).g < 25
     check frame.pixel(4, 4).r < 25
 
+  test "GPU direct command paints its raster fallback in an SDL offscreen layer":
+    let previousDriver = getEnv("SDL_VIDEODRIVER")
+    putEnv("SDL_VIDEODRIVER", "dummy")
+    defer:
+      if previousDriver.len > 0:
+        putEnv("SDL_VIDEODRIVER", previousDriver)
+      else:
+        delEnv("SDL_VIDEODRIVER")
+
+    let surface = newRasterSurface(2, 2, [0'u8, 255'u8, 0'u8, 255'u8])
+    var commands = @[
+      pushTransform(translationAffine2D(10, 8)),
+      PaintCommand(
+        kind: pcDrawGpuDirectSurface, owner: some(NodeId(1)),
+        gpuFallbackSurface: surface,
+        gpuSurfaceRect: rect(0, 0, 12, 12),
+        gpuSurfaceOpacity: 1.0'f32
+      ),
+      popTransform()
+    ]
+    commands.resolveTransformBounds()
+    var renderer = initSdl3Renderer("CBSS hybrid GPU layer test", 32, 32, false)
+    defer: renderer.close()
+    renderer.requestFrameCapture()
+    renderer.render(commands, rgb(0, 0, 0))
+    check renderer.gpuDirectCompositionStats().unsupported == 1
+    check renderer.capturedFrame().isSome
+    let frame = renderer.capturedFrame().get
+    check frame.pixel(14, 12).g > 220
+    check frame.pixel(14, 12).r < 25
+    check frame.pixel(4, 4).g < 25
+    renderer.requestFrameCapture()
+    renderer.renderLayered(commands, CosmicTextEngine(), initFontRegistry(),
+      rgb(0, 0, 0))
+    check renderer.capturedFrame().isSome
+    check renderer.capturedFrame().get.pixel(14, 12).g > 220
+
   test "layered rendering preserves affine transform scopes":
     let previousDriver = getEnv("SDL_VIDEODRIVER")
     putEnv("SDL_VIDEODRIVER", "dummy")

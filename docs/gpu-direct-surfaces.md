@@ -7,7 +7,7 @@ The normal, failure, edge-case, and pending hardware coverage is tracked in
 [GPU Surface Quality Matrix](gpu-surface-test-matrix.md).
 
 `GpuDisplaySurface` is the negotiated UI boundary for displaying a GPU Texture
-or RenderTarget. It selects one of two paths without changing the surrounding
+or RenderTarget. It selects one of three paths without changing the surrounding
 Box, Canvas, layout, clipping, opacity, transform, stacking, hit-test, focus,
 or accessibility contracts:
 
@@ -15,6 +15,9 @@ or accessibility contracts:
   ordered queue without a CPU readback;
 - `gdspReadback`: CBSS performs a bounded asynchronous copy into a
   `RasterSurface` and uses the ordinary CPU/SDL renderer.
+- `gdspHybrid`: CBSS retains a direct frame and an asynchronous raster copy.
+  SDL uses the copy when its active offscreen target cannot accept direct GPU
+  composition.
 
 The normal configuration allows the fallback:
 
@@ -28,11 +31,9 @@ let view = ui.gpuDisplaySurface(display, viewportStyle)
 
 Set `config.fallback = gdsfRequireDirect` only when the application has selected
 a paint adapter that consumes `pcDrawGpuDirectSurface` from the same
-`GpuHost`. The SDL high-level renderer does not import arbitrary external GPU
-textures. The current bgfx adapter therefore leaves direct-presentation
-capabilities disabled until its same-device compositor is qualified. With the
-default policy, these adapters select `gdspReadback` instead of silently
-displaying nothing.
+`GpuHost`. The standard bgfx same-host compositor supports its qualified
+final-window target. SDL texture-backed offscreen layers have a separate SDL
+texture and cannot pass it as a typed bgfx `RenderTarget`.
 
 When a Canvas may be painted inside an SDL texture-backed transform, opacity,
 filter, or cached layer, set `config.fallback = gdsfRequireReadback` before
@@ -40,7 +41,11 @@ creating the display surface. This selects the asynchronous `RasterSurface`
 path even if the host advertises direct presentation, so the ordinary SDL
 renderer can include the pixels in its layer. Construction fails if readback is
 unavailable for the requested format or byte budget. This is an explicit CPU
-transfer, not zero-copy SDL/bgfx texture sharing.
+transfer, not zero-copy SDL/bgfx texture sharing. Set
+`config.fallback = gdsfRequireHybrid` to keep direct presentation for compatible
+window passes while also preparing that SDL layer fallback. Both direct and
+readback capabilities and their resource budgets are required. The copied frame
+may appear later than its direct counterpart while readback completes.
 
 ## Publishing Frames
 

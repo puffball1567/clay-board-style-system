@@ -339,6 +339,11 @@ proc gpuDirectCompositeContext(
     layers: openArray[Sdl3TransformLayer]
 ): GpuDirectCompositeContext
 
+proc drawGpuFallbackSurface(
+    target: var Sdl3Renderer;
+    command: PaintCommand
+): bool
+
 proc renderGpuDirectSurface(
     target: var Sdl3Renderer;
     command: PaintCommand;
@@ -360,6 +365,8 @@ proc renderGpuDirectSurface(
     inc target.gpuDirectCompositionStats.unsupported
   of gdcsFailed:
     inc target.gpuDirectCompositionStats.failed
+  if status != gdcsPresented:
+    result = target.drawGpuFallbackSurface(command)
 
 proc indexKey(index: var Table[Hash, seq[int]]; key: string; entryIndex: int) =
   index.mgetOrPut(hash(key), @[]).add entryIndex
@@ -3656,6 +3663,18 @@ proc drawRasterSurfaceTexture(
     if roundedClips.len > 0: roundedClips else: target.clipStack
   )
   target.evictRasterSurfaceCacheIfNeeded()
+
+proc drawGpuFallbackSurface(
+    target: var Sdl3Renderer;
+    command: PaintCommand
+): bool =
+  if command.gpuFallbackSurface.isNil or command.gpuSurfaceRect.isEmpty:
+    return false
+  target.drawRasterSurfaceTexture(drawRasterSurface(
+    command.owner.get(NodeId(0)), command.gpuFallbackSurface,
+    command.gpuSurfaceRect, command.gpuSurfaceOpacity
+  ))
+  true
 
 proc evictTextCacheIfNeeded(target: var Sdl3Renderer) =
   let limit =

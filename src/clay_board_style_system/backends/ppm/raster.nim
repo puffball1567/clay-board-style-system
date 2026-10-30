@@ -761,7 +761,13 @@ proc renderInto*(
         command, transformStack[^1], clipStack[^1]
       )
     of pcDrawGpuDirectSurface:
-      discard # The deterministic CPU backend has no compatible GPU device.
+      if not command.gpuFallbackSurface.isNil:
+        targets[^1].drawRasterSurface(
+          drawRasterSurface(command.owner.get(),
+            command.gpuFallbackSurface, command.gpuSurfaceRect,
+            command.gpuSurfaceOpacity),
+          transformStack[^1], clipStack[^1]
+        )
 
   while layers.len > 0 and targets.len > 1:
     let source = targets.pop()

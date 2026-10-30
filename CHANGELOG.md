@@ -19,6 +19,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- GPU display surfaces can opt into a hybrid direct and readback mode. SDL3
+  texture-backed layers use the completed raster copy when direct composition
+  into their offscreen target is unavailable.
+
 - Motion Scene now supports stroked line segments with butt, square, and round
   caps in CPU rendering, hit testing, and instanced GPU rendering.
 

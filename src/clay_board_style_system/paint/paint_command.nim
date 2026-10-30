@@ -104,6 +104,7 @@ type
       rasterOpacity*: float32
     of pcDrawGpuDirectSurface:
       gpuDirectSurface*: GpuDirectSurface
+      gpuFallbackSurface*: RasterSurface
       gpuSurfaceRect*: Rect
       gpuSurfaceOpacity*: float32
 
@@ -301,6 +302,7 @@ proc samePaintCommand*(first, second: PaintCommand): bool =
       first.rasterOpacity == second.rasterOpacity
   of pcDrawGpuDirectSurface:
     first.gpuDirectSurface == second.gpuDirectSurface and
+      first.gpuFallbackSurface == second.gpuFallbackSurface and
       first.gpuSurfaceRect == second.gpuSurfaceRect and
       first.gpuSurfaceOpacity == second.gpuSurfaceOpacity
 
@@ -562,7 +564,8 @@ proc drawGpuDirectSurface*(
     node: NodeId;
     surface: GpuDirectSurface;
     bounds: Rect;
-    opacity = 1.0'f32
+    opacity = 1.0'f32;
+    fallback: RasterSurface = nil
 ): PaintCommand =
   if surface.isNil or surface.isClosed:
     raise newException(ValueError, "GPU direct surface cannot be nil or closed")
@@ -570,6 +573,7 @@ proc drawGpuDirectSurface*(
     kind: pcDrawGpuDirectSurface,
     owner: some(node),
     gpuDirectSurface: surface,
+    gpuFallbackSurface: fallback,
     gpuSurfaceRect: bounds,
     gpuSurfaceOpacity: clamp(opacity, 0.0'f32, 1.0'f32)
   )

@@ -43,7 +43,7 @@ proc queueGpuFrame*(
 proc collectGpuFrame*(handle: GpuDisplaySurfaceHandle): bool {.discardable.} =
   if not handle.valid or not handle.surface.collectGpuDisplayFrame():
     return false
-  if handle.surface.path == gdspReadback:
+  if handle.surface.path in {gdspReadback, gdspHybrid}:
     discard handle.surface.readbackSurface().rasterSurface().publish()
   handle.root.invalidate(handle.canvas.node.id, {ddPaint})
   true
@@ -78,6 +78,9 @@ proc gpuDisplaySurface*(
     drawing.drawGpuDirectSurfaceToContent(value.directSurface())
   of gdspReadback:
     drawing.drawRasterSurfaceToContent(value.readbackSurface().rasterSurface())
+  of gdspHybrid:
+    drawing.drawGpuDirectSurfaceToContent(value.directSurface(),
+      fallback = value.readbackSurface().rasterSurface())
   result = GpuDisplaySurfaceHandle(
     root: root,
     surface: value,
