@@ -133,6 +133,11 @@ suite "SDL3 transform rendering":
     check frame.pixel(14, 12).g > 220
     check frame.pixel(14, 12).r < 25
     check frame.pixel(4, 4).g < 25
+    renderer.requestFrameCapture()
+    renderer.renderLayered(commands, CosmicTextEngine(), initFontRegistry(),
+      rgb(0, 0, 0))
+    check renderer.capturedFrame().isSome
+    check renderer.capturedFrame().get.pixel(14, 12).g > 220
 
   test "layered rendering preserves affine transform scopes":
     let previousDriver = getEnv("SDL_VIDEODRIVER")
