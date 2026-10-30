@@ -12,7 +12,10 @@ type
   MotionObjectId* = distinct uint64
 
   MotionShape* = enum
-    msRoundedRect, msEllipse
+    msRoundedRect, msEllipse, msLine
+
+  MotionLineCap* = enum
+    mlcButt, mlcSquare, mlcRound
 
   MotionObject* = object
     ## A value-type scene shape. IDs are application-owned and nonzero.
@@ -88,6 +91,42 @@ proc motionEllipse*(
   MotionObject(id: id, shape: msEllipse, bounds: bounds, color: color,
     transform: transform, opacity: opacity, radius: 0.0'f32,
     zIndex: zIndex, visible: visible, hitTestable: hitTestable)
+
+proc motionLine*(
+    id: MotionObjectId; startPoint, endPoint: Vec2; width: float32;
+    color: Color; cap = mlcRound;
+    transform = identityAffine2D(); opacity = 1.0'f32;
+    zIndex = 0'i32; visible = true; hitTestable = true
+): MotionObject =
+  ## A stroked segment represented by the same affine rounded-rectangle
+  ## primitive in CPU paint, picking, and GPU instance batches.
+  if not startPoint.x.finite or not startPoint.y.finite or
+      not endPoint.x.finite or not endPoint.y.finite or
+      not width.finite or width <= 0:
+    raise newException(ValueError, "motion line endpoints must be finite and width must be positive and finite")
+  let dx = endPoint.x.float64 - startPoint.x.float64
+  let dy = endPoint.y.float64 - startPoint.y.float64
+  let length64 = sqrt(dx * dx + dy * dy)
+  if length64 + width.float64 > high(float32).float64:
+    raise newException(ValueError, "motion line geometry exceeds float32 range")
+  let length = float32(length64)
+  let extension = if cap == mlcButt: 0.0'f32 else: width * 0.5'f32
+  let basis =
+    if length64 == 0.0:
+      identityAffine2D()
+    else:
+      let cosine = float32(dx / length64)
+      let sine = float32(dy / length64)
+      Affine2D(m11: cosine, m12: sine, m21: -sine, m22: cosine)
+  let placement = translationAffine2D(startPoint.x, startPoint.y) * basis
+  result = motionRect(
+    id, rect(-extension, -width * 0.5'f32,
+      length + extension * 2.0'f32, width), color,
+    transform = transform * placement, opacity = opacity,
+    radius = (if cap == mlcRound: width * 0.5'f32 else: 0.0'f32),
+    zIndex = zIndex, visible = visible, hitTestable = hitTestable
+  )
+  result.shape = msLine
 
 proc motionSceneSnapshot*(
     viewport: Size; objects: openArray[MotionObject]
@@ -188,7 +227,7 @@ proc compile(snapshot: MotionSceneSnapshot): seq[CanvasCommand] =
     var color = value.color
     color.a *= value.opacity
     case value.shape
-    of msRoundedRect:
+    of msRoundedRect, msLine:
       if value.radius > 0:
         target.pushClip(value.bounds, value.radius)
       target.fillRect(value.bounds, color)
@@ -270,7 +309,7 @@ proc hitTest*(snapshot: MotionSceneSnapshot; position: Vec2): Option[MotionScene
     let bounds = entry.value.bounds
     if not bounds.contains(point): continue
     case entry.value.shape
-    of msRoundedRect:
+    of msRoundedRect, msLine:
       let radius = entry.value.radius
       if radius > 0:
         let x = clamp(point.x, bounds.x + radius, bounds.x + bounds.w - radius)

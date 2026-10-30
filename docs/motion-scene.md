@@ -1,8 +1,8 @@
 # CPU Motion Scene
 
 The opt-in `runtime/motion_scene` module keeps many visual objects in one
-retained Canvas. The CPU reference path supports rounded rectangles and
-ellipses, affine transforms, opacity, z-order, viewport clipping, stable
+retained Canvas. The CPU reference path supports rounded rectangles, ellipses,
+and stroked line segments, affine transforms, opacity, z-order, viewport clipping, stable
 application IDs, and inverse-transform hit testing. It runs without a GPU or
 window.
 
@@ -14,7 +14,9 @@ let initial = motionSceneSnapshot(size(320, 200), [
   motionRect(MotionObjectId(1), rect(20, 20, 80, 40), rgb(1, 0.3, 0.1),
     radius = 8),
   motionEllipse(MotionObjectId(2), rect(60, 40, 80, 40), rgb(0.1, 0.4, 1),
-    opacity = 0.8, zIndex = 1)
+    opacity = 0.8, zIndex = 1),
+  motionLine(MotionObjectId(3), vec2(20, 100), vec2(220, 140), 6,
+    rgb(0.1, 0.8, 0.4), cap = mlcRound, zIndex = 2)
 ])
 let scene = newMotionScene(initial)
 let ui = initUiRoot()
@@ -42,12 +44,16 @@ application-controlled across replacement, reordering, and removal. A snapshot
 accepts at most 65,536 objects; oversized input, invalid colors, negative sizes,
 non-finite values, and overflowing transformed geometry fail before publication.
 Colors and opacity must be in `[0, 1]`. Radius is clamped to half the shortest
-side for rectangles; ellipses use their full bounds. Hidden, empty, fully
+side for rectangles; ellipses use their full bounds. `motionLine` takes two
+endpoints and a positive stroke width, with butt, square, and round caps; its
+default is round. A zero-length round or square segment produces a dot, while
+a zero-length butt segment is empty. Hidden, empty, fully
 transparent, and singular-transform objects retain their identity but produce
 no pixels or hits.
 
 Paint order is ascending z-index, with authoring order breaking ties. Picking
 walks the same order backwards, respects rounded corners, ellipse boundaries,
+line caps,
 and the scene viewport, and returns coordinates relative to the object's
 untransformed top-left corner.
 `hitTestable = false` keeps an object visible while allowing hits to pass through.
@@ -84,8 +90,8 @@ the scene until released and do not retain UI nodes.
 
 ## GPU shape batches
 
-Import `runtime/motion_scene_gpu` explicitly to pack drawable rounded rectangles
-and ellipses of a snapshot into five-vec4 GPU instance records:
+Import `runtime/motion_scene_gpu` explicitly to pack drawable rounded rectangles,
+ellipses, and lines of a snapshot into five-vec4 GPU instance records:
 
 ```nim
 import clay_board_style_system/runtime/motion_scene_gpu

@@ -19,6 +19,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Motion Scene now supports stroked line segments with butt, square, and round
+  caps in CPU rendering, hit testing, and instanced GPU rendering.
+
 - C ABI `0x0001002A` adds direct sibling insertion and one-position child
   moves for pointer drops and keyboard reordering. Both preserve node handles,
   report no-op moves, and reject cross-parent or stale nodes without mutation.

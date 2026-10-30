@@ -101,6 +101,67 @@ suite "CPU Motion Scene snapshots":
     check records[1][0][2] == 7
     check records[1][1][2] == 6
 
+  test "line caps share CPU paint, picking, and GPU instance geometry":
+    let roundLine = motionLine(MotionObjectId(1), vec2(4, 8), vec2(16, 8),
+      4, rgb(0, 1, 0))
+    check roundLine.shape == msLine
+    let scene = newMotionScene(snap([roundLine]))
+    check scene.pixels.pixel(10, 8) == (0'u8, 255'u8, 0'u8)
+    check scene.pixels.pixel(3, 8).g == 255
+    check scene.pixels.pixel(1, 8).g == 0
+    check scene.hitTest(vec2(3, 8)).get.id == MotionObjectId(1)
+    check scene.hitTest(vec2(1, 8)).isNone
+    let records = gpuMotionRectRecords(scene.snapshot)
+    check records.len == 1
+    check records[0][2] == [16'f32, 4, 2, 0]
+    check records[0][0][2] == 2
+    check records[0][1][2] == 6
+
+    let butt = motionLine(MotionObjectId(2), vec2(4, 8), vec2(16, 8),
+      4, rgb(1, 0, 0), cap = mlcButt)
+    let square = motionLine(MotionObjectId(3), vec2(4, 8), vec2(16, 8),
+      4, rgb(0, 0, 1), cap = mlcSquare)
+    discard scene.replaceSnapshot(snap([butt]))
+    check scene.pixels.pixel(3, 8).r == 0
+    check scene.hitTest(vec2(3, 8)).isNone
+    discard scene.replaceSnapshot(snap([square]))
+    check scene.pixels.pixel(3, 8).b == 255
+    check scene.hitTest(vec2(3, 8)).get.id == MotionObjectId(3)
+
+    let vertical = motionLine(MotionObjectId(4), vec2(8, 4), vec2(8, 16),
+      4, rgb(1, 0, 0), cap = mlcButt,
+      transform = translationAffine2D(2, 0))
+    discard scene.replaceSnapshot(snap([vertical]))
+    check scene.pixels.pixel(10, 10).r == 255
+    check scene.pixels.pixel(7, 10).r == 0
+    check scene.hitTest(vec2(10, 10)).get.id == MotionObjectId(4)
+    check scene.hitTest(vec2(7, 10)).isNone
+    let verticalRecord = gpuMotionRectRecords(scene.snapshot)[0]
+    check abs(verticalRecord[0][0]) < 0.0001
+    check abs(verticalRecord[0][1] + 1) < 0.0001
+    check abs(verticalRecord[1][0] - 1) < 0.0001
+
+  test "line input and degenerate caps are validated":
+    expect ValueError:
+      discard motionLine(MotionObjectId(1), vec2(NaN.float32, 0),
+        vec2(1, 1), 2, rgb(1, 0, 0))
+    expect ValueError:
+      discard motionLine(MotionObjectId(1), vec2(0, 0),
+        vec2(1, 1), 0, rgb(1, 0, 0))
+    expect ValueError:
+      discard motionLine(MotionObjectId(1), vec2(-high(float32), 0),
+        vec2(high(float32), 0), 2, rgb(1, 0, 0))
+    let dot = motionLine(MotionObjectId(2), vec2(8, 8), vec2(8, 8),
+      4, rgb(0, 1, 0))
+    let scene = newMotionScene(snap([dot]))
+    check scene.pixels.pixel(8, 8).g == 255
+    check scene.hitTest(vec2(8, 8)).isSome
+    discard scene.replaceSnapshot(snap([
+      motionLine(MotionObjectId(3), vec2(8, 8), vec2(8, 8),
+        4, rgb(0, 1, 0), cap = mlcButt)]))
+    check scene.pixels.pixel(8, 8).g == 0
+    check scene.hitTest(vec2(8, 8)).isNone
+
   test "rounded transformed rectangles agree with inverse-space hit testing":
     var shape = item(1, rect(0, 0, 10, 10))
     shape.radius = 5

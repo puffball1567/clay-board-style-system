@@ -453,6 +453,16 @@ proc verifyMotionSceneCanvas(host: GpuHost;
     "GPU Canvas ellipse center")
   ellipsePixels.requireRasterPixel(16, 3, 3, Pixel(),
     "GPU Canvas ellipse outside")
+  discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), [
+    motionLine(MotionObjectId(4), vec2(2, 8), vec2(14, 8), 4,
+      rgba(0, 1, 0, 1))]))
+  doAssert renderer.queueFrame()
+  drain()
+  let linePixels = renderer.canvas.rasterSurface.pixels
+  linePixels.requireRasterPixel(16, 8, 8, Pixel(green: 255, alpha: 255),
+    "GPU Canvas line center")
+  linePixels.requireRasterPixel(16, 8, 3, Pixel(),
+    "GPU Canvas line outside")
   discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), []))
   doAssert renderer.queueFrame()
   drain()
@@ -524,6 +534,18 @@ proc verifyMotionSceneDirect(host: GpuHost;
   ellipsePixels.requirePixel(3, 3, Pixel(),
     "direct Motion Scene ellipse outside")
   doAssert ellipse.release()
+  discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), [
+    motionLine(MotionObjectId(4), vec2(2, 8), vec2(14, 8), 4,
+      rgba(0, 1, 0, 1))]))
+  doAssert renderer.queueFrame()
+  drain()
+  var line = renderer.surface().acquireGpuDirectSurfaceFrame().get
+  let linePixels = host.readPixels(ns, line.resource, 16, 16)
+  linePixels.requirePixel(8, 8, Pixel(green: 255, alpha: 255),
+    "direct Motion Scene line center")
+  linePixels.requirePixel(8, 3, Pixel(),
+    "direct Motion Scene line outside")
+  doAssert line.release()
   discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), []))
   doAssert renderer.queueFrame()
   drain()
