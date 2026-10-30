@@ -5,11 +5,13 @@ type
   GpuDisplaySurfaceFallback* = enum
     gdsfRequireDirect,
     gdsfAllowReadback,
-    gdsfRequireReadback
+    gdsfRequireReadback,
+    gdsfRequireHybrid
 
   GpuDisplaySurfacePath* = enum
     gdspDirect,
-    gdspReadback
+    gdspReadback,
+    gdspHybrid
 
   GpuDisplaySurfaceConfig* = object
     width*, height*: uint32
@@ -134,7 +136,24 @@ proc newGpuDisplaySurface*(
     namespace: namespace,
     configValue: resolved
   )
-  if capabilities.direct and resolved.fallback != gdsfRequireReadback:
+  if resolved.fallback == gdsfRequireHybrid:
+    if not capabilities.direct or not capabilities.readbackFallback:
+      raise newException(GpuHostError,
+        "GPU display hybrid path requires direct presentation and readback")
+    result.pathValue = gdspHybrid
+    result.directValue = host.newGpuDirectSurface(
+      namespace, resolved.directConfig()
+    )
+    var fallbackConfig = defaultGpuCanvasConfig(
+      resolved.width, resolved.height
+    )
+    fallbackConfig.format = resolved.format
+    fallbackConfig.alphaMode = resolved.alphaMode
+    fallbackConfig.readbackSlots = resolved.bufferCount
+    fallbackConfig.label = resolved.label
+    fallbackConfig.maxRasterBytes = resolved.maxRasterBytes
+    result.readbackValue = host.newGpuCanvasSurface(namespace, fallbackConfig)
+  elif capabilities.direct and resolved.fallback != gdsfRequireReadback:
     result.pathValue = gdspDirect
     result.directValue = host.newGpuDirectSurface(
       namespace, resolved.directConfig()
@@ -167,12 +186,12 @@ proc path*(surface: GpuDisplaySurface): GpuDisplaySurfacePath =
   surface.pathValue
 
 proc directSurface*(surface: GpuDisplaySurface): GpuDirectSurface =
-  if surface.isNil or surface.pathValue != gdspDirect:
+  if surface.isNil or surface.pathValue notin {gdspDirect, gdspHybrid}:
     return nil
   surface.directValue
 
 proc readbackSurface*(surface: GpuDisplaySurface): GpuCanvasSurface =
-  if surface.isNil or surface.pathValue != gdspReadback:
+  if surface.isNil or surface.pathValue notin {gdspReadback, gdspHybrid}:
     return nil
   surface.readbackValue
 
@@ -196,6 +215,20 @@ proc queueGpuDisplayFrame*(
         "GPU readback fallback must be queued in its active source frame"
       )
     surface.readbackValue.queueGpuCanvasFrameFrom(resource)
+  of gdspHybrid:
+    if not surface.host.isGpuFrameActive(completion):
+      raise newException(GpuHostError,
+        "GPU hybrid readback must be queued in its active source frame")
+    if not surface.directValue.queueGpuDirectSurfaceFrame(resource, completion):
+      return false
+    try:
+      if not surface.readbackValue.queueGpuCanvasFrameFrom(resource):
+        discard surface.directValue.cancelGpuDirectSurfaceFrame(resource)
+        return false
+    except:
+      discard surface.directValue.cancelGpuDirectSurfaceFrame(resource)
+      raise
+    true
 
 proc collectGpuDisplayFrame*(surface: GpuDisplaySurface): bool {.discardable.} =
   if surface.isNil or surface.closedValue:
@@ -205,6 +238,10 @@ proc collectGpuDisplayFrame*(surface: GpuDisplaySurface): bool {.discardable.} =
     surface.directValue.collectGpuDirectSurfaceFrame()
   of gdspReadback:
     surface.readbackValue.collectGpuCanvasFrame()
+  of gdspHybrid:
+    let directChanged = surface.directValue.collectGpuDirectSurfaceFrame()
+    let rasterChanged = surface.readbackValue.collectGpuCanvasFrame()
+    directChanged or rasterChanged
 
 proc closeGpuDisplaySurface*(surface: GpuDisplaySurface): bool {.discardable.} =
   if surface.isNil or surface.closedValue:
@@ -215,5 +252,12 @@ proc closeGpuDisplaySurface*(surface: GpuDisplaySurface): bool {.discardable.} =
       surface.directValue.closeGpuDirectSurface()
     of gdspReadback:
       surface.readbackValue.closeGpuCanvasSurface()
+    of gdspHybrid:
+      if surface.readbackValue.pendingFrameCount() > 0:
+        false
+      elif not surface.directValue.closeGpuDirectSurface():
+        false
+      else:
+        surface.readbackValue.closeGpuCanvasSurface()
   if result:
     surface.closedValue = true

@@ -87,6 +87,7 @@ type
       rasterFillContent*: bool
     of cckDrawGpuDirectSurface:
       gpuDirectSurface*: GpuDirectSurface
+      gpuFallbackSurface*: RasterSurface
       gpuSurfaceRect*: Rect
       gpuSurfaceOpacity*: float32
       gpuSurfaceFillContent*: bool
@@ -561,7 +562,8 @@ proc drawGpuDirectSurface*(
     canvas: Canvas2D;
     surface: GpuDirectSurface;
     bounds: Rect;
-    opacity = 1.0'f32
+    opacity = 1.0'f32;
+    fallback: RasterSurface = nil
 ) =
   if canvas.isNil:
     raise newException(ValueError, "canvas cannot be nil")
@@ -572,6 +574,7 @@ proc drawGpuDirectSurface*(
   canvas.commands.add CanvasCommand(
     kind: cckDrawGpuDirectSurface,
     gpuDirectSurface: surface,
+    gpuFallbackSurface: fallback,
     gpuSurfaceRect: bounds,
     gpuSurfaceOpacity: clamp(opacity, 0.0'f32, 1.0'f32),
     gpuSurfaceFillContent: false
@@ -581,7 +584,8 @@ proc drawGpuDirectSurface*(
 proc drawGpuDirectSurfaceToContent*(
     canvas: Canvas2D;
     surface: GpuDirectSurface;
-    opacity = 1.0'f32
+    opacity = 1.0'f32;
+    fallback: RasterSurface = nil
 ) =
   if canvas.isNil:
     raise newException(ValueError, "canvas cannot be nil")
@@ -590,6 +594,7 @@ proc drawGpuDirectSurfaceToContent*(
   canvas.commands.add CanvasCommand(
     kind: cckDrawGpuDirectSurface,
     gpuDirectSurface: surface,
+    gpuFallbackSurface: fallback,
     gpuSurfaceRect: rect(0, 0, 0, 0),
     gpuSurfaceOpacity: clamp(opacity, 0.0'f32, 1.0'f32),
     gpuSurfaceFillContent: true
@@ -764,7 +769,8 @@ proc paintCommands*(
         owner,
         command.gpuDirectSurface,
         destination,
-        command.gpuSurfaceOpacity * opacity
+        command.gpuSurfaceOpacity * opacity,
+        command.gpuFallbackSurface
       )
   while scopes.len > 0:
     case scopes.pop()
