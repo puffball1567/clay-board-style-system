@@ -1116,6 +1116,12 @@ against the actual storage resource stages, formats, and access directions
 before backend work.
 See [GPU Shader Authoring And Packaging](gpu-shaders.md).
 
+A same-host GPU RGB matrix pass now applies the immutable Canvas layer filter
+coefficients to sampled Texture or RenderTarget pixels and writes premultiplied
+RGBA8 output. This gives GPU-owned surfaces a bounded filter stage before
+direct display or asynchronous readback. Full GPU filtering of ordinary Style
+subtrees remains dependent on a shared GPU offscreen composition target.
+
 Bounded static/dynamic instanced draws now carry 1–5 packed vec4 values per
 instance through the host and bgfx adapter, with typed vertex-shader inputs,
 subrange validation, and up to 65,536 instances per draw. Motion Scene rectangle

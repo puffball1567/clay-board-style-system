@@ -19,9 +19,9 @@ import clay_board_style_system/runtime/[gpu_canvas, motion_scene,
     gpu_display_surface, motion_scene_gpu, motion_scene_gpu_canvas,
     motion_scene_gpu_direct]
 import clay_board_style_system/paint/[gpu_direct_compositor,
-    gpu_host_compositor, paint_command]
+    gpu_host_compositor, layer_color_filter, paint_command]
 import clay_board_style_system/runtime/[gpu_direct_surface, gpu_host,
-    gpu_shader_builder, gpu_shader_package]
+    gpu_color_matrix, gpu_shader_builder, gpu_shader_package]
 
 when sdl3CompileFlags.len > 0:
   {.passC: sdl3CompileFlags.}
@@ -376,6 +376,55 @@ proc verifyHybridDisplayPixels(host: GpuHost) =
   doAssert host.releaseGpuResource(target)
   doAssert host.closeGpuNamespace(ns)
   echo "Hybrid GPU display: Texture and RenderTarget direct/readback pixels passed"
+
+proc verifyGpuColorMatrixPixels(host: GpuHost;
+    shaderc, shaderIncludes, workDirectory: string) =
+  let ns = host.createGpuNamespace("gpu-color-matrix-pixels", budget())
+  let material = host.newGpuColorMatrixMaterial(ns,
+    compileShader(gpuColorMatrixVertexSource(), shaderc,
+      shaderIncludes, workDirectory),
+    compileShader(gpuColorMatrixFragmentSource(), shaderc,
+      shaderIncludes, workDirectory))
+  let source = host.createGpuTexture(ns, GpuTextureDescriptor(
+    width: 2, height: 2, format: gtfRgba8,
+    usage: {gtuSampled}, access: gtaStatic,
+    label: "color-matrix-source"),
+    rgbaPixels(2, 2, proc(x, y: int): Pixel =
+      if y == 0 and x == 0: Pixel(red: 100, green: 20, blue: 5, alpha: 128)
+      elif y == 0: Pixel()
+      elif x == 0: Pixel(green: 128, alpha: 128)
+      else: Pixel(red: 30, green: 60, blue: 90, alpha: 255)))
+  proc target(label: string): GpuResourceHandle =
+    host.createGpuRenderTarget(ns, GpuRenderTargetDescriptor(
+      width: 2, height: 2, format: gtfRgba8,
+      usage: {gtuRenderTarget, gtuSampled, gtuBlitSource},
+      label: label))
+  let filtered = target("color-matrix-filtered")
+  let chained = target("color-matrix-chained")
+  let swapRedBlue = colorMatrixFilter([
+    0'f32, 0, 1, 0,
+    0'f32, 1, 0, 0,
+    1'f32, 0, 0, 0
+  ])
+  let frame = host.beginGpuFrame()
+  doAssert material.submit(source, filtered, swapRedBlue, gcamPremultiplied)
+  doAssert material.submit(filtered, chained, nil, gcamPremultiplied)
+  host.endGpuFrame(frame)
+  for output in [filtered, chained]:
+    let pixels = host.readPixels(ns, output, 2, 2)
+    pixels.requirePixel(0, 0, Pixel(red: 5, green: 20, blue: 100,
+      alpha: 128), "GPU matrix premultiplied top row")
+    pixels.requirePixel(1, 0, Pixel(), "GPU matrix transparent pixel")
+    pixels.requirePixel(0, 1, Pixel(green: 128, alpha: 128),
+      "GPU matrix second row")
+    pixels.requirePixel(1, 1, Pixel(red: 90, green: 60, blue: 30,
+      alpha: 255), "GPU matrix opaque pixel")
+  doAssert host.releaseGpuResource(source)
+  doAssert host.releaseGpuResource(filtered)
+  doAssert host.releaseGpuResource(chained)
+  material.release()
+  doAssert host.closeGpuNamespace(ns)
+  echo "GPU color matrix: premultiplied pixels and RenderTarget chaining passed"
 
 proc verifyInstancedRects(host: GpuHost; shaderc, shaderIncludes, workDirectory: string) =
   doAssert host.backendInfo.instancingSupported
@@ -835,6 +884,7 @@ proc run() =
     doAssert host.backendInfo.rendererName.toLowerAscii.contains("opengl")
     host.verifyCanvasReadbackCancellation()
     host.verifyHybridDisplayPixels()
+    host.verifyGpuColorMatrixPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyInstancedRects(shaderc, shaderIncludes, workDirectory)
     host.verifyMotionSceneCanvas(shaderc, shaderIncludes, workDirectory)
     host.verifyMotionSceneDirect(shaderc, shaderIncludes, workDirectory)
