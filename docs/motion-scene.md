@@ -2,9 +2,9 @@
 
 The opt-in `runtime/motion_scene` module keeps many visual objects in one
 retained Canvas. The CPU reference path supports rounded rectangles, ellipses,
-and stroked line segments, affine transforms, opacity, z-order, viewport clipping, stable
-application IDs, and inverse-transform hit testing. It runs without a GPU or
-window.
+stroked line segments, and triangles, plus affine transforms, opacity, z-order,
+viewport clipping, stable application IDs, and inverse-transform hit testing.
+It runs without a GPU or window.
 
 ```nim
 import clay_board_style_system
@@ -16,7 +16,9 @@ let initial = motionSceneSnapshot(size(320, 200), [
   motionEllipse(MotionObjectId(2), rect(60, 40, 80, 40), rgb(0.1, 0.4, 1),
     opacity = 0.8, zIndex = 1),
   motionLine(MotionObjectId(3), vec2(20, 100), vec2(220, 140), 6,
-    rgb(0.1, 0.8, 0.4), cap = mlcRound, zIndex = 2)
+    rgb(0.1, 0.8, 0.4), cap = mlcRound, zIndex = 2),
+  motionTriangle(MotionObjectId(4), vec2(240, 40), vec2(300, 80),
+    vec2(250, 120), rgb(1, 0.8, 0.2), zIndex = 3)
 ])
 let scene = newMotionScene(initial)
 let ui = initUiRoot()
@@ -47,15 +49,16 @@ Colors and opacity must be in `[0, 1]`. Radius is clamped to half the shortest
 side for rectangles; ellipses use their full bounds. `motionLine` takes two
 endpoints and a positive stroke width, with butt, square, and round caps; its
 default is round. A zero-length round or square segment produces a dot, while
-a zero-length butt segment is empty. Hidden, empty, fully
-transparent, and singular-transform objects retain their identity but produce
-no pixels or hits.
+a zero-length butt segment is empty. `motionTriangle` takes three scene points
+in either winding order. A zero-area triangle retains its ID without producing
+pixels or hits. Hidden, empty, fully transparent, and singular-transform objects
+retain their identity but produce no pixels or hits.
 
 Paint order is ascending z-index, with authoring order breaking ties. Picking
 walks the same order backwards, respects rounded corners, ellipse boundaries,
-line caps,
-and the scene viewport, and returns coordinates relative to the object's
-untransformed top-left corner.
+line caps, triangle edges, and the scene viewport. Returned coordinates are
+relative to the object's local bounds origin; triangle coordinates are the
+normalized weights along its first-to-second and first-to-third edges.
 `hitTestable = false` keeps an object visible while allowing hits to pass through.
 Pass Canvas-local positions from RenderSurface input to `hitTest`; the scene does
 not synthesize ordinary UI events or accessibility nodes for its objects.
@@ -91,7 +94,7 @@ the scene until released and do not retain UI nodes.
 ## GPU shape batches
 
 Import `runtime/motion_scene_gpu` explicitly to pack drawable rounded rectangles,
-ellipses, and lines of a snapshot into five-vec4 GPU instance records:
+ellipses, lines, and triangles of a snapshot into five-vec4 GPU instance records:
 
 ```nim
 import clay_board_style_system/runtime/motion_scene_gpu

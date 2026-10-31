@@ -162,6 +162,44 @@ suite "CPU Motion Scene snapshots":
     check scene.pixels.pixel(8, 8).g == 0
     check scene.hitTest(vec2(8, 8)).isNone
 
+  test "triangles share transformed CPU paint, picking, and GPU records":
+    let triangle = motionTriangle(MotionObjectId(2),
+      vec2(4, 4), vec2(20, 4), vec2(4, 20), rgb(0, 1, 0),
+      transform = translationAffine2D(2, 1), zIndex = 1)
+    let scene = newMotionScene(snap([
+      item(1, rect(0, 0, 32, 24)), triangle]))
+    check scene.snapshot.objectById(MotionObjectId(2)).get.shape == msTriangle
+    check scene.pixels.pixel(10, 9) == (0'u8, 255'u8, 0'u8)
+    check scene.pixels.pixel(20, 19) == (255'u8, 0'u8, 0'u8)
+    check scene.hitTest(vec2(10, 9)).get.id == MotionObjectId(2)
+    check scene.hitTest(vec2(20, 19)).get.id == MotionObjectId(1)
+    let records = gpuMotionRectRecords(scene.snapshot)
+    check records.len == 2
+    check records[1][0] == [16'f32, 0, 6, 0]
+    check records[1][1] == [0'f32, 16, 5, 0]
+    check records[1][2] == [1'f32, 1, 0, 2]
+
+    let reversed = motionTriangle(MotionObjectId(3),
+      vec2(20, 4), vec2(4, 4), vec2(20, 20), rgb(0, 0, 1))
+    discard scene.replaceSnapshot(snap([reversed]))
+    check scene.pixels.pixel(16, 8).b == 255
+    check scene.hitTest(vec2(16, 8)).get.id == MotionObjectId(3)
+
+  test "degenerate and unsafe triangles do not corrupt snapshots":
+    let flat = motionTriangle(MotionObjectId(1),
+      vec2(2, 2), vec2(8, 2), vec2(14, 2), rgb(0, 1, 0))
+    let scene = newMotionScene(snap([flat]))
+    check scene.snapshot.objectCount == 1
+    check scene.pixels.pixel(7, 2).g == 0
+    check scene.hitTest(vec2(7, 2)).isNone
+    check gpuMotionRectRecords(scene.snapshot).len == 0
+    expect ValueError:
+      discard motionTriangle(MotionObjectId(2), vec2(NaN.float32, 0),
+        vec2(1, 0), vec2(0, 1), rgb(1, 0, 0))
+    expect ValueError:
+      discard motionTriangle(MotionObjectId(2), vec2(-high(float32), 0),
+        vec2(high(float32), 0), vec2(0, 1), rgb(1, 0, 0))
+
   test "rounded transformed rectangles agree with inverse-space hit testing":
     var shape = item(1, rect(0, 0, 10, 10))
     shape.radius = 5

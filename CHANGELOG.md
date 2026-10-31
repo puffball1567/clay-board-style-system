@@ -19,6 +19,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Motion Scene now renders filled triangles through CPU Canvas and GPU instances,
+  with affine transforms, hit testing, and stable handling of degenerate shapes.
+
 - GPU display surfaces can opt into a hybrid direct and readback mode. SDL3
   texture-backed layers use the completed raster copy when direct composition
   into their offscreen target is unavailable.
