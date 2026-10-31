@@ -19,6 +19,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added a same-host GPU RGB matrix postprocess for sampled Texture and
+  RenderTarget sources. It uses the Canvas layer color-matrix coefficients,
+  preserves alpha, and produces premultiplied output for GPU display surfaces.
+
 - Motion Scene now renders filled triangles through CPU Canvas and GPU instances,
   with affine transforms, hit testing, and stable handling of degenerate shapes.
 

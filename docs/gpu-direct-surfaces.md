@@ -47,6 +47,34 @@ window passes while also preparing that SDL layer fallback. Both direct and
 readback capabilities and their resource budgets are required. The copied frame
 may appear later than its direct counterpart while readback completes.
 
+## GPU RGB matrix postprocess
+
+Import `runtime/gpu_color_matrix` and `paint/layer_color_filter` to apply a
+Canvas `LayerColorFilter` to a
+sampled RGBA8 or BGRA8 Texture or RenderTarget. The source and destination must
+be distinct resources in one namespace, with equal dimensions; the destination
+is an RGBA8 RenderTarget. Compile `gpuColorMatrixVertexSource()` and
+`gpuColorMatrixFragmentSource()` for the selected backend, then create a
+`GpuColorMatrixMaterial` from those artifacts outside a frame.
+
+```nim
+let filter = colorMatrixFilter([
+  0'f32, 0, 1, 0,
+  0'f32, 1, 0, 0,
+  1'f32, 0, 0, 0
+])
+let frame = host.beginGpuFrame()
+discard material.submit(source, filteredTarget, filter, gcamStraight)
+discard display.queueGpuDisplayFrame(filteredTarget, frame)
+host.endGpuFrame(frame)
+```
+
+The pass evaluates the matrix in encoded sRGB, preserves source alpha, and
+stores premultiplied output. Configure the receiving display surface with
+`gcamPremultiplied`. An identity filter is represented by `nil`. This pass
+filters a GPU-owned surface; Style filters that include ordinary UI descendants
+still use their existing CPU layer path.
+
 ## Publishing Frames
 
 Producers rotate two or more sampled Texture or RenderTarget resources. A frame

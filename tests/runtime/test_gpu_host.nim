@@ -7,11 +7,13 @@ import clay_board_style_system/generated/default_properties
 import clay_board_style_system/hit/hit_test
 import clay_board_style_system/layout/layout
 import clay_board_style_system/paint/[paint, paint_command]
+import clay_board_style_system/paint/layer_color_filter
 import clay_board_style_system/paint/gpu_direct_compositor
 import clay_board_style_system/paint/gpu_host_compositor
 import clay_board_style_system/runtime/animation_clock
 import clay_board_style_system/runtime/button
 import clay_board_style_system/runtime/gpu_canvas
+import clay_board_style_system/runtime/gpu_color_matrix
 import clay_board_style_system/runtime/gpu_canvas_ui
 import clay_board_style_system/runtime/gpu_direct_surface
 import clay_board_style_system/runtime/gpu_display_surface
@@ -7552,6 +7554,59 @@ suite "GPU display surface quality matrix":
     check display.closeGpuDisplaySurface()
     expect ValueError:
       discard ui.gpuDisplaySurface(display)
+    host.close()
+
+suite "GPU color matrix postprocess":
+  test "matrix records and alpha mode submit through one bounded graphics pass":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("color-matrix",
+      GpuResourceBudget(persistentBytes: 65536,
+        workUnitsPerFrame: 2, maxResources: 12))
+    proc artifact(source: GpuShaderSource): GpuShaderArtifact =
+      GpuShaderArtifact(
+        descriptor: GpuShaderDescriptor(stage: source.stage),
+        bindingLayout: source.gpuShaderBindingLayout(),
+        bytecode: @[1'u8],
+        sourceHash: source.gpuShaderSourceHash())
+    let vertex = artifact(gpuColorMatrixVertexSource())
+    let fragment = artifact(gpuColorMatrixFragmentSource())
+    var wrong = fragment
+    inc wrong.sourceHash
+    expect ValueError:
+      discard host.newGpuColorMatrixMaterial(namespace, vertex, wrong)
+    check context.shaderCreates == 0
+    let material = host.newGpuColorMatrixMaterial(namespace, vertex, fragment)
+    let source = host.createGpuTexture(namespace,
+      textureDescriptor(width = 2, height = 1, usage = {gtuSampled}))
+    let target = host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(2, 1))
+    let swapRedBlue = colorMatrixFilter([
+      0'f32, 0, 1, 0,
+      0'f32, 1, 0, 0,
+      1'f32, 0, 0, 0
+    ])
+    expect GpuHostError:
+      discard material.submit(source, target, swapRedBlue)
+    let frame = host.beginGpuFrame()
+    check material.submit(source, target, swapRedBlue, gcamPremultiplied)
+    check context.drawSubmits == 1
+    check context.lastGraphicsPass.renderTarget == target
+    check context.lastBindings.uniforms.len == 3
+    check context.lastBindings.uniforms[0].values == @[
+      0'f32, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0]
+    check context.lastBindings.uniforms[1].values == @[
+      float32(ord(gcamPremultiplied)), 0, 0, 0]
+    check context.lastBindings.textures.len == 1
+    check context.lastBindings.textures[0].stage == 0
+    expect ValueError:
+      discard material.submit(source, source, swapRedBlue)
+    check context.drawSubmits == 1
+    host.endGpuFrame(frame)
+    material.release()
+    doAssert host.releaseGpuResource(source)
+    doAssert host.releaseGpuResource(target)
+    doAssert host.closeGpuNamespace(namespace)
     host.close()
 
 suite "GPU host direct compositor":
