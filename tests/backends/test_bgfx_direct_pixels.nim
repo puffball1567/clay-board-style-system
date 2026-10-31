@@ -534,6 +534,16 @@ proc verifyMotionSceneCanvas(host: GpuHost;
     "GPU Canvas line center")
   linePixels.requireRasterPixel(16, 8, 3, Pixel(),
     "GPU Canvas line outside")
+  discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), [
+    motionTriangle(MotionObjectId(5), vec2(2, 2), vec2(14, 2),
+      vec2(2, 14), rgba(0, 1, 0, 1))]))
+  doAssert renderer.queueFrame()
+  drain()
+  let trianglePixels = renderer.canvas.rasterSurface.pixels
+  trianglePixels.requireRasterPixel(16, 5, 5,
+    Pixel(green: 255, alpha: 255), "GPU Canvas triangle inside")
+  trianglePixels.requireRasterPixel(16, 12, 12, Pixel(),
+    "GPU Canvas triangle outside")
   discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), []))
   doAssert renderer.queueFrame()
   drain()
@@ -617,6 +627,18 @@ proc verifyMotionSceneDirect(host: GpuHost;
   linePixels.requirePixel(8, 3, Pixel(),
     "direct Motion Scene line outside")
   doAssert line.release()
+  discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), [
+    motionTriangle(MotionObjectId(5), vec2(2, 2), vec2(14, 2),
+      vec2(2, 14), rgba(0, 1, 0, 1))]))
+  doAssert renderer.queueFrame()
+  drain()
+  var triangle = renderer.surface().acquireGpuDirectSurfaceFrame().get
+  let trianglePixels = host.readPixels(ns, triangle.resource, 16, 16)
+  trianglePixels.requirePixel(5, 5, Pixel(green: 255, alpha: 255),
+    "direct Motion Scene triangle inside")
+  trianglePixels.requirePixel(12, 12, Pixel(),
+    "direct Motion Scene triangle outside")
+  doAssert triangle.release()
   discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), []))
   doAssert renderer.queueFrame()
   drain()

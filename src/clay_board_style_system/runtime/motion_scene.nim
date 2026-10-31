@@ -12,7 +12,7 @@ type
   MotionObjectId* = distinct uint64
 
   MotionShape* = enum
-    msRoundedRect, msEllipse, msLine
+    msRoundedRect, msEllipse, msLine, msTriangle
 
   MotionLineCap* = enum
     mlcButt, mlcSquare, mlcRound
@@ -128,6 +128,32 @@ proc motionLine*(
   )
   result.shape = msLine
 
+proc motionTriangle*(
+    id: MotionObjectId; first, second, third: Vec2; color: Color;
+    transform = identityAffine2D(); opacity = 1.0'f32;
+    zIndex = 0'i32; visible = true; hitTestable = true
+): MotionObject =
+  ## Maps a unit right triangle onto three authored scene points. A zero-area
+  ## triangle retains its ID but is neither painted nor picked.
+  for point in [first, second, third]:
+    if not point.x.finite or not point.y.finite:
+      raise newException(ValueError, "motion triangle points must be finite")
+  let bx = second.x.float64 - first.x.float64
+  let by = second.y.float64 - first.y.float64
+  let cx = third.x.float64 - first.x.float64
+  let cy = third.y.float64 - first.y.float64
+  for part in [bx, by, cx, cy]:
+    if abs(part) > high(float32).float64:
+      raise newException(ValueError, "motion triangle geometry exceeds float32 range")
+  let basis = Affine2D(
+    m11: bx.float32, m12: by.float32,
+    m21: cx.float32, m22: cy.float32,
+    tx: first.x, ty: first.y)
+  result = motionRect(id, rect(0, 0, 1, 1), color,
+    transform = transform * basis, opacity = opacity,
+    zIndex = zIndex, visible = visible, hitTestable = hitTestable)
+  result.shape = msTriangle
+
 proc motionSceneSnapshot*(
     viewport: Size; objects: openArray[MotionObject]
 ): MotionSceneSnapshot =
@@ -154,7 +180,7 @@ proc motionSceneSnapshot*(
     if value.transform.isIdentity:
       value.transform = identityAffine2D()
     value.radius = min(value.radius, min(value.bounds.w, value.bounds.h) * 0.5'f32)
-    if value.shape == msEllipse:
+    if value.shape in {msEllipse, msTriangle}:
       value.radius = 0.0'f32
     for corner in [vec2(value.bounds.x, value.bounds.y),
         vec2(value.bounds.x + value.bounds.w, value.bounds.y),
@@ -240,6 +266,13 @@ proc compile(snapshot: MotionSceneSnapshot): seq[CanvasCommand] =
         0.0'f32, 0.0'f32, PI.float32 * 2.0'f32)
       path.closePath()
       target.fillPath(path, color)
+    of msTriangle:
+      var path = initPath2D()
+      path.moveTo(vec2(value.bounds.x, value.bounds.y))
+      path.lineTo(vec2(value.bounds.x + value.bounds.w, value.bounds.y))
+      path.lineTo(vec2(value.bounds.x, value.bounds.y + value.bounds.h))
+      path.closePath()
+      target.fillPath(path, color)
     target.restore()
   target.popClip()
   target.commands
@@ -321,6 +354,10 @@ proc hitTest*(snapshot: MotionSceneSnapshot; position: Vec2): Option[MotionScene
       let x = (point.x.float64 - bounds.x.float64) / bounds.w.float64 * 2.0 - 1.0
       let y = (point.y.float64 - bounds.y.float64) / bounds.h.float64 * 2.0 - 1.0
       if x * x + y * y > 1.0: continue
+    of msTriangle:
+      let x = (point.x.float64 - bounds.x.float64) / bounds.w.float64
+      let y = (point.y.float64 - bounds.y.float64) / bounds.h.float64
+      if x + y > 1.0: continue
     return some(MotionSceneHit(id: entry.value.id,
       localPosition: vec2(point.x - bounds.x, point.y - bounds.y)))
 
