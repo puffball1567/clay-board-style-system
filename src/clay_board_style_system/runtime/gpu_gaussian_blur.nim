@@ -1,7 +1,17 @@
-## Fixed five-tap separable Gaussian blur for same-host GPU surfaces.
+## Bounded separable Gaussian blur for same-host GPU surfaces.
 ## The two-pass result is premultiplied RGBA8; import explicitly.
 import ../paint/gpu_host_compositor
 import ./[gpu_host, gpu_shader_builder]
+
+const
+  MaxGpuBlurRadius* = 4
+  BlurWeights: array[5, array[5, float32]] = [
+    [1'f32, 0, 0, 0, 0],
+    [0.5'f32, 0.25, 0, 0, 0],
+    [0.375'f32, 0.25, 0.0625, 0, 0],
+    [0.3125'f32, 0.234375, 0.09375, 0.015625, 0],
+    [0.2734375'f32, 0.21875, 0.109375, 0.03125, 0.00390625]
+  ]
 
 type
   GpuBlurVertex = object
@@ -13,7 +23,7 @@ type
     namespace: GpuNamespaceId
     vertexShader, fragmentShader: GpuResourceHandle
     pipeline, vertexBuffer: GpuResourceHandle
-    paramsUniform, uvUniform, sampler: GpuResourceHandle
+    paramsUniform, weightsUniform, uvUniform, sampler: GpuResourceHandle
 
 proc gpuGaussianBlurVertexSource*(): GpuShaderSource =
   gpuHostDirectCompositeVertexSource()
@@ -26,6 +36,7 @@ proc gpuGaussianBlurFragmentSource*(): GpuShaderSource =
 #include "bgfx_shader.sh"
 SAMPLER2D(s_cbssBlurSource, 0);
 uniform vec4 u_cbssBlurParams;
+uniform vec4 u_cbssBlurWeights;
 uniform vec4 u_cbssUvRect;
 vec4 premultipliedSample(vec2 uv)
 {
@@ -42,12 +53,16 @@ void main()
 {
   vec2 uv = mix(u_cbssUvRect.xy, u_cbssUvRect.zw, v_texcoord0);
   vec2 stepUv = u_cbssBlurParams.xy;
-  vec4 blurred = premultipliedSample(uv) * 6.0;
-  blurred += premultipliedSample(uv + stepUv) * 4.0;
-  blurred += premultipliedSample(uv - stepUv) * 4.0;
-  blurred += premultipliedSample(uv + stepUv * 2.0);
-  blurred += premultipliedSample(uv - stepUv * 2.0);
-  gl_FragColor = blurred * (1.0 / 16.0);
+  vec4 blurred = premultipliedSample(uv) * u_cbssBlurWeights.x;
+  blurred += premultipliedSample(uv + stepUv) * u_cbssBlurWeights.y;
+  blurred += premultipliedSample(uv - stepUv) * u_cbssBlurWeights.y;
+  blurred += premultipliedSample(uv + stepUv * 2.0) * u_cbssBlurWeights.z;
+  blurred += premultipliedSample(uv - stepUv * 2.0) * u_cbssBlurWeights.z;
+  blurred += premultipliedSample(uv + stepUv * 3.0) * u_cbssBlurWeights.w;
+  blurred += premultipliedSample(uv - stepUv * 3.0) * u_cbssBlurWeights.w;
+  blurred += premultipliedSample(uv + stepUv * 4.0) * u_cbssBlurParams.w;
+  blurred += premultipliedSample(uv - stepUv * 4.0) * u_cbssBlurParams.w;
+  gl_FragColor = blurred;
 }
 """,
     varyingDefinitions: gpuHostDirectCompositeVaryingDefinitions,
@@ -69,7 +84,8 @@ proc release*(material: GpuGaussianBlurMaterial) =
   ## Release after the last submitted frame while the host is open.
   if material.isClosed:
     return
-  for handle in [material.sampler, material.uvUniform, material.paramsUniform,
+  for handle in [material.sampler, material.uvUniform, material.weightsUniform,
+      material.paramsUniform,
       material.vertexBuffer, material.pipeline, material.fragmentShader,
       material.vertexShader]:
     if material.host.isGpuResourceLive(handle):
@@ -122,6 +138,9 @@ proc newGpuGaussianBlurMaterial*(
     result.paramsUniform = host.createGpuUniform(namespace,
       GpuUniformDescriptor(name: "u_cbssBlurParams", uniformType: gutVec4,
         arrayLength: 1, label: "gpu-gaussian-blur-params"))
+    result.weightsUniform = host.createGpuUniform(namespace,
+      GpuUniformDescriptor(name: "u_cbssBlurWeights", uniformType: gutVec4,
+        arrayLength: 1, label: "gpu-gaussian-blur-weights"))
     result.uvUniform = host.createGpuUniform(namespace,
       GpuUniformDescriptor(name: "u_cbssUvRect", uniformType: gutVec4,
         arrayLength: 1, label: "gpu-gaussian-blur-uv"))
@@ -139,7 +158,8 @@ proc submitPass(
     source, target: GpuResourceHandle;
     sourceInfo: GpuPresentableResourceInfo;
     stepX, stepY: float32;
-    alphaMode: GpuAlphaMode
+    alphaMode: GpuAlphaMode;
+    weights: array[5, float32]
 ) =
   let uv =
     if sourceInfo.rowsBottomUp: @[0'f32, 1, 1, 0]
@@ -157,7 +177,9 @@ proc submitPass(
       bindings: GpuBindingSet(
         uniforms: @[
           GpuUniformBinding(uniform: material.paramsUniform,
-            values: @[stepX, stepY, float32(ord(alphaMode)), 0'f32]),
+            values: @[stepX, stepY, float32(ord(alphaMode)), weights[4]]),
+          GpuUniformBinding(uniform: material.weightsUniform,
+            values: @[weights[0], weights[1], weights[2], weights[3]]),
           GpuUniformBinding(uniform: material.uvUniform, values: uv)
         ],
         textures: @[
@@ -170,12 +192,15 @@ proc submitPass(
 proc submit*(
     material: GpuGaussianBlurMaterial;
     source, scratch, destination: GpuResourceHandle;
-    sourceAlphaMode = gcamStraight
+    sourceAlphaMode = gcamStraight;
+    radius = 2
 ): bool =
-  ## A fixed radius-two Gaussian blur, horizontal then vertical. Edge pixels
-  ## are clamped. All resources must have equal dimensions in one namespace.
+  ## A radius 0..4 binomial Gaussian blur, horizontal then vertical. Radius 2
+  ## preserves the original five-tap kernel. All resources share dimensions.
   if material.isClosed:
     raise newException(ValueError, "GPU blur material is closed")
+  if radius < 0 or radius > MaxGpuBlurRadius:
+    raise newException(ValueError, "GPU blur radius must be between 0 and 4")
   if source == scratch or source == destination or scratch == destination or
       source.namespace != material.namespace or
       scratch.namespace != material.namespace or
@@ -200,7 +225,9 @@ proc submit*(
       sourceInfo.height != targetInfo.height:
     raise newException(ValueError, "GPU blur source, scratch, and target are incompatible")
   material.submitPass(source, scratch, sourceInfo,
-    1'f32 / float32(sourceInfo.width), 0'f32, sourceAlphaMode)
+    1'f32 / float32(sourceInfo.width), 0'f32, sourceAlphaMode,
+    BlurWeights[radius])
   material.submitPass(scratch, destination, scratchInfo,
-    0'f32, 1'f32 / float32(sourceInfo.height), gcamPremultiplied)
+    0'f32, 1'f32 / float32(sourceInfo.height), gcamPremultiplied,
+    BlurWeights[radius])
   true

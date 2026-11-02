@@ -19,6 +19,7 @@ type
     matrixValue: LayerColorFilter
     offsetXValue, offsetYValue: float32
     colorValue: Color
+    blurRadiusValue: int
 
   GpuFilterChain* = ref object
     host: GpuHost
@@ -31,12 +32,17 @@ type
 proc colorMatrixStage*(filter: LayerColorFilter): GpuFilterStage =
   GpuFilterStage(kindValue: gfskColorMatrix, matrixValue: filter)
 
-proc gaussianBlurStage*(): GpuFilterStage =
-  GpuFilterStage(kindValue: gfskGaussianBlur)
+proc gaussianBlurStage*(radius = 2): GpuFilterStage =
+  if radius < 0 or radius > MaxGpuBlurRadius:
+    raise newException(ValueError, "GPU filter blur radius must be between 0 and 4")
+  GpuFilterStage(kindValue: gfskGaussianBlur, blurRadiusValue: radius)
 
 proc dropShadowStage*(
-    offsetX, offsetY: float32; color: Color
+    offsetX, offsetY: float32; color: Color; blurRadius = 2
 ): GpuFilterStage =
+  if blurRadius < 0 or blurRadius > MaxGpuBlurRadius:
+    raise newException(ValueError,
+      "GPU filter shadow blur radius must be between 0 and 4")
   for value in [offsetX, offsetY]:
     if value.classify in {fcNan, fcInf, fcNegInf}:
       raise newException(ValueError, "GPU filter shadow offset must be finite")
@@ -46,7 +52,8 @@ proc dropShadowStage*(
       raise newException(ValueError,
         "GPU filter shadow color must be finite and normalized")
   GpuFilterStage(kindValue: gfskDropShadow,
-    offsetXValue: offsetX, offsetYValue: offsetY, colorValue: color)
+    offsetXValue: offsetX, offsetYValue: offsetY,
+    colorValue: color, blurRadiusValue: blurRadius)
 
 proc newGpuFilterChain*(
     host: GpuHost; namespace: GpuNamespaceId;
@@ -161,7 +168,7 @@ proc submit*(
         stage.matrixValue, alphaMode)
     of gfskGaussianBlur:
       discard chain.gaussianBlur.submit(current, scratch[2],
-        output, alphaMode)
+        output, alphaMode, stage.blurRadiusValue)
     of gfskDropShadow:
       # A non-final shadow uses destination as its blurred-alpha temporary.
       # The final stage uses the ping-pong target it does not read or write.
@@ -171,7 +178,7 @@ proc submit*(
         else: scratch[0]
       discard chain.dropShadow.submit(current, scratch[2], blurred,
         output, stage.offsetXValue, stage.offsetYValue,
-        stage.colorValue, alphaMode)
+        stage.colorValue, alphaMode, stage.blurRadiusValue)
     current = output
     alphaMode = gcamPremultiplied
   true

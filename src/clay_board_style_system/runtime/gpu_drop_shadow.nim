@@ -164,12 +164,16 @@ proc submit*(
     source, scratch, blurred, destination: GpuResourceHandle;
     offsetX, offsetY: float32;
     color: Color;
-    sourceAlphaMode = gcamStraight
+    sourceAlphaMode = gcamStraight;
+    blurRadius = 2
 ): bool =
   ## Offset is in destination pixels. The shadow is clipped to destination
   ## bounds; callers can supply padding in the source to show the full shadow.
   if material.isClosed:
     raise newException(ValueError, "GPU drop shadow material is closed")
+  if blurRadius < 0 or blurRadius > MaxGpuBlurRadius:
+    raise newException(ValueError,
+      "GPU drop shadow blur radius must be between 0 and 4")
   if offsetX.classify in {fcNan, fcInf, fcNegInf} or
       offsetY.classify in {fcNan, fcInf, fcNegInf}:
     raise newException(ValueError, "GPU drop shadow offset must be finite")
@@ -215,7 +219,8 @@ proc submit*(
     if material.host.isGpuResourcePresentationRetained(target):
       raise newException(GpuHostError,
         "GPU drop shadow cannot overwrite a presentation-retained target")
-  discard material.blur.submit(source, scratch, blurred, sourceAlphaMode)
+  discard material.blur.submit(source, scratch, blurred,
+    sourceAlphaMode, blurRadius)
   let sourceUv =
     if sourceInfo.rowsBottomUp: @[0'f32, 1, 1, 0]
     else: @[0'f32, 0, 1, 1]
