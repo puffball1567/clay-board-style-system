@@ -75,6 +75,29 @@ stores premultiplied output. Configure the receiving display surface with
 filters a GPU-owned surface; Style filters that include ordinary UI descendants
 still use their existing CPU layer path.
 
+## GPU Gaussian blur postprocess
+
+Import `runtime/gpu_gaussian_blur` for a fixed radius-two, five-tap separable
+Gaussian blur. Compile `gpuGaussianBlurVertexSource()` and
+`gpuGaussianBlurFragmentSource()` for the selected backend, then create a
+`GpuGaussianBlurMaterial` outside a frame. Provide three distinct same-namespace
+resources of equal dimensions: a sampled RGBA8 or BGRA8 Texture or RenderTarget,
+a sampled RGBA8 scratch RenderTarget, and an RGBA8 destination RenderTarget.
+
+```nim
+let frame = host.beginGpuFrame()
+discard blur.submit(source, scratch, blurredTarget, gcamStraight)
+discard display.queueGpuDisplayFrame(blurredTarget, frame)
+host.endGpuFrame(frame)
+```
+
+The first pass blurs horizontally and converts straight input to premultiplied
+alpha. The second pass blurs vertically; both passes clamp samples at the image
+edge. The output is premultiplied RGBA8, so configure the receiving display
+surface with `gcamPremultiplied`. Keep the scratch target available until the
+frame's queued work is complete. This is a GPU-owned surface effect; filtering
+an ordinary Style subtree still requires a shared GPU offscreen target.
+
 ## Publishing Frames
 
 Producers rotate two or more sampled Texture or RenderTarget resources. A frame

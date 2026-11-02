@@ -19,6 +19,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added a same-host GPU Gaussian blur for sampled Texture and RenderTarget
+  surfaces. It uses two bounded passes, clamps edge samples, and produces
+  premultiplied RGBA8 output for direct display or readback.
+
 - Added a same-host GPU RGB matrix postprocess for sampled Texture and
   RenderTarget sources. It uses the Canvas layer color-matrix coefficients,
   preserves alpha, and produces premultiplied output for GPU display surfaces.

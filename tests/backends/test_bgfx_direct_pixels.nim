@@ -21,7 +21,7 @@ import clay_board_style_system/runtime/[gpu_canvas, motion_scene,
 import clay_board_style_system/paint/[gpu_direct_compositor,
     gpu_host_compositor, layer_color_filter, paint_command]
 import clay_board_style_system/runtime/[gpu_direct_surface, gpu_host,
-    gpu_color_matrix, gpu_shader_builder, gpu_shader_package]
+    gpu_color_matrix, gpu_gaussian_blur, gpu_shader_builder, gpu_shader_package]
 
 when sdl3CompileFlags.len > 0:
   {.passC: sdl3CompileFlags.}
@@ -425,6 +425,48 @@ proc verifyGpuColorMatrixPixels(host: GpuHost;
   material.release()
   doAssert host.closeGpuNamespace(ns)
   echo "GPU color matrix: premultiplied pixels and RenderTarget chaining passed"
+
+proc verifyGpuGaussianBlurPixels(host: GpuHost;
+    shaderc, shaderIncludes, workDirectory: string) =
+  let ns = host.createGpuNamespace("gpu-gaussian-blur-pixels", budget())
+  let material = host.newGpuGaussianBlurMaterial(ns,
+    compileShader(gpuGaussianBlurVertexSource(), shaderc,
+      shaderIncludes, workDirectory),
+    compileShader(gpuGaussianBlurFragmentSource(), shaderc,
+      shaderIncludes, workDirectory))
+  let source = host.createGpuTexture(ns, GpuTextureDescriptor(
+    width: 5, height: 5, format: gtfRgba8,
+    usage: {gtuSampled}, access: gtaStatic,
+    label: "gaussian-blur-source"),
+    rgbaPixels(5, 5, proc(x, y: int): Pixel =
+      if x == 2 and y == 2: Pixel(red: 255, alpha: 128)
+      elif x == 0 and y == 0: Pixel(green: 255)
+      else: Pixel()))
+  proc target(label: string): GpuResourceHandle =
+    host.createGpuRenderTarget(ns, GpuRenderTargetDescriptor(
+      width: 5, height: 5, format: gtfRgba8,
+      usage: {gtuRenderTarget, gtuSampled, gtuBlitSource},
+      label: label))
+  let scratch = target("gaussian-blur-scratch")
+  let output = target("gaussian-blur-output")
+  let frame = host.beginGpuFrame()
+  doAssert material.submit(source, scratch, output, gcamStraight)
+  host.endGpuFrame(frame)
+  let pixels = host.readPixels(ns, output, 5, 5)
+  pixels.requirePixel(2, 2, Pixel(red: 18, alpha: 18),
+    "Gaussian blur center")
+  pixels.requirePixel(1, 2, Pixel(red: 12, alpha: 12),
+    "Gaussian blur horizontal neighbor")
+  pixels.requirePixel(2, 1, Pixel(red: 12, alpha: 12),
+    "Gaussian blur vertical neighbor")
+  pixels.requirePixel(0, 0, Pixel(red: 1, alpha: 1),
+    "Gaussian blur transparent source remains transparent")
+  doAssert host.releaseGpuResource(source)
+  doAssert host.releaseGpuResource(scratch)
+  doAssert host.releaseGpuResource(output)
+  material.release()
+  doAssert host.closeGpuNamespace(ns)
+  echo "GPU Gaussian blur: separable premultiplied pixels passed"
 
 proc verifyInstancedRects(host: GpuHost; shaderc, shaderIncludes, workDirectory: string) =
   doAssert host.backendInfo.instancingSupported
@@ -885,6 +927,7 @@ proc run() =
     host.verifyCanvasReadbackCancellation()
     host.verifyHybridDisplayPixels()
     host.verifyGpuColorMatrixPixels(shaderc, shaderIncludes, workDirectory)
+    host.verifyGpuGaussianBlurPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyInstancedRects(shaderc, shaderIncludes, workDirectory)
     host.verifyMotionSceneCanvas(shaderc, shaderIncludes, workDirectory)
     host.verifyMotionSceneDirect(shaderc, shaderIncludes, workDirectory)

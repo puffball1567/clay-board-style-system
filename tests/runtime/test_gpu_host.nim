@@ -14,6 +14,7 @@ import clay_board_style_system/runtime/animation_clock
 import clay_board_style_system/runtime/button
 import clay_board_style_system/runtime/gpu_canvas
 import clay_board_style_system/runtime/gpu_color_matrix
+import clay_board_style_system/runtime/gpu_gaussian_blur
 import clay_board_style_system/runtime/gpu_canvas_ui
 import clay_board_style_system/runtime/gpu_direct_surface
 import clay_board_style_system/runtime/gpu_display_surface
@@ -7606,6 +7607,55 @@ suite "GPU color matrix postprocess":
     material.release()
     doAssert host.releaseGpuResource(source)
     doAssert host.releaseGpuResource(target)
+    doAssert host.closeGpuNamespace(namespace)
+    host.close()
+
+suite "GPU Gaussian blur postprocess":
+  test "two ordered passes convert straight alpha and reject feedback":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("gaussian-blur",
+      GpuResourceBudget(persistentBytes: 65536,
+        workUnitsPerFrame: 2, maxResources: 12))
+    proc artifact(source: GpuShaderSource): GpuShaderArtifact =
+      GpuShaderArtifact(
+        descriptor: GpuShaderDescriptor(stage: source.stage),
+        bindingLayout: source.gpuShaderBindingLayout(),
+        bytecode: @[1'u8],
+        sourceHash: source.gpuShaderSourceHash())
+    let vertex = artifact(gpuGaussianBlurVertexSource())
+    let fragment = artifact(gpuGaussianBlurFragmentSource())
+    var wrong = fragment
+    inc wrong.sourceHash
+    expect ValueError:
+      discard host.newGpuGaussianBlurMaterial(namespace, vertex, wrong)
+    check context.shaderCreates == 0
+    let material = host.newGpuGaussianBlurMaterial(namespace, vertex, fragment)
+    let source = host.createGpuTexture(namespace,
+      textureDescriptor(width = 5, height = 5, usage = {gtuSampled}))
+    let scratch = host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(5, 5))
+    let output = host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(5, 5))
+    expect ValueError:
+      discard material.submit(source, scratch, scratch)
+    expect GpuHostError:
+      discard material.submit(source, scratch, output)
+    let frame = host.beginGpuFrame()
+    check material.submit(source, scratch, output)
+    check context.drawSubmits == 2
+    check context.lastGraphicsPass.renderTarget == output
+    check context.lastBindings.textures[0].texture.backendResourceIdValue() != 0
+    check context.lastBindings.uniforms[0].values == @[
+      0'f32, 0.2'f32, float32(ord(gcamPremultiplied)), 0'f32]
+    expect ValueError:
+      discard material.submit(output, source, scratch)
+    check context.drawSubmits == 2
+    host.endGpuFrame(frame)
+    material.release()
+    doAssert host.releaseGpuResource(source)
+    doAssert host.releaseGpuResource(scratch)
+    doAssert host.releaseGpuResource(output)
     doAssert host.closeGpuNamespace(namespace)
     host.close()
 
