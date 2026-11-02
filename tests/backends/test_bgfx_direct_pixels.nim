@@ -22,7 +22,7 @@ import clay_board_style_system/paint/[gpu_direct_compositor,
     gpu_host_compositor, layer_color_filter, paint_command]
 import clay_board_style_system/runtime/[gpu_direct_surface, gpu_host,
     gpu_color_matrix, gpu_gaussian_blur, gpu_drop_shadow, gpu_filter_chain,
-    gpu_shader_builder, gpu_shader_package]
+    gpu_raster_filter_display, gpu_shader_builder, gpu_shader_package]
 
 when sdl3CompileFlags.len > 0:
   {.passC: sdl3CompileFlags.}
@@ -571,6 +571,64 @@ proc verifyGpuFilterChainPixels(host: GpuHost;
   doAssert host.closeGpuNamespace(ns)
   echo "GPU filter chain: ordered matrix and blur pixels passed"
 
+proc verifyGpuRasterFilterDisplayPixels(host: GpuHost;
+    shaderc, shaderIncludes, workDirectory: string) =
+  let ns = host.createGpuNamespace("gpu-raster-filter-display-pixels", budget())
+  let material = host.newGpuColorMatrixMaterial(ns,
+    compileShader(gpuColorMatrixVertexSource(), shaderc,
+      shaderIncludes, workDirectory),
+    compileShader(gpuColorMatrixFragmentSource(), shaderc,
+      shaderIncludes, workDirectory))
+  let swapRedBlue = colorMatrixFilter([
+    0'f32, 0, 1, 0,
+    0'f32, 1, 0, 0,
+    1'f32, 0, 0, 0
+  ])
+  let chain = host.newGpuFilterChain(ns,
+    [colorMatrixStage(swapRedBlue)], colorMatrix = material)
+  let raster = newRasterSurface(5, 5)
+  raster.updateRegion(rasterRegion(2, 2, 1, 1), @[255'u8, 0, 0, 128])
+  doAssert raster.publish()
+  var config = defaultGpuRasterFilterDisplayConfig(5, 5)
+  config.fallback = gdsfRequireReadback
+  let filtered = host.newGpuRasterFilterDisplay(ns, raster, chain, config)
+  let display = filtered.displaySurface()
+
+  proc drain() =
+    for attempt in 0 ..< 128:
+      discard attempt
+      discard display.collectGpuDisplayFrame()
+      if display.readbackSurface().pendingFrameCount() == 0 and
+          display.readbackSurface().completedFrameNumber > 0:
+        return
+      let progress = host.beginGpuFrame()
+      host.endGpuFrame(progress)
+    raise newException(IOError, "GPU raster filter display readback did not drain")
+
+  let first = host.beginGpuFrame()
+  doAssert filtered.queueUpdatedGpuRasterFrame(first)
+  host.endGpuFrame(first)
+  drain()
+  doAssert display.readbackSurface().rasterSurface.publish()
+  display.readbackSurface().rasterSurface.pixels.requireRasterPixel(
+    5, 2, 2, Pixel(blue: 255, alpha: 128),
+    "raster upload through GPU matrix and display readback")
+
+  raster.updateRegion(rasterRegion(2, 2, 1, 1), @[0'u8, 0, 255, 128])
+  doAssert raster.publish()
+  let second = host.beginGpuFrame()
+  doAssert filtered.queueUpdatedGpuRasterFrame(second)
+  host.endGpuFrame(second)
+  drain()
+  doAssert display.readbackSurface().rasterSurface.publish()
+  display.readbackSurface().rasterSurface.pixels.requireRasterPixel(
+    5, 2, 2, Pixel(red: 255, alpha: 128),
+    "raster dirty upload through GPU matrix and display readback")
+  doAssert filtered.closeGpuRasterFilterDisplay()
+  material.release()
+  doAssert host.closeGpuNamespace(ns)
+  echo "GPU raster filter display: initial and dirty pixels passed"
+
 proc verifyInstancedRects(host: GpuHost; shaderc, shaderIncludes, workDirectory: string) =
   doAssert host.backendInfo.instancingSupported
   let ns = host.createGpuNamespace("instanced-rectangles", budget())
@@ -1033,6 +1091,7 @@ proc run() =
     host.verifyGpuGaussianBlurPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuDropShadowPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuFilterChainPixels(shaderc, shaderIncludes, workDirectory)
+    host.verifyGpuRasterFilterDisplayPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyInstancedRects(shaderc, shaderIncludes, workDirectory)
     host.verifyMotionSceneCanvas(shaderc, shaderIncludes, workDirectory)
     host.verifyMotionSceneDirect(shaderc, shaderIncludes, workDirectory)
