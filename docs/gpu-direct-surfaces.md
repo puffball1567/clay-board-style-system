@@ -183,8 +183,9 @@ Style subtree still needs the shared GPU offscreen target.
 To use the filtered raster as a Style-owned visual rather than a Canvas node,
 register it with `ui.registerGpuRasterFilterMaterial()` from
 `runtime/gpu_raster_filter_display_ui`. Underlay and overlay stages select the
-same direct, readback, or hybrid path and invalidate only components that
-consumed the material when a frame is collected. See
+same direct, readback, or hybrid path. Style masks use the completed readback
+pixels in a readback or hybrid display path. Collection invalidates only
+components that consumed the material. See
 [Custom Paint](custom-paint.md#filtered-raster-material).
 
 ## Publishing Frames

@@ -7888,6 +7888,9 @@ suite "GPU raster filter Style material":
     let nodeCount = ui.tree.nodes.len
     var material = ui.registerGpuRasterFilterMaterial(
       "filtered-accent", filtered)
+    expect ValueError:
+      discard ui.registerGpuRasterFilterMaterial(
+        "filtered-mask", filtered, {cpsMask})
     check material.valid
     check material.material == "filtered-accent"
     check ui.tree.nodes.len == nodeCount
@@ -7951,31 +7954,45 @@ suite "GPU raster filter Style material":
       decl("width", px(96)), decl("height", px(36)),
       customPaint("filtered-accent", cpsOverlay)
     ]))
+    let maskBox = ui.box(uiStyle([
+      decl("width", px(2)), decl("height", px(2)),
+      customPaint("filtered-mask", cpsMask)
+    ]), parent = some(button.container))
     var material = ui.registerGpuRasterFilterMaterial(
       "filtered-accent", filtered, {cpsOverlay})
+    var maskMaterial = ui.registerGpuRasterFilterMaterial(
+      "filtered-mask", filtered, {cpsMask})
     expect ValueError:
       discard ui.registerGpuRasterFilterMaterial(
         "filtered-accent", filtered)
     expect ValueError:
       discard ui.registerGpuRasterFilterMaterial(
-        "filtered-mask", filtered, {cpsMask})
+        "filtered-filter", filtered, {cpsFilter})
     var diagnostics: Diagnostics
     let styles = resolveTreeStyles(
       ui.tree, ui.styleSheets(), defaultProperties(), diagnostics)
     let layout = computeLayout(ui.tree, styles, size(160, 80))
     let commands = ui.buildPaintCommands(styles, layout)
     var rasterIndex = -1
+    var maskIndex = -1
+    var destinationInIndex = -1
     var textIndex = -1
     for index, command in commands:
       if command.kind == pcDrawRasterSurface:
-        rasterIndex = index
-        check command.owner == some(button.container.id)
+        if command.owner == some(button.container.id):
+          rasterIndex = index
+        elif command.owner == some(maskBox.id):
+          maskIndex = index
         check command.rasterSurface ==
           filtered.displaySurface().readbackSurface().rasterSurface()
+      elif command.kind == pcPushLayer and
+          command.layerCompositeMode == lcmDestinationIn:
+        destinationInIndex = index
       elif command.kind == pcDrawText and command.node == button.labelNode.id:
         textIndex = index
     check not diagnostics.hasErrors
     check rasterIndex > textIndex
+    check maskIndex > destinationInIndex and destinationInIndex >= 0
     discard ui.consumeInvalidation()
     let frame = host.beginGpuFrame()
     check material.queueGpuFrame(frame)
@@ -7983,9 +8000,12 @@ suite "GPU raster filter Style material":
     check not material.collectGpuFrame()
     context.readbackReady = true
     check material.collectGpuFrame()
+    check maskMaterial.collectGpuFrame()
+    check not maskMaterial.collectGpuFrame()
     let invalidation = ui.consumeInvalidation()
     check invalidation.domains == {ddPaint}
     check invalidation.roots == @[button.container.id]
+    check maskMaterial.unregister()
     check material.unregister()
     check filtered.closeGpuRasterFilterDisplay()
     matrix.release()
@@ -8018,25 +8038,50 @@ suite "GPU raster filter Style material":
     let filtered = host.newGpuRasterFilterDisplay(namespace,
       newRasterSurface(2, 2), chain, config)
     let ui = initUiRoot()
-    discard ui.box(uiStyle([
+    let accentBox = ui.box(uiStyle([
       decl("width", px(2)), decl("height", px(2)),
       customPaint("filtered-accent", cpsUnderlay)
     ]))
+    let maskBox = ui.box(uiStyle([
+      decl("width", px(2)), decl("height", px(2)),
+      customPaint("filtered-mask", cpsMask)
+    ]), parent = some(accentBox))
     var material = ui.registerGpuRasterFilterMaterial(
       "filtered-accent", filtered, {cpsUnderlay})
+    var maskMaterial = ui.registerGpuRasterFilterMaterial(
+      "filtered-mask", filtered, {cpsMask})
     var diagnostics: Diagnostics
     let styles = resolveTreeStyles(
       ui.tree, ui.styleSheets(), defaultProperties(), diagnostics)
     let layout = computeLayout(ui.tree, styles, size(8, 8))
     let commands = ui.buildPaintCommands(styles, layout)
     var found = false
+    var maskFound = false
     for command in commands:
       if command.kind == pcDrawGpuDirectSurface:
         found = true
+        check command.owner == some(accentBox.id)
         check command.gpuFallbackSurface ==
+          filtered.displaySurface().readbackSurface().rasterSurface()
+      elif command.kind == pcDrawRasterSurface:
+        maskFound = true
+        check command.owner == some(maskBox.id)
+        check command.rasterSurface ==
           filtered.displaySurface().readbackSurface().rasterSurface()
     check not diagnostics.hasErrors
     check found
+    check maskFound
+    discard ui.consumeInvalidation()
+    let frame = host.beginGpuFrame()
+    check material.queueGpuFrame(frame)
+    host.endGpuFrame(frame)
+    check material.collectGpuFrame()
+    check not maskMaterial.collectGpuFrame()
+    check ui.consumeInvalidation().roots == @[accentBox.id]
+    context.readbackReady = true
+    check maskMaterial.collectGpuFrame()
+    check ui.consumeInvalidation().roots == @[maskBox.id]
+    check maskMaterial.unregister()
     check material.unregister()
     check filtered.closeGpuRasterFilterDisplay()
     matrix.release()

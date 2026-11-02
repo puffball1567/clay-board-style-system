@@ -1,7 +1,7 @@
 ## Retained RasterSurface -> GPU filter chain -> negotiated UI display.
 ## Owns the upload texture and bounded reusable output/scratch targets.
 import ../core/raster_surface
-import ./[gpu_display_surface, gpu_filter_chain, gpu_host,
+import ./[gpu_canvas, gpu_display_surface, gpu_filter_chain, gpu_host,
   gpu_raster_texture]
 
 type
@@ -15,6 +15,7 @@ type
     outputs: seq[GpuResourceHandle]
     nextOutput: int
     lastQueuedRevisionValue: uint64
+    completedEpochValue: uint64
     closedValue: bool
 
 proc defaultGpuRasterFilterDisplayConfig*(
@@ -101,6 +102,24 @@ proc source*(surface: GpuRasterFilterDisplay): RasterSurface =
 
 proc lastQueuedRevision*(surface: GpuRasterFilterDisplay): uint64 =
   if surface.isNil: 0'u64 else: surface.lastQueuedRevisionValue
+
+proc completedEpoch*(surface: GpuRasterFilterDisplay): uint64 =
+  ## Advances when this adapter collects a completed display frame.
+  if surface.isNil: 0'u64 else: surface.completedEpochValue
+
+proc collectGpuRasterFrame*(
+    surface: GpuRasterFilterDisplay
+): bool {.discardable.} =
+  ## Collect once for all UI consumers, publishing fallback pixels as needed.
+  if surface.isStale:
+    return false
+  let display = surface.display
+  if not display.collectGpuDisplayFrame():
+    return false
+  if display.path in {gdspReadback, gdspHybrid}:
+    discard display.readbackSurface().rasterSurface().publish()
+  inc surface.completedEpochValue
+  true
 
 proc queueUpdatedGpuRasterFrame*(
     surface: GpuRasterFilterDisplay; frame: GpuFrameToken
