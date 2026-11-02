@@ -1129,7 +1129,10 @@ each stage and producing a display-ready RenderTarget. An owned raster-filter
 display adapter now bridges published CPU
 `RasterSurface` revisions through partial GPU uploads, the filter chain, and
 the existing direct/readback display surface with bounded output buffering.
-It is an explicit raster-content path. Full GPU filtering of ordinary Style
+The filtered raster can also serve as a Style-owned Custom Paint underlay or
+overlay without an extra UI node, with direct/readback/hybrid presentation and
+consumer-specific invalidation. It is an explicit raster-content path. Full GPU
+filtering of ordinary Style
 subtrees remains dependent on a shared GPU offscreen composition target.
 
 Bounded static/dynamic instanced draws now carry 1–5 packed vec4 values per
