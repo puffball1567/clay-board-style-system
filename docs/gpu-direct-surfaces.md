@@ -98,6 +98,29 @@ surface with `gcamPremultiplied`. Keep the scratch target available until the
 frame's queued work is complete. This is a GPU-owned surface effect; filtering
 an ordinary Style subtree still requires a shared GPU offscreen target.
 
+## GPU drop shadow postprocess
+
+Import `runtime/gpu_drop_shadow` for a bounded shadow of a sampled RGBA8 or
+BGRA8 Texture or RenderTarget. Compile the Gaussian blur and drop-shadow shader
+pairs, then construct `GpuDropShadowMaterial` outside a frame. Supply distinct
+same-size RGBA8 RenderTargets for the blur scratch, blurred alpha, and final
+output. The material owns its blur material and submits three ordered passes.
+
+```nim
+let frame = host.beginGpuFrame()
+discard shadow.submit(source, scratch, blurred, shadowTarget,
+  8'f32, 6'f32, rgba(0, 0, 0, 0.6), gcamStraight)
+discard display.queueGpuDisplayFrame(shadowTarget, frame)
+host.endGpuFrame(frame)
+```
+
+Offsets are in destination pixels, positive right and down. The tinted blurred
+alpha is composited behind the original source in premultiplied RGBA8. Shadow
+pixels outside the destination are clipped; provide transparent source padding
+if the entire shadow should remain visible. The receiving display surface uses
+`gcamPremultiplied`. Ordinary Style subtree shadowing still requires a shared
+GPU offscreen composition target.
+
 ## Publishing Frames
 
 Producers rotate two or more sampled Texture or RenderTarget resources. A frame

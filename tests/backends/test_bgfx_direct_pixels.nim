@@ -21,7 +21,8 @@ import clay_board_style_system/runtime/[gpu_canvas, motion_scene,
 import clay_board_style_system/paint/[gpu_direct_compositor,
     gpu_host_compositor, layer_color_filter, paint_command]
 import clay_board_style_system/runtime/[gpu_direct_surface, gpu_host,
-    gpu_color_matrix, gpu_gaussian_blur, gpu_shader_builder, gpu_shader_package]
+    gpu_color_matrix, gpu_gaussian_blur, gpu_drop_shadow,
+    gpu_shader_builder, gpu_shader_package]
 
 when sdl3CompileFlags.len > 0:
   {.passC: sdl3CompileFlags.}
@@ -467,6 +468,53 @@ proc verifyGpuGaussianBlurPixels(host: GpuHost;
   material.release()
   doAssert host.closeGpuNamespace(ns)
   echo "GPU Gaussian blur: separable premultiplied pixels passed"
+
+proc verifyGpuDropShadowPixels(host: GpuHost;
+    shaderc, shaderIncludes, workDirectory: string) =
+  let ns = host.createGpuNamespace("gpu-drop-shadow-pixels", budget())
+  let material = host.newGpuDropShadowMaterial(ns,
+    compileShader(gpuGaussianBlurVertexSource(), shaderc,
+      shaderIncludes, workDirectory),
+    compileShader(gpuGaussianBlurFragmentSource(), shaderc,
+      shaderIncludes, workDirectory),
+    compileShader(gpuDropShadowVertexSource(), shaderc,
+      shaderIncludes, workDirectory),
+    compileShader(gpuDropShadowFragmentSource(), shaderc,
+      shaderIncludes, workDirectory))
+  let source = host.createGpuTexture(ns, GpuTextureDescriptor(
+    width: 5, height: 5, format: gtfRgba8,
+    usage: {gtuSampled}, access: gtaStatic,
+    label: "drop-shadow-source"),
+    rgbaPixels(5, 5, proc(x, y: int): Pixel =
+      if x == 2 and y == 2: Pixel(red: 255, alpha: 128)
+      elif x == 0 and y == 0: Pixel(green: 255)
+      else: Pixel()))
+  proc target(label: string): GpuResourceHandle =
+    host.createGpuRenderTarget(ns, GpuRenderTargetDescriptor(
+      width: 5, height: 5, format: gtfRgba8,
+      usage: {gtuRenderTarget, gtuSampled, gtuBlitSource},
+      label: label))
+  let scratch = target("drop-shadow-scratch")
+  let blurred = target("drop-shadow-blurred")
+  let output = target("drop-shadow-output")
+  let frame = host.beginGpuFrame()
+  doAssert material.submit(source, scratch, blurred, output,
+    1, 0, rgb(0, 0, 1), gcamStraight)
+  host.endGpuFrame(frame)
+  let pixels = host.readPixels(ns, output, 5, 5)
+  pixels.requirePixel(2, 2, Pixel(red: 128, blue: 6, alpha: 134),
+    "drop shadow preserves the original above the shadow")
+  pixels.requirePixel(3, 2, Pixel(blue: 18, alpha: 18),
+    "drop shadow moves the blurred alpha right")
+  pixels.requirePixel(0, 0, Pixel(),
+    "drop shadow excludes transparent color and out-of-bounds samples")
+  doAssert host.releaseGpuResource(source)
+  doAssert host.releaseGpuResource(scratch)
+  doAssert host.releaseGpuResource(blurred)
+  doAssert host.releaseGpuResource(output)
+  material.release()
+  doAssert host.closeGpuNamespace(ns)
+  echo "GPU drop shadow: premultiplied offset pixels passed"
 
 proc verifyInstancedRects(host: GpuHost; shaderc, shaderIncludes, workDirectory: string) =
   doAssert host.backendInfo.instancingSupported
@@ -928,6 +976,7 @@ proc run() =
     host.verifyHybridDisplayPixels()
     host.verifyGpuColorMatrixPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuGaussianBlurPixels(shaderc, shaderIncludes, workDirectory)
+    host.verifyGpuDropShadowPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyInstancedRects(shaderc, shaderIncludes, workDirectory)
     host.verifyMotionSceneCanvas(shaderc, shaderIncludes, workDirectory)
     host.verifyMotionSceneDirect(shaderc, shaderIncludes, workDirectory)

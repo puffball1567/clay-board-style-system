@@ -15,6 +15,7 @@ import clay_board_style_system/runtime/button
 import clay_board_style_system/runtime/gpu_canvas
 import clay_board_style_system/runtime/gpu_color_matrix
 import clay_board_style_system/runtime/gpu_gaussian_blur
+import clay_board_style_system/runtime/gpu_drop_shadow
 import clay_board_style_system/runtime/gpu_canvas_ui
 import clay_board_style_system/runtime/gpu_direct_surface
 import clay_board_style_system/runtime/gpu_display_surface
@@ -7656,6 +7657,65 @@ suite "GPU Gaussian blur postprocess":
     doAssert host.releaseGpuResource(source)
     doAssert host.releaseGpuResource(scratch)
     doAssert host.releaseGpuResource(output)
+    doAssert host.closeGpuNamespace(namespace)
+    host.close()
+
+suite "GPU drop shadow postprocess":
+  test "shadow submits blur and composition with bounded inputs":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("drop-shadow",
+      GpuResourceBudget(persistentBytes: 65536,
+        workUnitsPerFrame: 3, maxResources: 24))
+    proc artifact(source: GpuShaderSource): GpuShaderArtifact =
+      GpuShaderArtifact(
+        descriptor: GpuShaderDescriptor(stage: source.stage),
+        bindingLayout: source.gpuShaderBindingLayout(),
+        bytecode: @[1'u8],
+        sourceHash: source.gpuShaderSourceHash())
+    let blurVertex = artifact(gpuGaussianBlurVertexSource())
+    let blurFragment = artifact(gpuGaussianBlurFragmentSource())
+    let shadowVertex = artifact(gpuDropShadowVertexSource())
+    let shadowFragment = artifact(gpuDropShadowFragmentSource())
+    var wrong = shadowFragment
+    inc wrong.sourceHash
+    expect ValueError:
+      discard host.newGpuDropShadowMaterial(namespace,
+        blurVertex, blurFragment, shadowVertex, wrong)
+    check context.shaderCreates == 0
+    let material = host.newGpuDropShadowMaterial(namespace,
+      blurVertex, blurFragment, shadowVertex, shadowFragment)
+    let source = host.createGpuTexture(namespace,
+      textureDescriptor(width = 5, height = 5, usage = {gtuSampled}))
+    let scratch = host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(5, 5))
+    let blurred = host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(5, 5))
+    let output = host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(5, 5))
+    expect ValueError:
+      discard material.submit(source, scratch, blurred, blurred,
+        1, 0, rgb(0, 0, 1))
+    expect ValueError:
+      discard material.submit(source, scratch, blurred, output,
+        Inf.float32, 0, rgb(0, 0, 1))
+    expect GpuHostError:
+      discard material.submit(source, scratch, blurred, output,
+        1, 0, rgb(0, 0, 1))
+    let frame = host.beginGpuFrame()
+    check material.submit(source, scratch, blurred, output,
+      1, 0, rgb(0, 0, 1))
+    check context.drawSubmits == 3
+    check context.lastGraphicsPass.renderTarget == output
+    check context.lastBindings.textures.len == 2
+    check context.lastBindings.uniforms[0].values == @[
+      0.2'f32, 0'f32, float32(ord(gcamStraight)), 0'f32]
+    check context.lastBindings.uniforms[1].values == @[
+      0'f32, 0, 1, 1]
+    host.endGpuFrame(frame)
+    material.release()
+    for handle in [source, scratch, blurred, output]:
+      doAssert host.releaseGpuResource(handle)
     doAssert host.closeGpuNamespace(namespace)
     host.close()
 
