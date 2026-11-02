@@ -28,6 +28,7 @@ type
     sourceValue: RasterSurface
     textureValue: GpuResourceHandle
     uploadedRevisionValue: uint64
+    forceFullUploadValue: bool
     closedValue: bool
 
 proc defaultGpuRasterTextureConfig*(): GpuRasterTextureConfig =
@@ -132,6 +133,23 @@ proc texture*(surface: GpuRasterTexture): GpuResourceHandle =
 proc uploadedRevision*(surface: GpuRasterTexture): uint64 =
   if surface.isNil: 0'u64 else: surface.uploadedRevisionValue
 
+proc replaceSource*(
+    surface: GpuRasterTexture; source: RasterSurface
+): bool {.discardable.} =
+  ## Switch to another retained image of the same size without reallocating
+  ## the texture. Its next synchronization uploads all pixels.
+  surface.requireOpen()
+  if source.isNil or source.width != surface.sourceValue.width or
+      source.height != surface.sourceValue.height:
+    raise newException(ValueError,
+      "GPU raster texture replacement source dimensions must match")
+  if source == surface.sourceValue:
+    return false
+  surface.sourceValue = source
+  surface.uploadedRevisionValue = 0
+  surface.forceFullUploadValue = true
+  true
+
 proc syncGpuRasterTexture*(
     surface: GpuRasterTexture
 ): GpuRasterTextureSyncResult {.discardable.} =
@@ -146,7 +164,7 @@ proc syncGpuRasterTexture*(
   let consecutive = surface.uploadedRevisionValue < high(uint64) and
     surface.uploadedRevisionValue + 1 == revision
   let dirtyCount = surface.sourceValue.dirtyRegionCount
-  if consecutive and dirtyCount > 0 and
+  if not surface.forceFullUploadValue and consecutive and dirtyCount > 0 and
       dirtyCount <= surface.configValue.maxPartialRegions:
     let pixels = surface.sourceValue.pixels
     let sourceStride = surface.sourceValue.width * RasterBytesPerPixel
@@ -189,6 +207,7 @@ proc syncGpuRasterTexture*(
     result.uploadedBytes = uint64(pixels.len)
 
   surface.uploadedRevisionValue = revision
+  surface.forceFullUploadValue = false
 
 proc closeGpuRasterTexture*(surface: GpuRasterTexture): bool {.discardable.} =
   if surface.isNil or surface.closedValue:

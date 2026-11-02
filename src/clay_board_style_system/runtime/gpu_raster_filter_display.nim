@@ -100,6 +100,18 @@ proc source*(surface: GpuRasterFilterDisplay): RasterSurface =
     raise newException(GpuHostError, "GPU raster filter display is stale")
   surface.upload.source()
 
+proc replaceSource*(
+    surface: GpuRasterFilterDisplay; source: RasterSurface
+): bool {.discardable.} =
+  ## Switch a same-size raster input, preserving the display and Style
+  ## registrations. The next queued frame uploads the complete new image.
+  if surface.isStale:
+    raise newException(GpuHostError, "GPU raster filter display is stale")
+  if surface.upload.replaceSource(source):
+    surface.lastQueuedRevisionValue = 0
+    return true
+  false
+
 proc lastQueuedRevision*(surface: GpuRasterFilterDisplay): uint64 =
   if surface.isNil: 0'u64 else: surface.lastQueuedRevisionValue
 

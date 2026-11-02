@@ -19,6 +19,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added same-size `RasterSurface` source replacement for GPU raster textures
+  and filtered displays, preserving registered UI visuals while forcing a
+  complete upload of the new image.
+
 - Added configurable 0–4 pixel GPU Gaussian blur radius to direct blur,
   drop-shadow, and ordered filter-chain stages; the default keeps the prior
   radius-two result.
