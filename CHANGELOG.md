@@ -19,6 +19,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added ordered GPU filter chains for sampled Texture and RenderTarget surfaces.
+  Matrix, blur, and drop-shadow stages reuse three scratch targets and produce
+  premultiplied output for GPU display surfaces.
+
 - Added a same-host GPU drop shadow for sampled Texture and RenderTarget
   surfaces, with pixel offsets, tinted blurred alpha, and premultiplied
   composition behind the original image.

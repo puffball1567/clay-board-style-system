@@ -21,7 +21,7 @@ import clay_board_style_system/runtime/[gpu_canvas, motion_scene,
 import clay_board_style_system/paint/[gpu_direct_compositor,
     gpu_host_compositor, layer_color_filter, paint_command]
 import clay_board_style_system/runtime/[gpu_direct_surface, gpu_host,
-    gpu_color_matrix, gpu_gaussian_blur, gpu_drop_shadow,
+    gpu_color_matrix, gpu_gaussian_blur, gpu_drop_shadow, gpu_filter_chain,
     gpu_shader_builder, gpu_shader_package]
 
 when sdl3CompileFlags.len > 0:
@@ -516,6 +516,61 @@ proc verifyGpuDropShadowPixels(host: GpuHost;
   doAssert host.closeGpuNamespace(ns)
   echo "GPU drop shadow: premultiplied offset pixels passed"
 
+proc verifyGpuFilterChainPixels(host: GpuHost;
+    shaderc, shaderIncludes, workDirectory: string) =
+  let ns = host.createGpuNamespace("gpu-filter-chain-pixels", budget())
+  let matrix = host.newGpuColorMatrixMaterial(ns,
+    compileShader(gpuColorMatrixVertexSource(), shaderc,
+      shaderIncludes, workDirectory),
+    compileShader(gpuColorMatrixFragmentSource(), shaderc,
+      shaderIncludes, workDirectory))
+  let blur = host.newGpuGaussianBlurMaterial(ns,
+    compileShader(gpuGaussianBlurVertexSource(), shaderc,
+      shaderIncludes, workDirectory),
+    compileShader(gpuGaussianBlurFragmentSource(), shaderc,
+      shaderIncludes, workDirectory))
+  let swapRedBlue = colorMatrixFilter([
+    0'f32, 0, 1, 0,
+    0'f32, 1, 0, 0,
+    1'f32, 0, 0, 0
+  ])
+  let chain = host.newGpuFilterChain(ns,
+    [colorMatrixStage(swapRedBlue), gaussianBlurStage()],
+    colorMatrix = matrix, gaussianBlur = blur)
+  let source = host.createGpuTexture(ns, GpuTextureDescriptor(
+    width: 5, height: 5, format: gtfRgba8,
+    usage: {gtuSampled}, access: gtaStatic,
+    label: "filter-chain-source"),
+    rgbaPixels(5, 5, proc(x, y: int): Pixel =
+      if x == 2 and y == 2: Pixel(red: 255, alpha: 128)
+      elif x == 0 and y == 0: Pixel(green: 255)
+      else: Pixel()))
+  proc target(label: string): GpuResourceHandle =
+    host.createGpuRenderTarget(ns, GpuRenderTargetDescriptor(
+      width: 5, height: 5, format: gtfRgba8,
+      usage: {gtuRenderTarget, gtuSampled, gtuBlitSource},
+      label: label))
+  let scratch = [target("filter-chain-scratch-a"),
+    target("filter-chain-scratch-b"), target("filter-chain-scratch-c")]
+  let output = target("filter-chain-output")
+  let frame = host.beginGpuFrame()
+  doAssert chain.submit(source, output, scratch, gcamStraight)
+  host.endGpuFrame(frame)
+  let pixels = host.readPixels(ns, output, 5, 5)
+  pixels.requirePixel(2, 2, Pixel(blue: 18, alpha: 18),
+    "filter chain matrix then blur center")
+  pixels.requirePixel(1, 2, Pixel(blue: 12, alpha: 12),
+    "filter chain matrix then blur neighbor")
+  pixels.requirePixel(0, 0, Pixel(blue: 1, alpha: 1),
+    "filter chain discards transparent source color")
+  matrix.release()
+  blur.release()
+  doAssert host.releaseGpuResource(source)
+  for handle in [output, scratch[0], scratch[1], scratch[2]]:
+    doAssert host.releaseGpuResource(handle)
+  doAssert host.closeGpuNamespace(ns)
+  echo "GPU filter chain: ordered matrix and blur pixels passed"
+
 proc verifyInstancedRects(host: GpuHost; shaderc, shaderIncludes, workDirectory: string) =
   doAssert host.backendInfo.instancingSupported
   let ns = host.createGpuNamespace("instanced-rectangles", budget())
@@ -977,6 +1032,7 @@ proc run() =
     host.verifyGpuColorMatrixPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuGaussianBlurPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuDropShadowPixels(shaderc, shaderIncludes, workDirectory)
+    host.verifyGpuFilterChainPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyInstancedRects(shaderc, shaderIncludes, workDirectory)
     host.verifyMotionSceneCanvas(shaderc, shaderIncludes, workDirectory)
     host.verifyMotionSceneDirect(shaderc, shaderIncludes, workDirectory)

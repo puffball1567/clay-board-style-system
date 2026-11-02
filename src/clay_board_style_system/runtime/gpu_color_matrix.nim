@@ -57,6 +57,12 @@ void main()
 proc isClosed*(material: GpuColorMatrixMaterial): bool =
   material.isNil or material.host.isNil
 
+proc belongsTo*(
+    material: GpuColorMatrixMaterial; host: GpuHost; namespace: GpuNamespaceId
+): bool =
+  not material.isClosed and material.host == host and
+    material.namespace == namespace
+
 proc release*(material: GpuColorMatrixMaterial) =
   ## Release after the final submitted frame while the host is still open.
   if material.isClosed:

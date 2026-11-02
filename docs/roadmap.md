@@ -1123,7 +1123,9 @@ direct display or asynchronous readback. A fixed-radius separable Gaussian
 blur adds the first GPU spatial filter with an explicit sampled scratch target
 and premultiplied output. A same-host drop-shadow pass reuses that blur,
 offsets and tints its alpha, and composites the original source above it.
-Full GPU filtering of ordinary Style
+An ordered GPU filter chain now combines up to eight matrix, blur, and shadow
+stages over three reusable scratch targets, carrying premultiplied alpha into
+each stage and producing a display-ready RenderTarget. Full GPU filtering of ordinary Style
 subtrees remains dependent on a shared GPU offscreen composition target.
 
 Bounded static/dynamic instanced draws now carry 1–5 packed vec4 values per

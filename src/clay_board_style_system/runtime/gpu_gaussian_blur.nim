@@ -59,6 +59,12 @@ void main()
 proc isClosed*(material: GpuGaussianBlurMaterial): bool =
   material.isNil or material.host.isNil
 
+proc belongsTo*(
+    material: GpuGaussianBlurMaterial; host: GpuHost; namespace: GpuNamespaceId
+): bool =
+  not material.isClosed and material.host == host and
+    material.namespace == namespace
+
 proc release*(material: GpuGaussianBlurMaterial) =
   ## Release after the last submitted frame while the host is open.
   if material.isClosed:
