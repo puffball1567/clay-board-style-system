@@ -19,6 +19,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added filtered raster alpha masks for Style through GPU readback and hybrid
+  display paths, using the completed raster inside Style's mask layer.
+
 - Added Style-owned GPU-filtered raster underlay and overlay materials. They
   select direct or readback display paths and invalidate only their consumers.
 

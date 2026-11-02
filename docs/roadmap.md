@@ -1129,9 +1129,11 @@ each stage and producing a display-ready RenderTarget. An owned raster-filter
 display adapter now bridges published CPU
 `RasterSurface` revisions through partial GPU uploads, the filter chain, and
 the existing direct/readback display surface with bounded output buffering.
-The filtered raster can also serve as a Style-owned Custom Paint underlay or
-overlay without an extra UI node, with direct/readback/hybrid presentation and
-consumer-specific invalidation. It is an explicit raster-content path. Full GPU
+The filtered raster can also serve as a Style-owned Custom Paint underlay,
+overlay, or alpha mask without an extra UI node. Underlays and overlays use
+direct/readback/hybrid presentation; masks use completed raster pixels in a
+readback or hybrid path. Collection invalidates only material consumers. It is
+an explicit raster-content path. Full GPU
 filtering of ordinary Style
 subtrees remains dependent on a shared GPU offscreen composition target.
 

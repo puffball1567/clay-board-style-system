@@ -242,7 +242,7 @@ implementation and its `bgfxim` dependency stay behind the adapter boundary.
 ### Filtered raster material
 
 An application-owned `RasterSurface` can pass through an ordered GPU filter
-chain and register the result as a Style underlay or overlay. Import
+chain and register the result as a Style underlay, overlay, or alpha mask. Import
 `runtime/gpu_raster_filter_display_ui` and register its
 `GpuRasterFilterDisplay` without adding a UI node:
 
@@ -258,9 +258,14 @@ discard accent.collectGpuFrame()
 The callback emits a direct GPU surface command when the compositor supports
 it, a raster command for readback, or a direct command with an SDL layer
 fallback in hybrid mode. Collection invalidates only components that consumed
-the material. Registration supports `cpsUnderlay` and `cpsOverlay`; it does not
-capture or filter the component's own children. The application retains the
-filtered display and chain materials until after unregistering the material.
+the material. For `cpsMask`, register with `{cpsMask}` and use a readback or
+hybrid display path. Masks always draw the completed raster into Style's
+isolated destination-in layer and invalidate only after those pixels arrive.
+A direct-only display rejects mask registration. Multiple material names may
+share one filtered display; each observes a completed frame once.
+This material does not capture or filter the component's own children. The
+application retains the filtered display and chain materials until after
+unregistering the material.
 
 ## Failure And Ownership Rules
 
