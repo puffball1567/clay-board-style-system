@@ -77,8 +77,10 @@ still use their existing CPU layer path.
 
 ## GPU Gaussian blur postprocess
 
-Import `runtime/gpu_gaussian_blur` for a fixed radius-two, five-tap separable
-Gaussian blur. Compile `gpuGaussianBlurVertexSource()` and
+Import `runtime/gpu_gaussian_blur` for a separable binomial Gaussian blur with
+an integer radius from 0 to 4 pixels. Radius 2 keeps the original five-tap
+kernel; radius 0 preserves the source while normalizing alpha. Compile
+`gpuGaussianBlurVertexSource()` and
 `gpuGaussianBlurFragmentSource()` for the selected backend, then create a
 `GpuGaussianBlurMaterial` outside a frame. Provide three distinct same-namespace
 resources of equal dimensions: a sampled RGBA8 or BGRA8 Texture or RenderTarget,
@@ -86,7 +88,8 @@ a sampled RGBA8 scratch RenderTarget, and an RGBA8 destination RenderTarget.
 
 ```nim
 let frame = host.beginGpuFrame()
-discard blur.submit(source, scratch, blurredTarget, gcamStraight)
+discard blur.submit(source, scratch, blurredTarget,
+  sourceAlphaMode = gcamStraight, radius = 4)
 discard display.queueGpuDisplayFrame(blurredTarget, frame)
 host.endGpuFrame(frame)
 ```
@@ -109,13 +112,15 @@ output. The material owns its blur material and submits three ordered passes.
 ```nim
 let frame = host.beginGpuFrame()
 discard shadow.submit(source, scratch, blurred, shadowTarget,
-  8'f32, 6'f32, rgba(0, 0, 0, 0.6), gcamStraight)
+  8'f32, 6'f32, rgba(0, 0, 0, 0.6),
+  sourceAlphaMode = gcamStraight, blurRadius = 4)
 discard display.queueGpuDisplayFrame(shadowTarget, frame)
 host.endGpuFrame(frame)
 ```
 
 Offsets are in destination pixels, positive right and down. The tinted blurred
 alpha is composited behind the original source in premultiplied RGBA8. Shadow
+blur radius accepts the same 0 to 4 pixel range and defaults to 2. Shadow
 pixels outside the destination are clipped; provide transparent source padding
 if the entire shadow should remain visible. The receiving display surface uses
 `gcamPremultiplied`. Ordinary Style subtree shadowing still requires a shared
@@ -130,7 +135,7 @@ one to eight immutable stages. It does not own the materials or render targets.
 
 ```nim
 let effects = host.newGpuFilterChain(resources,
-  [colorMatrixStage(tint), gaussianBlurStage()],
+  [colorMatrixStage(tint), gaussianBlurStage(radius = 4)],
   colorMatrix = matrixMaterial, gaussianBlur = blurMaterial)
 let scratch = [scratchA, scratchB, scratchC]
 let frame = host.beginGpuFrame()
@@ -140,6 +145,7 @@ host.endGpuFrame(frame)
 ```
 
 The source may be a sampled RGBA8 or BGRA8 Texture or RenderTarget. The
+`dropShadowStage` constructor also accepts `blurRadius = 0..4`. The
 destination and all three scratch resources are distinct, sampled RGBA8
 RenderTargets of the same size and namespace. The chain reuses them between
 stages, passes premultiplied alpha to each later stage, and returns a

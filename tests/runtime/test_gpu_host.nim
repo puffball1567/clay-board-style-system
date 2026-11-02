@@ -7642,6 +7642,10 @@ suite "GPU Gaussian blur postprocess":
     let output = host.createGpuRenderTarget(namespace,
       renderTargetDescriptor(5, 5))
     expect ValueError:
+      discard material.submit(source, scratch, output, radius = -1)
+    expect ValueError:
+      discard material.submit(source, scratch, output, radius = 5)
+    expect ValueError:
       discard material.submit(source, scratch, scratch)
     expect GpuHostError:
       discard material.submit(source, scratch, output)
@@ -7652,10 +7656,23 @@ suite "GPU Gaussian blur postprocess":
     check context.lastBindings.textures[0].texture.backendResourceIdValue() != 0
     check context.lastBindings.uniforms[0].values == @[
       0'f32, 0.2'f32, float32(ord(gcamPremultiplied)), 0'f32]
+    check context.lastBindings.uniforms[1].values == @[
+      0.375'f32, 0.25, 0.0625, 0]
     expect ValueError:
       discard material.submit(output, source, scratch)
     check context.drawSubmits == 2
     host.endGpuFrame(frame)
+    let narrowFrame = host.beginGpuFrame()
+    check material.submit(source, scratch, output, radius = 0)
+    check context.lastBindings.uniforms[1].values == @[
+      1'f32, 0, 0, 0]
+    host.endGpuFrame(narrowFrame)
+    let wideFrame = host.beginGpuFrame()
+    check material.submit(source, scratch, output, radius = 4)
+    check context.lastBindings.uniforms[0].values[3] == 0.00390625'f32
+    check context.lastBindings.uniforms[1].values == @[
+      0.2734375'f32, 0.21875, 0.109375, 0.03125]
+    host.endGpuFrame(wideFrame)
     material.release()
     doAssert host.releaseGpuResource(source)
     doAssert host.releaseGpuResource(scratch)
@@ -7702,6 +7719,9 @@ suite "GPU drop shadow postprocess":
     expect ValueError:
       discard material.submit(source, scratch, blurred, output,
         Inf.float32, 0, rgb(0, 0, 1))
+    expect ValueError:
+      discard material.submit(source, scratch, blurred, output,
+        1, 0, rgb(0, 0, 1), blurRadius = 5)
     expect GpuHostError:
       discard material.submit(source, scratch, blurred, output,
         1, 0, rgb(0, 0, 1))
@@ -7754,6 +7774,10 @@ suite "GPU filter chain":
     expect ValueError:
       discard host.newGpuFilterChain(namespace,
         [gaussianBlurStage()], colorMatrix = matrix)
+    expect ValueError:
+      discard gaussianBlurStage(5)
+    expect ValueError:
+      discard dropShadowStage(1, 0, rgb(0, 0, 1), blurRadius = -1)
     let chain = host.newGpuFilterChain(namespace,
       [colorMatrixStage(swapRedBlue), gaussianBlurStage(),
         dropShadowStage(1, 0, rgb(0, 0, 1))],
@@ -7777,6 +7801,14 @@ suite "GPU filter chain":
     check context.lastBindings.uniforms[0].values == @[
       0.2'f32, 0'f32, float32(ord(gcamPremultiplied)), 0'f32]
     host.endGpuFrame(frame)
+    let wideChain = host.newGpuFilterChain(namespace,
+      [gaussianBlurStage(4)], gaussianBlur = blur)
+    let wideFrame = host.beginGpuFrame()
+    check wideChain.submit(source, output, scratch)
+    check context.lastBindings.uniforms[0].values[3] == 0.00390625'f32
+    check context.lastBindings.uniforms[1].values == @[
+      0.2734375'f32, 0.21875, 0.109375, 0.03125]
+    host.endGpuFrame(wideFrame)
     matrix.release()
     blur.release()
     shadow.release()

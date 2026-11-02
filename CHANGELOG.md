@@ -19,6 +19,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added configurable 0–4 pixel GPU Gaussian blur radius to direct blur,
+  drop-shadow, and ordered filter-chain stages; the default keeps the prior
+  radius-two result.
+
 - Added filtered raster alpha masks for Style through GPU readback and hybrid
   display paths, using the completed raster inside Style's mask layer.
 
