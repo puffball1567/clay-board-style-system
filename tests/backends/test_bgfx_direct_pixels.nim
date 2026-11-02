@@ -650,6 +650,22 @@ proc verifyGpuRasterFilterDisplayPixels(host: GpuHost;
   display.readbackSurface().rasterSurface.pixels.requireRasterPixel(
     5, 2, 2, Pixel(red: 255, alpha: 128),
     "raster dirty upload through GPU matrix and display readback")
+  let replacement = newRasterSurface(5, 5)
+  replacement.updateRegion(rasterRegion(1, 1, 1, 1),
+    @[0'u8, 255, 0, 255])
+  doAssert replacement.publish()
+  doAssert filtered.replaceSource(replacement)
+  let swapped = host.beginGpuFrame()
+  doAssert filtered.queueUpdatedGpuRasterFrame(swapped)
+  host.endGpuFrame(swapped)
+  drain()
+  doAssert display.readbackSurface().rasterSurface.publish()
+  display.readbackSurface().rasterSurface.pixels.requireRasterPixel(
+    5, 1, 1, Pixel(green: 255, alpha: 255),
+    "replacement raster uploads through the existing GPU display")
+  display.readbackSurface().rasterSurface.pixels.requireRasterPixel(
+    5, 2, 2, Pixel(),
+    "replacement raster clears pixels from the previous source")
   doAssert filtered.closeGpuRasterFilterDisplay()
   material.release()
   doAssert host.closeGpuNamespace(ns)

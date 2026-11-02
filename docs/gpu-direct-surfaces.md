@@ -180,6 +180,11 @@ discard view.collectGpuFrame()
 The adapter uploads only published raster revisions, using dirty rectangles
 when possible. An unchanged revision or full presentation ring returns `false`
 without filtering or uploading; retry after collecting the display frame.
+Call `filtered.replaceSource(nextRaster)` to switch to another `RasterSurface`
+of the same dimensions while keeping the display and Style registrations.
+The next queued frame uploads the complete replacement once; subsequent
+published dirty regions return to partial uploads. A different size requires
+recreating the adapter and its display resources.
 The output remains premultiplied on the GPU, and the existing readback path
 normalizes it for CPU Canvas presentation. Close the adapter after queued
 frames drain, before releasing its chain materials. This provides GPU effects

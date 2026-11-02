@@ -1828,6 +1828,36 @@ suite "GPU raster texture synchronization":
     check upload.closeGpuRasterTexture()
     host.close()
 
+  test "same-size source replacement forces one complete upload":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("raster-source-swap", standardBudget())
+    let first = newRasterSurface(4, 4, [255'u8, 0, 0, 255])
+    let upload = host.newGpuRasterTexture(namespace, first)
+    let replacement = newRasterSurface(4, 4, [0'u8, 0, 255, 255])
+    replacement.updateRegion(rasterRegion(1, 1, 1, 1),
+      @[0'u8, 255, 0, 255])
+    check replacement.publish()
+    expect ValueError:
+      discard upload.replaceSource(nil)
+    expect ValueError:
+      discard upload.replaceSource(newRasterSurface(5, 4))
+    check upload.source == first
+    check not upload.replaceSource(first)
+    check upload.replaceSource(replacement)
+    check upload.source == replacement
+    check upload.uploadedRevision == 0
+    let frame = host.beginGpuFrame()
+    let synced = upload.syncGpuRasterTexture()
+    check synced.kind == grtskFull
+    check synced.revision == replacement.revision
+    check synced.uploadedBytes == uint64(4 * 4 * RasterBytesPerPixel)
+    check context.textureUpdates == 1
+    check upload.syncGpuRasterTexture().kind == grtskUnchanged
+    host.endGpuFrame(frame)
+    check upload.closeGpuRasterTexture()
+    host.close()
+
   test "skipped revisions and excessive dirty regions use one full upload":
     block skippedRevision:
       let context = newContext()
@@ -7882,6 +7912,20 @@ suite "GPU raster filter display":
     check context.drawSubmits == 3
     check context.textureUpdates == 2
     discard filtered.displaySurface().collectGpuDisplayFrame()
+    let replacement = newRasterSurface(2, 2, [0'u8, 255, 255, 255])
+    expect ValueError:
+      discard filtered.replaceSource(newRasterSurface(3, 2))
+    check filtered.source == raster
+    check filtered.replaceSource(replacement)
+    check filtered.source == replacement
+    check filtered.lastQueuedRevision == 0
+    check not filtered.replaceSource(replacement)
+    let swapped = host.beginGpuFrame()
+    check filtered.queueUpdatedGpuRasterFrame(swapped)
+    host.endGpuFrame(swapped)
+    check context.drawSubmits == 4
+    check context.textureUpdates == 3
+    discard filtered.displaySurface().collectGpuDisplayFrame()
     check filtered.closeGpuRasterFilterDisplay()
     material.release()
     doAssert host.closeGpuNamespace(namespace)
@@ -7950,6 +7994,14 @@ suite "GPU raster filter Style material":
     let invalidation = ui.consumeInvalidation()
     check invalidation.domains == {ddPaint}
     check invalidation.roots == @[button.container.id]
+    check filtered.replaceSource(
+      newRasterSurface(2, 2, [0'u8, 255, 0, 255]))
+    check material.valid
+    let replacementFrame = host.beginGpuFrame()
+    check material.queueGpuFrame(replacementFrame)
+    host.endGpuFrame(replacementFrame)
+    check material.collectGpuFrame()
+    check ui.consumeInvalidation().roots == @[button.container.id]
     check material.unregister()
     check not material.valid
     check filtered.closeGpuRasterFilterDisplay()
