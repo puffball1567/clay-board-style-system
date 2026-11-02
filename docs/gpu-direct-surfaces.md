@@ -149,6 +149,37 @@ submit all stages before publishing it. The chain rejects invalid resources,
 released materials, and presentation-retained write targets before the first
 pass. Ordinary Style subtrees still need the shared GPU offscreen target.
 
+## Raster input for filtered UI display
+
+Import `runtime/gpu_raster_filter_display` to connect an application-owned
+`RasterSurface` to a GPU filter chain and a normal `GpuDisplaySurface` UI
+attachment. `GpuRasterFilterDisplay` owns the dynamic upload texture, three
+scratch RenderTargets, a bounded ring of output RenderTargets, and the display
+surface. The chain and its materials remain caller-owned.
+
+```nim
+var config = defaultGpuRasterFilterDisplayConfig(
+  uint32(raster.width), uint32(raster.height))
+config.fallback = gdsfAllowReadback
+let filtered = host.newGpuRasterFilterDisplay(resources, raster, effects, config)
+let view = ui.gpuDisplaySurface(filtered.displaySurface())
+
+discard raster.publish()
+let frame = host.beginGpuFrame()
+discard filtered.queueUpdatedGpuRasterFrame(frame)
+host.endGpuFrame(frame)
+discard view.collectGpuFrame()
+```
+
+The adapter uploads only published raster revisions, using dirty rectangles
+when possible. An unchanged revision or full presentation ring returns `false`
+without filtering or uploading; retry after collecting the display frame.
+The output remains premultiplied on the GPU, and the existing readback path
+normalizes it for CPU Canvas presentation. Close the adapter after queued
+frames drain, before releasing its chain materials. This provides GPU effects
+for retained raster content; automatic capture and filtering of an ordinary
+Style subtree still needs the shared GPU offscreen target.
+
 ## Publishing Frames
 
 Producers rotate two or more sampled Texture or RenderTarget resources. A frame

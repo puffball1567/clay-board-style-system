@@ -80,6 +80,22 @@ proc newGpuFilterChain*(
 proc stageCount*(chain: GpuFilterChain): int =
   if chain.isNil: 0 else: chain.stages.len
 
+proc belongsTo*(
+    chain: GpuFilterChain; host: GpuHost; namespace: GpuNamespaceId
+): bool =
+  if chain.isNil or chain.host != host or chain.namespace != namespace or
+      host.isNil or not host.isReady():
+    return false
+  for stage in chain.stages:
+    case stage.kindValue
+    of gfskColorMatrix:
+      if not chain.colorMatrix.belongsTo(host, namespace): return false
+    of gfskGaussianBlur:
+      if not chain.gaussianBlur.belongsTo(host, namespace): return false
+    of gfskDropShadow:
+      if not chain.dropShadow.belongsTo(host, namespace): return false
+  true
+
 proc submit*(
     chain: GpuFilterChain;
     source, destination: GpuResourceHandle;

@@ -19,6 +19,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added a retained RasterSurface-to-GPU-filter display adapter with dirty-region
+  uploads, bounded output buffering, and the existing direct/readback UI path.
+
 - Added ordered GPU filter chains for sampled Texture and RenderTarget surfaces.
   Matrix, blur, and drop-shadow stages reuse three scratch targets and produce
   premultiplied output for GPU display surfaces.

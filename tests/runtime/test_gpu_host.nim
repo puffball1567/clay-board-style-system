@@ -17,6 +17,7 @@ import clay_board_style_system/runtime/gpu_color_matrix
 import clay_board_style_system/runtime/gpu_gaussian_blur
 import clay_board_style_system/runtime/gpu_drop_shadow
 import clay_board_style_system/runtime/gpu_filter_chain
+import clay_board_style_system/runtime/gpu_raster_filter_display
 import clay_board_style_system/runtime/gpu_canvas_ui
 import clay_board_style_system/runtime/gpu_direct_surface
 import clay_board_style_system/runtime/gpu_display_surface
@@ -7780,6 +7781,106 @@ suite "GPU filter chain":
     shadow.release()
     for handle in [source, output, scratch[0], scratch[1], scratch[2]]:
       doAssert host.releaseGpuResource(handle)
+    doAssert host.closeGpuNamespace(namespace)
+    host.close()
+
+suite "GPU raster filter display":
+  test "published raster changes filter and queue without overwriting retained output":
+    let context = newContext()
+    context.enableDirectPresentation(maxBuffers = 2)
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let namespace = host.createGpuNamespace("raster-filter-display",
+      GpuResourceBudget(persistentBytes: 65536,
+        transientBytesPerFrame: 256,
+        workUnitsPerFrame: 8, maxResources: 32))
+    proc artifact(source: GpuShaderSource): GpuShaderArtifact =
+      GpuShaderArtifact(
+        descriptor: GpuShaderDescriptor(stage: source.stage),
+        bindingLayout: source.gpuShaderBindingLayout(),
+        bytecode: @[1'u8],
+        sourceHash: source.gpuShaderSourceHash())
+    let material = host.newGpuColorMatrixMaterial(namespace,
+      artifact(gpuColorMatrixVertexSource()),
+      artifact(gpuColorMatrixFragmentSource()))
+    let chain = host.newGpuFilterChain(namespace,
+      [colorMatrixStage(nil)], colorMatrix = material)
+    let raster = newRasterSurface(2, 2, [255'u8, 0, 0, 255])
+    var config = defaultGpuRasterFilterDisplayConfig(2, 2)
+    config.bufferCount = 2
+    config.fallback = gdsfRequireDirect
+    var wrong = config
+    wrong.alphaMode = gcamStraight
+    expect ValueError:
+      discard host.newGpuRasterFilterDisplay(namespace, raster, chain, wrong)
+    let filtered = host.newGpuRasterFilterDisplay(namespace,
+      raster, chain, config)
+    check filtered.displaySurface().path == gdspDirect
+    let first = host.beginGpuFrame()
+    expect GpuHostError:
+      discard filtered.closeGpuRasterFilterDisplay()
+    check filtered.queueUpdatedGpuRasterFrame(first)
+    check filtered.lastQueuedRevision == raster.revision
+    check not filtered.queueUpdatedGpuRasterFrame(first)
+    host.endGpuFrame(first)
+    check context.drawSubmits == 1
+    check context.textureUpdates == 0
+
+    raster.replacePixels(@[0'u8, 255, 0, 255,
+      0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255])
+    check raster.publish()
+    let second = host.beginGpuFrame()
+    check filtered.queueUpdatedGpuRasterFrame(second)
+    host.endGpuFrame(second)
+    check context.drawSubmits == 2
+    check context.textureUpdates == 1
+
+    raster.replacePixels(@[0'u8, 0, 255, 255,
+      0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255])
+    check raster.publish()
+    let blocked = host.beginGpuFrame()
+    check not filtered.queueUpdatedGpuRasterFrame(blocked)
+    host.endGpuFrame(blocked)
+    check context.drawSubmits == 2
+    check context.textureUpdates == 1
+    check filtered.displaySurface().collectGpuDisplayFrame()
+    let retry = host.beginGpuFrame()
+    check filtered.queueUpdatedGpuRasterFrame(retry)
+    host.endGpuFrame(retry)
+    check context.drawSubmits == 3
+    check context.textureUpdates == 2
+    discard filtered.displaySurface().collectGpuDisplayFrame()
+    check filtered.closeGpuRasterFilterDisplay()
+    material.release()
+    doAssert host.closeGpuNamespace(namespace)
+    host.close()
+
+  test "constructor resource failure releases its partial upload and targets":
+    let context = newContext()
+    context.enableDirectPresentation(maxBuffers = 2)
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let namespace = host.createGpuNamespace("raster-filter-rollback",
+      GpuResourceBudget(persistentBytes: 65536,
+        maxResources: 11))
+    proc artifact(source: GpuShaderSource): GpuShaderArtifact =
+      GpuShaderArtifact(
+        descriptor: GpuShaderDescriptor(stage: source.stage),
+        bindingLayout: source.gpuShaderBindingLayout(),
+        bytecode: @[1'u8],
+        sourceHash: source.gpuShaderSourceHash())
+    let material = host.newGpuColorMatrixMaterial(namespace,
+      artifact(gpuColorMatrixVertexSource()),
+      artifact(gpuColorMatrixFragmentSource()))
+    let chain = host.newGpuFilterChain(namespace,
+      [colorMatrixStage(nil)], colorMatrix = material)
+    let retained = host.gpuNamespaceUsage(namespace).resourceCount
+    var config = defaultGpuRasterFilterDisplayConfig(2, 2)
+    config.bufferCount = 2
+    config.fallback = gdsfRequireDirect
+    expect GpuHostError:
+      discard host.newGpuRasterFilterDisplay(namespace,
+        newRasterSurface(2, 2), chain, config)
+    check host.gpuNamespaceUsage(namespace).resourceCount == retained
+    material.release()
     doAssert host.closeGpuNamespace(namespace)
     host.close()
 
