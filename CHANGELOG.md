@@ -19,6 +19,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added a same-host GPU drop shadow for sampled Texture and RenderTarget
+  surfaces, with pixel offsets, tinted blurred alpha, and premultiplied
+  composition behind the original image.
+
 - Added a same-host GPU Gaussian blur for sampled Texture and RenderTarget
   surfaces. It uses two bounded passes, clamps edge samples, and produces
   premultiplied RGBA8 output for direct display or readback.
