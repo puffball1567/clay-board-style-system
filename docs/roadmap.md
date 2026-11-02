@@ -1119,7 +1119,9 @@ See [GPU Shader Authoring And Packaging](gpu-shaders.md).
 A same-host GPU RGB matrix pass now applies the immutable Canvas layer filter
 coefficients to sampled Texture or RenderTarget pixels and writes premultiplied
 RGBA8 output. This gives GPU-owned surfaces a bounded filter stage before
-direct display or asynchronous readback. Full GPU filtering of ordinary Style
+direct display or asynchronous readback. A fixed-radius separable Gaussian
+blur adds the first GPU spatial filter with an explicit sampled scratch target
+and premultiplied output. Full GPU filtering of ordinary Style
 subtrees remains dependent on a shared GPU offscreen composition target.
 
 Bounded static/dynamic instanced draws now carry 1–5 packed vec4 values per
