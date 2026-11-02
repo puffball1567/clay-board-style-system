@@ -19,6 +19,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added Style-owned GPU-filtered raster underlay and overlay materials. They
+  select direct or readback display paths and invalidate only their consumers.
+
 - Added a retained RasterSurface-to-GPU-filter display adapter with dirty-region
   uploads, bounded output buffering, and the existing direct/readback UI path.
 

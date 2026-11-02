@@ -18,6 +18,7 @@ import clay_board_style_system/runtime/gpu_gaussian_blur
 import clay_board_style_system/runtime/gpu_drop_shadow
 import clay_board_style_system/runtime/gpu_filter_chain
 import clay_board_style_system/runtime/gpu_raster_filter_display
+import clay_board_style_system/runtime/gpu_raster_filter_display_ui
 import clay_board_style_system/runtime/gpu_canvas_ui
 import clay_board_style_system/runtime/gpu_direct_surface
 import clay_board_style_system/runtime/gpu_display_surface
@@ -7854,7 +7855,196 @@ suite "GPU raster filter display":
     doAssert host.closeGpuNamespace(namespace)
     host.close()
 
-  test "constructor resource failure releases its partial upload and targets":
+suite "GPU raster filter Style material":
+  test "direct filtered raster draws in a Style underlay without another node":
+    let context = newContext()
+    context.enableDirectPresentation(maxBuffers = 2)
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let namespace = host.createGpuNamespace("raster-filter-style-direct",
+      GpuResourceBudget(persistentBytes: 65536,
+        transientBytesPerFrame: 256,
+        workUnitsPerFrame: 8, maxResources: 32))
+    proc artifact(source: GpuShaderSource): GpuShaderArtifact =
+      GpuShaderArtifact(
+        descriptor: GpuShaderDescriptor(stage: source.stage),
+        bindingLayout: source.gpuShaderBindingLayout(),
+        bytecode: @[1'u8],
+        sourceHash: source.gpuShaderSourceHash())
+    let matrix = host.newGpuColorMatrixMaterial(namespace,
+      artifact(gpuColorMatrixVertexSource()),
+      artifact(gpuColorMatrixFragmentSource()))
+    let chain = host.newGpuFilterChain(namespace,
+      [colorMatrixStage(nil)], colorMatrix = matrix)
+    var config = defaultGpuRasterFilterDisplayConfig(2, 2)
+    config.bufferCount = 2
+    config.fallback = gdsfRequireDirect
+    let filtered = host.newGpuRasterFilterDisplay(namespace,
+      newRasterSurface(2, 2), chain, config)
+    let ui = initUiRoot()
+    let button = ui.button("Filtered", style = uiStyle([
+      decl("width", px(96)), decl("height", px(36)),
+      customPaint("filtered-accent", cpsUnderlay)
+    ]))
+    let nodeCount = ui.tree.nodes.len
+    var material = ui.registerGpuRasterFilterMaterial(
+      "filtered-accent", filtered)
+    check material.valid
+    check material.material == "filtered-accent"
+    check ui.tree.nodes.len == nodeCount
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(
+      ui.tree, ui.styleSheets(), defaultProperties(), diagnostics)
+    let layout = computeLayout(ui.tree, styles, size(160, 80))
+    let commands = ui.buildPaintCommands(styles, layout)
+    var gpuIndex = -1
+    var textIndex = -1
+    for index, command in commands:
+      if command.kind == pcDrawGpuDirectSurface:
+        gpuIndex = index
+        check command.owner == some(button.container.id)
+        check command.gpuDirectSurface == filtered.displaySurface().directSurface()
+      elif command.kind == pcDrawText and command.node == button.labelNode.id:
+        textIndex = index
+    check not diagnostics.hasErrors
+    check gpuIndex >= 0 and textIndex > gpuIndex
+    discard ui.consumeInvalidation()
+    let frame = host.beginGpuFrame()
+    check material.queueGpuFrame(frame)
+    host.endGpuFrame(frame)
+    check material.collectGpuFrame()
+    let invalidation = ui.consumeInvalidation()
+    check invalidation.domains == {ddPaint}
+    check invalidation.roots == @[button.container.id]
+    check material.unregister()
+    check not material.valid
+    check filtered.closeGpuRasterFilterDisplay()
+    matrix.release()
+    doAssert host.closeGpuNamespace(namespace)
+    host.close()
+
+  test "readback filtered raster supplies Style overlay and invalidates consumers":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("raster-filter-style-readback",
+      GpuResourceBudget(persistentBytes: 65536,
+        transientBytesPerFrame: 256,
+        readbackBytesPerFrame: 256,
+        workUnitsPerFrame: 8, maxResources: 32))
+    proc artifact(source: GpuShaderSource): GpuShaderArtifact =
+      GpuShaderArtifact(
+        descriptor: GpuShaderDescriptor(stage: source.stage),
+        bindingLayout: source.gpuShaderBindingLayout(),
+        bytecode: @[1'u8],
+        sourceHash: source.gpuShaderSourceHash())
+    let matrix = host.newGpuColorMatrixMaterial(namespace,
+      artifact(gpuColorMatrixVertexSource()),
+      artifact(gpuColorMatrixFragmentSource()))
+    let chain = host.newGpuFilterChain(namespace,
+      [colorMatrixStage(nil)], colorMatrix = matrix)
+    var config = defaultGpuRasterFilterDisplayConfig(2, 2)
+    config.bufferCount = 2
+    config.fallback = gdsfRequireReadback
+    let filtered = host.newGpuRasterFilterDisplay(namespace,
+      newRasterSurface(2, 2), chain, config)
+    let ui = initUiRoot()
+    let button = ui.button("Filtered", style = uiStyle([
+      decl("width", px(96)), decl("height", px(36)),
+      customPaint("filtered-accent", cpsOverlay)
+    ]))
+    var material = ui.registerGpuRasterFilterMaterial(
+      "filtered-accent", filtered, {cpsOverlay})
+    expect ValueError:
+      discard ui.registerGpuRasterFilterMaterial(
+        "filtered-accent", filtered)
+    expect ValueError:
+      discard ui.registerGpuRasterFilterMaterial(
+        "filtered-mask", filtered, {cpsMask})
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(
+      ui.tree, ui.styleSheets(), defaultProperties(), diagnostics)
+    let layout = computeLayout(ui.tree, styles, size(160, 80))
+    let commands = ui.buildPaintCommands(styles, layout)
+    var rasterIndex = -1
+    var textIndex = -1
+    for index, command in commands:
+      if command.kind == pcDrawRasterSurface:
+        rasterIndex = index
+        check command.owner == some(button.container.id)
+        check command.rasterSurface ==
+          filtered.displaySurface().readbackSurface().rasterSurface()
+      elif command.kind == pcDrawText and command.node == button.labelNode.id:
+        textIndex = index
+    check not diagnostics.hasErrors
+    check rasterIndex > textIndex
+    discard ui.consumeInvalidation()
+    let frame = host.beginGpuFrame()
+    check material.queueGpuFrame(frame)
+    host.endGpuFrame(frame)
+    check not material.collectGpuFrame()
+    context.readbackReady = true
+    check material.collectGpuFrame()
+    let invalidation = ui.consumeInvalidation()
+    check invalidation.domains == {ddPaint}
+    check invalidation.roots == @[button.container.id]
+    check material.unregister()
+    check filtered.closeGpuRasterFilterDisplay()
+    matrix.release()
+    doAssert host.closeGpuNamespace(namespace)
+    host.close()
+
+  test "hybrid Style material includes a raster fallback for SDL layers":
+    let context = newContext()
+    context.enableDirectPresentation(maxBuffers = 2)
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let namespace = host.createGpuNamespace("raster-filter-style-hybrid",
+      GpuResourceBudget(persistentBytes: 65536,
+        transientBytesPerFrame: 256,
+        readbackBytesPerFrame: 256,
+        workUnitsPerFrame: 8, maxResources: 32))
+    proc artifact(source: GpuShaderSource): GpuShaderArtifact =
+      GpuShaderArtifact(
+        descriptor: GpuShaderDescriptor(stage: source.stage),
+        bindingLayout: source.gpuShaderBindingLayout(),
+        bytecode: @[1'u8],
+        sourceHash: source.gpuShaderSourceHash())
+    let matrix = host.newGpuColorMatrixMaterial(namespace,
+      artifact(gpuColorMatrixVertexSource()),
+      artifact(gpuColorMatrixFragmentSource()))
+    let chain = host.newGpuFilterChain(namespace,
+      [colorMatrixStage(nil)], colorMatrix = matrix)
+    var config = defaultGpuRasterFilterDisplayConfig(2, 2)
+    config.bufferCount = 2
+    config.fallback = gdsfRequireHybrid
+    let filtered = host.newGpuRasterFilterDisplay(namespace,
+      newRasterSurface(2, 2), chain, config)
+    let ui = initUiRoot()
+    discard ui.box(uiStyle([
+      decl("width", px(2)), decl("height", px(2)),
+      customPaint("filtered-accent", cpsUnderlay)
+    ]))
+    var material = ui.registerGpuRasterFilterMaterial(
+      "filtered-accent", filtered, {cpsUnderlay})
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(
+      ui.tree, ui.styleSheets(), defaultProperties(), diagnostics)
+    let layout = computeLayout(ui.tree, styles, size(8, 8))
+    let commands = ui.buildPaintCommands(styles, layout)
+    var found = false
+    for command in commands:
+      if command.kind == pcDrawGpuDirectSurface:
+        found = true
+        check command.gpuFallbackSurface ==
+          filtered.displaySurface().readbackSurface().rasterSurface()
+    check not diagnostics.hasErrors
+    check found
+    check material.unregister()
+    check filtered.closeGpuRasterFilterDisplay()
+    matrix.release()
+    doAssert host.closeGpuNamespace(namespace)
+    host.close()
+
+suite "GPU raster filter construction":
+  test "resource failure releases its partial upload and targets":
     let context = newContext()
     context.enableDirectPresentation(maxBuffers = 2)
     let host = openGpuHost(context.backend, ghoOwned, presentationConfig())

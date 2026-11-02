@@ -180,6 +180,13 @@ frames drain, before releasing its chain materials. This provides GPU effects
 for retained raster content; automatic capture and filtering of an ordinary
 Style subtree still needs the shared GPU offscreen target.
 
+To use the filtered raster as a Style-owned visual rather than a Canvas node,
+register it with `ui.registerGpuRasterFilterMaterial()` from
+`runtime/gpu_raster_filter_display_ui`. Underlay and overlay stages select the
+same direct, readback, or hybrid path and invalidate only components that
+consumed the material when a frame is collected. See
+[Custom Paint](custom-paint.md#filtered-raster-material).
+
 ## Publishing Frames
 
 Producers rotate two or more sampled Texture or RenderTarget resources. A frame

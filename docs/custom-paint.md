@@ -239,6 +239,29 @@ also makes GPU-produced alpha masks available without exposing a GPU handle to
 Style. It is backend-neutral above `GpuCanvasSurface`; the optional bgfx
 implementation and its `bgfxim` dependency stay behind the adapter boundary.
 
+### Filtered raster material
+
+An application-owned `RasterSurface` can pass through an ordered GPU filter
+chain and register the result as a Style underlay or overlay. Import
+`runtime/gpu_raster_filter_display_ui` and register its
+`GpuRasterFilterDisplay` without adding a UI node:
+
+```nim
+var accent = ui.registerGpuRasterFilterMaterial(
+  "filtered-accent", filtered, {cpsUnderlay})
+let frame = host.beginGpuFrame()
+discard accent.queueGpuFrame(frame)
+host.endGpuFrame(frame)
+discard accent.collectGpuFrame()
+```
+
+The callback emits a direct GPU surface command when the compositor supports
+it, a raster command for readback, or a direct command with an SDL layer
+fallback in hybrid mode. Collection invalidates only components that consumed
+the material. Registration supports `cpsUnderlay` and `cpsOverlay`; it does not
+capture or filter the component's own children. The application retains the
+filtered display and chain materials until after unregistering the material.
+
 ## Failure And Ownership Rules
 
 - Material names are non-empty, bounded to 256 bytes, and cannot contain
