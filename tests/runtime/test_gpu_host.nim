@@ -16,6 +16,7 @@ import clay_board_style_system/runtime/gpu_canvas
 import clay_board_style_system/runtime/gpu_color_matrix
 import clay_board_style_system/runtime/gpu_gaussian_blur
 import clay_board_style_system/runtime/gpu_drop_shadow
+import clay_board_style_system/runtime/gpu_filter_chain
 import clay_board_style_system/runtime/gpu_canvas_ui
 import clay_board_style_system/runtime/gpu_direct_surface
 import clay_board_style_system/runtime/gpu_display_surface
@@ -7715,6 +7716,69 @@ suite "GPU drop shadow postprocess":
     host.endGpuFrame(frame)
     material.release()
     for handle in [source, scratch, blurred, output]:
+      doAssert host.releaseGpuResource(handle)
+    doAssert host.closeGpuNamespace(namespace)
+    host.close()
+
+suite "GPU filter chain":
+  test "ordered matrix blur and shadow stages reuse bounded scratch targets":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("filter-chain",
+      GpuResourceBudget(persistentBytes: 262144,
+        workUnitsPerFrame: 6, maxResources: 48))
+    proc artifact(source: GpuShaderSource): GpuShaderArtifact =
+      GpuShaderArtifact(
+        descriptor: GpuShaderDescriptor(stage: source.stage),
+        bindingLayout: source.gpuShaderBindingLayout(),
+        bytecode: @[1'u8],
+        sourceHash: source.gpuShaderSourceHash())
+    let matrix = host.newGpuColorMatrixMaterial(namespace,
+      artifact(gpuColorMatrixVertexSource()),
+      artifact(gpuColorMatrixFragmentSource()))
+    let blur = host.newGpuGaussianBlurMaterial(namespace,
+      artifact(gpuGaussianBlurVertexSource()),
+      artifact(gpuGaussianBlurFragmentSource()))
+    let shadow = host.newGpuDropShadowMaterial(namespace,
+      artifact(gpuGaussianBlurVertexSource()),
+      artifact(gpuGaussianBlurFragmentSource()),
+      artifact(gpuDropShadowVertexSource()),
+      artifact(gpuDropShadowFragmentSource()))
+    let swapRedBlue = colorMatrixFilter([
+      0'f32, 0, 1, 0,
+      0'f32, 1, 0, 0,
+      1'f32, 0, 0, 0
+    ])
+    expect ValueError:
+      discard host.newGpuFilterChain(namespace,
+        [gaussianBlurStage()], colorMatrix = matrix)
+    let chain = host.newGpuFilterChain(namespace,
+      [colorMatrixStage(swapRedBlue), gaussianBlurStage(),
+        dropShadowStage(1, 0, rgb(0, 0, 1))],
+      colorMatrix = matrix, gaussianBlur = blur, dropShadow = shadow)
+    check chain.stageCount() == 3
+    let source = host.createGpuTexture(namespace,
+      textureDescriptor(width = 5, height = 5, usage = {gtuSampled}))
+    proc target(): GpuResourceHandle =
+      host.createGpuRenderTarget(namespace, renderTargetDescriptor(5, 5))
+    let scratch = [target(), target(), target()]
+    let output = target()
+    expect GpuHostError:
+      discard chain.submit(source, output, scratch)
+    let frame = host.beginGpuFrame()
+    expect ValueError:
+      discard chain.submit(source, output,
+        [scratch[0], output, scratch[2]])
+    check chain.submit(source, output, scratch)
+    check context.drawSubmits == 6
+    check context.lastGraphicsPass.renderTarget == output
+    check context.lastBindings.uniforms[0].values == @[
+      0.2'f32, 0'f32, float32(ord(gcamPremultiplied)), 0'f32]
+    host.endGpuFrame(frame)
+    matrix.release()
+    blur.release()
+    shadow.release()
+    for handle in [source, output, scratch[0], scratch[1], scratch[2]]:
       doAssert host.releaseGpuResource(handle)
     doAssert host.closeGpuNamespace(namespace)
     host.close()

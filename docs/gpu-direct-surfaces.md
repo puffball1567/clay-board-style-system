@@ -121,6 +121,34 @@ if the entire shadow should remain visible. The receiving display surface uses
 `gcamPremultiplied`. Ordinary Style subtree shadowing still requires a shared
 GPU offscreen composition target.
 
+## Ordered GPU filter chains
+
+Import `runtime/gpu_filter_chain` to combine the RGB matrix, Gaussian blur,
+and drop-shadow passes on one GPU-owned surface. Create only the materials used
+by the chain, then supply their references when constructing it. A chain accepts
+one to eight immutable stages. It does not own the materials or render targets.
+
+```nim
+let effects = host.newGpuFilterChain(resources,
+  [colorMatrixStage(tint), gaussianBlurStage()],
+  colorMatrix = matrixMaterial, gaussianBlur = blurMaterial)
+let scratch = [scratchA, scratchB, scratchC]
+let frame = host.beginGpuFrame()
+discard effects.submit(source, filteredTarget, scratch, gcamStraight)
+discard display.queueGpuDisplayFrame(filteredTarget, frame)
+host.endGpuFrame(frame)
+```
+
+The source may be a sampled RGBA8 or BGRA8 Texture or RenderTarget. The
+destination and all three scratch resources are distinct, sampled RGBA8
+RenderTargets of the same size and namespace. The chain reuses them between
+stages, passes premultiplied alpha to each later stage, and returns a
+premultiplied RGBA8 destination for a display surface configured with
+`gcamPremultiplied`. A non-final shadow may use the destination temporarily;
+submit all stages before publishing it. The chain rejects invalid resources,
+released materials, and presentation-retained write targets before the first
+pass. Ordinary Style subtrees still need the shared GPU offscreen target.
+
 ## Publishing Frames
 
 Producers rotate two or more sampled Texture or RenderTarget resources. A frame

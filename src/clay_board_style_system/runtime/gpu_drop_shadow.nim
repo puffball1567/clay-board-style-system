@@ -67,6 +67,12 @@ void main()
 proc isClosed*(material: GpuDropShadowMaterial): bool =
   material.isNil or material.host.isNil
 
+proc belongsTo*(
+    material: GpuDropShadowMaterial; host: GpuHost; namespace: GpuNamespaceId
+): bool =
+  not material.isClosed and material.host == host and
+    material.namespace == namespace
+
 proc release*(material: GpuDropShadowMaterial) =
   ## Release after the last submitted frame while the host is open.
   if material.isClosed:
