@@ -28,6 +28,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added GPU raster filter-chain replacement, so unchanged raster content can
+  receive updated effects without another upload or UI registration.
+
 - Added sepia and hue rotation color filters for CPU layers and GPU matrix
   passes, with preserved alpha and no-op identity handling.
 

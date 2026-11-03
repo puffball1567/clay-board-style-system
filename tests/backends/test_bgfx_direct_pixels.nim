@@ -740,10 +740,24 @@ proc verifyGpuRasterFilterDisplayPixels(host: GpuHost;
   display.readbackSurface().rasterSurface.pixels.requireRasterPixel(
     5, 2, 2, Pixel(),
     "replacement raster clears pixels from the previous source")
+  let alternateChain = host.newGpuFilterChain(ns,
+    [colorMatrixStage(sepiaColorFilter(1))], colorMatrix = material)
+  let sourceRevision = replacement.revision
+  doAssert filtered.replaceFilterChain(alternateChain)
+  doAssert filtered.displaySurface() == display
+  doAssert filtered.source().revision == sourceRevision
+  let recolored = host.beginGpuFrame()
+  doAssert filtered.queueUpdatedGpuRasterFrame(recolored)
+  host.endGpuFrame(recolored)
+  drain()
+  doAssert display.readbackSurface().rasterSurface.publish()
+  display.readbackSurface().rasterSurface.pixels.requireRasterPixel(
+    5, 1, 1, Pixel(red: 196, green: 175, blue: 136, alpha: 255),
+    "updated GPU filter chain reprocesses unchanged raster")
   doAssert filtered.closeGpuRasterFilterDisplay()
   material.release()
   doAssert host.closeGpuNamespace(ns)
-  echo "GPU raster filter display: initial and dirty pixels passed"
+  echo "GPU raster filter display: initial, dirty, and chain replacement pixels passed"
 
 proc verifyInstancedRects(host: GpuHost; shaderc, shaderIncludes, workDirectory: string) =
   doAssert host.backendInfo.instancingSupported

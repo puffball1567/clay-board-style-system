@@ -112,6 +112,22 @@ proc replaceSource*(
     return true
   false
 
+proc replaceFilterChain*(
+    surface: GpuRasterFilterDisplay; chain: GpuFilterChain
+): bool {.discardable.} =
+  ## Reprocess the current raster with another same-host chain on the next
+  ## queued frame, without replacing the upload texture or UI display.
+  if surface.isStale:
+    raise newException(GpuHostError, "GPU raster filter display is stale")
+  if not chain.belongsTo(surface.host, surface.namespace):
+    raise newException(ValueError,
+      "GPU raster filter chain belongs to another host namespace")
+  if chain == surface.chain:
+    return false
+  surface.chain = chain
+  surface.lastQueuedRevisionValue = 0
+  true
+
 proc lastQueuedRevision*(surface: GpuRasterFilterDisplay): uint64 =
   if surface.isNil: 0'u64 else: surface.lastQueuedRevisionValue
 
