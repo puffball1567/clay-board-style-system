@@ -175,10 +175,12 @@ clamped to `[0, 1]`. Alpha and geometric coverage remain unchanged, so color
 offsets cannot fill transparent holes. The filter applies once to the completed
 layer, before layer opacity and composition. Nested filters apply inside out.
 `brightnessColorFilter`, `contrastColorFilter`, and `saturationColorFilter`
-accept finite amounts from 0 to 4. `grayscaleColorFilter` and
-`invertColorFilter` accept amounts from 0 to 1. All five create the same
-immutable matrix type, preserve alpha, and return the identity for their
-no-op amount.
+accept finite amounts from 0 to 4. `grayscaleColorFilter`,
+`invertColorFilter`, and `sepiaColorFilter` accept amounts from 0 to 1.
+`hueRotateColorFilter` accepts a finite angle in degrees, including negative
+angles and full turns. All seven create the same immutable matrix type,
+preserve alpha, and return the identity for their no-op amount or angle.
+Sepia and hue rotation use the [W3C Filter Effects color matrices](https://www.w3.org/TR/filter-effects-1/#feColorMatrixElement).
 Coefficients must be finite and are copied at construction. A nil filter or
 the identity matrix adds no filtering work. `colorMatrixCoefficients` returns
 a value copy for inspection, and retained caches compare coefficient values

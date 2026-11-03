@@ -28,6 +28,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added sepia and hue rotation color filters for CPU layers and GPU matrix
+  passes, with preserved alpha and no-op identity handling.
+
 - Added bounded brightness, contrast, saturation, grayscale, and inversion
   color filters that share one immutable matrix across CPU layers and GPU
   filter chains.
