@@ -196,6 +196,12 @@ of the same dimensions while keeping the display and Style registrations.
 The next queued frame uploads the complete replacement once; subsequent
 published dirty regions return to partial uploads. A different size requires
 recreating the adapter and its display resources.
+Call `filtered.replaceFilterChain(nextEffects)` to change the effect while
+keeping the same source, upload texture, display, and Style registrations.
+The next queued frame reprocesses the current raster even if its revision is
+unchanged, without another texture upload. The replacement chain must belong
+to the same host namespace. Keep materials used by already queued frames alive
+until those frames complete.
 The output remains premultiplied on the GPU, and the existing readback path
 normalizes it for CPU Canvas presentation. Close the adapter after queued
 frames drain, before releasing its chain materials. This provides GPU effects

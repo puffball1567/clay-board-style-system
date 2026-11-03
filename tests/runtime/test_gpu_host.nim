@@ -7975,6 +7975,22 @@ suite "GPU raster filter display":
     check context.drawSubmits == 4
     check context.textureUpdates == 3
     discard filtered.displaySurface().collectGpuDisplayFrame()
+    let display = filtered.displaySurface()
+    let alternateChain = host.newGpuFilterChain(namespace,
+      [colorMatrixStage(invertColorFilter(1))], colorMatrix = material)
+    expect ValueError:
+      discard filtered.replaceFilterChain(nil)
+    check filtered.replaceFilterChain(alternateChain)
+    check filtered.displaySurface() == display
+    check filtered.source() == replacement
+    check filtered.lastQueuedRevision == 0
+    check not filtered.replaceFilterChain(alternateChain)
+    let recolored = host.beginGpuFrame()
+    check filtered.queueUpdatedGpuRasterFrame(recolored)
+    host.endGpuFrame(recolored)
+    check context.drawSubmits == 5
+    check context.textureUpdates == 3
+    discard display.collectGpuDisplayFrame()
     check filtered.closeGpuRasterFilterDisplay()
     material.release()
     doAssert host.closeGpuNamespace(namespace)
@@ -8049,6 +8065,15 @@ suite "GPU raster filter Style material":
     let replacementFrame = host.beginGpuFrame()
     check material.queueGpuFrame(replacementFrame)
     host.endGpuFrame(replacementFrame)
+    check material.collectGpuFrame()
+    check ui.consumeInvalidation().roots == @[button.container.id]
+    let alternateChain = host.newGpuFilterChain(namespace,
+      [colorMatrixStage(invertColorFilter(1))], colorMatrix = matrix)
+    check filtered.replaceFilterChain(alternateChain)
+    check material.valid
+    let recoloredFrame = host.beginGpuFrame()
+    check material.queueGpuFrame(recoloredFrame)
+    host.endGpuFrame(recoloredFrame)
     check material.collectGpuFrame()
     check ui.consumeInvalidation().roots == @[button.container.id]
     check material.unregister()

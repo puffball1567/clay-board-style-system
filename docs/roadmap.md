@@ -1132,6 +1132,8 @@ raster-filter display adapter now bridges published CPU
 the existing direct/readback display surface with bounded output buffering.
 Same-size source replacement keeps its display and Style registrations while
 forcing one full upload of the new image before returning to dirty updates.
+Filter-chain replacement keeps those registrations and reprocesses the current
+raster without a redundant texture upload.
 The filtered raster can also serve as a Style-owned Custom Paint underlay,
 overlay, or alpha mask without an extra UI node. Underlays and overlays use
 direct/readback/hybrid presentation; masks use completed raster pixels in a
