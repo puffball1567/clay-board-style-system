@@ -71,6 +71,10 @@ Mesa software OpenGL, and the bundled SDL3 runtime. This exercises the actual
 OpenGL renderer and compiled shaders, not a mock or NOOP renderer. It does not
 qualify physical GPU drivers, other graphics APIs, or mixed SDL/GPU layers.
 
+A local AMD Renoir OpenGL run on 2026-11-03 passed the same direct pixel fixture
+under ARC and ORC with bundled SDL3 3.4.18. This establishes one hardware
+result; the broader multi-driver release gate below remains open.
+
 Local runs default to system SDL3 through `pkg-config`. Set
 `CBSS_GPU_PIXEL_SDL_MODE=bundled` to use the repository runtime instead.
 Both modes run ARC and ORC; missing prerequisites and pixel mismatches fail

@@ -402,6 +402,7 @@ proc verifyGpuColorMatrixPixels(host: GpuHost;
       label: label))
   let filtered = target("color-matrix-filtered")
   let chained = target("color-matrix-chained")
+  let faded = target("color-matrix-faded")
   let swapRedBlue = colorMatrixFilter([
     0'f32, 0, 1, 0,
     0'f32, 1, 0, 0,
@@ -410,6 +411,8 @@ proc verifyGpuColorMatrixPixels(host: GpuHost;
   let frame = host.beginGpuFrame()
   doAssert material.submit(source, filtered, swapRedBlue, gcamPremultiplied)
   doAssert material.submit(filtered, chained, nil, gcamPremultiplied)
+  doAssert material.submit(chained, faded, nil,
+    gcamPremultiplied, opacity = 0.5)
   host.endGpuFrame(frame)
   for output in [filtered, chained]:
     let pixels = host.readPixels(ns, output, 2, 2)
@@ -420,9 +423,17 @@ proc verifyGpuColorMatrixPixels(host: GpuHost;
       "GPU matrix second row")
     pixels.requirePixel(1, 1, Pixel(red: 90, green: 60, blue: 30,
       alpha: 255), "GPU matrix opaque pixel")
+  let fadedPixels = host.readPixels(ns, faded, 2, 2)
+  fadedPixels.requirePixel(0, 0, Pixel(red: 3, green: 10, blue: 50,
+    alpha: 64), "GPU matrix opacity premultiplied pixel")
+  fadedPixels.requirePixel(0, 1, Pixel(green: 64, alpha: 64),
+    "GPU matrix opacity translucent pixel")
+  fadedPixels.requirePixel(1, 1, Pixel(red: 45, green: 30, blue: 15,
+    alpha: 128), "GPU matrix opacity opaque pixel")
   doAssert host.releaseGpuResource(source)
   doAssert host.releaseGpuResource(filtered)
   doAssert host.releaseGpuResource(chained)
+  doAssert host.releaseGpuResource(faded)
   material.release()
   doAssert host.closeGpuNamespace(ns)
   echo "GPU color matrix: premultiplied pixels and RenderTarget chaining passed"

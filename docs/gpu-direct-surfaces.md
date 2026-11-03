@@ -75,6 +75,10 @@ stores premultiplied output. Configure the receiving display surface with
 filters a GPU-owned surface; Style filters that include ordinary UI descendants
 still use their existing CPU layer path.
 
+Pass `opacity = 0..1` to `GpuColorMatrixMaterial.submit()` to fade the filtered
+result. The opacity multiplies both alpha and premultiplied RGB. It defaults to
+one, so existing matrix output is unchanged.
+
 ## GPU Gaussian blur postprocess
 
 Import `runtime/gpu_gaussian_blur` for a separable binomial Gaussian blur with
@@ -128,8 +132,8 @@ GPU offscreen composition target.
 
 ## Ordered GPU filter chains
 
-Import `runtime/gpu_filter_chain` to combine the RGB matrix, Gaussian blur,
-and drop-shadow passes on one GPU-owned surface. Create only the materials used
+Import `runtime/gpu_filter_chain` to combine the RGB matrix, opacity, Gaussian
+blur, and drop-shadow passes on one GPU-owned surface. Create only the materials used
 by the chain, then supply their references when constructing it. A chain accepts
 one to eight immutable stages. It does not own the materials or render targets.
 
@@ -145,7 +149,9 @@ host.endGpuFrame(frame)
 ```
 
 The source may be a sampled RGBA8 or BGRA8 Texture or RenderTarget. The
-`dropShadowStage` constructor also accepts `blurRadius = 0..4`. The
+`opacityStage(0..1)` constructor uses the color matrix material without a
+separate pipeline. The `dropShadowStage` constructor also accepts
+`blurRadius = 0..4`. The
 destination and all three scratch resources are distinct, sampled RGBA8
 RenderTargets of the same size and namespace. The chain reuses them between
 stages, passes premultiplied alpha to each later stage, and returns a
