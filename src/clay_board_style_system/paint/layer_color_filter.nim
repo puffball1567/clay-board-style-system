@@ -73,6 +73,41 @@ proc invertColorFilter*(amount: float32): LayerColorFilter =
     0'f32, 0, scale, amount
   ])
 
+proc sepiaColorFilter*(amount: float32): LayerColorFilter =
+  ## Blend toward the CSS sepia matrix in encoded sRGB, bounded to 0..1.
+  validateColorFilterAmount(amount, 1, "sepia")
+  let original = 1'f32 - amount
+  colorMatrixFilter([
+    original + 0.393'f32 * amount, 0.769'f32 * amount,
+      0.189'f32 * amount, 0'f32,
+    0.349'f32 * amount, original + 0.686'f32 * amount,
+      0.168'f32 * amount, 0'f32,
+    0.272'f32 * amount, 0.534'f32 * amount,
+      original + 0.131'f32 * amount, 0'f32
+  ])
+
+proc hueRotateColorFilter*(angleDegrees: float32): LayerColorFilter =
+  ## Rotate hue with the SVG color-matrix coefficients; alpha is unchanged.
+  if angleDegrees.classify in {fcNan, fcInf, fcNegInf}:
+    raise newException(ValueError, "hue rotation angle must be finite")
+  let angle = angleDegrees.float64 mod 360.0
+  if angle == 0:
+    return nil
+  let radians = angle * PI / 180.0
+  let c = cos(radians)
+  let s = sin(radians)
+  colorMatrixFilter([
+    float32(0.213 + 0.787 * c - 0.213 * s),
+      float32(0.715 - 0.715 * c - 0.715 * s),
+      float32(0.072 - 0.072 * c + 0.928 * s), 0'f32,
+    float32(0.213 - 0.213 * c + 0.143 * s),
+      float32(0.715 + 0.285 * c + 0.140 * s),
+      float32(0.072 - 0.072 * c - 0.283 * s), 0'f32,
+    float32(0.213 - 0.213 * c - 0.787 * s),
+      float32(0.715 - 0.715 * c + 0.715 * s),
+      float32(0.072 + 0.928 * c + 0.072 * s), 0'f32
+  ])
+
 proc sameLayerColorFilter*(first, second: LayerColorFilter): bool =
   if first == second:
     return true

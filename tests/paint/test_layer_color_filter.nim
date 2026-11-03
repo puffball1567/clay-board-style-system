@@ -17,7 +17,9 @@ suite "retained layer color filters":
     for identity in [
         brightnessColorFilter(1), contrastColorFilter(1),
         saturationColorFilter(1), grayscaleColorFilter(0),
-        invertColorFilter(0)]:
+        invertColorFilter(0), sepiaColorFilter(0),
+        hueRotateColorFilter(0), hueRotateColorFilter(360),
+        hueRotateColorFilter(-360)]:
       check identity.isNil
     check brightnessColorFilter(2).applyLayerColorFilter(input) ==
       rgba(0.5, 1, 1, 0.4)
@@ -44,6 +46,41 @@ suite "retained layer color filters":
       discard grayscaleColorFilter(1.1)
     expect ValueError:
       discard invertColorFilter(1.1)
+
+  test "sepia and hue rotation share the layer matrix path":
+    let translucentRed = rgba(1, 0, 0, 0.4)
+    let sepia = sepiaColorFilter(1).applyLayerColorFilter(translucentRed)
+    check abs(sepia.r - 0.393) < 0.0001
+    check abs(sepia.g - 0.349) < 0.0001
+    check abs(sepia.b - 0.272) < 0.0001
+    check sepia.a == translucentRed.a
+    let halfSepia = sepiaColorFilter(0.5).applyLayerColorFilter(translucentRed)
+    check abs(halfSepia.r - 0.6965) < 0.0001
+    check abs(halfSepia.g - 0.1745) < 0.0001
+    check abs(halfSepia.b - 0.136) < 0.0001
+    let rotated = hueRotateColorFilter(90).applyLayerColorFilter(translucentRed)
+    check rotated.r < 0.0001
+    check abs(rotated.g - 0.356) < 0.0001
+    check rotated.b == 0
+    check rotated.a == translucentRed.a
+    check sameLayerColorFilter(hueRotateColorFilter(30),
+      hueRotateColorFilter(390))
+    let image = render([
+      pushLayer(rect(0, 0, 1, 1), colorFilter = sepiaColorFilter(1)),
+      fillRect(rect(0, 0, 1, 1), rgb(1, 0, 0)), popLayer(),
+      pushLayer(rect(1, 0, 1, 1), colorFilter = hueRotateColorFilter(90)),
+      fillRect(rect(1, 0, 1, 1), rgb(1, 0, 0)), popLayer()
+    ], 2, 1)
+    check image.pixel(0, 0) == [100'u8, 89, 69, 255]
+    check image.pixel(1, 0) == [0'u8, 91, 0, 255]
+    for invalid in [NaN.float32, Inf.float32, NegInf.float32]:
+      expect ValueError:
+        discard sepiaColorFilter(invalid)
+      expect ValueError:
+        discard hueRotateColorFilter(invalid)
+    for invalid in [-0.1'f32, 1.1'f32]:
+      expect ValueError:
+        discard sepiaColorFilter(invalid)
 
   test "matrices are copied, finite, and evaluated before channel clamping":
     var matrix = identityColorMatrix

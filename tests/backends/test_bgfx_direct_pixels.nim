@@ -404,6 +404,8 @@ proc verifyGpuColorMatrixPixels(host: GpuHost;
   let chained = target("color-matrix-chained")
   let faded = target("color-matrix-faded")
   let grayscale = target("color-matrix-grayscale")
+  let sepia = target("color-matrix-sepia")
+  let hue = target("color-matrix-hue")
   let swapRedBlue = colorMatrixFilter([
     0'f32, 0, 1, 0,
     0'f32, 1, 0, 0,
@@ -415,6 +417,10 @@ proc verifyGpuColorMatrixPixels(host: GpuHost;
   doAssert material.submit(chained, faded, nil,
     gcamPremultiplied, opacity = 0.5)
   doAssert material.submit(source, grayscale, grayscaleColorFilter(1),
+    gcamPremultiplied)
+  doAssert material.submit(source, sepia, sepiaColorFilter(1),
+    gcamPremultiplied)
+  doAssert material.submit(source, hue, hueRotateColorFilter(90),
     gcamPremultiplied)
   host.endGpuFrame(frame)
   for output in [filtered, chained]:
@@ -440,14 +446,26 @@ proc verifyGpuColorMatrixPixels(host: GpuHost;
     blue: 92, alpha: 128), "GPU grayscale green pixel")
   grayscalePixels.requirePixel(1, 1, Pixel(red: 56, green: 56,
     blue: 56, alpha: 255), "GPU grayscale opaque pixel")
+  let sepiaPixels = host.readPixels(ns, sepia, 2, 2)
+  sepiaPixels.requirePixel(0, 0, Pixel(red: 56, green: 49,
+    blue: 39, alpha: 128), "GPU sepia translucent pixel")
+  sepiaPixels.requirePixel(0, 1, Pixel(red: 98, green: 88,
+    blue: 68, alpha: 128), "GPU sepia green pixel")
+  let huePixels = host.readPixels(ns, hue, 2, 2)
+  huePixels.requirePixel(0, 0, Pixel(red: 5, green: 52, alpha: 128),
+    "GPU hue rotation translucent pixel")
+  huePixels.requirePixel(0, 1, Pixel(green: 109, blue: 128, alpha: 128),
+    "GPU hue rotation green pixel")
   doAssert host.releaseGpuResource(source)
   doAssert host.releaseGpuResource(filtered)
   doAssert host.releaseGpuResource(chained)
   doAssert host.releaseGpuResource(faded)
   doAssert host.releaseGpuResource(grayscale)
+  doAssert host.releaseGpuResource(sepia)
+  doAssert host.releaseGpuResource(hue)
   material.release()
   doAssert host.closeGpuNamespace(ns)
-  echo "GPU color matrix: premultiplied, grayscale, and RenderTarget chaining pixels passed"
+  echo "GPU color matrix: premultiplied, grayscale, sepia, hue rotation, and RenderTarget chaining pixels passed"
 
 proc verifyGpuGaussianBlurPixels(host: GpuHost;
     shaderc, shaderIncludes, workDirectory: string) =
