@@ -12,6 +12,39 @@ proc swapRedGreen(): LayerColorFilter =
   colorMatrixFilter([0.0'f32, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0])
 
 suite "retained layer color filters":
+  test "named color filters preserve alpha and share the matrix contract":
+    let input = rgba(0.25, 0.5, 0.75, 0.4)
+    for identity in [
+        brightnessColorFilter(1), contrastColorFilter(1),
+        saturationColorFilter(1), grayscaleColorFilter(0),
+        invertColorFilter(0)]:
+      check identity.isNil
+    check brightnessColorFilter(2).applyLayerColorFilter(input) ==
+      rgba(0.5, 1, 1, 0.4)
+    check contrastColorFilter(0).applyLayerColorFilter(input) ==
+      rgba(0.5, 0.5, 0.5, 0.4)
+    let desaturated = saturationColorFilter(0).applyLayerColorFilter(input)
+    check abs(desaturated.r - 0.4649) < 0.0001
+    check abs(desaturated.g - desaturated.r) < 0.0001
+    check abs(desaturated.b - desaturated.r) < 0.0001
+    check sameLayerColorFilter(
+      grayscaleColorFilter(1), saturationColorFilter(0))
+    check invertColorFilter(1).applyLayerColorFilter(input) ==
+      rgba(0.75, 0.5, 0.25, 0.4)
+    for invalid in [NaN.float32, Inf.float32, NegInf.float32, -0.1'f32]:
+      expect ValueError:
+        discard brightnessColorFilter(invalid)
+      expect ValueError:
+        discard grayscaleColorFilter(invalid)
+    expect ValueError:
+      discard contrastColorFilter(4.1)
+    expect ValueError:
+      discard saturationColorFilter(4.1)
+    expect ValueError:
+      discard grayscaleColorFilter(1.1)
+    expect ValueError:
+      discard invertColorFilter(1.1)
+
   test "matrices are copied, finite, and evaluated before channel clamping":
     var matrix = identityColorMatrix
     matrix[0] = -1

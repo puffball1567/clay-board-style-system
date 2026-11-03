@@ -403,6 +403,7 @@ proc verifyGpuColorMatrixPixels(host: GpuHost;
   let filtered = target("color-matrix-filtered")
   let chained = target("color-matrix-chained")
   let faded = target("color-matrix-faded")
+  let grayscale = target("color-matrix-grayscale")
   let swapRedBlue = colorMatrixFilter([
     0'f32, 0, 1, 0,
     0'f32, 1, 0, 0,
@@ -413,6 +414,8 @@ proc verifyGpuColorMatrixPixels(host: GpuHost;
   doAssert material.submit(filtered, chained, nil, gcamPremultiplied)
   doAssert material.submit(chained, faded, nil,
     gcamPremultiplied, opacity = 0.5)
+  doAssert material.submit(source, grayscale, grayscaleColorFilter(1),
+    gcamPremultiplied)
   host.endGpuFrame(frame)
   for output in [filtered, chained]:
     let pixels = host.readPixels(ns, output, 2, 2)
@@ -430,13 +433,21 @@ proc verifyGpuColorMatrixPixels(host: GpuHost;
     "GPU matrix opacity translucent pixel")
   fadedPixels.requirePixel(1, 1, Pixel(red: 45, green: 30, blue: 15,
     alpha: 128), "GPU matrix opacity opaque pixel")
+  let grayscalePixels = host.readPixels(ns, grayscale, 2, 2)
+  grayscalePixels.requirePixel(0, 0, Pixel(red: 36, green: 36,
+    blue: 36, alpha: 128), "GPU grayscale translucent pixel")
+  grayscalePixels.requirePixel(0, 1, Pixel(red: 92, green: 92,
+    blue: 92, alpha: 128), "GPU grayscale green pixel")
+  grayscalePixels.requirePixel(1, 1, Pixel(red: 56, green: 56,
+    blue: 56, alpha: 255), "GPU grayscale opaque pixel")
   doAssert host.releaseGpuResource(source)
   doAssert host.releaseGpuResource(filtered)
   doAssert host.releaseGpuResource(chained)
   doAssert host.releaseGpuResource(faded)
+  doAssert host.releaseGpuResource(grayscale)
   material.release()
   doAssert host.closeGpuNamespace(ns)
-  echo "GPU color matrix: premultiplied pixels and RenderTarget chaining passed"
+  echo "GPU color matrix: premultiplied, grayscale, and RenderTarget chaining pixels passed"
 
 proc verifyGpuGaussianBlurPixels(host: GpuHost;
     shaderc, shaderIncludes, workDirectory: string) =

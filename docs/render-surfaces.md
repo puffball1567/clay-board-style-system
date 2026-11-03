@@ -163,11 +163,7 @@ Nim Canvas layers accept an optional immutable `colorFilter`. The same filter
 can be shared by multiple retained layers and by low-level `pushLayer` commands:
 
 ```nim
-let invert = colorMatrixFilter([
-  -1.0'f32, 0, 0, 1,
-  0.0'f32, -1, 0, 1,
-  0.0'f32, 0, -1, 1
-])
+let invert = invertColorFilter(1)
 drawing.beginLayer(rect(0, 0, 240, 160), colorFilter = invert)
 drawing.fillRect(rect(20, 20, 80, 60), rgb(1, 0, 0))
 drawing.endLayer()
@@ -178,6 +174,11 @@ produces one output channel from straight, encoded sRGB input; output RGB is
 clamped to `[0, 1]`. Alpha and geometric coverage remain unchanged, so color
 offsets cannot fill transparent holes. The filter applies once to the completed
 layer, before layer opacity and composition. Nested filters apply inside out.
+`brightnessColorFilter`, `contrastColorFilter`, and `saturationColorFilter`
+accept finite amounts from 0 to 4. `grayscaleColorFilter` and
+`invertColorFilter` accept amounts from 0 to 1. All five create the same
+immutable matrix type, preserve alpha, and return the identity for their
+no-op amount.
 Coefficients must be finite and are copied at construction. A nil filter or
 the identity matrix adds no filtering work. `colorMatrixCoefficients` returns
 a value copy for inspection, and retained caches compare coefficient values

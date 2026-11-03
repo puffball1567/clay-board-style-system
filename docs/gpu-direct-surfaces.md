@@ -74,6 +74,10 @@ stores premultiplied output. Configure the receiving display surface with
 `gcamPremultiplied`. An identity filter is represented by `nil`. This pass
 filters a GPU-owned surface; Style filters that include ordinary UI descendants
 still use their existing CPU layer path.
+The shared `brightnessColorFilter`, `contrastColorFilter`,
+`saturationColorFilter`, `grayscaleColorFilter`, and `invertColorFilter`
+constructors can be passed directly to this material or to
+`colorMatrixStage()` in an ordered GPU filter chain.
 
 Pass `opacity = 0..1` to `GpuColorMatrixMaterial.submit()` to fade the filtered
 result. The opacity multiplies both alpha and premultiplied RGB. It defaults to
