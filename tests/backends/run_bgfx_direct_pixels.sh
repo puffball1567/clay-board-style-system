@@ -59,6 +59,14 @@ case "$sdl_mode" in
     ;;
 esac
 
+set --
+if [ -n "$sdl_cflags" ]; then
+  set -- "$@" "--passC:$sdl_cflags"
+fi
+if [ -n "$sdl_libs" ]; then
+  set -- "$@" "--passL:$sdl_libs"
+fi
+
 build_dir=$(mktemp -d "${TMPDIR:-/tmp}/cbss-bgfx-pixels.XXXXXX")
 trap 'rm -rf -- "$build_dir"' EXIT HUP INT TERM
 
@@ -108,9 +116,8 @@ nim c -r --mm:"$memory_model" -d:release -d:cbssGpuBgfx \
   --nimcache:"$build_dir/nim-$memory_model" \
   --out:"$build_dir/cbss-bgfx-pixels-$memory_model" \
   --passC:"-I$bgfx_dir/include" --passC:"-I$bx_dir/include" \
-  --passC:"$sdl_cflags" \
   --passL:"$build_dir/bgfx.o" --passL:"$build_dir/libbimg.a" \
   --passL:"$build_dir/bx.o" --passL:-lstdc++ --passL:-pthread \
-  --passL:-ldl --passL:-lm --passL:"$sdl_libs" \
+  --passL:-ldl --passL:-lm "$@" \
   tests/backends/test_bgfx_direct_pixels.nim
 done
