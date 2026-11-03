@@ -82,7 +82,7 @@ one, so existing matrix output is unchanged.
 ## GPU Gaussian blur postprocess
 
 Import `runtime/gpu_gaussian_blur` for a separable binomial Gaussian blur with
-an integer radius from 0 to 4 pixels. Radius 2 keeps the original five-tap
+an integer radius from 0 to 8 pixels. Radius 2 keeps the original five-tap
 kernel; radius 0 preserves the source while normalizing alpha. Compile
 `gpuGaussianBlurVertexSource()` and
 `gpuGaussianBlurFragmentSource()` for the selected backend, then create a
@@ -93,7 +93,7 @@ a sampled RGBA8 scratch RenderTarget, and an RGBA8 destination RenderTarget.
 ```nim
 let frame = host.beginGpuFrame()
 discard blur.submit(source, scratch, blurredTarget,
-  sourceAlphaMode = gcamStraight, radius = 4)
+  sourceAlphaMode = gcamStraight, radius = 8)
 discard display.queueGpuDisplayFrame(blurredTarget, frame)
 host.endGpuFrame(frame)
 ```
@@ -117,14 +117,14 @@ output. The material owns its blur material and submits three ordered passes.
 let frame = host.beginGpuFrame()
 discard shadow.submit(source, scratch, blurred, shadowTarget,
   8'f32, 6'f32, rgba(0, 0, 0, 0.6),
-  sourceAlphaMode = gcamStraight, blurRadius = 4)
+  sourceAlphaMode = gcamStraight, blurRadius = 8)
 discard display.queueGpuDisplayFrame(shadowTarget, frame)
 host.endGpuFrame(frame)
 ```
 
 Offsets are in destination pixels, positive right and down. The tinted blurred
 alpha is composited behind the original source in premultiplied RGBA8. Shadow
-blur radius accepts the same 0 to 4 pixel range and defaults to 2. Shadow
+blur radius accepts the same 0 to 8 pixel range and defaults to 2. Shadow
 pixels outside the destination are clipped; provide transparent source padding
 if the entire shadow should remain visible. The receiving display surface uses
 `gcamPremultiplied`. Ordinary Style subtree shadowing still requires a shared
@@ -151,7 +151,7 @@ host.endGpuFrame(frame)
 The source may be a sampled RGBA8 or BGRA8 Texture or RenderTarget. The
 `opacityStage(0..1)` constructor uses the color matrix material without a
 separate pipeline. The `dropShadowStage` constructor also accepts
-`blurRadius = 0..4`. The
+`blurRadius = 0..8`. The
 destination and all three scratch resources are distinct, sampled RGBA8
 RenderTargets of the same size and namespace. The chain reuses them between
 stages, passes premultiplied alpha to each later stage, and returns a

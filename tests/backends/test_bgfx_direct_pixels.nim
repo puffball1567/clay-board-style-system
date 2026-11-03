@@ -489,6 +489,15 @@ proc verifyGpuGaussianBlurPixels(host: GpuHost;
   let widePixels = host.readPixels(ns, output, 5, 5)
   widePixels.requirePixel(2, 2, Pixel(red: 10, alpha: 10),
     "radius-four blur spreads premultiplied source")
+  let widerFrame = host.beginGpuFrame()
+  doAssert material.submit(source, scratch, output,
+    sourceAlphaMode = gcamStraight, radius = 8)
+  host.endGpuFrame(widerFrame)
+  let widerPixels = host.readPixels(ns, output, 5, 5)
+  widerPixels.requirePixel(2, 2, Pixel(red: 5, alpha: 5),
+    "radius-eight blur spreads premultiplied source", tolerance = 1)
+  widerPixels.requirePixel(0, 0, Pixel(red: 1, alpha: 1),
+    "radius-eight blur keeps transparent source color out", tolerance = 2)
   doAssert host.releaseGpuResource(source)
   doAssert host.releaseGpuResource(scratch)
   doAssert host.releaseGpuResource(output)
@@ -545,6 +554,14 @@ proc verifyGpuDropShadowPixels(host: GpuHost;
     "zero-radius shadow preserves original")
   sharpPixels.requirePixel(3, 2, Pixel(blue: 128, alpha: 128),
     "zero-radius shadow places sharp alpha")
+  let wideFrame = host.beginGpuFrame()
+  doAssert material.submit(source, scratch, blurred, output,
+    1, 0, rgb(0, 0, 1), sourceAlphaMode = gcamStraight,
+    blurRadius = 8)
+  host.endGpuFrame(wideFrame)
+  let widePixels = host.readPixels(ns, output, 5, 5)
+  widePixels.requirePixel(3, 2, Pixel(blue: 5, alpha: 5),
+    "radius-eight shadow spreads offset alpha", tolerance = 3)
   doAssert host.releaseGpuResource(source)
   doAssert host.releaseGpuResource(scratch)
   doAssert host.releaseGpuResource(blurred)
