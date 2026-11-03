@@ -46,8 +46,8 @@
  * and load appropriate drivers.
  *
  * If you would like to receive joystick updates while the application is in
- * the background, you should set the
- * SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS hint.
+ * the background, you should set the following hint before calling
+ * SDL_Init(): SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS
  *
  * SDL can provide virtual joysticks as well: the app defines an imaginary
  * controller with SDL_AttachVirtualJoystick(), and then can provide inputs
@@ -187,21 +187,6 @@ typedef enum SDL_JoystickConnectionState
  * \since This function is available since SDL 3.2.0.
  */
 extern SDL_DECLSPEC void SDLCALL SDL_LockJoysticks(void) SDL_ACQUIRE(SDL_joystick_lock);
-
-/**
- * Locking for atomic access to the joystick API.
- *
- * The SDL joystick functions are thread-safe, however you can lock the
- * joysticks while processing to guarantee that the joystick list won't change
- * and joystick and gamepad events will not be delivered.
- *
- * \returns true if the joysticks were successfully locked, false otherwise.
- *
- * \threadsafety It is safe to call this function from any thread.
- *
- * \since This function is available since SDL 3.6.0.
- */
-extern SDL_DECLSPEC bool SDLCALL SDL_TryLockJoysticks(void) SDL_ACQUIRE(SDL_joystick_lock);
 
 /**
  * Unlocking for atomic access to the joystick API.
@@ -1132,7 +1117,7 @@ extern SDL_DECLSPEC bool SDLCALL SDL_JoystickEventsEnabled(void);
  * Update the current state of the open joysticks.
  *
  * This is called automatically by the event loop if any joystick events are
- * enabled and SDL_HINT_AUTO_UPDATE_JOYSTICKS hasn't been set to "0".
+ * enabled.
  *
  * \threadsafety It is safe to call this function from any thread.
  *

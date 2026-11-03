@@ -1,5 +1,4 @@
-# Generated from the vendored SDL3 C headers.
-# Do not edit manually.
+# Generated from the vendored SDL3 C headers and reconciled with SDL 3.4.18.
 # Add {.passL: "-lYOURLIB".} or {.dynlib: "libYOURLIB.so".} to link.
 #
 # Usage:  import sdl3
@@ -434,6 +433,8 @@ type
     timestamp*: uint64
     windowID*: SDL_WindowID
     which*: SDL_PenID
+    pen_state*: SDL_PenInputFlags
+    device_type*: SDL_PenDeviceType
   SDL_PenMotionEvent* {.importc: "SDL_PenMotionEvent", bycopy.} = object
     `type`*: SDL_EventType
     reserved*: uint32
@@ -443,6 +444,7 @@ type
     pen_state*: SDL_PenInputFlags
     x*: cfloat
     y*: cfloat
+    device_type*: SDL_PenDeviceType
   SDL_PenTouchEvent* {.importc: "SDL_PenTouchEvent", bycopy.} = object
     `type`*: SDL_EventType
     reserved*: uint32
@@ -454,6 +456,7 @@ type
     y*: cfloat
     eraser*: bool
     down*: bool
+    device_type*: SDL_PenDeviceType
   SDL_PenButtonEvent* {.importc: "SDL_PenButtonEvent", bycopy.} = object
     `type`*: SDL_EventType
     reserved*: uint32
@@ -465,6 +468,7 @@ type
     y*: cfloat
     button*: uint8
     down*: bool
+    device_type*: SDL_PenDeviceType
   SDL_PenAxisEvent* {.importc: "SDL_PenAxisEvent", bycopy.} = object
     `type`*: SDL_EventType
     reserved*: uint32
@@ -476,6 +480,7 @@ type
     y*: cfloat
     axis*: SDL_PenAxis
     value*: cfloat
+    device_type*: SDL_PenDeviceType
   SDL_DropEvent* {.importc: "SDL_DropEvent", bycopy.} = object
     `type`*: SDL_EventType
     reserved*: uint32
@@ -2423,8 +2428,8 @@ const
   SDL_NS_PER_MS* = 1000000
   SDL_NS_PER_US* = 1000
   SDL_MAJOR_VERSION* = 3
-  SDL_MINOR_VERSION* = 5
-  SDL_MICRO_VERSION* = 0
+  SDL_MINOR_VERSION* = 4
+  SDL_MICRO_VERSION* = 18
 
 # Macros (function-like)
 template SDL_COMPILE_TIME_ASSERT*(name, x: untyped): untyped =
@@ -16720,18 +16725,6 @@ proc lockJoysticks*(_: type SDL3) {.importc: "SDL_LockJoysticks", cdecl.}
   ## \threadsafety It is safe to call this function from any thread.
   ##
   ## \since This function is available since SDL 3.2.0.
-proc tryLockJoysticks*(_: type SDL3): bool {.importc: "SDL_TryLockJoysticks", cdecl.}
-  ## Locking for atomic access to the joystick API.
-  ##
-  ## The SDL joystick functions are thread-safe, however you can lock the
-  ## joysticks while processing to guarantee that the joystick list won't change
-  ## and joystick and gamepad events will not be delivered.
-  ##
-  ## \returns true if the joysticks were successfully locked, false otherwise.
-  ##
-  ## \threadsafety It is safe to call this function from any thread.
-  ##
-  ## \since This function is available since SDL 3.6.0.
 proc unlockJoysticks*(_: type SDL3) {.importc: "SDL_UnlockJoysticks", cdecl.}
   ## Unlocking for atomic access to the joystick API.
   ##
@@ -27343,48 +27336,6 @@ proc createTray*(_: type SDL3; icon: pointer; tooltip: cstring): pointer {.impor
   ##
   ## \since This function is available since SDL 3.2.0.
   ##
-  ## \sa SDL_CreateTrayWithProperties
-  ## \sa SDL_CreateTrayMenu
-  ## \sa SDL_GetTrayMenu
-  ## \sa SDL_DestroyTray
-proc createTrayWithProperties*(_: type SDL3; props: SDL_PropertiesID): pointer {.importc: "SDL_CreateTrayWithProperties", cdecl.}
-  ## Create an icon to be placed in the operating system's tray, or equivalent.
-  ##
-  ## Many platforms advise not using a system tray unless persistence is a
-  ## necessary feature. Avoid needlessly creating a tray icon, as the user may
-  ## feel like it clutters their interface.
-  ##
-  ## Using tray icons require the video subsystem.
-  ##
-  ## These are the supported properties:
-  ##
-  ## - `SDL_PROP_TRAY_CREATE_ICON_POINTER`: an SDL_Surface to be used as the
-  ##   tray icon. May be NULL.
-  ## - `SDL_PROP_TRAY_CREATE_TOOLTIP_STRING`: a tooltip to be displayed when the
-  ##   mouse hovers the icon in UTF-8 encoding. Not supported on all platforms.
-  ##   May be NULL.
-  ## - `SDL_PROP_TRAY_CREATE_USERDATA_POINTER`: an optional pointer to associate
-  ##   with the tray, which will be passed to click callbacks. May be NULL.
-  ## - `SDL_PROP_TRAY_CREATE_LEFTCLICK_CALLBACK_POINTER`: an
-  ##   SDL_TrayClickCallback to be invoked when the tray icon is left-clicked.
-  ##   Not supported on all platforms. The callback should return true to show
-  ##   the default menu, or false to skip showing it. May be NULL.
-  ## - `SDL_PROP_TRAY_CREATE_RIGHTCLICK_CALLBACK_POINTER`: an
-  ##   SDL_TrayClickCallback to be invoked when the tray icon is right-clicked.
-  ##   Not supported on all platforms. The callback should return true to show
-  ##   the default menu, or false to skip showing it. May be NULL.
-  ## - `SDL_PROP_TRAY_CREATE_MIDDLECLICK_CALLBACK_POINTER`: an
-  ##   SDL_TrayClickCallback to be invoked when the tray icon is middle-clicked.
-  ##   Not supported on all platforms. May be NULL.
-  ##
-  ## \param props the properties to use.
-  ## \returns The newly created system tray icon.
-  ##
-  ## \threadsafety This function should only be called on the main thread.
-  ##
-  ## \since This function is available since SDL 3.6.0.
-  ##
-  ## \sa SDL_CreateTray
   ## \sa SDL_CreateTrayMenu
   ## \sa SDL_GetTrayMenu
   ## \sa SDL_DestroyTray

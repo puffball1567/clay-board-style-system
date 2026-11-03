@@ -123,6 +123,9 @@ jobs:
       - name: Check examples and link profiles
         run: nimble checkExamples -y
 
+      - name: Verify bundled SDL3 version and pen event ABI
+        run: nim c -r --mm:arc --path:src --nimcache:/tmp/cbss-sdl3-release-check --out:/tmp/cbss-sdl3-release-check-test -d:cbssSdl3LinkMode=bundled -d:cbssRuntimeRoot=vendor/sdl3 tests/backends/test_sdl3_pen_input.nim
+
       - name: Test shared and static C ABI
         run: nimble testCAbi -y
 
