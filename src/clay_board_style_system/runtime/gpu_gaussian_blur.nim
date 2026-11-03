@@ -4,14 +4,18 @@ import ../paint/gpu_host_compositor
 import ./[gpu_host, gpu_shader_builder]
 
 const
-  MaxGpuBlurRadius* = 4
-  BlurWeights: array[5, array[5, float32]] = [
-    [1'f32, 0, 0, 0, 0],
-    [0.5'f32, 0.25, 0, 0, 0],
-    [0.375'f32, 0.25, 0.0625, 0, 0],
-    [0.3125'f32, 0.234375, 0.09375, 0.015625, 0],
-    [0.2734375'f32, 0.21875, 0.109375, 0.03125, 0.00390625]
-  ]
+  MaxGpuBlurRadius* = 8
+
+proc blurWeights(radius: int): array[MaxGpuBlurRadius + 1, float32] =
+  ## Normalized row of Pascal's triangle for a radius-wide binomial kernel.
+  let n = radius * 2
+  let divisor = float64(1'u64 shl n)
+  var coefficient = 1'u64
+  for position in 0 .. n:
+    if position >= radius:
+      result[position - radius] = float32(float64(coefficient) / divisor)
+    if position < n:
+      coefficient = coefficient * uint64(n - position) div uint64(position + 1)
 
 type
   GpuBlurVertex = object
@@ -36,7 +40,7 @@ proc gpuGaussianBlurFragmentSource*(): GpuShaderSource =
 #include "bgfx_shader.sh"
 SAMPLER2D(s_cbssBlurSource, 0);
 uniform vec4 u_cbssBlurParams;
-uniform vec4 u_cbssBlurWeights;
+uniform vec4 u_cbssBlurWeights[3];
 uniform vec4 u_cbssUvRect;
 vec4 premultipliedSample(vec2 uv)
 {
@@ -53,15 +57,39 @@ void main()
 {
   vec2 uv = mix(u_cbssUvRect.xy, u_cbssUvRect.zw, v_texcoord0);
   vec2 stepUv = u_cbssBlurParams.xy;
-  vec4 blurred = premultipliedSample(uv) * u_cbssBlurWeights.x;
-  blurred += premultipliedSample(uv + stepUv) * u_cbssBlurWeights.y;
-  blurred += premultipliedSample(uv - stepUv) * u_cbssBlurWeights.y;
-  blurred += premultipliedSample(uv + stepUv * 2.0) * u_cbssBlurWeights.z;
-  blurred += premultipliedSample(uv - stepUv * 2.0) * u_cbssBlurWeights.z;
-  blurred += premultipliedSample(uv + stepUv * 3.0) * u_cbssBlurWeights.w;
-  blurred += premultipliedSample(uv - stepUv * 3.0) * u_cbssBlurWeights.w;
-  blurred += premultipliedSample(uv + stepUv * 4.0) * u_cbssBlurParams.w;
-  blurred += premultipliedSample(uv - stepUv * 4.0) * u_cbssBlurParams.w;
+  vec4 blurred = premultipliedSample(uv) * u_cbssBlurWeights[0].x;
+  if (u_cbssBlurParams.w >= 1.0) {
+    blurred += premultipliedSample(uv + stepUv) * u_cbssBlurWeights[0].y;
+    blurred += premultipliedSample(uv - stepUv) * u_cbssBlurWeights[0].y;
+  }
+  if (u_cbssBlurParams.w >= 2.0) {
+    blurred += premultipliedSample(uv + stepUv * 2.0) * u_cbssBlurWeights[0].z;
+    blurred += premultipliedSample(uv - stepUv * 2.0) * u_cbssBlurWeights[0].z;
+  }
+  if (u_cbssBlurParams.w >= 3.0) {
+    blurred += premultipliedSample(uv + stepUv * 3.0) * u_cbssBlurWeights[0].w;
+    blurred += premultipliedSample(uv - stepUv * 3.0) * u_cbssBlurWeights[0].w;
+  }
+  if (u_cbssBlurParams.w >= 4.0) {
+    blurred += premultipliedSample(uv + stepUv * 4.0) * u_cbssBlurWeights[1].x;
+    blurred += premultipliedSample(uv - stepUv * 4.0) * u_cbssBlurWeights[1].x;
+  }
+  if (u_cbssBlurParams.w >= 5.0) {
+    blurred += premultipliedSample(uv + stepUv * 5.0) * u_cbssBlurWeights[1].y;
+    blurred += premultipliedSample(uv - stepUv * 5.0) * u_cbssBlurWeights[1].y;
+  }
+  if (u_cbssBlurParams.w >= 6.0) {
+    blurred += premultipliedSample(uv + stepUv * 6.0) * u_cbssBlurWeights[1].z;
+    blurred += premultipliedSample(uv - stepUv * 6.0) * u_cbssBlurWeights[1].z;
+  }
+  if (u_cbssBlurParams.w >= 7.0) {
+    blurred += premultipliedSample(uv + stepUv * 7.0) * u_cbssBlurWeights[1].w;
+    blurred += premultipliedSample(uv - stepUv * 7.0) * u_cbssBlurWeights[1].w;
+  }
+  if (u_cbssBlurParams.w >= 8.0) {
+    blurred += premultipliedSample(uv + stepUv * 8.0) * u_cbssBlurWeights[2].x;
+    blurred += premultipliedSample(uv - stepUv * 8.0) * u_cbssBlurWeights[2].x;
+  }
   gl_FragColor = blurred;
 }
 """,
@@ -140,7 +168,7 @@ proc newGpuGaussianBlurMaterial*(
         arrayLength: 1, label: "gpu-gaussian-blur-params"))
     result.weightsUniform = host.createGpuUniform(namespace,
       GpuUniformDescriptor(name: "u_cbssBlurWeights", uniformType: gutVec4,
-        arrayLength: 1, label: "gpu-gaussian-blur-weights"))
+        arrayLength: 3, label: "gpu-gaussian-blur-weights"))
     result.uvUniform = host.createGpuUniform(namespace,
       GpuUniformDescriptor(name: "u_cbssUvRect", uniformType: gutVec4,
         arrayLength: 1, label: "gpu-gaussian-blur-uv"))
@@ -159,7 +187,8 @@ proc submitPass(
     sourceInfo: GpuPresentableResourceInfo;
     stepX, stepY: float32;
     alphaMode: GpuAlphaMode;
-    weights: array[5, float32]
+    radius: int;
+    weights: array[MaxGpuBlurRadius + 1, float32]
 ) =
   let uv =
     if sourceInfo.rowsBottomUp: @[0'f32, 1, 1, 0]
@@ -177,9 +206,11 @@ proc submitPass(
       bindings: GpuBindingSet(
         uniforms: @[
           GpuUniformBinding(uniform: material.paramsUniform,
-            values: @[stepX, stepY, float32(ord(alphaMode)), weights[4]]),
+            values: @[stepX, stepY, float32(ord(alphaMode)), float32(radius)]),
           GpuUniformBinding(uniform: material.weightsUniform,
-            values: @[weights[0], weights[1], weights[2], weights[3]]),
+            values: @[weights[0], weights[1], weights[2], weights[3],
+              weights[4], weights[5], weights[6], weights[7],
+              weights[8], 0'f32, 0, 0]),
           GpuUniformBinding(uniform: material.uvUniform, values: uv)
         ],
         textures: @[
@@ -195,12 +226,12 @@ proc submit*(
     sourceAlphaMode = gcamStraight;
     radius = 2
 ): bool =
-  ## A radius 0..4 binomial Gaussian blur, horizontal then vertical. Radius 2
+  ## A radius 0..8 binomial Gaussian blur, horizontal then vertical. Radius 2
   ## preserves the original five-tap kernel. All resources share dimensions.
   if material.isClosed:
     raise newException(ValueError, "GPU blur material is closed")
   if radius < 0 or radius > MaxGpuBlurRadius:
-    raise newException(ValueError, "GPU blur radius must be between 0 and 4")
+    raise newException(ValueError, "GPU blur radius must be between 0 and 8")
   if source == scratch or source == destination or scratch == destination or
       source.namespace != material.namespace or
       scratch.namespace != material.namespace or
@@ -224,10 +255,11 @@ proc submit*(
       sourceInfo.width != targetInfo.width or
       sourceInfo.height != targetInfo.height:
     raise newException(ValueError, "GPU blur source, scratch, and target are incompatible")
+  let weights = blurWeights(radius)
   material.submitPass(source, scratch, sourceInfo,
     1'f32 / float32(sourceInfo.width), 0'f32, sourceAlphaMode,
-    BlurWeights[radius])
+    radius, weights)
   material.submitPass(scratch, destination, scratchInfo,
     0'f32, 1'f32 / float32(sourceInfo.height), gcamPremultiplied,
-    BlurWeights[radius])
+    radius, weights)
   true

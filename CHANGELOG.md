@@ -9,6 +9,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Changed
 
+- Expanded GPU Gaussian blur and drop-shadow radii from 4 to 8 pixels with
+  normalized binomial weights and bounded sample counts.
+
 - Updated the bundled Linux x86_64 SDL3 libraries and vendored headers to
   stable SDL 3.4.18, and aligned the Nim bindings with its pen-event ABI and
   exported API.

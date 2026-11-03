@@ -173,7 +173,7 @@ proc submit*(
     raise newException(ValueError, "GPU drop shadow material is closed")
   if blurRadius < 0 or blurRadius > MaxGpuBlurRadius:
     raise newException(ValueError,
-      "GPU drop shadow blur radius must be between 0 and 4")
+      "GPU drop shadow blur radius must be between 0 and 8")
   if offsetX.classify in {fcNan, fcInf, fcNegInf} or
       offsetY.classify in {fcNan, fcInf, fcNegInf}:
     raise newException(ValueError, "GPU drop shadow offset must be finite")
