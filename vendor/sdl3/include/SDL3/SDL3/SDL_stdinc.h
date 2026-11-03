@@ -1290,8 +1290,9 @@ extern "C" {
 /**
  * Free memory previously allocated with SDL_stack_alloc.
  *
- * If SDL used alloca() to allocate this memory, this macro does nothing and
- * the allocated memory will be automatically released when the function that
+ * If SDL used alloca() to allocate this memory, this macro does nothing (other
+ * than insert `((void)(data)` so the compiler sees an expression) and the
+ * allocated memory will be automatically released when the function that
  * called SDL_stack_alloc() returns. If SDL used SDL_malloc(), it will
  * SDL_free the memory immediately.
  *
@@ -1303,10 +1304,10 @@ extern "C" {
  *
  * \sa SDL_stack_alloc
  */
-#define SDL_stack_free(data)
+#define SDL_stack_free(data) ((void)(data))
 #elif !defined(SDL_DISABLE_ALLOCA)
 #define SDL_stack_alloc(type, count)    (type*)alloca(sizeof(type)*(count))
-#define SDL_stack_free(data)
+#define SDL_stack_free(data)            ((void)(data))
 #else
 #define SDL_stack_alloc(type, count)    (type*)SDL_malloc(sizeof(type)*(count))
 #define SDL_stack_free(data)            SDL_free(data)
@@ -1796,6 +1797,8 @@ extern SDL_DECLSPEC void SDLCALL SDL_DestroyEnvironment(SDL_Environment *env);
 /**
  * Get the value of a variable in the environment.
  *
+ * The name of the variable is case sensitive on all platforms.
+ *
  * This function uses SDL's cached copy of the environment and is thread-safe.
  *
  * \param name the name of the variable to get.
@@ -1813,6 +1816,11 @@ extern SDL_DECLSPEC const char * SDLCALL SDL_getenv(const char *name);
  *
  * This function bypasses SDL's cached copy of the environment and is not
  * thread-safe.
+ *
+ * On some platforms, this may make case-insensitive matches, while other
+ * platforms are case-sensitive. It is best to be precise with strings used
+ * for queries through this interface. SDL_getenv is always case-sensitive,
+ * however.
  *
  * \param name the name of the variable to get.
  * \returns a pointer to the value of the variable or NULL if it can't be
@@ -5815,6 +5823,8 @@ typedef struct SDL_iconv_data_t *SDL_iconv_t;
  * \returns a handle that must be freed with SDL_iconv_close, or
  *          SDL_ICONV_ERROR on failure.
  *
+ * \threadsafety It is safe to call this function from any thread.
+ *
  * \since This function is available since SDL 3.2.0.
  *
  * \sa SDL_iconv
@@ -5829,6 +5839,8 @@ extern SDL_DECLSPEC SDL_iconv_t SDLCALL SDL_iconv_open(const char *tocode,
  *
  * \param cd The character set conversion handle.
  * \returns 0 on success, or -1 on failure.
+ *
+ * \threadsafety It is safe to call this function from any thread.
  *
  * \since This function is available since SDL 3.2.0.
  *
@@ -5868,6 +5880,8 @@ extern SDL_DECLSPEC int SDLCALL SDL_iconv_close(SDL_iconv_t cd);
  * \param outbytesleft The number of bytes in the output buffer.
  * \returns the number of conversions on success, or a negative error code.
  *
+ * \threadsafety Do not use the same SDL_iconv_t from two threads at once.
+ *
  * \since This function is available since SDL 3.2.0.
  *
  * \sa SDL_iconv_open
@@ -5903,6 +5917,8 @@ extern SDL_DECLSPEC size_t SDLCALL SDL_iconv(SDL_iconv_t cd, const char **inbuf,
  * \param inbytesleft the size of the input string _in bytes_.
  * \returns a new string, converted to the new encoding, or NULL on error.
  *
+ * \threadsafety It is safe to call this function from any thread.
+ *
  * \since This function is available since SDL 3.2.0.
  *
  * \sa SDL_iconv_open
@@ -5926,6 +5942,8 @@ extern SDL_DECLSPEC char * SDLCALL SDL_iconv_string(const char *tocode,
  * \param S the string to convert.
  * \returns a new string, converted to the new encoding, or NULL on error.
  *
+ * \threadsafety It is safe to call this macro from any thread.
+ *
  * \since This macro is available since SDL 3.2.0.
  */
 #define SDL_iconv_utf8_locale(S)    SDL_iconv_string("", "UTF-8", S, SDL_strlen(S)+1)
@@ -5939,6 +5957,8 @@ extern SDL_DECLSPEC char * SDLCALL SDL_iconv_string(const char *tocode,
  *
  * \param S the string to convert.
  * \returns a new string, converted to the new encoding, or NULL on error.
+ *
+ * \threadsafety It is safe to call this macro from any thread.
  *
  * \since This macro is available since SDL 3.2.0.
  */
@@ -5954,6 +5974,8 @@ extern SDL_DECLSPEC char * SDLCALL SDL_iconv_string(const char *tocode,
  * \param S the string to convert.
  * \returns a new string, converted to the new encoding, or NULL on error.
  *
+ * \threadsafety It is safe to call this macro from any thread.
+ *
  * \since This macro is available since SDL 3.2.0.
  */
 #define SDL_iconv_utf8_ucs4(S)      SDL_reinterpret_cast(Uint32 *, SDL_iconv_string("UCS-4", "UTF-8", S, SDL_strlen(S)+1))
@@ -5967,6 +5989,8 @@ extern SDL_DECLSPEC char * SDLCALL SDL_iconv_string(const char *tocode,
  *
  * \param S the string to convert.
  * \returns a new string, converted to the new encoding, or NULL on error.
+ *
+ * \threadsafety It is safe to call this macro from any thread.
  *
  * \since This macro is available since SDL 3.2.0.
  */

@@ -1,11 +1,31 @@
 import std/[math, options, unittest]
 
+import clay_board_style_system/backends/sdl3/config
 import clay_board_style_system/backends/sdl3/renderer
 import clay_board_style_system/core/node
 import clay_board_style_system/input/events
 import clay_board_style_system/vendor/sdl3
 
 suite "SDL3 pen input conversion":
+  when cbssSdl3LinkMode == cbssBundledLinkMode:
+    test "bundled SDL3 runtime and pen event fields match 3.4.18":
+      check SDL3.getVersion() == SDL_VERSIONNUM(3, 4, 18)
+      var proximity: SDL_PenProximityEvent
+      var motion: SDL_PenMotionEvent
+      var touch: SDL_PenTouchEvent
+      var button: SDL_PenButtonEvent
+      var axis: SDL_PenAxisEvent
+      proximity.device_type = SDL_PEN_DEVICE_TYPE_DIRECT
+      motion.device_type = SDL_PEN_DEVICE_TYPE_DIRECT
+      touch.device_type = SDL_PEN_DEVICE_TYPE_DIRECT
+      button.device_type = SDL_PEN_DEVICE_TYPE_DIRECT
+      axis.device_type = SDL_PEN_DEVICE_TYPE_DIRECT
+      check proximity.device_type == SDL_PEN_DEVICE_TYPE_DIRECT
+      check motion.device_type == SDL_PEN_DEVICE_TYPE_DIRECT
+      check touch.device_type == SDL_PEN_DEVICE_TYPE_DIRECT
+      check button.device_type == SDL_PEN_DEVICE_TYPE_DIRECT
+      check axis.device_type == SDL_PEN_DEVICE_TYPE_DIRECT
+
   test "only idle mouse hover motion may discard intermediate samples":
     let mouse = Sdl3Event(
       kind: sekPointerMove,

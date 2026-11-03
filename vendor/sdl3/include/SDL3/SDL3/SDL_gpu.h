@@ -884,8 +884,8 @@ typedef enum SDL_GPUTextureFormat
 /**
  * Specifies how a texture is intended to be used by the client.
  *
- * A texture must have at least one usage flag. Note that some usage flag
- * combinations are invalid.
+ * A texture must have at least one usage flag.
+ * Note that combining SAMPLER with STORAGE_READ flags is invalid.
  *
  * With regards to compute storage usage, READ | WRITE means that you can have
  * shader A that only writes into the texture and shader B that only reads
@@ -967,8 +967,10 @@ typedef enum SDL_GPUCubeMapFace
 /**
  * Specifies how a buffer is intended to be used by the client.
  *
- * A buffer must have at least one usage flag. Note that some usage flag
- * combinations are invalid.
+ * A buffer must have at least one usage flag.
+ *
+ * If a buffer has multiple read usages, this may lead to a performance penalty
+ * due to more conservative memory barriers, but it also may not necessarily affect the performance.
  *
  * Unlike textures, READ | WRITE can be used for simultaneous read-write
  * usage. The same data synchronization concerns as textures apply.
@@ -1409,6 +1411,7 @@ typedef struct SDL_GPUViewport
  *
  * \sa SDL_UploadToGPUTexture
  * \sa SDL_DownloadFromGPUTexture
+ * \sa SDL_GPUTransferBuffer
  */
 typedef struct SDL_GPUTextureTransferInfo
 {
@@ -1427,6 +1430,7 @@ typedef struct SDL_GPUTextureTransferInfo
  *
  * \sa SDL_UploadToGPUBuffer
  * \sa SDL_DownloadFromGPUBuffer
+ * \sa SDL_GPUTransferBuffer
  */
 typedef struct SDL_GPUTransferBufferLocation
 {
@@ -1442,6 +1446,7 @@ typedef struct SDL_GPUTransferBufferLocation
  * \since This struct is available since SDL 3.2.0.
  *
  * \sa SDL_CopyGPUTextureToTexture
+ * \sa SDL_GPUTexture
  */
 typedef struct SDL_GPUTextureLocation
 {
@@ -1463,6 +1468,7 @@ typedef struct SDL_GPUTextureLocation
  * \sa SDL_UploadToGPUTexture
  * \sa SDL_DownloadFromGPUTexture
  * \sa SDL_CreateGPUTexture
+ * \sa SDL_GPUTexture
  */
 typedef struct SDL_GPUTextureRegion
 {
@@ -1483,6 +1489,7 @@ typedef struct SDL_GPUTextureRegion
  * \since This struct is available since SDL 3.2.0.
  *
  * \sa SDL_BlitGPUTexture
+ * \sa SDL_GPUTexture
  */
 typedef struct SDL_GPUBlitRegion
 {
@@ -1707,6 +1714,7 @@ typedef struct SDL_GPUStencilOpState
  *
  * \since This struct is available since SDL 3.2.0.
  *
+ * \sa SDL_SetGPUBlendConstants
  * \sa SDL_GPUColorTargetDescription
  * \sa SDL_GPUBlendFactor
  * \sa SDL_GPUBlendOp
@@ -2098,6 +2106,11 @@ typedef struct SDL_GPUDepthStencilTargetInfo
  * \since This struct is available since SDL 3.2.0.
  *
  * \sa SDL_BlitGPUTexture
+ * \sa SDL_GPUBlitRegion
+ * \sa SDL_GPULoadOp
+ * \sa SDL_FColor
+ * \sa SDL_FlipMode
+ * \sa SDL_GPUFilter
  */
 typedef struct SDL_GPUBlitInfo {
     SDL_GPUBlitRegion source;       /**< The source region for the blit. */
@@ -2381,20 +2394,6 @@ extern SDL_DECLSPEC SDL_GPUDevice * SDLCALL SDL_CreateGPUDeviceWithProperties(
 #define SDL_PROP_GPU_DEVICE_CREATE_VULKAN_REQUIRE_HARDWARE_ACCELERATION_BOOLEAN "SDL.gpu.device.create.vulkan.requirehardwareacceleration"
 #define SDL_PROP_GPU_DEVICE_CREATE_VULKAN_OPTIONS_POINTER                       "SDL.gpu.device.create.vulkan.options"
 #define SDL_PROP_GPU_DEVICE_CREATE_METAL_ALLOW_MACFAMILY1_BOOLEAN               "SDL.gpu.device.create.metal.allowmacfamily1"
-
-#define SDL_PROP_GPU_DEVICE_CREATE_XR_ENABLE_BOOLEAN                            "SDL.gpu.device.create.xr.enable"
-#define SDL_PROP_GPU_DEVICE_CREATE_XR_INSTANCE_POINTER                          "SDL.gpu.device.create.xr.instance_out"
-#define SDL_PROP_GPU_DEVICE_CREATE_XR_SYSTEM_ID_POINTER                         "SDL.gpu.device.create.xr.system_id_out"
-#define SDL_PROP_GPU_DEVICE_CREATE_XR_VERSION_NUMBER                            "SDL.gpu.device.create.xr.version"
-#define SDL_PROP_GPU_DEVICE_CREATE_XR_FORM_FACTOR_NUMBER                        "SDL.gpu.device.create.xr.form_factor"
-#define SDL_PROP_GPU_DEVICE_CREATE_XR_EXTENSION_COUNT_NUMBER                    "SDL.gpu.device.create.xr.extensions.count"
-#define SDL_PROP_GPU_DEVICE_CREATE_XR_EXTENSION_NAMES_POINTER                   "SDL.gpu.device.create.xr.extensions.names"
-#define SDL_PROP_GPU_DEVICE_CREATE_XR_LAYER_COUNT_NUMBER                        "SDL.gpu.device.create.xr.layers.count"
-#define SDL_PROP_GPU_DEVICE_CREATE_XR_LAYER_NAMES_POINTER                       "SDL.gpu.device.create.xr.layers.names"
-#define SDL_PROP_GPU_DEVICE_CREATE_XR_APPLICATION_NAME_STRING                   "SDL.gpu.device.create.xr.application.name"
-#define SDL_PROP_GPU_DEVICE_CREATE_XR_APPLICATION_VERSION_NUMBER                "SDL.gpu.device.create.xr.application.version"
-#define SDL_PROP_GPU_DEVICE_CREATE_XR_ENGINE_NAME_STRING                        "SDL.gpu.device.create.xr.engine.name"
-#define SDL_PROP_GPU_DEVICE_CREATE_XR_ENGINE_VERSION_NUMBER                     "SDL.gpu.device.create.xr.engine.version"
 
 
 /**
@@ -3392,6 +3391,9 @@ extern SDL_DECLSPEC void SDLCALL SDL_BindGPUIndexBuffer(
  *
  * The textures must have been created with SDL_GPU_TEXTUREUSAGE_SAMPLER.
  *
+ * The textures being bound must have a matching type declared in the shader
+ * (2D, 3D, etc.). Multisample textures are not allowed.
+ *
  * Be sure your shader is set up according to the requirements documented in
  * SDL_CreateGPUShader().
  *
@@ -3417,6 +3419,9 @@ extern SDL_DECLSPEC void SDLCALL SDL_BindGPUVertexSamplers(
  *
  * These textures must have been created with
  * SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ.
+ *
+ * The textures being bound must have a matching type declared in the shader
+ * (2D, 3D, 2DMS, etc.)
  *
  * Be sure your shader is set up according to the requirements documented in
  * SDL_CreateGPUShader().
@@ -3465,6 +3470,9 @@ extern SDL_DECLSPEC void SDLCALL SDL_BindGPUVertexStorageBuffers(
  *
  * The textures must have been created with SDL_GPU_TEXTUREUSAGE_SAMPLER.
  *
+ * The textures being bound must have a matching type declared in the shader
+ * (2D, 3D, etc.). Multisample textures are not allowed.
+ *
  * Be sure your shader is set up according to the requirements documented in
  * SDL_CreateGPUShader().
  *
@@ -3490,6 +3498,9 @@ extern SDL_DECLSPEC void SDLCALL SDL_BindGPUFragmentSamplers(
  *
  * These textures must have been created with
  * SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ.
+ *
+ * The textures being bound must have a matching type declared in the shader
+ * (2D, 3D, 2DMS, etc.)
  *
  * Be sure your shader is set up according to the requirements documented in
  * SDL_CreateGPUShader().
@@ -3713,6 +3724,9 @@ extern SDL_DECLSPEC void SDLCALL SDL_BindGPUComputePipeline(
  *
  * The textures must have been created with SDL_GPU_TEXTUREUSAGE_SAMPLER.
  *
+ * The textures being bound must have a matching type declared in the shader
+ * (2D, 3D, etc.). Multisample textures are not allowed.
+ *
  * Be sure your shader is set up according to the requirements documented in
  * SDL_CreateGPUComputePipeline().
  *
@@ -3738,6 +3752,9 @@ extern SDL_DECLSPEC void SDLCALL SDL_BindGPUComputeSamplers(
  *
  * These textures must have been created with
  * SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_READ.
+ *
+ * The textures being bound must have a matching type declared in the shader
+ * (2D, 3D, 2DMS, etc.)
  *
  * Be sure your shader is set up according to the requirements documented in
  * SDL_CreateGPUComputePipeline().

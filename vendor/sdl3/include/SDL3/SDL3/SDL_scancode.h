@@ -125,7 +125,7 @@ typedef enum SDL_Scancode
     SDL_SCANCODE_NONUSHASH = 50, /**< ISO USB keyboards actually use this code
                                   *   instead of 49 for the same key, but all
                                   *   OSes I've seen treat the two codes
-                                  *   identically. So, as an implementer, unless
+                                  *   identically. So, as an implementor, unless
                                   *   your keyboard generates both of those
                                   *   codes and your OS treats them differently,
                                   *   you should generate SDL_SCANCODE_BACKSLASH
@@ -286,6 +286,7 @@ typedef enum SDL_Scancode
     SDL_SCANCODE_CLEARAGAIN = 162,
     SDL_SCANCODE_CRSEL = 163,
     SDL_SCANCODE_EXSEL = 164,
+    SDL_SCANCODE_FRONT = 165,   /**< Front (Sun keyboards) */
 
     SDL_SCANCODE_KP_00 = 176,
     SDL_SCANCODE_KP_000 = 177,

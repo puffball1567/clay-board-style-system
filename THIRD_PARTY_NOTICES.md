@@ -6,17 +6,21 @@ project also contains or links the following third-party software.
 ## SDL3
 
 - Component: SDL3 headers and Linux x86_64 libraries
-- Version: 3.5.0
-- Upstream: <https://github.com/libsdl-org/SDL>
+- Version: 3.4.18 (stable release)
+- Upstream: <https://github.com/libsdl-org/SDL/releases/tag/release-3.4.18>
+- Source archive SHA-256: `9c75cf16330322c217dedd2e0609f1124f1b54b8633e763467b4684d0f4334a3`
 - Development-checkout location: `vendor/sdl3/` (not included in the installed
   CBSS Nimble package)
 - License: zlib
 - License text: [licenses/SDL3.txt](licenses/SDL3.txt)
 
-The three `libSDL3.so*` paths are the ABI name, SONAME, and versioned filename
-for the same Linux build. Applications using bundled setup statically link the
-corresponding `libSDL3.a`. System and custom setup dynamically link an
-installation supplied by the application or operating system instead.
+The Linux x86_64 shared, static, and test libraries were built from that
+release archive with CMake Release and SDL shared, static, and test-library
+targets enabled. The three `libSDL3.so*` paths are the ABI name, SONAME, and
+versioned filename for the same build. Applications using bundled setup
+statically link the corresponding `libSDL3.a`. System and custom setup
+dynamically link an installation supplied by the application or operating
+system instead.
 
 ## cosmic-text Bridge
 
@@ -69,9 +73,10 @@ update to it must update this catalogue and the corresponding license notices.
 
 ## Generated SDL3 Nim Bindings
 
-`src/clay_board_style_system/vendor/sdl3.nim` is generated from the vendored SDL3
-headers. It describes the SDL3 C API and is used under the same SDL3 license
-identified above.
+`src/clay_board_style_system/vendor/sdl3.nim` originated from generated SDL3
+headers and is reconciled with the 3.4.18 release: version constants, pen
+event fields, and declarations absent from the stable library. It is used
+under the same SDL3 license identified above.
 
 ## Updating This File
 

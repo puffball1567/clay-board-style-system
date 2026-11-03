@@ -7,6 +7,12 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ## [Unreleased]
 
+### Changed
+
+- Updated the bundled Linux x86_64 SDL3 libraries and vendored headers to
+  stable SDL 3.4.18, and aligned the Nim bindings with its pen-event ABI and
+  exported API.
+
 ### Fixed
 
 - SDL3 wheel coalescing now keeps samples at different cursor positions as
