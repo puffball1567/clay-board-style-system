@@ -28,6 +28,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added bounded brightness, contrast, saturation, grayscale, and inversion
+  color filters that share one immutable matrix across CPU layers and GPU
+  filter chains.
+
 - Added GPU opacity filtering for sampled surfaces and ordered filter chains,
   scaling alpha and premultiplied color together without an extra shader
   material.
