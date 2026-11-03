@@ -7683,7 +7683,7 @@ suite "GPU Gaussian blur postprocess":
     expect ValueError:
       discard material.submit(source, scratch, output, radius = -1)
     expect ValueError:
-      discard material.submit(source, scratch, output, radius = 9)
+      discard material.submit(source, scratch, output, radius = 17)
     expect ValueError:
       discard material.submit(source, scratch, scratch)
     expect GpuHostError:
@@ -7697,6 +7697,7 @@ suite "GPU Gaussian blur postprocess":
       0'f32, 0.2'f32, float32(ord(gcamPremultiplied)), 2'f32]
     check context.lastBindings.uniforms[1].values == @[
       0.375'f32, 0.25, 0.0625, 0,
+      0'f32, 0, 0, 0, 0, 0, 0, 0,
       0'f32, 0, 0, 0, 0, 0, 0, 0]
     expect ValueError:
       discard material.submit(output, source, scratch)
@@ -7705,14 +7706,16 @@ suite "GPU Gaussian blur postprocess":
     let narrowFrame = host.beginGpuFrame()
     check material.submit(source, scratch, output, radius = 0)
     check context.lastBindings.uniforms[1].values == @[
-      1'f32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      1'f32, 0, 0, 0, 0, 0, 0, 0,
+      0'f32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     host.endGpuFrame(narrowFrame)
     let wideFrame = host.beginGpuFrame()
     check material.submit(source, scratch, output, radius = 4)
     check context.lastBindings.uniforms[0].values[3] == 4'f32
     check context.lastBindings.uniforms[1].values == @[
       0.2734375'f32, 0.21875, 0.109375, 0.03125,
-      0.00390625'f32, 0, 0, 0, 0, 0, 0, 0]
+      0.00390625'f32, 0, 0, 0, 0, 0, 0, 0,
+      0'f32, 0, 0, 0, 0, 0, 0, 0]
     host.endGpuFrame(wideFrame)
     let widerFrame = host.beginGpuFrame()
     check material.submit(source, scratch, output, radius = 8)
@@ -7725,6 +7728,18 @@ suite "GPU Gaussian blur postprocess":
       total += 2 * wideWeights[index]
     check abs(total - 1) < 0.000001
     host.endGpuFrame(widerFrame)
+    let widestFrame = host.beginGpuFrame()
+    check material.submit(source, scratch, output, radius = 16)
+    check context.lastBindings.uniforms[0].values[3] == 16'f32
+    let widestWeights = context.lastBindings.uniforms[1].values
+    check widestWeights.len == 20
+    check abs(widestWeights[0] - 601080390'f32 / 4294967296'f32) < 0.000001
+    check widestWeights[16] == 1'f32 / 4294967296'f32
+    total = widestWeights[0]
+    for index in 1 .. 16:
+      total += 2 * widestWeights[index]
+    check abs(total - 1) < 0.000001
+    host.endGpuFrame(widestFrame)
     material.release()
     doAssert host.releaseGpuResource(source)
     doAssert host.releaseGpuResource(scratch)
@@ -7773,7 +7788,7 @@ suite "GPU drop shadow postprocess":
         Inf.float32, 0, rgb(0, 0, 1))
     expect ValueError:
       discard material.submit(source, scratch, blurred, output,
-        1, 0, rgb(0, 0, 1), blurRadius = 9)
+        1, 0, rgb(0, 0, 1), blurRadius = 17)
     expect GpuHostError:
       discard material.submit(source, scratch, blurred, output,
         1, 0, rgb(0, 0, 1))
@@ -7827,7 +7842,9 @@ suite "GPU filter chain":
       discard host.newGpuFilterChain(namespace,
         [gaussianBlurStage()], colorMatrix = matrix)
     expect ValueError:
-      discard gaussianBlurStage(9)
+      discard gaussianBlurStage(17)
+    expect ValueError:
+      discard dropShadowStage(1, 0, rgb(0, 0, 1), blurRadius = 17)
     expect ValueError:
       discard opacityStage(-0.1)
     expect ValueError:

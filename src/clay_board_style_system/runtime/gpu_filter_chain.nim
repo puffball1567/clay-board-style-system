@@ -42,7 +42,7 @@ proc opacityStage*(opacity: float32): GpuFilterStage =
 
 proc gaussianBlurStage*(radius = 2): GpuFilterStage =
   if radius < 0 or radius > MaxGpuBlurRadius:
-    raise newException(ValueError, "GPU filter blur radius must be between 0 and 8")
+    raise newException(ValueError, "GPU filter blur radius must be between 0 and 16")
   GpuFilterStage(kindValue: gfskGaussianBlur, blurRadiusValue: radius)
 
 proc dropShadowStage*(
@@ -50,7 +50,7 @@ proc dropShadowStage*(
 ): GpuFilterStage =
   if blurRadius < 0 or blurRadius > MaxGpuBlurRadius:
     raise newException(ValueError,
-      "GPU filter shadow blur radius must be between 0 and 8")
+      "GPU filter shadow blur radius must be between 0 and 16")
   for value in [offsetX, offsetY]:
     if value.classify in {fcNan, fcInf, fcNegInf}:
       raise newException(ValueError, "GPU filter shadow offset must be finite")

@@ -4,7 +4,8 @@ import ../paint/gpu_host_compositor
 import ./[gpu_host, gpu_shader_builder]
 
 const
-  MaxGpuBlurRadius* = 8
+  MaxGpuBlurRadius* = 16
+  GpuBlurWeightVec4Count = (MaxGpuBlurRadius + 4) div 4
 
 proc blurWeights(radius: int): array[MaxGpuBlurRadius + 1, float32] =
   ## Normalized row of Pascal's triangle for a radius-wide binomial kernel.
@@ -40,7 +41,7 @@ proc gpuGaussianBlurFragmentSource*(): GpuShaderSource =
 #include "bgfx_shader.sh"
 SAMPLER2D(s_cbssBlurSource, 0);
 uniform vec4 u_cbssBlurParams;
-uniform vec4 u_cbssBlurWeights[3];
+uniform vec4 u_cbssBlurWeights[5];
 uniform vec4 u_cbssUvRect;
 vec4 premultipliedSample(vec2 uv)
 {
@@ -89,6 +90,38 @@ void main()
   if (u_cbssBlurParams.w >= 8.0) {
     blurred += premultipliedSample(uv + stepUv * 8.0) * u_cbssBlurWeights[2].x;
     blurred += premultipliedSample(uv - stepUv * 8.0) * u_cbssBlurWeights[2].x;
+  }
+  if (u_cbssBlurParams.w >= 9.0) {
+    blurred += premultipliedSample(uv + stepUv * 9.0) * u_cbssBlurWeights[2].y;
+    blurred += premultipliedSample(uv - stepUv * 9.0) * u_cbssBlurWeights[2].y;
+  }
+  if (u_cbssBlurParams.w >= 10.0) {
+    blurred += premultipliedSample(uv + stepUv * 10.0) * u_cbssBlurWeights[2].z;
+    blurred += premultipliedSample(uv - stepUv * 10.0) * u_cbssBlurWeights[2].z;
+  }
+  if (u_cbssBlurParams.w >= 11.0) {
+    blurred += premultipliedSample(uv + stepUv * 11.0) * u_cbssBlurWeights[2].w;
+    blurred += premultipliedSample(uv - stepUv * 11.0) * u_cbssBlurWeights[2].w;
+  }
+  if (u_cbssBlurParams.w >= 12.0) {
+    blurred += premultipliedSample(uv + stepUv * 12.0) * u_cbssBlurWeights[3].x;
+    blurred += premultipliedSample(uv - stepUv * 12.0) * u_cbssBlurWeights[3].x;
+  }
+  if (u_cbssBlurParams.w >= 13.0) {
+    blurred += premultipliedSample(uv + stepUv * 13.0) * u_cbssBlurWeights[3].y;
+    blurred += premultipliedSample(uv - stepUv * 13.0) * u_cbssBlurWeights[3].y;
+  }
+  if (u_cbssBlurParams.w >= 14.0) {
+    blurred += premultipliedSample(uv + stepUv * 14.0) * u_cbssBlurWeights[3].z;
+    blurred += premultipliedSample(uv - stepUv * 14.0) * u_cbssBlurWeights[3].z;
+  }
+  if (u_cbssBlurParams.w >= 15.0) {
+    blurred += premultipliedSample(uv + stepUv * 15.0) * u_cbssBlurWeights[3].w;
+    blurred += premultipliedSample(uv - stepUv * 15.0) * u_cbssBlurWeights[3].w;
+  }
+  if (u_cbssBlurParams.w >= 16.0) {
+    blurred += premultipliedSample(uv + stepUv * 16.0) * u_cbssBlurWeights[4].x;
+    blurred += premultipliedSample(uv - stepUv * 16.0) * u_cbssBlurWeights[4].x;
   }
   gl_FragColor = blurred;
 }
@@ -168,7 +201,8 @@ proc newGpuGaussianBlurMaterial*(
         arrayLength: 1, label: "gpu-gaussian-blur-params"))
     result.weightsUniform = host.createGpuUniform(namespace,
       GpuUniformDescriptor(name: "u_cbssBlurWeights", uniformType: gutVec4,
-        arrayLength: 3, label: "gpu-gaussian-blur-weights"))
+        arrayLength: GpuBlurWeightVec4Count,
+        label: "gpu-gaussian-blur-weights"))
     result.uvUniform = host.createGpuUniform(namespace,
       GpuUniformDescriptor(name: "u_cbssUvRect", uniformType: gutVec4,
         arrayLength: 1, label: "gpu-gaussian-blur-uv"))
@@ -190,6 +224,9 @@ proc submitPass(
     radius: int;
     weights: array[MaxGpuBlurRadius + 1, float32]
 ) =
+  var packedWeights = newSeq[float32](GpuBlurWeightVec4Count * 4)
+  for index, weight in weights:
+    packedWeights[index] = weight
   let uv =
     if sourceInfo.rowsBottomUp: @[0'f32, 1, 1, 0]
     else: @[0'f32, 0, 1, 1]
@@ -208,9 +245,7 @@ proc submitPass(
           GpuUniformBinding(uniform: material.paramsUniform,
             values: @[stepX, stepY, float32(ord(alphaMode)), float32(radius)]),
           GpuUniformBinding(uniform: material.weightsUniform,
-            values: @[weights[0], weights[1], weights[2], weights[3],
-              weights[4], weights[5], weights[6], weights[7],
-              weights[8], 0'f32, 0, 0]),
+            values: packedWeights),
           GpuUniformBinding(uniform: material.uvUniform, values: uv)
         ],
         textures: @[
@@ -226,12 +261,12 @@ proc submit*(
     sourceAlphaMode = gcamStraight;
     radius = 2
 ): bool =
-  ## A radius 0..8 binomial Gaussian blur, horizontal then vertical. Radius 2
+  ## A radius 0..16 binomial Gaussian blur, horizontal then vertical. Radius 2
   ## preserves the original five-tap kernel. All resources share dimensions.
   if material.isClosed:
     raise newException(ValueError, "GPU blur material is closed")
   if radius < 0 or radius > MaxGpuBlurRadius:
-    raise newException(ValueError, "GPU blur radius must be between 0 and 8")
+    raise newException(ValueError, "GPU blur radius must be between 0 and 16")
   if source == scratch or source == destination or scratch == destination or
       source.namespace != material.namespace or
       scratch.namespace != material.namespace or

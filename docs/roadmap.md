@@ -1119,7 +1119,7 @@ See [GPU Shader Authoring And Packaging](gpu-shaders.md).
 A same-host GPU RGB matrix pass now applies the immutable Canvas layer filter
 coefficients to sampled Texture or RenderTarget pixels and writes premultiplied
 RGBA8 output. This gives GPU-owned surfaces a bounded filter stage before
-direct display or asynchronous readback. A bounded radius 0–8 separable
+direct display or asynchronous readback. A bounded radius 0–16 separable
 Gaussian blur adds the first GPU spatial filter with an explicit sampled
 scratch target and premultiplied output. A same-host drop-shadow pass reuses
 that configurable blur,
