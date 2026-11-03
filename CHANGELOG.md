@@ -25,6 +25,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added GPU opacity filtering for sampled surfaces and ordered filter chains,
+  scaling alpha and premultiplied color together without an extra shader
+  material.
+
 - Added same-size `RasterSurface` source replacement for GPU raster textures
   and filtered displays, preserving registered UI visuals while forcing a
   complete upload of the new image.

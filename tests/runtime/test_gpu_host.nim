@@ -7631,13 +7631,22 @@ suite "GPU color matrix postprocess":
     check context.lastBindings.uniforms[0].values == @[
       0'f32, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0]
     check context.lastBindings.uniforms[1].values == @[
-      float32(ord(gcamPremultiplied)), 0, 0, 0]
+      float32(ord(gcamPremultiplied)), 1, 0, 0]
     check context.lastBindings.textures.len == 1
     check context.lastBindings.textures[0].stage == 0
     expect ValueError:
       discard material.submit(source, source, swapRedBlue)
+    expect ValueError:
+      discard material.submit(source, target, swapRedBlue,
+        opacity = Inf.float32)
     check context.drawSubmits == 1
     host.endGpuFrame(frame)
+    let faded = host.beginGpuFrame()
+    check material.submit(source, target, nil,
+      gcamStraight, opacity = 0.5)
+    check context.lastBindings.uniforms[1].values == @[
+      float32(ord(gcamStraight)), 0.5, 0, 0]
+    host.endGpuFrame(faded)
     material.release()
     doAssert host.releaseGpuResource(source)
     doAssert host.releaseGpuResource(target)
@@ -7807,6 +7816,10 @@ suite "GPU filter chain":
     expect ValueError:
       discard gaussianBlurStage(5)
     expect ValueError:
+      discard opacityStage(-0.1)
+    expect ValueError:
+      discard opacityStage(NaN.float32)
+    expect ValueError:
       discard dropShadowStage(1, 0, rgb(0, 0, 1), blurRadius = -1)
     let chain = host.newGpuFilterChain(namespace,
       [colorMatrixStage(swapRedBlue), gaussianBlurStage(),
@@ -7839,6 +7852,13 @@ suite "GPU filter chain":
     check context.lastBindings.uniforms[1].values == @[
       0.2734375'f32, 0.21875, 0.109375, 0.03125]
     host.endGpuFrame(wideFrame)
+    let opacityChain = host.newGpuFilterChain(namespace,
+      [opacityStage(0.5)], colorMatrix = matrix)
+    let opacityFrame = host.beginGpuFrame()
+    check opacityChain.submit(source, output, scratch)
+    check context.lastBindings.uniforms[1].values == @[
+      float32(ord(gcamStraight)), 0.5, 0, 0]
+    host.endGpuFrame(opacityFrame)
     matrix.release()
     blur.release()
     shadow.release()

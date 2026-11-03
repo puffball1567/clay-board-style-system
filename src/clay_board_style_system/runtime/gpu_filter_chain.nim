@@ -12,11 +12,13 @@ type
   GpuFilterStageKind* = enum
     gfskColorMatrix,
     gfskGaussianBlur,
-    gfskDropShadow
+    gfskDropShadow,
+    gfskOpacity
 
   GpuFilterStage* = object
     kindValue: GpuFilterStageKind
     matrixValue: LayerColorFilter
+    opacityValue: float32
     offsetXValue, offsetYValue: float32
     colorValue: Color
     blurRadiusValue: int
@@ -31,6 +33,12 @@ type
 
 proc colorMatrixStage*(filter: LayerColorFilter): GpuFilterStage =
   GpuFilterStage(kindValue: gfskColorMatrix, matrixValue: filter)
+
+proc opacityStage*(opacity: float32): GpuFilterStage =
+  if opacity.classify in {fcNan, fcInf, fcNegInf} or
+      opacity < 0 or opacity > 1:
+    raise newException(ValueError, "GPU filter opacity must be finite and normalized")
+  GpuFilterStage(kindValue: gfskOpacity, opacityValue: opacity)
 
 proc gaussianBlurStage*(radius = 2): GpuFilterStage =
   if radius < 0 or radius > MaxGpuBlurRadius:
@@ -68,7 +76,7 @@ proc newGpuFilterChain*(
     raise newException(ValueError, "GPU filter chain stage count is invalid")
   for stage in stages:
     case stage.kindValue
-    of gfskColorMatrix:
+    of gfskColorMatrix, gfskOpacity:
       if not colorMatrix.belongsTo(host, namespace):
         raise newException(ValueError,
           "GPU filter chain color matrix material belongs to another host")
@@ -95,7 +103,7 @@ proc belongsTo*(
     return false
   for stage in chain.stages:
     case stage.kindValue
-    of gfskColorMatrix:
+    of gfskColorMatrix, gfskOpacity:
       if not chain.colorMatrix.belongsTo(host, namespace): return false
     of gfskGaussianBlur:
       if not chain.gaussianBlur.belongsTo(host, namespace): return false
@@ -145,7 +153,7 @@ proc submit*(
         "GPU filter chain cannot overwrite a presentation-retained target")
   for stage in chain.stages:
     case stage.kindValue
-    of gfskColorMatrix:
+    of gfskColorMatrix, gfskOpacity:
       if not chain.colorMatrix.belongsTo(chain.host, chain.namespace):
         raise newException(ValueError, "GPU filter chain color matrix material is closed")
     of gfskGaussianBlur:
@@ -166,6 +174,9 @@ proc submit*(
     of gfskColorMatrix:
       discard chain.colorMatrix.submit(current, output,
         stage.matrixValue, alphaMode)
+    of gfskOpacity:
+      discard chain.colorMatrix.submit(current, output,
+        nil, alphaMode, stage.opacityValue)
     of gfskGaussianBlur:
       discard chain.gaussianBlur.submit(current, scratch[2],
         output, alphaMode, stage.blurRadiusValue)

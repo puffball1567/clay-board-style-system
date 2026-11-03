@@ -1,5 +1,7 @@
 ## GPU postprocess for the same encoded-sRGB RGB matrix used by Canvas layers.
 ## Import explicitly; the ordinary UI and CPU filter path remains GPU-free.
+import std/math
+
 import ../paint/[gpu_host_compositor, layer_color_filter]
 import ./[gpu_host, gpu_shader_builder]
 
@@ -45,6 +47,7 @@ void main()
     dot(u_cbssColorRows[0], channels),
     dot(u_cbssColorRows[1], channels),
     dot(u_cbssColorRows[2], channels)), 0.0, 1.0);
+  alpha *= u_cbssFilterParams.y;
   gl_FragColor = vec4(filtered * alpha, alpha);
 }
 """,
@@ -139,12 +142,17 @@ proc submit*(
     material: GpuColorMatrixMaterial;
     source, destination: GpuResourceHandle;
     filter: LayerColorFilter;
-    sourceAlphaMode = gcamStraight
+    sourceAlphaMode = gcamStraight;
+    opacity = 1'f32
 ): bool =
   ## Filters one sampled RGBA8/BGRA8 source into a same-size RGBA8 target.
+  ## Opacity scales premultiplied RGB and alpha after the RGB matrix.
   ## Output pixels are premultiplied; use gcamPremultiplied for presentation.
   if material.isClosed:
     raise newException(ValueError, "GPU color matrix material is closed")
+  if opacity.classify in {fcNan, fcInf, fcNegInf} or
+      opacity < 0 or opacity > 1:
+    raise newException(ValueError, "GPU color matrix opacity must be finite and normalized")
   let host = material.host
   if source.namespace != material.namespace or
       destination.namespace != material.namespace or source == destination:
@@ -181,7 +189,7 @@ proc submit*(
         uniforms: @[
           GpuUniformBinding(uniform: material.rowsUniform, values: rows),
           GpuUniformBinding(uniform: material.paramsUniform,
-            values: @[float32(ord(sourceAlphaMode)), 0'f32, 0, 0]),
+            values: @[float32(ord(sourceAlphaMode)), opacity, 0'f32, 0]),
           GpuUniformBinding(uniform: material.uvUniform, values: uv)
         ],
         textures: @[
