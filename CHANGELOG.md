@@ -28,6 +28,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added a GPU alpha-mask pass and filter-chain stage for sampled surfaces,
+  preserving premultiplied color and transparent coverage.
+
 - Added GPU raster filter-chain replacement, so unchanged raster content can
   receive updated effects without another upload or UI registration.
 

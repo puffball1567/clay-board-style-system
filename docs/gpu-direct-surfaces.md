@@ -84,6 +84,29 @@ Pass `opacity = 0..1` to `GpuColorMatrixMaterial.submit()` to fade the filtered
 result. The opacity multiplies both alpha and premultiplied RGB. It defaults to
 one, so existing matrix output is unchanged.
 
+## GPU alpha mask postprocess
+
+Import `runtime/gpu_alpha_mask` to multiply a sampled GPU surface by another
+surface's alpha. Compile `gpuAlphaMaskVertexSource()` and
+`gpuAlphaMaskFragmentSource()` for the selected backend, then create a
+`GpuAlphaMaskMaterial` outside a frame. The source and mask are sampled RGBA8
+or BGRA8 Textures or RenderTargets of the same size; the destination is a
+distinct RGBA8 RenderTarget. Mask RGB is ignored.
+
+```nim
+let frame = host.beginGpuFrame()
+discard maskMaterial.submit(source, coverage, maskedTarget, gcamStraight)
+discard display.queueGpuDisplayFrame(maskedTarget, frame)
+host.endGpuFrame(frame)
+```
+
+The pass converts straight source color to premultiplied alpha, then multiplies
+color and alpha by the mask coverage. It also accepts premultiplied or opaque
+source alpha modes. The output uses `gcamPremultiplied` for presentation.
+Use `alphaMaskStage(coverage)` in an ordered filter chain, supplying the
+`alphaMask` material when constructing it. The mask must remain distinct from
+the chain's writable render targets. The mask may share the source resource.
+
 ## GPU Gaussian blur postprocess
 
 Import `runtime/gpu_gaussian_blur` for a separable binomial Gaussian blur with
@@ -138,8 +161,9 @@ GPU offscreen composition target.
 ## Ordered GPU filter chains
 
 Import `runtime/gpu_filter_chain` to combine the RGB matrix, opacity, Gaussian
-blur, and drop-shadow passes on one GPU-owned surface. Create only the materials used
-by the chain, then supply their references when constructing it. A chain accepts
+blur, drop-shadow, and alpha-mask passes on one GPU-owned surface. Create only
+the materials used by the chain, then supply their references when constructing
+it. A chain accepts
 one to eight immutable stages. It does not own the materials or render targets.
 
 ```nim
