@@ -1136,6 +1136,8 @@ Same-size source replacement keeps its display and Style registrations while
 forcing one full upload of the new image before returning to dirty updates.
 Filter-chain replacement keeps those registrations and reprocesses the current
 raster without a redundant texture upload.
+Explicit refresh requests do the same when an external GPU input such as a mask
+changes while the raster revision stays fixed.
 The filtered raster can also serve as a Style-owned Custom Paint underlay,
 overlay, or alpha mask without an extra UI node. Underlays and overlays use
 direct/readback/hybrid presentation; masks use completed raster pixels in a

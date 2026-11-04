@@ -226,6 +226,12 @@ The next queued frame reprocesses the current raster even if its revision is
 unchanged, without another texture upload. The replacement chain must belong
 to the same host namespace. Keep materials used by already queued frames alive
 until those frames complete.
+When a chain reads an external GPU resource such as an alpha mask, call
+`filtered.requestReprocess()` after changing that resource. The next queued
+frame applies the current chain to the unchanged raster without uploading it
+again. If the display ring is full, the request remains pending until a frame
+can be queued. Collect that frame through the usual display or Style handle to
+publish its pixels and invalidate its UI consumers.
 The output remains premultiplied on the GPU, and the existing readback path
 normalizes it for CPU Canvas presentation. Close the adapter after queued
 frames drain, before releasing its chain materials. This provides GPU effects
