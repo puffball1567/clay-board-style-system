@@ -28,6 +28,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added explicit GPU raster filter refresh requests for changing external
+  inputs such as masks, without re-uploading unchanged raster content.
+
 - Added a GPU alpha-mask pass and filter-chain stage for sampled surfaces,
   preserving premultiplied color and transparent coverage.
 

@@ -8034,9 +8034,11 @@ suite "GPU raster filter display":
     raster.replacePixels(@[0'u8, 0, 255, 255,
       0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255])
     check raster.publish()
+    check filtered.requestReprocess()
     let blocked = host.beginGpuFrame()
     check not filtered.queueUpdatedGpuRasterFrame(blocked)
     host.endGpuFrame(blocked)
+    check not filtered.requestReprocess()
     check context.drawSubmits == 2
     check context.textureUpdates == 1
     check filtered.displaySurface().collectGpuDisplayFrame()
@@ -8074,6 +8076,18 @@ suite "GPU raster filter display":
     check filtered.queueUpdatedGpuRasterFrame(recolored)
     host.endGpuFrame(recolored)
     check context.drawSubmits == 5
+    check context.textureUpdates == 3
+    discard display.collectGpuDisplayFrame()
+    check filtered.lastQueuedRevision == replacement.revision
+    check filtered.requestReprocess()
+    check not filtered.requestReprocess()
+    check filtered.lastQueuedRevision == replacement.revision
+    let requested = host.beginGpuFrame()
+    check filtered.queueUpdatedGpuRasterFrame(requested)
+    check not filtered.queueUpdatedGpuRasterFrame(requested)
+    host.endGpuFrame(requested)
+    check filtered.lastQueuedRevision == replacement.revision
+    check context.drawSubmits == 6
     check context.textureUpdates == 3
     discard display.collectGpuDisplayFrame()
     check filtered.closeGpuRasterFilterDisplay()
@@ -8160,6 +8174,14 @@ suite "GPU raster filter Style material":
     check material.queueGpuFrame(recoloredFrame)
     host.endGpuFrame(recoloredFrame)
     check material.collectGpuFrame()
+    check ui.consumeInvalidation().roots == @[button.container.id]
+    let unchangedRevision = filtered.source().revision
+    check filtered.requestReprocess()
+    let effectFrame = host.beginGpuFrame()
+    check material.queueGpuFrame(effectFrame)
+    host.endGpuFrame(effectFrame)
+    check material.collectGpuFrame()
+    check filtered.source().revision == unchangedRevision
     check ui.consumeInvalidation().roots == @[button.container.id]
     check material.unregister()
     check not material.valid

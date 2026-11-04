@@ -15,6 +15,7 @@ type
     outputs: seq[GpuResourceHandle]
     nextOutput: int
     lastQueuedRevisionValue: uint64
+    reprocessRequested: bool
     completedEpochValue: uint64
     closedValue: bool
 
@@ -131,6 +132,16 @@ proc replaceFilterChain*(
 proc lastQueuedRevision*(surface: GpuRasterFilterDisplay): uint64 =
   if surface.isNil: 0'u64 else: surface.lastQueuedRevisionValue
 
+proc requestReprocess*(surface: GpuRasterFilterDisplay): bool {.discardable.} =
+  ## Reapply the current chain when an external GPU input changes without a
+  ## new raster revision. Keep the request until a frame is actually queued.
+  if surface.isStale:
+    raise newException(GpuHostError, "GPU raster filter display is stale")
+  if surface.reprocessRequested:
+    return false
+  surface.reprocessRequested = true
+  true
+
 proc completedEpoch*(surface: GpuRasterFilterDisplay): uint64 =
   ## Advances when this adapter collects a completed display frame.
   if surface.isNil: 0'u64 else: surface.completedEpochValue
@@ -160,7 +171,8 @@ proc queueUpdatedGpuRasterFrame*(
     raise newException(GpuHostError,
       "GPU raster filter display requires its active host frame")
   let revision = surface.upload.source().revision
-  if revision == surface.lastQueuedRevisionValue:
+  if revision == surface.lastQueuedRevisionValue and
+      not surface.reprocessRequested:
     return false
   var selected = -1
   for offset in 0 ..< surface.outputs.len:
@@ -177,6 +189,7 @@ proc queueUpdatedGpuRasterFrame*(
   if not surface.display.queueGpuDisplayFrame(output, frame):
     return false
   surface.lastQueuedRevisionValue = revision
+  surface.reprocessRequested = false
   surface.nextOutput = (selected + 1) mod surface.outputs.len
   true
 

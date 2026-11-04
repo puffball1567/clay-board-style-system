@@ -816,8 +816,22 @@ proc verifyGpuRasterFilterDisplayPixels(host: GpuHost;
   display.readbackSurface().rasterSurface.pixels.requireRasterPixel(
     5, 2, 2, Pixel(),
     "replacement raster clears pixels from the previous source")
+  let maskMaterial = host.newGpuAlphaMaskMaterial(ns,
+    compileShader(gpuAlphaMaskVertexSource(), shaderc,
+      shaderIncludes, workDirectory),
+    compileShader(gpuAlphaMaskFragmentSource(), shaderc,
+      shaderIncludes, workDirectory))
+  let mask = host.createGpuTexture(ns, GpuTextureDescriptor(
+    width: 5, height: 5, format: gtfRgba8,
+    usage: {gtuSampled}, access: gtaDynamic,
+    label: "raster-filter-dynamic-mask"),
+    rgbaPixels(5, 5, proc(x, y: int): Pixel =
+      discard x
+      discard y
+      Pixel(alpha: 255)))
   let alternateChain = host.newGpuFilterChain(ns,
-    [colorMatrixStage(sepiaColorFilter(1))], colorMatrix = material)
+    [colorMatrixStage(sepiaColorFilter(1)), alphaMaskStage(mask)],
+    colorMatrix = material, alphaMask = maskMaterial)
   let sourceRevision = replacement.revision
   doAssert filtered.replaceFilterChain(alternateChain)
   doAssert filtered.displaySurface() == display
@@ -830,10 +844,27 @@ proc verifyGpuRasterFilterDisplayPixels(host: GpuHost;
   display.readbackSurface().rasterSurface.pixels.requireRasterPixel(
     5, 1, 1, Pixel(red: 196, green: 175, blue: 136, alpha: 255),
     "updated GPU filter chain reprocesses unchanged raster")
+  doAssert filtered.requestReprocess()
+  doAssert filtered.lastQueuedRevision == sourceRevision
+  let masked = host.beginGpuFrame()
+  host.updateGpuTexture(mask,
+    GpuTextureUpdateRegion(x: 1, y: 1, width: 1, height: 1),
+    @[255'u8, 0, 0, 128])
+  doAssert filtered.queueUpdatedGpuRasterFrame(masked)
+  host.endGpuFrame(masked)
+  drain()
+  doAssert display.readbackSurface().rasterSurface.publish()
+  display.readbackSurface().rasterSurface.pixels.requireRasterPixel(
+    5, 1, 1, Pixel(red: 196, green: 175, blue: 136, alpha: 128),
+    "updated GPU mask reprocesses unchanged raster")
+  doAssert filtered.source().revision == sourceRevision
+  doAssert filtered.lastQueuedRevision == sourceRevision
   doAssert filtered.closeGpuRasterFilterDisplay()
+  doAssert host.releaseGpuResource(mask)
+  maskMaterial.release()
   material.release()
   doAssert host.closeGpuNamespace(ns)
-  echo "GPU raster filter display: initial, dirty, and chain replacement pixels passed"
+  echo "GPU raster filter display: initial, dirty, chain replacement, and mask refresh pixels passed"
 
 proc verifyInstancedRects(host: GpuHost; shaderc, shaderIncludes, workDirectory: string) =
   doAssert host.backendInfo.instancingSupported
