@@ -1124,9 +1124,11 @@ Gaussian blur adds the first GPU spatial filter with an explicit sampled
 scratch target and premultiplied output. A same-host drop-shadow pass reuses
 that configurable blur,
 offsets and tints its alpha, and composites the original source above it.
+An alpha-mask pass multiplies a GPU-owned surface by another sampled surface's
+coverage while preserving premultiplied output.
 An ordered GPU filter chain now combines up to eight matrix, opacity, blur,
-and shadow stages over three reusable scratch targets, carrying premultiplied
-alpha into each stage and producing a display-ready RenderTarget. An owned
+shadow, and alpha-mask stages over three reusable scratch targets, carrying
+premultiplied alpha into each stage and producing a display-ready RenderTarget. An owned
 raster-filter display adapter now bridges published CPU
 `RasterSurface` revisions through partial GPU uploads, the filter chain, and
 the existing direct/readback display surface with bounded output buffering.

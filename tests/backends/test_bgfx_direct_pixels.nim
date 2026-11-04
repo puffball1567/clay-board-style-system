@@ -21,7 +21,8 @@ import clay_board_style_system/runtime/[gpu_canvas, motion_scene,
 import clay_board_style_system/paint/[gpu_direct_compositor,
     gpu_host_compositor, layer_color_filter, paint_command]
 import clay_board_style_system/runtime/[gpu_direct_surface, gpu_host,
-    gpu_color_matrix, gpu_gaussian_blur, gpu_drop_shadow, gpu_filter_chain,
+    gpu_alpha_mask, gpu_color_matrix, gpu_gaussian_blur, gpu_drop_shadow,
+    gpu_filter_chain,
     gpu_raster_filter_display, gpu_shader_builder, gpu_shader_package]
 
 when sdl3CompileFlags.len > 0:
@@ -466,6 +467,81 @@ proc verifyGpuColorMatrixPixels(host: GpuHost;
   material.release()
   doAssert host.closeGpuNamespace(ns)
   echo "GPU color matrix: premultiplied, grayscale, sepia, hue rotation, and RenderTarget chaining pixels passed"
+
+proc verifyGpuAlphaMaskPixels(host: GpuHost;
+    shaderc, shaderIncludes, workDirectory: string) =
+  let ns = host.createGpuNamespace("gpu-alpha-mask-pixels", budget())
+  let material = host.newGpuAlphaMaskMaterial(ns,
+    compileShader(gpuAlphaMaskVertexSource(), shaderc,
+      shaderIncludes, workDirectory),
+    compileShader(gpuAlphaMaskFragmentSource(), shaderc,
+      shaderIncludes, workDirectory))
+  let matrix = host.newGpuColorMatrixMaterial(ns,
+    compileShader(gpuColorMatrixVertexSource(), shaderc,
+      shaderIncludes, workDirectory),
+    compileShader(gpuColorMatrixFragmentSource(), shaderc,
+      shaderIncludes, workDirectory))
+  let source = host.createGpuTexture(ns, GpuTextureDescriptor(
+    width: 2, height: 2, format: gtfRgba8,
+    usage: {gtuSampled}, access: gtaStatic,
+    label: "alpha-mask-source"),
+    rgbaPixels(2, 2, proc(x, y: int): Pixel =
+      if y == 0 and x == 0: Pixel(red: 255, alpha: 128)
+      elif y == 0: Pixel(green: 255, alpha: 255)
+      elif x == 0: Pixel(blue: 255, alpha: 255)
+      else: Pixel(red: 255)))
+  let mask = host.createGpuTexture(ns, GpuTextureDescriptor(
+    width: 2, height: 2, format: gtfRgba8,
+    usage: {gtuSampled}, access: gtaStatic,
+    label: "alpha-mask-coverage"),
+    rgbaPixels(2, 2, proc(x, y: int): Pixel =
+      if y == 0 and x == 0: Pixel(green: 255, alpha: 128)
+      elif y == 0: Pixel(red: 255)
+      else: Pixel(red: 255, green: 255, alpha: 255)))
+  proc target(label: string): GpuResourceHandle =
+    host.createGpuRenderTarget(ns, GpuRenderTargetDescriptor(
+      width: 2, height: 2, format: gtfRgba8,
+      usage: {gtuRenderTarget, gtuSampled, gtuBlitSource},
+      label: label))
+  let output = target("alpha-mask-output")
+  let chained = target("alpha-mask-chained")
+  let maskTarget = target("alpha-mask-render-target")
+  let scratch = [target("alpha-mask-scratch-0"),
+    target("alpha-mask-scratch-1"), target("alpha-mask-scratch-2")]
+  let swapRedBlue = colorMatrixFilter([
+    0'f32, 0, 1, 0,
+    0'f32, 1, 0, 0,
+    1'f32, 0, 0, 0
+  ])
+  let chain = host.newGpuFilterChain(ns,
+    [colorMatrixStage(swapRedBlue), alphaMaskStage(maskTarget)],
+    colorMatrix = matrix, alphaMask = material)
+  let frame = host.beginGpuFrame()
+  doAssert matrix.submit(mask, maskTarget, nil, gcamStraight)
+  doAssert material.submit(source, mask, output, gcamStraight)
+  doAssert chain.submit(source, chained, scratch, gcamStraight)
+  host.endGpuFrame(frame)
+  let pixels = host.readPixels(ns, output, 2, 2)
+  pixels.requirePixel(0, 0, Pixel(red: 64, alpha: 64),
+    "GPU alpha mask combines translucent source and half coverage")
+  pixels.requirePixel(1, 0, Pixel(),
+    "GPU alpha mask removes fully masked source")
+  pixels.requirePixel(0, 1, Pixel(blue: 255, alpha: 255),
+    "GPU alpha mask keeps unmasked source without mask RGB")
+  pixels.requirePixel(1, 1, Pixel(),
+    "GPU alpha mask keeps transparent source empty")
+  let chainedPixels = host.readPixels(ns, chained, 2, 2)
+  chainedPixels.requirePixel(0, 0, Pixel(blue: 64, alpha: 64),
+    "GPU filter chain masks premultiplied matrix output")
+  chainedPixels.requirePixel(0, 1, Pixel(red: 255, alpha: 255),
+    "GPU filter chain retains opaque masked pixel")
+  material.release()
+  matrix.release()
+  for handle in [source, mask, output, chained, maskTarget, scratch[0],
+      scratch[1], scratch[2]]:
+    doAssert host.releaseGpuResource(handle)
+  doAssert host.closeGpuNamespace(ns)
+  echo "GPU alpha mask: direct and chained premultiplied pixels passed"
 
 proc verifyGpuGaussianBlurPixels(host: GpuHost;
     shaderc, shaderIncludes, workDirectory: string) =
@@ -1218,6 +1294,7 @@ proc run() =
     host.verifyCanvasReadbackCancellation()
     host.verifyHybridDisplayPixels()
     host.verifyGpuColorMatrixPixels(shaderc, shaderIncludes, workDirectory)
+    host.verifyGpuAlphaMaskPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuGaussianBlurPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuDropShadowPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuFilterChainPixels(shaderc, shaderIncludes, workDirectory)

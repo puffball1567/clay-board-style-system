@@ -4,7 +4,8 @@ import std/math
 
 import ../core/color
 import ../paint/layer_color_filter
-import ./[gpu_color_matrix, gpu_gaussian_blur, gpu_drop_shadow, gpu_host]
+import ./[gpu_alpha_mask, gpu_color_matrix, gpu_gaussian_blur,
+  gpu_drop_shadow, gpu_host]
 
 const MaxGpuFilterStages* = 8
 
@@ -13,7 +14,8 @@ type
     gfskColorMatrix,
     gfskGaussianBlur,
     gfskDropShadow,
-    gfskOpacity
+    gfskOpacity,
+    gfskAlphaMask
 
   GpuFilterStage* = object
     kindValue: GpuFilterStageKind
@@ -22,6 +24,7 @@ type
     offsetXValue, offsetYValue: float32
     colorValue: Color
     blurRadiusValue: int
+    maskValue: GpuResourceHandle
 
   GpuFilterChain* = ref object
     host: GpuHost
@@ -30,6 +33,7 @@ type
     colorMatrix: GpuColorMatrixMaterial
     gaussianBlur: GpuGaussianBlurMaterial
     dropShadow: GpuDropShadowMaterial
+    alphaMask: GpuAlphaMaskMaterial
 
 proc colorMatrixStage*(filter: LayerColorFilter): GpuFilterStage =
   GpuFilterStage(kindValue: gfskColorMatrix, matrixValue: filter)
@@ -39,6 +43,10 @@ proc opacityStage*(opacity: float32): GpuFilterStage =
       opacity < 0 or opacity > 1:
     raise newException(ValueError, "GPU filter opacity must be finite and normalized")
   GpuFilterStage(kindValue: gfskOpacity, opacityValue: opacity)
+
+proc alphaMaskStage*(mask: GpuResourceHandle): GpuFilterStage =
+  ## Use the sampled mask's alpha; its RGB does not affect the source.
+  GpuFilterStage(kindValue: gfskAlphaMask, maskValue: mask)
 
 proc gaussianBlurStage*(radius = 2): GpuFilterStage =
   if radius < 0 or radius > MaxGpuBlurRadius:
@@ -68,7 +76,8 @@ proc newGpuFilterChain*(
     stages: openArray[GpuFilterStage];
     colorMatrix: GpuColorMatrixMaterial = nil;
     gaussianBlur: GpuGaussianBlurMaterial = nil;
-    dropShadow: GpuDropShadowMaterial = nil
+    dropShadow: GpuDropShadowMaterial = nil;
+    alphaMask: GpuAlphaMaskMaterial = nil
 ): GpuFilterChain =
   if host.isNil or not host.isReady() or not host.hasGpuNamespace(namespace):
     raise newException(ValueError, "GPU filter chain requires a ready host namespace")
@@ -88,9 +97,23 @@ proc newGpuFilterChain*(
       if not dropShadow.belongsTo(host, namespace):
         raise newException(ValueError,
           "GPU filter chain shadow material belongs to another host")
+    of gfskAlphaMask:
+      if not alphaMask.belongsTo(host, namespace):
+        raise newException(ValueError,
+          "GPU filter chain alpha mask material belongs to another host")
+      if stage.maskValue.namespace != namespace or
+          not host.isGpuResourceLive(stage.maskValue):
+        raise newException(ValueError,
+          "GPU filter chain alpha mask resource is unavailable")
+      let maskInfo = host.gpuPresentableResourceInfo(stage.maskValue)
+      if maskInfo.kind notin {grkTexture, grkRenderTarget} or
+          gtuSampled notin maskInfo.usage or
+          maskInfo.format notin {gtfRgba8, gtfBgra8}:
+        raise newException(ValueError,
+          "GPU filter chain alpha mask must be sampled RGBA8 or BGRA8")
   GpuFilterChain(host: host, namespace: namespace, stages: @stages,
     colorMatrix: colorMatrix, gaussianBlur: gaussianBlur,
-    dropShadow: dropShadow)
+    dropShadow: dropShadow, alphaMask: alphaMask)
 
 proc stageCount*(chain: GpuFilterChain): int =
   if chain.isNil: 0 else: chain.stages.len
@@ -109,6 +132,9 @@ proc belongsTo*(
       if not chain.gaussianBlur.belongsTo(host, namespace): return false
     of gfskDropShadow:
       if not chain.dropShadow.belongsTo(host, namespace): return false
+    of gfskAlphaMask:
+      if not chain.alphaMask.belongsTo(host, namespace) or
+          not host.isGpuResourceLive(stage.maskValue): return false
   true
 
 proc submit*(
@@ -162,6 +188,21 @@ proc submit*(
     of gfskDropShadow:
       if not chain.dropShadow.belongsTo(chain.host, chain.namespace):
         raise newException(ValueError, "GPU filter chain shadow material is closed")
+    of gfskAlphaMask:
+      if not chain.alphaMask.belongsTo(chain.host, chain.namespace):
+        raise newException(ValueError, "GPU filter chain alpha mask material is closed")
+      if stage.maskValue.namespace != chain.namespace or
+          stage.maskValue in [destination, scratch[0], scratch[1], scratch[2]]:
+        raise newException(ValueError,
+          "GPU filter chain mask must not alias a writable target")
+      let maskInfo = chain.host.gpuPresentableResourceInfo(stage.maskValue)
+      if maskInfo.kind notin {grkTexture, grkRenderTarget} or
+          gtuSampled notin maskInfo.usage or
+          maskInfo.format notin {gtfRgba8, gtfBgra8} or
+          maskInfo.width != sourceInfo.width or
+          maskInfo.height != sourceInfo.height:
+        raise newException(ValueError,
+          "GPU filter chain mask must be a sampled RGBA8 or BGRA8 source of matching size")
   var current = source
   var alphaMode = sourceAlphaMode
   for index, stage in chain.stages:
@@ -190,6 +231,9 @@ proc submit*(
       discard chain.dropShadow.submit(current, scratch[2], blurred,
         output, stage.offsetXValue, stage.offsetYValue,
         stage.colorValue, alphaMode, stage.blurRadiusValue)
+    of gfskAlphaMask:
+      discard chain.alphaMask.submit(current, stage.maskValue,
+        output, alphaMode)
     current = output
     alphaMode = gcamPremultiplied
   true
