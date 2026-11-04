@@ -1126,8 +1126,11 @@ that configurable blur,
 offsets and tints its alpha, and composites the original source above it.
 An alpha-mask pass multiplies a GPU-owned surface by another sampled surface's
 coverage while preserving premultiplied output.
+An independent-alpha source-over pass now composites two sampled GPU surfaces
+into a premultiplied RenderTarget. Its filter-chain stage places an external
+foreground over the current GPU-owned result.
 An ordered GPU filter chain now combines up to eight matrix, opacity, blur,
-shadow, and alpha-mask stages over three reusable scratch targets, carrying
+shadow, alpha-mask, and source-over stages over three reusable scratch targets, carrying
 premultiplied alpha into each stage and producing a display-ready RenderTarget. An owned
 raster-filter display adapter now bridges published CPU
 `RasterSurface` revisions through partial GPU uploads, the filter chain, and
