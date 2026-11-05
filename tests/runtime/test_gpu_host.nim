@@ -14,6 +14,7 @@ import clay_board_style_system/runtime/animation_clock
 import clay_board_style_system/runtime/button
 import clay_board_style_system/runtime/gpu_canvas
 import clay_board_style_system/runtime/gpu_alpha_mask
+import clay_board_style_system/runtime/gpu_composite
 import clay_board_style_system/runtime/gpu_color_matrix
 import clay_board_style_system/runtime/gpu_gaussian_blur
 import clay_board_style_system/runtime/gpu_drop_shadow
@@ -7708,6 +7709,76 @@ suite "GPU alpha mask postprocess":
     host.endGpuFrame(frame)
     material.release()
     for handle in [source, mask, wrongSize, output]:
+      doAssert host.releaseGpuResource(handle)
+    doAssert host.closeGpuNamespace(namespace)
+    host.close()
+
+suite "GPU source-over composition":
+  test "two inputs use separate alpha modes and reject target feedback":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("composite",
+      GpuResourceBudget(persistentBytes: 65536,
+        workUnitsPerFrame: 3, maxResources: 24))
+    proc artifact(source: GpuShaderSource): GpuShaderArtifact =
+      GpuShaderArtifact(
+        descriptor: GpuShaderDescriptor(stage: source.stage),
+        bindingLayout: source.gpuShaderBindingLayout(),
+        bytecode: @[1'u8],
+        sourceHash: source.gpuShaderSourceHash())
+    let vertex = artifact(gpuCompositeVertexSource())
+    let fragment = artifact(gpuCompositeFragmentSource())
+    var wrong = fragment
+    inc wrong.sourceHash
+    expect ValueError:
+      discard host.newGpuCompositeMaterial(namespace, vertex, wrong)
+    check context.shaderCreates == 0
+    let material = host.newGpuCompositeMaterial(namespace, vertex, fragment)
+    let backdrop = host.createGpuTexture(namespace,
+      textureDescriptor(width = 2, height = 2, usage = {gtuSampled}))
+    let foreground = host.createGpuTexture(namespace,
+      textureDescriptor(width = 2, height = 2, usage = {gtuSampled}))
+    let wrongSize = host.createGpuTexture(namespace,
+      textureDescriptor(width = 3, height = 2, usage = {gtuSampled}))
+    let output = host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(2, 2))
+    let scratch = [host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(2, 2)), host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(2, 2)), host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(2, 2))]
+    expect GpuHostError:
+      discard material.submit(backdrop, foreground, output)
+    expect ValueError:
+      discard host.newGpuFilterChain(namespace,
+        [compositeStage(foreground)])
+    let chain = host.newGpuFilterChain(namespace,
+      [compositeStage(foreground, gcamPremultiplied)],
+      composite = material)
+    let invalidChain = host.newGpuFilterChain(namespace,
+      [compositeStage(output)], composite = material)
+    let frame = host.beginGpuFrame()
+    expect ValueError:
+      discard material.submit(backdrop, foreground, backdrop)
+    expect ValueError:
+      discard material.submit(backdrop, wrongSize, output)
+    expect ValueError:
+      discard invalidChain.submit(backdrop, output, scratch)
+    check context.drawSubmits == 0
+    check material.submit(backdrop, foreground, output,
+      gcamOpaque, gcamStraight)
+    check context.lastBindings.uniforms[0].values == @[
+      float32(ord(gcamOpaque)), float32(ord(gcamStraight)), 0, 0]
+    check context.lastBindings.textures.len == 2
+    check context.lastBindings.textures[0].stage == 0
+    check context.lastBindings.textures[1].stage == 1
+    check chain.submit(backdrop, output, scratch)
+    check context.lastBindings.uniforms[0].values == @[
+      float32(ord(gcamStraight)), float32(ord(gcamPremultiplied)), 0, 0]
+    check context.drawSubmits == 2
+    host.endGpuFrame(frame)
+    material.release()
+    for handle in [backdrop, foreground, wrongSize, output,
+        scratch[0], scratch[1], scratch[2]]:
       doAssert host.releaseGpuResource(handle)
     doAssert host.closeGpuNamespace(namespace)
     host.close()

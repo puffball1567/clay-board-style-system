@@ -21,7 +21,8 @@ import clay_board_style_system/runtime/[gpu_canvas, motion_scene,
 import clay_board_style_system/paint/[gpu_direct_compositor,
     gpu_host_compositor, layer_color_filter, paint_command]
 import clay_board_style_system/runtime/[gpu_direct_surface, gpu_host,
-    gpu_alpha_mask, gpu_color_matrix, gpu_gaussian_blur, gpu_drop_shadow,
+    gpu_alpha_mask, gpu_color_matrix, gpu_composite, gpu_gaussian_blur,
+    gpu_drop_shadow,
     gpu_filter_chain,
     gpu_raster_filter_display, gpu_shader_builder, gpu_shader_package]
 
@@ -542,6 +543,73 @@ proc verifyGpuAlphaMaskPixels(host: GpuHost;
     doAssert host.releaseGpuResource(handle)
   doAssert host.closeGpuNamespace(ns)
   echo "GPU alpha mask: direct and chained premultiplied pixels passed"
+
+proc verifyGpuCompositePixels(host: GpuHost;
+    shaderc, shaderIncludes, workDirectory: string) =
+  let ns = host.createGpuNamespace("gpu-composite-pixels", budget())
+  let composite = host.newGpuCompositeMaterial(ns,
+    compileShader(gpuCompositeVertexSource(), shaderc,
+      shaderIncludes, workDirectory),
+    compileShader(gpuCompositeFragmentSource(), shaderc,
+      shaderIncludes, workDirectory))
+  let matrix = host.newGpuColorMatrixMaterial(ns,
+    compileShader(gpuColorMatrixVertexSource(), shaderc,
+      shaderIncludes, workDirectory),
+    compileShader(gpuColorMatrixFragmentSource(), shaderc,
+      shaderIncludes, workDirectory))
+  let backdrop = host.createGpuTexture(ns, GpuTextureDescriptor(
+    width: 2, height: 2, format: gtfRgba8,
+    usage: {gtuSampled}, access: gtaStatic,
+    label: "composite-backdrop"),
+    rgbaPixels(2, 2, proc(x, y: int): Pixel =
+      if y == 0 and x == 0: Pixel(blue: 255, alpha: 128)
+      elif y == 0: Pixel(green: 255, alpha: 255)
+      elif x == 0: Pixel(red: 255)
+      else: Pixel(blue: 255, alpha: 255)))
+  let foreground = host.createGpuTexture(ns, GpuTextureDescriptor(
+    width: 2, height: 2, format: gtfRgba8,
+    usage: {gtuSampled}, access: gtaStatic,
+    label: "composite-foreground"),
+    rgbaPixels(2, 2, proc(x, y: int): Pixel =
+      if y == 0 and x == 0: Pixel(red: 255, alpha: 128)
+      elif y == 0: Pixel(green: 255)
+      elif x == 0: Pixel(green: 255, alpha: 128)
+      else: Pixel(red: 255, green: 255, alpha: 255)))
+  proc target(label: string): GpuResourceHandle =
+    host.createGpuRenderTarget(ns, GpuRenderTargetDescriptor(
+      width: 2, height: 2, format: gtfRgba8,
+      usage: {gtuRenderTarget, gtuSampled, gtuBlitSource},
+      label: label))
+  let premultipliedForeground = target("composite-foreground-target")
+  let output = target("composite-output")
+  let chained = target("composite-chained")
+  let scratch = [target("composite-scratch-0"),
+    target("composite-scratch-1"), target("composite-scratch-2")]
+  let chain = host.newGpuFilterChain(ns,
+    [compositeStage(foreground)], composite = composite)
+  let frame = host.beginGpuFrame()
+  doAssert matrix.submit(foreground, premultipliedForeground, nil)
+  doAssert composite.submit(backdrop, premultipliedForeground,
+    output, gcamStraight, gcamPremultiplied)
+  doAssert chain.submit(backdrop, chained, scratch)
+  host.endGpuFrame(frame)
+  for item in [output, chained]:
+    let pixels = host.readPixels(ns, item, 2, 2)
+    pixels.requirePixel(0, 0, Pixel(red: 128, blue: 64, alpha: 192),
+      "GPU source-over combines two translucent pixels")
+    pixels.requirePixel(1, 0, Pixel(green: 255, alpha: 255),
+      "GPU source-over preserves backdrop through transparent foreground")
+    pixels.requirePixel(0, 1, Pixel(green: 128, alpha: 128),
+      "GPU source-over discards transparent backdrop color")
+    pixels.requirePixel(1, 1, Pixel(red: 255, green: 255, alpha: 255),
+      "GPU source-over keeps opaque foreground")
+  composite.release()
+  matrix.release()
+  for handle in [backdrop, foreground, premultipliedForeground,
+      output, chained, scratch[0], scratch[1], scratch[2]]:
+    doAssert host.releaseGpuResource(handle)
+  doAssert host.closeGpuNamespace(ns)
+  echo "GPU source-over: direct RenderTarget and chained pixels passed"
 
 proc verifyGpuGaussianBlurPixels(host: GpuHost;
     shaderc, shaderIncludes, workDirectory: string) =
@@ -1329,6 +1397,7 @@ proc run() =
     host.verifyGpuGaussianBlurPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuDropShadowPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuFilterChainPixels(shaderc, shaderIncludes, workDirectory)
+    host.verifyGpuCompositePixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuRasterFilterDisplayPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyInstancedRects(shaderc, shaderIncludes, workDirectory)
     host.verifyMotionSceneCanvas(shaderc, shaderIncludes, workDirectory)

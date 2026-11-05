@@ -28,6 +28,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added a same-host GPU source-over pass and filter-chain stage for combining
+  two sampled surfaces with independent alpha modes and premultiplied output.
+
 - Added explicit GPU raster filter refresh requests for changing external
   inputs such as masks, without re-uploading unchanged raster content.
 

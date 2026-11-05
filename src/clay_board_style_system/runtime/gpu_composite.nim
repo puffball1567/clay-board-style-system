@@ -1,0 +1,220 @@
+## Same-host source-over composition of two sampled GPU surfaces.
+## The output is premultiplied RGBA8.
+import ../paint/gpu_host_compositor
+import ./[gpu_host, gpu_shader_builder]
+
+type
+  GpuCompositeVertex = object
+    x, y, z: float32
+    u, v: float32
+
+  GpuCompositeMaterial* = ref object
+    host: GpuHost
+    namespace: GpuNamespaceId
+    vertexShader, fragmentShader: GpuResourceHandle
+    pipeline, vertexBuffer: GpuResourceHandle
+    paramsUniform, backdropUvUniform, foregroundUvUniform: GpuResourceHandle
+    backdropSampler, foregroundSampler: GpuResourceHandle
+
+proc gpuCompositeVertexSource*(): GpuShaderSource =
+  gpuHostDirectCompositeVertexSource()
+
+proc gpuCompositeFragmentSource*(): GpuShaderSource =
+  GpuShaderSource(
+    stage: gssFragment,
+    label: "cbss-gpu-composite-fragment",
+    source: """$input v_texcoord0
+#include "bgfx_shader.sh"
+SAMPLER2D(s_cbssBackdrop, 0);
+SAMPLER2D(s_cbssForeground, 1);
+uniform vec4 u_cbssCompositeParams;
+uniform vec4 u_cbssBackdropUv;
+uniform vec4 u_cbssForegroundUv;
+void main()
+{
+  vec2 backdropUv = mix(u_cbssBackdropUv.xy,
+    u_cbssBackdropUv.zw, v_texcoord0);
+  vec2 foregroundUv = mix(u_cbssForegroundUv.xy,
+    u_cbssForegroundUv.zw, v_texcoord0);
+  vec4 backdrop = texture2D(s_cbssBackdrop, backdropUv);
+  vec4 foreground = texture2D(s_cbssForeground, foregroundUv);
+  if (u_cbssCompositeParams.x > 1.5) {
+    backdrop.a = 1.0;
+  } else if (u_cbssCompositeParams.x < 0.5) {
+    backdrop.rgb *= backdrop.a;
+  }
+  if (u_cbssCompositeParams.y > 1.5) {
+    foreground.a = 1.0;
+  } else if (u_cbssCompositeParams.y < 0.5) {
+    foreground.rgb *= foreground.a;
+  }
+  gl_FragColor = foreground + backdrop * (1.0 - foreground.a);
+}
+""",
+    varyingDefinitions: gpuHostDirectCompositeVaryingDefinitions,
+    inputs: @[
+      GpuShaderInterfaceEntry(slot: gsisTexCoord0, valueType: gsvtVec2)
+    ]
+  )
+
+proc isClosed*(material: GpuCompositeMaterial): bool =
+  material.isNil or material.host.isNil
+
+proc belongsTo*(
+    material: GpuCompositeMaterial; host: GpuHost; namespace: GpuNamespaceId
+): bool =
+  not material.isClosed and material.host == host and
+    material.namespace == namespace
+
+proc release*(material: GpuCompositeMaterial) =
+  ## Release after the final submitted frame while the host is still open.
+  if material.isClosed:
+    return
+  for handle in [material.foregroundSampler, material.backdropSampler,
+      material.foregroundUvUniform, material.backdropUvUniform,
+      material.paramsUniform, material.vertexBuffer, material.pipeline,
+      material.fragmentShader, material.vertexShader]:
+    if material.host.isGpuResourceLive(handle):
+      discard material.host.releaseGpuResource(handle)
+  material.host = nil
+
+proc newGpuCompositeMaterial*(
+    host: GpuHost; namespace: GpuNamespaceId;
+    vertexArtifact, fragmentArtifact: GpuShaderArtifact
+): GpuCompositeMaterial =
+  if host.isNil or not host.isReady():
+    raise newException(ValueError, "GPU composite material requires a ready host")
+  if vertexArtifact.descriptor.stage != gssVertex or
+      vertexArtifact.sourceHash != gpuCompositeVertexSource().gpuShaderSourceHash() or
+      fragmentArtifact.descriptor.stage != gssFragment or
+      fragmentArtifact.sourceHash != gpuCompositeFragmentSource().gpuShaderSourceHash():
+    raise newException(ValueError,
+      "GPU composite shader artifacts do not match the built-in shaders")
+  result = GpuCompositeMaterial(host: host, namespace: namespace)
+  let layout = @[
+    GpuVertexAttribute(semantic: gvsPosition, components: 3,
+      componentType: gvctFloat),
+    GpuVertexAttribute(semantic: gvsTexCoord0, components: 2,
+      componentType: gvctFloat)
+  ]
+  let vertices = [
+    GpuCompositeVertex(x: -1, y: -1, u: 0, v: 1),
+    GpuCompositeVertex(x: -1, y: 1, u: 0, v: 0),
+    GpuCompositeVertex(x: 1, y: -1, u: 1, v: 1),
+    GpuCompositeVertex(x: 1, y: 1, u: 1, v: 0)
+  ]
+  var vertexBytes = newSeq[byte](sizeof(vertices))
+  copyMem(addr vertexBytes[0], unsafeAddr vertices[0], vertexBytes.len)
+  try:
+    result.vertexShader = host.createGpuShader(namespace, vertexArtifact)
+    result.fragmentShader = host.createGpuShader(namespace, fragmentArtifact)
+    result.pipeline = host.createGpuGraphicsPipeline(namespace,
+      GpuGraphicsPipelineDescriptor(
+        vertexShader: result.vertexShader,
+        fragmentShader: result.fragmentShader,
+        vertexLayout: layout,
+        colorFormat: gtfRgba8,
+        topology: gptTriangleStrip,
+        cullMode: gcmNone,
+        blend: opaqueGpuBlendState(),
+        label: "gpu-composite-pipeline"))
+    result.vertexBuffer = host.createGpuBuffer(namespace,
+      GpuBufferDescriptor(byteSize: uint64(vertexBytes.len),
+        role: gbrVertex, access: gbaStatic, vertexLayout: layout,
+        label: "gpu-composite-quad"), vertexBytes)
+    result.paramsUniform = host.createGpuUniform(namespace,
+      GpuUniformDescriptor(name: "u_cbssCompositeParams", uniformType: gutVec4,
+        arrayLength: 1, label: "gpu-composite-params"))
+    result.backdropUvUniform = host.createGpuUniform(namespace,
+      GpuUniformDescriptor(name: "u_cbssBackdropUv", uniformType: gutVec4,
+        arrayLength: 1, label: "gpu-composite-backdrop-uv"))
+    result.foregroundUvUniform = host.createGpuUniform(namespace,
+      GpuUniformDescriptor(name: "u_cbssForegroundUv", uniformType: gutVec4,
+        arrayLength: 1, label: "gpu-composite-foreground-uv"))
+    result.backdropSampler = host.createGpuSampler(namespace,
+      GpuSamplerDescriptor(name: "s_cbssBackdrop",
+        addressU: gsamClamp, addressV: gsamClamp, addressW: gsamClamp,
+        minFilter: gsfNearest, magFilter: gsfNearest,
+        mipFilter: gsfNearest, label: "gpu-composite-backdrop-sampler"))
+    result.foregroundSampler = host.createGpuSampler(namespace,
+      GpuSamplerDescriptor(name: "s_cbssForeground",
+        addressU: gsamClamp, addressV: gsamClamp, addressW: gsamClamp,
+        minFilter: gsfNearest, magFilter: gsfNearest,
+        mipFilter: gsfNearest, label: "gpu-composite-foreground-sampler"))
+  except CatchableError:
+    result.release()
+    raise
+
+proc submit*(
+    material: GpuCompositeMaterial;
+    backdrop, foreground, destination: GpuResourceHandle;
+    backdropAlphaMode = gcamStraight;
+    foregroundAlphaMode = gcamStraight
+): bool =
+  ## Foreground is placed over backdrop. Both inputs may share one resource.
+  if material.isClosed:
+    raise newException(ValueError, "GPU composite material is closed")
+  let host = material.host
+  if not host.hasActiveGpuFrame():
+    raise newException(GpuHostError, "GPU composite requires an active frame")
+  if backdrop.namespace != material.namespace or
+      foreground.namespace != material.namespace or
+      destination.namespace != material.namespace or
+      backdrop == destination or foreground == destination:
+    raise newException(ValueError,
+      "GPU composite resources must be in one namespace without target feedback")
+  let backdropInfo = host.gpuPresentableResourceInfo(backdrop)
+  let foregroundInfo = host.gpuPresentableResourceInfo(foreground)
+  let targetInfo = host.gpuPresentableResourceInfo(destination)
+  if backdropInfo.kind notin {grkTexture, grkRenderTarget} or
+      gtuSampled notin backdropInfo.usage or
+      backdropInfo.format notin {gtfRgba8, gtfBgra8} or
+      foregroundInfo.kind notin {grkTexture, grkRenderTarget} or
+      gtuSampled notin foregroundInfo.usage or
+      foregroundInfo.format notin {gtfRgba8, gtfBgra8} or
+      targetInfo.kind != grkRenderTarget or
+      gtuRenderTarget notin targetInfo.usage or
+      targetInfo.format != gtfRgba8 or
+      backdropInfo.width != targetInfo.width or
+      backdropInfo.height != targetInfo.height or
+      foregroundInfo.width != targetInfo.width or
+      foregroundInfo.height != targetInfo.height:
+    raise newException(ValueError, "GPU composite resource shapes are incompatible")
+  if host.isGpuResourcePresentationRetained(destination):
+    raise newException(GpuHostError,
+      "GPU composite cannot overwrite a presentation-retained target")
+  let backdropUv =
+    if backdropInfo.rowsBottomUp: @[0'f32, 1, 1, 0]
+    else: @[0'f32, 0, 1, 1]
+  let foregroundUv =
+    if foregroundInfo.rowsBottomUp: @[0'f32, 1, 1, 0]
+    else: @[0'f32, 0, 1, 1]
+  host.submitGpuDraw(material.namespace,
+    GpuGraphicsPassDescriptor(
+      viewport: GpuViewport(width: targetInfo.width, height: targetInfo.height),
+      renderTarget: destination,
+      clearColorEnabled: true,
+      clearColor: GpuClearColor()),
+    GpuDrawCommand(
+      pipeline: material.pipeline,
+      vertexBuffer: material.vertexBuffer,
+      vertexCount: 4,
+      bindings: GpuBindingSet(
+        uniforms: @[
+          GpuUniformBinding(uniform: material.paramsUniform,
+            values: @[float32(ord(backdropAlphaMode)),
+              float32(ord(foregroundAlphaMode)), 0'f32, 0]),
+          GpuUniformBinding(uniform: material.backdropUvUniform,
+            values: backdropUv),
+          GpuUniformBinding(uniform: material.foregroundUvUniform,
+            values: foregroundUv)
+        ],
+        textures: @[
+          GpuTextureBinding(stage: 0, sampler: material.backdropSampler,
+            texture: backdrop),
+          GpuTextureBinding(stage: 1, sampler: material.foregroundSampler,
+            texture: foreground)
+        ]
+      )
+    ))
+  true

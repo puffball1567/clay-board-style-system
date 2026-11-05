@@ -107,6 +107,30 @@ Use `alphaMaskStage(coverage)` in an ordered filter chain, supplying the
 `alphaMask` material when constructing it. The mask must remain distinct from
 the chain's writable render targets. The mask may share the source resource.
 
+## GPU source-over composition
+
+Import `runtime/gpu_composite` to place one sampled GPU surface over another.
+Compile `gpuCompositeVertexSource()` and `gpuCompositeFragmentSource()` for the
+selected backend, then create a `GpuCompositeMaterial` outside a frame. Both
+inputs may be sampled RGBA8 or BGRA8 Textures or RenderTargets of the same
+size. The destination is a distinct RGBA8 RenderTarget. The two inputs may
+share a resource, but neither may alias the destination.
+
+```nim
+let frame = host.beginGpuFrame()
+discard composite.submit(backdrop, foreground, combinedTarget,
+  backdropAlphaMode = gcamStraight,
+  foregroundAlphaMode = gcamPremultiplied)
+discard display.queueGpuDisplayFrame(combinedTarget, frame)
+host.endGpuFrame(frame)
+```
+
+The pass converts each input according to its alpha mode, then places the
+foreground over the backdrop. Its output is premultiplied RGBA8; present with
+`gcamPremultiplied`. Use `compositeStage(foreground, foregroundAlphaMode)` in a
+filter chain to place an external foreground over the current stage result.
+The foreground must remain distinct from all writable chain targets.
+
 ## GPU Gaussian blur postprocess
 
 Import `runtime/gpu_gaussian_blur` for a separable binomial Gaussian blur with
@@ -161,7 +185,7 @@ GPU offscreen composition target.
 ## Ordered GPU filter chains
 
 Import `runtime/gpu_filter_chain` to combine the RGB matrix, opacity, Gaussian
-blur, drop-shadow, and alpha-mask passes on one GPU-owned surface. Create only
+blur, drop-shadow, alpha-mask, and source-over passes on GPU-owned surfaces. Create only
 the materials used by the chain, then supply their references when constructing
 it. A chain accepts
 one to eight immutable stages. It does not own the materials or render targets.
