@@ -7719,7 +7719,7 @@ suite "GPU source-over composition":
     let host = openGpuHost(context.backend, ghoOwned)
     let namespace = host.createGpuNamespace("composite",
       GpuResourceBudget(persistentBytes: 65536,
-        workUnitsPerFrame: 3, maxResources: 24))
+        workUnitsPerFrame: 4, maxResources: 24))
     proc artifact(source: GpuShaderSource): GpuShaderArtifact =
       GpuShaderArtifact(
         descriptor: GpuShaderDescriptor(stage: source.stage),
@@ -7752,7 +7752,7 @@ suite "GPU source-over composition":
       discard host.newGpuFilterChain(namespace,
         [compositeStage(foreground)])
     let chain = host.newGpuFilterChain(namespace,
-      [compositeStage(foreground, gcamPremultiplied)],
+      [compositeStage(foreground, gcamPremultiplied, gcbmMultiply)],
       composite = material)
     let invalidChain = host.newGpuFilterChain(namespace,
       [compositeStage(output)], composite = material)
@@ -7771,10 +7771,18 @@ suite "GPU source-over composition":
     check context.lastBindings.textures.len == 2
     check context.lastBindings.textures[0].stage == 0
     check context.lastBindings.textures[1].stage == 1
+    check material.submit(backdrop, foreground, output,
+      blendMode = gcbmMultiply)
+    check context.lastBindings.uniforms[0].values == @[
+      float32(ord(gcamStraight)), float32(ord(gcamStraight)), 1, 0]
+    check material.submit(backdrop, foreground, output,
+      blendMode = gcbmScreen)
+    check context.lastBindings.uniforms[0].values == @[
+      float32(ord(gcamStraight)), float32(ord(gcamStraight)), 2, 0]
     check chain.submit(backdrop, output, scratch)
     check context.lastBindings.uniforms[0].values == @[
-      float32(ord(gcamStraight)), float32(ord(gcamPremultiplied)), 0, 0]
-    check context.drawSubmits == 2
+      float32(ord(gcamStraight)), float32(ord(gcamPremultiplied)), 1, 0]
+    check context.drawSubmits == 4
     host.endGpuFrame(frame)
     material.release()
     for handle in [backdrop, foreground, wrongSize, output,

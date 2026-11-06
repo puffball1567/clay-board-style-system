@@ -120,15 +120,20 @@ share a resource, but neither may alias the destination.
 let frame = host.beginGpuFrame()
 discard composite.submit(backdrop, foreground, combinedTarget,
   backdropAlphaMode = gcamStraight,
-  foregroundAlphaMode = gcamPremultiplied)
+  foregroundAlphaMode = gcamPremultiplied,
+  blendMode = gcbmMultiply)
 discard display.queueGpuDisplayFrame(combinedTarget, frame)
 host.endGpuFrame(frame)
 ```
 
 The pass converts each input according to its alpha mode, then places the
-foreground over the backdrop. Its output is premultiplied RGBA8; present with
-`gcamPremultiplied`. Use `compositeStage(foreground, foregroundAlphaMode)` in a
-filter chain to place an external foreground over the current stage result.
+foreground over the backdrop. The default `gcbmNormal` uses source-over color;
+`gcbmMultiply` and `gcbmScreen` apply the corresponding
+[W3C blend functions](https://www.w3.org/TR/compositing-1/#blending) with
+source-over alpha. Color blending runs on the sampled encoded RGB channels.
+The output is premultiplied RGBA8; present with `gcamPremultiplied`. Use
+`compositeStage(foreground, foregroundAlphaMode, blendMode)` in a filter chain
+to place an external foreground over the current stage result.
 The foreground must remain distinct from all writable chain targets.
 
 ## GPU Gaussian blur postprocess
