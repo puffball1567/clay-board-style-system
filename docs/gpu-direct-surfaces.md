@@ -128,7 +128,8 @@ host.endGpuFrame(frame)
 
 The pass converts each input according to its alpha mode, then places the
 foreground over the backdrop. The default `gcbmNormal` uses source-over color;
-`gcbmMultiply` and `gcbmScreen` apply the corresponding
+`gcbmMultiply`, `gcbmScreen`, `gcbmOverlay`, `gcbmDarken`, `gcbmLighten`,
+`gcbmDifference`, and `gcbmExclusion` apply the corresponding
 [W3C blend functions](https://www.w3.org/TR/compositing-1/#blending) with
 source-over alpha. Color blending runs on the sampled encoded RGB channels.
 The output is premultiplied RGBA8; present with `gcamPremultiplied`. Use

@@ -7,7 +7,12 @@ type
   GpuCompositeBlendMode* = enum
     gcbmNormal,
     gcbmMultiply,
-    gcbmScreen
+    gcbmScreen,
+    gcbmOverlay,
+    gcbmDarken,
+    gcbmLighten,
+    gcbmDifference,
+    gcbmExclusion
 
   GpuCompositeVertex = object
     x, y, z: float32
@@ -54,7 +59,31 @@ void main()
     foreground.rgb *= foreground.a;
   }
   vec3 rgb;
-  if (u_cbssCompositeParams.z > 1.5) {
+  if (u_cbssCompositeParams.z > 6.5) {
+    rgb = foreground.rgb + backdrop.rgb -
+      2.0 * foreground.rgb * backdrop.rgb;
+  } else if (u_cbssCompositeParams.z > 5.5) {
+    rgb = foreground.rgb * (1.0 - backdrop.a) +
+      backdrop.rgb * (1.0 - foreground.a) +
+      abs(backdrop.rgb * foreground.a - foreground.rgb * backdrop.a);
+  } else if (u_cbssCompositeParams.z > 4.5) {
+    rgb = foreground.rgb * (1.0 - backdrop.a) +
+      backdrop.rgb * (1.0 - foreground.a) +
+      max(backdrop.rgb * foreground.a, foreground.rgb * backdrop.a);
+  } else if (u_cbssCompositeParams.z > 3.5) {
+    rgb = foreground.rgb * (1.0 - backdrop.a) +
+      backdrop.rgb * (1.0 - foreground.a) +
+      min(backdrop.rgb * foreground.a, foreground.rgb * backdrop.a);
+  } else if (u_cbssCompositeParams.z > 2.5) {
+    vec3 low = 2.0 * backdrop.rgb * foreground.rgb;
+    vec3 high = vec3(backdrop.a * foreground.a) -
+      2.0 * (vec3(backdrop.a) - backdrop.rgb) *
+      (vec3(foreground.a) - foreground.rgb);
+    vec3 overlap = mix(low, high,
+      step(vec3(backdrop.a * 0.5), backdrop.rgb));
+    rgb = foreground.rgb * (1.0 - backdrop.a) +
+      backdrop.rgb * (1.0 - foreground.a) + overlap;
+  } else if (u_cbssCompositeParams.z > 1.5) {
     rgb = foreground.rgb + backdrop.rgb -
       foreground.rgb * backdrop.rgb;
   } else if (u_cbssCompositeParams.z > 0.5) {

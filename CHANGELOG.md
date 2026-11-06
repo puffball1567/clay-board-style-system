@@ -28,6 +28,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added GPU overlay, darken, lighten, difference, and exclusion blend modes
+  for sampled surfaces, including translucent source-over composition.
+
 - Added GPU multiply and screen blend modes for direct sampled-surface
   composition and ordered filter chains, including translucent inputs.
 
