@@ -7719,7 +7719,7 @@ suite "GPU source-over composition":
     let host = openGpuHost(context.backend, ghoOwned)
     let namespace = host.createGpuNamespace("composite",
       GpuResourceBudget(persistentBytes: 65536,
-        workUnitsPerFrame: 4, maxResources: 24))
+        workUnitsPerFrame: 10, maxResources: 24))
     proc artifact(source: GpuShaderSource): GpuShaderArtifact =
       GpuShaderArtifact(
         descriptor: GpuShaderDescriptor(stage: source.stage),
@@ -7754,6 +7754,9 @@ suite "GPU source-over composition":
     let chain = host.newGpuFilterChain(namespace,
       [compositeStage(foreground, gcamPremultiplied, gcbmMultiply)],
       composite = material)
+    let overlayChain = host.newGpuFilterChain(namespace,
+      [compositeStage(foreground, blendMode = gcbmOverlay)],
+      composite = material)
     let invalidChain = host.newGpuFilterChain(namespace,
       [compositeStage(output)], composite = material)
     let frame = host.beginGpuFrame()
@@ -7779,10 +7782,19 @@ suite "GPU source-over composition":
       blendMode = gcbmScreen)
     check context.lastBindings.uniforms[0].values == @[
       float32(ord(gcamStraight)), float32(ord(gcamStraight)), 2, 0]
+    for mode in [gcbmOverlay, gcbmDarken, gcbmLighten,
+        gcbmDifference, gcbmExclusion]:
+      check material.submit(backdrop, foreground, output, blendMode = mode)
+      check context.lastBindings.uniforms[0].values == @[
+        float32(ord(gcamStraight)), float32(ord(gcamStraight)),
+        float32(ord(mode)), 0]
     check chain.submit(backdrop, output, scratch)
     check context.lastBindings.uniforms[0].values == @[
       float32(ord(gcamStraight)), float32(ord(gcamPremultiplied)), 1, 0]
-    check context.drawSubmits == 4
+    check overlayChain.submit(backdrop, output, scratch)
+    check context.lastBindings.uniforms[0].values == @[
+      float32(ord(gcamStraight)), float32(ord(gcamStraight)), 3, 0]
+    check context.drawSubmits == 10
     host.endGpuFrame(frame)
     material.release()
     for handle in [backdrop, foreground, wrongSize, output,

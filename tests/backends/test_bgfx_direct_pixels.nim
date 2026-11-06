@@ -565,7 +565,7 @@ proc verifyGpuCompositePixels(host: GpuHost;
       if y == 0 and x == 0: Pixel(blue: 255, alpha: 128)
       elif y == 0: Pixel(green: 255, alpha: 255)
       elif x == 0: Pixel(red: 255)
-      else: Pixel(blue: 255, alpha: 255)))
+      else: Pixel(red: 64, green: 128, blue: 192, alpha: 255)))
   let foreground = host.createGpuTexture(ns, GpuTextureDescriptor(
     width: 2, height: 2, format: gtfRgba8,
     usage: {gtuSampled}, access: gtaStatic,
@@ -574,7 +574,7 @@ proc verifyGpuCompositePixels(host: GpuHost;
       if y == 0 and x == 0: Pixel(red: 255, alpha: 128)
       elif y == 0: Pixel(green: 255)
       elif x == 0: Pixel(green: 255, alpha: 128)
-      else: Pixel(red: 255, green: 255, alpha: 255)))
+      else: Pixel(red: 192, green: 96, blue: 32, alpha: 255)))
   proc target(label: string): GpuResourceHandle =
     host.createGpuRenderTarget(ns, GpuRenderTargetDescriptor(
       width: 2, height: 2, format: gtfRgba8,
@@ -585,8 +585,18 @@ proc verifyGpuCompositePixels(host: GpuHost;
   let chained = target("composite-chained")
   let multiplied = target("composite-multiplied")
   let screened = target("composite-screened")
+  let overlaid = target("composite-overlaid")
+  let darkened = target("composite-darkened")
+  let lightened = target("composite-lightened")
+  let differenced = target("composite-differenced")
+  let excluded = target("composite-excluded")
   let chainedMultiply = target("composite-chained-multiply")
   let chainedScreen = target("composite-chained-screen")
+  let chainedOverlay = target("composite-chained-overlay")
+  let chainedDarken = target("composite-chained-darken")
+  let chainedLighten = target("composite-chained-lighten")
+  let chainedDifference = target("composite-chained-difference")
+  let chainedExclusion = target("composite-chained-exclusion")
   let scratch = [target("composite-scratch-0"),
     target("composite-scratch-1"), target("composite-scratch-2")]
   let chain = host.newGpuFilterChain(ns,
@@ -597,6 +607,21 @@ proc verifyGpuCompositePixels(host: GpuHost;
   let screenChain = host.newGpuFilterChain(ns,
     [compositeStage(foreground, blendMode = gcbmScreen)],
     composite = composite)
+  let overlayChain = host.newGpuFilterChain(ns,
+    [compositeStage(foreground, blendMode = gcbmOverlay)],
+    composite = composite)
+  let darkenChain = host.newGpuFilterChain(ns,
+    [compositeStage(foreground, blendMode = gcbmDarken)],
+    composite = composite)
+  let lightenChain = host.newGpuFilterChain(ns,
+    [compositeStage(foreground, blendMode = gcbmLighten)],
+    composite = composite)
+  let differenceChain = host.newGpuFilterChain(ns,
+    [compositeStage(foreground, blendMode = gcbmDifference)],
+    composite = composite)
+  let exclusionChain = host.newGpuFilterChain(ns,
+    [compositeStage(foreground, blendMode = gcbmExclusion)],
+    composite = composite)
   let frame = host.beginGpuFrame()
   doAssert matrix.submit(foreground, premultipliedForeground, nil)
   doAssert composite.submit(backdrop, premultipliedForeground,
@@ -606,8 +631,23 @@ proc verifyGpuCompositePixels(host: GpuHost;
     multiplied, gcamStraight, gcamPremultiplied, gcbmMultiply)
   doAssert composite.submit(backdrop, premultipliedForeground,
     screened, gcamStraight, gcamPremultiplied, gcbmScreen)
+  doAssert composite.submit(backdrop, premultipliedForeground,
+    overlaid, gcamStraight, gcamPremultiplied, gcbmOverlay)
+  doAssert composite.submit(backdrop, premultipliedForeground,
+    darkened, gcamStraight, gcamPremultiplied, gcbmDarken)
+  doAssert composite.submit(backdrop, premultipliedForeground,
+    lightened, gcamStraight, gcamPremultiplied, gcbmLighten)
+  doAssert composite.submit(backdrop, premultipliedForeground,
+    differenced, gcamStraight, gcamPremultiplied, gcbmDifference)
+  doAssert composite.submit(backdrop, premultipliedForeground,
+    excluded, gcamStraight, gcamPremultiplied, gcbmExclusion)
   doAssert multiplyChain.submit(backdrop, chainedMultiply, scratch)
   doAssert screenChain.submit(backdrop, chainedScreen, scratch)
+  doAssert overlayChain.submit(backdrop, chainedOverlay, scratch)
+  doAssert darkenChain.submit(backdrop, chainedDarken, scratch)
+  doAssert lightenChain.submit(backdrop, chainedLighten, scratch)
+  doAssert differenceChain.submit(backdrop, chainedDifference, scratch)
+  doAssert exclusionChain.submit(backdrop, chainedExclusion, scratch)
   host.endGpuFrame(frame)
   for item in [output, chained]:
     let pixels = host.readPixels(ns, item, 2, 2)
@@ -617,7 +657,8 @@ proc verifyGpuCompositePixels(host: GpuHost;
       "GPU source-over preserves backdrop through transparent foreground")
     pixels.requirePixel(0, 1, Pixel(green: 128, alpha: 128),
       "GPU source-over discards transparent backdrop color")
-    pixels.requirePixel(1, 1, Pixel(red: 255, green: 255, alpha: 255),
+    pixels.requirePixel(1, 1, Pixel(red: 192, green: 96, blue: 32,
+      alpha: 255),
       "GPU source-over keeps opaque foreground")
   for item in [multiplied, chainedMultiply]:
     let pixels = host.readPixels(ns, item, 2, 2)
@@ -627,8 +668,8 @@ proc verifyGpuCompositePixels(host: GpuHost;
       "GPU multiply preserves backdrop through transparent foreground")
     pixels.requirePixel(0, 1, Pixel(green: 128, alpha: 128),
       "GPU multiply preserves foreground over transparent backdrop")
-    pixels.requirePixel(1, 1, Pixel(alpha: 255),
-      "GPU multiply blends opaque disjoint channels to black")
+    pixels.requirePixel(1, 1, Pixel(red: 48, green: 48, blue: 24,
+      alpha: 255), "GPU multiply blends opaque midtones")
   for item in [screened, chainedScreen]:
     let pixels = host.readPixels(ns, item, 2, 2)
     pixels.requirePixel(0, 0, Pixel(red: 128, blue: 128, alpha: 192),
@@ -637,16 +678,48 @@ proc verifyGpuCompositePixels(host: GpuHost;
       "GPU screen preserves backdrop through transparent foreground")
     pixels.requirePixel(0, 1, Pixel(green: 128, alpha: 128),
       "GPU screen preserves foreground over transparent backdrop")
-    pixels.requirePixel(1, 1, Pixel(red: 255, green: 255, blue: 255,
-      alpha: 255), "GPU screen blends opaque disjoint channels to white")
+    pixels.requirePixel(1, 1, Pixel(red: 208, green: 176, blue: 200,
+      alpha: 255), "GPU screen blends opaque midtones")
+  for item in [overlaid, chainedOverlay]:
+    let pixels = host.readPixels(ns, item, 2, 2)
+    pixels.requirePixel(0, 0, Pixel(red: 64, blue: 128, alpha: 192),
+      "GPU overlay preserves half-transparent backdrop highlight")
+    pixels.requirePixel(1, 1, Pixel(red: 96, green: 97, blue: 145,
+      alpha: 255), "GPU overlay selects low and high branches by backdrop")
+  for item in [darkened, chainedDarken]:
+    let pixels = host.readPixels(ns, item, 2, 2)
+    pixels.requirePixel(0, 0, Pixel(red: 64, blue: 64, alpha: 192),
+      "GPU darken blends translucent colors")
+    pixels.requirePixel(1, 1, Pixel(red: 64, green: 96, blue: 32,
+      alpha: 255), "GPU darken selects each lower channel")
+  for item in [lightened, chainedLighten]:
+    let pixels = host.readPixels(ns, item, 2, 2)
+    pixels.requirePixel(0, 0, Pixel(red: 128, blue: 128, alpha: 192),
+      "GPU lighten blends translucent colors")
+    pixels.requirePixel(1, 1, Pixel(red: 192, green: 128, blue: 192,
+      alpha: 255), "GPU lighten selects each higher channel")
+  for item in [differenced, chainedDifference]:
+    let pixels = host.readPixels(ns, item, 2, 2)
+    pixels.requirePixel(0, 0, Pixel(red: 128, blue: 128,
+      alpha: 192), "GPU difference blends translucent colors")
+    pixels.requirePixel(1, 1, Pixel(red: 128, green: 32,
+      blue: 160, alpha: 255), "GPU difference subtracts each channel")
+  for item in [excluded, chainedExclusion]:
+    let pixels = host.readPixels(ns, item, 2, 2)
+    pixels.requirePixel(0, 0, Pixel(red: 128, blue: 128,
+      alpha: 192), "GPU exclusion blends translucent colors")
+    pixels.requirePixel(1, 1, Pixel(red: 160, green: 128,
+      blue: 176, alpha: 255), "GPU exclusion keeps lower contrast")
   composite.release()
   matrix.release()
   for handle in [backdrop, foreground, premultipliedForeground,
-      output, chained, multiplied, screened, chainedMultiply, chainedScreen,
+      output, chained, multiplied, screened, overlaid, darkened, lightened,
+      differenced, excluded, chainedMultiply, chainedScreen, chainedOverlay,
+      chainedDarken, chainedLighten, chainedDifference, chainedExclusion,
       scratch[0], scratch[1], scratch[2]]:
     doAssert host.releaseGpuResource(handle)
   doAssert host.closeGpuNamespace(ns)
-  echo "GPU normal, multiply, and screen: direct and chained pixels passed"
+  echo "GPU normal, multiply, screen, overlay, darken, lighten, difference, and exclusion pixels passed"
 
 proc verifyGpuGaussianBlurPixels(host: GpuHost;
     shaderc, shaderIncludes, workDirectory: string) =
