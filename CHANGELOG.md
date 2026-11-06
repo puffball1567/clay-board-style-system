@@ -28,6 +28,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Completed the twelve separable GPU surface blend modes with color dodge,
+  color burn, hard light, and soft light for direct and filter-chain composition.
+
 - Added GPU overlay, darken, lighten, difference, and exclusion blend modes
   for sampled surfaces, including translucent source-over composition.
 

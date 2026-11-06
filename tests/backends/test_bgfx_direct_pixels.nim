@@ -590,6 +590,10 @@ proc verifyGpuCompositePixels(host: GpuHost;
   let lightened = target("composite-lightened")
   let differenced = target("composite-differenced")
   let excluded = target("composite-excluded")
+  let dodged = target("composite-color-dodged")
+  let burned = target("composite-color-burned")
+  let hardLit = target("composite-hard-lit")
+  let softLit = target("composite-soft-lit")
   let chainedMultiply = target("composite-chained-multiply")
   let chainedScreen = target("composite-chained-screen")
   let chainedOverlay = target("composite-chained-overlay")
@@ -597,8 +601,31 @@ proc verifyGpuCompositePixels(host: GpuHost;
   let chainedLighten = target("composite-chained-lighten")
   let chainedDifference = target("composite-chained-difference")
   let chainedExclusion = target("composite-chained-exclusion")
+  let chainedDodge = target("composite-chained-dodge")
+  let chainedBurn = target("composite-chained-burn")
+  let chainedHardLight = target("composite-chained-hard-light")
+  let chainedSoftLight = target("composite-chained-soft-light")
   let scratch = [target("composite-scratch-0"),
     target("composite-scratch-1"), target("composite-scratch-2")]
+  let midBackdrop = host.createGpuTexture(ns, GpuTextureDescriptor(
+    width: 1, height: 1, format: gtfRgba8,
+    usage: {gtuSampled}, access: gtaStatic,
+    label: "composite-mid-backdrop"),
+    rgbaPixels(1, 1, proc(x, y: int): Pixel =
+      Pixel(red: 64, green: 160, blue: 192, alpha: 255)))
+  let midForeground = host.createGpuTexture(ns, GpuTextureDescriptor(
+    width: 1, height: 1, format: gtfRgba8,
+    usage: {gtuSampled}, access: gtaStatic,
+    label: "composite-mid-foreground"),
+    rgbaPixels(1, 1, proc(x, y: int): Pixel =
+      Pixel(red: 64, green: 192, blue: 128, alpha: 255)))
+  proc midTarget(label: string): GpuResourceHandle =
+    host.createGpuRenderTarget(ns, GpuRenderTargetDescriptor(
+      width: 1, height: 1, format: gtfRgba8,
+      usage: {gtuRenderTarget, gtuSampled, gtuBlitSource},
+      label: label))
+  let midDodge = midTarget("composite-mid-dodge")
+  let midBurn = midTarget("composite-mid-burn")
   let chain = host.newGpuFilterChain(ns,
     [compositeStage(foreground)], composite = composite)
   let multiplyChain = host.newGpuFilterChain(ns,
@@ -622,6 +649,18 @@ proc verifyGpuCompositePixels(host: GpuHost;
   let exclusionChain = host.newGpuFilterChain(ns,
     [compositeStage(foreground, blendMode = gcbmExclusion)],
     composite = composite)
+  let dodgeChain = host.newGpuFilterChain(ns,
+    [compositeStage(foreground, blendMode = gcbmColorDodge)],
+    composite = composite)
+  let burnChain = host.newGpuFilterChain(ns,
+    [compositeStage(foreground, blendMode = gcbmColorBurn)],
+    composite = composite)
+  let hardLightChain = host.newGpuFilterChain(ns,
+    [compositeStage(foreground, blendMode = gcbmHardLight)],
+    composite = composite)
+  let softLightChain = host.newGpuFilterChain(ns,
+    [compositeStage(foreground, blendMode = gcbmSoftLight)],
+    composite = composite)
   let frame = host.beginGpuFrame()
   doAssert matrix.submit(foreground, premultipliedForeground, nil)
   doAssert composite.submit(backdrop, premultipliedForeground,
@@ -641,6 +680,14 @@ proc verifyGpuCompositePixels(host: GpuHost;
     differenced, gcamStraight, gcamPremultiplied, gcbmDifference)
   doAssert composite.submit(backdrop, premultipliedForeground,
     excluded, gcamStraight, gcamPremultiplied, gcbmExclusion)
+  doAssert composite.submit(backdrop, premultipliedForeground,
+    dodged, gcamStraight, gcamPremultiplied, gcbmColorDodge)
+  doAssert composite.submit(backdrop, premultipliedForeground,
+    burned, gcamStraight, gcamPremultiplied, gcbmColorBurn)
+  doAssert composite.submit(backdrop, premultipliedForeground,
+    hardLit, gcamStraight, gcamPremultiplied, gcbmHardLight)
+  doAssert composite.submit(backdrop, premultipliedForeground,
+    softLit, gcamStraight, gcamPremultiplied, gcbmSoftLight)
   doAssert multiplyChain.submit(backdrop, chainedMultiply, scratch)
   doAssert screenChain.submit(backdrop, chainedScreen, scratch)
   doAssert overlayChain.submit(backdrop, chainedOverlay, scratch)
@@ -648,6 +695,14 @@ proc verifyGpuCompositePixels(host: GpuHost;
   doAssert lightenChain.submit(backdrop, chainedLighten, scratch)
   doAssert differenceChain.submit(backdrop, chainedDifference, scratch)
   doAssert exclusionChain.submit(backdrop, chainedExclusion, scratch)
+  doAssert dodgeChain.submit(backdrop, chainedDodge, scratch)
+  doAssert burnChain.submit(backdrop, chainedBurn, scratch)
+  doAssert hardLightChain.submit(backdrop, chainedHardLight, scratch)
+  doAssert softLightChain.submit(backdrop, chainedSoftLight, scratch)
+  doAssert composite.submit(midBackdrop, midForeground,
+    midDodge, blendMode = gcbmColorDodge)
+  doAssert composite.submit(midBackdrop, midForeground,
+    midBurn, blendMode = gcbmColorBurn)
   host.endGpuFrame(frame)
   for item in [output, chained]:
     let pixels = host.readPixels(ns, item, 2, 2)
@@ -710,16 +765,49 @@ proc verifyGpuCompositePixels(host: GpuHost;
       alpha: 192), "GPU exclusion blends translucent colors")
     pixels.requirePixel(1, 1, Pixel(red: 160, green: 128,
       blue: 176, alpha: 255), "GPU exclusion keeps lower contrast")
+  for item in [dodged, chainedDodge]:
+    let pixels = host.readPixels(ns, item, 2, 2)
+    pixels.requirePixel(0, 0, Pixel(red: 64, blue: 128, alpha: 192),
+      "GPU color dodge preserves transparent overlap edges")
+    pixels.requirePixel(1, 1, Pixel(red: 255, green: 205,
+      blue: 220, alpha: 255), "GPU color dodge brightens midtones")
+  for item in [burned, chainedBurn]:
+    let pixels = host.readPixels(ns, item, 2, 2)
+    pixels.requirePixel(0, 0, Pixel(red: 64, blue: 128, alpha: 192),
+      "GPU color burn handles zero and unit channels")
+    pixels.requirePixel(1, 1, Pixel(red: 1, alpha: 255),
+      "GPU color burn darkens midtones")
+  for item in [hardLit, chainedHardLight]:
+    let pixels = host.readPixels(ns, item, 2, 2)
+    pixels.requirePixel(0, 0, Pixel(red: 128, blue: 64, alpha: 192),
+      "GPU hard light uses source color for its branch")
+    pixels.requirePixel(1, 1, Pixel(red: 161, green: 96,
+      blue: 48, alpha: 255), "GPU hard light combines low and high channels")
+  for item in [softLit, chainedSoftLight]:
+    let pixels = host.readPixels(ns, item, 2, 2)
+    pixels.requirePixel(0, 0, Pixel(red: 64, blue: 128, alpha: 192),
+      "GPU soft light blends translucent channel extremes")
+    pixels.requirePixel(1, 1, Pixel(red: 96, green: 112,
+      blue: 156, alpha: 255), "GPU soft light uses cubic and square-root curves")
+  let midDodgePixels = host.readPixels(ns, midDodge, 1, 1)
+  midDodgePixels.requirePixel(0, 0, Pixel(red: 85, green: 255,
+    blue: 255, alpha: 255), "GPU color dodge includes unsaturated channels")
+  let midBurnPixels = host.readPixels(ns, midBurn, 1, 1)
+  midBurnPixels.requirePixel(0, 0, Pixel(green: 129, blue: 129,
+    alpha: 255), "GPU color burn includes nonzero channels")
   composite.release()
   matrix.release()
   for handle in [backdrop, foreground, premultipliedForeground,
       output, chained, multiplied, screened, overlaid, darkened, lightened,
-      differenced, excluded, chainedMultiply, chainedScreen, chainedOverlay,
+      differenced, excluded, dodged, burned, hardLit, softLit,
+      chainedMultiply, chainedScreen, chainedOverlay,
       chainedDarken, chainedLighten, chainedDifference, chainedExclusion,
-      scratch[0], scratch[1], scratch[2]]:
+      chainedDodge, chainedBurn, chainedHardLight, chainedSoftLight,
+      scratch[0], scratch[1], scratch[2], midBackdrop, midForeground,
+      midDodge, midBurn]:
     doAssert host.releaseGpuResource(handle)
   doAssert host.closeGpuNamespace(ns)
-  echo "GPU normal, multiply, screen, overlay, darken, lighten, difference, and exclusion pixels passed"
+  echo "GPU separable blend modes: direct and chained pixels passed"
 
 proc verifyGpuGaussianBlurPixels(host: GpuHost;
     shaderc, shaderIncludes, workDirectory: string) =

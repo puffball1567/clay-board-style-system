@@ -12,7 +12,11 @@ type
     gcbmDarken,
     gcbmLighten,
     gcbmDifference,
-    gcbmExclusion
+    gcbmExclusion,
+    gcbmColorDodge,
+    gcbmColorBurn,
+    gcbmHardLight,
+    gcbmSoftLight
 
   GpuCompositeVertex = object
     x, y, z: float32
@@ -40,6 +44,34 @@ SAMPLER2D(s_cbssForeground, 1);
 uniform vec4 u_cbssCompositeParams;
 uniform vec4 u_cbssBackdropUv;
 uniform vec4 u_cbssForegroundUv;
+float cbssColorDodge(float backdrop, float foreground)
+{
+  if (backdrop <= 0.0) return 0.0;
+  if (foreground >= 1.0) return 1.0;
+  return min(1.0, backdrop / (1.0 - foreground));
+}
+float cbssColorBurn(float backdrop, float foreground)
+{
+  if (backdrop >= 1.0) return 1.0;
+  if (foreground <= 0.0) return 0.0;
+  return 1.0 - min(1.0, (1.0 - backdrop) / foreground);
+}
+float cbssHardLight(float backdrop, float foreground)
+{
+  if (foreground <= 0.5) return 2.0 * backdrop * foreground;
+  return 1.0 - 2.0 * (1.0 - backdrop) * (1.0 - foreground);
+}
+float cbssSoftLight(float backdrop, float foreground)
+{
+  if (foreground <= 0.5) {
+    return backdrop - (1.0 - 2.0 * foreground) *
+      backdrop * (1.0 - backdrop);
+  }
+  float d = backdrop <= 0.25 ?
+    ((16.0 * backdrop - 12.0) * backdrop + 4.0) * backdrop :
+    sqrt(backdrop);
+  return backdrop + (2.0 * foreground - 1.0) * (d - backdrop);
+}
 void main()
 {
   vec2 backdropUv = mix(u_cbssBackdropUv.xy,
@@ -59,7 +91,37 @@ void main()
     foreground.rgb *= foreground.a;
   }
   vec3 rgb;
-  if (u_cbssCompositeParams.z > 6.5) {
+  if (u_cbssCompositeParams.z > 7.5) {
+    vec3 backdropColor = vec3(0.0);
+    vec3 foregroundColor = vec3(0.0);
+    if (backdrop.a > 0.0) backdropColor = backdrop.rgb / backdrop.a;
+    if (foreground.a > 0.0) foregroundColor = foreground.rgb / foreground.a;
+    vec3 blended;
+    if (u_cbssCompositeParams.z > 10.5) {
+      blended = vec3(
+        cbssSoftLight(backdropColor.r, foregroundColor.r),
+        cbssSoftLight(backdropColor.g, foregroundColor.g),
+        cbssSoftLight(backdropColor.b, foregroundColor.b));
+    } else if (u_cbssCompositeParams.z > 9.5) {
+      blended = vec3(
+        cbssHardLight(backdropColor.r, foregroundColor.r),
+        cbssHardLight(backdropColor.g, foregroundColor.g),
+        cbssHardLight(backdropColor.b, foregroundColor.b));
+    } else if (u_cbssCompositeParams.z > 8.5) {
+      blended = vec3(
+        cbssColorBurn(backdropColor.r, foregroundColor.r),
+        cbssColorBurn(backdropColor.g, foregroundColor.g),
+        cbssColorBurn(backdropColor.b, foregroundColor.b));
+    } else {
+      blended = vec3(
+        cbssColorDodge(backdropColor.r, foregroundColor.r),
+        cbssColorDodge(backdropColor.g, foregroundColor.g),
+        cbssColorDodge(backdropColor.b, foregroundColor.b));
+    }
+    rgb = foreground.rgb * (1.0 - backdrop.a) +
+      backdrop.rgb * (1.0 - foreground.a) +
+      blended * (backdrop.a * foreground.a);
+  } else if (u_cbssCompositeParams.z > 6.5) {
     rgb = foreground.rgb + backdrop.rgb -
       2.0 * foreground.rgb * backdrop.rgb;
   } else if (u_cbssCompositeParams.z > 5.5) {
