@@ -28,6 +28,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added GPU multiply and screen blend modes for direct sampled-surface
+  composition and ordered filter chains, including translucent inputs.
+
 - Added a same-host GPU source-over pass and filter-chain stage for combining
   two sampled surfaces with independent alpha modes and premultiplied output.
 

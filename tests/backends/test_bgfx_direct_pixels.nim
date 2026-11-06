@@ -583,15 +583,31 @@ proc verifyGpuCompositePixels(host: GpuHost;
   let premultipliedForeground = target("composite-foreground-target")
   let output = target("composite-output")
   let chained = target("composite-chained")
+  let multiplied = target("composite-multiplied")
+  let screened = target("composite-screened")
+  let chainedMultiply = target("composite-chained-multiply")
+  let chainedScreen = target("composite-chained-screen")
   let scratch = [target("composite-scratch-0"),
     target("composite-scratch-1"), target("composite-scratch-2")]
   let chain = host.newGpuFilterChain(ns,
     [compositeStage(foreground)], composite = composite)
+  let multiplyChain = host.newGpuFilterChain(ns,
+    [compositeStage(foreground, blendMode = gcbmMultiply)],
+    composite = composite)
+  let screenChain = host.newGpuFilterChain(ns,
+    [compositeStage(foreground, blendMode = gcbmScreen)],
+    composite = composite)
   let frame = host.beginGpuFrame()
   doAssert matrix.submit(foreground, premultipliedForeground, nil)
   doAssert composite.submit(backdrop, premultipliedForeground,
     output, gcamStraight, gcamPremultiplied)
   doAssert chain.submit(backdrop, chained, scratch)
+  doAssert composite.submit(backdrop, premultipliedForeground,
+    multiplied, gcamStraight, gcamPremultiplied, gcbmMultiply)
+  doAssert composite.submit(backdrop, premultipliedForeground,
+    screened, gcamStraight, gcamPremultiplied, gcbmScreen)
+  doAssert multiplyChain.submit(backdrop, chainedMultiply, scratch)
+  doAssert screenChain.submit(backdrop, chainedScreen, scratch)
   host.endGpuFrame(frame)
   for item in [output, chained]:
     let pixels = host.readPixels(ns, item, 2, 2)
@@ -603,13 +619,34 @@ proc verifyGpuCompositePixels(host: GpuHost;
       "GPU source-over discards transparent backdrop color")
     pixels.requirePixel(1, 1, Pixel(red: 255, green: 255, alpha: 255),
       "GPU source-over keeps opaque foreground")
+  for item in [multiplied, chainedMultiply]:
+    let pixels = host.readPixels(ns, item, 2, 2)
+    pixels.requirePixel(0, 0, Pixel(red: 64, blue: 64, alpha: 192),
+      "GPU multiply blends two translucent pixels")
+    pixels.requirePixel(1, 0, Pixel(green: 255, alpha: 255),
+      "GPU multiply preserves backdrop through transparent foreground")
+    pixels.requirePixel(0, 1, Pixel(green: 128, alpha: 128),
+      "GPU multiply preserves foreground over transparent backdrop")
+    pixels.requirePixel(1, 1, Pixel(alpha: 255),
+      "GPU multiply blends opaque disjoint channels to black")
+  for item in [screened, chainedScreen]:
+    let pixels = host.readPixels(ns, item, 2, 2)
+    pixels.requirePixel(0, 0, Pixel(red: 128, blue: 128, alpha: 192),
+      "GPU screen blends two translucent pixels")
+    pixels.requirePixel(1, 0, Pixel(green: 255, alpha: 255),
+      "GPU screen preserves backdrop through transparent foreground")
+    pixels.requirePixel(0, 1, Pixel(green: 128, alpha: 128),
+      "GPU screen preserves foreground over transparent backdrop")
+    pixels.requirePixel(1, 1, Pixel(red: 255, green: 255, blue: 255,
+      alpha: 255), "GPU screen blends opaque disjoint channels to white")
   composite.release()
   matrix.release()
   for handle in [backdrop, foreground, premultipliedForeground,
-      output, chained, scratch[0], scratch[1], scratch[2]]:
+      output, chained, multiplied, screened, chainedMultiply, chainedScreen,
+      scratch[0], scratch[1], scratch[2]]:
     doAssert host.releaseGpuResource(handle)
   doAssert host.closeGpuNamespace(ns)
-  echo "GPU source-over: direct RenderTarget and chained pixels passed"
+  echo "GPU normal, multiply, and screen: direct and chained pixels passed"
 
 proc verifyGpuGaussianBlurPixels(host: GpuHost;
     shaderc, shaderIncludes, workDirectory: string) =

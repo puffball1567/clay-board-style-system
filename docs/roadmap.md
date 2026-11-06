@@ -1128,7 +1128,8 @@ An alpha-mask pass multiplies a GPU-owned surface by another sampled surface's
 coverage while preserving premultiplied output.
 An independent-alpha source-over pass now composites two sampled GPU surfaces
 into a premultiplied RenderTarget. Its filter-chain stage places an external
-foreground over the current GPU-owned result.
+foreground over the current GPU-owned result. Normal, multiply, and screen
+color blending share source-over alpha with premultiplied output.
 An ordered GPU filter chain now combines up to eight matrix, opacity, blur,
 shadow, alpha-mask, and source-over stages over three reusable scratch targets, carrying
 premultiplied alpha into each stage and producing a display-ready RenderTarget. An owned

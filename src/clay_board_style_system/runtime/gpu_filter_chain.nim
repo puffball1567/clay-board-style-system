@@ -27,6 +27,7 @@ type
     blurRadiusValue: int
     sampledInputValue: GpuResourceHandle
     foregroundAlphaModeValue: GpuAlphaMode
+    blendModeValue: GpuCompositeBlendMode
 
   GpuFilterChain* = ref object
     host: GpuHost
@@ -53,11 +54,13 @@ proc alphaMaskStage*(mask: GpuResourceHandle): GpuFilterStage =
 
 proc compositeStage*(
     foreground: GpuResourceHandle;
-    foregroundAlphaMode = gcamStraight
+    foregroundAlphaMode = gcamStraight;
+    blendMode = gcbmNormal
 ): GpuFilterStage =
   ## Place a sampled foreground above the current chain result.
   GpuFilterStage(kindValue: gfskComposite, sampledInputValue: foreground,
-    foregroundAlphaModeValue: foregroundAlphaMode)
+    foregroundAlphaModeValue: foregroundAlphaMode,
+    blendModeValue: blendMode)
 
 proc gaussianBlurStage*(radius = 2): GpuFilterStage =
   if radius < 0 or radius > MaxGpuBlurRadius:
@@ -280,7 +283,8 @@ proc submit*(
         output, alphaMode)
     of gfskComposite:
       discard chain.composite.submit(current, stage.sampledInputValue,
-        output, alphaMode, stage.foregroundAlphaModeValue)
+        output, alphaMode, stage.foregroundAlphaModeValue,
+        stage.blendModeValue)
     current = output
     alphaMode = gcamPremultiplied
   true

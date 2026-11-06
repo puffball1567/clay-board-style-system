@@ -4,6 +4,11 @@ import ../paint/gpu_host_compositor
 import ./[gpu_host, gpu_shader_builder]
 
 type
+  GpuCompositeBlendMode* = enum
+    gcbmNormal,
+    gcbmMultiply,
+    gcbmScreen
+
   GpuCompositeVertex = object
     x, y, z: float32
     u, v: float32
@@ -48,7 +53,19 @@ void main()
   } else if (u_cbssCompositeParams.y < 0.5) {
     foreground.rgb *= foreground.a;
   }
-  gl_FragColor = foreground + backdrop * (1.0 - foreground.a);
+  vec3 rgb;
+  if (u_cbssCompositeParams.z > 1.5) {
+    rgb = foreground.rgb + backdrop.rgb -
+      foreground.rgb * backdrop.rgb;
+  } else if (u_cbssCompositeParams.z > 0.5) {
+    rgb = foreground.rgb * (1.0 - backdrop.a) +
+      backdrop.rgb * (1.0 - foreground.a) +
+      foreground.rgb * backdrop.rgb;
+  } else {
+    rgb = foreground.rgb + backdrop.rgb * (1.0 - foreground.a);
+  }
+  float alpha = foreground.a + backdrop.a * (1.0 - foreground.a);
+  gl_FragColor = vec4(rgb, alpha);
 }
 """,
     varyingDefinitions: gpuHostDirectCompositeVaryingDefinitions,
@@ -149,7 +166,8 @@ proc submit*(
     material: GpuCompositeMaterial;
     backdrop, foreground, destination: GpuResourceHandle;
     backdropAlphaMode = gcamStraight;
-    foregroundAlphaMode = gcamStraight
+    foregroundAlphaMode = gcamStraight;
+    blendMode = gcbmNormal
 ): bool =
   ## Foreground is placed over backdrop. Both inputs may share one resource.
   if material.isClosed:
@@ -203,7 +221,8 @@ proc submit*(
         uniforms: @[
           GpuUniformBinding(uniform: material.paramsUniform,
             values: @[float32(ord(backdropAlphaMode)),
-              float32(ord(foregroundAlphaMode)), 0'f32, 0]),
+              float32(ord(foregroundAlphaMode)),
+              float32(ord(blendMode)), 0'f32]),
           GpuUniformBinding(uniform: material.backdropUvUniform,
             values: backdropUv),
           GpuUniformBinding(uniform: material.foregroundUvUniform,
