@@ -28,6 +28,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added GPU hue, saturation, color, and luminosity blending for sampled
+  surfaces, completing the sixteen W3C color blend functions in this pass.
+
 - Completed the twelve separable GPU surface blend modes with color dodge,
   color burn, hard light, and soft light for direct and filter-chain composition.
 

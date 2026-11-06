@@ -594,6 +594,10 @@ proc verifyGpuCompositePixels(host: GpuHost;
   let burned = target("composite-color-burned")
   let hardLit = target("composite-hard-lit")
   let softLit = target("composite-soft-lit")
+  let hued = target("composite-hued")
+  let saturated = target("composite-saturated")
+  let colored = target("composite-colored")
+  let luminosity = target("composite-luminosity")
   let chainedMultiply = target("composite-chained-multiply")
   let chainedScreen = target("composite-chained-screen")
   let chainedOverlay = target("composite-chained-overlay")
@@ -605,6 +609,10 @@ proc verifyGpuCompositePixels(host: GpuHost;
   let chainedBurn = target("composite-chained-burn")
   let chainedHardLight = target("composite-chained-hard-light")
   let chainedSoftLight = target("composite-chained-soft-light")
+  let chainedHue = target("composite-chained-hue")
+  let chainedSaturation = target("composite-chained-saturation")
+  let chainedColor = target("composite-chained-color")
+  let chainedLuminosity = target("composite-chained-luminosity")
   let scratch = [target("composite-scratch-0"),
     target("composite-scratch-1"), target("composite-scratch-2")]
   let midBackdrop = host.createGpuTexture(ns, GpuTextureDescriptor(
@@ -626,6 +634,20 @@ proc verifyGpuCompositePixels(host: GpuHost;
       label: label))
   let midDodge = midTarget("composite-mid-dodge")
   let midBurn = midTarget("composite-mid-burn")
+  let grayBackdrop = host.createGpuTexture(ns, GpuTextureDescriptor(
+    width: 1, height: 1, format: gtfRgba8,
+    usage: {gtuSampled}, access: gtaStatic,
+    label: "composite-gray-backdrop"),
+    rgbaPixels(1, 1, proc(x, y: int): Pixel =
+      Pixel(red: 128, green: 128, blue: 128, alpha: 255)))
+  let grayForeground = host.createGpuTexture(ns, GpuTextureDescriptor(
+    width: 1, height: 1, format: gtfRgba8,
+    usage: {gtuSampled}, access: gtaStatic,
+    label: "composite-gray-foreground"),
+    rgbaPixels(1, 1, proc(x, y: int): Pixel =
+      Pixel(red: 255, alpha: 255)))
+  let grayHue = midTarget("composite-gray-hue")
+  let graySaturation = midTarget("composite-gray-saturation")
   let chain = host.newGpuFilterChain(ns,
     [compositeStage(foreground)], composite = composite)
   let multiplyChain = host.newGpuFilterChain(ns,
@@ -661,6 +683,18 @@ proc verifyGpuCompositePixels(host: GpuHost;
   let softLightChain = host.newGpuFilterChain(ns,
     [compositeStage(foreground, blendMode = gcbmSoftLight)],
     composite = composite)
+  let hueChain = host.newGpuFilterChain(ns,
+    [compositeStage(foreground, blendMode = gcbmHue)],
+    composite = composite)
+  let saturationChain = host.newGpuFilterChain(ns,
+    [compositeStage(foreground, blendMode = gcbmSaturation)],
+    composite = composite)
+  let colorChain = host.newGpuFilterChain(ns,
+    [compositeStage(foreground, blendMode = gcbmColor)],
+    composite = composite)
+  let luminosityChain = host.newGpuFilterChain(ns,
+    [compositeStage(foreground, blendMode = gcbmLuminosity)],
+    composite = composite)
   let frame = host.beginGpuFrame()
   doAssert matrix.submit(foreground, premultipliedForeground, nil)
   doAssert composite.submit(backdrop, premultipliedForeground,
@@ -688,6 +722,14 @@ proc verifyGpuCompositePixels(host: GpuHost;
     hardLit, gcamStraight, gcamPremultiplied, gcbmHardLight)
   doAssert composite.submit(backdrop, premultipliedForeground,
     softLit, gcamStraight, gcamPremultiplied, gcbmSoftLight)
+  doAssert composite.submit(backdrop, premultipliedForeground,
+    hued, gcamStraight, gcamPremultiplied, gcbmHue)
+  doAssert composite.submit(backdrop, premultipliedForeground,
+    saturated, gcamStraight, gcamPremultiplied, gcbmSaturation)
+  doAssert composite.submit(backdrop, premultipliedForeground,
+    colored, gcamStraight, gcamPremultiplied, gcbmColor)
+  doAssert composite.submit(backdrop, premultipliedForeground,
+    luminosity, gcamStraight, gcamPremultiplied, gcbmLuminosity)
   doAssert multiplyChain.submit(backdrop, chainedMultiply, scratch)
   doAssert screenChain.submit(backdrop, chainedScreen, scratch)
   doAssert overlayChain.submit(backdrop, chainedOverlay, scratch)
@@ -699,10 +741,18 @@ proc verifyGpuCompositePixels(host: GpuHost;
   doAssert burnChain.submit(backdrop, chainedBurn, scratch)
   doAssert hardLightChain.submit(backdrop, chainedHardLight, scratch)
   doAssert softLightChain.submit(backdrop, chainedSoftLight, scratch)
+  doAssert hueChain.submit(backdrop, chainedHue, scratch)
+  doAssert saturationChain.submit(backdrop, chainedSaturation, scratch)
+  doAssert colorChain.submit(backdrop, chainedColor, scratch)
+  doAssert luminosityChain.submit(backdrop, chainedLuminosity, scratch)
   doAssert composite.submit(midBackdrop, midForeground,
     midDodge, blendMode = gcbmColorDodge)
   doAssert composite.submit(midBackdrop, midForeground,
     midBurn, blendMode = gcbmColorBurn)
+  doAssert composite.submit(grayBackdrop, grayForeground,
+    grayHue, blendMode = gcbmHue)
+  doAssert composite.submit(grayBackdrop, grayForeground,
+    graySaturation, blendMode = gcbmSaturation)
   host.endGpuFrame(frame)
   for item in [output, chained]:
     let pixels = host.readPixels(ns, item, 2, 2)
@@ -789,25 +839,62 @@ proc verifyGpuCompositePixels(host: GpuHost;
       "GPU soft light blends translucent channel extremes")
     pixels.requirePixel(1, 1, Pixel(red: 96, green: 112,
       blue: 156, alpha: 255), "GPU soft light uses cubic and square-root curves")
+  for item in [hued, chainedHue]:
+    let pixels = host.readPixels(ns, item, 2, 2)
+    pixels.requirePixel(0, 0, Pixel(red: 87, blue: 64, alpha: 192),
+      "GPU hue blends translucent source color")
+    pixels.requirePixel(1, 0, Pixel(green: 255, alpha: 255),
+      "GPU hue preserves backdrop through transparent foreground")
+    pixels.requirePixel(0, 1, Pixel(green: 128, alpha: 128),
+      "GPU hue preserves source over transparent backdrop")
+    pixels.requirePixel(1, 1, Pixel(red: 175, green: 98, blue: 47,
+      alpha: 255), "GPU hue retains backdrop saturation and luminosity")
+  for item in [saturated, chainedSaturation]:
+    let pixels = host.readPixels(ns, item, 2, 2)
+    pixels.requirePixel(0, 0, Pixel(red: 64, blue: 128, alpha: 192),
+      "GPU saturation blends translucent source color")
+    pixels.requirePixel(1, 1, Pixel(red: 51, green: 131, blue: 211,
+      alpha: 255), "GPU saturation retains backdrop hue and luminosity")
+  for item in [colored, chainedColor]:
+    let pixels = host.readPixels(ns, item, 2, 2)
+    pixels.requirePixel(0, 0, Pixel(red: 87, blue: 64, alpha: 192),
+      "GPU color blends translucent source color")
+    pixels.requirePixel(1, 1, Pixel(red: 190, green: 94, blue: 30,
+      alpha: 255), "GPU color retains backdrop luminosity")
+  for item in [luminosity, chainedLuminosity]:
+    let pixels = host.readPixels(ns, item, 2, 2)
+    pixels.requirePixel(0, 0, Pixel(red: 77, green: 14, blue: 128,
+      alpha: 192), "GPU luminosity blends translucent source color")
+    pixels.requirePixel(1, 1, Pixel(red: 66, green: 130, blue: 194,
+      alpha: 255), "GPU luminosity retains backdrop hue and saturation")
   let midDodgePixels = host.readPixels(ns, midDodge, 1, 1)
   midDodgePixels.requirePixel(0, 0, Pixel(red: 85, green: 255,
     blue: 255, alpha: 255), "GPU color dodge includes unsaturated channels")
   let midBurnPixels = host.readPixels(ns, midBurn, 1, 1)
   midBurnPixels.requirePixel(0, 0, Pixel(green: 129, blue: 129,
     alpha: 255), "GPU color burn includes nonzero channels")
+  let grayHuePixels = host.readPixels(ns, grayHue, 1, 1)
+  grayHuePixels.requirePixel(0, 0, Pixel(red: 128, green: 128,
+    blue: 128, alpha: 255), "GPU hue handles zero backdrop saturation")
+  let graySaturationPixels = host.readPixels(ns, graySaturation, 1, 1)
+  graySaturationPixels.requirePixel(0, 0, Pixel(red: 128, green: 128,
+    blue: 128, alpha: 255), "GPU saturation handles zero backdrop range")
   composite.release()
   matrix.release()
   for handle in [backdrop, foreground, premultipliedForeground,
       output, chained, multiplied, screened, overlaid, darkened, lightened,
       differenced, excluded, dodged, burned, hardLit, softLit,
+      hued, saturated, colored, luminosity,
       chainedMultiply, chainedScreen, chainedOverlay,
       chainedDarken, chainedLighten, chainedDifference, chainedExclusion,
       chainedDodge, chainedBurn, chainedHardLight, chainedSoftLight,
+      chainedHue, chainedSaturation, chainedColor, chainedLuminosity,
       scratch[0], scratch[1], scratch[2], midBackdrop, midForeground,
-      midDodge, midBurn]:
+      midDodge, midBurn, grayBackdrop, grayForeground,
+      grayHue, graySaturation]:
     doAssert host.releaseGpuResource(handle)
   doAssert host.closeGpuNamespace(ns)
-  echo "GPU separable blend modes: direct and chained pixels passed"
+  echo "GPU separable and non-separable blend modes: direct and chained pixels passed"
 
 proc verifyGpuGaussianBlurPixels(host: GpuHost;
     shaderc, shaderIncludes, workDirectory: string) =
