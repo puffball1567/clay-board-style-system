@@ -1125,7 +1125,8 @@ scratch target and premultiplied output. A same-host drop-shadow pass reuses
 that configurable blur,
 offsets and tints its alpha, and composites the original source above it.
 An alpha-mask pass multiplies a GPU-owned surface by another sampled surface's
-coverage while preserving premultiplied output.
+coverage while preserving premultiplied output. Direct and chained masks can
+invert coverage or blend its strength without rewriting the sampled image.
 An independent-alpha source-over pass now composites two sampled GPU surfaces
 into a premultiplied RenderTarget. Its filter-chain stage places an external
 foreground over the current GPU-owned result. Normal, multiply, screen,

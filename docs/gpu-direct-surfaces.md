@@ -95,17 +95,24 @@ distinct RGBA8 RenderTarget. Mask RGB is ignored.
 
 ```nim
 let frame = host.beginGpuFrame()
-discard maskMaterial.submit(source, coverage, maskedTarget, gcamStraight)
+discard maskMaterial.submit(source, coverage, maskedTarget,
+  sourceAlphaMode = gcamStraight, invertMask = true,
+  maskStrength = 0.5'f32)
 discard display.queueGpuDisplayFrame(maskedTarget, frame)
 host.endGpuFrame(frame)
 ```
 
 The pass converts straight source color to premultiplied alpha, then multiplies
 color and alpha by the mask coverage. It also accepts premultiplied or opaque
-source alpha modes. The output uses `gcamPremultiplied` for presentation.
-Use `alphaMaskStage(coverage)` in an ordered filter chain, supplying the
-`alphaMask` material when constructing it. The mask must remain distinct from
-the chain's writable render targets. The mask may share the source resource.
+source alpha modes. Set `invertMask = true` to use the complement of the mask
+alpha. `maskStrength` blends from the unmasked source at `0` to full mask
+coverage at `1` and must be finite and normalized. Both options default to
+the original alpha-mask behavior. The output uses `gcamPremultiplied` for
+presentation.
+Use `alphaMaskStage(coverage, invertMask, maskStrength)` in an ordered filter
+chain, supplying the `alphaMask` material when constructing it. The mask must
+remain distinct from the chain's writable render targets. It may share the
+source resource.
 
 ## GPU source-over composition
 

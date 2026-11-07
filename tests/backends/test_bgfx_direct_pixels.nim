@@ -506,6 +506,10 @@ proc verifyGpuAlphaMaskPixels(host: GpuHost;
       label: label))
   let output = target("alpha-mask-output")
   let chained = target("alpha-mask-chained")
+  let inverted = target("alpha-mask-inverted")
+  let softened = target("alpha-mask-softened")
+  let unmasked = target("alpha-mask-zero-strength")
+  let chainedInverted = target("alpha-mask-chained-inverted")
   let maskTarget = target("alpha-mask-render-target")
   let scratch = [target("alpha-mask-scratch-0"),
     target("alpha-mask-scratch-1"), target("alpha-mask-scratch-2")]
@@ -517,10 +521,19 @@ proc verifyGpuAlphaMaskPixels(host: GpuHost;
   let chain = host.newGpuFilterChain(ns,
     [colorMatrixStage(swapRedBlue), alphaMaskStage(maskTarget)],
     colorMatrix = matrix, alphaMask = material)
+  let invertedChain = host.newGpuFilterChain(ns,
+    [colorMatrixStage(swapRedBlue),
+      alphaMaskStage(maskTarget, invertMask = true,
+        maskStrength = 0.5'f32)],
+    colorMatrix = matrix, alphaMask = material)
   let frame = host.beginGpuFrame()
   doAssert matrix.submit(mask, maskTarget, nil, gcamStraight)
   doAssert material.submit(source, mask, output, gcamStraight)
   doAssert chain.submit(source, chained, scratch, gcamStraight)
+  doAssert material.submit(source, mask, inverted, invertMask = true)
+  doAssert material.submit(source, mask, softened, maskStrength = 0.5'f32)
+  doAssert material.submit(source, mask, unmasked, maskStrength = 0'f32)
+  doAssert invertedChain.submit(source, chainedInverted, scratch)
   host.endGpuFrame(frame)
   let pixels = host.readPixels(ns, output, 2, 2)
   pixels.requirePixel(0, 0, Pixel(red: 64, alpha: 64),
@@ -536,13 +549,40 @@ proc verifyGpuAlphaMaskPixels(host: GpuHost;
     "GPU filter chain masks premultiplied matrix output")
   chainedPixels.requirePixel(0, 1, Pixel(red: 255, alpha: 255),
     "GPU filter chain retains opaque masked pixel")
+  let invertedPixels = host.readPixels(ns, inverted, 2, 2)
+  invertedPixels.requirePixel(0, 0, Pixel(red: 64, alpha: 64),
+    "GPU inverted alpha mask keeps complementary half coverage")
+  invertedPixels.requirePixel(1, 0, Pixel(green: 255, alpha: 255),
+    "GPU inverted alpha mask reveals a zero-mask pixel")
+  invertedPixels.requirePixel(0, 1, Pixel(),
+    "GPU inverted alpha mask hides a full-mask pixel")
+  let softenedPixels = host.readPixels(ns, softened, 2, 2)
+  softenedPixels.requirePixel(0, 0, Pixel(red: 96, alpha: 96),
+    "GPU mask strength mixes half coverage with unmasked source")
+  softenedPixels.requirePixel(1, 0, Pixel(green: 128, alpha: 128),
+    "GPU mask strength partially reveals a zero-mask pixel")
+  softenedPixels.requirePixel(0, 1, Pixel(blue: 255, alpha: 255),
+    "GPU mask strength preserves full-mask coverage")
+  let unmaskedPixels = host.readPixels(ns, unmasked, 2, 2)
+  unmaskedPixels.requirePixel(0, 0, Pixel(red: 128, alpha: 128),
+    "GPU zero-strength mask preserves translucent source")
+  unmaskedPixels.requirePixel(1, 0, Pixel(green: 255, alpha: 255),
+    "GPU zero-strength mask preserves opaque source")
+  let chainedInvertedPixels = host.readPixels(ns, chainedInverted, 2, 2)
+  chainedInvertedPixels.requirePixel(0, 0, Pixel(blue: 96, alpha: 96),
+    "GPU chain applies inverted mask strength to matrix output")
+  chainedInvertedPixels.requirePixel(1, 0, Pixel(green: 255, alpha: 255),
+    "GPU chain reveals a zero-mask pixel with inversion")
+  chainedInvertedPixels.requirePixel(0, 1, Pixel(red: 128, alpha: 128),
+    "GPU chain softens an inverted full-mask pixel")
   material.release()
   matrix.release()
-  for handle in [source, mask, output, chained, maskTarget, scratch[0],
-      scratch[1], scratch[2]]:
+  for handle in [source, mask, output, chained, inverted, softened,
+      unmasked, chainedInverted, maskTarget, scratch[0], scratch[1],
+      scratch[2]]:
     doAssert host.releaseGpuResource(handle)
   doAssert host.closeGpuNamespace(ns)
-  echo "GPU alpha mask: direct and chained premultiplied pixels passed"
+  echo "GPU alpha mask: direct and chained inversion/strength pixels passed"
 
 proc verifyGpuCompositePixels(host: GpuHost;
     shaderc, shaderIncludes, workDirectory: string) =
