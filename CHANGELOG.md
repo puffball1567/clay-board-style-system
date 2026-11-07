@@ -28,6 +28,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added per-composition foreground opacity for direct GPU surface blending and
+  filter-chain composite stages, with the same setting across all blend modes.
+
 - Added GPU hue, saturation, color, and luminosity blending for sampled
   surfaces, completing the sixteen W3C color blend functions in this pass.
 

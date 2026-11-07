@@ -7719,7 +7719,7 @@ suite "GPU source-over composition":
     let host = openGpuHost(context.backend, ghoOwned)
     let namespace = host.createGpuNamespace("composite",
       GpuResourceBudget(persistentBytes: 65536,
-        workUnitsPerFrame: 20, maxResources: 24))
+        workUnitsPerFrame: 22, maxResources: 24))
     proc artifact(source: GpuShaderSource): GpuShaderArtifact =
       GpuShaderArtifact(
         descriptor: GpuShaderDescriptor(stage: source.stage),
@@ -7763,6 +7763,13 @@ suite "GPU source-over composition":
     let hueChain = host.newGpuFilterChain(namespace,
       [compositeStage(foreground, blendMode = gcbmHue)],
       composite = material)
+    let fadedChain = host.newGpuFilterChain(namespace,
+      [compositeStage(foreground, blendMode = gcbmScreen,
+        foregroundOpacity = 0.5'f32)], composite = material)
+    for invalid in [NaN.float32, Inf.float32, NegInf.float32,
+        -0.1'f32, 1.1'f32]:
+      expect ValueError:
+        discard compositeStage(foreground, foregroundOpacity = invalid)
     let invalidChain = host.newGpuFilterChain(namespace,
       [compositeStage(output)], composite = material)
     let frame = host.beginGpuFrame()
@@ -7772,22 +7779,27 @@ suite "GPU source-over composition":
       discard material.submit(backdrop, wrongSize, output)
     expect ValueError:
       discard invalidChain.submit(backdrop, output, scratch)
+    for invalid in [NaN.float32, Inf.float32, NegInf.float32,
+        -0.1'f32, 1.1'f32]:
+      expect ValueError:
+        discard material.submit(backdrop, foreground, output,
+          foregroundOpacity = invalid)
     check context.drawSubmits == 0
     check material.submit(backdrop, foreground, output,
       gcamOpaque, gcamStraight)
     check context.lastBindings.uniforms[0].values == @[
-      float32(ord(gcamOpaque)), float32(ord(gcamStraight)), 0, 0]
+      float32(ord(gcamOpaque)), float32(ord(gcamStraight)), 0, 1]
     check context.lastBindings.textures.len == 2
     check context.lastBindings.textures[0].stage == 0
     check context.lastBindings.textures[1].stage == 1
     check material.submit(backdrop, foreground, output,
       blendMode = gcbmMultiply)
     check context.lastBindings.uniforms[0].values == @[
-      float32(ord(gcamStraight)), float32(ord(gcamStraight)), 1, 0]
+      float32(ord(gcamStraight)), float32(ord(gcamStraight)), 1, 1]
     check material.submit(backdrop, foreground, output,
       blendMode = gcbmScreen)
     check context.lastBindings.uniforms[0].values == @[
-      float32(ord(gcamStraight)), float32(ord(gcamStraight)), 2, 0]
+      float32(ord(gcamStraight)), float32(ord(gcamStraight)), 2, 1]
     for mode in [gcbmOverlay, gcbmDarken, gcbmLighten,
         gcbmDifference, gcbmExclusion, gcbmColorDodge,
         gcbmColorBurn, gcbmHardLight, gcbmSoftLight,
@@ -7795,20 +7807,27 @@ suite "GPU source-over composition":
       check material.submit(backdrop, foreground, output, blendMode = mode)
       check context.lastBindings.uniforms[0].values == @[
         float32(ord(gcamStraight)), float32(ord(gcamStraight)),
-        float32(ord(mode)), 0]
+        float32(ord(mode)), 1]
+    check material.submit(backdrop, foreground, output,
+      foregroundOpacity = 0'f32)
+    check context.lastBindings.uniforms[0].values == @[
+      float32(ord(gcamStraight)), float32(ord(gcamStraight)), 0, 0]
     check chain.submit(backdrop, output, scratch)
     check context.lastBindings.uniforms[0].values == @[
-      float32(ord(gcamStraight)), float32(ord(gcamPremultiplied)), 1, 0]
+      float32(ord(gcamStraight)), float32(ord(gcamPremultiplied)), 1, 1]
     check overlayChain.submit(backdrop, output, scratch)
     check context.lastBindings.uniforms[0].values == @[
-      float32(ord(gcamStraight)), float32(ord(gcamStraight)), 3, 0]
+      float32(ord(gcamStraight)), float32(ord(gcamStraight)), 3, 1]
     check softLightChain.submit(backdrop, output, scratch)
     check context.lastBindings.uniforms[0].values == @[
-      float32(ord(gcamStraight)), float32(ord(gcamStraight)), 11, 0]
+      float32(ord(gcamStraight)), float32(ord(gcamStraight)), 11, 1]
     check hueChain.submit(backdrop, output, scratch)
     check context.lastBindings.uniforms[0].values == @[
-      float32(ord(gcamStraight)), float32(ord(gcamStraight)), 12, 0]
-    check context.drawSubmits == 20
+      float32(ord(gcamStraight)), float32(ord(gcamStraight)), 12, 1]
+    check fadedChain.submit(backdrop, output, scratch)
+    check context.lastBindings.uniforms[0].values == @[
+      float32(ord(gcamStraight)), float32(ord(gcamStraight)), 2, 0.5'f32]
+    check context.drawSubmits == 22
     host.endGpuFrame(frame)
     material.release()
     for handle in [backdrop, foreground, wrongSize, output,

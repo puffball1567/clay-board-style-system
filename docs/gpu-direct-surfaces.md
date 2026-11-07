@@ -121,7 +121,8 @@ let frame = host.beginGpuFrame()
 discard composite.submit(backdrop, foreground, combinedTarget,
   backdropAlphaMode = gcamStraight,
   foregroundAlphaMode = gcamPremultiplied,
-  blendMode = gcbmMultiply)
+  blendMode = gcbmMultiply,
+  foregroundOpacity = 0.5'f32)
 discard display.queueGpuDisplayFrame(combinedTarget, frame)
 host.endGpuFrame(frame)
 ```
@@ -139,8 +140,11 @@ uses the specified cubic and square-root curves. Hue, saturation, color, and
 luminosity use the specified RGB luminosity weights, saturation transfer, and
 bounded color clipping. All sixteen modes accept straight, premultiplied, or
 opaque inputs, including transparent pixels.
+`foregroundOpacity` defaults to `1` and accepts finite values from `0` to
+`1`. It scales the foreground's premultiplied color and alpha after its alpha
+mode is applied, so the same setting works with every blend mode.
 The output is premultiplied RGBA8; present with `gcamPremultiplied`. Use
-`compositeStage(foreground, foregroundAlphaMode, blendMode)` in a filter chain
+`compositeStage(foreground, foregroundAlphaMode, blendMode, foregroundOpacity)` in a filter chain
 to place an external foreground over the current stage result.
 The foreground must remain distinct from all writable chain targets.
 
