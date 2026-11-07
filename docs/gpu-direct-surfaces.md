@@ -90,8 +90,9 @@ Import `runtime/gpu_alpha_mask` to multiply a sampled GPU surface by another
 surface's alpha. Compile `gpuAlphaMaskVertexSource()` and
 `gpuAlphaMaskFragmentSource()` for the selected backend, then create a
 `GpuAlphaMaskMaterial` outside a frame. The source and mask are sampled RGBA8
-or BGRA8 Textures or RenderTargets of the same size; the destination is a
-distinct RGBA8 RenderTarget. Mask RGB is ignored.
+or BGRA8 Textures or RenderTargets. The destination is a distinct RGBA8
+RenderTarget matching the source size. The mask has that size unless it has
+explicit placement. Mask RGB is ignored.
 
 ```nim
 let frame = host.beginGpuFrame()
@@ -109,19 +110,25 @@ alpha. `maskStrength` blends from the unmasked source at `0` to full mask
 coverage at `1` and must be finite and normalized. Both options default to
 the original alpha-mask behavior. The output uses `gcamPremultiplied` for
 presentation.
-Use `alphaMaskStage(coverage, invertMask, maskStrength)` in an ordered filter
-chain, supplying the `alphaMask` material when constructing it. The mask must
-remain distinct from the chain's writable render targets. It may share the
-source resource.
+Pass `maskPlacement = gpuAlphaMaskPlacement(x, y, width, height)` to position
+and scale a mask of any size in destination pixels. `x` and `y` may be
+negative; `width` and `height` must be positive. Outside the placed mask,
+coverage is zero before inversion and strength are applied. Omitting the
+placement retains the same-size, full-target behavior.
+Use `alphaMaskStage(coverage, invertMask, maskStrength, maskPlacement)` in an
+ordered filter chain, supplying the `alphaMask` material when constructing it.
+The mask must remain distinct from the chain's writable render targets. It may
+share the source resource.
 
 ## GPU source-over composition
 
 Import `runtime/gpu_composite` to place one sampled GPU surface over another.
 Compile `gpuCompositeVertexSource()` and `gpuCompositeFragmentSource()` for the
 selected backend, then create a `GpuCompositeMaterial` outside a frame. Both
-inputs may be sampled RGBA8 or BGRA8 Textures or RenderTargets of the same
-size. The destination is a distinct RGBA8 RenderTarget. The two inputs may
-share a resource, but neither may alias the destination.
+inputs may be sampled RGBA8 or BGRA8 Textures or RenderTargets. The distinct
+RGBA8 destination matches the backdrop size. The foreground has that size
+unless it has explicit placement. The two inputs may share a resource, but
+neither may alias the destination.
 
 ```nim
 let frame = host.beginGpuFrame()

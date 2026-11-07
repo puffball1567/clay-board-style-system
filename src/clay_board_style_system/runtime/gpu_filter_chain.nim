@@ -5,7 +5,7 @@ import std/math
 import ../core/color
 import ../paint/layer_color_filter
 import ./[gpu_alpha_mask, gpu_color_matrix, gpu_composite, gpu_gaussian_blur,
-  gpu_drop_shadow, gpu_host]
+  gpu_drop_shadow, gpu_host, gpu_surface_placement]
 
 const MaxGpuFilterStages* = 8
 
@@ -28,6 +28,7 @@ type
     sampledInputValue: GpuResourceHandle
     invertMaskValue: bool
     maskStrengthValue: float32
+    maskPlacementValue: GpuAlphaMaskPlacement
     foregroundAlphaModeValue: GpuAlphaMode
     blendModeValue: GpuCompositeBlendMode
     foregroundOpacityValue: float32
@@ -53,7 +54,8 @@ proc opacityStage*(opacity: float32): GpuFilterStage =
   GpuFilterStage(kindValue: gfskOpacity, opacityValue: opacity)
 
 proc alphaMaskStage*(
-    mask: GpuResourceHandle; invertMask = false; maskStrength = 1'f32
+    mask: GpuResourceHandle; invertMask = false; maskStrength = 1'f32;
+    maskPlacement = GpuAlphaMaskPlacement()
 ): GpuFilterStage =
   ## Use the sampled mask's alpha; its RGB does not affect the source.
   if maskStrength.classify in {fcNan, fcInf, fcNegInf} or
@@ -61,7 +63,8 @@ proc alphaMaskStage*(
     raise newException(ValueError,
       "GPU alpha mask strength must be finite and normalized")
   GpuFilterStage(kindValue: gfskAlphaMask, sampledInputValue: mask,
-    invertMaskValue: invertMask, maskStrengthValue: maskStrength)
+    invertMaskValue: invertMask, maskStrengthValue: maskStrength,
+    maskPlacementValue: maskPlacement)
 
 proc compositeStage*(
     foreground: GpuResourceHandle;
@@ -249,8 +252,9 @@ proc submit*(
       if maskInfo.kind notin {grkTexture, grkRenderTarget} or
           gtuSampled notin maskInfo.usage or
           maskInfo.format notin {gtfRgba8, gtfBgra8} or
-          maskInfo.width != sourceInfo.width or
-          maskInfo.height != sourceInfo.height:
+          (not stage.maskPlacementValue.isGpuPlacementActive and
+            (maskInfo.width != sourceInfo.width or
+              maskInfo.height != sourceInfo.height)):
         raise newException(ValueError,
           "GPU filter chain mask must be a sampled RGBA8 or BGRA8 source of matching size")
     of gfskComposite:
@@ -299,7 +303,8 @@ proc submit*(
         stage.colorValue, alphaMode, stage.blurRadiusValue)
     of gfskAlphaMask:
       discard chain.alphaMask.submit(current, stage.sampledInputValue,
-        output, alphaMode, stage.invertMaskValue, stage.maskStrengthValue)
+        output, alphaMode, stage.invertMaskValue, stage.maskStrengthValue,
+        stage.maskPlacementValue)
     of gfskComposite:
       discard chain.composite.submit(current, stage.sampledInputValue,
         output, alphaMode, stage.foregroundAlphaModeValue,

@@ -28,6 +28,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added pixel-space placement and scaling for GPU alpha masks, including
+  clipping, inversion, and filter-chain use with differently sized masks.
+
 - Added pixel-space foreground placement and scaling to GPU surface composition
   and composite filter stages, including clipping beyond the destination.
 

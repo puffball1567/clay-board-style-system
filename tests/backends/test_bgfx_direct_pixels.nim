@@ -584,6 +584,108 @@ proc verifyGpuAlphaMaskPixels(host: GpuHost;
   doAssert host.closeGpuNamespace(ns)
   echo "GPU alpha mask: direct and chained inversion/strength pixels passed"
 
+proc verifyGpuAlphaMaskPlacementPixels(host: GpuHost;
+    shaderc, shaderIncludes, workDirectory: string) =
+  let ns = host.createGpuNamespace("gpu-alpha-mask-placement-pixels", budget())
+  let material = host.newGpuAlphaMaskMaterial(ns,
+    compileShader(gpuAlphaMaskVertexSource(), shaderc,
+      shaderIncludes, workDirectory),
+    compileShader(gpuAlphaMaskFragmentSource(), shaderc,
+      shaderIncludes, workDirectory))
+  let source = host.createGpuTexture(ns, GpuTextureDescriptor(
+    width: 4, height: 4, format: gtfRgba8,
+    usage: {gtuSampled}, access: gtaStatic,
+    label: "placed-mask-source"),
+    rgbaPixels(4, 4, proc(x, y: int): Pixel =
+      Pixel(red: 255, alpha: 255)))
+  let mask = host.createGpuTexture(ns, GpuTextureDescriptor(
+    width: 2, height: 2, format: gtfRgba8,
+    usage: {gtuSampled}, access: gtaStatic,
+    label: "placed-mask-coverage"),
+    rgbaPixels(2, 2, proc(x, y: int): Pixel =
+      if y == 0 and x == 0: Pixel(alpha: 128)
+      elif y == 0: Pixel()
+      elif x == 0: Pixel(alpha: 255)
+      else: Pixel(alpha: 64)))
+  proc target(label: string): GpuResourceHandle =
+    host.createGpuRenderTarget(ns, GpuRenderTargetDescriptor(
+      width: 4, height: 4, format: gtfRgba8,
+      usage: {gtuRenderTarget, gtuSampled, gtuBlitSource},
+      label: label))
+  let centered = target("placed-mask-centered")
+  let inverted = target("placed-mask-inverted")
+  let softened = target("placed-mask-softened")
+  let scaled = target("placed-mask-scaled")
+  let clipped = target("placed-mask-clipped")
+  let chained = target("placed-mask-chained")
+  let scratch = [target("placed-mask-scratch-0"),
+    target("placed-mask-scratch-1"), target("placed-mask-scratch-2")]
+  let center = gpuAlphaMaskPlacement(1, 1, 2, 2)
+  let chain = host.newGpuFilterChain(ns,
+    [alphaMaskStage(mask, invertMask = true, maskStrength = 0.5'f32,
+      maskPlacement = center)], alphaMask = material)
+  let frame = host.beginGpuFrame()
+  doAssert material.submit(source, mask, centered,
+    maskPlacement = center)
+  doAssert material.submit(source, mask, inverted,
+    invertMask = true, maskPlacement = center)
+  doAssert material.submit(source, mask, softened,
+    maskStrength = 0.5'f32, maskPlacement = center)
+  doAssert material.submit(source, mask, scaled,
+    maskPlacement = gpuAlphaMaskPlacement(0, 0, 4, 4))
+  doAssert material.submit(source, mask, clipped,
+    maskPlacement = gpuAlphaMaskPlacement(-1, -1, 2, 2))
+  doAssert chain.submit(source, chained, scratch)
+  host.endGpuFrame(frame)
+  let centeredPixels = host.readPixels(ns, centered, 4, 4)
+  centeredPixels.requirePixel(0, 0, Pixel(),
+    "placed mask clears source outside its bounds")
+  centeredPixels.requirePixel(1, 1, Pixel(red: 128, alpha: 128),
+    "placed mask applies half coverage at its top-left")
+  centeredPixels.requirePixel(2, 1, Pixel(),
+    "placed mask keeps zero coverage inside")
+  centeredPixels.requirePixel(1, 2, Pixel(red: 255, alpha: 255),
+    "placed mask applies full coverage inside")
+  let invertedPixels = host.readPixels(ns, inverted, 4, 4)
+  invertedPixels.requirePixel(0, 0, Pixel(red: 255, alpha: 255),
+    "inverted placed mask reveals source outside its bounds")
+  invertedPixels.requirePixel(1, 1, Pixel(red: 127, alpha: 127),
+    "inverted placed mask complements half coverage")
+  invertedPixels.requirePixel(1, 2, Pixel(),
+    "inverted placed mask removes full-coverage source")
+  let softenedPixels = host.readPixels(ns, softened, 4, 4)
+  softenedPixels.requirePixel(0, 0, Pixel(red: 128, alpha: 128),
+    "half-strength placed mask preserves source outside bounds")
+  softenedPixels.requirePixel(1, 1, Pixel(red: 192, alpha: 192),
+    "half-strength placed mask mixes half coverage")
+  softenedPixels.requirePixel(2, 1, Pixel(red: 128, alpha: 128),
+    "half-strength placed mask mixes zero coverage")
+  let scaledPixels = host.readPixels(ns, scaled, 4, 4)
+  scaledPixels.requirePixel(0, 0, Pixel(red: 128, alpha: 128),
+    "scaled mask repeats its top-left texel")
+  scaledPixels.requirePixel(3, 0, Pixel(),
+    "scaled mask keeps its top-right zero texel")
+  scaledPixels.requirePixel(0, 3, Pixel(red: 255, alpha: 255),
+    "scaled mask reaches bottom-left")
+  let clippedPixels = host.readPixels(ns, clipped, 4, 4)
+  clippedPixels.requirePixel(0, 0, Pixel(red: 64, alpha: 64),
+    "negative mask placement clips to bottom-right texel")
+  clippedPixels.requirePixel(1, 0, Pixel(),
+    "clipped mask does not smear beyond its bounds")
+  let chainedPixels = host.readPixels(ns, chained, 4, 4)
+  chainedPixels.requirePixel(0, 0, Pixel(red: 255, alpha: 255),
+    "chained inverted mask reveals source outside placement")
+  chainedPixels.requirePixel(1, 1, Pixel(red: 191, alpha: 191),
+    "chained placed mask combines inversion and strength")
+  chainedPixels.requirePixel(1, 2, Pixel(red: 128, alpha: 128),
+    "chained placed mask softens inverted full coverage")
+  material.release()
+  for handle in [source, mask, centered, inverted, softened, scaled,
+      clipped, chained, scratch[0], scratch[1], scratch[2]]:
+    doAssert host.releaseGpuResource(handle)
+  doAssert host.closeGpuNamespace(ns)
+  echo "GPU mask placement: clipping, scaling, inversion, and chaining passed"
+
 proc verifyGpuCompositePixels(host: GpuHost;
     shaderc, shaderIncludes, workDirectory: string) =
   let ns = host.createGpuNamespace("gpu-composite-pixels", budget())
@@ -1852,6 +1954,8 @@ proc run() =
     host.verifyHybridDisplayPixels()
     host.verifyGpuColorMatrixPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuAlphaMaskPixels(shaderc, shaderIncludes, workDirectory)
+    host.verifyGpuAlphaMaskPlacementPixels(shaderc, shaderIncludes,
+      workDirectory)
     host.verifyGpuGaussianBlurPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuDropShadowPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuFilterChainPixels(shaderc, shaderIncludes, workDirectory)

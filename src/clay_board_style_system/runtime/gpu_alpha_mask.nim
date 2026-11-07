@@ -3,9 +3,11 @@
 import std/math
 
 import ../paint/gpu_host_compositor
-import ./[gpu_host, gpu_shader_builder]
+import ./[gpu_host, gpu_shader_builder, gpu_surface_placement]
 
 type
+  GpuAlphaMaskPlacement* = GpuSurfacePlacement
+
   GpuAlphaMaskVertex = object
     x, y, z: float32
     u, v: float32
@@ -16,7 +18,17 @@ type
     vertexShader, fragmentShader: GpuResourceHandle
     pipeline, vertexBuffer: GpuResourceHandle
     paramsUniform, sourceUvUniform, maskUvUniform: GpuResourceHandle
+    maskPlacementUniform: GpuResourceHandle
     sourceSampler, maskSampler: GpuResourceHandle
+
+proc gpuAlphaMaskPlacement*(
+    x, y: int32; width, height: uint32
+): GpuAlphaMaskPlacement =
+  ## Pixel bounds in the destination, measured from its top-left corner.
+  gpuSurfacePlacement(x, y, width, height)
+
+proc isMaskPlaced*(placement: GpuAlphaMaskPlacement): bool =
+  placement.isGpuPlacementActive()
 
 proc gpuAlphaMaskVertexSource*(): GpuShaderSource =
   gpuHostDirectCompositeVertexSource()
@@ -32,19 +44,26 @@ SAMPLER2D(s_cbssMaskCoverage, 1);
 uniform vec4 u_cbssMaskParams;
 uniform vec4 u_cbssMaskSourceUv;
 uniform vec4 u_cbssMaskCoverageUv;
+uniform vec4 u_cbssMaskPlacement;
 void main()
 {
   vec2 sourceUv = mix(u_cbssMaskSourceUv.xy,
     u_cbssMaskSourceUv.zw, v_texcoord0);
-  vec2 maskUv = mix(u_cbssMaskCoverageUv.xy,
-    u_cbssMaskCoverageUv.zw, v_texcoord0);
   vec4 source = texture2D(s_cbssMaskSource, sourceUv);
   if (u_cbssMaskParams.x > 1.5) {
     source.a = 1.0;
   } else if (u_cbssMaskParams.x < 0.5) {
     source.rgb *= source.a;
   }
-  float coverage = texture2D(s_cbssMaskCoverage, maskUv).a;
+  vec2 maskLocal = (v_texcoord0 - u_cbssMaskPlacement.xy) /
+    u_cbssMaskPlacement.zw;
+  float coverage = 0.0;
+  if (maskLocal.x >= 0.0 && maskLocal.y >= 0.0 &&
+      maskLocal.x < 1.0 && maskLocal.y < 1.0) {
+    vec2 maskUv = mix(u_cbssMaskCoverageUv.xy,
+      u_cbssMaskCoverageUv.zw, maskLocal);
+    coverage = texture2D(s_cbssMaskCoverage, maskUv).a;
+  }
   if (u_cbssMaskParams.y > 0.5) coverage = 1.0 - coverage;
   coverage = mix(1.0, coverage, u_cbssMaskParams.z);
   gl_FragColor = source * coverage;
@@ -70,7 +89,8 @@ proc release*(material: GpuAlphaMaskMaterial) =
   if material.isClosed:
     return
   for handle in [material.maskSampler, material.sourceSampler,
-      material.maskUvUniform, material.sourceUvUniform,
+      material.maskPlacementUniform, material.maskUvUniform,
+      material.sourceUvUniform,
       material.paramsUniform, material.vertexBuffer, material.pipeline,
       material.fragmentShader, material.vertexShader]:
     if material.host.isGpuResourceLive(handle):
@@ -129,6 +149,10 @@ proc newGpuAlphaMaskMaterial*(
     result.maskUvUniform = host.createGpuUniform(namespace,
       GpuUniformDescriptor(name: "u_cbssMaskCoverageUv", uniformType: gutVec4,
         arrayLength: 1, label: "gpu-alpha-mask-coverage-uv"))
+    result.maskPlacementUniform = host.createGpuUniform(namespace,
+      GpuUniformDescriptor(name: "u_cbssMaskPlacement",
+        uniformType: gutVec4, arrayLength: 1,
+        label: "gpu-alpha-mask-placement"))
     result.sourceSampler = host.createGpuSampler(namespace,
       GpuSamplerDescriptor(name: "s_cbssMaskSource",
         addressU: gsamClamp, addressV: gsamClamp, addressW: gsamClamp,
@@ -148,7 +172,8 @@ proc submit*(
     source, mask, destination: GpuResourceHandle;
     sourceAlphaMode = gcamStraight;
     invertMask = false;
-    maskStrength = 1'f32
+    maskStrength = 1'f32;
+    maskPlacement = GpuAlphaMaskPlacement()
 ): bool =
   ## Mask strength blends between an unmasked source and mask coverage.
   ## Source and mask may be the same sampled resource. Output is premultiplied.
@@ -181,8 +206,9 @@ proc submit*(
       targetInfo.format != gtfRgba8 or
       sourceInfo.width != targetInfo.width or
       sourceInfo.height != targetInfo.height or
-      maskInfo.width != targetInfo.width or
-      maskInfo.height != targetInfo.height:
+      (not maskPlacement.isGpuPlacementActive and
+        (maskInfo.width != targetInfo.width or
+          maskInfo.height != targetInfo.height)):
     raise newException(ValueError, "GPU alpha mask resource shapes are incompatible")
   if host.isGpuResourcePresentationRetained(destination):
     raise newException(GpuHostError,
@@ -193,6 +219,8 @@ proc submit*(
   let maskUv =
     if maskInfo.rowsBottomUp: @[0'f32, 1, 1, 0]
     else: @[0'f32, 0, 1, 1]
+  let placement = maskPlacement.normalizedGpuPlacement(
+    targetInfo.width, targetInfo.height)
   host.submitGpuDraw(material.namespace,
     GpuGraphicsPassDescriptor(
       viewport: GpuViewport(width: targetInfo.width, height: targetInfo.height),
@@ -211,7 +239,9 @@ proc submit*(
           GpuUniformBinding(uniform: material.sourceUvUniform,
             values: sourceUv),
           GpuUniformBinding(uniform: material.maskUvUniform,
-            values: maskUv)
+            values: maskUv),
+          GpuUniformBinding(uniform: material.maskPlacementUniform,
+            values: placement)
         ],
         textures: @[
           GpuTextureBinding(stage: 0, sampler: material.sourceSampler,

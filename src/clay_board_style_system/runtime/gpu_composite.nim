@@ -3,7 +3,7 @@
 import std/math
 
 import ../paint/gpu_host_compositor
-import ./[gpu_host, gpu_shader_builder]
+import ./[gpu_host, gpu_shader_builder, gpu_surface_placement]
 
 type
   GpuCompositeBlendMode* = enum
@@ -24,10 +24,7 @@ type
     gcbmColor,
     gcbmLuminosity
 
-  GpuCompositePlacement* = object
-    enabled: bool
-    x, y: int32
-    width, height: uint32
+  GpuCompositePlacement* = GpuSurfacePlacement
 
   GpuCompositeVertex = object
     x, y, z: float32
@@ -46,14 +43,10 @@ proc gpuCompositePlacement*(
     x, y: int32; width, height: uint32
 ): GpuCompositePlacement =
   ## Pixel bounds in the destination, measured from its top-left corner.
-  if width == 0 or height == 0:
-    raise newException(ValueError,
-      "GPU composite foreground placement must have positive dimensions")
-  GpuCompositePlacement(enabled: true, x: x, y: y,
-    width: width, height: height)
+  gpuSurfacePlacement(x, y, width, height)
 
 proc isPlaced*(placement: GpuCompositePlacement): bool =
-  placement.enabled
+  placement.isGpuPlacementActive()
 
 proc gpuCompositeVertexSource*(): GpuShaderSource =
   gpuHostDirectCompositeVertexSource()
@@ -392,14 +385,8 @@ proc submit*(
   let foregroundUv =
     if foregroundInfo.rowsBottomUp: @[0'f32, 1, 1, 0]
     else: @[0'f32, 0, 1, 1]
-  let placement =
-    if foregroundPlacement.isPlaced:
-      @[float32(foregroundPlacement.x) / float32(targetInfo.width),
-        float32(foregroundPlacement.y) / float32(targetInfo.height),
-        float32(foregroundPlacement.width) / float32(targetInfo.width),
-        float32(foregroundPlacement.height) / float32(targetInfo.height)]
-    else:
-      @[0'f32, 0, 1, 1]
+  let placement = foregroundPlacement.normalizedGpuPlacement(
+    targetInfo.width, targetInfo.height)
   host.submitGpuDraw(material.namespace,
     GpuGraphicsPassDescriptor(
       viewport: GpuViewport(width: targetInfo.width, height: targetInfo.height),
