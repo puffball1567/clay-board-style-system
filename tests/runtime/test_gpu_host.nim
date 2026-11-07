@@ -7734,7 +7734,7 @@ suite "GPU source-over composition":
     let host = openGpuHost(context.backend, ghoOwned)
     let namespace = host.createGpuNamespace("composite",
       GpuResourceBudget(persistentBytes: 65536,
-        workUnitsPerFrame: 22, maxResources: 24))
+        workUnitsPerFrame: 24, maxResources: 25))
     proc artifact(source: GpuShaderSource): GpuShaderArtifact =
       GpuShaderArtifact(
         descriptor: GpuShaderDescriptor(stage: source.stage),
@@ -7781,6 +7781,16 @@ suite "GPU source-over composition":
     let fadedChain = host.newGpuFilterChain(namespace,
       [compositeStage(foreground, blendMode = gcbmScreen,
         foregroundOpacity = 0.5'f32)], composite = material)
+    let placement = gpuCompositePlacement(-1, 0, 3, 2)
+    let placedChain = host.newGpuFilterChain(namespace,
+      [compositeStage(wrongSize, foregroundPlacement = placement)],
+      composite = material)
+    check not GpuCompositePlacement().isPlaced
+    check placement.isPlaced
+    expect ValueError:
+      discard gpuCompositePlacement(0, 0, 0, 2)
+    expect ValueError:
+      discard gpuCompositePlacement(0, 0, 2, 0)
     for invalid in [NaN.float32, Inf.float32, NegInf.float32,
         -0.1'f32, 1.1'f32]:
       expect ValueError:
@@ -7804,6 +7814,8 @@ suite "GPU source-over composition":
       gcamOpaque, gcamStraight)
     check context.lastBindings.uniforms[0].values == @[
       float32(ord(gcamOpaque)), float32(ord(gcamStraight)), 0, 1]
+    check context.lastBindings.uniforms[3].values == @[
+      0'f32, 0'f32, 1'f32, 1'f32]
     check context.lastBindings.textures.len == 2
     check context.lastBindings.textures[0].stage == 0
     check context.lastBindings.textures[1].stage == 1
@@ -7842,7 +7854,14 @@ suite "GPU source-over composition":
     check fadedChain.submit(backdrop, output, scratch)
     check context.lastBindings.uniforms[0].values == @[
       float32(ord(gcamStraight)), float32(ord(gcamStraight)), 2, 0.5'f32]
-    check context.drawSubmits == 22
+    check material.submit(backdrop, wrongSize, output,
+      foregroundPlacement = placement)
+    check context.lastBindings.uniforms[3].values == @[
+      -0.5'f32, 0'f32, 1.5'f32, 1'f32]
+    check placedChain.submit(backdrop, output, scratch)
+    check context.lastBindings.uniforms[3].values == @[
+      -0.5'f32, 0'f32, 1.5'f32, 1'f32]
+    check context.drawSubmits == 24
     host.endGpuFrame(frame)
     material.release()
     for handle in [backdrop, foreground, wrongSize, output,

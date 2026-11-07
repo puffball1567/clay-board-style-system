@@ -150,9 +150,16 @@ opaque inputs, including transparent pixels.
 `foregroundOpacity` defaults to `1` and accepts finite values from `0` to
 `1`. It scales the foreground's premultiplied color and alpha after its alpha
 mode is applied, so the same setting works with every blend mode.
+Pass `foregroundPlacement = gpuCompositePlacement(x, y, width, height)` to
+position a foreground of any size in destination pixels. `x` and `y` may be
+negative; `width` and `height` must be positive. The foreground is scaled to
+those bounds and clipped by the destination. Outside them, only the backdrop
+is visible, including with `gcamOpaque`. Omitting placement retains the
+same-size, full-target behavior.
 The output is premultiplied RGBA8; present with `gcamPremultiplied`. Use
-`compositeStage(foreground, foregroundAlphaMode, blendMode, foregroundOpacity)` in a filter chain
-to place an external foreground over the current stage result.
+`compositeStage(foreground, foregroundAlphaMode, blendMode,
+foregroundOpacity, foregroundPlacement)` in a filter chain to place an
+external foreground over the current stage result.
 The foreground must remain distinct from all writable chain targets.
 
 ## GPU Gaussian blur postprocess

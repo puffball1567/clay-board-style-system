@@ -977,6 +977,98 @@ proc verifyGpuCompositePixels(host: GpuHost;
   doAssert host.closeGpuNamespace(ns)
   echo "GPU blend modes and foreground opacity: direct and chained pixels passed"
 
+proc verifyGpuCompositePlacementPixels(host: GpuHost;
+    shaderc, shaderIncludes, workDirectory: string) =
+  let ns = host.createGpuNamespace("gpu-composite-placement-pixels", budget())
+  let material = host.newGpuCompositeMaterial(ns,
+    compileShader(gpuCompositeVertexSource(), shaderc,
+      shaderIncludes, workDirectory),
+    compileShader(gpuCompositeFragmentSource(), shaderc,
+      shaderIncludes, workDirectory))
+  let backdrop = host.createGpuTexture(ns, GpuTextureDescriptor(
+    width: 4, height: 4, format: gtfRgba8,
+    usage: {gtuSampled}, access: gtaStatic,
+    label: "placement-backdrop"),
+    rgbaPixels(4, 4, proc(x, y: int): Pixel =
+      Pixel(blue: 255, alpha: 255)))
+  let foreground = host.createGpuTexture(ns, GpuTextureDescriptor(
+    width: 2, height: 2, format: gtfRgba8,
+    usage: {gtuSampled}, access: gtaStatic,
+    label: "placement-foreground"),
+    rgbaPixels(2, 2, proc(x, y: int): Pixel =
+      if y == 0 and x == 0: Pixel(red: 255, alpha: 128)
+      elif y == 0: Pixel(green: 255)
+      elif x == 0: Pixel(green: 255, alpha: 128)
+      else: Pixel(red: 192, green: 96, blue: 32, alpha: 255)))
+  proc target(label: string): GpuResourceHandle =
+    host.createGpuRenderTarget(ns, GpuRenderTargetDescriptor(
+      width: 4, height: 4, format: gtfRgba8,
+      usage: {gtuRenderTarget, gtuSampled, gtuBlitSource},
+      label: label))
+  let centered = target("placement-centered")
+  let clipped = target("placement-clipped")
+  let scaled = target("placement-scaled")
+  let opaque = target("placement-opaque")
+  let chained = target("placement-chained")
+  let scratch = [target("placement-scratch-0"),
+    target("placement-scratch-1"), target("placement-scratch-2")]
+  let center = gpuCompositePlacement(1, 1, 2, 2)
+  let chain = host.newGpuFilterChain(ns,
+    [compositeStage(foreground, blendMode = gcbmScreen,
+      foregroundPlacement = center)], composite = material)
+  let frame = host.beginGpuFrame()
+  doAssert material.submit(backdrop, foreground, centered,
+    foregroundPlacement = center)
+  doAssert material.submit(backdrop, foreground, clipped,
+    foregroundPlacement = gpuCompositePlacement(-1, -1, 2, 2))
+  doAssert material.submit(backdrop, foreground, scaled,
+    foregroundPlacement = gpuCompositePlacement(0, 0, 4, 4))
+  doAssert material.submit(backdrop, foreground, opaque,
+    foregroundAlphaMode = gcamOpaque, foregroundPlacement = center)
+  doAssert chain.submit(backdrop, chained, scratch)
+  host.endGpuFrame(frame)
+  let centeredPixels = host.readPixels(ns, centered, 4, 4)
+  centeredPixels.requirePixel(0, 0, Pixel(blue: 255, alpha: 255),
+    "placed GPU foreground leaves the outside backdrop intact")
+  centeredPixels.requirePixel(1, 1, Pixel(red: 128, blue: 127, alpha: 255),
+    "placed GPU foreground blends its top-left pixel")
+  centeredPixels.requirePixel(2, 1, Pixel(blue: 255, alpha: 255),
+    "placed GPU foreground preserves a transparent pixel")
+  centeredPixels.requirePixel(1, 2, Pixel(green: 128, blue: 127, alpha: 255),
+    "placed GPU foreground blends its bottom-left pixel")
+  centeredPixels.requirePixel(2, 2, Pixel(red: 192, green: 96,
+    blue: 32, alpha: 255), "placed GPU foreground keeps its opaque pixel")
+  let clippedPixels = host.readPixels(ns, clipped, 4, 4)
+  clippedPixels.requirePixel(0, 0, Pixel(red: 192, green: 96,
+    blue: 32, alpha: 255), "negative foreground placement clips to target")
+  clippedPixels.requirePixel(1, 0, Pixel(blue: 255, alpha: 255),
+    "clipped foreground does not smear beyond its bounds")
+  let scaledPixels = host.readPixels(ns, scaled, 4, 4)
+  scaledPixels.requirePixel(1, 1, Pixel(red: 128, blue: 127, alpha: 255),
+    "scaled foreground repeats the top-left texel")
+  scaledPixels.requirePixel(3, 0, Pixel(blue: 255, alpha: 255),
+    "scaled foreground keeps transparent source texels")
+  scaledPixels.requirePixel(3, 3, Pixel(red: 192, green: 96,
+    blue: 32, alpha: 255), "scaled foreground reaches bottom-right")
+  let opaquePixels = host.readPixels(ns, opaque, 4, 4)
+  opaquePixels.requirePixel(0, 0, Pixel(blue: 255, alpha: 255),
+    "opaque alpha mode remains transparent outside placement")
+  opaquePixels.requirePixel(2, 1, Pixel(green: 255, alpha: 255),
+    "opaque alpha mode applies inside placement")
+  let chainedPixels = host.readPixels(ns, chained, 4, 4)
+  chainedPixels.requirePixel(0, 0, Pixel(blue: 255, alpha: 255),
+    "placed chain leaves the outside backdrop intact")
+  chainedPixels.requirePixel(1, 1, Pixel(red: 128, blue: 255, alpha: 255),
+    "placed chain applies screen blending to translucent source")
+  chainedPixels.requirePixel(2, 2, Pixel(red: 192, green: 96,
+    blue: 255, alpha: 255), "placed chain screens opaque source")
+  material.release()
+  for handle in [backdrop, foreground, centered, clipped, scaled, opaque,
+      chained, scratch[0], scratch[1], scratch[2]]:
+    doAssert host.releaseGpuResource(handle)
+  doAssert host.closeGpuNamespace(ns)
+  echo "GPU foreground placement: clipping, scaling, and chaining pixels passed"
+
 proc verifyGpuGaussianBlurPixels(host: GpuHost;
     shaderc, shaderIncludes, workDirectory: string) =
   let ns = host.createGpuNamespace("gpu-gaussian-blur-pixels", budget())
@@ -1764,6 +1856,7 @@ proc run() =
     host.verifyGpuDropShadowPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuFilterChainPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuCompositePixels(shaderc, shaderIncludes, workDirectory)
+    host.verifyGpuCompositePlacementPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuRasterFilterDisplayPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyInstancedRects(shaderc, shaderIncludes, workDirectory)
     host.verifyMotionSceneCanvas(shaderc, shaderIncludes, workDirectory)
