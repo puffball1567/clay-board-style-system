@@ -24,6 +24,11 @@ type
     gcbmColor,
     gcbmLuminosity
 
+  GpuCompositePlacement* = object
+    enabled: bool
+    x, y: int32
+    width, height: uint32
+
   GpuCompositeVertex = object
     x, y, z: float32
     u, v: float32
@@ -34,7 +39,21 @@ type
     vertexShader, fragmentShader: GpuResourceHandle
     pipeline, vertexBuffer: GpuResourceHandle
     paramsUniform, backdropUvUniform, foregroundUvUniform: GpuResourceHandle
+    foregroundPlacementUniform: GpuResourceHandle
     backdropSampler, foregroundSampler: GpuResourceHandle
+
+proc gpuCompositePlacement*(
+    x, y: int32; width, height: uint32
+): GpuCompositePlacement =
+  ## Pixel bounds in the destination, measured from its top-left corner.
+  if width == 0 or height == 0:
+    raise newException(ValueError,
+      "GPU composite foreground placement must have positive dimensions")
+  GpuCompositePlacement(enabled: true, x: x, y: y,
+    width: width, height: height)
+
+proc isPlaced*(placement: GpuCompositePlacement): bool =
+  placement.enabled
 
 proc gpuCompositeVertexSource*(): GpuShaderSource =
   gpuHostDirectCompositeVertexSource()
@@ -50,6 +69,7 @@ SAMPLER2D(s_cbssForeground, 1);
 uniform vec4 u_cbssCompositeParams;
 uniform vec4 u_cbssBackdropUv;
 uniform vec4 u_cbssForegroundUv;
+uniform vec4 u_cbssForegroundPlacement;
 float cbssColorDodge(float backdrop, float foreground)
 {
   if (backdrop <= 0.0) return 0.0;
@@ -117,10 +137,18 @@ void main()
 {
   vec2 backdropUv = mix(u_cbssBackdropUv.xy,
     u_cbssBackdropUv.zw, v_texcoord0);
-  vec2 foregroundUv = mix(u_cbssForegroundUv.xy,
-    u_cbssForegroundUv.zw, v_texcoord0);
   vec4 backdrop = texture2D(s_cbssBackdrop, backdropUv);
-  vec4 foreground = texture2D(s_cbssForeground, foregroundUv);
+  vec2 localForeground = (v_texcoord0 - u_cbssForegroundPlacement.xy) /
+    u_cbssForegroundPlacement.zw;
+  vec4 foreground = vec4(0.0);
+  float foregroundCoverage = 0.0;
+  if (localForeground.x >= 0.0 && localForeground.y >= 0.0 &&
+      localForeground.x < 1.0 && localForeground.y < 1.0) {
+    vec2 foregroundUv = mix(u_cbssForegroundUv.xy,
+      u_cbssForegroundUv.zw, localForeground);
+    foreground = texture2D(s_cbssForeground, foregroundUv);
+    foregroundCoverage = 1.0;
+  }
   if (u_cbssCompositeParams.x > 1.5) {
     backdrop.a = 1.0;
   } else if (u_cbssCompositeParams.x < 0.5) {
@@ -131,7 +159,7 @@ void main()
   } else if (u_cbssCompositeParams.y < 0.5) {
     foreground.rgb *= foreground.a;
   }
-  foreground *= u_cbssCompositeParams.w;
+  foreground *= foregroundCoverage * u_cbssCompositeParams.w;
   vec3 rgb;
   if (u_cbssCompositeParams.z > 7.5) {
     vec3 backdropColor = vec3(0.0);
@@ -233,7 +261,8 @@ proc release*(material: GpuCompositeMaterial) =
   if material.isClosed:
     return
   for handle in [material.foregroundSampler, material.backdropSampler,
-      material.foregroundUvUniform, material.backdropUvUniform,
+      material.foregroundPlacementUniform, material.foregroundUvUniform,
+      material.backdropUvUniform,
       material.paramsUniform, material.vertexBuffer, material.pipeline,
       material.fragmentShader, material.vertexShader]:
     if material.host.isGpuResourceLive(handle):
@@ -293,6 +322,10 @@ proc newGpuCompositeMaterial*(
     result.foregroundUvUniform = host.createGpuUniform(namespace,
       GpuUniformDescriptor(name: "u_cbssForegroundUv", uniformType: gutVec4,
         arrayLength: 1, label: "gpu-composite-foreground-uv"))
+    result.foregroundPlacementUniform = host.createGpuUniform(namespace,
+      GpuUniformDescriptor(name: "u_cbssForegroundPlacement",
+        uniformType: gutVec4, arrayLength: 1,
+        label: "gpu-composite-foreground-placement"))
     result.backdropSampler = host.createGpuSampler(namespace,
       GpuSamplerDescriptor(name: "s_cbssBackdrop",
         addressU: gsamClamp, addressV: gsamClamp, addressW: gsamClamp,
@@ -313,7 +346,8 @@ proc submit*(
     backdropAlphaMode = gcamStraight;
     foregroundAlphaMode = gcamStraight;
     blendMode = gcbmNormal;
-    foregroundOpacity = 1'f32
+    foregroundOpacity = 1'f32;
+    foregroundPlacement = GpuCompositePlacement()
 ): bool =
   ## Foreground is placed over backdrop. Both inputs may share one resource.
   if material.isClosed:
@@ -345,8 +379,9 @@ proc submit*(
       targetInfo.format != gtfRgba8 or
       backdropInfo.width != targetInfo.width or
       backdropInfo.height != targetInfo.height or
-      foregroundInfo.width != targetInfo.width or
-      foregroundInfo.height != targetInfo.height:
+      (not foregroundPlacement.isPlaced and
+        (foregroundInfo.width != targetInfo.width or
+          foregroundInfo.height != targetInfo.height)):
     raise newException(ValueError, "GPU composite resource shapes are incompatible")
   if host.isGpuResourcePresentationRetained(destination):
     raise newException(GpuHostError,
@@ -357,6 +392,14 @@ proc submit*(
   let foregroundUv =
     if foregroundInfo.rowsBottomUp: @[0'f32, 1, 1, 0]
     else: @[0'f32, 0, 1, 1]
+  let placement =
+    if foregroundPlacement.isPlaced:
+      @[float32(foregroundPlacement.x) / float32(targetInfo.width),
+        float32(foregroundPlacement.y) / float32(targetInfo.height),
+        float32(foregroundPlacement.width) / float32(targetInfo.width),
+        float32(foregroundPlacement.height) / float32(targetInfo.height)]
+    else:
+      @[0'f32, 0, 1, 1]
   host.submitGpuDraw(material.namespace,
     GpuGraphicsPassDescriptor(
       viewport: GpuViewport(width: targetInfo.width, height: targetInfo.height),
@@ -376,7 +419,9 @@ proc submit*(
           GpuUniformBinding(uniform: material.backdropUvUniform,
             values: backdropUv),
           GpuUniformBinding(uniform: material.foregroundUvUniform,
-            values: foregroundUv)
+            values: foregroundUv),
+          GpuUniformBinding(uniform: material.foregroundPlacementUniform,
+            values: placement)
         ],
         textures: @[
           GpuTextureBinding(stage: 0, sampler: material.backdropSampler,

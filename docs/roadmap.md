@@ -1135,7 +1135,8 @@ difference, and exclusion complete the twelve separable blend modes for
 GPU-owned surfaces. Hue, saturation, color, and luminosity add the four
 non-separable modes. All sixteen use source-over alpha and premultiplied output.
 Direct composition and the filter-chain composite stage can scale foreground
-opacity without rewriting the sampled surface.
+opacity without rewriting the sampled surface. They can also position, clip,
+and scale a foreground of different dimensions over a same-size backdrop.
 An ordered GPU filter chain now combines up to eight matrix, opacity, blur,
 shadow, alpha-mask, and source-over stages over three reusable scratch targets, carrying
 premultiplied alpha into each stage and producing a display-ready RenderTarget. An owned

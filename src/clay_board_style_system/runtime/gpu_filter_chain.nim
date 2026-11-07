@@ -31,6 +31,7 @@ type
     foregroundAlphaModeValue: GpuAlphaMode
     blendModeValue: GpuCompositeBlendMode
     foregroundOpacityValue: float32
+    foregroundPlacementValue: GpuCompositePlacement
 
   GpuFilterChain* = ref object
     host: GpuHost
@@ -66,7 +67,8 @@ proc compositeStage*(
     foreground: GpuResourceHandle;
     foregroundAlphaMode = gcamStraight;
     blendMode = gcbmNormal;
-    foregroundOpacity = 1'f32
+    foregroundOpacity = 1'f32;
+    foregroundPlacement = GpuCompositePlacement()
 ): GpuFilterStage =
   ## Place a sampled foreground above the current chain result.
   if foregroundOpacity.classify in {fcNan, fcInf, fcNegInf} or
@@ -75,7 +77,8 @@ proc compositeStage*(
       "GPU composite foreground opacity must be finite and normalized")
   GpuFilterStage(kindValue: gfskComposite, sampledInputValue: foreground,
     foregroundAlphaModeValue: foregroundAlphaMode,
-    blendModeValue: blendMode, foregroundOpacityValue: foregroundOpacity)
+    blendModeValue: blendMode, foregroundOpacityValue: foregroundOpacity,
+    foregroundPlacementValue: foregroundPlacement)
 
 proc gaussianBlurStage*(radius = 2): GpuFilterStage =
   if radius < 0 or radius > MaxGpuBlurRadius:
@@ -261,8 +264,9 @@ proc submit*(
       if foregroundInfo.kind notin {grkTexture, grkRenderTarget} or
           gtuSampled notin foregroundInfo.usage or
           foregroundInfo.format notin {gtfRgba8, gtfBgra8} or
-          foregroundInfo.width != sourceInfo.width or
-          foregroundInfo.height != sourceInfo.height:
+          (not stage.foregroundPlacementValue.isPlaced and
+            (foregroundInfo.width != sourceInfo.width or
+              foregroundInfo.height != sourceInfo.height)):
         raise newException(ValueError,
           "GPU filter chain foreground must be a sampled RGBA8 or BGRA8 source of matching size")
   var current = source
@@ -299,7 +303,8 @@ proc submit*(
     of gfskComposite:
       discard chain.composite.submit(current, stage.sampledInputValue,
         output, alphaMode, stage.foregroundAlphaModeValue,
-        stage.blendModeValue, stage.foregroundOpacityValue)
+        stage.blendModeValue, stage.foregroundOpacityValue,
+        stage.foregroundPlacementValue)
     current = output
     alphaMode = gcamPremultiplied
   true
