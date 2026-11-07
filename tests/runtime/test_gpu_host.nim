@@ -7661,7 +7661,7 @@ suite "GPU alpha mask postprocess":
     let host = openGpuHost(context.backend, ghoOwned)
     let namespace = host.createGpuNamespace("alpha-mask",
       GpuResourceBudget(persistentBytes: 65536,
-        workUnitsPerFrame: 4, maxResources: 20))
+        workUnitsPerFrame: 5, maxResources: 21))
     proc artifact(source: GpuShaderSource): GpuShaderArtifact =
       GpuShaderArtifact(
         descriptor: GpuShaderDescriptor(stage: source.stage),
@@ -7691,6 +7691,13 @@ suite "GPU alpha mask postprocess":
       discard material.submit(source, mask, source)
     expect ValueError:
       discard material.submit(source, wrongSize, output)
+    let placement = gpuAlphaMaskPlacement(-1, 0, 3, 2)
+    check not GpuAlphaMaskPlacement().isMaskPlaced
+    check placement.isMaskPlaced
+    expect ValueError:
+      discard gpuAlphaMaskPlacement(0, 0, 0, 2)
+    expect ValueError:
+      discard gpuAlphaMaskPlacement(0, 0, 2, 0)
     for invalid in [NaN.float32, Inf.float32, NegInf.float32,
         -0.1'f32, 1.1'f32]:
       expect ValueError:
@@ -7704,6 +7711,8 @@ suite "GPU alpha mask postprocess":
     check context.lastGraphicsPass.renderTarget == output
     check context.lastBindings.uniforms[0].values == @[
       float32(ord(gcamStraight)), 0, 1, 0]
+    check context.lastBindings.uniforms[3].values == @[
+      0'f32, 0'f32, 1'f32, 1'f32]
     check context.lastBindings.textures.len == 2
     check context.lastBindings.textures[0].stage == 0
     check context.lastBindings.textures[0].texture.backendResourceIdValue() != 0
@@ -7720,7 +7729,11 @@ suite "GPU alpha mask postprocess":
     check material.submit(source, mask, output, maskStrength = 0'f32)
     check context.lastBindings.uniforms[0].values == @[
       float32(ord(gcamStraight)), 0, 0, 0]
-    check context.drawSubmits == 4
+    check material.submit(source, wrongSize, output,
+      maskPlacement = placement)
+    check context.lastBindings.uniforms[3].values == @[
+      -0.5'f32, 0'f32, 1.5'f32, 1'f32]
+    check context.drawSubmits == 5
     host.endGpuFrame(frame)
     material.release()
     for handle in [source, mask, wrongSize, output]:
@@ -8080,6 +8093,8 @@ suite "GPU filter chain":
       textureDescriptor(width = 5, height = 5, usage = {gtuSampled}))
     let mask = host.createGpuTexture(namespace,
       textureDescriptor(width = 5, height = 5, usage = {gtuSampled}))
+    let smallerMask = host.createGpuTexture(namespace,
+      textureDescriptor(width = 2, height = 2, usage = {gtuSampled}))
     proc target(): GpuResourceHandle =
       host.createGpuRenderTarget(namespace, renderTargetDescriptor(5, 5))
     let scratch = [target(), target(), target()]
@@ -8117,10 +8132,18 @@ suite "GPU filter chain":
     let invertedMaskChain = host.newGpuFilterChain(namespace,
       [alphaMaskStage(mask, invertMask = true,
         maskStrength = 0.5'f32)], alphaMask = alphaMask)
+    let mismatchedMaskChain = host.newGpuFilterChain(namespace,
+      [alphaMaskStage(smallerMask)], alphaMask = alphaMask)
+    let placedMaskChain = host.newGpuFilterChain(namespace,
+      [alphaMaskStage(smallerMask,
+        maskPlacement = gpuAlphaMaskPlacement(1, 1, 2, 2))],
+      alphaMask = alphaMask)
     let maskFrame = host.beginGpuFrame()
     let drawsBeforeMask = context.drawSubmits
     expect ValueError:
       discard badMaskChain.submit(source, output, scratch)
+    expect ValueError:
+      discard mismatchedMaskChain.submit(source, output, scratch)
     check context.drawSubmits == drawsBeforeMask
     check maskChain.submit(source, output, scratch)
     check context.drawSubmits == drawsBeforeMask + 2
@@ -8128,6 +8151,9 @@ suite "GPU filter chain":
     check invertedMaskChain.submit(source, output, scratch)
     check context.lastBindings.uniforms[0].values == @[
       float32(ord(gcamStraight)), 1, 0.5'f32, 0]
+    check placedMaskChain.submit(source, output, scratch)
+    check context.lastBindings.uniforms[3].values == @[
+      0.2'f32, 0.2'f32, 0.4'f32, 0.4'f32]
     host.endGpuFrame(maskFrame)
     let opacityChain = host.newGpuFilterChain(namespace,
       [opacityStage(0.5)], colorMatrix = matrix)
@@ -8140,7 +8166,8 @@ suite "GPU filter chain":
     blur.release()
     shadow.release()
     alphaMask.release()
-    for handle in [source, mask, output, scratch[0], scratch[1], scratch[2]]:
+    for handle in [source, mask, smallerMask, output,
+        scratch[0], scratch[1], scratch[2]]:
       doAssert host.releaseGpuResource(handle)
     doAssert host.closeGpuNamespace(namespace)
     host.close()

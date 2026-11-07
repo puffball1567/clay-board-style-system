@@ -1127,6 +1127,8 @@ offsets and tints its alpha, and composites the original source above it.
 An alpha-mask pass multiplies a GPU-owned surface by another sampled surface's
 coverage while preserving premultiplied output. Direct and chained masks can
 invert coverage or blend its strength without rewriting the sampled image.
+Masks of different dimensions can be positioned, clipped, and scaled in the
+destination while keeping transparent coverage outside their bounds.
 An independent-alpha source-over pass now composites two sampled GPU surfaces
 into a premultiplied RenderTarget. Its filter-chain stage places an external
 foreground over the current GPU-owned result. Normal, multiply, screen,
