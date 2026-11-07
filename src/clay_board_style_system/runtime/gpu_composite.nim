@@ -16,7 +16,11 @@ type
     gcbmColorDodge,
     gcbmColorBurn,
     gcbmHardLight,
-    gcbmSoftLight
+    gcbmSoftLight,
+    gcbmHue,
+    gcbmSaturation,
+    gcbmColor,
+    gcbmLuminosity
 
   GpuCompositeVertex = object
     x, y, z: float32
@@ -72,6 +76,41 @@ float cbssSoftLight(float backdrop, float foreground)
     sqrt(backdrop);
   return backdrop + (2.0 * foreground - 1.0) * (d - backdrop);
 }
+float cbssLum(vec3 color)
+{
+  return dot(color, vec3(0.3, 0.59, 0.11));
+}
+float cbssSat(vec3 color)
+{
+  return max(color.r, max(color.g, color.b)) -
+    min(color.r, min(color.g, color.b));
+}
+vec3 cbssClipColor(vec3 color)
+{
+  float lum = cbssLum(color);
+  float low = min(color.r, min(color.g, color.b));
+  float high = max(color.r, max(color.g, color.b));
+  if (low < 0.0) {
+    color = vec3(lum) + (color - vec3(lum)) *
+      (lum / (lum - low));
+  }
+  if (high > 1.0) {
+    color = vec3(lum) + (color - vec3(lum)) *
+      ((1.0 - lum) / (high - lum));
+  }
+  return clamp(color, vec3(0.0), vec3(1.0));
+}
+vec3 cbssSetLum(vec3 color, float lum)
+{
+  return cbssClipColor(color + vec3(lum - cbssLum(color)));
+}
+vec3 cbssSetSat(vec3 color, float sat)
+{
+  float low = min(color.r, min(color.g, color.b));
+  float high = max(color.r, max(color.g, color.b));
+  if (high <= low) return vec3(0.0);
+  return (color - vec3(low)) * (sat / (high - low));
+}
 void main()
 {
   vec2 backdropUv = mix(u_cbssBackdropUv.xy,
@@ -97,7 +136,19 @@ void main()
     if (backdrop.a > 0.0) backdropColor = backdrop.rgb / backdrop.a;
     if (foreground.a > 0.0) foregroundColor = foreground.rgb / foreground.a;
     vec3 blended;
-    if (u_cbssCompositeParams.z > 10.5) {
+    if (u_cbssCompositeParams.z > 14.5) {
+      blended = cbssSetLum(backdropColor, cbssLum(foregroundColor));
+    } else if (u_cbssCompositeParams.z > 13.5) {
+      blended = cbssSetLum(foregroundColor, cbssLum(backdropColor));
+    } else if (u_cbssCompositeParams.z > 12.5) {
+      blended = cbssSetLum(
+        cbssSetSat(backdropColor, cbssSat(foregroundColor)),
+        cbssLum(backdropColor));
+    } else if (u_cbssCompositeParams.z > 11.5) {
+      blended = cbssSetLum(
+        cbssSetSat(foregroundColor, cbssSat(backdropColor)),
+        cbssLum(backdropColor));
+    } else if (u_cbssCompositeParams.z > 10.5) {
       blended = vec3(
         cbssSoftLight(backdropColor.r, foregroundColor.r),
         cbssSoftLight(backdropColor.g, foregroundColor.g),

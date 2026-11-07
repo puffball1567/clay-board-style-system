@@ -7719,7 +7719,7 @@ suite "GPU source-over composition":
     let host = openGpuHost(context.backend, ghoOwned)
     let namespace = host.createGpuNamespace("composite",
       GpuResourceBudget(persistentBytes: 65536,
-        workUnitsPerFrame: 15, maxResources: 24))
+        workUnitsPerFrame: 20, maxResources: 24))
     proc artifact(source: GpuShaderSource): GpuShaderArtifact =
       GpuShaderArtifact(
         descriptor: GpuShaderDescriptor(stage: source.stage),
@@ -7760,6 +7760,9 @@ suite "GPU source-over composition":
     let softLightChain = host.newGpuFilterChain(namespace,
       [compositeStage(foreground, blendMode = gcbmSoftLight)],
       composite = material)
+    let hueChain = host.newGpuFilterChain(namespace,
+      [compositeStage(foreground, blendMode = gcbmHue)],
+      composite = material)
     let invalidChain = host.newGpuFilterChain(namespace,
       [compositeStage(output)], composite = material)
     let frame = host.beginGpuFrame()
@@ -7787,7 +7790,8 @@ suite "GPU source-over composition":
       float32(ord(gcamStraight)), float32(ord(gcamStraight)), 2, 0]
     for mode in [gcbmOverlay, gcbmDarken, gcbmLighten,
         gcbmDifference, gcbmExclusion, gcbmColorDodge,
-        gcbmColorBurn, gcbmHardLight, gcbmSoftLight]:
+        gcbmColorBurn, gcbmHardLight, gcbmSoftLight,
+        gcbmHue, gcbmSaturation, gcbmColor, gcbmLuminosity]:
       check material.submit(backdrop, foreground, output, blendMode = mode)
       check context.lastBindings.uniforms[0].values == @[
         float32(ord(gcamStraight)), float32(ord(gcamStraight)),
@@ -7801,7 +7805,10 @@ suite "GPU source-over composition":
     check softLightChain.submit(backdrop, output, scratch)
     check context.lastBindings.uniforms[0].values == @[
       float32(ord(gcamStraight)), float32(ord(gcamStraight)), 11, 0]
-    check context.drawSubmits == 15
+    check hueChain.submit(backdrop, output, scratch)
+    check context.lastBindings.uniforms[0].values == @[
+      float32(ord(gcamStraight)), float32(ord(gcamStraight)), 12, 0]
+    check context.drawSubmits == 20
     host.endGpuFrame(frame)
     material.release()
     for handle in [backdrop, foreground, wrongSize, output,

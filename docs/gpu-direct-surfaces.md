@@ -130,12 +130,15 @@ The pass converts each input according to its alpha mode, then places the
 foreground over the backdrop. The default `gcbmNormal` uses source-over color;
 `gcbmMultiply`, `gcbmScreen`, `gcbmOverlay`, `gcbmDarken`, `gcbmLighten`,
 `gcbmColorDodge`, `gcbmColorBurn`, `gcbmHardLight`, `gcbmSoftLight`,
-`gcbmDifference`, and `gcbmExclusion` apply the corresponding
+`gcbmDifference`, `gcbmExclusion`, `gcbmHue`, `gcbmSaturation`,
+`gcbmColor`, and `gcbmLuminosity` apply the corresponding
 [W3C blend functions](https://www.w3.org/TR/compositing-1/#blending) with
 source-over alpha. Color blending runs on the sampled encoded RGB channels.
 Color dodge and burn handle zero and unit color channels explicitly; soft light
-uses the specified cubic and square-root curves. All twelve separable modes
-accept straight, premultiplied, or opaque inputs, including transparent pixels.
+uses the specified cubic and square-root curves. Hue, saturation, color, and
+luminosity use the specified RGB luminosity weights, saturation transfer, and
+bounded color clipping. All sixteen modes accept straight, premultiplied, or
+opaque inputs, including transparent pixels.
 The output is premultiplied RGBA8; present with `gcamPremultiplied`. Use
 `compositeStage(foreground, foregroundAlphaMode, blendMode)` in a filter chain
 to place an external foreground over the current stage result.
