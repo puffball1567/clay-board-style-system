@@ -2516,6 +2516,14 @@ proc ensureGpuViewsAvailable(host: GpuHost; count: int) =
       uint64(host.configValue.viewIdCount - host.nextViewOffset):
     raise newException(GpuHostError, "GPU frame view identifier range exhausted")
 
+proc validateGpuViewCapacity*(host: GpuHost; count: int) =
+  ## Check a multi-pass submission without consuming frame view identifiers.
+  host.requireHost()
+  if host.stateValue != ghsReady or not host.activeFrame:
+    raise newException(GpuHostError,
+      "GPU view capacity requires an active ready frame")
+  host.ensureGpuViewsAvailable(count)
+
 proc validateGraphicsPass(
     host: GpuHost;
     namespace: GpuNamespaceId;

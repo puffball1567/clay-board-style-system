@@ -249,8 +249,12 @@ stages, passes premultiplied alpha to each later stage, and returns a
 premultiplied RGBA8 destination for a display surface configured with
 `gcamPremultiplied`. A non-final shadow may use the destination temporarily;
 submit all stages before publishing it. The chain rejects invalid resources,
-released materials, and presentation-retained write targets before the first
-pass. Ordinary Style subtrees still need the shared GPU offscreen target.
+released materials, presentation-retained write targets, and insufficient
+frame work or view capacity before the first pass. `requiredWorkUnits()` reports
+the chain's draw count: one for matrix, opacity, mask, or composite, two for
+blur, and three for shadow. Direct blur and shadow passes also check their full
+draw count before writing. Ordinary Style subtrees still need the shared GPU
+offscreen target.
 
 ## Raster input for filtered UI display
 
