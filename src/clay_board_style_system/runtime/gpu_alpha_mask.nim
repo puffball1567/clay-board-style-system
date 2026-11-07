@@ -1,5 +1,7 @@
 ## Same-host GPU alpha mask for sampled surfaces.
 ## Source and mask are sampled independently; output is premultiplied RGBA8.
+import std/math
+
 import ../paint/gpu_host_compositor
 import ./[gpu_host, gpu_shader_builder]
 
@@ -43,6 +45,8 @@ void main()
     source.rgb *= source.a;
   }
   float coverage = texture2D(s_cbssMaskCoverage, maskUv).a;
+  if (u_cbssMaskParams.y > 0.5) coverage = 1.0 - coverage;
+  coverage = mix(1.0, coverage, u_cbssMaskParams.z);
   gl_FragColor = source * coverage;
 }
 """,
@@ -142,12 +146,18 @@ proc newGpuAlphaMaskMaterial*(
 proc submit*(
     material: GpuAlphaMaskMaterial;
     source, mask, destination: GpuResourceHandle;
-    sourceAlphaMode = gcamStraight
+    sourceAlphaMode = gcamStraight;
+    invertMask = false;
+    maskStrength = 1'f32
 ): bool =
-  ## The mask's alpha multiplies source coverage; its RGB is ignored.
+  ## Mask strength blends between an unmasked source and mask coverage.
   ## Source and mask may be the same sampled resource. Output is premultiplied.
   if material.isClosed:
     raise newException(ValueError, "GPU alpha mask material is closed")
+  if maskStrength.classify in {fcNan, fcInf, fcNegInf} or
+      maskStrength < 0 or maskStrength > 1:
+    raise newException(ValueError,
+      "GPU alpha mask strength must be finite and normalized")
   let host = material.host
   if not host.hasActiveGpuFrame():
     raise newException(GpuHostError, "GPU alpha mask requires an active frame")
@@ -196,7 +206,8 @@ proc submit*(
       bindings: GpuBindingSet(
         uniforms: @[
           GpuUniformBinding(uniform: material.paramsUniform,
-            values: @[float32(ord(sourceAlphaMode)), 0'f32, 0, 0]),
+            values: @[float32(ord(sourceAlphaMode)),
+              (if invertMask: 1'f32 else: 0'f32), maskStrength, 0'f32]),
           GpuUniformBinding(uniform: material.sourceUvUniform,
             values: sourceUv),
           GpuUniformBinding(uniform: material.maskUvUniform,

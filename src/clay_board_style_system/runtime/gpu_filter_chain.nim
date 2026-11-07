@@ -26,6 +26,8 @@ type
     colorValue: Color
     blurRadiusValue: int
     sampledInputValue: GpuResourceHandle
+    invertMaskValue: bool
+    maskStrengthValue: float32
     foregroundAlphaModeValue: GpuAlphaMode
     blendModeValue: GpuCompositeBlendMode
     foregroundOpacityValue: float32
@@ -49,9 +51,16 @@ proc opacityStage*(opacity: float32): GpuFilterStage =
     raise newException(ValueError, "GPU filter opacity must be finite and normalized")
   GpuFilterStage(kindValue: gfskOpacity, opacityValue: opacity)
 
-proc alphaMaskStage*(mask: GpuResourceHandle): GpuFilterStage =
+proc alphaMaskStage*(
+    mask: GpuResourceHandle; invertMask = false; maskStrength = 1'f32
+): GpuFilterStage =
   ## Use the sampled mask's alpha; its RGB does not affect the source.
-  GpuFilterStage(kindValue: gfskAlphaMask, sampledInputValue: mask)
+  if maskStrength.classify in {fcNan, fcInf, fcNegInf} or
+      maskStrength < 0 or maskStrength > 1:
+    raise newException(ValueError,
+      "GPU alpha mask strength must be finite and normalized")
+  GpuFilterStage(kindValue: gfskAlphaMask, sampledInputValue: mask,
+    invertMaskValue: invertMask, maskStrengthValue: maskStrength)
 
 proc compositeStage*(
     foreground: GpuResourceHandle;
@@ -286,7 +295,7 @@ proc submit*(
         stage.colorValue, alphaMode, stage.blurRadiusValue)
     of gfskAlphaMask:
       discard chain.alphaMask.submit(current, stage.sampledInputValue,
-        output, alphaMode)
+        output, alphaMode, stage.invertMaskValue, stage.maskStrengthValue)
     of gfskComposite:
       discard chain.composite.submit(current, stage.sampledInputValue,
         output, alphaMode, stage.foregroundAlphaModeValue,

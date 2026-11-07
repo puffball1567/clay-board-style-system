@@ -28,6 +28,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added inverted GPU alpha masks and normalized mask strength for direct
+  sampled-surface passes and ordered filter chains.
+
 - Added per-composition foreground opacity for direct GPU surface blending and
   filter-chain composite stages, with the same setting across all blend modes.
 

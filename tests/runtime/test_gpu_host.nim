@@ -7661,7 +7661,7 @@ suite "GPU alpha mask postprocess":
     let host = openGpuHost(context.backend, ghoOwned)
     let namespace = host.createGpuNamespace("alpha-mask",
       GpuResourceBudget(persistentBytes: 65536,
-        workUnitsPerFrame: 2, maxResources: 20))
+        workUnitsPerFrame: 4, maxResources: 20))
     proc artifact(source: GpuShaderSource): GpuShaderArtifact =
       GpuShaderArtifact(
         descriptor: GpuShaderDescriptor(stage: source.stage),
@@ -7691,12 +7691,19 @@ suite "GPU alpha mask postprocess":
       discard material.submit(source, mask, source)
     expect ValueError:
       discard material.submit(source, wrongSize, output)
+    for invalid in [NaN.float32, Inf.float32, NegInf.float32,
+        -0.1'f32, 1.1'f32]:
+      expect ValueError:
+        discard material.submit(source, mask, output,
+          maskStrength = invalid)
+      expect ValueError:
+        discard alphaMaskStage(mask, maskStrength = invalid)
     check context.drawSubmits == 0
     check material.submit(source, mask, output)
     check context.drawSubmits == 1
     check context.lastGraphicsPass.renderTarget == output
     check context.lastBindings.uniforms[0].values == @[
-      float32(ord(gcamStraight)), 0, 0, 0]
+      float32(ord(gcamStraight)), 0, 1, 0]
     check context.lastBindings.textures.len == 2
     check context.lastBindings.textures[0].stage == 0
     check context.lastBindings.textures[0].texture.backendResourceIdValue() != 0
@@ -7706,6 +7713,14 @@ suite "GPU alpha mask postprocess":
     check context.lastBindings.textures[1].stage == 1
     check material.submit(source, source, output)
     check context.drawSubmits == 2
+    check material.submit(source, mask, output, invertMask = true,
+      maskStrength = 0.5'f32)
+    check context.lastBindings.uniforms[0].values == @[
+      float32(ord(gcamStraight)), 1, 0.5'f32, 0]
+    check material.submit(source, mask, output, maskStrength = 0'f32)
+    check context.lastBindings.uniforms[0].values == @[
+      float32(ord(gcamStraight)), 0, 0, 0]
+    check context.drawSubmits == 4
     host.endGpuFrame(frame)
     material.release()
     for handle in [source, mask, wrongSize, output]:
@@ -8080,6 +8095,9 @@ suite "GPU filter chain":
     let maskChain = host.newGpuFilterChain(namespace,
       [colorMatrixStage(swapRedBlue), alphaMaskStage(mask)],
       colorMatrix = matrix, alphaMask = alphaMask)
+    let invertedMaskChain = host.newGpuFilterChain(namespace,
+      [alphaMaskStage(mask, invertMask = true,
+        maskStrength = 0.5'f32)], alphaMask = alphaMask)
     let maskFrame = host.beginGpuFrame()
     let drawsBeforeMask = context.drawSubmits
     expect ValueError:
@@ -8088,6 +8106,9 @@ suite "GPU filter chain":
     check maskChain.submit(source, output, scratch)
     check context.drawSubmits == drawsBeforeMask + 2
     check context.lastBindings.textures[1].texture.backendResourceIdValue() != 0
+    check invertedMaskChain.submit(source, output, scratch)
+    check context.lastBindings.uniforms[0].values == @[
+      float32(ord(gcamStraight)), 1, 0.5'f32, 0]
     host.endGpuFrame(maskFrame)
     let opacityChain = host.newGpuFilterChain(namespace,
       [opacityStage(0.5)], colorMatrix = matrix)
