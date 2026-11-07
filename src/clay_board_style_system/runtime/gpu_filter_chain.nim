@@ -168,6 +168,19 @@ proc newGpuFilterChain*(
 proc stageCount*(chain: GpuFilterChain): int =
   if chain.isNil: 0 else: chain.stages.len
 
+proc requiredWorkUnits*(chain: GpuFilterChain): uint32 =
+  ## One view/work unit per graphics pass, including blur and shadow passes.
+  if chain.isNil:
+    return 0
+  for stage in chain.stages:
+    case stage.kindValue
+    of gfskGaussianBlur:
+      result += 2
+    of gfskDropShadow:
+      result += 3
+    else:
+      inc result
+
 proc belongsTo*(
     chain: GpuFilterChain; host: GpuHost; namespace: GpuNamespaceId
 ): bool =
@@ -273,6 +286,9 @@ proc submit*(
               foregroundInfo.height != sourceInfo.height)):
         raise newException(ValueError,
           "GPU filter chain foreground must be a sampled RGBA8 or BGRA8 source of matching size")
+  let workUnits = chain.requiredWorkUnits()
+  chain.host.validateGpuFrameWork(chain.namespace, workUnits = workUnits)
+  chain.host.validateGpuViewCapacity(int(workUnits))
   var current = source
   var alphaMode = sourceAlphaMode
   for index, stage in chain.stages:

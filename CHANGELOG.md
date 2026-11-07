@@ -18,6 +18,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Fixed
 
+- GPU filter chains, Gaussian blurs, and drop shadows now reject insufficient
+  frame work or view capacity before starting a multi-pass draw. Blur also
+  rejects presentation-retained write targets before its first pass.
+
 - SDL3 wheel coalescing now keeps samples at different cursor positions as
   separate dispatches, so a move between nested scroll regions cannot send
   earlier wheel deltas to the later target.

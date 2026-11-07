@@ -290,6 +290,12 @@ proc submit*(
       sourceInfo.width != targetInfo.width or
       sourceInfo.height != targetInfo.height:
     raise newException(ValueError, "GPU blur source, scratch, and target are incompatible")
+  for target in [scratch, destination]:
+    if material.host.isGpuResourcePresentationRetained(target):
+      raise newException(GpuHostError,
+        "GPU blur cannot overwrite a presentation-retained target")
+  material.host.validateGpuFrameWork(material.namespace, workUnits = 2)
+  material.host.validateGpuViewCapacity(2)
   let weights = blurWeights(radius)
   material.submitPass(source, scratch, sourceInfo,
     1'f32 / float32(sourceInfo.width), 0'f32, sourceAlphaMode,
