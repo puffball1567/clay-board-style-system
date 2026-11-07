@@ -28,6 +28,7 @@ type
     sampledInputValue: GpuResourceHandle
     foregroundAlphaModeValue: GpuAlphaMode
     blendModeValue: GpuCompositeBlendMode
+    foregroundOpacityValue: float32
 
   GpuFilterChain* = ref object
     host: GpuHost
@@ -55,12 +56,17 @@ proc alphaMaskStage*(mask: GpuResourceHandle): GpuFilterStage =
 proc compositeStage*(
     foreground: GpuResourceHandle;
     foregroundAlphaMode = gcamStraight;
-    blendMode = gcbmNormal
+    blendMode = gcbmNormal;
+    foregroundOpacity = 1'f32
 ): GpuFilterStage =
   ## Place a sampled foreground above the current chain result.
+  if foregroundOpacity.classify in {fcNan, fcInf, fcNegInf} or
+      foregroundOpacity < 0 or foregroundOpacity > 1:
+    raise newException(ValueError,
+      "GPU composite foreground opacity must be finite and normalized")
   GpuFilterStage(kindValue: gfskComposite, sampledInputValue: foreground,
     foregroundAlphaModeValue: foregroundAlphaMode,
-    blendModeValue: blendMode)
+    blendModeValue: blendMode, foregroundOpacityValue: foregroundOpacity)
 
 proc gaussianBlurStage*(radius = 2): GpuFilterStage =
   if radius < 0 or radius > MaxGpuBlurRadius:
@@ -284,7 +290,7 @@ proc submit*(
     of gfskComposite:
       discard chain.composite.submit(current, stage.sampledInputValue,
         output, alphaMode, stage.foregroundAlphaModeValue,
-        stage.blendModeValue)
+        stage.blendModeValue, stage.foregroundOpacityValue)
     current = output
     alphaMode = gcamPremultiplied
   true

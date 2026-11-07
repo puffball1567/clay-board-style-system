@@ -585,6 +585,11 @@ proc verifyGpuCompositePixels(host: GpuHost;
   let chained = target("composite-chained")
   let multiplied = target("composite-multiplied")
   let screened = target("composite-screened")
+  let halfNormal = target("composite-half-normal")
+  let halfScreen = target("composite-half-screen")
+  let zeroForeground = target("composite-zero-foreground")
+  let chainedHalfNormal = target("composite-chained-half-normal")
+  let chainedHalfScreen = target("composite-chained-half-screen")
   let overlaid = target("composite-overlaid")
   let darkened = target("composite-darkened")
   let lightened = target("composite-lightened")
@@ -656,6 +661,12 @@ proc verifyGpuCompositePixels(host: GpuHost;
   let screenChain = host.newGpuFilterChain(ns,
     [compositeStage(foreground, blendMode = gcbmScreen)],
     composite = composite)
+  let halfNormalChain = host.newGpuFilterChain(ns,
+    [compositeStage(foreground, foregroundOpacity = 0.5'f32)],
+    composite = composite)
+  let halfScreenChain = host.newGpuFilterChain(ns,
+    [compositeStage(foreground, blendMode = gcbmScreen,
+      foregroundOpacity = 0.5'f32)], composite = composite)
   let overlayChain = host.newGpuFilterChain(ns,
     [compositeStage(foreground, blendMode = gcbmOverlay)],
     composite = composite)
@@ -704,6 +715,15 @@ proc verifyGpuCompositePixels(host: GpuHost;
     multiplied, gcamStraight, gcamPremultiplied, gcbmMultiply)
   doAssert composite.submit(backdrop, premultipliedForeground,
     screened, gcamStraight, gcamPremultiplied, gcbmScreen)
+  doAssert composite.submit(backdrop, premultipliedForeground,
+    halfNormal, gcamStraight, gcamPremultiplied,
+    foregroundOpacity = 0.5'f32)
+  doAssert composite.submit(backdrop, premultipliedForeground,
+    halfScreen, gcamStraight, gcamPremultiplied, gcbmScreen, 0.5'f32)
+  doAssert composite.submit(backdrop, foreground,
+    zeroForeground, foregroundOpacity = 0'f32)
+  doAssert halfNormalChain.submit(backdrop, chainedHalfNormal, scratch)
+  doAssert halfScreenChain.submit(backdrop, chainedHalfScreen, scratch)
   doAssert composite.submit(backdrop, premultipliedForeground,
     overlaid, gcamStraight, gcamPremultiplied, gcbmOverlay)
   doAssert composite.submit(backdrop, premultipliedForeground,
@@ -785,6 +805,25 @@ proc verifyGpuCompositePixels(host: GpuHost;
       "GPU screen preserves foreground over transparent backdrop")
     pixels.requirePixel(1, 1, Pixel(red: 208, green: 176, blue: 200,
       alpha: 255), "GPU screen blends opaque midtones")
+  for item in [halfNormal, chainedHalfNormal]:
+    let pixels = host.readPixels(ns, item, 2, 2)
+    pixels.requirePixel(0, 0, Pixel(red: 64, blue: 96, alpha: 160),
+      "GPU half-opacity source-over scales translucent foreground")
+    pixels.requirePixel(1, 0, Pixel(green: 255, alpha: 255),
+      "GPU half-opacity source-over preserves transparent foreground")
+    pixels.requirePixel(1, 1, Pixel(red: 128, green: 112, blue: 112,
+      alpha: 255), "GPU half-opacity source-over mixes opaque colors")
+  for item in [halfScreen, chainedHalfScreen]:
+    let pixels = host.readPixels(ns, item, 2, 2)
+    pixels.requirePixel(0, 0, Pixel(red: 64, blue: 128, alpha: 160),
+      "GPU half-opacity screen scales translucent foreground")
+    pixels.requirePixel(1, 1, Pixel(red: 136, green: 152, blue: 196,
+      alpha: 255), "GPU half-opacity screen blends opaque colors")
+  let zeroPixels = host.readPixels(ns, zeroForeground, 2, 2)
+  zeroPixels.requirePixel(0, 0, Pixel(blue: 128, alpha: 128),
+    "GPU zero-opacity foreground preserves premultiplied backdrop")
+  zeroPixels.requirePixel(1, 1, Pixel(red: 64, green: 128, blue: 192,
+    alpha: 255), "GPU zero-opacity foreground preserves opaque backdrop")
   for item in [overlaid, chainedOverlay]:
     let pixels = host.readPixels(ns, item, 2, 2)
     pixels.requirePixel(0, 0, Pixel(red: 64, blue: 128, alpha: 192),
@@ -882,7 +921,9 @@ proc verifyGpuCompositePixels(host: GpuHost;
   composite.release()
   matrix.release()
   for handle in [backdrop, foreground, premultipliedForeground,
-      output, chained, multiplied, screened, overlaid, darkened, lightened,
+      output, chained, multiplied, screened, halfNormal, halfScreen,
+      zeroForeground, chainedHalfNormal, chainedHalfScreen,
+      overlaid, darkened, lightened,
       differenced, excluded, dodged, burned, hardLit, softLit,
       hued, saturated, colored, luminosity,
       chainedMultiply, chainedScreen, chainedOverlay,
@@ -894,7 +935,7 @@ proc verifyGpuCompositePixels(host: GpuHost;
       grayHue, graySaturation]:
     doAssert host.releaseGpuResource(handle)
   doAssert host.closeGpuNamespace(ns)
-  echo "GPU separable and non-separable blend modes: direct and chained pixels passed"
+  echo "GPU blend modes and foreground opacity: direct and chained pixels passed"
 
 proc verifyGpuGaussianBlurPixels(host: GpuHost;
     shaderc, shaderIncludes, workDirectory: string) =

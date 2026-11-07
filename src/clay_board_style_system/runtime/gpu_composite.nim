@@ -1,5 +1,7 @@
 ## Same-host source-over composition of two sampled GPU surfaces.
 ## The output is premultiplied RGBA8.
+import std/math
+
 import ../paint/gpu_host_compositor
 import ./[gpu_host, gpu_shader_builder]
 
@@ -129,6 +131,7 @@ void main()
   } else if (u_cbssCompositeParams.y < 0.5) {
     foreground.rgb *= foreground.a;
   }
+  foreground *= u_cbssCompositeParams.w;
   vec3 rgb;
   if (u_cbssCompositeParams.z > 7.5) {
     vec3 backdropColor = vec3(0.0);
@@ -309,11 +312,16 @@ proc submit*(
     backdrop, foreground, destination: GpuResourceHandle;
     backdropAlphaMode = gcamStraight;
     foregroundAlphaMode = gcamStraight;
-    blendMode = gcbmNormal
+    blendMode = gcbmNormal;
+    foregroundOpacity = 1'f32
 ): bool =
   ## Foreground is placed over backdrop. Both inputs may share one resource.
   if material.isClosed:
     raise newException(ValueError, "GPU composite material is closed")
+  if foregroundOpacity.classify in {fcNan, fcInf, fcNegInf} or
+      foregroundOpacity < 0 or foregroundOpacity > 1:
+    raise newException(ValueError,
+      "GPU composite foreground opacity must be finite and normalized")
   let host = material.host
   if not host.hasActiveGpuFrame():
     raise newException(GpuHostError, "GPU composite requires an active frame")
@@ -364,7 +372,7 @@ proc submit*(
           GpuUniformBinding(uniform: material.paramsUniform,
             values: @[float32(ord(backdropAlphaMode)),
               float32(ord(foregroundAlphaMode)),
-              float32(ord(blendMode)), 0'f32]),
+              float32(ord(blendMode)), foregroundOpacity]),
           GpuUniformBinding(uniform: material.backdropUvUniform,
             values: backdropUv),
           GpuUniformBinding(uniform: material.foregroundUvUniform,
