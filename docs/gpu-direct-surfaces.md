@@ -281,10 +281,12 @@ discard view.collectGpuFrame()
 The adapter uploads only published raster revisions, using dirty rectangles
 when possible. An unchanged revision or full presentation ring returns `false`
 without filtering or uploading; retry after collecting the display frame.
-Before uploading a changed revision, it checks the combined upload and filter
-work against the current frame budget and checks the filter's view capacity.
-If either limit is insufficient, the call raises `GpuHostError` without
-uploading or drawing; the published revision remains pending for a later frame.
+Before uploading a changed revision, it checks the combined upload, filter,
+and readback work against the current frame budget, including readback bytes
+and view capacity. A full display or readback ring returns `false` before
+uploading. If a budget limit is insufficient, the call raises `GpuHostError`
+without uploading or drawing; the published revision remains pending for a
+later frame.
 Call `filtered.replaceSource(nextRaster)` to switch to another `RasterSurface`
 of the same dimensions while keeping the display and Style registrations.
 The next queued frame uploads the complete replacement once; subsequent

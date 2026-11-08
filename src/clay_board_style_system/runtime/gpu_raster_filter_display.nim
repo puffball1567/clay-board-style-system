@@ -1,7 +1,7 @@
 ## Retained RasterSurface -> GPU filter chain -> negotiated UI display.
 ## Owns the upload texture and bounded reusable output/scratch targets.
 import ../core/raster_surface
-import ./[gpu_canvas, gpu_display_surface, gpu_filter_chain, gpu_host,
+import ./[gpu_canvas, gpu_direct_surface, gpu_display_surface, gpu_filter_chain, gpu_host,
   gpu_raster_texture]
 
 type
@@ -183,12 +183,33 @@ proc queueUpdatedGpuRasterFrame*(
   if selected < 0:
     return false
   let output = surface.outputs[selected]
+  let displayPath = surface.display.path()
+  if displayPath in {gdspDirect, gdspHybrid} and
+      surface.display.directSurface().retainedFrameCount() >=
+        surface.display.config().bufferCount:
+    return false
+  var readbackBytes = 0'u64
+  var readbackWork = 0'u32
+  var readbackViews = 0
+  if displayPath in {gdspReadback, gdspHybrid}:
+    if surface.display.readbackSurface().pendingFrameCount() >=
+        surface.display.config().bufferCount:
+      return false
+    if surface.host.pendingGpuReadbackCount(surface.namespace) >=
+        maxGpuPendingReadbacksPerNamespace:
+      raise newException(GpuHostError, "GPU pending readback count exceeded")
+    let config = surface.display.config()
+    readbackBytes = uint64(config.width) * uint64(config.height) *
+      gpuTextureBytesPerPixel(config.format)
+    readbackWork = 2
+    readbackViews = 1
   let uploadPlan = surface.upload.pendingGpuRasterTextureSync()
   let filterWork = surface.chain.requiredWorkUnits()
   surface.host.validateGpuFrameWork(surface.namespace,
     transientBytes = uploadPlan.uploadedBytes,
-    workUnits = uint32(uploadPlan.regionCount) + filterWork)
-  surface.host.validateGpuViewCapacity(int(filterWork))
+    readbackBytes = readbackBytes,
+    workUnits = uint32(uploadPlan.regionCount) + filterWork + readbackWork)
+  surface.host.validateGpuViewCapacity(int(filterWork) + readbackViews)
   discard surface.upload.syncGpuRasterTexture()
   discard surface.chain.submit(surface.upload.texture(), output,
     surface.scratch, gcamStraight)
