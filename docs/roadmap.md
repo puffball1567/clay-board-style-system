@@ -1137,6 +1137,8 @@ overlay, darken, lighten, color dodge, color burn, hard light, soft light,
 difference, and exclusion complete the twelve separable blend modes for
 GPU-owned surfaces. Hue, saturation, color, and luminosity add the four
 non-separable modes. All sixteen use source-over alpha and premultiplied output.
+Plus-lighter also adds clamped premultiplied color and alpha for GPU-owned
+surface cross-fades, in direct composition and filter chains.
 Direct composition and the filter-chain composite stage can scale foreground
 opacity without rewriting the sampled surface. They can also position, clip,
 and scale a foreground of different dimensions over a same-size backdrop.

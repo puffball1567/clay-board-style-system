@@ -22,7 +22,8 @@ type
     gcbmHue,
     gcbmSaturation,
     gcbmColor,
-    gcbmLuminosity
+    gcbmLuminosity,
+    gcbmPlusLighter
 
   GpuCompositePlacement* = GpuSurfacePlacement
 
@@ -153,6 +154,10 @@ void main()
     foreground.rgb *= foreground.a;
   }
   foreground *= foregroundCoverage * u_cbssCompositeParams.w;
+  if (u_cbssCompositeParams.z > 15.5) {
+    gl_FragColor = min(backdrop + foreground, vec4(1.0));
+    return;
+  }
   vec3 rgb;
   if (u_cbssCompositeParams.z > 7.5) {
     vec3 backdropColor = vec3(0.0);
@@ -342,7 +347,8 @@ proc submit*(
     foregroundOpacity = 1'f32;
     foregroundPlacement = GpuCompositePlacement()
 ): bool =
-  ## Foreground is placed over backdrop. Both inputs may share one resource.
+  ## Foreground is placed over backdrop. Plus-lighter adds premultiplied
+  ## colors and alpha with saturation; both inputs may share one resource.
   if material.isClosed:
     raise newException(ValueError, "GPU composite material is closed")
   if foregroundOpacity.classify in {fcNan, fcInf, fcNegInf} or
