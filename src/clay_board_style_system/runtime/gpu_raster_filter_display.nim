@@ -183,6 +183,12 @@ proc queueUpdatedGpuRasterFrame*(
   if selected < 0:
     return false
   let output = surface.outputs[selected]
+  let uploadPlan = surface.upload.pendingGpuRasterTextureSync()
+  let filterWork = surface.chain.requiredWorkUnits()
+  surface.host.validateGpuFrameWork(surface.namespace,
+    transientBytes = uploadPlan.uploadedBytes,
+    workUnits = uint32(uploadPlan.regionCount) + filterWork)
+  surface.host.validateGpuViewCapacity(int(filterWork))
   discard surface.upload.syncGpuRasterTexture()
   discard surface.chain.submit(surface.upload.texture(), output,
     surface.scratch, gcamStraight)
