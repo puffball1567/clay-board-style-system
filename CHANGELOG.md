@@ -18,6 +18,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Fixed
 
+- GPU raster filter displays now check readback capacity and its frame budget
+  before uploading or drawing, so saturated readback slots and insufficient
+  copy/readback work leave the published revision ready for retry.
+
 - GPU raster filter displays now check upload and filter work together before
   starting a frame, so a full frame budget leaves the raster revision ready
   for retry without an unnecessary texture upload.

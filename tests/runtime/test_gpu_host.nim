@@ -8241,6 +8241,108 @@ suite "GPU filter chain":
     host.close()
 
 suite "GPU raster filter display":
+  test "readback budget and slot pressure reject before filtering":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("raster-filter-readback-budget",
+      GpuResourceBudget(persistentBytes: 65536,
+        transientBytesPerFrame: 256,
+        readbackBytesPerFrame: 16,
+        workUnitsPerFrame: 4, maxResources: 32))
+    proc artifact(source: GpuShaderSource): GpuShaderArtifact =
+      GpuShaderArtifact(
+        descriptor: GpuShaderDescriptor(stage: source.stage),
+        bindingLayout: source.gpuShaderBindingLayout(),
+        bytecode: @[1'u8],
+        sourceHash: source.gpuShaderSourceHash())
+    let material = host.newGpuColorMatrixMaterial(namespace,
+      artifact(gpuColorMatrixVertexSource()),
+      artifact(gpuColorMatrixFragmentSource()))
+    let chain = host.newGpuFilterChain(namespace,
+      [opacityStage(0.5'f32)], colorMatrix = material)
+    let source = host.createGpuTexture(namespace,
+      textureDescriptor(width = 2, height = 2))
+    let target = host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(2, 2))
+    let raster = newRasterSurface(2, 2, [255'u8, 0, 0, 255])
+    var config = defaultGpuRasterFilterDisplayConfig(2, 2)
+    config.bufferCount = 2
+    config.fallback = gdsfRequireReadback
+    let filtered = host.newGpuRasterFilterDisplay(namespace,
+      raster, chain, config)
+    check filtered.displaySurface().path == gdspReadback
+
+    let initial = host.beginGpuFrame()
+    check filtered.queueUpdatedGpuRasterFrame(initial)
+    host.endGpuFrame(initial)
+    check context.drawSubmits == 1
+    check context.textureCopies == 1
+    check context.readbackRequests == 1
+    context.readbackReady = true
+    check filtered.collectGpuRasterFrame()
+
+    raster.updateRegion(rasterRegion(0, 0, 1, 1),
+      @[0'u8, 255, 0, 255])
+    check raster.publish()
+    let previousRevision = filtered.lastQueuedRevision
+    let blocked = host.beginGpuFrame()
+    check material.submit(source, target, nil)
+    expect GpuHostError:
+      discard filtered.queueUpdatedGpuRasterFrame(blocked)
+    check host.gpuNamespaceUsage(namespace).workUnits == 1
+    check context.drawSubmits == 2
+    check context.textureUpdates == 0
+    check context.textureCopies == 1
+    check context.readbackRequests == 1
+    check filtered.lastQueuedRevision == previousRevision
+    host.endGpuFrame(blocked)
+
+    let retry = host.beginGpuFrame()
+    check filtered.queueUpdatedGpuRasterFrame(retry)
+    host.endGpuFrame(retry)
+    check context.drawSubmits == 3
+    check context.textureUpdates == 1
+    check context.textureCopies == 2
+    check context.readbackRequests == 2
+    check filtered.lastQueuedRevision == raster.revision
+    check filtered.collectGpuRasterFrame()
+
+    context.readbackReady = false
+    for red in [50'u8, 100'u8]:
+      raster.updateRegion(rasterRegion(0, 0, 1, 1),
+        @[red, 0'u8, 0, 255])
+      check raster.publish()
+      let frame = host.beginGpuFrame()
+      check filtered.queueUpdatedGpuRasterFrame(frame)
+      host.endGpuFrame(frame)
+    check filtered.displaySurface().readbackSurface().pendingFrameCount() == 2
+    let drawsBeforePressure = context.drawSubmits
+    let uploadsBeforePressure = context.textureUpdates
+    raster.updateRegion(rasterRegion(0, 0, 1, 1),
+      @[150'u8, 0, 0, 255])
+    check raster.publish()
+    let pressured = host.beginGpuFrame()
+    check not filtered.queueUpdatedGpuRasterFrame(pressured)
+    host.endGpuFrame(pressured)
+    check context.drawSubmits == drawsBeforePressure
+    check context.textureUpdates == uploadsBeforePressure
+    check filtered.lastQueuedRevision < raster.revision
+
+    context.readbackReady = true
+    check filtered.collectGpuRasterFrame()
+    let recovered = host.beginGpuFrame()
+    check filtered.queueUpdatedGpuRasterFrame(recovered)
+    host.endGpuFrame(recovered)
+    check filtered.lastQueuedRevision == raster.revision
+    check context.textureUpdates == uploadsBeforePressure + 1
+    check filtered.collectGpuRasterFrame()
+    check filtered.closeGpuRasterFilterDisplay()
+    material.release()
+    doAssert host.releaseGpuResource(source)
+    doAssert host.releaseGpuResource(target)
+    doAssert host.closeGpuNamespace(namespace)
+    host.close()
+
   test "combined upload and filter budget fails before upload and retries":
     let context = newContext()
     context.enableDirectPresentation(maxBuffers = 2)
