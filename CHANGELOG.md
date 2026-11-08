@@ -44,6 +44,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added GPU plus-lighter composition for direct sampled surfaces and filter
+  chains, with saturated premultiplied color and alpha for cross-fades.
+
 - Added pixel-space placement and scaling for GPU alpha masks, including
   clipping, inversion, and filter-chain use with differently sized masks.
 

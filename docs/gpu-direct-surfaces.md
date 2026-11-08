@@ -154,6 +154,11 @@ uses the specified cubic and square-root curves. Hue, saturation, color, and
 luminosity use the specified RGB luminosity weights, saturation transfer, and
 bounded color clipping. All sixteen modes accept straight, premultiplied, or
 opaque inputs, including transparent pixels.
+`gcbmPlusLighter` adds premultiplied foreground and backdrop RGB and alpha,
+clamping each channel to one as specified for
+[plus-lighter compositing](https://drafts.csswg.org/compositing-2/#plus-lighter).
+It works in a direct pass or filter-chain composite stage and supports the
+same input alpha modes, foreground opacity, and placement.
 `foregroundOpacity` defaults to `1` and accepts finite values from `0` to
 `1`. It scales the foreground's premultiplied color and alpha after its alpha
 mode is applied, so the same setting works with every blend mode.
