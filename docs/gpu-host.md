@@ -845,6 +845,11 @@ preserving ordered resource release. R8 expands to opaque grayscale, BGRA8 is
 swizzled, and straight, premultiplied, or opaque source alpha is normalized to
 the canonical straight-alpha surface.
 
+Before copying a frame, the canvas checks combined copy and readback work,
+readback bytes, and the remaining GPU view capacity. A budget failure
+raises `GpuHostError` without copying or queuing a readback; the caller can
+retry in a later frame.
+
 An obsolete queued readback can be withdrawn with
 `gpuCanvas.cancelGpuCanvasFrame(gpuCanvas.queuedFrameNumber())` before it is
 collected. The frame number identifies one pending request; cancellation does

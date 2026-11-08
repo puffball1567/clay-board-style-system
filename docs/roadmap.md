@@ -1068,7 +1068,8 @@ retains destination storage until completion; and rejects unsupported adapters
 before submission. `GpuCanvasSurface` adds a bounded multi-frame readback ring,
 non-blocking backpressure, ordered latest-frame publication, and explicit
 format/alpha normalization before exposing the result as a normal
-`RasterSurface`. `GpuDisplaySurface` now negotiates a direct same-device
+`RasterSurface`. It preflights the combined copy and readback budgets before
+starting either operation. `GpuDisplaySurface` now negotiates a direct same-device
 Texture/RenderTarget path and this deterministic fallback without changing the
 upper Canvas contract. A backend may advertise the direct path only when its
 paint compositor shares the producer's device and ordered queue.

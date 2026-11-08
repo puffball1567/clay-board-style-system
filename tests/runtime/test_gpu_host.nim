@@ -5737,6 +5737,76 @@ suite "GPU canvas composition bridge":
     check canvas.closeGpuCanvasSurface()
     host.close()
 
+  test "canvas preflights copy and readback before using a GPU view":
+    for useReadbackBytes in [false, true]:
+      let context = newContext()
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace(
+        "gpu-canvas-preflight-" & $useReadbackBytes,
+        GpuResourceBudget(persistentBytes: 8,
+          readbackBytesPerFrame: 4,
+          workUnitsPerFrame: 2, maxResources: 2))
+      var config = defaultGpuCanvasConfig(1, 1)
+      config.readbackSlots = 1
+      let canvas = host.newGpuCanvasSurface(namespace, config)
+      let blocked = host.beginGpuFrame()
+      if useReadbackBytes:
+        host.reserveGpuFrameWork(namespace, readbackBytes = 1)
+      else:
+        host.reserveGpuFrameWork(namespace, workUnits = 1)
+      expect GpuHostError:
+        discard canvas.queueGpuCanvasFrame()
+      check context.textureCopies == 0
+      check context.readbackRequests == 0
+      check canvas.pendingFrameCount == 0
+      check canvas.queuedFrameNumber == 0
+      host.endGpuFrame(blocked)
+
+      let retry = host.beginGpuFrame()
+      check canvas.queueGpuCanvasFrame()
+      host.endGpuFrame(retry)
+      check context.textureCopies == 1
+      check context.readbackRequests == 1
+      context.readbackReady = true
+      check canvas.collectGpuCanvasFrame()
+      check canvas.closeGpuCanvasSurface()
+      host.close()
+
+    let context = newContext()
+    var hostConfig = presentationConfig()
+    hostConfig.viewIdCount = 1
+    let host = openGpuHost(context.backend, ghoOwned, hostConfig)
+    let namespace = host.createGpuNamespace("gpu-canvas-view-preflight",
+      GpuResourceBudget(persistentBytes: 12,
+        readbackBytesPerFrame: 4,
+        workUnitsPerFrame: 3, maxResources: 3))
+    var config = defaultGpuCanvasConfig(1, 1)
+    config.readbackSlots = 1
+    let canvas = host.newGpuCanvasSurface(namespace, config)
+    let extra = host.createGpuTexture(namespace,
+      textureDescriptor(width = 1, height = 1,
+        usage = {gtuBlitDestination, gtuReadback}))
+    let blocked = host.beginGpuFrame()
+    host.copyGpuTexture(namespace, canvas.renderTarget(), extra)
+    expect GpuHostError:
+      discard canvas.queueGpuCanvasFrame()
+    check context.textureCopies == 1
+    check context.readbackRequests == 0
+    check canvas.pendingFrameCount == 0
+    host.endGpuFrame(blocked)
+
+    let retry = host.beginGpuFrame()
+    check canvas.queueGpuCanvasFrame()
+    host.endGpuFrame(retry)
+    check context.textureCopies == 2
+    check context.readbackRequests == 1
+    context.readbackReady = true
+    check canvas.collectGpuCanvasFrame()
+    check canvas.closeGpuCanvasSurface()
+    doAssert host.releaseGpuResource(extra)
+    doAssert host.closeGpuNamespace(namespace)
+    host.close()
+
   test "cancelled readbacks drain safely without replacing visible pixels":
     let context = newContext()
     context.deferReadbackWrites = true
