@@ -212,6 +212,15 @@ proc queueGpuCanvasFrameFrom*(
   if slotIndex < 0:
     return false
 
+  if canvas.host.pendingGpuReadbackCount(canvas.namespace) >=
+      maxGpuPendingReadbacksPerNamespace:
+    raise newException(GpuHostError, "GPU pending readback count exceeded")
+  let readbackBytes = uint64(canvas.configValue.width) *
+    uint64(canvas.configValue.height) *
+    gpuTextureBytesPerPixel(canvas.configValue.format)
+  canvas.host.validateGpuFrameWork(canvas.namespace,
+    readbackBytes = readbackBytes, workUnits = 2)
+  canvas.host.validateGpuViewCapacity(1)
   let texture = canvas.slots[slotIndex].texture
   canvas.host.copyGpuTexture(canvas.namespace, source, texture)
   let readback = canvas.host.requestGpuReadback(canvas.namespace, texture)

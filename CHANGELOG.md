@@ -18,6 +18,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Fixed
 
+- GPU Canvas readback now checks copy and readback budgets together before
+  copying a frame, avoiding an unused copy when readback work or view capacity
+  is exhausted.
+
 - GPU raster filter displays now check readback capacity and its frame budget
   before uploading or drawing, so saturated readback slots and insufficient
   copy/readback work leave the published revision ready for retry.
