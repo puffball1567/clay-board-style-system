@@ -1141,7 +1141,9 @@ opacity without rewriting the sampled surface. They can also position, clip,
 and scale a foreground of different dimensions over a same-size backdrop.
 An ordered GPU filter chain now combines up to eight matrix, opacity, blur,
 shadow, alpha-mask, and source-over stages over three reusable scratch targets, carrying
-premultiplied alpha into each stage and producing a display-ready RenderTarget. An owned
+premultiplied alpha into each stage and producing a display-ready RenderTarget.
+The chain, direct blur, and direct shadow now preflight their complete work and
+view budgets before the first pass. An owned
 raster-filter display adapter now bridges published CPU
 `RasterSurface` revisions through partial GPU uploads, the filter chain, and
 the existing direct/readback display surface with bounded output buffering.

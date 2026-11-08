@@ -7889,7 +7889,7 @@ suite "GPU Gaussian blur postprocess":
     let host = openGpuHost(context.backend, ghoOwned)
     let namespace = host.createGpuNamespace("gaussian-blur",
       GpuResourceBudget(persistentBytes: 65536,
-        workUnitsPerFrame: 2, maxResources: 12))
+        workUnitsPerFrame: 3, maxResources: 12))
     proc artifact(source: GpuShaderSource): GpuShaderArtifact =
       GpuShaderArtifact(
         descriptor: GpuShaderDescriptor(stage: source.stage),
@@ -7921,6 +7921,10 @@ suite "GPU Gaussian blur postprocess":
     let frame = host.beginGpuFrame()
     check material.submit(source, scratch, output)
     check context.drawSubmits == 2
+    expect GpuHostError:
+      discard material.submit(source, scratch, output)
+    check context.drawSubmits == 2
+    check host.gpuNamespaceUsage(namespace).workUnits == 2
     check context.lastGraphicsPass.renderTarget == output
     check context.lastBindings.textures[0].texture.backendResourceIdValue() != 0
     check context.lastBindings.uniforms[0].values == @[
@@ -7983,7 +7987,7 @@ suite "GPU drop shadow postprocess":
     let host = openGpuHost(context.backend, ghoOwned)
     let namespace = host.createGpuNamespace("drop-shadow",
       GpuResourceBudget(persistentBytes: 65536,
-        workUnitsPerFrame: 3, maxResources: 24))
+        workUnitsPerFrame: 4, maxResources: 24))
     proc artifact(source: GpuShaderSource): GpuShaderArtifact =
       GpuShaderArtifact(
         descriptor: GpuShaderDescriptor(stage: source.stage),
@@ -8026,6 +8030,11 @@ suite "GPU drop shadow postprocess":
     check material.submit(source, scratch, blurred, output,
       1, 0, rgb(0, 0, 1))
     check context.drawSubmits == 3
+    expect GpuHostError:
+      discard material.submit(source, scratch, blurred, output,
+        1, 0, rgb(0, 0, 1))
+    check context.drawSubmits == 3
+    check host.gpuNamespaceUsage(namespace).workUnits == 3
     check context.lastGraphicsPass.renderTarget == output
     check context.lastBindings.textures.len == 2
     check context.lastBindings.uniforms[0].values == @[
@@ -8089,6 +8098,7 @@ suite "GPU filter chain":
         dropShadowStage(1, 0, rgb(0, 0, 1))],
       colorMatrix = matrix, gaussianBlur = blur, dropShadow = shadow)
     check chain.stageCount() == 3
+    check chain.requiredWorkUnits() == 6
     let source = host.createGpuTexture(namespace,
       textureDescriptor(width = 5, height = 5, usage = {gtuSampled}))
     let mask = host.createGpuTexture(namespace,
@@ -8111,6 +8121,14 @@ suite "GPU filter chain":
     check context.lastBindings.uniforms[0].values == @[
       0.2'f32, 0'f32, float32(ord(gcamPremultiplied)), 0'f32]
     host.endGpuFrame(frame)
+    let budgetFrame = host.beginGpuFrame()
+    check matrix.submit(source, output, nil)
+    let drawsBeforeBudget = context.drawSubmits
+    expect GpuHostError:
+      discard chain.submit(source, output, scratch)
+    check context.drawSubmits == drawsBeforeBudget
+    check host.gpuNamespaceUsage(namespace).workUnits == 1
+    host.endGpuFrame(budgetFrame)
     let wideChain = host.newGpuFilterChain(namespace,
       [gaussianBlurStage(8)], gaussianBlur = blur)
     let wideFrame = host.beginGpuFrame()
@@ -8168,6 +8186,48 @@ suite "GPU filter chain":
     alphaMask.release()
     for handle in [source, mask, smallerMask, output,
         scratch[0], scratch[1], scratch[2]]:
+      doAssert host.releaseGpuResource(handle)
+    doAssert host.closeGpuNamespace(namespace)
+    host.close()
+
+  test "filter chain preflights all view identifiers before drawing":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned,
+      GpuHostConfig(viewIdCount: 1))
+    let namespace = host.createGpuNamespace("filter-chain-views",
+      GpuResourceBudget(persistentBytes: 65536,
+        workUnitsPerFrame: 3, maxResources: 20))
+    proc artifact(source: GpuShaderSource): GpuShaderArtifact =
+      GpuShaderArtifact(
+        descriptor: GpuShaderDescriptor(stage: source.stage),
+        bindingLayout: source.gpuShaderBindingLayout(),
+        bytecode: @[1'u8],
+        sourceHash: source.gpuShaderSourceHash())
+    let matrix = host.newGpuColorMatrixMaterial(namespace,
+      artifact(gpuColorMatrixVertexSource()),
+      artifact(gpuColorMatrixFragmentSource()))
+    let chain = host.newGpuFilterChain(namespace,
+      [opacityStage(0.5'f32), opacityStage(0.5'f32)],
+      colorMatrix = matrix)
+    check chain.requiredWorkUnits() == 2
+    let single = host.newGpuFilterChain(namespace,
+      [opacityStage(0.5'f32)], colorMatrix = matrix)
+    let source = host.createGpuTexture(namespace,
+      textureDescriptor(width = 2, height = 2, usage = {gtuSampled}))
+    proc target(): GpuResourceHandle =
+      host.createGpuRenderTarget(namespace, renderTargetDescriptor(2, 2))
+    let output = target()
+    let scratch = [target(), target(), target()]
+    let frame = host.beginGpuFrame()
+    expect GpuHostError:
+      discard chain.submit(source, output, scratch)
+    check context.drawSubmits == 0
+    check host.gpuNamespaceUsage(namespace).workUnits == 0
+    check single.submit(source, output, scratch)
+    check context.drawSubmits == 1
+    host.endGpuFrame(frame)
+    matrix.release()
+    for handle in [source, output, scratch[0], scratch[1], scratch[2]]:
       doAssert host.releaseGpuResource(handle)
     doAssert host.closeGpuNamespace(namespace)
     host.close()

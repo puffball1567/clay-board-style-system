@@ -219,6 +219,8 @@ proc submit*(
     if material.host.isGpuResourcePresentationRetained(target):
       raise newException(GpuHostError,
         "GPU drop shadow cannot overwrite a presentation-retained target")
+  material.host.validateGpuFrameWork(material.namespace, workUnits = 3)
+  material.host.validateGpuViewCapacity(3)
   discard material.blur.submit(source, scratch, blurred,
     sourceAlphaMode, blurRadius)
   let sourceUv =
