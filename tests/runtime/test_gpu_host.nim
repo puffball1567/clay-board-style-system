@@ -1811,7 +1811,15 @@ suite "GPU raster texture synchronization":
     )
     check raster.publish()
     let frame = host.beginGpuFrame()
+    let planned = upload.pendingGpuRasterTextureSync()
+    check planned.kind == grtskPartial
+    check planned.revision == 2
+    check planned.regionCount == 1
+    check planned.uploadedBytes == 24
+    check upload.uploadedRevision == 1
+    check context.textureUpdates == 0
     let synced = upload.syncGpuRasterTexture()
+    check synced == planned
     check synced.kind == grtskPartial
     check synced.revision == 2
     check synced.regionCount == 1
@@ -8233,6 +8241,73 @@ suite "GPU filter chain":
     host.close()
 
 suite "GPU raster filter display":
+  test "combined upload and filter budget fails before upload and retries":
+    let context = newContext()
+    context.enableDirectPresentation(maxBuffers = 2)
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let namespace = host.createGpuNamespace("raster-filter-budget",
+      GpuResourceBudget(persistentBytes: 65536,
+        transientBytesPerFrame: 256,
+        workUnitsPerFrame: 3, maxResources: 32))
+    proc artifact(source: GpuShaderSource): GpuShaderArtifact =
+      GpuShaderArtifact(
+        descriptor: GpuShaderDescriptor(stage: source.stage),
+        bindingLayout: source.gpuShaderBindingLayout(),
+        bytecode: @[1'u8],
+        sourceHash: source.gpuShaderSourceHash())
+    let material = host.newGpuColorMatrixMaterial(namespace,
+      artifact(gpuColorMatrixVertexSource()),
+      artifact(gpuColorMatrixFragmentSource()))
+    let chain = host.newGpuFilterChain(namespace,
+      [opacityStage(0.5'f32), opacityStage(0.5'f32)],
+      colorMatrix = material)
+    let source = host.createGpuTexture(namespace,
+      textureDescriptor(width = 2, height = 2))
+    let target = host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(2, 2))
+    let raster = newRasterSurface(2, 2, [255'u8, 0, 0, 255])
+    var config = defaultGpuRasterFilterDisplayConfig(2, 2)
+    config.bufferCount = 2
+    config.fallback = gdsfRequireDirect
+    let filtered = host.newGpuRasterFilterDisplay(namespace,
+      raster, chain, config)
+
+    let initial = host.beginGpuFrame()
+    check filtered.queueUpdatedGpuRasterFrame(initial)
+    host.endGpuFrame(initial)
+    check context.drawSubmits == 2
+    check context.textureUpdates == 0
+    check filtered.displaySurface().collectGpuDisplayFrame()
+    let previousRevision = filtered.lastQueuedRevision
+
+    raster.replacePixels(@[0'u8, 255, 0, 255,
+      0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255])
+    check raster.publish()
+    let blocked = host.beginGpuFrame()
+    check material.submit(source, target, nil)
+    expect GpuHostError:
+      discard filtered.queueUpdatedGpuRasterFrame(blocked)
+    check host.gpuNamespaceUsage(namespace).workUnits == 1
+    check context.drawSubmits == 3
+    check context.textureUpdates == 0
+    check filtered.lastQueuedRevision == previousRevision
+    host.endGpuFrame(blocked)
+
+    let retry = host.beginGpuFrame()
+    check filtered.queueUpdatedGpuRasterFrame(retry)
+    host.endGpuFrame(retry)
+    check context.drawSubmits == 5
+    check context.textureUpdates == 1
+    check filtered.lastQueuedRevision == raster.revision
+    check filtered.displaySurface().collectGpuDisplayFrame()
+
+    check filtered.closeGpuRasterFilterDisplay()
+    material.release()
+    doAssert host.releaseGpuResource(source)
+    doAssert host.releaseGpuResource(target)
+    doAssert host.closeGpuNamespace(namespace)
+    host.close()
+
   test "published raster changes filter and queue without overwriting retained output":
     let context = newContext()
     context.enableDirectPresentation(maxBuffers = 2)

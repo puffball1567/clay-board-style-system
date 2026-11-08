@@ -18,6 +18,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Fixed
 
+- GPU raster filter displays now check upload and filter work together before
+  starting a frame, so a full frame budget leaves the raster revision ready
+  for retry without an unnecessary texture upload.
+
 - GPU filter chains, Gaussian blurs, and drop shadows now reject insufficient
   frame work or view capacity before starting a multi-pass draw. Blur also
   rejects presentation-retained write targets before its first pass.

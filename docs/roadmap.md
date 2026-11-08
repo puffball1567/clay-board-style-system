@@ -1147,6 +1147,8 @@ view budgets before the first pass. An owned
 raster-filter display adapter now bridges published CPU
 `RasterSurface` revisions through partial GPU uploads, the filter chain, and
 the existing direct/readback display surface with bounded output buffering.
+The adapter checks combined upload and filter work before starting a changed
+frame, leaving the revision available for retry when the frame budget is full.
 Same-size source replacement keeps its display and Style registrations while
 forcing one full upload of the new image before returning to dirty updates.
 Filter-chain replacement keeps those registrations and reprocesses the current

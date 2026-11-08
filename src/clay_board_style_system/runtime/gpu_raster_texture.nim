@@ -150,9 +150,10 @@ proc replaceSource*(
   surface.forceFullUploadValue = true
   true
 
-proc syncGpuRasterTexture*(
+proc pendingGpuRasterTextureSync*(
     surface: GpuRasterTexture
 ): GpuRasterTextureSyncResult {.discardable.} =
+  ## Estimate the next upload without consuming frame work or changing state.
   surface.requireOpen()
   let revision = surface.sourceValue.revision
   result.revision = revision
@@ -166,7 +167,6 @@ proc syncGpuRasterTexture*(
   let dirtyCount = surface.sourceValue.dirtyRegionCount
   if not surface.forceFullUploadValue and consecutive and dirtyCount > 0 and
       dirtyCount <= surface.configValue.maxPartialRegions:
-    let pixels = surface.sourceValue.pixels
     let sourceStride = surface.sourceValue.width * RasterBytesPerPixel
     var uploadBytes = 0'u64
     for region in surface.sourceValue.dirtyRegions:
@@ -175,15 +175,32 @@ proc syncGpuRasterTexture*(
       if uint64(byteLength) > high(uint64) - uploadBytes:
         raise newException(GpuHostError, "GPU raster texture upload size overflows")
       uploadBytes += uint64(byteLength)
+    result.kind = grtskPartial
+    result.regionCount = dirtyCount
+    result.uploadedBytes = uploadBytes
+  else:
+    result.kind = grtskFull
+    result.regionCount = 1
+    result.uploadedBytes = uint64(surface.sourceValue.pixels.len)
+
+proc syncGpuRasterTexture*(
+    surface: GpuRasterTexture
+): GpuRasterTextureSyncResult {.discardable.} =
+  result = surface.pendingGpuRasterTextureSync()
+  if result.kind == grtskUnchanged:
+    return
+  if result.kind == grtskPartial:
     surface.host.validateGpuFrameWork(
       surface.namespace,
-      transientBytes = uploadBytes,
-      workUnits = uint32(dirtyCount)
+      transientBytes = result.uploadedBytes,
+      workUnits = uint32(result.regionCount)
     )
+    let pixels = surface.sourceValue.pixels
+    let sourceStride = surface.sourceValue.width * RasterBytesPerPixel
     for region in surface.sourceValue.dirtyRegions:
-      let rowBytes = region.width * RasterBytesPerPixel
       let byteOffset =
         (region.y * surface.sourceValue.width + region.x) * RasterBytesPerPixel
+      let rowBytes = region.width * RasterBytesPerPixel
       let byteLength = (region.height - 1) * sourceStride + rowBytes
       surface.host.updateGpuTexture(
         surface.textureValue,
@@ -196,17 +213,11 @@ proc syncGpuRasterTexture*(
         pixels.toOpenArray(byteOffset, byteOffset + byteLength - 1),
         rowStride = uint32(sourceStride)
       )
-    result.kind = grtskPartial
-    result.regionCount = dirtyCount
-    result.uploadedBytes = uploadBytes
   else:
-    let pixels = surface.sourceValue.pixels
-    surface.host.updateGpuTexture(surface.textureValue, pixels)
-    result.kind = grtskFull
-    result.regionCount = 1
-    result.uploadedBytes = uint64(pixels.len)
+    surface.host.updateGpuTexture(surface.textureValue,
+      surface.sourceValue.pixels)
 
-  surface.uploadedRevisionValue = revision
+  surface.uploadedRevisionValue = result.revision
   surface.forceFullUploadValue = false
 
 proc closeGpuRasterTexture*(surface: GpuRasterTexture): bool {.discardable.} =
