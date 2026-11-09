@@ -44,6 +44,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added opt-in linear sampling for placed GPU alpha masks and foregrounds,
+  including direct passes and filter chains. Nearest sampling remains the
+  default.
+
 - Added GPU plus-lighter composition for direct sampled surfaces and filter
   chains, with saturated premultiplied color and alpha for cross-fades.
 

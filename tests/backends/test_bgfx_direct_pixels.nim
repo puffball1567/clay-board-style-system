@@ -587,11 +587,13 @@ proc verifyGpuAlphaMaskPixels(host: GpuHost;
 proc verifyGpuAlphaMaskPlacementPixels(host: GpuHost;
     shaderc, shaderIncludes, workDirectory: string) =
   let ns = host.createGpuNamespace("gpu-alpha-mask-placement-pixels", budget())
-  let material = host.newGpuAlphaMaskMaterial(ns,
-    compileShader(gpuAlphaMaskVertexSource(), shaderc,
-      shaderIncludes, workDirectory),
-    compileShader(gpuAlphaMaskFragmentSource(), shaderc,
-      shaderIncludes, workDirectory))
+  let vertex = compileShader(gpuAlphaMaskVertexSource(), shaderc,
+    shaderIncludes, workDirectory)
+  let fragment = compileShader(gpuAlphaMaskFragmentSource(), shaderc,
+    shaderIncludes, workDirectory)
+  let material = host.newGpuAlphaMaskMaterial(ns, vertex, fragment)
+  let linearMaterial = host.newGpuAlphaMaskMaterial(ns, vertex, fragment,
+    maskFilter = gsfLinear)
   let source = host.createGpuTexture(ns, GpuTextureDescriptor(
     width: 4, height: 4, format: gtfRgba8,
     usage: {gtuSampled}, access: gtaStatic,
@@ -616,14 +618,20 @@ proc verifyGpuAlphaMaskPlacementPixels(host: GpuHost;
   let inverted = target("placed-mask-inverted")
   let softened = target("placed-mask-softened")
   let scaled = target("placed-mask-scaled")
+  let linearScaled = target("placed-mask-linear-scaled")
   let clipped = target("placed-mask-clipped")
   let chained = target("placed-mask-chained")
+  let linearChained = target("placed-mask-linear-chained")
   let scratch = [target("placed-mask-scratch-0"),
     target("placed-mask-scratch-1"), target("placed-mask-scratch-2")]
   let center = gpuAlphaMaskPlacement(1, 1, 2, 2)
   let chain = host.newGpuFilterChain(ns,
     [alphaMaskStage(mask, invertMask = true, maskStrength = 0.5'f32,
       maskPlacement = center)], alphaMask = material)
+  let linearChain = host.newGpuFilterChain(ns,
+    [alphaMaskStage(mask,
+      maskPlacement = gpuAlphaMaskPlacement(0, 0, 4, 4))],
+    alphaMask = linearMaterial)
   let frame = host.beginGpuFrame()
   doAssert material.submit(source, mask, centered,
     maskPlacement = center)
@@ -633,9 +641,12 @@ proc verifyGpuAlphaMaskPlacementPixels(host: GpuHost;
     maskStrength = 0.5'f32, maskPlacement = center)
   doAssert material.submit(source, mask, scaled,
     maskPlacement = gpuAlphaMaskPlacement(0, 0, 4, 4))
+  doAssert linearMaterial.submit(source, mask, linearScaled,
+    maskPlacement = gpuAlphaMaskPlacement(0, 0, 4, 4))
   doAssert material.submit(source, mask, clipped,
     maskPlacement = gpuAlphaMaskPlacement(-1, -1, 2, 2))
   doAssert chain.submit(source, chained, scratch)
+  doAssert linearChain.submit(source, linearChained, scratch)
   host.endGpuFrame(frame)
   let centeredPixels = host.readPixels(ns, centered, 4, 4)
   centeredPixels.requirePixel(0, 0, Pixel(),
@@ -667,6 +678,12 @@ proc verifyGpuAlphaMaskPlacementPixels(host: GpuHost;
     "scaled mask keeps its top-right zero texel")
   scaledPixels.requirePixel(0, 3, Pixel(red: 255, alpha: 255),
     "scaled mask reaches bottom-left")
+  for item in [linearScaled, linearChained]:
+    let pixels = host.readPixels(ns, item, 4, 4)
+    pixels.requirePixel(1, 1, Pixel(red: 124, alpha: 124),
+      "linear mask interpolates nearby coverage")
+    pixels.requirePixel(2, 2, Pixel(red: 92, alpha: 92),
+      "linear mask interpolates all four source texels")
   let clippedPixels = host.readPixels(ns, clipped, 4, 4)
   clippedPixels.requirePixel(0, 0, Pixel(red: 64, alpha: 64),
     "negative mask placement clips to bottom-right texel")
@@ -680,8 +697,10 @@ proc verifyGpuAlphaMaskPlacementPixels(host: GpuHost;
   chainedPixels.requirePixel(1, 2, Pixel(red: 128, alpha: 128),
     "chained placed mask softens inverted full coverage")
   material.release()
+  linearMaterial.release()
   for handle in [source, mask, centered, inverted, softened, scaled,
-      clipped, chained, scratch[0], scratch[1], scratch[2]]:
+      linearScaled, clipped, chained, linearChained,
+      scratch[0], scratch[1], scratch[2]]:
     doAssert host.releaseGpuResource(handle)
   doAssert host.closeGpuNamespace(ns)
   echo "GPU mask placement: clipping, scaling, inversion, and chaining passed"
@@ -1112,11 +1131,13 @@ proc verifyGpuCompositePixels(host: GpuHost;
 proc verifyGpuCompositePlacementPixels(host: GpuHost;
     shaderc, shaderIncludes, workDirectory: string) =
   let ns = host.createGpuNamespace("gpu-composite-placement-pixels", budget())
-  let material = host.newGpuCompositeMaterial(ns,
-    compileShader(gpuCompositeVertexSource(), shaderc,
-      shaderIncludes, workDirectory),
-    compileShader(gpuCompositeFragmentSource(), shaderc,
-      shaderIncludes, workDirectory))
+  let vertex = compileShader(gpuCompositeVertexSource(), shaderc,
+    shaderIncludes, workDirectory)
+  let fragment = compileShader(gpuCompositeFragmentSource(), shaderc,
+    shaderIncludes, workDirectory)
+  let material = host.newGpuCompositeMaterial(ns, vertex, fragment)
+  let linearMaterial = host.newGpuCompositeMaterial(ns, vertex, fragment,
+    foregroundFilter = gsfLinear)
   let backdrop = host.createGpuTexture(ns, GpuTextureDescriptor(
     width: 4, height: 4, format: gtfRgba8,
     usage: {gtuSampled}, access: gtaStatic,
@@ -1132,6 +1153,15 @@ proc verifyGpuCompositePlacementPixels(host: GpuHost;
       elif y == 0: Pixel(green: 255)
       elif x == 0: Pixel(green: 255, alpha: 128)
       else: Pixel(red: 192, green: 96, blue: 32, alpha: 255)))
+  let premultipliedForeground = host.createGpuTexture(ns,
+    GpuTextureDescriptor(width: 2, height: 2, format: gtfRgba8,
+      usage: {gtuSampled}, access: gtaStatic,
+      label: "placement-premultiplied-foreground"),
+    rgbaPixels(2, 2, proc(x, y: int): Pixel =
+      if y == 0 and x == 0: Pixel(red: 128, alpha: 128)
+      elif y == 0: Pixel()
+      elif x == 0: Pixel(green: 128, alpha: 128)
+      else: Pixel(red: 192, green: 96, blue: 32, alpha: 255)))
   proc target(label: string): GpuResourceHandle =
     host.createGpuRenderTarget(ns, GpuRenderTargetDescriptor(
       width: 4, height: 4, format: gtfRgba8,
@@ -1140,14 +1170,20 @@ proc verifyGpuCompositePlacementPixels(host: GpuHost;
   let centered = target("placement-centered")
   let clipped = target("placement-clipped")
   let scaled = target("placement-scaled")
+  let linearScaled = target("placement-linear-scaled")
   let opaque = target("placement-opaque")
   let chained = target("placement-chained")
+  let linearChained = target("placement-linear-chained")
   let scratch = [target("placement-scratch-0"),
     target("placement-scratch-1"), target("placement-scratch-2")]
   let center = gpuCompositePlacement(1, 1, 2, 2)
   let chain = host.newGpuFilterChain(ns,
     [compositeStage(foreground, blendMode = gcbmScreen,
       foregroundPlacement = center)], composite = material)
+  let linearChain = host.newGpuFilterChain(ns,
+    [compositeStage(premultipliedForeground, gcamPremultiplied,
+      foregroundPlacement = gpuCompositePlacement(0, 0, 4, 4))],
+    composite = linearMaterial)
   let frame = host.beginGpuFrame()
   doAssert material.submit(backdrop, foreground, centered,
     foregroundPlacement = center)
@@ -1155,9 +1191,13 @@ proc verifyGpuCompositePlacementPixels(host: GpuHost;
     foregroundPlacement = gpuCompositePlacement(-1, -1, 2, 2))
   doAssert material.submit(backdrop, foreground, scaled,
     foregroundPlacement = gpuCompositePlacement(0, 0, 4, 4))
+  doAssert linearMaterial.submit(backdrop, premultipliedForeground,
+    linearScaled, foregroundAlphaMode = gcamPremultiplied,
+    foregroundPlacement = gpuCompositePlacement(0, 0, 4, 4))
   doAssert material.submit(backdrop, foreground, opaque,
     foregroundAlphaMode = gcamOpaque, foregroundPlacement = center)
   doAssert chain.submit(backdrop, chained, scratch)
+  doAssert linearChain.submit(backdrop, linearChained, scratch)
   host.endGpuFrame(frame)
   let centeredPixels = host.readPixels(ns, centered, 4, 4)
   centeredPixels.requirePixel(0, 0, Pixel(blue: 255, alpha: 255),
@@ -1182,6 +1222,12 @@ proc verifyGpuCompositePlacementPixels(host: GpuHost;
     "scaled foreground keeps transparent source texels")
   scaledPixels.requirePixel(3, 3, Pixel(red: 192, green: 96,
     blue: 32, alpha: 255), "scaled foreground reaches bottom-right")
+  for item in [linearScaled, linearChained]:
+    let pixels = host.readPixels(ns, item, 4, 4)
+    pixels.requirePixel(1, 1, Pixel(red: 84, green: 30, blue: 145,
+      alpha: 255), "linear foreground blends nearby premultiplied texels")
+    pixels.requirePixel(2, 2, Pixel(red: 116, green: 78, blue: 98,
+      alpha: 255), "linear foreground interpolates all four texels")
   let opaquePixels = host.readPixels(ns, opaque, 4, 4)
   opaquePixels.requirePixel(0, 0, Pixel(blue: 255, alpha: 255),
     "opaque alpha mode remains transparent outside placement")
@@ -1195,8 +1241,10 @@ proc verifyGpuCompositePlacementPixels(host: GpuHost;
   chainedPixels.requirePixel(2, 2, Pixel(red: 192, green: 96,
     blue: 255, alpha: 255), "placed chain screens opaque source")
   material.release()
-  for handle in [backdrop, foreground, centered, clipped, scaled, opaque,
-      chained, scratch[0], scratch[1], scratch[2]]:
+  linearMaterial.release()
+  for handle in [backdrop, foreground, premultipliedForeground,
+      centered, clipped, scaled, linearScaled, opaque, chained,
+      linearChained, scratch[0], scratch[1], scratch[2]]:
     doAssert host.releaseGpuResource(handle)
   doAssert host.closeGpuNamespace(ns)
   echo "GPU foreground placement: clipping, scaling, and chaining pixels passed"
