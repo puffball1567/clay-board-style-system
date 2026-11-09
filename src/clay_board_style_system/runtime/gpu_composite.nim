@@ -3,7 +3,7 @@
 import std/math
 
 import ../paint/gpu_host_compositor
-import ./[gpu_host, gpu_shader_builder, gpu_surface_placement]
+import ./[gpu_host, gpu_shader_builder, gpu_surface_crop, gpu_surface_placement]
 
 type
   GpuCompositeBlendMode* = enum
@@ -26,6 +26,7 @@ type
     gcbmPlusLighter
 
   GpuCompositePlacement* = GpuSurfacePlacement
+  GpuCompositeCrop* = GpuSurfaceCrop
 
   GpuCompositeVertex = object
     x, y, z: float32
@@ -37,7 +38,7 @@ type
     vertexShader, fragmentShader: GpuResourceHandle
     pipeline, vertexBuffer: GpuResourceHandle
     paramsUniform, backdropUvUniform, foregroundUvUniform: GpuResourceHandle
-    foregroundPlacementUniform: GpuResourceHandle
+    foregroundPlacementUniform, foregroundCropClampUniform: GpuResourceHandle
     backdropSampler, foregroundSampler: GpuResourceHandle
 
 proc gpuCompositePlacement*(
@@ -48,6 +49,11 @@ proc gpuCompositePlacement*(
 
 proc isPlaced*(placement: GpuCompositePlacement): bool =
   placement.isGpuPlacementActive()
+
+proc gpuCompositeCrop*(
+    x, y, width, height: uint32
+): GpuCompositeCrop =
+  gpuSurfaceCrop(x, y, width, height)
 
 proc gpuCompositeVertexSource*(): GpuShaderSource =
   gpuHostDirectCompositeVertexSource()
@@ -64,6 +70,7 @@ uniform vec4 u_cbssCompositeParams;
 uniform vec4 u_cbssBackdropUv;
 uniform vec4 u_cbssForegroundUv;
 uniform vec4 u_cbssForegroundPlacement;
+uniform vec4 u_cbssForegroundCropClamp;
 float cbssColorDodge(float backdrop, float foreground)
 {
   if (backdrop <= 0.0) return 0.0;
@@ -140,6 +147,8 @@ void main()
       localForeground.x < 1.0 && localForeground.y < 1.0) {
     vec2 foregroundUv = mix(u_cbssForegroundUv.xy,
       u_cbssForegroundUv.zw, localForeground);
+    foregroundUv = clamp(foregroundUv, u_cbssForegroundCropClamp.xy,
+      u_cbssForegroundCropClamp.zw);
     foreground = texture2D(s_cbssForeground, foregroundUv);
     foregroundCoverage = 1.0;
   }
@@ -259,6 +268,7 @@ proc release*(material: GpuCompositeMaterial) =
   if material.isClosed:
     return
   for handle in [material.foregroundSampler, material.backdropSampler,
+      material.foregroundCropClampUniform,
       material.foregroundPlacementUniform, material.foregroundUvUniform,
       material.backdropUvUniform,
       material.paramsUniform, material.vertexBuffer, material.pipeline,
@@ -328,6 +338,10 @@ proc newGpuCompositeMaterial*(
       GpuUniformDescriptor(name: "u_cbssForegroundPlacement",
         uniformType: gutVec4, arrayLength: 1,
         label: "gpu-composite-foreground-placement"))
+    result.foregroundCropClampUniform = host.createGpuUniform(namespace,
+      GpuUniformDescriptor(name: "u_cbssForegroundCropClamp",
+        uniformType: gutVec4, arrayLength: 1,
+        label: "gpu-composite-foreground-crop-clamp"))
     result.backdropSampler = host.createGpuSampler(namespace,
       GpuSamplerDescriptor(name: "s_cbssBackdrop",
         addressU: gsamClamp, addressV: gsamClamp, addressW: gsamClamp,
@@ -349,7 +363,8 @@ proc submit*(
     foregroundAlphaMode = gcamStraight;
     blendMode = gcbmNormal;
     foregroundOpacity = 1'f32;
-    foregroundPlacement = GpuCompositePlacement()
+    foregroundPlacement = GpuCompositePlacement();
+    foregroundCrop = GpuCompositeCrop()
 ): bool =
   ## Foreground is placed over backdrop. Plus-lighter adds premultiplied
   ## colors and alpha with saturation; both inputs may share one resource.
@@ -383,6 +398,7 @@ proc submit*(
       backdropInfo.width != targetInfo.width or
       backdropInfo.height != targetInfo.height or
       (not foregroundPlacement.isPlaced and
+        not foregroundCrop.isGpuCropActive and
         (foregroundInfo.width != targetInfo.width or
           foregroundInfo.height != targetInfo.height)):
     raise newException(ValueError, "GPU composite resource shapes are incompatible")
@@ -392,9 +408,8 @@ proc submit*(
   let backdropUv =
     if backdropInfo.rowsBottomUp: @[0'f32, 1, 1, 0]
     else: @[0'f32, 0, 1, 1]
-  let foregroundUv =
-    if foregroundInfo.rowsBottomUp: @[0'f32, 1, 1, 0]
-    else: @[0'f32, 0, 1, 1]
+  let foregroundSample = foregroundCrop.sampledGpuCropUv(
+    foregroundInfo.width, foregroundInfo.height, foregroundInfo.rowsBottomUp)
   let placement = foregroundPlacement.normalizedGpuPlacement(
     targetInfo.width, targetInfo.height)
   host.submitGpuDraw(material.namespace,
@@ -416,9 +431,11 @@ proc submit*(
           GpuUniformBinding(uniform: material.backdropUvUniform,
             values: backdropUv),
           GpuUniformBinding(uniform: material.foregroundUvUniform,
-            values: foregroundUv),
+            values: foregroundSample.uv),
           GpuUniformBinding(uniform: material.foregroundPlacementUniform,
-            values: placement)
+            values: placement),
+          GpuUniformBinding(uniform: material.foregroundCropClampUniform,
+            values: foregroundSample.clampUv)
         ],
         textures: @[
           GpuTextureBinding(stage: 0, sampler: material.backdropSampler,

@@ -44,6 +44,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added source-pixel crops for GPU alpha masks and foreground composition,
+  including filter chains and atlas-safe linear sampling.
+
 - Added opt-in linear sampling for placed GPU alpha masks and foregrounds,
   including direct passes and filter chains. Nearest sampling remains the
   default.

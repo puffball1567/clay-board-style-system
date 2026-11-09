@@ -7779,6 +7779,12 @@ suite "GPU alpha mask postprocess":
       discard gpuAlphaMaskPlacement(0, 0, 0, 2)
     expect ValueError:
       discard gpuAlphaMaskPlacement(0, 0, 2, 0)
+    let crop = gpuAlphaMaskCrop(0, 0, 2, 2)
+    expect ValueError:
+      discard gpuAlphaMaskCrop(0, 0, 0, 2)
+    expect ValueError:
+      discard material.submit(source, mask, output,
+        maskCrop = gpuAlphaMaskCrop(1, 1, 2, 2))
     for invalid in [NaN.float32, Inf.float32, NegInf.float32,
         -0.1'f32, 1.1'f32]:
       expect ValueError:
@@ -7811,9 +7817,13 @@ suite "GPU alpha mask postprocess":
     check context.lastBindings.uniforms[0].values == @[
       float32(ord(gcamStraight)), 0, 0, 0]
     check material.submit(source, wrongSize, output,
-      maskPlacement = placement)
+      maskPlacement = placement, maskCrop = crop)
     check context.lastBindings.uniforms[3].values == @[
       -0.5'f32, 0'f32, 1.5'f32, 1'f32]
+    check context.lastBindings.uniforms[2].values == @[
+      0'f32, 0'f32, 2'f32 / 3'f32, 1'f32]
+    check context.lastBindings.uniforms[4].values == @[
+      1'f32 / 6'f32, 0.25'f32, 0.5'f32, 0.75'f32]
     check context.drawSubmits == 5
     host.endGpuFrame(frame)
     material.release()
@@ -7896,6 +7906,9 @@ suite "GPU source-over composition":
       discard gpuCompositePlacement(0, 0, 0, 2)
     expect ValueError:
       discard gpuCompositePlacement(0, 0, 2, 0)
+    let crop = gpuCompositeCrop(0, 0, 2, 2)
+    expect ValueError:
+      discard gpuCompositeCrop(0, 0, 2, 0)
     for invalid in [NaN.float32, Inf.float32, NegInf.float32,
         -0.1'f32, 1.1'f32]:
       expect ValueError:
@@ -7907,6 +7920,9 @@ suite "GPU source-over composition":
       discard material.submit(backdrop, foreground, backdrop)
     expect ValueError:
       discard material.submit(backdrop, wrongSize, output)
+    expect ValueError:
+      discard material.submit(backdrop, foreground, output,
+        foregroundCrop = gpuCompositeCrop(1, 1, 2, 2))
     expect ValueError:
       discard invalidChain.submit(backdrop, output, scratch)
     for invalid in [NaN.float32, Inf.float32, NegInf.float32,
@@ -7964,9 +7980,13 @@ suite "GPU source-over composition":
     check context.lastBindings.uniforms[0].values == @[
       float32(ord(gcamStraight)), float32(ord(gcamStraight)), 2, 0.5'f32]
     check material.submit(backdrop, wrongSize, output,
-      foregroundPlacement = placement)
+      foregroundPlacement = placement, foregroundCrop = crop)
     check context.lastBindings.uniforms[3].values == @[
       -0.5'f32, 0'f32, 1.5'f32, 1'f32]
+    check context.lastBindings.uniforms[2].values == @[
+      0'f32, 0'f32, 2'f32 / 3'f32, 1'f32]
+    check context.lastBindings.uniforms[4].values == @[
+      1'f32 / 6'f32, 0.25'f32, 0.5'f32, 0.75'f32]
     check placedChain.submit(backdrop, output, scratch)
     check context.lastBindings.uniforms[3].values == @[
       -0.5'f32, 0'f32, 1.5'f32, 1'f32]
