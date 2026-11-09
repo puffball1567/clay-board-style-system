@@ -99,10 +99,14 @@ proc release*(material: GpuAlphaMaskMaterial) =
 
 proc newGpuAlphaMaskMaterial*(
     host: GpuHost; namespace: GpuNamespaceId;
-    vertexArtifact, fragmentArtifact: GpuShaderArtifact
+    vertexArtifact, fragmentArtifact: GpuShaderArtifact;
+    maskFilter = gsfNearest
 ): GpuAlphaMaskMaterial =
   if host.isNil or not host.isReady():
     raise newException(ValueError, "GPU alpha mask material requires a ready host")
+  if maskFilter notin {gsfNearest, gsfLinear}:
+    raise newException(ValueError,
+      "GPU alpha mask sampling must be nearest or linear")
   if vertexArtifact.descriptor.stage != gssVertex or
       vertexArtifact.sourceHash != gpuAlphaMaskVertexSource().gpuShaderSourceHash() or
       fragmentArtifact.descriptor.stage != gssFragment or
@@ -161,7 +165,7 @@ proc newGpuAlphaMaskMaterial*(
     result.maskSampler = host.createGpuSampler(namespace,
       GpuSamplerDescriptor(name: "s_cbssMaskCoverage",
         addressU: gsamClamp, addressV: gsamClamp, addressW: gsamClamp,
-        minFilter: gsfNearest, magFilter: gsfNearest,
+        minFilter: maskFilter, magFilter: maskFilter,
         mipFilter: gsfNearest, label: "gpu-alpha-mask-coverage-sampler"))
   except CatchableError:
     result.release()

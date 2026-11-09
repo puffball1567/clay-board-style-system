@@ -119,6 +119,10 @@ Use `alphaMaskStage(coverage, invertMask, maskStrength, maskPlacement)` in an
 ordered filter chain, supplying the `alphaMask` material when constructing it.
 The mask must remain distinct from the chain's writable render targets. It may
 share the source resource.
+Pass `maskFilter = gsfLinear` when constructing `GpuAlphaMaskMaterial` to
+interpolate coverage while scaling a placed mask. The default `gsfNearest`
+preserves hard pixel edges. The selected filter applies to direct passes and
+filter chains that use that material.
 
 ## GPU source-over composition
 
@@ -173,6 +177,12 @@ The output is premultiplied RGBA8; present with `gcamPremultiplied`. Use
 foregroundOpacity, foregroundPlacement)` in a filter chain to place an
 external foreground over the current stage result.
 The foreground must remain distinct from all writable chain targets.
+Pass `foregroundFilter = gsfLinear` when constructing
+`GpuCompositeMaterial` to interpolate a scaled foreground; the default is
+`gsfNearest`. Use a premultiplied foreground with `gcamPremultiplied` for
+smooth transparent edges, since hardware filtering interpolates texels before
+the composite pass applies its alpha mode. The selected filter also applies
+to filter-chain composite stages using that material.
 
 ## GPU Gaussian blur postprocess
 

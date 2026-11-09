@@ -1130,6 +1130,8 @@ coverage while preserving premultiplied output. Direct and chained masks can
 invert coverage or blend its strength without rewriting the sampled image.
 Masks of different dimensions can be positioned, clipped, and scaled in the
 destination while keeping transparent coverage outside their bounds.
+Placed masks and foregrounds can now select nearest or linear GPU sampling
+through their materials, including when used in ordered filter chains.
 An independent-alpha source-over pass now composites two sampled GPU surfaces
 into a premultiplied RenderTarget. Its filter-chain stage places an external
 foreground over the current GPU-owned result. Normal, multiply, screen,

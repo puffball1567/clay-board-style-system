@@ -7752,6 +7752,9 @@ suite "GPU alpha mask postprocess":
     inc wrong.sourceHash
     expect ValueError:
       discard host.newGpuAlphaMaskMaterial(namespace, vertex, wrong)
+    expect ValueError:
+      discard host.newGpuAlphaMaskMaterial(namespace, vertex, fragment,
+        maskFilter = gsfAnisotropic)
     check context.shaderCreates == 0
     let material = host.newGpuAlphaMaskMaterial(namespace, vertex, fragment)
     let source = host.createGpuTexture(namespace,
@@ -7814,6 +7817,11 @@ suite "GPU alpha mask postprocess":
     check context.drawSubmits == 5
     host.endGpuFrame(frame)
     material.release()
+    let linear = host.newGpuAlphaMaskMaterial(namespace, vertex, fragment,
+      maskFilter = gsfLinear)
+    check context.lastSampler.minFilter == gsfLinear
+    check context.lastSampler.magFilter == gsfLinear
+    linear.release()
     for handle in [source, mask, wrongSize, output]:
       doAssert host.releaseGpuResource(handle)
     doAssert host.closeGpuNamespace(namespace)
@@ -7838,6 +7846,9 @@ suite "GPU source-over composition":
     inc wrong.sourceHash
     expect ValueError:
       discard host.newGpuCompositeMaterial(namespace, vertex, wrong)
+    expect ValueError:
+      discard host.newGpuCompositeMaterial(namespace, vertex, fragment,
+        foregroundFilter = gsfAnisotropic)
     check context.shaderCreates == 0
     let material = host.newGpuCompositeMaterial(namespace, vertex, fragment)
     let backdrop = host.createGpuTexture(namespace,
@@ -7962,6 +7973,11 @@ suite "GPU source-over composition":
     check context.drawSubmits == 26
     host.endGpuFrame(frame)
     material.release()
+    let linear = host.newGpuCompositeMaterial(namespace, vertex, fragment,
+      foregroundFilter = gsfLinear)
+    check context.lastSampler.minFilter == gsfLinear
+    check context.lastSampler.magFilter == gsfLinear
+    linear.release()
     for handle in [backdrop, foreground, wrongSize, output,
         scratch[0], scratch[1], scratch[2]]:
       doAssert host.releaseGpuResource(handle)

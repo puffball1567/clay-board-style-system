@@ -269,10 +269,14 @@ proc release*(material: GpuCompositeMaterial) =
 
 proc newGpuCompositeMaterial*(
     host: GpuHost; namespace: GpuNamespaceId;
-    vertexArtifact, fragmentArtifact: GpuShaderArtifact
+    vertexArtifact, fragmentArtifact: GpuShaderArtifact;
+    foregroundFilter = gsfNearest
 ): GpuCompositeMaterial =
   if host.isNil or not host.isReady():
     raise newException(ValueError, "GPU composite material requires a ready host")
+  if foregroundFilter notin {gsfNearest, gsfLinear}:
+    raise newException(ValueError,
+      "GPU composite sampling must be nearest or linear")
   if vertexArtifact.descriptor.stage != gssVertex or
       vertexArtifact.sourceHash != gpuCompositeVertexSource().gpuShaderSourceHash() or
       fragmentArtifact.descriptor.stage != gssFragment or
@@ -332,7 +336,7 @@ proc newGpuCompositeMaterial*(
     result.foregroundSampler = host.createGpuSampler(namespace,
       GpuSamplerDescriptor(name: "s_cbssForeground",
         addressU: gsamClamp, addressV: gsamClamp, addressW: gsamClamp,
-        minFilter: gsfNearest, magFilter: gsfNearest,
+        minFilter: foregroundFilter, magFilter: foregroundFilter,
         mipFilter: gsfNearest, label: "gpu-composite-foreground-sampler"))
   except CatchableError:
     result.release()
