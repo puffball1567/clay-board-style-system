@@ -92,7 +92,7 @@ surface's alpha. Compile `gpuAlphaMaskVertexSource()` and
 `GpuAlphaMaskMaterial` outside a frame. The source and mask are sampled RGBA8
 or BGRA8 Textures or RenderTargets. The destination is a distinct RGBA8
 RenderTarget matching the source size. The mask has that size unless it has
-explicit placement. Mask RGB is ignored.
+explicit placement. Mask RGB is ignored by the default alpha mode.
 
 ```nim
 let frame = host.beginGpuFrame()
@@ -105,11 +105,21 @@ host.endGpuFrame(frame)
 
 The pass converts straight source color to premultiplied alpha, then multiplies
 color and alpha by the mask coverage. It also accepts premultiplied or opaque
-source alpha modes. Set `invertMask = true` to use the complement of the mask
-alpha. `maskStrength` blends from the unmasked source at `0` to full mask
+source alpha modes. Set `invertMask = true` to use the complement of mask
+coverage. `maskStrength` blends from the unmasked source at `0` to full mask
 coverage at `1` and must be finite and normalized. Both options default to
 the original alpha-mask behavior. The output uses `gcamPremultiplied` for
 presentation.
+Set `maskMode = gmmLuminance` to derive coverage from the mask RGB channels
+using the [luminance-to-alpha coefficients](https://www.w3.org/TR/filter-effects-1/#attr-valuedef-type-luminancetoalpha)
+`0.2126 R + 0.7152 G + 0.0722 B`. For a straight-alpha mask, the result is
+multiplied by its alpha. Pass `maskAlphaMode = gcamPremultiplied` for a GPU
+render target whose RGB has already been multiplied by alpha, or `gcamOpaque`
+to ignore sampled alpha. This pass evaluates the sampled RGB values in their
+existing color space; applications needing linear-RGB mask luminance must
+convert the mask before this pass. The default `gmmAlpha` continues to use
+only the sampled alpha channel. Inversion and strength apply after either
+coverage calculation. `alphaMaskStage` accepts both options in a filter chain.
 Pass `maskPlacement = gpuAlphaMaskPlacement(x, y, width, height)` to position
 and scale a mask of any size in destination pixels. `x` and `y` may be
 negative; `width` and `height` must be positive. Outside the placed mask,

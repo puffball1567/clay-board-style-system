@@ -30,6 +30,8 @@ type
     maskStrengthValue: float32
     maskPlacementValue: GpuAlphaMaskPlacement
     maskCropValue: GpuAlphaMaskCrop
+    maskModeValue: GpuMaskMode
+    maskAlphaModeValue: GpuAlphaMode
     foregroundAlphaModeValue: GpuAlphaMode
     blendModeValue: GpuCompositeBlendMode
     foregroundOpacityValue: float32
@@ -58,7 +60,9 @@ proc opacityStage*(opacity: float32): GpuFilterStage =
 proc alphaMaskStage*(
     mask: GpuResourceHandle; invertMask = false; maskStrength = 1'f32;
     maskPlacement = GpuAlphaMaskPlacement();
-    maskCrop = GpuAlphaMaskCrop()
+    maskCrop = GpuAlphaMaskCrop();
+    maskMode = gmmAlpha;
+    maskAlphaMode = gcamStraight
 ): GpuFilterStage =
   ## Use the sampled mask's alpha; its RGB does not affect the source.
   if maskStrength.classify in {fcNan, fcInf, fcNegInf} or
@@ -67,7 +71,8 @@ proc alphaMaskStage*(
       "GPU alpha mask strength must be finite and normalized")
   GpuFilterStage(kindValue: gfskAlphaMask, sampledInputValue: mask,
     invertMaskValue: invertMask, maskStrengthValue: maskStrength,
-    maskPlacementValue: maskPlacement, maskCropValue: maskCrop)
+    maskPlacementValue: maskPlacement, maskCropValue: maskCrop,
+    maskModeValue: maskMode, maskAlphaModeValue: maskAlphaMode)
 
 proc compositeStage*(
     foreground: GpuResourceHandle;
@@ -332,7 +337,8 @@ proc submit*(
     of gfskAlphaMask:
       discard chain.alphaMask.submit(current, stage.sampledInputValue,
         output, alphaMode, stage.invertMaskValue, stage.maskStrengthValue,
-        stage.maskPlacementValue, stage.maskCropValue)
+        stage.maskPlacementValue, stage.maskCropValue,
+        stage.maskModeValue, stage.maskAlphaModeValue)
     of gfskComposite:
       discard chain.composite.submit(current, stage.sampledInputValue,
         output, alphaMode, stage.foregroundAlphaModeValue,

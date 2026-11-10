@@ -510,6 +510,11 @@ proc verifyGpuAlphaMaskPixels(host: GpuHost;
   let softened = target("alpha-mask-softened")
   let unmasked = target("alpha-mask-zero-strength")
   let chainedInverted = target("alpha-mask-chained-inverted")
+  let luminance = target("alpha-mask-luminance")
+  let premultLuminance = target("alpha-mask-premult-luminance")
+  let opaqueLuminance = target("alpha-mask-opaque-luminance")
+  let invertedLuminance = target("alpha-mask-inverted-luminance")
+  let chainedLuminance = target("alpha-mask-chained-luminance")
   let maskTarget = target("alpha-mask-render-target")
   let scratch = [target("alpha-mask-scratch-0"),
     target("alpha-mask-scratch-1"), target("alpha-mask-scratch-2")]
@@ -526,6 +531,11 @@ proc verifyGpuAlphaMaskPixels(host: GpuHost;
       alphaMaskStage(maskTarget, invertMask = true,
         maskStrength = 0.5'f32)],
     colorMatrix = matrix, alphaMask = material)
+  let luminanceChain = host.newGpuFilterChain(ns,
+    [colorMatrixStage(swapRedBlue),
+      alphaMaskStage(maskTarget, maskMode = gmmLuminance,
+        maskAlphaMode = gcamPremultiplied)],
+    colorMatrix = matrix, alphaMask = material)
   let frame = host.beginGpuFrame()
   doAssert matrix.submit(mask, maskTarget, nil, gcamStraight)
   doAssert material.submit(source, mask, output, gcamStraight)
@@ -534,6 +544,16 @@ proc verifyGpuAlphaMaskPixels(host: GpuHost;
   doAssert material.submit(source, mask, softened, maskStrength = 0.5'f32)
   doAssert material.submit(source, mask, unmasked, maskStrength = 0'f32)
   doAssert invertedChain.submit(source, chainedInverted, scratch)
+  doAssert material.submit(source, mask, luminance,
+    maskMode = gmmLuminance)
+  doAssert material.submit(source, maskTarget, premultLuminance,
+    maskMode = gmmLuminance, maskAlphaMode = gcamPremultiplied)
+  doAssert material.submit(source, mask, opaqueLuminance,
+    maskMode = gmmLuminance, maskAlphaMode = gcamOpaque)
+  doAssert material.submit(source, mask, invertedLuminance,
+    invertMask = true, maskStrength = 0.5'f32,
+    maskMode = gmmLuminance)
+  doAssert luminanceChain.submit(source, chainedLuminance, scratch)
   host.endGpuFrame(frame)
   let pixels = host.readPixels(ns, output, 2, 2)
   pixels.requirePixel(0, 0, Pixel(red: 64, alpha: 64),
@@ -575,11 +595,38 @@ proc verifyGpuAlphaMaskPixels(host: GpuHost;
     "GPU chain reveals a zero-mask pixel with inversion")
   chainedInvertedPixels.requirePixel(0, 1, Pixel(red: 128, alpha: 128),
     "GPU chain softens an inverted full-mask pixel")
+  for item in [luminance, premultLuminance]:
+    let maskPixels = host.readPixels(ns, item, 2, 2)
+    maskPixels.requirePixel(0, 0, Pixel(red: 46, alpha: 46),
+      "luminance mask multiplies green brightness by mask alpha")
+    maskPixels.requirePixel(1, 0, Pixel(),
+      "luminance mask removes transparent red")
+    maskPixels.requirePixel(0, 1, Pixel(blue: 237, alpha: 237),
+      "luminance mask uses red and green brightness")
+  let opaqueLuminancePixels = host.readPixels(ns, opaqueLuminance, 2, 2)
+  opaqueLuminancePixels.requirePixel(1, 0,
+    Pixel(green: 54, alpha: 54),
+    "opaque luminance mask ignores sampled alpha")
+  let invertedLuminancePixels = host.readPixels(ns, invertedLuminance, 2, 2)
+  invertedLuminancePixels.requirePixel(0, 0,
+    Pixel(red: 105, alpha: 105),
+    "luminance inversion and strength follow coverage calculation")
+  invertedLuminancePixels.requirePixel(1, 0,
+    Pixel(green: 255, alpha: 255),
+    "inverted luminance reveals transparent mask pixels")
+  let chainedLuminancePixels = host.readPixels(ns, chainedLuminance, 2, 2)
+  chainedLuminancePixels.requirePixel(0, 0,
+    Pixel(blue: 46, alpha: 46),
+    "filter chain accepts premultiplied luminance masks")
+  chainedLuminancePixels.requirePixel(0, 1,
+    Pixel(red: 237, alpha: 237),
+    "filter chain applies luminance after color matrix")
   material.release()
   matrix.release()
   for handle in [source, mask, output, chained, inverted, softened,
-      unmasked, chainedInverted, maskTarget, scratch[0], scratch[1],
-      scratch[2]]:
+      unmasked, chainedInverted, luminance, premultLuminance,
+      opaqueLuminance, invertedLuminance, chainedLuminance, maskTarget,
+      scratch[0], scratch[1], scratch[2]]:
     doAssert host.releaseGpuResource(handle)
   doAssert host.closeGpuNamespace(ns)
   echo "GPU alpha mask: direct and chained inversion/strength pixels passed"
