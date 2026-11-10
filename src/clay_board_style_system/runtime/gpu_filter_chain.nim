@@ -5,7 +5,8 @@ import std/math
 import ../core/color
 import ../paint/layer_color_filter
 import ./[gpu_alpha_mask, gpu_color_matrix, gpu_composite, gpu_gaussian_blur,
-  gpu_drop_shadow, gpu_host, gpu_surface_crop, gpu_surface_placement]
+  gpu_displacement, gpu_drop_shadow, gpu_host, gpu_surface_crop,
+  gpu_surface_placement]
 
 const MaxGpuFilterStages* = 8
 
@@ -16,7 +17,8 @@ type
     gfskDropShadow,
     gfskOpacity,
     gfskAlphaMask,
-    gfskComposite
+    gfskComposite,
+    gfskDisplacement
 
   GpuFilterStage* = object
     kindValue: GpuFilterStageKind
@@ -37,6 +39,7 @@ type
     foregroundOpacityValue: float32
     foregroundPlacementValue: GpuCompositePlacement
     foregroundCropValue: GpuCompositeCrop
+    displacementScaleXValue, displacementScaleYValue: float32
 
   GpuFilterChain* = ref object
     host: GpuHost
@@ -47,6 +50,7 @@ type
     dropShadow: GpuDropShadowMaterial
     alphaMask: GpuAlphaMaskMaterial
     composite: GpuCompositeMaterial
+    displacement: GpuDisplacementMaterial
 
 proc colorMatrixStage*(filter: LayerColorFilter): GpuFilterStage =
   GpuFilterStage(kindValue: gfskColorMatrix, matrixValue: filter)
@@ -93,6 +97,19 @@ proc compositeStage*(
     foregroundPlacementValue: foregroundPlacement,
     foregroundCropValue: foregroundCrop)
 
+proc displacementStage*(
+    displacementMap: GpuResourceHandle; scaleX, scaleY: float32
+): GpuFilterStage =
+  ## Map R and G displace the current result in destination pixels.
+  if not scaleX.validGpuDisplacementScale or
+      not scaleY.validGpuDisplacementScale:
+    raise newException(ValueError,
+      "GPU displacement scale must be finite and within 4096 pixels")
+  GpuFilterStage(kindValue: gfskDisplacement,
+    sampledInputValue: displacementMap,
+    displacementScaleXValue: scaleX,
+    displacementScaleYValue: scaleY)
+
 proc gaussianBlurStage*(radius = 2): GpuFilterStage =
   if radius < 0 or radius > MaxGpuBlurRadius:
     raise newException(ValueError, "GPU filter blur radius must be between 0 and 16")
@@ -123,7 +140,8 @@ proc newGpuFilterChain*(
     gaussianBlur: GpuGaussianBlurMaterial = nil;
     dropShadow: GpuDropShadowMaterial = nil;
     alphaMask: GpuAlphaMaskMaterial = nil;
-    composite: GpuCompositeMaterial = nil
+    composite: GpuCompositeMaterial = nil;
+    displacement: GpuDisplacementMaterial = nil
 ): GpuFilterChain =
   if host.isNil or not host.isReady() or not host.hasGpuNamespace(namespace):
     raise newException(ValueError, "GPU filter chain requires a ready host namespace")
@@ -171,9 +189,24 @@ proc newGpuFilterChain*(
           foregroundInfo.format notin {gtfRgba8, gtfBgra8}:
         raise newException(ValueError,
           "GPU filter chain foreground must be sampled RGBA8 or BGRA8")
+    of gfskDisplacement:
+      if not displacement.belongsTo(host, namespace):
+        raise newException(ValueError,
+          "GPU filter chain displacement material belongs to another host")
+      if stage.sampledInputValue.namespace != namespace or
+          not host.isGpuResourceLive(stage.sampledInputValue):
+        raise newException(ValueError,
+          "GPU filter chain displacement map is unavailable")
+      let mapInfo = host.gpuPresentableResourceInfo(stage.sampledInputValue)
+      if mapInfo.kind notin {grkTexture, grkRenderTarget} or
+          gtuSampled notin mapInfo.usage or
+          mapInfo.format notin {gtfRgba8, gtfBgra8}:
+        raise newException(ValueError,
+          "GPU filter chain displacement map must be sampled RGBA8 or BGRA8")
   GpuFilterChain(host: host, namespace: namespace, stages: @stages,
     colorMatrix: colorMatrix, gaussianBlur: gaussianBlur,
-    dropShadow: dropShadow, alphaMask: alphaMask, composite: composite)
+    dropShadow: dropShadow, alphaMask: alphaMask, composite: composite,
+    displacement: displacement)
 
 proc stageCount*(chain: GpuFilterChain): int =
   if chain.isNil: 0 else: chain.stages.len
@@ -210,6 +243,9 @@ proc belongsTo*(
           not host.isGpuResourceLive(stage.sampledInputValue): return false
     of gfskComposite:
       if not chain.composite.belongsTo(host, namespace) or
+          not host.isGpuResourceLive(stage.sampledInputValue): return false
+    of gfskDisplacement:
+      if not chain.displacement.belongsTo(host, namespace) or
           not host.isGpuResourceLive(stage.sampledInputValue): return false
   true
 
@@ -303,6 +339,22 @@ proc submit*(
       discard stage.foregroundCropValue.sampledGpuCropUv(
         foregroundInfo.width, foregroundInfo.height,
         foregroundInfo.rowsBottomUp)
+    of gfskDisplacement:
+      if not chain.displacement.belongsTo(chain.host, chain.namespace):
+        raise newException(ValueError,
+          "GPU filter chain displacement material is closed")
+      if stage.sampledInputValue.namespace != chain.namespace or
+          stage.sampledInputValue in [destination, scratch[0], scratch[1], scratch[2]]:
+        raise newException(ValueError,
+          "GPU filter chain displacement map must not alias a writable target")
+      let mapInfo = chain.host.gpuPresentableResourceInfo(stage.sampledInputValue)
+      if mapInfo.kind notin {grkTexture, grkRenderTarget} or
+          gtuSampled notin mapInfo.usage or
+          mapInfo.format notin {gtfRgba8, gtfBgra8} or
+          mapInfo.width != sourceInfo.width or
+          mapInfo.height != sourceInfo.height:
+        raise newException(ValueError,
+          "GPU filter chain displacement map must match the source size")
   let workUnits = chain.requiredWorkUnits()
   chain.host.validateGpuFrameWork(chain.namespace, workUnits = workUnits)
   chain.host.validateGpuViewCapacity(int(workUnits))
@@ -344,6 +396,10 @@ proc submit*(
         output, alphaMode, stage.foregroundAlphaModeValue,
         stage.blendModeValue, stage.foregroundOpacityValue,
         stage.foregroundPlacementValue, stage.foregroundCropValue)
+    of gfskDisplacement:
+      discard chain.displacement.submit(current, stage.sampledInputValue,
+        output, stage.displacementScaleXValue,
+        stage.displacementScaleYValue, alphaMode)
     current = output
     alphaMode = gcamPremultiplied
   true

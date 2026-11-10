@@ -44,6 +44,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added same-host GPU displacement mapping with bounded pixel scales and
+  nearest or linear sampling, available directly and in filter chains.
+
 - Added GPU luminance masks with explicit mask alpha handling for direct passes
   and filter chains.
 

@@ -21,7 +21,8 @@ import clay_board_style_system/runtime/[gpu_canvas, motion_scene,
 import clay_board_style_system/paint/[gpu_direct_compositor,
     gpu_host_compositor, layer_color_filter, paint_command]
 import clay_board_style_system/runtime/[gpu_direct_surface, gpu_host,
-    gpu_alpha_mask, gpu_color_matrix, gpu_composite, gpu_gaussian_blur,
+    gpu_alpha_mask, gpu_color_matrix, gpu_composite, gpu_displacement,
+    gpu_gaussian_blur,
     gpu_drop_shadow,
     gpu_filter_chain,
     gpu_raster_filter_display, gpu_shader_builder, gpu_shader_package]
@@ -1328,6 +1329,83 @@ proc verifyGpuCompositePlacementPixels(host: GpuHost;
   doAssert host.closeGpuNamespace(ns)
   echo "GPU foreground placement: clipping, scaling, and chaining pixels passed"
 
+proc verifyGpuDisplacementPixels(host: GpuHost;
+    shaderc, shaderIncludes, workDirectory: string) =
+  let ns = host.createGpuNamespace("gpu-displacement-pixels", budget())
+  let material = host.newGpuDisplacementMaterial(ns,
+    compileShader(gpuDisplacementVertexSource(), shaderc,
+      shaderIncludes, workDirectory),
+    compileShader(gpuDisplacementFragmentSource(), shaderc,
+      shaderIncludes, workDirectory))
+  let matrix = host.newGpuColorMatrixMaterial(ns,
+    compileShader(gpuColorMatrixVertexSource(), shaderc,
+      shaderIncludes, workDirectory),
+    compileShader(gpuColorMatrixFragmentSource(), shaderc,
+      shaderIncludes, workDirectory))
+  let source = host.createGpuTexture(ns, GpuTextureDescriptor(
+    width: 3, height: 3, format: gtfRgba8,
+    usage: {gtuSampled}, access: gtaStatic,
+    label: "displacement-source"),
+    rgbaPixels(3, 3, proc(x, y: int): Pixel =
+      if x == 1 and y == 2:
+        Pixel(red: 200, green: 100, blue: 40, alpha: 128)
+      else:
+        Pixel(red: uint8(x * 70), green: uint8(y * 70),
+          blue: 40, alpha: 255)))
+  let displacementMap = host.createGpuTexture(ns, GpuTextureDescriptor(
+    width: 3, height: 3, format: gtfRgba8,
+    usage: {gtuSampled}, access: gtaStatic,
+    label: "displacement-map"),
+    rgbaPixels(3, 3, proc(x, y: int): Pixel =
+      Pixel(green: 255, alpha: 255)))
+  proc target(label: string): GpuResourceHandle =
+    host.createGpuRenderTarget(ns, GpuRenderTargetDescriptor(
+      width: 3, height: 3, format: gtfRgba8,
+      usage: {gtuRenderTarget, gtuSampled, gtuBlitSource},
+      label: label))
+  let displaced = target("displacement-direct")
+  let chained = target("displacement-chained")
+  let unchanged = target("displacement-zero-scale")
+  let scratch = [target("displacement-scratch-0"),
+    target("displacement-scratch-1"),
+    target("displacement-scratch-2")]
+  let chain = host.newGpuFilterChain(ns,
+    [opacityStage(1'f32),
+      displacementStage(displacementMap, -1'f32, 1'f32)],
+    colorMatrix = matrix, displacement = material)
+  let frame = host.beginGpuFrame()
+  doAssert material.submit(source, displacementMap, displaced,
+    -1'f32, 1'f32)
+  doAssert chain.submit(source, chained, scratch)
+  doAssert material.submit(source, displacementMap, unchanged,
+    0'f32, 0'f32)
+  host.endGpuFrame(frame)
+  for item in [displaced, chained]:
+    let pixels = host.readPixels(ns, item, 3, 3)
+    pixels.requirePixel(0, 0, Pixel(red: 70, green: 70,
+      blue: 40, alpha: 255),
+      "displacement map moves right and down in source pixels")
+    pixels.requirePixel(1, 0, Pixel(red: 140, green: 70,
+      blue: 40, alpha: 255),
+      "displacement map reads the next source column")
+    pixels.requirePixel(0, 1, Pixel(red: 100, green: 50,
+      blue: 20, alpha: 128),
+      "displacement preserves translucent source color through the chain")
+    pixels.requirePixel(2, 2, Pixel(red: 140, green: 140,
+      blue: 40, alpha: 255),
+      "displacement clamps at the source boundary")
+  let unchangedPixels = host.readPixels(ns, unchanged, 3, 3)
+  unchangedPixels.requirePixel(1, 2, Pixel(red: 100, green: 50,
+    blue: 20, alpha: 128),
+    "zero displacement retains premultiplied translucent pixels")
+  material.release()
+  matrix.release()
+  for handle in [source, displacementMap, displaced, chained, unchanged,
+      scratch[0], scratch[1], scratch[2]]:
+    doAssert host.releaseGpuResource(handle)
+  doAssert host.closeGpuNamespace(ns)
+  echo "GPU displacement: direct, chained, and zero-scale pixels passed"
+
 proc verifyGpuGaussianBlurPixels(host: GpuHost;
     shaderc, shaderIncludes, workDirectory: string) =
   let ns = host.createGpuNamespace("gpu-gaussian-blur-pixels", budget())
@@ -2114,6 +2192,7 @@ proc run() =
     host.verifyGpuAlphaMaskPlacementPixels(shaderc, shaderIncludes,
       workDirectory)
     host.verifyGpuGaussianBlurPixels(shaderc, shaderIncludes, workDirectory)
+    host.verifyGpuDisplacementPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuDropShadowPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuFilterChainPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuCompositePixels(shaderc, shaderIncludes, workDirectory)

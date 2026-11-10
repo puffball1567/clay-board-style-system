@@ -1149,7 +1149,8 @@ Direct composition and the filter-chain composite stage can scale foreground
 opacity without rewriting the sampled surface. They can also position, clip,
 and scale a foreground of different dimensions over a same-size backdrop.
 An ordered GPU filter chain now combines up to eight matrix, opacity, blur,
-shadow, alpha-mask, and source-over stages over three reusable scratch targets, carrying
+shadow, alpha-mask, source-over, and RG displacement stages over three reusable
+scratch targets, carrying
 premultiplied alpha into each stage and producing a display-ready RenderTarget.
 The chain, direct blur, and direct shadow now preflight their complete work and
 view budgets before the first pass. An owned
