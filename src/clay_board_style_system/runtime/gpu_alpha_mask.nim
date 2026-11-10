@@ -3,10 +3,11 @@
 import std/math
 
 import ../paint/gpu_host_compositor
-import ./[gpu_host, gpu_shader_builder, gpu_surface_placement]
+import ./[gpu_host, gpu_shader_builder, gpu_surface_crop, gpu_surface_placement]
 
 type
   GpuAlphaMaskPlacement* = GpuSurfacePlacement
+  GpuAlphaMaskCrop* = GpuSurfaceCrop
 
   GpuAlphaMaskVertex = object
     x, y, z: float32
@@ -18,7 +19,7 @@ type
     vertexShader, fragmentShader: GpuResourceHandle
     pipeline, vertexBuffer: GpuResourceHandle
     paramsUniform, sourceUvUniform, maskUvUniform: GpuResourceHandle
-    maskPlacementUniform: GpuResourceHandle
+    maskPlacementUniform, maskCropClampUniform: GpuResourceHandle
     sourceSampler, maskSampler: GpuResourceHandle
 
 proc gpuAlphaMaskPlacement*(
@@ -29,6 +30,11 @@ proc gpuAlphaMaskPlacement*(
 
 proc isMaskPlaced*(placement: GpuAlphaMaskPlacement): bool =
   placement.isGpuPlacementActive()
+
+proc gpuAlphaMaskCrop*(
+    x, y, width, height: uint32
+): GpuAlphaMaskCrop =
+  gpuSurfaceCrop(x, y, width, height)
 
 proc gpuAlphaMaskVertexSource*(): GpuShaderSource =
   gpuHostDirectCompositeVertexSource()
@@ -45,6 +51,7 @@ uniform vec4 u_cbssMaskParams;
 uniform vec4 u_cbssMaskSourceUv;
 uniform vec4 u_cbssMaskCoverageUv;
 uniform vec4 u_cbssMaskPlacement;
+uniform vec4 u_cbssMaskCropClamp;
 void main()
 {
   vec2 sourceUv = mix(u_cbssMaskSourceUv.xy,
@@ -62,6 +69,8 @@ void main()
       maskLocal.x < 1.0 && maskLocal.y < 1.0) {
     vec2 maskUv = mix(u_cbssMaskCoverageUv.xy,
       u_cbssMaskCoverageUv.zw, maskLocal);
+    maskUv = clamp(maskUv, u_cbssMaskCropClamp.xy,
+      u_cbssMaskCropClamp.zw);
     coverage = texture2D(s_cbssMaskCoverage, maskUv).a;
   }
   if (u_cbssMaskParams.y > 0.5) coverage = 1.0 - coverage;
@@ -89,7 +98,8 @@ proc release*(material: GpuAlphaMaskMaterial) =
   if material.isClosed:
     return
   for handle in [material.maskSampler, material.sourceSampler,
-      material.maskPlacementUniform, material.maskUvUniform,
+      material.maskCropClampUniform, material.maskPlacementUniform,
+      material.maskUvUniform,
       material.sourceUvUniform,
       material.paramsUniform, material.vertexBuffer, material.pipeline,
       material.fragmentShader, material.vertexShader]:
@@ -157,6 +167,10 @@ proc newGpuAlphaMaskMaterial*(
       GpuUniformDescriptor(name: "u_cbssMaskPlacement",
         uniformType: gutVec4, arrayLength: 1,
         label: "gpu-alpha-mask-placement"))
+    result.maskCropClampUniform = host.createGpuUniform(namespace,
+      GpuUniformDescriptor(name: "u_cbssMaskCropClamp",
+        uniformType: gutVec4, arrayLength: 1,
+        label: "gpu-alpha-mask-crop-clamp"))
     result.sourceSampler = host.createGpuSampler(namespace,
       GpuSamplerDescriptor(name: "s_cbssMaskSource",
         addressU: gsamClamp, addressV: gsamClamp, addressW: gsamClamp,
@@ -177,7 +191,8 @@ proc submit*(
     sourceAlphaMode = gcamStraight;
     invertMask = false;
     maskStrength = 1'f32;
-    maskPlacement = GpuAlphaMaskPlacement()
+    maskPlacement = GpuAlphaMaskPlacement();
+    maskCrop = GpuAlphaMaskCrop()
 ): bool =
   ## Mask strength blends between an unmasked source and mask coverage.
   ## Source and mask may be the same sampled resource. Output is premultiplied.
@@ -211,6 +226,7 @@ proc submit*(
       sourceInfo.width != targetInfo.width or
       sourceInfo.height != targetInfo.height or
       (not maskPlacement.isGpuPlacementActive and
+        not maskCrop.isGpuCropActive and
         (maskInfo.width != targetInfo.width or
           maskInfo.height != targetInfo.height)):
     raise newException(ValueError, "GPU alpha mask resource shapes are incompatible")
@@ -220,9 +236,8 @@ proc submit*(
   let sourceUv =
     if sourceInfo.rowsBottomUp: @[0'f32, 1, 1, 0]
     else: @[0'f32, 0, 1, 1]
-  let maskUv =
-    if maskInfo.rowsBottomUp: @[0'f32, 1, 1, 0]
-    else: @[0'f32, 0, 1, 1]
+  let maskSample = maskCrop.sampledGpuCropUv(
+    maskInfo.width, maskInfo.height, maskInfo.rowsBottomUp)
   let placement = maskPlacement.normalizedGpuPlacement(
     targetInfo.width, targetInfo.height)
   host.submitGpuDraw(material.namespace,
@@ -243,9 +258,11 @@ proc submit*(
           GpuUniformBinding(uniform: material.sourceUvUniform,
             values: sourceUv),
           GpuUniformBinding(uniform: material.maskUvUniform,
-            values: maskUv),
+            values: maskSample.uv),
           GpuUniformBinding(uniform: material.maskPlacementUniform,
-            values: placement)
+            values: placement),
+          GpuUniformBinding(uniform: material.maskCropClampUniform,
+            values: maskSample.clampUv)
         ],
         textures: @[
           GpuTextureBinding(stage: 0, sampler: material.sourceSampler,

@@ -5,7 +5,7 @@ import std/math
 import ../core/color
 import ../paint/layer_color_filter
 import ./[gpu_alpha_mask, gpu_color_matrix, gpu_composite, gpu_gaussian_blur,
-  gpu_drop_shadow, gpu_host, gpu_surface_placement]
+  gpu_drop_shadow, gpu_host, gpu_surface_crop, gpu_surface_placement]
 
 const MaxGpuFilterStages* = 8
 
@@ -29,10 +29,12 @@ type
     invertMaskValue: bool
     maskStrengthValue: float32
     maskPlacementValue: GpuAlphaMaskPlacement
+    maskCropValue: GpuAlphaMaskCrop
     foregroundAlphaModeValue: GpuAlphaMode
     blendModeValue: GpuCompositeBlendMode
     foregroundOpacityValue: float32
     foregroundPlacementValue: GpuCompositePlacement
+    foregroundCropValue: GpuCompositeCrop
 
   GpuFilterChain* = ref object
     host: GpuHost
@@ -55,7 +57,8 @@ proc opacityStage*(opacity: float32): GpuFilterStage =
 
 proc alphaMaskStage*(
     mask: GpuResourceHandle; invertMask = false; maskStrength = 1'f32;
-    maskPlacement = GpuAlphaMaskPlacement()
+    maskPlacement = GpuAlphaMaskPlacement();
+    maskCrop = GpuAlphaMaskCrop()
 ): GpuFilterStage =
   ## Use the sampled mask's alpha; its RGB does not affect the source.
   if maskStrength.classify in {fcNan, fcInf, fcNegInf} or
@@ -64,14 +67,15 @@ proc alphaMaskStage*(
       "GPU alpha mask strength must be finite and normalized")
   GpuFilterStage(kindValue: gfskAlphaMask, sampledInputValue: mask,
     invertMaskValue: invertMask, maskStrengthValue: maskStrength,
-    maskPlacementValue: maskPlacement)
+    maskPlacementValue: maskPlacement, maskCropValue: maskCrop)
 
 proc compositeStage*(
     foreground: GpuResourceHandle;
     foregroundAlphaMode = gcamStraight;
     blendMode = gcbmNormal;
     foregroundOpacity = 1'f32;
-    foregroundPlacement = GpuCompositePlacement()
+    foregroundPlacement = GpuCompositePlacement();
+    foregroundCrop = GpuCompositeCrop()
 ): GpuFilterStage =
   ## Place a sampled foreground above the current chain result.
   if foregroundOpacity.classify in {fcNan, fcInf, fcNegInf} or
@@ -81,7 +85,8 @@ proc compositeStage*(
   GpuFilterStage(kindValue: gfskComposite, sampledInputValue: foreground,
     foregroundAlphaModeValue: foregroundAlphaMode,
     blendModeValue: blendMode, foregroundOpacityValue: foregroundOpacity,
-    foregroundPlacementValue: foregroundPlacement)
+    foregroundPlacementValue: foregroundPlacement,
+    foregroundCropValue: foregroundCrop)
 
 proc gaussianBlurStage*(radius = 2): GpuFilterStage =
   if radius < 0 or radius > MaxGpuBlurRadius:
@@ -266,10 +271,13 @@ proc submit*(
           gtuSampled notin maskInfo.usage or
           maskInfo.format notin {gtfRgba8, gtfBgra8} or
           (not stage.maskPlacementValue.isGpuPlacementActive and
+            not stage.maskCropValue.isGpuCropActive and
             (maskInfo.width != sourceInfo.width or
               maskInfo.height != sourceInfo.height)):
         raise newException(ValueError,
           "GPU filter chain mask must be a sampled RGBA8 or BGRA8 source of matching size")
+      discard stage.maskCropValue.sampledGpuCropUv(
+        maskInfo.width, maskInfo.height, maskInfo.rowsBottomUp)
     of gfskComposite:
       if not chain.composite.belongsTo(chain.host, chain.namespace):
         raise newException(ValueError, "GPU filter chain composite material is closed")
@@ -282,10 +290,14 @@ proc submit*(
           gtuSampled notin foregroundInfo.usage or
           foregroundInfo.format notin {gtfRgba8, gtfBgra8} or
           (not stage.foregroundPlacementValue.isPlaced and
+            not stage.foregroundCropValue.isGpuCropActive and
             (foregroundInfo.width != sourceInfo.width or
               foregroundInfo.height != sourceInfo.height)):
         raise newException(ValueError,
           "GPU filter chain foreground must be a sampled RGBA8 or BGRA8 source of matching size")
+      discard stage.foregroundCropValue.sampledGpuCropUv(
+        foregroundInfo.width, foregroundInfo.height,
+        foregroundInfo.rowsBottomUp)
   let workUnits = chain.requiredWorkUnits()
   chain.host.validateGpuFrameWork(chain.namespace, workUnits = workUnits)
   chain.host.validateGpuViewCapacity(int(workUnits))
@@ -320,12 +332,12 @@ proc submit*(
     of gfskAlphaMask:
       discard chain.alphaMask.submit(current, stage.sampledInputValue,
         output, alphaMode, stage.invertMaskValue, stage.maskStrengthValue,
-        stage.maskPlacementValue)
+        stage.maskPlacementValue, stage.maskCropValue)
     of gfskComposite:
       discard chain.composite.submit(current, stage.sampledInputValue,
         output, alphaMode, stage.foregroundAlphaModeValue,
         stage.blendModeValue, stage.foregroundOpacityValue,
-        stage.foregroundPlacementValue)
+        stage.foregroundPlacementValue, stage.foregroundCropValue)
     current = output
     alphaMode = gcamPremultiplied
   true

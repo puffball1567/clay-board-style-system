@@ -1132,6 +1132,8 @@ Masks of different dimensions can be positioned, clipped, and scaled in the
 destination while keeping transparent coverage outside their bounds.
 Placed masks and foregrounds can now select nearest or linear GPU sampling
 through their materials, including when used in ordered filter chains.
+They can also crop source-pixel rectangles before placement, with linear
+sampling clamped inside each crop for texture-atlas use.
 An independent-alpha source-over pass now composites two sampled GPU surfaces
 into a premultiplied RenderTarget. Its filter-chain stage places an external
 foreground over the current GPU-owned result. Normal, multiply, screen,

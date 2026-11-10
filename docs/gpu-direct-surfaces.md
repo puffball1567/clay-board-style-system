@@ -123,6 +123,12 @@ Pass `maskFilter = gsfLinear` when constructing `GpuAlphaMaskMaterial` to
 interpolate coverage while scaling a placed mask. The default `gsfNearest`
 preserves hard pixel edges. The selected filter applies to direct passes and
 filter chains that use that material.
+Pass `maskCrop = gpuAlphaMaskCrop(x, y, width, height)` to sample a rectangle
+from the mask in source pixels. The rectangle must fit inside the mask and have
+positive dimensions. A crop may fill the whole destination without a separate
+placement, or combine with `maskPlacement` to choose its destination bounds.
+Linear sampling clamps to texel centers within the crop, avoiding neighboring
+atlas tiles. `alphaMaskStage` accepts the same `maskCrop` argument.
 
 ## GPU source-over composition
 
@@ -183,6 +189,12 @@ Pass `foregroundFilter = gsfLinear` when constructing
 smooth transparent edges, since hardware filtering interpolates texels before
 the composite pass applies its alpha mode. The selected filter also applies
 to filter-chain composite stages using that material.
+Pass `foregroundCrop = gpuCompositeCrop(x, y, width, height)` to select a
+source-pixel rectangle from the foreground. It may fill the destination or
+combine with `foregroundPlacement`. The rectangle must fit inside the source
+and have positive dimensions. Linear sampling stays within the selected
+rectangle, so adjacent atlas tiles do not bleed into the result.
+`compositeStage` accepts the same `foregroundCrop` argument.
 
 ## GPU Gaussian blur postprocess
 

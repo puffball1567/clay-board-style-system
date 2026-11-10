@@ -619,6 +619,8 @@ proc verifyGpuAlphaMaskPlacementPixels(host: GpuHost;
   let softened = target("placed-mask-softened")
   let scaled = target("placed-mask-scaled")
   let linearScaled = target("placed-mask-linear-scaled")
+  let cropped = target("placed-mask-cropped")
+  let croppedChained = target("placed-mask-cropped-chained")
   let clipped = target("placed-mask-clipped")
   let chained = target("placed-mask-chained")
   let linearChained = target("placed-mask-linear-chained")
@@ -632,6 +634,10 @@ proc verifyGpuAlphaMaskPlacementPixels(host: GpuHost;
     [alphaMaskStage(mask,
       maskPlacement = gpuAlphaMaskPlacement(0, 0, 4, 4))],
     alphaMask = linearMaterial)
+  let crop = gpuAlphaMaskCrop(0, 0, 1, 2)
+  let cropChain = host.newGpuFilterChain(ns,
+    [alphaMaskStage(mask, maskCrop = crop)],
+    alphaMask = linearMaterial)
   let frame = host.beginGpuFrame()
   doAssert material.submit(source, mask, centered,
     maskPlacement = center)
@@ -643,10 +649,13 @@ proc verifyGpuAlphaMaskPlacementPixels(host: GpuHost;
     maskPlacement = gpuAlphaMaskPlacement(0, 0, 4, 4))
   doAssert linearMaterial.submit(source, mask, linearScaled,
     maskPlacement = gpuAlphaMaskPlacement(0, 0, 4, 4))
+  doAssert linearMaterial.submit(source, mask, cropped,
+    maskCrop = crop)
   doAssert material.submit(source, mask, clipped,
     maskPlacement = gpuAlphaMaskPlacement(-1, -1, 2, 2))
   doAssert chain.submit(source, chained, scratch)
   doAssert linearChain.submit(source, linearChained, scratch)
+  doAssert cropChain.submit(source, croppedChained, scratch)
   host.endGpuFrame(frame)
   let centeredPixels = host.readPixels(ns, centered, 4, 4)
   centeredPixels.requirePixel(0, 0, Pixel(),
@@ -684,6 +693,12 @@ proc verifyGpuAlphaMaskPlacementPixels(host: GpuHost;
       "linear mask interpolates nearby coverage")
     pixels.requirePixel(2, 2, Pixel(red: 92, alpha: 92),
       "linear mask interpolates all four source texels")
+  for item in [cropped, croppedChained]:
+    let pixels = host.readPixels(ns, item, 4, 4)
+    pixels.requirePixel(3, 0, Pixel(red: 128, alpha: 128),
+      "cropped mask clamps linear samples to its first column")
+    pixels.requirePixel(3, 3, Pixel(red: 255, alpha: 255),
+      "cropped mask reaches its lower source texel")
   let clippedPixels = host.readPixels(ns, clipped, 4, 4)
   clippedPixels.requirePixel(0, 0, Pixel(red: 64, alpha: 64),
     "negative mask placement clips to bottom-right texel")
@@ -699,7 +714,7 @@ proc verifyGpuAlphaMaskPlacementPixels(host: GpuHost;
   material.release()
   linearMaterial.release()
   for handle in [source, mask, centered, inverted, softened, scaled,
-      linearScaled, clipped, chained, linearChained,
+      linearScaled, cropped, croppedChained, clipped, chained, linearChained,
       scratch[0], scratch[1], scratch[2]]:
     doAssert host.releaseGpuResource(handle)
   doAssert host.closeGpuNamespace(ns)
@@ -1171,6 +1186,8 @@ proc verifyGpuCompositePlacementPixels(host: GpuHost;
   let clipped = target("placement-clipped")
   let scaled = target("placement-scaled")
   let linearScaled = target("placement-linear-scaled")
+  let cropped = target("placement-cropped")
+  let croppedChained = target("placement-cropped-chained")
   let opaque = target("placement-opaque")
   let chained = target("placement-chained")
   let linearChained = target("placement-linear-chained")
@@ -1184,6 +1201,10 @@ proc verifyGpuCompositePlacementPixels(host: GpuHost;
     [compositeStage(premultipliedForeground, gcamPremultiplied,
       foregroundPlacement = gpuCompositePlacement(0, 0, 4, 4))],
     composite = linearMaterial)
+  let crop = gpuCompositeCrop(0, 0, 1, 2)
+  let cropChain = host.newGpuFilterChain(ns,
+    [compositeStage(premultipliedForeground, gcamPremultiplied,
+      foregroundCrop = crop)], composite = linearMaterial)
   let frame = host.beginGpuFrame()
   doAssert material.submit(backdrop, foreground, centered,
     foregroundPlacement = center)
@@ -1194,10 +1215,14 @@ proc verifyGpuCompositePlacementPixels(host: GpuHost;
   doAssert linearMaterial.submit(backdrop, premultipliedForeground,
     linearScaled, foregroundAlphaMode = gcamPremultiplied,
     foregroundPlacement = gpuCompositePlacement(0, 0, 4, 4))
+  doAssert linearMaterial.submit(backdrop, premultipliedForeground,
+    cropped, foregroundAlphaMode = gcamPremultiplied,
+    foregroundCrop = crop)
   doAssert material.submit(backdrop, foreground, opaque,
     foregroundAlphaMode = gcamOpaque, foregroundPlacement = center)
   doAssert chain.submit(backdrop, chained, scratch)
   doAssert linearChain.submit(backdrop, linearChained, scratch)
+  doAssert cropChain.submit(backdrop, croppedChained, scratch)
   host.endGpuFrame(frame)
   let centeredPixels = host.readPixels(ns, centered, 4, 4)
   centeredPixels.requirePixel(0, 0, Pixel(blue: 255, alpha: 255),
@@ -1228,6 +1253,12 @@ proc verifyGpuCompositePlacementPixels(host: GpuHost;
       alpha: 255), "linear foreground blends nearby premultiplied texels")
     pixels.requirePixel(2, 2, Pixel(red: 116, green: 78, blue: 98,
       alpha: 255), "linear foreground interpolates all four texels")
+  for item in [cropped, croppedChained]:
+    let pixels = host.readPixels(ns, item, 4, 4)
+    pixels.requirePixel(3, 0, Pixel(red: 128, blue: 127, alpha: 255),
+      "cropped foreground avoids transparent atlas neighbor")
+    pixels.requirePixel(3, 3, Pixel(green: 128, blue: 127, alpha: 255),
+      "cropped foreground reaches its lower source texel")
   let opaquePixels = host.readPixels(ns, opaque, 4, 4)
   opaquePixels.requirePixel(0, 0, Pixel(blue: 255, alpha: 255),
     "opaque alpha mode remains transparent outside placement")
@@ -1243,7 +1274,8 @@ proc verifyGpuCompositePlacementPixels(host: GpuHost;
   material.release()
   linearMaterial.release()
   for handle in [backdrop, foreground, premultipliedForeground,
-      centered, clipped, scaled, linearScaled, opaque, chained,
+      centered, clipped, scaled, linearScaled, cropped, croppedChained,
+      opaque, chained,
       linearChained, scratch[0], scratch[1], scratch[2]]:
     doAssert host.releaseGpuResource(handle)
   doAssert host.closeGpuNamespace(ns)
