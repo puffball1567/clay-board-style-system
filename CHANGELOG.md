@@ -44,6 +44,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added GPU luminance masks with explicit mask alpha handling for direct passes
+  and filter chains.
+
 - Added source-pixel crops for GPU alpha masks and foreground composition,
   including filter chains and atlas-safe linear sampling.
 

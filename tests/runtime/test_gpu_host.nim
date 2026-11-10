@@ -7807,15 +7807,20 @@ suite "GPU alpha mask postprocess":
     check context.lastBindings.textures[0].texture.backendResourceIdValue() !=
       context.lastBindings.textures[1].texture.backendResourceIdValue()
     check context.lastBindings.textures[1].stage == 1
-    check material.submit(source, source, output)
+    check material.submit(source, source, output,
+      maskMode = gmmLuminance)
     check context.drawSubmits == 2
+    check context.lastBindings.uniforms[0].values == @[
+      float32(ord(gcamStraight)), 0, 1, 1]
     check material.submit(source, mask, output, invertMask = true,
-      maskStrength = 0.5'f32)
+      maskStrength = 0.5'f32, maskMode = gmmLuminance,
+      maskAlphaMode = gcamPremultiplied)
     check context.lastBindings.uniforms[0].values == @[
-      float32(ord(gcamStraight)), 1, 0.5'f32, 0]
-    check material.submit(source, mask, output, maskStrength = 0'f32)
+      float32(ord(gcamStraight)), 1, 0.5'f32, 2]
+    check material.submit(source, mask, output, maskStrength = 0'f32,
+      maskMode = gmmLuminance, maskAlphaMode = gcamOpaque)
     check context.lastBindings.uniforms[0].values == @[
-      float32(ord(gcamStraight)), 0, 0, 0]
+      float32(ord(gcamStraight)), 0, 0, 3]
     check material.submit(source, wrongSize, output,
       maskPlacement = placement, maskCrop = crop)
     check context.lastBindings.uniforms[3].values == @[

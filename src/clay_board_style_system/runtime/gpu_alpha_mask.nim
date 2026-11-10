@@ -1,4 +1,4 @@
-## Same-host GPU alpha mask for sampled surfaces.
+## Same-host GPU alpha or luminance mask for sampled surfaces.
 ## Source and mask are sampled independently; output is premultiplied RGBA8.
 import std/math
 
@@ -6,6 +6,10 @@ import ../paint/gpu_host_compositor
 import ./[gpu_host, gpu_shader_builder, gpu_surface_crop, gpu_surface_placement]
 
 type
+  GpuMaskMode* = enum
+    gmmAlpha,
+    gmmLuminance
+
   GpuAlphaMaskPlacement* = GpuSurfacePlacement
   GpuAlphaMaskCrop* = GpuSurfaceCrop
 
@@ -71,7 +75,13 @@ void main()
       u_cbssMaskCoverageUv.zw, maskLocal);
     maskUv = clamp(maskUv, u_cbssMaskCropClamp.xy,
       u_cbssMaskCropClamp.zw);
-    coverage = texture2D(s_cbssMaskCoverage, maskUv).a;
+    vec4 sampledMask = texture2D(s_cbssMaskCoverage, maskUv);
+    if (u_cbssMaskParams.w < 0.5) {
+      coverage = sampledMask.a;
+    } else {
+      coverage = dot(sampledMask.rgb, vec3(0.2126, 0.7152, 0.0722));
+      if (u_cbssMaskParams.w < 1.5) coverage *= sampledMask.a;
+    }
   }
   if (u_cbssMaskParams.y > 0.5) coverage = 1.0 - coverage;
   coverage = mix(1.0, coverage, u_cbssMaskParams.z);
@@ -192,7 +202,9 @@ proc submit*(
     invertMask = false;
     maskStrength = 1'f32;
     maskPlacement = GpuAlphaMaskPlacement();
-    maskCrop = GpuAlphaMaskCrop()
+    maskCrop = GpuAlphaMaskCrop();
+    maskMode = gmmAlpha;
+    maskAlphaMode = gcamStraight
 ): bool =
   ## Mask strength blends between an unmasked source and mask coverage.
   ## Source and mask may be the same sampled resource. Output is premultiplied.
@@ -254,7 +266,9 @@ proc submit*(
         uniforms: @[
           GpuUniformBinding(uniform: material.paramsUniform,
             values: @[float32(ord(sourceAlphaMode)),
-              (if invertMask: 1'f32 else: 0'f32), maskStrength, 0'f32]),
+              (if invertMask: 1'f32 else: 0'f32), maskStrength,
+              (if maskMode == gmmAlpha: 0'f32
+                else: 1'f32 + float32(ord(maskAlphaMode)))]),
           GpuUniformBinding(uniform: material.sourceUvUniform,
             values: sourceUv),
           GpuUniformBinding(uniform: material.maskUvUniform,

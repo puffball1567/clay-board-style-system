@@ -1128,6 +1128,8 @@ offsets and tints its alpha, and composites the original source above it.
 An alpha-mask pass multiplies a GPU-owned surface by another sampled surface's
 coverage while preserving premultiplied output. Direct and chained masks can
 invert coverage or blend its strength without rewriting the sampled image.
+They can derive coverage from sampled RGB luminance, with explicit straight,
+premultiplied, or opaque mask-alpha handling.
 Masks of different dimensions can be positioned, clipped, and scaled in the
 destination while keeping transparent coverage outside their bounds.
 Placed masks and foregrounds can now select nearest or linear GPU sampling
