@@ -17,6 +17,7 @@ import clay_board_style_system/runtime/gpu_alpha_mask
 import clay_board_style_system/runtime/gpu_composite
 import clay_board_style_system/runtime/gpu_color_matrix
 import clay_board_style_system/runtime/gpu_gaussian_blur
+import clay_board_style_system/runtime/gpu_displacement
 import clay_board_style_system/runtime/gpu_drop_shadow
 import clay_board_style_system/runtime/gpu_filter_chain
 import clay_board_style_system/runtime/gpu_raster_filter_display
@@ -8004,6 +8005,98 @@ suite "GPU source-over composition":
     check context.lastSampler.magFilter == gsfLinear
     linear.release()
     for handle in [backdrop, foreground, wrongSize, output,
+        scratch[0], scratch[1], scratch[2]]:
+      doAssert host.releaseGpuResource(handle)
+    doAssert host.closeGpuNamespace(namespace)
+    host.close()
+
+suite "GPU displacement postprocess":
+  test "map channels displace sampled pixels with bounded work and chain ownership":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("displacement",
+      GpuResourceBudget(persistentBytes: 65536,
+        workUnitsPerFrame: 3, maxResources: 20))
+    proc artifact(source: GpuShaderSource): GpuShaderArtifact =
+      GpuShaderArtifact(
+        descriptor: GpuShaderDescriptor(stage: source.stage),
+        bindingLayout: source.gpuShaderBindingLayout(),
+        bytecode: @[1'u8],
+        sourceHash: source.gpuShaderSourceHash())
+    let vertex = artifact(gpuDisplacementVertexSource())
+    let fragment = artifact(gpuDisplacementFragmentSource())
+    var wrong = fragment
+    inc wrong.sourceHash
+    expect ValueError:
+      discard host.newGpuDisplacementMaterial(namespace, vertex, wrong)
+    expect ValueError:
+      discard host.newGpuDisplacementMaterial(namespace, vertex, fragment,
+        mapFilter = gsfAnisotropic)
+    check context.shaderCreates == 0
+    let material = host.newGpuDisplacementMaterial(namespace, vertex, fragment,
+      sourceFilter = gsfLinear, mapFilter = gsfLinear)
+    check context.lastSampler.minFilter == gsfLinear
+    let source = host.createGpuTexture(namespace,
+      textureDescriptor(width = 4, height = 3, usage = {gtuSampled}))
+    let displacementMap = host.createGpuTexture(namespace,
+      textureDescriptor(width = 4, height = 3, usage = {gtuSampled}))
+    let wrongSize = host.createGpuTexture(namespace,
+      textureDescriptor(width = 2, height = 3, usage = {gtuSampled}))
+    let output = host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(4, 3))
+    let scratch = [host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(4, 3)), host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(4, 3)), host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(4, 3))]
+    expect ValueError:
+      discard displacementStage(displacementMap, NaN.float32, 0'f32)
+    expect ValueError:
+      discard displacementStage(displacementMap,
+        MaxGpuDisplacementPixels + 1'f32, 0'f32)
+    expect GpuHostError:
+      discard material.submit(source, displacementMap, output, 1'f32, 0'f32)
+    expect ValueError:
+      discard host.newGpuFilterChain(namespace,
+        [displacementStage(displacementMap, 1'f32, 0'f32)])
+    let chain = host.newGpuFilterChain(namespace,
+      [displacementStage(displacementMap, 1'f32, -1'f32)],
+      displacement = material)
+    let aliasChain = host.newGpuFilterChain(namespace,
+      [displacementStage(output, 1'f32, 0'f32)],
+      displacement = material)
+    let wrongSizeChain = host.newGpuFilterChain(namespace,
+      [displacementStage(wrongSize, 1'f32, 0'f32)],
+      displacement = material)
+    let frame = host.beginGpuFrame()
+    expect ValueError:
+      discard material.submit(source, wrongSize, output, 1'f32, 0'f32)
+    expect ValueError:
+      discard material.submit(source, displacementMap, source,
+        1'f32, 0'f32)
+    expect ValueError:
+      discard material.submit(source, displacementMap, output,
+        Inf.float32, 0'f32)
+    expect ValueError:
+      discard aliasChain.submit(source, output, scratch)
+    expect ValueError:
+      discard wrongSizeChain.submit(source, output, scratch)
+    check context.drawSubmits == 0
+    check material.submit(source, displacementMap, output,
+      1'f32, -1'f32, gcamPremultiplied)
+    check context.lastBindings.uniforms[0].values == @[
+      0.25'f32, -1'f32 / 3'f32,
+      float32(ord(gcamPremultiplied)), 0'f32]
+    check context.lastBindings.textures.len == 2
+    check context.lastBindings.textures[0].stage == 0
+    check context.lastBindings.textures[1].stage == 1
+    check chain.submit(source, output, scratch)
+    check context.lastBindings.uniforms[0].values == @[
+      0.25'f32, -1'f32 / 3'f32,
+      float32(ord(gcamStraight)), 0'f32]
+    check context.drawSubmits == 2
+    host.endGpuFrame(frame)
+    material.release()
+    for handle in [source, displacementMap, wrongSize, output,
         scratch[0], scratch[1], scratch[2]]:
       doAssert host.releaseGpuResource(handle)
     doAssert host.closeGpuNamespace(namespace)

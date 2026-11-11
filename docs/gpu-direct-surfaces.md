@@ -206,6 +206,37 @@ and have positive dimensions. Linear sampling stays within the selected
 rectangle, so adjacent atlas tiles do not bleed into the result.
 `compositeStage` accepts the same `foregroundCrop` argument.
 
+## GPU displacement postprocess
+
+Import `runtime/gpu_displacement` to move sampled source pixels according to
+the red and green channels of a second GPU surface. Compile
+`gpuDisplacementVertexSource()` and `gpuDisplacementFragmentSource()` for the
+selected backend, then create a `GpuDisplacementMaterial` outside a frame.
+The source and displacement map must be sampled RGBA8 or BGRA8 Textures or
+RenderTargets with the same dimensions as the distinct RGBA8 destination
+RenderTarget. The two sampled inputs may share a resource.
+
+```nim
+let frame = host.beginGpuFrame()
+discard displacement.submit(source, displacementMap, shiftedTarget,
+  scaleX = 12'f32, scaleY = 6'f32,
+  sourceAlphaMode = gcamPremultiplied)
+discard display.queueGpuDisplayFrame(shiftedTarget, frame)
+host.endGpuFrame(frame)
+```
+
+An RG value of `0.5` leaves the corresponding sampling coordinate unchanged.
+Values `0` and `1` move it by the negative and positive scale, respectively,
+measured in destination pixels from the top-left corner. Both scales may be
+negative and must be finite and within 4096 pixels. The source sampler clamps
+at the image edge. The map's blue and alpha channels are ignored. Output is
+premultiplied RGBA8; present with `gcamPremultiplied`.
+`sourceFilter` and `mapFilter` select nearest or linear sampling at material
+construction; both default to nearest. Use
+`displacementStage(displacementMap, scaleX, scaleY)` with the material in an
+ordered GPU filter chain. The stage receives the premultiplied result of any
+preceding stage without an extra CPU transfer.
+
 ## GPU Gaussian blur postprocess
 
 Import `runtime/gpu_gaussian_blur` for a separable binomial Gaussian blur with
