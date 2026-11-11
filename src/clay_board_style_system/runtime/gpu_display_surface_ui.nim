@@ -1,7 +1,8 @@
 import std/options
 
 import ../core/[declaration, raster_surface, style_value]
-import ./[canvas, gpu_canvas, gpu_display_surface, gpu_host, invalidation, ui_root]
+import ./[canvas, gpu_canvas, gpu_display_surface, gpu_filter_chain, gpu_host,
+  invalidation, ui_root]
 
 type
   GpuDisplaySurfaceHandle* = object
@@ -40,6 +41,19 @@ proc queueGpuFrame*(
     return false
   handle.surface.queueGpuDisplayFrame(resource, completion)
 
+proc queueFilteredGpuFrame*(
+    handle: GpuDisplaySurfaceHandle;
+    chain: GpuFilterChain;
+    source, destination: GpuResourceHandle;
+    scratch: array[3, GpuResourceHandle];
+    completion: GpuFrameToken;
+    sourceAlphaMode = gcamStraight
+): bool {.discardable.} =
+  if not handle.valid:
+    return false
+  handle.surface.queueFilteredGpuDisplayFrame(chain, source, destination,
+    scratch, completion, sourceAlphaMode)
+
 proc collectGpuFrame*(handle: GpuDisplaySurfaceHandle): bool {.discardable.} =
   if not handle.valid or not handle.surface.collectGpuDisplayFrame():
     return false
@@ -54,6 +68,17 @@ proc queueGpuFrame*(
     completion: GpuFrameToken
 ): bool {.discardable.} =
   handle.attachment.queueGpuFrame(resource, completion)
+
+proc queueFilteredGpuFrame*(
+    handle: GpuDisplayVisualLayerHandle;
+    chain: GpuFilterChain;
+    source, destination: GpuResourceHandle;
+    scratch: array[3, GpuResourceHandle];
+    completion: GpuFrameToken;
+    sourceAlphaMode = gcamStraight
+): bool {.discardable.} =
+  handle.attachment.queueFilteredGpuFrame(chain, source, destination,
+    scratch, completion, sourceAlphaMode)
 
 proc collectGpuFrame*(
     handle: GpuDisplayVisualLayerHandle

@@ -1167,6 +1167,8 @@ the existing direct/readback display surface with bounded output buffering.
 The adapter checks combined upload, filter, and readback work before starting
 a changed frame, leaving the revision available for retry when the frame
 budget or readback ring is full.
+GPU-owned sampled images can also feed the chain before negotiated direct,
+readback, or hybrid UI display with combined budget and backpressure checks.
 Same-size source replacement keeps its display and Style registrations while
 forcing one full upload of the new image before returning to dirty updates.
 Filter-chain replacement keeps those registrations and reprocesses the current

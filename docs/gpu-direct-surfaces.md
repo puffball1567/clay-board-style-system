@@ -382,8 +382,9 @@ GPU offscreen composition target.
 
 ## Ordered GPU filter chains
 
-Import `runtime/gpu_filter_chain` to combine the RGB matrix, opacity, Gaussian
-blur, drop-shadow, alpha-mask, and source-over passes on GPU-owned surfaces. Create only
+Import `runtime/gpu_filter_chain` to combine RGB/RGBA matrices, opacity,
+Gaussian blur, drop-shadow, morphology, convolution, alpha-mask, displacement,
+and source-over passes on GPU-owned surfaces. Create only
 the materials used by the chain, then supply their references when constructing
 it. A chain accepts
 one to eight immutable stages. It does not own the materials or render targets.
@@ -411,10 +412,34 @@ premultiplied RGBA8 destination for a display surface configured with
 submit all stages before publishing it. The chain rejects invalid resources,
 released materials, presentation-retained write targets, and insufficient
 frame work or view capacity before the first pass. `requiredWorkUnits()` reports
-the chain's draw count: one for matrix, opacity, mask, or composite, two for
-blur, and three for shadow. Direct blur and shadow passes also check their full
-draw count before writing. Ordinary Style subtrees still need the shared GPU
+the chain's draw count: one for each single-pass stage, two for blur or
+morphology, and three for shadow. Direct blur and shadow passes also check their
+full draw count before writing. Ordinary Style subtrees still need the shared GPU
 offscreen target.
+
+## Filtered GPU-owned UI display
+
+`GpuDisplaySurface.queueFilteredGpuDisplayFrame` applies a filter chain to a
+sampled GPU Texture or RenderTarget and queues its premultiplied RGBA8 result
+through the selected direct, readback, or hybrid UI display path:
+
+```nim
+var config = defaultGpuDisplaySurfaceConfig(width, height)
+config.alphaMode = gcamPremultiplied
+let display = host.newGpuDisplaySurface(resources, config)
+let frame = host.beginGpuFrame()
+discard display.queueFilteredGpuDisplayFrame(effects, source,
+  filteredTarget, [scratchA, scratchB, scratchC], frame)
+host.endGpuFrame(frame)
+```
+
+The destination must be a distinct sampled RGBA8 RenderTarget and also allow
+texture copies when the path includes readback. The caller owns the output and
+scratch targets and should provide enough outputs for its display buffer ring.
+The helper checks display backpressure and the combined filter, copy, and
+readback budgets before drawing. A full display ring returns `false` without
+filtering. `GpuDisplaySurfaceHandle` and `GpuDisplayVisualLayerHandle` expose
+the same operation as `queueFilteredGpuFrame`.
 
 ## Raster input for filtered UI display
 
