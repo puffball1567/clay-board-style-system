@@ -4,6 +4,7 @@ import clay_board_style_system/core/[custom_paint, declaration, raster_surface,
     style_value]
 import clay_board_style_system/paint/[custom_paint_registry, paint_command]
 import clay_board_style_system/runtime/gpu_canvas
+import clay_board_style_system/runtime/[gpu_filter_chain, gpu_host]
 import clay_board_style_system/runtime/ui_root
 
 type
@@ -62,6 +63,15 @@ proc queueGpuFrame*(handle: GpuCanvasHandle): bool {.discardable.} =
     return false
   handle.canvas.queueGpuCanvasFrame()
 
+proc queueFilteredGpuFrame*(
+    handle: GpuCanvasHandle; chain: GpuFilterChain;
+    destination: GpuResourceHandle;
+    scratch: array[3, GpuResourceHandle]
+): bool {.discardable.} =
+  if not handle.valid:
+    return false
+  handle.canvas.queueFilteredGpuCanvasFrame(chain, destination, scratch)
+
 proc collectGpuFrame*(handle: GpuCanvasHandle): bool {.discardable.} =
   ## Publishes the newest completed frame and invalidates only this UI surface.
   if not handle.valid or not handle.canvas.collectGpuCanvasFrame():
@@ -71,6 +81,13 @@ proc collectGpuFrame*(handle: GpuCanvasHandle): bool {.discardable.} =
 proc queueGpuFrame*(handle: GpuVisualLayerHandle): bool {.discardable.} =
   handle.attachment.queueGpuFrame()
 
+proc queueFilteredGpuFrame*(
+    handle: GpuVisualLayerHandle; chain: GpuFilterChain;
+    destination: GpuResourceHandle;
+    scratch: array[3, GpuResourceHandle]
+): bool {.discardable.} =
+  handle.attachment.queueFilteredGpuFrame(chain, destination, scratch)
+
 proc collectGpuFrame*(handle: GpuVisualLayerHandle): bool {.discardable.} =
   handle.attachment.collectGpuFrame()
 
@@ -79,6 +96,15 @@ proc queueGpuFrame*(handle: GpuPaintMaterialHandle): bool {.discardable.} =
   if not handle.valid:
     return false
   handle.state.canvas.queueGpuCanvasFrame()
+
+proc queueFilteredGpuFrame*(
+    handle: GpuPaintMaterialHandle; chain: GpuFilterChain;
+    destination: GpuResourceHandle;
+    scratch: array[3, GpuResourceHandle]
+): bool {.discardable.} =
+  if not handle.valid:
+    return false
+  handle.state.canvas.queueFilteredGpuCanvasFrame(chain, destination, scratch)
 
 proc collectGpuFrame*(handle: GpuPaintMaterialHandle): bool {.discardable.} =
   ## Invalidates only components that actually consumed this material.

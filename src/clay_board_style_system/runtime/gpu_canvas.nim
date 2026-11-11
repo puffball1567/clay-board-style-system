@@ -1,5 +1,6 @@
 import clay_board_style_system/core/raster_surface
 import clay_board_style_system/runtime/gpu_host
+import clay_board_style_system/runtime/gpu_filter_chain
 
 const
   DefaultGpuCanvasReadbackSlots* = 3
@@ -11,12 +12,14 @@ type
     width*, height*: uint32
     format*: GpuTextureFormat
     alphaMode*: GpuCanvasAlphaMode
+    sampledTarget*: bool
     readbackSlots*: int
     label*: string
     maxRasterBytes*: int
 
   GpuCanvasReadbackSlot = object
     texture: GpuResourceHandle
+    alphaMode: GpuCanvasAlphaMode
     pending: bool
     cancelled: bool
     frameNumber: uint64
@@ -61,6 +64,9 @@ proc normalized(config: GpuCanvasConfig): GpuCanvasConfig =
       ValueError,
       "GPU canvas readback supports only 8-bit raster formats"
     )
+  if result.sampledTarget and result.format == gtfR8:
+    raise newException(ValueError,
+      "sampled GPU canvas targets require RGBA8 or BGRA8")
   if uint64(result.width) > uint64(high(int)) or
       uint64(result.height) > uint64(high(int)):
     raise newException(ValueError, "GPU canvas dimensions exceed addressable memory")
@@ -106,13 +112,16 @@ proc newGpuCanvasSurface*(
     int(resolved.height),
     maxBytes = resolved.maxRasterBytes
   )
+  var targetUsage = {gtuRenderTarget, gtuBlitSource}
+  if resolved.sampledTarget:
+    targetUsage.incl gtuSampled
   var target = host.createGpuRenderTarget(
     namespace,
     GpuRenderTargetDescriptor(
       width: resolved.width,
       height: resolved.height,
       format: resolved.format,
-      usage: {gtuRenderTarget, gtuBlitSource},
+      usage: targetUsage,
       label: resolved.label & "-target"
     )
   )
@@ -199,7 +208,8 @@ proc isClosed*(canvas: GpuCanvasSurface): bool =
 
 proc queueGpuCanvasFrameFrom*(
     canvas: GpuCanvasSurface;
-    source: GpuResourceHandle
+    source: GpuResourceHandle;
+    sourceAlphaMode: GpuCanvasAlphaMode
 ): bool {.discardable.} =
   canvas.requireOpen()
   if canvas.queuedFrameNumber == high(uint64):
@@ -225,6 +235,7 @@ proc queueGpuCanvasFrameFrom*(
   canvas.host.copyGpuTexture(canvas.namespace, source, texture)
   let readback = canvas.host.requestGpuReadback(canvas.namespace, texture)
   canvas.slots[slotIndex].readback = readback
+  canvas.slots[slotIndex].alphaMode = sourceAlphaMode
   canvas.slots[slotIndex].pending = true
   canvas.slots[slotIndex].cancelled = false
   canvas.slots[slotIndex].frameNumber = canvas.queuedFrameNumber + 1'u64
@@ -232,8 +243,60 @@ proc queueGpuCanvasFrameFrom*(
   inc canvas.queuedFrameNumber
   true
 
+proc queueGpuCanvasFrameFrom*(
+    canvas: GpuCanvasSurface; source: GpuResourceHandle
+): bool {.discardable.} =
+  canvas.requireOpen()
+  canvas.queueGpuCanvasFrameFrom(source, canvas.configValue.alphaMode)
+
 proc queueGpuCanvasFrame*(canvas: GpuCanvasSurface): bool {.discardable.} =
   canvas.queueGpuCanvasFrameFrom(canvas.target)
+
+proc queueFilteredGpuCanvasFrame*(
+    canvas: GpuCanvasSurface; chain: GpuFilterChain;
+    destination: GpuResourceHandle;
+    scratch: array[3, GpuResourceHandle]
+): bool {.discardable.} =
+  ## Filter the canvas target and queue its premultiplied output for UI paint.
+  ## All render targets and filter materials remain caller-owned.
+  canvas.requireOpen()
+  if canvas.configValue.format != gtfRgba8:
+    raise newException(ValueError,
+      "GPU canvas filtering requires an RGBA8 canvas")
+  if not canvas.configValue.sampledTarget:
+    raise newException(ValueError,
+      "GPU canvas filtering requires a sampled target")
+  if not chain.belongsTo(canvas.host, canvas.namespace):
+    raise newException(ValueError,
+      "GPU canvas filter chain belongs to another host namespace")
+  if not canvas.host.hasActiveGpuFrame():
+    raise newException(GpuHostError,
+      "GPU canvas filtering requires an active frame")
+  let outputInfo = canvas.host.gpuPresentableResourceInfo(destination)
+  if outputInfo.kind != grkRenderTarget or
+      gtuBlitSource notin outputInfo.usage:
+    raise newException(ValueError,
+      "GPU canvas filter output must support texture copies")
+  var hasSlot = false
+  for slot in canvas.slots:
+    if not slot.pending:
+      hasSlot = true
+      break
+  if not hasSlot:
+    return false
+  if canvas.host.pendingGpuReadbackCount(canvas.namespace) >=
+      maxGpuPendingReadbacksPerNamespace:
+    raise newException(GpuHostError, "GPU pending readback count exceeded")
+  let readbackBytes = uint64(canvas.configValue.width) *
+    uint64(canvas.configValue.height) *
+    gpuTextureBytesPerPixel(canvas.configValue.format)
+  let filterWork = chain.requiredWorkUnits()
+  canvas.host.validateGpuFrameWork(canvas.namespace,
+    readbackBytes = readbackBytes, workUnits = filterWork + 2)
+  canvas.host.validateGpuViewCapacity(int(filterWork) + 1)
+  discard chain.submit(canvas.target, destination, scratch,
+    canvas.configValue.alphaMode)
+  canvas.queueGpuCanvasFrameFrom(destination, gcamPremultiplied)
 
 proc cancelGpuCanvasFrame*(
     canvas: GpuCanvasSurface;
@@ -308,6 +371,7 @@ proc collectGpuCanvasFrame*(canvas: GpuCanvasSurface): bool {.discardable.} =
       high(uint64) - uint64(canvas.pendingOrder.len):
     raise newException(ValueError, "GPU canvas frame number space exhausted")
   var latest: GpuReadbackData
+  var latestAlphaMode = gcamStraight
   var completed = 0
   var publishable = false
   while canvas.pendingOrder.len > 0:
@@ -334,6 +398,7 @@ proc collectGpuCanvasFrame*(canvas: GpuCanvasSurface): bool {.discardable.} =
       canvas.pendingOrder.delete(0)
       if not canvas.slots[slotIndex].cancelled:
         latest = move(data)
+        latestAlphaMode = canvas.slots[slotIndex].alphaMode
         publishable = true
       inc completed
 
@@ -347,10 +412,10 @@ proc collectGpuCanvasFrame*(canvas: GpuCanvasSurface): bool {.discardable.} =
       latest.format != canvas.configValue.format:
     raise newException(GpuHostError, "GPU canvas readback does not match its surface")
   if latest.format == gtfRgba8 and
-      canvas.configValue.alphaMode == gcamStraight:
+      latestAlphaMode == gcamStraight:
     canvas.surface.replacePixels(latest.pixels, int(latest.rowStride))
   else:
-    let rgba = convertReadback(latest, canvas.configValue.alphaMode)
+    let rgba = convertReadback(latest, latestAlphaMode)
     canvas.surface.replacePixels(rgba)
   canvas.completedFrameNumber += uint64(completed)
   true

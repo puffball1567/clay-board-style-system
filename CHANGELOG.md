@@ -44,6 +44,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added filtered GPU Canvas readback: RGBA8 canvas targets can feed a GPU
+  filter chain before UI publication, with alpha handling per queued frame.
+
 - Added bounded 3×3 GPU image convolution with optional alpha filtering,
   available as a direct pass or an ordered filter-chain stage.
 
