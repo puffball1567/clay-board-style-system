@@ -5,7 +5,7 @@ import std/math
 import ../core/color
 import ../paint/layer_color_filter
 import ./[gpu_alpha_mask, gpu_channel_matrix, gpu_color_matrix,
-  gpu_composite, gpu_gaussian_blur,
+  gpu_composite, gpu_convolution, gpu_gaussian_blur,
   gpu_displacement, gpu_drop_shadow, gpu_host, gpu_surface_crop,
   gpu_morphology, gpu_surface_placement]
 
@@ -21,7 +21,8 @@ type
     gfskComposite,
     gfskDisplacement,
     gfskMorphology,
-    gfskChannelMatrix
+    gfskChannelMatrix,
+    gfskConvolution
 
   GpuFilterStage* = object
     kindValue: GpuFilterStageKind
@@ -46,6 +47,8 @@ type
     morphologyModeValue: GpuMorphologyMode
     morphologyRadiusValue: int
     channelMatrixValue: GpuChannelMatrix
+    convolutionKernelValue: GpuConvolutionKernel
+    preserveAlphaValue: bool
 
   GpuFilterChain* = ref object
     host: GpuHost
@@ -59,6 +62,7 @@ type
     displacement: GpuDisplacementMaterial
     morphology: GpuMorphologyMaterial
     channelMatrix: GpuChannelMatrixMaterial
+    convolution: GpuConvolutionMaterial
 
 proc colorMatrixStage*(filter: LayerColorFilter): GpuFilterStage =
   GpuFilterStage(kindValue: gfskColorMatrix, matrixValue: filter)
@@ -66,6 +70,12 @@ proc colorMatrixStage*(filter: LayerColorFilter): GpuFilterStage =
 proc channelMatrixStage*(matrix: GpuChannelMatrix): GpuFilterStage =
   GpuFilterStage(kindValue: gfskChannelMatrix,
     channelMatrixValue: matrix)
+
+proc convolutionStage*(
+    kernel: GpuConvolutionKernel; preserveAlpha = true
+): GpuFilterStage =
+  GpuFilterStage(kindValue: gfskConvolution,
+    convolutionKernelValue: kernel, preserveAlphaValue: preserveAlpha)
 
 proc opacityStage*(opacity: float32): GpuFilterStage =
   if opacity.classify in {fcNan, fcInf, fcNegInf} or
@@ -164,7 +174,8 @@ proc newGpuFilterChain*(
     composite: GpuCompositeMaterial = nil;
     displacement: GpuDisplacementMaterial = nil;
     morphology: GpuMorphologyMaterial = nil;
-    channelMatrix: GpuChannelMatrixMaterial = nil
+    channelMatrix: GpuChannelMatrixMaterial = nil;
+    convolution: GpuConvolutionMaterial = nil
 ): GpuFilterChain =
   if host.isNil or not host.isReady() or not host.hasGpuNamespace(namespace):
     raise newException(ValueError, "GPU filter chain requires a ready host namespace")
@@ -180,6 +191,10 @@ proc newGpuFilterChain*(
       if not channelMatrix.belongsTo(host, namespace):
         raise newException(ValueError,
           "GPU filter chain channel matrix material belongs to another host")
+    of gfskConvolution:
+      if not convolution.belongsTo(host, namespace):
+        raise newException(ValueError,
+          "GPU filter chain convolution material belongs to another host")
     of gfskGaussianBlur:
       if not gaussianBlur.belongsTo(host, namespace):
         raise newException(ValueError,
@@ -238,7 +253,7 @@ proc newGpuFilterChain*(
     colorMatrix: colorMatrix, gaussianBlur: gaussianBlur,
     dropShadow: dropShadow, alphaMask: alphaMask, composite: composite,
     displacement: displacement, morphology: morphology,
-    channelMatrix: channelMatrix)
+    channelMatrix: channelMatrix, convolution: convolution)
 
 proc stageCount*(chain: GpuFilterChain): int =
   if chain.isNil: 0 else: chain.stages.len
@@ -268,6 +283,8 @@ proc belongsTo*(
       if not chain.colorMatrix.belongsTo(host, namespace): return false
     of gfskChannelMatrix:
       if not chain.channelMatrix.belongsTo(host, namespace): return false
+    of gfskConvolution:
+      if not chain.convolution.belongsTo(host, namespace): return false
     of gfskGaussianBlur:
       if not chain.gaussianBlur.belongsTo(host, namespace): return false
     of gfskDropShadow:
@@ -334,6 +351,10 @@ proc submit*(
       if not chain.channelMatrix.belongsTo(chain.host, chain.namespace):
         raise newException(ValueError,
           "GPU filter chain channel matrix material is closed")
+    of gfskConvolution:
+      if not chain.convolution.belongsTo(chain.host, chain.namespace):
+        raise newException(ValueError,
+          "GPU filter chain convolution material is closed")
     of gfskGaussianBlur:
       if not chain.gaussianBlur.belongsTo(chain.host, chain.namespace):
         raise newException(ValueError, "GPU filter chain blur material is closed")
@@ -417,6 +438,9 @@ proc submit*(
     of gfskChannelMatrix:
       discard chain.channelMatrix.submit(current, output,
         stage.channelMatrixValue, alphaMode)
+    of gfskConvolution:
+      discard chain.convolution.submit(current, output,
+        stage.convolutionKernelValue, alphaMode, stage.preserveAlphaValue)
     of gfskOpacity:
       discard chain.colorMatrix.submit(current, output,
         nil, alphaMode, stage.opacityValue)

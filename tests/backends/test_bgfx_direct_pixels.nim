@@ -22,7 +22,7 @@ import clay_board_style_system/paint/[gpu_direct_compositor,
     gpu_host_compositor, layer_color_filter, paint_command]
 import clay_board_style_system/runtime/[gpu_direct_surface, gpu_host,
     gpu_alpha_mask, gpu_channel_matrix, gpu_color_matrix,
-    gpu_composite, gpu_displacement,
+    gpu_composite, gpu_convolution, gpu_displacement,
     gpu_gaussian_blur, gpu_morphology,
     gpu_drop_shadow,
     gpu_filter_chain,
@@ -1472,6 +1472,66 @@ proc verifyGpuDisplacementPixels(host: GpuHost;
   doAssert host.closeGpuNamespace(ns)
   echo "GPU displacement: direct, chained, and zero-scale pixels passed"
 
+proc verifyGpuConvolutionPixels(host: GpuHost;
+    shaderc, shaderIncludes, workDirectory: string) =
+  let ns = host.createGpuNamespace("gpu-convolution-pixels", budget())
+  let material = host.newGpuConvolutionMaterial(ns,
+    compileShader(gpuConvolutionVertexSource(), shaderc,
+      shaderIncludes, workDirectory),
+    compileShader(gpuConvolutionFragmentSource(), shaderc,
+      shaderIncludes, workDirectory))
+  let source = host.createGpuTexture(ns, GpuTextureDescriptor(
+    width: 3, height: 3, format: gtfRgba8,
+    usage: {gtuSampled}, access: gtaStatic,
+    label: "convolution-source"),
+    rgbaPixels(3, 3, proc(x, y: int): Pixel =
+      if x == 1 and y == 0: Pixel(red: 255, alpha: 255)
+      elif x == 1 and y == 1: Pixel(blue: 255, alpha: 128)
+      elif x == 1 and y == 2: Pixel(green: 255, alpha: 255)
+      else: Pixel(alpha: 255)))
+  proc target(label: string): GpuResourceHandle =
+    host.createGpuRenderTarget(ns, GpuRenderTargetDescriptor(
+      width: 3, height: 3, format: gtfRgba8,
+      usage: {gtuRenderTarget, gtuSampled, gtuBlitSource},
+      label: label))
+  let preserved = target("convolution-preserved")
+  let replaced = target("convolution-replaced")
+  let chained = target("convolution-chained")
+  let scratch = [target("convolution-scratch-0"),
+    target("convolution-scratch-1"),
+    target("convolution-scratch-2")]
+  let topNeighbor = gpuConvolutionKernel([
+    0'f32, 1, 0, 0, 0, 0, 0, 0, 0])
+  let chain = host.newGpuFilterChain(ns,
+    [convolutionStage(identityGpuConvolutionKernel()),
+      convolutionStage(topNeighbor, preserveAlpha = false)],
+    convolution = material)
+  let frame = host.beginGpuFrame()
+  doAssert material.submit(source, preserved, topNeighbor)
+  doAssert material.submit(source, replaced, topNeighbor,
+    preserveAlpha = false)
+  doAssert chain.submit(source, chained, scratch)
+  host.endGpuFrame(frame)
+  let preservedPixels = host.readPixels(ns, preserved, 3, 3)
+  preservedPixels.requirePixel(1, 1, Pixel(red: 128, alpha: 128),
+    "convolution preserves center alpha and clamps premultiplied color")
+  preservedPixels.requirePixel(1, 0, Pixel(red: 255, alpha: 255),
+    "convolution clamps top-edge sampling")
+  let replacedPixels = host.readPixels(ns, replaced, 3, 3)
+  replacedPixels.requirePixel(1, 1, Pixel(red: 255, alpha: 255),
+    "convolution can filter alpha with the color channels")
+  let chainedPixels = host.readPixels(ns, chained, 3, 3)
+  chainedPixels.requirePixel(1, 1, Pixel(red: 255, alpha: 255),
+    "convolution reads the top row of a premultiplied RenderTarget")
+  chainedPixels.requirePixel(1, 2, Pixel(blue: 128, alpha: 128),
+    "convolution keeps bottom-row image orientation")
+  material.release()
+  for handle in [source, preserved, replaced, chained,
+      scratch[0], scratch[1], scratch[2]]:
+    doAssert host.releaseGpuResource(handle)
+  doAssert host.closeGpuNamespace(ns)
+  echo "GPU convolution: alpha policy, edge clamp, and chain pixels passed"
+
 proc verifyGpuMorphologyPixels(host: GpuHost;
     shaderc, shaderIncludes, workDirectory: string) =
   let ns = host.createGpuNamespace("gpu-morphology-pixels", budget())
@@ -2329,6 +2389,7 @@ proc run() =
     host.verifyGpuAlphaMaskPlacementPixels(shaderc, shaderIncludes,
       workDirectory)
     host.verifyGpuGaussianBlurPixels(shaderc, shaderIncludes, workDirectory)
+    host.verifyGpuConvolutionPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuMorphologyPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuDisplacementPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuDropShadowPixels(shaderc, shaderIncludes, workDirectory)

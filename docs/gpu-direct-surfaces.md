@@ -272,6 +272,35 @@ construction; both default to nearest. Use
 ordered GPU filter chain. The stage receives the premultiplied result of any
 preceding stage without an extra CPU transfer.
 
+## GPU 3×3 convolution postprocess
+
+Import `runtime/gpu_convolution` to apply a row-major 3×3 image kernel.
+Compile `gpuConvolutionVertexSource()` and
+`gpuConvolutionFragmentSource()` for the selected backend, then create a
+`GpuConvolutionMaterial` outside a frame. The sampled RGBA8 or BGRA8 source
+and RGBA8 RenderTarget must be distinct and have equal dimensions.
+
+```nim
+let sharpen = gpuConvolutionKernel([
+  0'f32, -1, 0,
+  -1'f32, 5, -1,
+  0'f32, -1, 0
+])
+let frame = host.beginGpuFrame()
+discard convolution.submit(source, sharpenedTarget, sharpen)
+discard display.queueGpuDisplayFrame(sharpenedTarget, frame)
+host.endGpuFrame(frame)
+```
+
+Weights must be finite and within −16 to 16. The sampler clamps at the image
+edge. Input is converted to premultiplied RGBA before filtering. By default,
+the center pixel's alpha is preserved and filtered RGB is clamped to that
+alpha. Set `preserveAlpha = false` to convolve alpha as well. Output is
+premultiplied RGBA8; present with `gcamPremultiplied`.
+`convolutionStage(kernel, preserveAlpha)` uses the same material in an ordered
+GPU filter chain. `identityGpuConvolutionKernel()` provides a one-pass copy
+with alpha normalization.
+
 ## GPU morphology postprocess
 
 Import `runtime/gpu_morphology` for bounded dilation and erosion of sampled

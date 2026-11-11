@@ -1129,6 +1129,8 @@ that configurable blur,
 offsets and tints its alpha, and composites the original source above it.
 Bounded radius 0–8 GPU morphology adds component-wise dilation and erosion
 over premultiplied RGBA, directly or in ordered filter chains.
+A bounded 3×3 GPU convolution pass adds authored image kernels for sharpening
+and edge effects, with optional alpha convolution and ordered chaining.
 An alpha-mask pass multiplies a GPU-owned surface by another sampled surface's
 coverage while preserving premultiplied output. Direct and chained masks can
 invert coverage or blend its strength without rewriting the sampled image.
@@ -1154,7 +1156,7 @@ opacity without rewriting the sampled surface. They can also position, clip,
 and scale a foreground of different dimensions over a same-size backdrop.
 An ordered GPU filter chain now combines up to eight RGB or RGBA matrix,
 opacity, blur,
-shadow, morphology, alpha-mask, source-over, and RG displacement stages over three reusable
+shadow, morphology, convolution, alpha-mask, source-over, and RG displacement stages over three reusable
 scratch targets, carrying
 premultiplied alpha into each stage and producing a display-ready RenderTarget.
 The chain, direct blur, direct shadow, and direct morphology now preflight their complete work and

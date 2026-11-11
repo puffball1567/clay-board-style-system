@@ -44,6 +44,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added bounded 3×3 GPU image convolution with optional alpha filtering,
+  available as a direct pass or an ordered filter-chain stage.
+
 - Added a GPU-only 4×5 RGBA channel matrix that can transform alpha from color,
   with direct and filter-chain passes.
 
