@@ -16,6 +16,7 @@ import clay_board_style_system/runtime/gpu_canvas
 import clay_board_style_system/runtime/gpu_alpha_mask
 import clay_board_style_system/runtime/gpu_channel_matrix
 import clay_board_style_system/runtime/gpu_composite
+import clay_board_style_system/runtime/gpu_convolution
 import clay_board_style_system/runtime/gpu_color_matrix
 import clay_board_style_system/runtime/gpu_gaussian_blur
 import clay_board_style_system/runtime/gpu_displacement
@@ -8179,6 +8180,81 @@ suite "GPU displacement postprocess":
     host.endGpuFrame(frame)
     material.release()
     for handle in [source, displacementMap, wrongSize, output,
+        scratch[0], scratch[1], scratch[2]]:
+      doAssert host.releaseGpuResource(handle)
+    doAssert host.closeGpuNamespace(namespace)
+    host.close()
+
+suite "GPU convolution postprocess":
+  test "bounded kernels submit one premultiplied pass and chain in order":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("convolution",
+      GpuResourceBudget(persistentBytes: 65536,
+        workUnitsPerFrame: 3, maxResources: 20))
+    proc artifact(source: GpuShaderSource): GpuShaderArtifact =
+      GpuShaderArtifact(
+        descriptor: GpuShaderDescriptor(stage: source.stage),
+        bindingLayout: source.gpuShaderBindingLayout(),
+        bytecode: @[1'u8],
+        sourceHash: source.gpuShaderSourceHash())
+    let vertex = artifact(gpuConvolutionVertexSource())
+    let fragment = artifact(gpuConvolutionFragmentSource())
+    var wrong = fragment
+    inc wrong.sourceHash
+    expect ValueError:
+      discard host.newGpuConvolutionMaterial(namespace, vertex, wrong)
+    check context.shaderCreates == 0
+    expect ValueError:
+      discard gpuConvolutionKernel([float32(Inf), 0, 0, 0, 1, 0, 0, 0, 0])
+    expect ValueError:
+      discard gpuConvolutionKernel([17'f32, 0, 0, 0, 1, 0, 0, 0, 0])
+    let material = host.newGpuConvolutionMaterial(namespace, vertex, fragment)
+    let source = host.createGpuTexture(namespace,
+      textureDescriptor(width = 3, height = 3, usage = {gtuSampled}))
+    let destination = host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(3, 3))
+    let scratch = [host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(3, 3)), host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(3, 3)), host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(3, 3))]
+    let wrongSize = host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(2, 3))
+    let topNeighbor = gpuConvolutionKernel([
+      0'f32, 1, 0, 0, 0, 0, 0, 0, 0])
+    expect ValueError:
+      discard host.newGpuFilterChain(namespace,
+        [convolutionStage(topNeighbor)])
+    let chain = host.newGpuFilterChain(namespace,
+      [convolutionStage(identityGpuConvolutionKernel()),
+        convolutionStage(topNeighbor, preserveAlpha = false)],
+      convolution = material)
+    check chain.requiredWorkUnits() == 2
+    expect GpuHostError:
+      discard material.submit(source, destination, topNeighbor)
+    let frame = host.beginGpuFrame()
+    expect ValueError:
+      discard material.submit(source, source, topNeighbor)
+    expect ValueError:
+      discard material.submit(source, wrongSize, topNeighbor)
+    check material.submit(source, destination, topNeighbor)
+    check context.drawSubmits == 1
+    check context.lastBindings.uniforms[0].values == @[
+      0'f32, 1, 0, 0,
+      0'f32, 0, 0, 0,
+      0'f32, 0, 0, 0]
+    check context.lastBindings.uniforms[1].values == @[
+      1'f32 / 3, 1'f32 / 3, float32(ord(gcamStraight)), 1'f32]
+    check chain.submit(source, destination, scratch)
+    check context.drawSubmits == 3
+    check context.lastBindings.uniforms[1].values == @[
+      1'f32 / 3, 1'f32 / 3, float32(ord(gcamPremultiplied)), 0'f32]
+    expect GpuHostError:
+      discard material.submit(source, destination, topNeighbor)
+    check context.drawSubmits == 3
+    host.endGpuFrame(frame)
+    material.release()
+    for handle in [source, destination, wrongSize,
         scratch[0], scratch[1], scratch[2]]:
       doAssert host.releaseGpuResource(handle)
     doAssert host.closeGpuNamespace(namespace)
