@@ -5315,6 +5315,66 @@ suite "GPU storage buffer transfer and readback":
 
 suite "GPU canvas composition bridge":
 
+  test "canvas filters its sampled target before alpha-correct UI readback":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("gpu-canvas-filtered",
+      GpuResourceBudget(persistentBytes: 65536,
+        readbackBytesPerFrame: 4,
+        workUnitsPerFrame: 3, maxResources: 20))
+    var config = defaultGpuCanvasConfig(1, 1)
+    config.readbackSlots = 1
+    config.sampledTarget = true
+    let canvas = host.newGpuCanvasSurface(namespace, config)
+    let ui = initUiRoot()
+    let handle = ui.gpuCanvas(canvas)
+    discard ui.consumeInvalidation()
+    check gtuSampled in host.gpuPresentableResourceInfo(
+      canvas.renderTarget()).usage
+    proc artifact(source: GpuShaderSource): GpuShaderArtifact =
+      GpuShaderArtifact(
+        descriptor: GpuShaderDescriptor(stage: source.stage),
+        bindingLayout: source.gpuShaderBindingLayout(),
+        bytecode: @[1'u8],
+        sourceHash: source.gpuShaderSourceHash())
+    let material = host.newGpuChannelMatrixMaterial(namespace,
+      artifact(gpuChannelMatrixVertexSource()),
+      artifact(gpuChannelMatrixFragmentSource()))
+    let chain = host.newGpuFilterChain(namespace,
+      [channelMatrixStage(identityGpuChannelMatrix())],
+      channelMatrix = material)
+    let destination = host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(1, 1,
+        usage = {gtuRenderTarget, gtuSampled, gtuBlitSource}))
+    let scratch = [host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(1, 1)), host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(1, 1)), host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(1, 1))]
+    let blocked = host.beginGpuFrame()
+    host.reserveGpuFrameWork(namespace, workUnits = 1)
+    expect GpuHostError:
+      discard handle.queueFilteredGpuFrame(chain, destination, scratch)
+    check context.drawSubmits == 0
+    check context.textureCopies == 0
+    host.endGpuFrame(blocked)
+    let frame = host.beginGpuFrame()
+    check handle.queueFilteredGpuFrame(chain, destination, scratch)
+    check context.drawSubmits == 1
+    check context.textureCopies == 1
+    check not handle.queueFilteredGpuFrame(chain, destination, scratch)
+    check context.drawSubmits == 1
+    host.endGpuFrame(frame)
+    context.readbackReady = true
+    check handle.collectGpuFrame()
+    check ui.consumeInvalidation().domains == {ddPaint}
+    check canvas.rasterSurface.pixels == @[0'u8, 85, 170, 3]
+    check canvas.closeGpuCanvasSurface()
+    material.release()
+    for handle in [destination, scratch[0], scratch[1], scratch[2]]:
+      doAssert host.releaseGpuResource(handle)
+    doAssert host.closeGpuNamespace(namespace)
+    host.close()
+
   test "UI attachment publishes only the completed GPU canvas surface":
     let context = newContext()
     let host = openGpuHost(context.backend, ghoOwned)
@@ -5690,6 +5750,8 @@ suite "GPU canvas composition bridge":
     check canvas.queuedFrameNumber == 0
     check canvas.completedFrameNumber == 0
     check canvas.renderTarget.kind == grkRenderTarget
+    check gtuSampled notin host.gpuPresentableResourceInfo(
+      canvas.renderTarget()).usage
     check canvas.rasterSurface.width == 2
     check canvas.rasterSurface.height == 1
     check context.renderTargetCreates == 1
@@ -5932,6 +5994,11 @@ suite "GPU canvas composition bridge":
         discard host.newGpuCanvasSurface(namespace, config)
       config = defaultGpuCanvasConfig(1, 1)
       config.label = repeat('x', maxGpuResourceLabelBytes)
+      expect ValueError:
+        discard host.newGpuCanvasSurface(namespace, config)
+      config = defaultGpuCanvasConfig(1, 1)
+      config.format = gtfR8
+      config.sampledTarget = true
       expect ValueError:
         discard host.newGpuCanvasSurface(namespace, config)
       for format in [

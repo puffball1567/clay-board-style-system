@@ -809,6 +809,21 @@ host.endGpuFrame(frame)
 discard canvasView.collectGpuFrame()
 ```
 
+Set `gpuCanvasConfig.sampledTarget = true` to make an RGBA8 GPU Canvas target
+sampleable by an ordered GPU filter chain.
+`queueFilteredGpuCanvasFrame(chain, destination, scratch)` applies the chain
+to `gpuCanvas.renderTarget()` and queues its RGBA8 output for asynchronous UI
+readback. The caller owns the chain, its materials, a sampled and copyable
+RGBA8 destination RenderTarget, and three sampled RGBA8 scratch targets.
+`GpuCanvasHandle`, `GpuVisualLayerHandle`, and `GpuPaintMaterialHandle` expose
+the same operation as `queueFilteredGpuFrame`.
+The call checks the combined filter, copy, and readback budgets before any
+filter pass. It returns `false` without drawing when the readback ring is full.
+Filtered output is premultiplied and converted to straight RGBA for the
+`RasterSurface`, independently of the canvas target's alpha mode.
+`queueGpuCanvasFrameFrom(source, sourceAlphaMode)` likewise declares the alpha
+mode of an externally produced source for each queued readback.
+
 GPU pixels can also be attached to an existing semantic component as a
 visual-only layer:
 

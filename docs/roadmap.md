@@ -2397,8 +2397,11 @@ the GPU, clear ranges from retained zero buffers, chain compute passes without
 CPU staging, and retrieve only final output or diagnostics.
 Offscreen Canvas composition is implemented through `GpuCanvasSurface`, and
 `gpuVisualLayer` mounts it as a bounded underlay or overlay of an ordinary
-component without taking over events or accessibility. Typed Shader Builder
-authoring now maps bounded Nim expression graphs to deterministic bgfx source,
+component without taking over events or accessibility.
+Opt-in sampled RGBA8 GPU Canvas targets can now feed the ordered filter chain
+before asynchronous UI readback, with per-frame alpha-mode conversion.
+Typed Shader Builder authoring now maps bounded Nim expression graphs to
+deterministic bgfx source,
 and the append-only C ABI exposes the same graph through opaque handles and
 fixed-width expression IDs. Generated source is compiled only by build tools;
 the resulting artifact enters the existing retained Shader/Pipeline contract

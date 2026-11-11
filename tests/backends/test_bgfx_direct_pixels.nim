@@ -536,6 +536,73 @@ proc verifyGpuChannelMatrixPixels(host: GpuHost;
   doAssert host.closeGpuNamespace(ns)
   echo "GPU channel matrix: alpha generation and chaining pixels passed"
 
+proc verifyFilteredCanvasReadbackPixels(host: GpuHost;
+    shaderc, shaderIncludes, workDirectory: string) =
+  let ns = host.createGpuNamespace("filtered-canvas-pixels", budget())
+  var config = defaultGpuCanvasConfig(2, 2)
+  config.alphaMode = gcamPremultiplied
+  config.readbackSlots = 1
+  config.sampledTarget = true
+  let canvas = host.newGpuCanvasSurface(ns, config)
+  let material = host.newGpuChannelMatrixMaterial(ns,
+    compileShader(gpuChannelMatrixVertexSource(), shaderc,
+      shaderIncludes, workDirectory),
+    compileShader(gpuChannelMatrixFragmentSource(), shaderc,
+      shaderIncludes, workDirectory))
+  let source = host.createGpuTexture(ns, GpuTextureDescriptor(
+    width: 2, height: 2, format: gtfRgba8,
+    usage: {gtuSampled}, access: gtaStatic,
+    label: "filtered-canvas-source"),
+    rgbaPixels(2, 2, proc(x, y: int): Pixel =
+      discard x
+      discard y
+      Pixel(red: 255, alpha: 128)))
+  proc target(label: string): GpuResourceHandle =
+    host.createGpuRenderTarget(ns, GpuRenderTargetDescriptor(
+      width: 2, height: 2, format: gtfRgba8,
+      usage: {gtuRenderTarget, gtuSampled, gtuBlitSource},
+      label: label))
+  let output = target("filtered-canvas-output")
+  let scratch = [target("filtered-canvas-scratch-0"),
+    target("filtered-canvas-scratch-1"),
+    target("filtered-canvas-scratch-2")]
+  let blueFromRed = gpuChannelMatrix([
+    0'f32, 0, 0, 0, 0,
+    0'f32, 0, 0, 0, 0,
+    1'f32, 0, 0, 0, 0,
+    0'f32, 0, 0, 1, 0
+  ])
+  let chain = host.newGpuFilterChain(ns,
+    [channelMatrixStage(blueFromRed)], channelMatrix = material)
+  let frame = host.beginGpuFrame()
+  doAssert material.submit(source, canvas.renderTarget(),
+    identityGpuChannelMatrix())
+  doAssert canvas.queueFilteredGpuCanvasFrame(chain, output, scratch)
+  host.endGpuFrame(frame)
+  var completed = false
+  for attempt in 0 ..< 32:
+    discard attempt
+    pumpWindow()
+    if canvas.collectGpuCanvasFrame():
+      completed = true
+      break
+    let progress = host.beginGpuFrame()
+    host.endGpuFrame(progress)
+  doAssert completed
+  doAssert canvas.rasterSurface.publish()
+  canvas.rasterSurface.pixels.requirePixel(0, 0,
+    Pixel(blue: 255, alpha: 128),
+    "filtered canvas readback converts premultiplied output to straight RGBA")
+  canvas.rasterSurface.pixels.requirePixel(1, 1,
+    Pixel(blue: 255, alpha: 128),
+    "filtered canvas keeps all pixels through a sampled target")
+  doAssert canvas.closeGpuCanvasSurface()
+  material.release()
+  for handle in [source, output, scratch[0], scratch[1], scratch[2]]:
+    doAssert host.releaseGpuResource(handle)
+  doAssert host.closeGpuNamespace(ns)
+  echo "GPU Canvas filter chain: sampled target and alpha-correct readback passed"
+
 proc verifyGpuAlphaMaskPixels(host: GpuHost;
     shaderc, shaderIncludes, workDirectory: string) =
   let ns = host.createGpuNamespace("gpu-alpha-mask-pixels", budget())
@@ -2385,6 +2452,8 @@ proc run() =
     host.verifyHybridDisplayPixels()
     host.verifyGpuColorMatrixPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuChannelMatrixPixels(shaderc, shaderIncludes, workDirectory)
+    host.verifyFilteredCanvasReadbackPixels(shaderc, shaderIncludes,
+      workDirectory)
     host.verifyGpuAlphaMaskPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuAlphaMaskPlacementPixels(shaderc, shaderIncludes,
       workDirectory)
