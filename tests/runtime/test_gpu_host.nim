@@ -14,6 +14,7 @@ import clay_board_style_system/runtime/animation_clock
 import clay_board_style_system/runtime/button
 import clay_board_style_system/runtime/gpu_canvas
 import clay_board_style_system/runtime/gpu_alpha_mask
+import clay_board_style_system/runtime/gpu_channel_matrix
 import clay_board_style_system/runtime/gpu_composite
 import clay_board_style_system/runtime/gpu_color_matrix
 import clay_board_style_system/runtime/gpu_gaussian_blur
@@ -7732,6 +7733,86 @@ suite "GPU color matrix postprocess":
     material.release()
     doAssert host.releaseGpuResource(source)
     doAssert host.releaseGpuResource(target)
+    doAssert host.closeGpuNamespace(namespace)
+    host.close()
+
+suite "GPU channel matrix postprocess":
+  test "RGBA rows and offsets transform sampled channels in direct and chained passes":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("channel-matrix",
+      GpuResourceBudget(persistentBytes: 65536,
+        workUnitsPerFrame: 3, maxResources: 20))
+    proc artifact(source: GpuShaderSource): GpuShaderArtifact =
+      GpuShaderArtifact(
+        descriptor: GpuShaderDescriptor(stage: source.stage),
+        bindingLayout: source.gpuShaderBindingLayout(),
+        bytecode: @[1'u8],
+        sourceHash: source.gpuShaderSourceHash())
+    let vertex = artifact(gpuChannelMatrixVertexSource())
+    let fragment = artifact(gpuChannelMatrixFragmentSource())
+    var wrong = fragment
+    inc wrong.sourceHash
+    expect ValueError:
+      discard host.newGpuChannelMatrixMaterial(namespace, vertex, wrong)
+    check context.shaderCreates == 0
+    var invalid: array[20, float32]
+    invalid[0] = NaN.float32
+    expect ValueError:
+      discard gpuChannelMatrix(invalid)
+    invalid[0] = MaxGpuChannelMatrixCoefficient + 1'f32
+    expect ValueError:
+      discard gpuChannelMatrix(invalid)
+    let matrix = gpuChannelMatrix([
+      1'f32, 0, 0, 0.25'f32, 0.1'f32,
+      0'f32, 1, 0, 0, 0,
+      0'f32, 0, 1, 0, 0,
+      0.5'f32, 0, 0, 0.5'f32, 0
+    ])
+    let material = host.newGpuChannelMatrixMaterial(namespace,
+      vertex, fragment)
+    let source = host.createGpuTexture(namespace,
+      textureDescriptor(width = 2, height = 2, usage = {gtuSampled}))
+    let destination = host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(2, 2))
+    let wrongSize = host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(3, 2))
+    let scratch = [host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(2, 2)), host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(2, 2)), host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(2, 2))]
+    expect ValueError:
+      discard host.newGpuFilterChain(namespace,
+        [channelMatrixStage(matrix)])
+    let chain = host.newGpuFilterChain(namespace,
+      [channelMatrixStage(matrix)], channelMatrix = material)
+    expect ValueError:
+      discard material.submit(source, source, matrix)
+    expect ValueError:
+      discard material.submit(source, wrongSize, matrix)
+    expect GpuHostError:
+      discard material.submit(source, destination, matrix)
+    let frame = host.beginGpuFrame()
+    check material.submit(source, destination, matrix,
+      gcamPremultiplied)
+    check context.lastBindings.uniforms[0].values == @[
+      1'f32, 0, 0, 0.25'f32,
+      0'f32, 1, 0, 0,
+      0'f32, 0, 1, 0,
+      0.5'f32, 0, 0, 0.5'f32]
+    check context.lastBindings.uniforms[1].values == @[
+      0.1'f32, 0, 0, 0]
+    check context.lastBindings.uniforms[2].values[0] ==
+      float32(ord(gcamPremultiplied))
+    check chain.submit(source, destination, scratch)
+    check context.lastBindings.uniforms[2].values[0] ==
+      float32(ord(gcamStraight))
+    check context.drawSubmits == 2
+    host.endGpuFrame(frame)
+    material.release()
+    for handle in [source, destination, wrongSize,
+        scratch[0], scratch[1], scratch[2]]:
+      doAssert host.releaseGpuResource(handle)
     doAssert host.closeGpuNamespace(namespace)
     host.close()
 

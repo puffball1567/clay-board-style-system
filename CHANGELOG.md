@@ -44,6 +44,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added a GPU-only 4×5 RGBA channel matrix that can transform alpha from color,
+  with direct and filter-chain passes.
+
 - Added bounded GPU dilation and erosion for premultiplied surfaces, including
   direct passes and ordered filter chains.
 

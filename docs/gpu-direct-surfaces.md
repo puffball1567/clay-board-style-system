@@ -84,6 +84,41 @@ Pass `opacity = 0..1` to `GpuColorMatrixMaterial.submit()` to fade the filtered
 result. The opacity multiplies both alpha and premultiplied RGB. It defaults to
 one, so existing matrix output is unchanged.
 
+## GPU RGBA channel matrix
+
+Import `runtime/gpu_channel_matrix` for a full 4×5 matrix over GPU-owned
+surfaces. Each row is `[R, G, B, A, offset]`, so color may depend on alpha and
+the output alpha may depend on color. Coefficients must be finite and within
+`-16..16`. The matrix evaluates straight sampled channels in their encoded
+color space, clamps the four results to `0..1`, and writes premultiplied RGBA8.
+This follows the channel math of
+[feColorMatrix](https://www.w3.org/TR/filter-effects-1/#feColorMatrixElement)
+without changing the ordinary UI `LayerColorFilter`, which preserves alpha.
+
+Compile `gpuChannelMatrixVertexSource()` and
+`gpuChannelMatrixFragmentSource()` for the selected backend, then create a
+`GpuChannelMatrixMaterial` outside a frame. Its source is a sampled RGBA8 or
+BGRA8 Texture or RenderTarget; its distinct destination is an equal-size
+RGBA8 RenderTarget.
+
+```nim
+let matrix = gpuChannelMatrix([
+  1'f32, 0, 0, 0, 0,
+  0'f32, 1, 0, 0, 0,
+  0'f32, 0, 1, 0, 0,
+  0.5'f32, 0, 0, 0.5'f32, 0
+])
+let frame = host.beginGpuFrame()
+discard material.submit(source, filteredTarget, matrix, gcamStraight)
+discard display.queueGpuDisplayFrame(filteredTarget, frame)
+host.endGpuFrame(frame)
+```
+
+Use `identityGpuChannelMatrix()` for an identity transform or
+`channelMatrixStage(matrix)` with the material in an ordered GPU filter chain.
+The stage receives the preceding pass's premultiplied output. Present the
+result with `gcamPremultiplied`.
+
 ## GPU alpha mask postprocess
 
 Import `runtime/gpu_alpha_mask` to multiply a sampled GPU surface by another

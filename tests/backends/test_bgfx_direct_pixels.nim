@@ -21,7 +21,8 @@ import clay_board_style_system/runtime/[gpu_canvas, motion_scene,
 import clay_board_style_system/paint/[gpu_direct_compositor,
     gpu_host_compositor, layer_color_filter, paint_command]
 import clay_board_style_system/runtime/[gpu_direct_surface, gpu_host,
-    gpu_alpha_mask, gpu_color_matrix, gpu_composite, gpu_displacement,
+    gpu_alpha_mask, gpu_channel_matrix, gpu_color_matrix,
+    gpu_composite, gpu_displacement,
     gpu_gaussian_blur, gpu_morphology,
     gpu_drop_shadow,
     gpu_filter_chain,
@@ -469,6 +470,71 @@ proc verifyGpuColorMatrixPixels(host: GpuHost;
   material.release()
   doAssert host.closeGpuNamespace(ns)
   echo "GPU color matrix: premultiplied, grayscale, sepia, hue rotation, and RenderTarget chaining pixels passed"
+
+proc verifyGpuChannelMatrixPixels(host: GpuHost;
+    shaderc, shaderIncludes, workDirectory: string) =
+  let ns = host.createGpuNamespace("gpu-channel-matrix-pixels", budget())
+  let material = host.newGpuChannelMatrixMaterial(ns,
+    compileShader(gpuChannelMatrixVertexSource(), shaderc,
+      shaderIncludes, workDirectory),
+    compileShader(gpuChannelMatrixFragmentSource(), shaderc,
+      shaderIncludes, workDirectory))
+  let source = host.createGpuTexture(ns, GpuTextureDescriptor(
+    width: 2, height: 2, format: gtfRgba8,
+    usage: {gtuSampled}, access: gtaStatic,
+    label: "channel-matrix-source"),
+    rgbaPixels(2, 2, proc(x, y: int): Pixel =
+      if y == 0 and x == 0: Pixel(red: 255)
+      elif y == 0: Pixel(red: 128, green: 64, alpha: 128)
+      elif x == 0: Pixel(green: 255, alpha: 255)
+      else: Pixel(blue: 255, alpha: 255)))
+  proc target(label: string): GpuResourceHandle =
+    host.createGpuRenderTarget(ns, GpuRenderTargetDescriptor(
+      width: 2, height: 2, format: gtfRgba8,
+      usage: {gtuRenderTarget, gtuSampled, gtuBlitSource},
+      label: label))
+  let direct = target("channel-matrix-direct")
+  let chained = target("channel-matrix-chained")
+  let scratch = [target("channel-matrix-scratch-0"),
+    target("channel-matrix-scratch-1"),
+    target("channel-matrix-scratch-2")]
+  let matrix = gpuChannelMatrix([
+    1'f32, 0, 0, 0.25'f32, 0,
+    0'f32, 1, 0, 0, 0,
+    0'f32, 0, 1, 0, 0,
+    0.5'f32, 0, 0, 0.5'f32, 0.25'f32
+  ])
+  let chain = host.newGpuFilterChain(ns,
+    [channelMatrixStage(identityGpuChannelMatrix()),
+      channelMatrixStage(matrix)], channelMatrix = material)
+  let frame = host.beginGpuFrame()
+  doAssert material.submit(source, direct, matrix)
+  doAssert chain.submit(source, chained, scratch)
+  host.endGpuFrame(frame)
+  let directPixels = host.readPixels(ns, direct, 2, 2)
+  directPixels.requirePixel(0, 0, Pixel(red: 191, alpha: 191),
+    "RGBA matrix can derive new alpha from straight transparent RGB")
+  directPixels.requirePixel(1, 0,
+    Pixel(red: 120, green: 48, alpha: 192),
+    "RGBA matrix combines color and source alpha in both directions")
+  directPixels.requirePixel(0, 1,
+    Pixel(red: 48, green: 191, alpha: 191),
+    "RGBA matrix applies alpha offset to opaque green")
+  let chainedPixels = host.readPixels(ns, chained, 2, 2)
+  chainedPixels.requirePixel(0, 0, Pixel(alpha: 64),
+    "chain unpremultiplies the prior transparent RenderTarget")
+  chainedPixels.requirePixel(1, 0,
+    Pixel(red: 120, green: 48, alpha: 192),
+    "chain applies RGBA matrix to premultiplied color")
+  chainedPixels.requirePixel(1, 1,
+    Pixel(red: 48, blue: 191, alpha: 191),
+    "chain preserves bottom-row RenderTarget orientation")
+  material.release()
+  for handle in [source, direct, chained,
+      scratch[0], scratch[1], scratch[2]]:
+    doAssert host.releaseGpuResource(handle)
+  doAssert host.closeGpuNamespace(ns)
+  echo "GPU channel matrix: alpha generation and chaining pixels passed"
 
 proc verifyGpuAlphaMaskPixels(host: GpuHost;
     shaderc, shaderIncludes, workDirectory: string) =
@@ -2258,6 +2324,7 @@ proc run() =
     host.verifyCanvasReadbackCancellation()
     host.verifyHybridDisplayPixels()
     host.verifyGpuColorMatrixPixels(shaderc, shaderIncludes, workDirectory)
+    host.verifyGpuChannelMatrixPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuAlphaMaskPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuAlphaMaskPlacementPixels(shaderc, shaderIncludes,
       workDirectory)
