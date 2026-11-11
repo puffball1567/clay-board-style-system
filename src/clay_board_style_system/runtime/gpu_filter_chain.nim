@@ -4,7 +4,8 @@ import std/math
 
 import ../core/color
 import ../paint/layer_color_filter
-import ./[gpu_alpha_mask, gpu_color_matrix, gpu_composite, gpu_gaussian_blur,
+import ./[gpu_alpha_mask, gpu_channel_matrix, gpu_color_matrix,
+  gpu_composite, gpu_gaussian_blur,
   gpu_displacement, gpu_drop_shadow, gpu_host, gpu_surface_crop,
   gpu_morphology, gpu_surface_placement]
 
@@ -19,7 +20,8 @@ type
     gfskAlphaMask,
     gfskComposite,
     gfskDisplacement,
-    gfskMorphology
+    gfskMorphology,
+    gfskChannelMatrix
 
   GpuFilterStage* = object
     kindValue: GpuFilterStageKind
@@ -43,6 +45,7 @@ type
     displacementScaleXValue, displacementScaleYValue: float32
     morphologyModeValue: GpuMorphologyMode
     morphologyRadiusValue: int
+    channelMatrixValue: GpuChannelMatrix
 
   GpuFilterChain* = ref object
     host: GpuHost
@@ -55,9 +58,14 @@ type
     composite: GpuCompositeMaterial
     displacement: GpuDisplacementMaterial
     morphology: GpuMorphologyMaterial
+    channelMatrix: GpuChannelMatrixMaterial
 
 proc colorMatrixStage*(filter: LayerColorFilter): GpuFilterStage =
   GpuFilterStage(kindValue: gfskColorMatrix, matrixValue: filter)
+
+proc channelMatrixStage*(matrix: GpuChannelMatrix): GpuFilterStage =
+  GpuFilterStage(kindValue: gfskChannelMatrix,
+    channelMatrixValue: matrix)
 
 proc opacityStage*(opacity: float32): GpuFilterStage =
   if opacity.classify in {fcNan, fcInf, fcNegInf} or
@@ -155,7 +163,8 @@ proc newGpuFilterChain*(
     alphaMask: GpuAlphaMaskMaterial = nil;
     composite: GpuCompositeMaterial = nil;
     displacement: GpuDisplacementMaterial = nil;
-    morphology: GpuMorphologyMaterial = nil
+    morphology: GpuMorphologyMaterial = nil;
+    channelMatrix: GpuChannelMatrixMaterial = nil
 ): GpuFilterChain =
   if host.isNil or not host.isReady() or not host.hasGpuNamespace(namespace):
     raise newException(ValueError, "GPU filter chain requires a ready host namespace")
@@ -167,6 +176,10 @@ proc newGpuFilterChain*(
       if not colorMatrix.belongsTo(host, namespace):
         raise newException(ValueError,
           "GPU filter chain color matrix material belongs to another host")
+    of gfskChannelMatrix:
+      if not channelMatrix.belongsTo(host, namespace):
+        raise newException(ValueError,
+          "GPU filter chain channel matrix material belongs to another host")
     of gfskGaussianBlur:
       if not gaussianBlur.belongsTo(host, namespace):
         raise newException(ValueError,
@@ -224,7 +237,8 @@ proc newGpuFilterChain*(
   GpuFilterChain(host: host, namespace: namespace, stages: @stages,
     colorMatrix: colorMatrix, gaussianBlur: gaussianBlur,
     dropShadow: dropShadow, alphaMask: alphaMask, composite: composite,
-    displacement: displacement, morphology: morphology)
+    displacement: displacement, morphology: morphology,
+    channelMatrix: channelMatrix)
 
 proc stageCount*(chain: GpuFilterChain): int =
   if chain.isNil: 0 else: chain.stages.len
@@ -252,6 +266,8 @@ proc belongsTo*(
     case stage.kindValue
     of gfskColorMatrix, gfskOpacity:
       if not chain.colorMatrix.belongsTo(host, namespace): return false
+    of gfskChannelMatrix:
+      if not chain.channelMatrix.belongsTo(host, namespace): return false
     of gfskGaussianBlur:
       if not chain.gaussianBlur.belongsTo(host, namespace): return false
     of gfskDropShadow:
@@ -314,6 +330,10 @@ proc submit*(
     of gfskColorMatrix, gfskOpacity:
       if not chain.colorMatrix.belongsTo(chain.host, chain.namespace):
         raise newException(ValueError, "GPU filter chain color matrix material is closed")
+    of gfskChannelMatrix:
+      if not chain.channelMatrix.belongsTo(chain.host, chain.namespace):
+        raise newException(ValueError,
+          "GPU filter chain channel matrix material is closed")
     of gfskGaussianBlur:
       if not chain.gaussianBlur.belongsTo(chain.host, chain.namespace):
         raise newException(ValueError, "GPU filter chain blur material is closed")
@@ -394,6 +414,9 @@ proc submit*(
     of gfskColorMatrix:
       discard chain.colorMatrix.submit(current, output,
         stage.matrixValue, alphaMode)
+    of gfskChannelMatrix:
+      discard chain.channelMatrix.submit(current, output,
+        stage.channelMatrixValue, alphaMode)
     of gfskOpacity:
       discard chain.colorMatrix.submit(current, output,
         nil, alphaMode, stage.opacityValue)
