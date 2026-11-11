@@ -6576,6 +6576,75 @@ suite "GPU direct surface lifecycle":
 
 suite "GPU display surface negotiation and UI":
 
+  test "filtered GPU images use negotiated display paths without premature work":
+    for fallback in [gdsfRequireDirect, gdsfRequireReadback,
+        gdsfRequireHybrid]:
+      let context = newContext()
+      context.enableDirectPresentation(maxBuffers = 2)
+      let host = openGpuHost(context.backend, ghoOwned)
+      let namespace = host.createGpuNamespace("filtered-display-" & $fallback,
+        GpuResourceBudget(persistentBytes: 65536,
+          readbackBytesPerFrame: 4,
+          workUnitsPerFrame: 3, maxResources: 24))
+      var config = defaultGpuDisplaySurfaceConfig(1, 1)
+      config.bufferCount = 2
+      config.fallback = fallback
+      config.alphaMode = gcamPremultiplied
+      let display = host.newGpuDisplaySurface(namespace, config)
+      let ui = initUiRoot()
+      let handle = ui.gpuDisplaySurface(display)
+      discard ui.consumeInvalidation()
+      proc artifact(source: GpuShaderSource): GpuShaderArtifact =
+        GpuShaderArtifact(
+          descriptor: GpuShaderDescriptor(stage: source.stage),
+          bindingLayout: source.gpuShaderBindingLayout(),
+          bytecode: @[1'u8],
+          sourceHash: source.gpuShaderSourceHash())
+      let material = host.newGpuChannelMatrixMaterial(namespace,
+        artifact(gpuChannelMatrixVertexSource()),
+        artifact(gpuChannelMatrixFragmentSource()))
+      let chain = host.newGpuFilterChain(namespace,
+        [channelMatrixStage(identityGpuChannelMatrix())],
+        channelMatrix = material)
+      let source = host.createGpuTexture(namespace,
+        textureDescriptor(width = 1, height = 1, usage = {gtuSampled}))
+      let destination = host.createGpuRenderTarget(namespace,
+        renderTargetDescriptor(1, 1,
+          usage = {gtuRenderTarget, gtuSampled, gtuBlitSource}))
+      let scratch = [host.createGpuRenderTarget(namespace,
+        renderTargetDescriptor(1, 1)), host.createGpuRenderTarget(namespace,
+        renderTargetDescriptor(1, 1)), host.createGpuRenderTarget(namespace,
+        renderTargetDescriptor(1, 1))]
+      if fallback != gdsfRequireDirect:
+        let blocked = host.beginGpuFrame()
+        host.reserveGpuFrameWork(namespace, workUnits = 1)
+        expect GpuHostError:
+          discard handle.queueFilteredGpuFrame(chain, source, destination,
+            scratch, blocked)
+        check context.drawSubmits == 0
+        check context.textureCopies == 0
+        host.endGpuFrame(blocked)
+      let frame = host.beginGpuFrame()
+      check handle.queueFilteredGpuFrame(chain, source, destination,
+        scratch, frame)
+      check context.drawSubmits == 1
+      check context.textureCopies ==
+        (if fallback == gdsfRequireDirect: 0 else: 1)
+      host.endGpuFrame(frame)
+      context.readbackReady = true
+      check handle.collectGpuFrame()
+      check ui.consumeInvalidation().domains == {ddPaint}
+      if fallback != gdsfRequireDirect:
+        check display.readbackSurface().rasterSurface().pixels ==
+          @[0'u8, 85, 170, 3]
+      check display.closeGpuDisplaySurface()
+      material.release()
+      for resource in [source, destination, scratch[0], scratch[1],
+          scratch[2]]:
+        doAssert host.releaseGpuResource(resource)
+      doAssert host.closeGpuNamespace(namespace)
+      host.close()
+
   test "direct surfaces participate in normal layout paint and component semantics":
     let context = newContext()
     context.enableDirectPresentation(maxBuffers = 2)

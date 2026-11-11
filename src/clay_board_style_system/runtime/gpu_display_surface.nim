@@ -1,5 +1,5 @@
 import ../core/raster_surface
-import ./[gpu_canvas, gpu_direct_surface, gpu_host]
+import ./[gpu_canvas, gpu_direct_surface, gpu_filter_chain, gpu_host]
 
 type
   GpuDisplaySurfaceFallback* = enum
@@ -229,6 +229,60 @@ proc queueGpuDisplayFrame*(
       discard surface.directValue.cancelGpuDirectSurfaceFrame(resource)
       raise
     true
+
+proc queueFilteredGpuDisplayFrame*(
+    surface: GpuDisplaySurface;
+    chain: GpuFilterChain;
+    source, destination: GpuResourceHandle;
+    scratch: array[3, GpuResourceHandle];
+    completion: GpuFrameToken;
+    sourceAlphaMode = gcamStraight
+): bool {.discardable.} =
+  ## Filter a GPU-owned image and queue its premultiplied result for the
+  ## negotiated direct, readback, or hybrid UI display path.
+  if surface.isNil or surface.closedValue:
+    return false
+  if surface.configValue.format != gtfRgba8 or
+      surface.configValue.alphaMode != gcamPremultiplied:
+    raise newException(ValueError,
+      "GPU filtered display requires premultiplied RGBA8 configuration")
+  if not chain.belongsTo(surface.host, surface.namespace):
+    raise newException(ValueError,
+      "GPU filtered display chain belongs to another host namespace")
+  if not surface.host.isGpuFrameActive(completion):
+    raise newException(GpuHostError,
+      "GPU filtered display requires its active host frame")
+  let outputInfo = surface.host.gpuPresentableResourceInfo(destination)
+  let needsReadback = surface.pathValue in {gdspReadback, gdspHybrid}
+  if outputInfo.kind != grkRenderTarget or
+      (needsReadback and gtuBlitSource notin outputInfo.usage):
+    raise newException(ValueError,
+      "GPU filtered display output must support the selected display path")
+  if surface.pathValue in {gdspDirect, gdspHybrid} and
+      surface.directValue.retainedFrameCount() >=
+        surface.configValue.bufferCount:
+    return false
+  if needsReadback:
+    if surface.readbackValue.pendingFrameCount() >=
+        surface.configValue.bufferCount:
+      return false
+    if surface.host.pendingGpuReadbackCount(surface.namespace) >=
+        maxGpuPendingReadbacksPerNamespace:
+      raise newException(GpuHostError, "GPU pending readback count exceeded")
+  let filterWork = chain.requiredWorkUnits()
+  let readbackWork = if needsReadback: 2'u32 else: 0'u32
+  let readbackViews = if needsReadback: 1 else: 0
+  let readbackBytes =
+    if needsReadback:
+      uint64(surface.configValue.width) * uint64(surface.configValue.height) *
+        gpuTextureBytesPerPixel(surface.configValue.format)
+    else: 0'u64
+  surface.host.validateGpuFrameWork(surface.namespace,
+    readbackBytes = readbackBytes,
+    workUnits = filterWork + readbackWork)
+  surface.host.validateGpuViewCapacity(int(filterWork) + readbackViews)
+  discard chain.submit(source, destination, scratch, sourceAlphaMode)
+  surface.queueGpuDisplayFrame(destination, completion)
 
 proc collectGpuDisplayFrame*(surface: GpuDisplaySurface): bool {.discardable.} =
   if surface.isNil or surface.closedValue:

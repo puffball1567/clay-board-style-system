@@ -603,6 +603,78 @@ proc verifyFilteredCanvasReadbackPixels(host: GpuHost;
   doAssert host.closeGpuNamespace(ns)
   echo "GPU Canvas filter chain: sampled target and alpha-correct readback passed"
 
+proc verifyFilteredDisplayPixels(host: GpuHost;
+    shaderc, shaderIncludes, workDirectory: string) =
+  let ns = host.createGpuNamespace("filtered-display-pixels", budget())
+  var config = defaultGpuDisplaySurfaceConfig(2, 2)
+  config.bufferCount = 2
+  config.fallback = gdsfRequireHybrid
+  config.alphaMode = gcamPremultiplied
+  let display = host.newGpuDisplaySurface(ns, config)
+  let material = host.newGpuChannelMatrixMaterial(ns,
+    compileShader(gpuChannelMatrixVertexSource(), shaderc,
+      shaderIncludes, workDirectory),
+    compileShader(gpuChannelMatrixFragmentSource(), shaderc,
+      shaderIncludes, workDirectory))
+  let source = host.createGpuTexture(ns, GpuTextureDescriptor(
+    width: 2, height: 2, format: gtfRgba8,
+    usage: {gtuSampled}, access: gtaStatic,
+    label: "filtered-display-source"),
+    rgbaPixels(2, 2, proc(x, y: int): Pixel =
+      discard x
+      discard y
+      Pixel(red: 255, alpha: 128)))
+  proc target(label: string): GpuResourceHandle =
+    host.createGpuRenderTarget(ns, GpuRenderTargetDescriptor(
+      width: 2, height: 2, format: gtfRgba8,
+      usage: {gtuRenderTarget, gtuSampled, gtuBlitSource},
+      label: label))
+  let output = target("filtered-display-output")
+  let scratch = [target("filtered-display-scratch-0"),
+    target("filtered-display-scratch-1"),
+    target("filtered-display-scratch-2")]
+  let blueFromRed = gpuChannelMatrix([
+    0'f32, 0, 0, 0, 0,
+    0'f32, 0, 0, 0, 0,
+    1'f32, 0, 0, 0, 0,
+    0'f32, 0, 0, 1, 0
+  ])
+  let chain = host.newGpuFilterChain(ns,
+    [channelMatrixStage(blueFromRed)], channelMatrix = material)
+  let frame = host.beginGpuFrame()
+  doAssert display.queueFilteredGpuDisplayFrame(chain, source, output,
+    scratch, frame)
+  host.endGpuFrame(frame)
+  var completed = false
+  for attempt in 0 ..< 32:
+    discard attempt
+    pumpWindow()
+    discard display.collectGpuDisplayFrame()
+    if display.readbackSurface().completedFrameNumber == 1 and
+        display.directSurface().presentedRevision == 1:
+      completed = true
+      break
+    let progress = host.beginGpuFrame()
+    host.endGpuFrame(progress)
+  doAssert completed
+  doAssert display.readbackSurface().rasterSurface().publish()
+  display.readbackSurface().rasterSurface().pixels.requireRasterPixel(2,
+    0, 0, Pixel(blue: 255, alpha: 128),
+    "filtered hybrid readback converts premultiplied color")
+  display.readbackSurface().rasterSurface().pixels.requireRasterPixel(2,
+    1, 1, Pixel(blue: 255, alpha: 128),
+    "filtered hybrid readback keeps every pixel")
+  var directFrame = display.directSurface().acquireGpuDirectSurfaceFrame().get
+  doAssert directFrame.resource == output
+  doAssert directFrame.alphaMode == gcamPremultiplied
+  doAssert directFrame.release()
+  doAssert display.closeGpuDisplaySurface()
+  material.release()
+  for handle in [source, output, scratch[0], scratch[1], scratch[2]]:
+    doAssert host.releaseGpuResource(handle)
+  doAssert host.closeGpuNamespace(ns)
+  echo "GPU filtered display: direct and alpha-correct readback pixels passed"
+
 proc verifyGpuAlphaMaskPixels(host: GpuHost;
     shaderc, shaderIncludes, workDirectory: string) =
   let ns = host.createGpuNamespace("gpu-alpha-mask-pixels", budget())
@@ -2454,6 +2526,7 @@ proc run() =
     host.verifyGpuChannelMatrixPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyFilteredCanvasReadbackPixels(shaderc, shaderIncludes,
       workDirectory)
+    host.verifyFilteredDisplayPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuAlphaMaskPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuAlphaMaskPlacementPixels(shaderc, shaderIncludes,
       workDirectory)

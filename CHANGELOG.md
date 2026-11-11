@@ -44,6 +44,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added filtered GPU-owned UI display across direct, readback, and hybrid
+  paths, with combined budget checks and display backpressure before drawing.
+
 - Added filtered GPU Canvas readback: RGBA8 canvas targets can feed a GPU
   filter chain before UI publication, with alpha handling per queued frame.
 
