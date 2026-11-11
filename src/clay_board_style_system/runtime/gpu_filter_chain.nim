@@ -6,7 +6,7 @@ import ../core/color
 import ../paint/layer_color_filter
 import ./[gpu_alpha_mask, gpu_color_matrix, gpu_composite, gpu_gaussian_blur,
   gpu_displacement, gpu_drop_shadow, gpu_host, gpu_surface_crop,
-  gpu_surface_placement]
+  gpu_morphology, gpu_surface_placement]
 
 const MaxGpuFilterStages* = 8
 
@@ -18,7 +18,8 @@ type
     gfskOpacity,
     gfskAlphaMask,
     gfskComposite,
-    gfskDisplacement
+    gfskDisplacement,
+    gfskMorphology
 
   GpuFilterStage* = object
     kindValue: GpuFilterStageKind
@@ -40,6 +41,8 @@ type
     foregroundPlacementValue: GpuCompositePlacement
     foregroundCropValue: GpuCompositeCrop
     displacementScaleXValue, displacementScaleYValue: float32
+    morphologyModeValue: GpuMorphologyMode
+    morphologyRadiusValue: int
 
   GpuFilterChain* = ref object
     host: GpuHost
@@ -51,6 +54,7 @@ type
     alphaMask: GpuAlphaMaskMaterial
     composite: GpuCompositeMaterial
     displacement: GpuDisplacementMaterial
+    morphology: GpuMorphologyMaterial
 
 proc colorMatrixStage*(filter: LayerColorFilter): GpuFilterStage =
   GpuFilterStage(kindValue: gfskColorMatrix, matrixValue: filter)
@@ -110,6 +114,15 @@ proc displacementStage*(
     displacementScaleXValue: scaleX,
     displacementScaleYValue: scaleY)
 
+proc morphologyStage*(
+    mode: GpuMorphologyMode; radius = 1
+): GpuFilterStage =
+  if radius < 0 or radius > MaxGpuMorphologyRadius:
+    raise newException(ValueError,
+      "GPU morphology radius must be between 0 and 8")
+  GpuFilterStage(kindValue: gfskMorphology,
+    morphologyModeValue: mode, morphologyRadiusValue: radius)
+
 proc gaussianBlurStage*(radius = 2): GpuFilterStage =
   if radius < 0 or radius > MaxGpuBlurRadius:
     raise newException(ValueError, "GPU filter blur radius must be between 0 and 16")
@@ -141,7 +154,8 @@ proc newGpuFilterChain*(
     dropShadow: GpuDropShadowMaterial = nil;
     alphaMask: GpuAlphaMaskMaterial = nil;
     composite: GpuCompositeMaterial = nil;
-    displacement: GpuDisplacementMaterial = nil
+    displacement: GpuDisplacementMaterial = nil;
+    morphology: GpuMorphologyMaterial = nil
 ): GpuFilterChain =
   if host.isNil or not host.isReady() or not host.hasGpuNamespace(namespace):
     raise newException(ValueError, "GPU filter chain requires a ready host namespace")
@@ -203,10 +217,14 @@ proc newGpuFilterChain*(
           mapInfo.format notin {gtfRgba8, gtfBgra8}:
         raise newException(ValueError,
           "GPU filter chain displacement map must be sampled RGBA8 or BGRA8")
+    of gfskMorphology:
+      if not morphology.belongsTo(host, namespace):
+        raise newException(ValueError,
+          "GPU filter chain morphology material belongs to another host")
   GpuFilterChain(host: host, namespace: namespace, stages: @stages,
     colorMatrix: colorMatrix, gaussianBlur: gaussianBlur,
     dropShadow: dropShadow, alphaMask: alphaMask, composite: composite,
-    displacement: displacement)
+    displacement: displacement, morphology: morphology)
 
 proc stageCount*(chain: GpuFilterChain): int =
   if chain.isNil: 0 else: chain.stages.len
@@ -217,7 +235,7 @@ proc requiredWorkUnits*(chain: GpuFilterChain): uint32 =
     return 0
   for stage in chain.stages:
     case stage.kindValue
-    of gfskGaussianBlur:
+    of gfskGaussianBlur, gfskMorphology:
       result += 2
     of gfskDropShadow:
       result += 3
@@ -247,6 +265,8 @@ proc belongsTo*(
     of gfskDisplacement:
       if not chain.displacement.belongsTo(host, namespace) or
           not host.isGpuResourceLive(stage.sampledInputValue): return false
+    of gfskMorphology:
+      if not chain.morphology.belongsTo(host, namespace): return false
   true
 
 proc submit*(
@@ -355,6 +375,10 @@ proc submit*(
           mapInfo.height != sourceInfo.height:
         raise newException(ValueError,
           "GPU filter chain displacement map must match the source size")
+    of gfskMorphology:
+      if not chain.morphology.belongsTo(chain.host, chain.namespace):
+        raise newException(ValueError,
+          "GPU filter chain morphology material is closed")
   let workUnits = chain.requiredWorkUnits()
   chain.host.validateGpuFrameWork(chain.namespace, workUnits = workUnits)
   chain.host.validateGpuViewCapacity(int(workUnits))
@@ -400,6 +424,10 @@ proc submit*(
       discard chain.displacement.submit(current, stage.sampledInputValue,
         output, stage.displacementScaleXValue,
         stage.displacementScaleYValue, alphaMode)
+    of gfskMorphology:
+      discard chain.morphology.submit(current, scratch[2], output,
+        alphaMode, stage.morphologyModeValue,
+        stage.morphologyRadiusValue)
     current = output
     alphaMode = gcamPremultiplied
   true

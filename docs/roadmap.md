@@ -1125,6 +1125,8 @@ Gaussian blur adds the first GPU spatial filter with an explicit sampled
 scratch target and premultiplied output. A same-host drop-shadow pass reuses
 that configurable blur,
 offsets and tints its alpha, and composites the original source above it.
+Bounded radius 0–8 GPU morphology adds component-wise dilation and erosion
+over premultiplied RGBA, directly or in ordered filter chains.
 An alpha-mask pass multiplies a GPU-owned surface by another sampled surface's
 coverage while preserving premultiplied output. Direct and chained masks can
 invert coverage or blend its strength without rewriting the sampled image.
@@ -1149,10 +1151,10 @@ Direct composition and the filter-chain composite stage can scale foreground
 opacity without rewriting the sampled surface. They can also position, clip,
 and scale a foreground of different dimensions over a same-size backdrop.
 An ordered GPU filter chain now combines up to eight matrix, opacity, blur,
-shadow, alpha-mask, source-over, and RG displacement stages over three reusable
+shadow, morphology, alpha-mask, source-over, and RG displacement stages over three reusable
 scratch targets, carrying
 premultiplied alpha into each stage and producing a display-ready RenderTarget.
-The chain, direct blur, and direct shadow now preflight their complete work and
+The chain, direct blur, direct shadow, and direct morphology now preflight their complete work and
 view budgets before the first pass. An owned
 raster-filter display adapter now bridges published CPU
 `RasterSurface` revisions through partial GPU uploads, the filter chain, and

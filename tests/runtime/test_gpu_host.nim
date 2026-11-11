@@ -18,6 +18,7 @@ import clay_board_style_system/runtime/gpu_composite
 import clay_board_style_system/runtime/gpu_color_matrix
 import clay_board_style_system/runtime/gpu_gaussian_blur
 import clay_board_style_system/runtime/gpu_displacement
+import clay_board_style_system/runtime/gpu_morphology
 import clay_board_style_system/runtime/gpu_drop_shadow
 import clay_board_style_system/runtime/gpu_filter_chain
 import clay_board_style_system/runtime/gpu_raster_filter_display
@@ -8097,6 +8098,76 @@ suite "GPU displacement postprocess":
     host.endGpuFrame(frame)
     material.release()
     for handle in [source, displacementMap, wrongSize, output,
+        scratch[0], scratch[1], scratch[2]]:
+      doAssert host.releaseGpuResource(handle)
+    doAssert host.closeGpuNamespace(namespace)
+    host.close()
+
+suite "GPU morphology postprocess":
+  test "dilation and erosion use bounded premultiplied two-pass draws":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("morphology",
+      GpuResourceBudget(persistentBytes: 65536,
+        workUnitsPerFrame: 6, maxResources: 20))
+    proc artifact(source: GpuShaderSource): GpuShaderArtifact =
+      GpuShaderArtifact(
+        descriptor: GpuShaderDescriptor(stage: source.stage),
+        bindingLayout: source.gpuShaderBindingLayout(),
+        bytecode: @[1'u8],
+        sourceHash: source.gpuShaderSourceHash())
+    let vertex = artifact(gpuMorphologyVertexSource())
+    let fragment = artifact(gpuMorphologyFragmentSource())
+    var wrong = fragment
+    inc wrong.sourceHash
+    expect ValueError:
+      discard host.newGpuMorphologyMaterial(namespace, vertex, wrong)
+    check context.shaderCreates == 0
+    let material = host.newGpuMorphologyMaterial(namespace, vertex, fragment)
+    let source = host.createGpuTexture(namespace,
+      textureDescriptor(width = 5, height = 5, usage = {gtuSampled}))
+    let destination = host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(5, 5))
+    let scratch = [host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(5, 5)), host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(5, 5)), host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(5, 5))]
+    let wrongSize = host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(3, 5))
+    expect ValueError:
+      discard material.submit(source, scratch[0], destination,
+        radius = -1)
+    expect ValueError:
+      discard morphologyStage(gmmErode, MaxGpuMorphologyRadius + 1)
+    expect ValueError:
+      discard material.submit(source, wrongSize, destination)
+    expect ValueError:
+      discard material.submit(source, scratch[0], scratch[0])
+    expect ValueError:
+      discard host.newGpuFilterChain(namespace,
+        [morphologyStage(gmmDilate)])
+    let chain = host.newGpuFilterChain(namespace,
+      [morphologyStage(gmmErode), morphologyStage(gmmDilate)],
+      morphology = material)
+    check chain.requiredWorkUnits() == 4
+    expect GpuHostError:
+      discard material.submit(source, scratch[0], destination)
+    let frame = host.beginGpuFrame()
+    check material.submit(source, scratch[0], destination,
+      gcamStraight, gmmErode, 1)
+    check context.drawSubmits == 2
+    check context.lastBindings.uniforms[0].values == @[
+      0'f32, 0.2'f32, float32(ord(gcamPremultiplied)), -1'f32]
+    check chain.submit(source, destination, scratch)
+    check context.drawSubmits == 6
+    check context.lastBindings.uniforms[0].values == @[
+      0'f32, 0.2'f32, float32(ord(gcamPremultiplied)), 1'f32]
+    expect GpuHostError:
+      discard material.submit(source, scratch[0], destination)
+    check context.drawSubmits == 6
+    host.endGpuFrame(frame)
+    material.release()
+    for handle in [source, destination, wrongSize,
         scratch[0], scratch[1], scratch[2]]:
       doAssert host.releaseGpuResource(handle)
     doAssert host.closeGpuNamespace(namespace)
