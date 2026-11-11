@@ -44,6 +44,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added a retained GPU-input filter display that manages scratch and output
+  buffers across repeated direct, readback, and hybrid UI frames.
+
 - Added filtered GPU-owned UI display across direct, readback, and hybrid
   paths, with combined budget checks and display backpressure before drawing.
 

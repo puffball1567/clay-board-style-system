@@ -441,6 +441,28 @@ readback budgets before drawing. A full display ring returns `false` without
 filtering. `GpuDisplaySurfaceHandle` and `GpuDisplayVisualLayerHandle` expose
 the same operation as `queueFilteredGpuFrame`.
 
+For repeated GPU-owned revisions, import `runtime/gpu_filter_display` and
+create `GpuFilterDisplay`. It owns three scratch targets and a bounded output
+ring while retaining the caller's filter chain, materials, and source:
+
+```nim
+let filtered = host.newGpuFilterDisplay(resources, effects,
+  defaultGpuFilterDisplayConfig(width, height))
+let view = ui.gpuDisplaySurface(filtered.displaySurface())
+let frame = host.beginGpuFrame()
+discard filtered.queueGpuFilterDisplayFrame(source, frame)
+host.endGpuFrame(frame)
+discard view.collectGpuFrame()
+```
+
+Use `gdsfRequireDirect`, `gdsfRequireReadback`, or `gdsfRequireHybrid` on the
+display config when the application requires a specific path. The adapter
+selects an output that is no longer retained for presentation. If every
+output is busy, it returns `false` before drawing and the caller can retry
+after collection. `replaceFilterChain` changes the effect without rebuilding
+the display or output ring. Close the adapter after display frames have
+drained; the caller still owns its source and filter materials.
+
 ## Raster input for filtered UI display
 
 Import `runtime/gpu_raster_filter_display` to connect an application-owned

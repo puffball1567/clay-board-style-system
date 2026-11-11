@@ -1169,6 +1169,9 @@ a changed frame, leaving the revision available for retry when the frame
 budget or readback ring is full.
 GPU-owned sampled images can also feed the chain before negotiated direct,
 readback, or hybrid UI display with combined budget and backpressure checks.
+A retained GPU-input filter display now owns reusable scratch and output
+targets, so repeated GPU image revisions can reach the same UI paths without
+caller-managed output rings.
 Same-size source replacement keeps its display and Style registrations while
 forcing one full upload of the new image before returning to dirty updates.
 Filter-chain replacement keeps those registrations and reprocesses the current

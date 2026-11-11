@@ -25,7 +25,7 @@ import clay_board_style_system/runtime/[gpu_direct_surface, gpu_host,
     gpu_composite, gpu_convolution, gpu_displacement,
     gpu_gaussian_blur, gpu_morphology,
     gpu_drop_shadow,
-    gpu_filter_chain,
+    gpu_filter_chain, gpu_filter_display,
     gpu_raster_filter_display, gpu_shader_builder, gpu_shader_package]
 
 when sdl3CompileFlags.len > 0:
@@ -674,6 +674,62 @@ proc verifyFilteredDisplayPixels(host: GpuHost;
     doAssert host.releaseGpuResource(handle)
   doAssert host.closeGpuNamespace(ns)
   echo "GPU filtered display: direct and alpha-correct readback pixels passed"
+
+proc verifyOwnedGpuFilterDisplayPixels(host: GpuHost;
+    shaderc, shaderIncludes, workDirectory: string) =
+  let ns = host.createGpuNamespace("owned-filter-display-pixels", budget())
+  let material = host.newGpuChannelMatrixMaterial(ns,
+    compileShader(gpuChannelMatrixVertexSource(), shaderc,
+      shaderIncludes, workDirectory),
+    compileShader(gpuChannelMatrixFragmentSource(), shaderc,
+      shaderIncludes, workDirectory))
+  let blueFromRed = gpuChannelMatrix([
+    0'f32, 0, 0, 0, 0,
+    0'f32, 0, 0, 0, 0,
+    1'f32, 0, 0, 0, 0,
+    0'f32, 0, 0, 1, 0
+  ])
+  let chain = host.newGpuFilterChain(ns,
+    [channelMatrixStage(blueFromRed)], channelMatrix = material)
+  var config = defaultGpuFilterDisplayConfig(2, 2)
+  config.bufferCount = 2
+  config.fallback = gdsfRequireHybrid
+  let filtered = host.newGpuFilterDisplay(ns, chain, config)
+  let display = filtered.displaySurface()
+  let source = host.createGpuTexture(ns, GpuTextureDescriptor(
+    width: 2, height: 2, format: gtfRgba8,
+    usage: {gtuSampled}, access: gtaStatic,
+    label: "owned-filter-display-source"),
+    rgbaPixels(2, 2, proc(x, y: int): Pixel =
+      discard x
+      discard y
+      Pixel(red: 255, alpha: 128)))
+  let frame = host.beginGpuFrame()
+  doAssert filtered.queueGpuFilterDisplayFrame(source, frame)
+  host.endGpuFrame(frame)
+  var completed = false
+  for attempt in 0 ..< 32:
+    discard attempt
+    pumpWindow()
+    discard filtered.collectGpuFilterDisplayFrame()
+    if display.readbackSurface().completedFrameNumber == 1 and
+        display.directSurface().presentedRevision == 1:
+      completed = true
+      break
+    let progress = host.beginGpuFrame()
+    host.endGpuFrame(progress)
+  doAssert completed
+  display.readbackSurface().rasterSurface().pixels.requireRasterPixel(2,
+    0, 0, Pixel(blue: 255, alpha: 128),
+    "owned filter display publishes straight translucent UI pixels")
+  var directFrame = display.directSurface().acquireGpuDirectSurfaceFrame().get
+  doAssert directFrame.alphaMode == gcamPremultiplied
+  doAssert directFrame.release()
+  doAssert filtered.closeGpuFilterDisplay()
+  material.release()
+  doAssert host.releaseGpuResource(source)
+  doAssert host.closeGpuNamespace(ns)
+  echo "GPU filter display: owned output ring publishes hybrid pixels passed"
 
 proc verifyGpuAlphaMaskPixels(host: GpuHost;
     shaderc, shaderIncludes, workDirectory: string) =
@@ -2527,6 +2583,8 @@ proc run() =
     host.verifyFilteredCanvasReadbackPixels(shaderc, shaderIncludes,
       workDirectory)
     host.verifyFilteredDisplayPixels(shaderc, shaderIncludes, workDirectory)
+    host.verifyOwnedGpuFilterDisplayPixels(shaderc, shaderIncludes,
+      workDirectory)
     host.verifyGpuAlphaMaskPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuAlphaMaskPlacementPixels(shaderc, shaderIncludes,
       workDirectory)

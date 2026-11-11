@@ -23,6 +23,7 @@ import clay_board_style_system/runtime/gpu_displacement
 import clay_board_style_system/runtime/gpu_morphology
 import clay_board_style_system/runtime/gpu_drop_shadow
 import clay_board_style_system/runtime/gpu_filter_chain
+import clay_board_style_system/runtime/gpu_filter_display
 import clay_board_style_system/runtime/gpu_raster_filter_display
 import clay_board_style_system/runtime/gpu_raster_filter_display_ui
 import clay_board_style_system/runtime/gpu_canvas_ui
@@ -8812,6 +8813,67 @@ suite "GPU filter chain":
     matrix.release()
     for handle in [source, output, scratch[0], scratch[1], scratch[2]]:
       doAssert host.releaseGpuResource(handle)
+    doAssert host.closeGpuNamespace(namespace)
+    host.close()
+
+suite "GPU-owned filter display":
+  test "owned output ring filters GPU revisions through hybrid UI display":
+    let context = newContext()
+    context.enableDirectPresentation(maxBuffers = 2)
+    let host = openGpuHost(context.backend, ghoOwned)
+    let namespace = host.createGpuNamespace("gpu-owned-filter-display",
+      GpuResourceBudget(persistentBytes: 65536,
+        readbackBytesPerFrame: 4,
+        workUnitsPerFrame: 3, maxResources: 30))
+    proc artifact(source: GpuShaderSource): GpuShaderArtifact =
+      GpuShaderArtifact(
+        descriptor: GpuShaderDescriptor(stage: source.stage),
+        bindingLayout: source.gpuShaderBindingLayout(),
+        bytecode: @[1'u8],
+        sourceHash: source.gpuShaderSourceHash())
+    let material = host.newGpuChannelMatrixMaterial(namespace,
+      artifact(gpuChannelMatrixVertexSource()),
+      artifact(gpuChannelMatrixFragmentSource()))
+    let chain = host.newGpuFilterChain(namespace,
+      [channelMatrixStage(identityGpuChannelMatrix())],
+      channelMatrix = material)
+    var config = defaultGpuFilterDisplayConfig(1, 1)
+    config.bufferCount = 2
+    config.fallback = gdsfRequireHybrid
+    let wrong = defaultGpuDisplaySurfaceConfig(1, 1)
+    expect ValueError:
+      discard host.newGpuFilterDisplay(namespace, chain, wrong)
+    let filtered = host.newGpuFilterDisplay(namespace, chain, config)
+    let display = filtered.displaySurface()
+    check display.path == gdspHybrid
+    let source = host.createGpuTexture(namespace,
+      textureDescriptor(width = 1, height = 1, usage = {gtuSampled}))
+    let ui = initUiRoot()
+    let handle = ui.gpuDisplaySurface(display)
+    discard ui.consumeInvalidation()
+    for index in 0 ..< 2:
+      let frame = host.beginGpuFrame()
+      check filtered.queueGpuFilterDisplayFrame(source, frame)
+      host.endGpuFrame(frame)
+      check context.drawSubmits == index + 1
+    let blocked = host.beginGpuFrame()
+    check not filtered.queueGpuFilterDisplayFrame(source, blocked)
+    check context.drawSubmits == 2
+    host.endGpuFrame(blocked)
+    context.readbackReady = true
+    check handle.collectGpuFrame()
+    check ui.consumeInvalidation().domains == {ddPaint}
+    check display.readbackSurface().rasterSurface().pixels ==
+      @[64'u8, 128, 191, 4]
+    let retry = host.beginGpuFrame()
+    check filtered.queueGpuFilterDisplayFrame(source, retry)
+    host.endGpuFrame(retry)
+    check context.drawSubmits == 3
+    check handle.collectGpuFrame()
+    check filtered.closeGpuFilterDisplay()
+    check not filtered.closeGpuFilterDisplay()
+    material.release()
+    doAssert host.releaseGpuResource(source)
     doAssert host.closeGpuNamespace(namespace)
     host.close()
 
