@@ -237,6 +237,34 @@ construction; both default to nearest. Use
 ordered GPU filter chain. The stage receives the premultiplied result of any
 preceding stage without an extra CPU transfer.
 
+## GPU morphology postprocess
+
+Import `runtime/gpu_morphology` for bounded dilation and erosion of sampled
+surfaces. Compile `gpuMorphologyVertexSource()` and
+`gpuMorphologyFragmentSource()` for the selected backend, then create a
+`GpuMorphologyMaterial` outside a frame. Provide a sampled RGBA8 or BGRA8
+source, a sampled RGBA8 scratch RenderTarget, and a distinct RGBA8 destination
+RenderTarget, all with equal dimensions.
+
+```nim
+let frame = host.beginGpuFrame()
+discard morphology.submit(source, scratch, expandedTarget,
+  sourceAlphaMode = gcamStraight,
+  mode = gmmDilate, radius = 2)
+discard display.queueGpuDisplayFrame(expandedTarget, frame)
+host.endGpuFrame(frame)
+```
+
+`gmmDilate` selects the component-wise maximum and `gmmErode` the minimum of
+premultiplied RGBA within a square kernel, matching the core
+[morphology operation](https://www.w3.org/TR/filter-effects-1/#feMorphologyElement).
+Radius is an integer from `0` to `8` pixels; zero preserves the source after
+alpha normalization. Horizontal and vertical passes use one scratch target
+and reserve two draw/view units before either pass. Sampling clamps at the
+image edge. Output is premultiplied RGBA8 and uses `gcamPremultiplied` for
+presentation. `morphologyStage(mode, radius)` adds the same operation to an
+ordered GPU filter chain; it uses the chain's shared scratch targets.
+
 ## GPU Gaussian blur postprocess
 
 Import `runtime/gpu_gaussian_blur` for a separable binomial Gaussian blur with

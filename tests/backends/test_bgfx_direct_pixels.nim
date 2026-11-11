@@ -22,7 +22,7 @@ import clay_board_style_system/paint/[gpu_direct_compositor,
     gpu_host_compositor, layer_color_filter, paint_command]
 import clay_board_style_system/runtime/[gpu_direct_surface, gpu_host,
     gpu_alpha_mask, gpu_color_matrix, gpu_composite, gpu_displacement,
-    gpu_gaussian_blur,
+    gpu_gaussian_blur, gpu_morphology,
     gpu_drop_shadow,
     gpu_filter_chain,
     gpu_raster_filter_display, gpu_shader_builder, gpu_shader_package]
@@ -1406,6 +1406,76 @@ proc verifyGpuDisplacementPixels(host: GpuHost;
   doAssert host.closeGpuNamespace(ns)
   echo "GPU displacement: direct, chained, and zero-scale pixels passed"
 
+proc verifyGpuMorphologyPixels(host: GpuHost;
+    shaderc, shaderIncludes, workDirectory: string) =
+  let ns = host.createGpuNamespace("gpu-morphology-pixels", budget())
+  let material = host.newGpuMorphologyMaterial(ns,
+    compileShader(gpuMorphologyVertexSource(), shaderc,
+      shaderIncludes, workDirectory),
+    compileShader(gpuMorphologyFragmentSource(), shaderc,
+      shaderIncludes, workDirectory))
+  let source = host.createGpuTexture(ns, GpuTextureDescriptor(
+    width: 5, height: 5, format: gtfRgba8,
+    usage: {gtuSampled}, access: gtaStatic,
+    label: "morphology-source"),
+    rgbaPixels(5, 5, proc(x, y: int): Pixel =
+      if x == 2 and y == 2:
+        Pixel(red: 255, alpha: 128)
+      elif x in 1 .. 3 and y in 1 .. 3:
+        Pixel(red: 255, alpha: 255)
+      else:
+        Pixel()))
+  proc target(label: string): GpuResourceHandle =
+    host.createGpuRenderTarget(ns, GpuRenderTargetDescriptor(
+      width: 5, height: 5, format: gtfRgba8,
+      usage: {gtuRenderTarget, gtuSampled, gtuBlitSource},
+      label: label))
+  let dilated = target("morphology-dilated")
+  let eroded = target("morphology-eroded")
+  let unchanged = target("morphology-radius-zero")
+  let opened = target("morphology-opened")
+  let scratch = [target("morphology-scratch-0"),
+    target("morphology-scratch-1"),
+    target("morphology-scratch-2")]
+  let chain = host.newGpuFilterChain(ns,
+    [morphologyStage(gmmErode, 1),
+      morphologyStage(gmmDilate, 1)], morphology = material)
+  let frame = host.beginGpuFrame()
+  doAssert material.submit(source, scratch[2], dilated,
+    mode = gmmDilate, radius = 1)
+  doAssert material.submit(source, scratch[2], eroded,
+    mode = gmmErode, radius = 1)
+  doAssert material.submit(source, scratch[2], unchanged,
+    radius = 0)
+  doAssert chain.submit(source, opened, scratch)
+  host.endGpuFrame(frame)
+  let dilatedPixels = host.readPixels(ns, dilated, 5, 5)
+  for point in [(0, 0), (2, 2), (4, 4)]:
+    dilatedPixels.requirePixel(point[0], point[1],
+      Pixel(red: 255, alpha: 255),
+      "GPU dilation expands premultiplied color and alpha")
+  let erodedPixels = host.readPixels(ns, eroded, 5, 5)
+  erodedPixels.requirePixel(2, 2, Pixel(red: 128, alpha: 128),
+    "GPU erosion keeps the minimum premultiplied center")
+  erodedPixels.requirePixel(1, 2, Pixel(),
+    "GPU erosion removes edge pixels")
+  let unchangedPixels = host.readPixels(ns, unchanged, 5, 5)
+  unchangedPixels.requirePixel(2, 2, Pixel(red: 128, alpha: 128),
+    "zero-radius morphology normalizes straight alpha")
+  unchangedPixels.requirePixel(1, 1, Pixel(red: 255, alpha: 255),
+    "zero-radius morphology keeps opaque pixels")
+  let openedPixels = host.readPixels(ns, opened, 5, 5)
+  openedPixels.requirePixel(1, 1, Pixel(red: 128, alpha: 128),
+    "chained erosion then dilation expands the minimum center")
+  openedPixels.requirePixel(0, 0, Pixel(),
+    "chained morphology keeps the cleared border")
+  material.release()
+  for handle in [source, dilated, eroded, unchanged, opened,
+      scratch[0], scratch[1], scratch[2]]:
+    doAssert host.releaseGpuResource(handle)
+  doAssert host.closeGpuNamespace(ns)
+  echo "GPU morphology: dilation, erosion, zero radius, and chaining pixels passed"
+
 proc verifyGpuGaussianBlurPixels(host: GpuHost;
     shaderc, shaderIncludes, workDirectory: string) =
   let ns = host.createGpuNamespace("gpu-gaussian-blur-pixels", budget())
@@ -2192,6 +2262,7 @@ proc run() =
     host.verifyGpuAlphaMaskPlacementPixels(shaderc, shaderIncludes,
       workDirectory)
     host.verifyGpuGaussianBlurPixels(shaderc, shaderIncludes, workDirectory)
+    host.verifyGpuMorphologyPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuDisplacementPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuDropShadowPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyGpuFilterChainPixels(shaderc, shaderIncludes, workDirectory)

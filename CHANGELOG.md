@@ -44,6 +44,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Added
 
+- Added bounded GPU dilation and erosion for premultiplied surfaces, including
+  direct passes and ordered filter chains.
+
 - Added same-host GPU displacement mapping with bounded pixel scales and
   nearest or linear sampling, available directly and in filter chains.
 
