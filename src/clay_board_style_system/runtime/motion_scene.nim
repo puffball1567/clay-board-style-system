@@ -12,7 +12,7 @@ type
   MotionObjectId* = distinct uint64
 
   MotionShape* = enum
-    msRoundedRect, msEllipse, msLine, msTriangle
+    msRoundedRect, msEllipse, msLine, msTriangle, msRing
 
   MotionLineCap* = enum
     mlcButt, mlcSquare, mlcRound
@@ -90,6 +90,18 @@ proc motionEllipse*(
   ## Bounds enclose a filled ellipse in local scene coordinates.
   MotionObject(id: id, shape: msEllipse, bounds: bounds, color: color,
     transform: transform, opacity: opacity, radius: 0.0'f32,
+    zIndex: zIndex, visible: visible, hitTestable: hitTestable)
+
+proc motionRing*(
+    id: MotionObjectId; bounds: Rect; color: Color;
+    innerRadius = 0.5'f32; transform = identityAffine2D();
+    opacity = 1.0'f32; zIndex = 0'i32;
+    visible = true; hitTestable = true
+): MotionObject =
+  ## An elliptical ring. innerRadius is the inner-to-outer radius ratio.
+  ## Snapshot construction validates the ratio with the rest of the shape.
+  MotionObject(id: id, shape: msRing, bounds: bounds, color: color,
+    transform: transform, opacity: opacity, radius: innerRadius,
     zIndex: zIndex, visible: visible, hitTestable: hitTestable)
 
 proc motionLine*(
@@ -171,7 +183,7 @@ proc motionSceneSnapshot*(
         not value.transform.finite or not value.transform.determinant.finite or
         not value.opacity.finite or
         value.opacity < 0 or value.opacity > 1 or not value.radius.finite or
-        value.radius < 0:
+        value.radius < 0 or (value.shape == msRing and value.radius >= 1):
       raise newException(ValueError, "invalid motion scene geometry or opacity")
     for channel in [value.color.r, value.color.g, value.color.b, value.color.a]:
       if not channel.finite or channel < 0 or channel > 1:
@@ -179,7 +191,8 @@ proc motionSceneSnapshot*(
     # Match Canvas's identity tolerance and rounded clip normalization.
     if value.transform.isIdentity:
       value.transform = identityAffine2D()
-    value.radius = min(value.radius, min(value.bounds.w, value.bounds.h) * 0.5'f32)
+    if value.shape != msRing:
+      value.radius = min(value.radius, min(value.bounds.w, value.bounds.h) * 0.5'f32)
     if value.shape in {msEllipse, msTriangle}:
       value.radius = 0.0'f32
     for corner in [vec2(value.bounds.x, value.bounds.y),
@@ -257,15 +270,26 @@ proc compile(snapshot: MotionSceneSnapshot): seq[CanvasCommand] =
       if value.radius > 0:
         target.pushClip(value.bounds, value.radius)
       target.fillRect(value.bounds, color)
-    of msEllipse:
+    of msEllipse, msRing:
       var path = initPath2D()
+      let center = vec2(value.bounds.x + value.bounds.w * 0.5'f32,
+        value.bounds.y + value.bounds.h * 0.5'f32)
       path.ellipse(
-        vec2(value.bounds.x + value.bounds.w * 0.5'f32,
-          value.bounds.y + value.bounds.h * 0.5'f32),
+        center,
         value.bounds.w * 0.5'f32, value.bounds.h * 0.5'f32,
         0.0'f32, 0.0'f32, PI.float32 * 2.0'f32)
       path.closePath()
-      target.fillPath(path, color)
+      if value.shape == msRing and value.radius > 0:
+        path.moveTo(vec2(center.x + value.bounds.w * value.radius * 0.5'f32,
+          center.y))
+        path.ellipse(center,
+          value.bounds.w * value.radius * 0.5'f32,
+          value.bounds.h * value.radius * 0.5'f32,
+          0.0'f32, 0.0'f32, PI.float32 * 2.0'f32)
+        path.closePath()
+        target.fillPath(path, color, pfrEvenOdd)
+      else:
+        target.fillPath(path, color)
     of msTriangle:
       var path = initPath2D()
       path.moveTo(vec2(value.bounds.x, value.bounds.y))
@@ -350,10 +374,14 @@ proc hitTest*(snapshot: MotionSceneSnapshot; position: Vec2): Option[MotionScene
         let dx = point.x.float64 - x.float64
         let dy = point.y.float64 - y.float64
         if dx * dx + dy * dy > radius.float64 * radius.float64: continue
-    of msEllipse:
+    of msEllipse, msRing:
       let x = (point.x.float64 - bounds.x.float64) / bounds.w.float64 * 2.0 - 1.0
       let y = (point.y.float64 - bounds.y.float64) / bounds.h.float64 * 2.0 - 1.0
-      if x * x + y * y > 1.0: continue
+      let distanceSquared = x * x + y * y
+      if distanceSquared > 1.0 or
+          (entry.value.shape == msRing and
+           distanceSquared < entry.value.radius.float64 * entry.value.radius.float64):
+        continue
     of msTriangle:
       let x = (point.x.float64 - bounds.x.float64) / bounds.w.float64
       let y = (point.y.float64 - bounds.y.float64) / bounds.h.float64

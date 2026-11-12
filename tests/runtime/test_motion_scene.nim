@@ -101,6 +101,28 @@ suite "CPU Motion Scene snapshots":
     check records[1][0][2] == 7
     check records[1][1][2] == 6
 
+  test "rings have a CPU hole, transformed picking, and GPU instance data":
+    let ring = motionRing(MotionObjectId(2), rect(4, 2, 20, 20),
+      rgb(0, 1, 0), innerRadius = 0.5,
+      transform = translationAffine2D(2, 0), zIndex = 1)
+    let scene = newMotionScene(snap([
+      item(1, rect(0, 0, 32, 24)), ring]))
+    check scene.pixels.pixel(16, 4) == (0'u8, 255'u8, 0'u8)
+    check scene.pixels.pixel(16, 12) == (255'u8, 0'u8, 0'u8)
+    check scene.pixels.pixel(6, 2) == (255'u8, 0'u8, 0'u8)
+    check scene.hitTest(vec2(16, 4)).get.id == MotionObjectId(2)
+    check scene.hitTest(vec2(16, 12)).get.id == MotionObjectId(1)
+    check scene.hitTest(vec2(6, 2)).get.id == MotionObjectId(1)
+    let records = gpuMotionRectRecords(scene.snapshot)
+    check records[1][2] == [20'f32, 20, 0.5, 3]
+    check records[1][0][2] == 6
+    expect ValueError:
+      discard snap([motionRing(MotionObjectId(3), rect(4, 2, 20, 20),
+        rgb(0, 1, 0), innerRadius = 1)])
+    expect ValueError:
+      discard snap([motionRing(MotionObjectId(3), rect(4, 2, 20, 20),
+        rgb(0, 1, 0), innerRadius = -0.1)])
+
   test "line caps share CPU paint, picking, and GPU instance geometry":
     let roundLine = motionLine(MotionObjectId(1), vec2(4, 8), vec2(16, 8),
       4, rgb(0, 1, 0))

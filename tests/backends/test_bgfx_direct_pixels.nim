@@ -2287,6 +2287,18 @@ proc verifyMotionSceneCanvas(host: GpuHost;
     Pixel(green: 255, alpha: 255), "GPU Canvas triangle inside")
   trianglePixels.requireRasterPixel(16, 12, 12, Pixel(),
     "GPU Canvas triangle outside")
+  discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), [
+    motionRing(MotionObjectId(6), rect(2, 2, 12, 12),
+      rgba(0, 1, 0, 1), innerRadius = 0.5)]))
+  doAssert renderer.queueFrame()
+  drain()
+  let ringPixels = renderer.canvas.rasterSurface.pixels
+  ringPixels.requireRasterPixel(16, 8, 4,
+    Pixel(green: 255, alpha: 255), "GPU Canvas ring band")
+  ringPixels.requireRasterPixel(16, 8, 8, Pixel(),
+    "GPU Canvas ring hole")
+  ringPixels.requireRasterPixel(16, 2, 2, Pixel(),
+    "GPU Canvas ring outside")
   discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), []))
   doAssert renderer.queueFrame()
   drain()

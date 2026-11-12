@@ -30,7 +30,7 @@ static:
   doAssert sizeof(GpuMotionRectRecord) == 80
 
 proc gpuMotionRectRecords*(snapshot: MotionSceneSnapshot): seq[GpuMotionRectRecord] =
-  ## Packs drawable rectangles, ellipses, lines, and triangles in CPU paint order. The five vec4 rows
+  ## Packs drawable rectangles, ellipses, lines, triangles, and rings in CPU paint order. The five vec4 rows
   ## match gpuMotionRectVertexSource and one host instanced draw.
   if snapshot.isNil:
     raise newException(ValueError, "motion scene snapshot must not be nil")
@@ -54,6 +54,7 @@ proc gpuMotionRectRecords*(snapshot: MotionSceneSnapshot): seq[GpuMotionRectReco
       [item.bounds.w, item.bounds.h, item.radius,
         (if item.shape == msEllipse: 1'f32
          elif item.shape == msTriangle: 2'f32
+         elif item.shape == msRing: 3'f32
          else: 0'f32)],
       [item.color.r, item.color.g, item.color.b,
         item.color.a * item.opacity],
@@ -177,7 +178,12 @@ proc gpuMotionRectFragmentSource*(): GpuShaderSource =
 void main()
 {
   vec2 halfSize = v_texcoord1.xy * 0.5;
-  if (v_texcoord1.w > 1.5) {
+  if (v_texcoord1.w > 2.5) {
+    vec2 normalized = (v_texcoord0 - halfSize) / halfSize;
+    float distanceSquared = dot(normalized, normalized);
+    if (distanceSquared > 1.0 ||
+        distanceSquared < v_texcoord1.z * v_texcoord1.z) { discard; }
+  } else if (v_texcoord1.w > 1.5) {
     vec2 normalized = v_texcoord0 / v_texcoord1.xy;
     if (normalized.x + normalized.y > 1.0) { discard; }
   } else if (v_texcoord1.w > 0.5) {
