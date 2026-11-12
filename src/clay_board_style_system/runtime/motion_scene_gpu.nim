@@ -50,13 +50,16 @@ proc gpuMotionRectRecords*(snapshot: MotionSceneSnapshot): seq[GpuMotionRectReco
     )
     result.add [
       [item.transform.m11, item.transform.m21, origin.x, item.sweepAngle],
-      [item.transform.m12, item.transform.m22, origin.y, 0'f32],
+      [item.transform.m12, item.transform.m22, origin.y,
+        (if item.shape == msAnnularSector: item.radius else: 0'f32)],
       [item.bounds.w, item.bounds.h,
-        (if item.shape == msSector: item.startAngle else: item.radius),
+        (if item.shape in {msSector, msAnnularSector}:
+          item.startAngle else: item.radius),
         (if item.shape == msEllipse: 1'f32
          elif item.shape == msTriangle: 2'f32
          elif item.shape == msRing: 3'f32
          elif item.shape == msSector: 4'f32
+         elif item.shape == msAnnularSector: 5'f32
          else: 0'f32)],
       [item.color.r, item.color.g, item.color.b,
         item.color.a * item.opacity],
@@ -171,7 +174,7 @@ proc gpuMotionRectVertexSource*(): GpuShaderSource =
   builder.setVaryingOutput(gsisTexCoord0, point)
   builder.setVaryingOutput(gsisTexCoord1, shape)
   builder.setVaryingOutput(gsisTexCoord2, builder.construct(gsvtVec2, [
-    builder.swizzle(rowX, "w"), builder.scalar(0)
+    builder.swizzle(rowX, "w"), builder.swizzle(rowY, "w")
   ]))
   builder.setVaryingOutput(gsisColor0, color)
   builder.emitGpuShaderSource()
@@ -186,7 +189,9 @@ void main()
   if (v_texcoord1.w > 3.5) {
     vec2 normalized = (v_texcoord0 - halfSize) / halfSize;
     float distanceSquared = dot(normalized, normalized);
-    if (distanceSquared > 1.0) { discard; }
+    if (distanceSquared > 1.0 ||
+        (v_texcoord1.w > 4.5 &&
+         distanceSquared < v_texcoord2.y * v_texcoord2.y)) { discard; }
     if (distanceSquared > 0.0 && v_texcoord2.x < 6.2831855) {
       float delta = atan(normalized.y, normalized.x) - v_texcoord1.z;
       float relative = delta - floor(delta / 6.2831855) * 6.2831855;

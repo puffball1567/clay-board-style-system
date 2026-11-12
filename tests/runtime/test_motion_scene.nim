@@ -167,6 +167,40 @@ suite "CPU Motion Scene snapshots":
       discard snap([motionSector(MotionObjectId(5), rect(4, 2, 20, 20),
         rgb(0, 1, 0), NaN.float32, PI.float32)])
 
+  test "annular sectors keep the wedge and its hole in CPU and GPU records":
+    let wedge = motionAnnularSector(MotionObjectId(2), rect(4, 2, 20, 20),
+      rgb(0, 1, 0), 0, PI.float32 * 0.5'f32,
+      innerRadius = 0.5, transform = translationAffine2D(2, 0),
+      zIndex = 1)
+    let scene = newMotionScene(snap([
+      item(1, rect(0, 0, 32, 24)), wedge]))
+    check scene.pixels.pixel(22, 16) == (0'u8, 255'u8, 0'u8)
+    check scene.pixels.pixel(18, 13) == (255'u8, 0'u8, 0'u8)
+    check scene.pixels.pixel(22, 8) == (255'u8, 0'u8, 0'u8)
+    check scene.hitTest(vec2(22, 16)).get.id == MotionObjectId(2)
+    check scene.hitTest(vec2(18, 13)).get.id == MotionObjectId(1)
+    check scene.hitTest(vec2(22, 8)).get.id == MotionObjectId(1)
+    let record = gpuMotionRectRecords(scene.snapshot)[1]
+    check record[0][3] == PI.float32 * 0.5'f32
+    check record[1][3] == 0.5'f32
+    check record[2] == [20'f32, 20, 0, 5]
+
+    discard scene.replaceSnapshot(snap([
+      motionAnnularSector(MotionObjectId(3), rect(4, 2, 20, 20),
+        rgb(0, 0, 1), PI.float32 * 0.25'f32,
+        PI.float32 * 2.0'f32, innerRadius = 0.5)]))
+    check scene.pixels.pixel(14, 12).b == 0
+    check scene.pixels.pixel(8, 12).b == 255
+    check scene.hitTest(vec2(14, 12)).isNone
+    check scene.hitTest(vec2(8, 12)).get.id == MotionObjectId(3)
+    expect ValueError:
+      discard snap([motionAnnularSector(MotionObjectId(4),
+        rect(4, 2, 20, 20), rgb(0, 1, 0), 0, PI.float32,
+        innerRadius = 1)])
+    expect ValueError:
+      discard snap([motionAnnularSector(MotionObjectId(4),
+        rect(4, 2, 20, 20), rgb(0, 1, 0), 0, 0)])
+
   test "line caps share CPU paint, picking, and GPU instance geometry":
     let roundLine = motionLine(MotionObjectId(1), vec2(4, 8), vec2(16, 8),
       4, rgb(0, 1, 0))

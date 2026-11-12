@@ -2325,6 +2325,21 @@ proc verifyMotionSceneCanvas(host: GpuHost;
     Pixel(blue: 255, alpha: 255), "GPU Canvas wrapped sector after zero")
   wrappedSectorPixels.requireRasterPixel(16, 5, 8, Pixel(),
     "GPU Canvas wrapped sector outside")
+  discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), [
+    motionAnnularSector(MotionObjectId(9), rect(2, 2, 12, 12),
+      rgba(0, 1, 0, 1), 0, PI.float32 * 0.5'f32,
+      innerRadius = 0.5)]))
+  doAssert renderer.queueFrame()
+  drain()
+  let annularPixels = renderer.canvas.rasterSurface.pixels
+  annularPixels.requireRasterPixel(16, 12, 10,
+    Pixel(green: 255, alpha: 255), "GPU Canvas annular sector band")
+  annularPixels.requireRasterPixel(16, 9, 9, Pixel(),
+    "GPU Canvas annular sector hole")
+  annularPixels.requireRasterPixel(16, 5, 10, Pixel(),
+    "GPU Canvas annular sector outside angle")
+  annularPixels.requireRasterPixel(16, 14, 10, Pixel(),
+    "GPU Canvas annular sector outside ellipse")
   discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), []))
   doAssert renderer.queueFrame()
   drain()

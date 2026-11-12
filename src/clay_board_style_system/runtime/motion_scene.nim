@@ -13,7 +13,8 @@ type
   MotionObjectId* = distinct uint64
 
   MotionShape* = enum
-    msRoundedRect, msEllipse, msLine, msTriangle, msRing, msSector
+    msRoundedRect, msEllipse, msLine, msTriangle, msRing, msSector,
+    msAnnularSector
 
   MotionLineCap* = enum
     mlcButt, mlcSquare, mlcRound
@@ -118,6 +119,18 @@ proc motionSector*(
     sweepAngle: sweepAngle, zIndex: zIndex, visible: visible,
     hitTestable: hitTestable)
 
+proc motionAnnularSector*(
+    id: MotionObjectId; bounds: Rect; color: Color;
+    startAngle, sweepAngle: float32; innerRadius = 0.5'f32;
+    transform = identityAffine2D(); opacity = 1.0'f32;
+    zIndex = 0'i32; visible = true; hitTestable = true
+): MotionObject =
+  ## An elliptical wedge with a concentric hole. innerRadius is a ratio.
+  MotionObject(id: id, shape: msAnnularSector, bounds: bounds, color: color,
+    transform: transform, opacity: opacity, radius: innerRadius,
+    startAngle: startAngle, sweepAngle: sweepAngle, zIndex: zIndex,
+    visible: visible, hitTestable: hitTestable)
+
 proc motionLine*(
     id: MotionObjectId; startPoint, endPoint: Vec2; width: float32;
     color: Color; cap = mlcRound;
@@ -197,9 +210,10 @@ proc motionSceneSnapshot*(
         not value.transform.finite or not value.transform.determinant.finite or
         not value.opacity.finite or
         value.opacity < 0 or value.opacity > 1 or not value.radius.finite or
-        value.radius < 0 or (value.shape == msRing and value.radius >= 1):
+        value.radius < 0 or
+        (value.shape in {msRing, msAnnularSector} and value.radius >= 1):
       raise newException(ValueError, "invalid motion scene geometry or opacity")
-    if value.shape == msSector:
+    if value.shape in {msSector, msAnnularSector}:
       if not value.startAngle.finite or not value.sweepAngle.finite or
           value.sweepAngle <= 0 or value.sweepAngle > motionFullTurn:
         raise newException(ValueError, "invalid motion scene sector angles")
@@ -215,7 +229,7 @@ proc motionSceneSnapshot*(
     # Match Canvas's identity tolerance and rounded clip normalization.
     if value.transform.isIdentity:
       value.transform = identityAffine2D()
-    if value.shape != msRing:
+    if value.shape notin {msRing, msAnnularSector}:
       value.radius = min(value.radius, min(value.bounds.w, value.bounds.h) * 0.5'f32)
     if value.shape in {msEllipse, msTriangle, msSector}:
       value.radius = 0.0'f32
@@ -278,6 +292,26 @@ proc sameSnapshot(a, b: MotionSceneSnapshot): bool =
     if a.entries[index].value != b.entries[index].value: return false
   true
 
+proc appendSectorContour(
+    path: var Path2D; bounds: Rect;
+    startAngle, sweepAngle, radiusScale: float32
+) =
+  let center = vec2(bounds.x + bounds.w * 0.5'f32,
+    bounds.y + bounds.h * 0.5'f32)
+  let radiusX = bounds.w * radiusScale * 0.5'f32
+  let radiusY = bounds.h * radiusScale * 0.5'f32
+  if sweepAngle == motionFullTurn:
+    path.moveTo(vec2(center.x + radiusX, center.y))
+    path.ellipse(center, radiusX, radiusY, 0.0'f32,
+      0.0'f32, motionFullTurn)
+  else:
+    path.moveTo(center)
+    path.lineTo(vec2(center.x + cos(startAngle) * radiusX,
+      center.y + sin(startAngle) * radiusY))
+    path.ellipse(center, radiusX, radiusY, 0.0'f32,
+      startAngle, startAngle + sweepAngle)
+  path.closePath()
+
 proc compile(snapshot: MotionSceneSnapshot): seq[CanvasCommand] =
   let target = newCanvas2D()
   target.pushClip(rect(0, 0, snapshot.viewport.w, snapshot.viewport.h))
@@ -314,24 +348,16 @@ proc compile(snapshot: MotionSceneSnapshot): seq[CanvasCommand] =
         target.fillPath(path, color, pfrEvenOdd)
       else:
         target.fillPath(path, color)
-    of msSector:
+    of msSector, msAnnularSector:
       var path = initPath2D()
-      let center = vec2(value.bounds.x + value.bounds.w * 0.5'f32,
-        value.bounds.y + value.bounds.h * 0.5'f32)
-      if value.sweepAngle == motionFullTurn:
-        path.ellipse(center, value.bounds.w * 0.5'f32,
-          value.bounds.h * 0.5'f32, 0.0'f32,
-          0.0'f32, motionFullTurn)
+      path.appendSectorContour(value.bounds, value.startAngle,
+        value.sweepAngle, 1.0'f32)
+      if value.shape == msAnnularSector and value.radius > 0:
+        path.appendSectorContour(value.bounds, value.startAngle,
+          value.sweepAngle, value.radius)
+        target.fillPath(path, color, pfrEvenOdd)
       else:
-        path.moveTo(center)
-        path.lineTo(vec2(
-          center.x + cos(value.startAngle) * value.bounds.w * 0.5'f32,
-          center.y + sin(value.startAngle) * value.bounds.h * 0.5'f32))
-        path.ellipse(center, value.bounds.w * 0.5'f32,
-          value.bounds.h * 0.5'f32, 0.0'f32,
-          value.startAngle, value.startAngle + value.sweepAngle)
-      path.closePath()
-      target.fillPath(path, color)
+        target.fillPath(path, color)
     of msTriangle:
       var path = initPath2D()
       path.moveTo(vec2(value.bounds.x, value.bounds.y))
@@ -416,20 +442,16 @@ proc hitTest*(snapshot: MotionSceneSnapshot; position: Vec2): Option[MotionScene
         let dx = point.x.float64 - x.float64
         let dy = point.y.float64 - y.float64
         if dx * dx + dy * dy > radius.float64 * radius.float64: continue
-    of msEllipse, msRing:
+    of msEllipse, msRing, msSector, msAnnularSector:
       let x = (point.x.float64 - bounds.x.float64) / bounds.w.float64 * 2.0 - 1.0
       let y = (point.y.float64 - bounds.y.float64) / bounds.h.float64 * 2.0 - 1.0
       let distanceSquared = x * x + y * y
       if distanceSquared > 1.0 or
-          (entry.value.shape == msRing and
+          (entry.value.shape in {msRing, msAnnularSector} and
            distanceSquared < entry.value.radius.float64 * entry.value.radius.float64):
         continue
-    of msSector:
-      let x = (point.x.float64 - bounds.x.float64) / bounds.w.float64 * 2.0 - 1.0
-      let y = (point.y.float64 - bounds.y.float64) / bounds.h.float64 * 2.0 - 1.0
-      let distanceSquared = x * x + y * y
-      if distanceSquared > 1.0: continue
-      if distanceSquared > 0.0 and
+      if entry.value.shape in {msSector, msAnnularSector} and
+          distanceSquared > 0.0 and
           entry.value.sweepAngle < motionFullTurn:
         let turn = motionFullTurn.float64
         let delta = arctan2(y, x) - entry.value.startAngle.float64
