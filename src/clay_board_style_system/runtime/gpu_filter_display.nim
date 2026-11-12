@@ -1,7 +1,7 @@
 ## Retained GPU-owned source -> filter chain -> negotiated UI display.
 ## Owns bounded reusable output and scratch targets, but not source or materials.
 import ../core/raster_surface
-import ./[gpu_canvas, gpu_display_surface,
+import ./[gpu_canvas, gpu_direct_surface, gpu_display_surface,
   gpu_filter_chain, gpu_host]
 
 type
@@ -102,6 +102,23 @@ proc replaceFilterChain*(
   surface.chain = chain
   true
 
+proc canQueueGpuFilterDisplayFrame*(surface: GpuFilterDisplay): bool =
+  ## Check display and output-ring pressure before drawing a GPU source.
+  if surface.isStale:
+    raise newException(GpuHostError, "GPU filter display is stale")
+  let display = surface.display
+  let config = display.config()
+  if display.path in {gdspDirect, gdspHybrid} and
+      display.directSurface().retainedFrameCount() >= config.bufferCount:
+    return false
+  if display.path in {gdspReadback, gdspHybrid} and
+      display.readbackSurface().pendingFrameCount() >= config.bufferCount:
+    return false
+  for output in surface.outputs:
+    if not surface.host.isGpuResourcePresentationRetained(output):
+      return true
+  false
+
 proc queueGpuFilterDisplayFrame*(
     surface: GpuFilterDisplay;
     source: GpuResourceHandle; frame: GpuFrameToken;
@@ -114,6 +131,8 @@ proc queueGpuFilterDisplayFrame*(
   if not surface.host.isGpuFrameActive(frame):
     raise newException(GpuHostError,
       "GPU filter display requires its active host frame")
+  if not surface.canQueueGpuFilterDisplayFrame():
+    return false
   var selected = -1
   for offset in 0 ..< surface.outputs.len:
     let index = (surface.nextOutput + offset) mod surface.outputs.len

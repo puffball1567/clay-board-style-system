@@ -1196,6 +1196,10 @@ to ordinary UI paint. Typed Motion Timeline samples now share the UI frame
 scheduler with GPU readback polling, and paint invalidation waits for completed
 pixels.
 
+Motion Scene snapshots can also flow through an ordered GPU filter chain into
+a retained direct, readback, or hybrid UI display. The adapter reuses its source,
+scratch, and output targets and retries changed revisions after backpressure.
+
 CBSS will not claim exclusive ownership of the machine's GPU. A separate
 backend process may own an independent compute device and return bounded Blob,
 Stream, or immutable snapshot results. An in-process backend using the selected

@@ -17,7 +17,7 @@ import clay_board_style_system/backends/ppm/raster
 import clay_board_style_system/runtime/canvas
 import clay_board_style_system/runtime/[gpu_canvas, motion_scene,
     gpu_display_surface, motion_scene_gpu, motion_scene_gpu_canvas,
-    motion_scene_gpu_direct]
+    motion_scene_gpu_direct, motion_scene_gpu_filter_display]
 import clay_board_style_system/paint/[gpu_direct_compositor,
     gpu_host_compositor, layer_color_filter, paint_command]
 import clay_board_style_system/runtime/[gpu_direct_surface, gpu_host,
@@ -2354,6 +2354,61 @@ proc verifyMotionSceneCanvas(host: GpuHost;
   doAssert host.closeGpuNamespace(ns)
   echo "Motion Scene GPU canvas: changed and empty revisions publish expected pixels"
 
+proc verifyFilteredMotionScenePixels(host: GpuHost;
+    shaderc, shaderIncludes, workDirectory: string) =
+  let ns = host.createGpuNamespace("motion-scene-filtered", budget())
+  let matrix = host.newGpuColorMatrixMaterial(ns,
+    compileShader(gpuColorMatrixVertexSource(), shaderc,
+      shaderIncludes, workDirectory),
+    compileShader(gpuColorMatrixFragmentSource(), shaderc,
+      shaderIncludes, workDirectory))
+  let swapRedBlue = colorMatrixFilter([
+    0'f32, 0, 1, 0,
+    0'f32, 1, 0, 0,
+    1'f32, 0, 0, 0
+  ])
+  let chain = host.newGpuFilterChain(ns,
+    [colorMatrixStage(swapRedBlue)], colorMatrix = matrix)
+  let scene = newMotionScene(motionSceneSnapshot(size(16, 16), [
+    motionAnnularSector(MotionObjectId(1), rect(2, 2, 12, 12),
+      rgba(1, 0, 0, 1), 0, PI.float32 * 0.5'f32,
+      innerRadius = 0.5)]))
+  var config = defaultGpuMotionSceneFilterDisplayConfig(16, 16)
+  config.bufferCount = 2
+  config.fallback = gdsfRequireReadback
+  let renderer = host.newGpuMotionSceneFilterDisplay(ns, scene, chain, config,
+    compileShader(gpuMotionRectVertexSource(), shaderc,
+      shaderIncludes, workDirectory),
+    compileShader(gpuMotionRectFragmentSource(), shaderc,
+      shaderIncludes, workDirectory))
+  let display = renderer.displaySurface()
+  proc drain() =
+    for attempt in 0 ..< 64:
+      discard attempt
+      pumpWindow()
+      discard renderer.collectFrame()
+      if display.readbackSurface().pendingFrameCount() == 0:
+        return
+      let progress = host.beginGpuFrame()
+      host.endGpuFrame(progress)
+    raise newException(IOError, "filtered Motion Scene readback did not drain")
+  doAssert renderer.queueFrame()
+  drain()
+  let pixels = display.readbackSurface().rasterSurface().pixels
+  pixels.requireRasterPixel(16, 12, 10,
+    Pixel(blue: 255, alpha: 255), "filtered Motion Scene band")
+  pixels.requireRasterPixel(16, 9, 9, Pixel(),
+    "filtered Motion Scene hole")
+  discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), []))
+  doAssert renderer.queueFrame()
+  drain()
+  display.readbackSurface().rasterSurface().pixels.requireRasterPixel(
+    16, 12, 10, Pixel(), "filtered Motion Scene empty revision")
+  doAssert renderer.close()
+  matrix.release()
+  doAssert host.closeGpuNamespace(ns)
+  echo "Filtered Motion Scene: GPU shape, effect, and readback pixels passed"
+
 proc verifyMotionSceneDirect(host: GpuHost;
     shaderc, shaderIncludes, workDirectory: string) =
   let ns = host.createGpuNamespace("motion-scene-direct", budget())
@@ -2652,6 +2707,8 @@ proc run() =
     host.verifyGpuRasterFilterDisplayPixels(shaderc, shaderIncludes, workDirectory)
     host.verifyInstancedRects(shaderc, shaderIncludes, workDirectory)
     host.verifyMotionSceneCanvas(shaderc, shaderIncludes, workDirectory)
+    host.verifyFilteredMotionScenePixels(shaderc, shaderIncludes,
+      workDirectory)
     host.verifyMotionSceneDirect(shaderc, shaderIncludes, workDirectory)
 
     let compositorNamespace = host.createGpuNamespace(

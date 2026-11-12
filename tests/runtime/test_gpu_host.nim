@@ -36,7 +36,8 @@ import clay_board_style_system/runtime/frame_scheduler
 import clay_board_style_system/runtime/[motion_scene, motion_scene_gpu]
 import clay_board_style_system/runtime/[motion_scene_gpu_canvas,
   motion_scene_gpu_canvas_ui, motion_scene_gpu_direct,
-  motion_scene_gpu_direct_ui, motion_scene_timeline,
+  motion_scene_gpu_direct_ui, motion_scene_gpu_filter_display,
+  motion_scene_gpu_filter_display_ui, motion_scene_timeline,
   motion_scene_timeline_gpu_ui]
 import clay_board_style_system/runtime/gpu_raster_texture
 import clay_board_style_system/runtime/[invalidation, ui_root]
@@ -10207,6 +10208,93 @@ suite "GPU host direct compositor":
 
 
 suite "GPU instanced draws":
+  test "filtered Motion Scene display retries revisions and refreshes a static scene":
+    let context = newContext()
+    context.enableDirectPresentation(maxBuffers = 2)
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let namespace = host.createGpuNamespace("motion-filtered",
+      GpuResourceBudget(persistentBytes: 65536,
+        readbackBytesPerFrame: 1024,
+        workUnitsPerFrame: 8, maxResources: 32))
+    proc artifact(source: GpuShaderSource): GpuShaderArtifact =
+      GpuShaderArtifact(
+        descriptor: GpuShaderDescriptor(stage: source.stage),
+        bindingLayout: source.gpuShaderBindingLayout(),
+        bytecode: @[1'u8], sourceHash: source.gpuShaderSourceHash())
+    let matrix = host.newGpuColorMatrixMaterial(namespace,
+      artifact(gpuColorMatrixVertexSource()),
+      artifact(gpuColorMatrixFragmentSource()))
+    let chain = host.newGpuFilterChain(namespace,
+      [opacityStage(0.5'f32)], colorMatrix = matrix)
+    let scene = newMotionScene(motionSceneSnapshot(size(8, 8), [
+      motionRect(MotionObjectId(1), rect(1, 1, 3, 3), rgb(1, 0, 0))]))
+    var config = defaultGpuMotionSceneFilterDisplayConfig(8, 8)
+    config.bufferCount = 2
+    config.fallback = gdsfRequireHybrid
+    var wrong = config
+    wrong.width = 7
+    expect ValueError:
+      discard host.newGpuMotionSceneFilterDisplay(namespace, scene,
+        chain, wrong, artifact(gpuMotionRectVertexSource()),
+        artifact(gpuMotionRectFragmentSource()))
+    let resourcesBefore = host.gpuNamespaceUsage(namespace).resourceCount
+    var wrongVertex = artifact(gpuMotionRectVertexSource())
+    inc wrongVertex.sourceHash
+    expect ValueError:
+      discard host.newGpuMotionSceneFilterDisplay(namespace, scene,
+        chain, config, wrongVertex,
+        artifact(gpuMotionRectFragmentSource()))
+    check host.gpuNamespaceUsage(namespace).resourceCount == resourcesBefore
+    let renderer = host.newGpuMotionSceneFilterDisplay(namespace, scene,
+      chain, config, artifact(gpuMotionRectVertexSource()),
+      artifact(gpuMotionRectFragmentSource()))
+    check renderer.displaySurface().path == gdspHybrid
+    let ui = initUiRoot()
+    let view = ui.gpuMotionSceneFilterDisplay(renderer)
+    discard ui.consumeInvalidation()
+    check view.publish()
+    check not view.publish()
+    check context.drawSubmits == 2
+    discard scene.replaceSnapshot(motionSceneSnapshot(size(8, 8), [
+      motionRect(MotionObjectId(1), rect(2, 1, 3, 3), rgb(0, 1, 0))]))
+    check view.publish()
+    check context.drawSubmits == 4
+    discard scene.replaceSnapshot(motionSceneSnapshot(size(8, 8), [
+      motionRect(MotionObjectId(1), rect(3, 1, 3, 3), rgb(0, 0, 1))]))
+    check not view.publish()
+    check context.drawSubmits == 4
+    context.readbackReady = true
+    check view.collectGpuFrame()
+    check ui.consumeInvalidation().domains == {ddPaint}
+    check context.drawSubmits == 6
+    check view.collectGpuFrame()
+    discard ui.consumeInvalidation()
+    renderer.requestRefresh()
+    check renderer.hasUnqueuedRevision()
+    check view.publish()
+    check context.drawSubmits == 8
+    check view.collectGpuFrame()
+    discard ui.consumeInvalidation()
+    let replacement = host.newGpuFilterChain(namespace,
+      [opacityStage(0.25'f32)], colorMatrix = matrix)
+    check renderer.replaceFilterChain(replacement)
+    check view.publish()
+    check view.collectGpuFrame()
+    let timeline = newMotionTimeline(scene, [motionTrack(MotionObjectId(1),
+      mspX, [FloatKeyframe(offset: 0, value: 3),
+        FloatKeyframe(offset: 1, value: 4)])], 1, 0)
+    var scheduler = initFrameScheduler()
+    check timeline.advance(view, scheduler, 0.5)
+    check scheduler.nextDeadline.isSome
+    check view.collectGpuFrame(scheduler, 0.51)
+    check scheduler.consumeDirty() == {ddPaint}
+    check renderer.close()
+    check not view.valid
+    matrix.release()
+    check host.gpuNamespaceUsage(namespace).resourceCount == 0
+    check host.closeGpuNamespace(namespace)
+    host.close()
+
   test "direct Motion Scene UI presents revisions without readback or target reuse":
     let context = newContext()
     context.enableDirectPresentation(maxBuffers = 2)

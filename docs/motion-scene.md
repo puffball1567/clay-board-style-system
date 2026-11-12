@@ -217,6 +217,33 @@ the latest scene revision when a target becomes free. Outstanding presentation
 leases must be released before closing the renderer. Unlike the GPU Canvas
 path, normal presentation does not copy pixels back to the CPU.
 
+For a filtered scene, `motion_scene_gpu_filter_display` connects the same
+instanced shape batch to a `GpuFilterChain` and the negotiated direct, readback,
+or hybrid UI display path:
+
+```nim
+import clay_board_style_system/runtime/[motion_scene_gpu_filter_display,
+  motion_scene_gpu_filter_display_ui]
+
+# effects is a GpuFilterChain with caller-owned filter materials.
+let renderer = host.newGpuMotionSceneFilterDisplay(resources, scene, effects,
+  defaultGpuMotionSceneFilterDisplayConfig(320, 200),
+  vertexArtifact, fragmentArtifact)
+let gpuView = ui.gpuMotionSceneFilterDisplay(renderer)
+discard gpuView.publish()
+discard gpuView.collectGpuFrame()
+discard renderer.close()
+```
+
+The renderer owns one reusable scene target, the shape material and batch, and
+the filter display's scratch and output targets. It borrows the filter chain and
+its materials. The scene viewport must match the display dimensions. The
+filter runs on premultiplied RGBA before presentation or readback. A full
+display ring defers a revision before drawing; `collectGpuFrame` retries it.
+Call `requestRefresh` when a filter input changes without a scene revision, or
+`replaceFilterChain` to reprocess the current scene with another chain. Drain
+pending frames and release UI presentation leases before closing the renderer.
+
 ## Typed timelines
 
 Import `runtime/motion_scene_timeline` to animate a whole batch through the
@@ -242,7 +269,7 @@ discard timeline.advance(view, scheduler, nowSeconds = 11)
 # Headless callers use timeline.advance(scheduler, nowSeconds) instead.
 ```
 
-With either GPU Canvas or GPU direct attachment, import
+With a GPU Canvas, GPU direct, or GPU filtered-display attachment, import
 `runtime/motion_scene_timeline_gpu_ui` and pass its `gpuView`. In each UI-loop
 wake-up, clear the consumed deadline, then sample and collect using the same
 monotonic time:
@@ -257,8 +284,8 @@ discard gpuView.collectGpuFrame(scheduler, nowSeconds)
 
 The GPU overloads keep the timeline's next sample deadline in the shared
 `FrameScheduler`. Canvas requests a bounded poll while readback is pending;
-direct presentation polls while a frame is pending or the newest revision is
-blocked by a retained presentation target. Sampling can queue a GPU frame
+direct and filtered presentation poll while a frame is pending or the newest
+revision is blocked by a retained output. Sampling can queue a GPU frame
 without dirtying UI paint. Only a completed frame marks `ddPaint` and
 invalidates its attachment node. Once the timeline finishes and its final
 frame is collected, it requests no further wake-up. The application still
