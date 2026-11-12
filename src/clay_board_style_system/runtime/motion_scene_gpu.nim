@@ -30,7 +30,7 @@ static:
   doAssert sizeof(GpuMotionRectRecord) == 80
 
 proc gpuMotionRectRecords*(snapshot: MotionSceneSnapshot): seq[GpuMotionRectRecord] =
-  ## Packs drawable rectangles, ellipses, lines, triangles, and rings in CPU paint order. The five vec4 rows
+  ## Packs drawable shapes in CPU paint order. The five vec4 rows
   ## match gpuMotionRectVertexSource and one host instanced draw.
   if snapshot.isNil:
     raise newException(ValueError, "motion scene snapshot must not be nil")
@@ -49,12 +49,14 @@ proc gpuMotionRectRecords*(snapshot: MotionSceneSnapshot): seq[GpuMotionRectReco
       vec2(item.bounds.x, item.bounds.y)
     )
     result.add [
-      [item.transform.m11, item.transform.m21, origin.x, 0'f32],
+      [item.transform.m11, item.transform.m21, origin.x, item.sweepAngle],
       [item.transform.m12, item.transform.m22, origin.y, 0'f32],
-      [item.bounds.w, item.bounds.h, item.radius,
+      [item.bounds.w, item.bounds.h,
+        (if item.shape == msSector: item.startAngle else: item.radius),
         (if item.shape == msEllipse: 1'f32
          elif item.shape == msTriangle: 2'f32
          elif item.shape == msRing: 3'f32
+         elif item.shape == msSector: 4'f32
          else: 0'f32)],
       [item.color.r, item.color.g, item.color.b,
         item.color.a * item.opacity],
@@ -168,17 +170,29 @@ proc gpuMotionRectVertexSource*(): GpuShaderSource =
   ]))
   builder.setVaryingOutput(gsisTexCoord0, point)
   builder.setVaryingOutput(gsisTexCoord1, shape)
+  builder.setVaryingOutput(gsisTexCoord2, builder.construct(gsvtVec2, [
+    builder.swizzle(rowX, "w"), builder.scalar(0)
+  ]))
   builder.setVaryingOutput(gsisColor0, color)
   builder.emitGpuShaderSource()
 
 proc gpuMotionRectFragmentSource*(): GpuShaderSource =
   GpuShaderSource(stage: gssFragment, label: "motion-scene-rect-fragment",
-    source: """$input v_texcoord0, v_texcoord1, v_color0
+    source: """$input v_texcoord0, v_texcoord1, v_texcoord2, v_color0
 #include "bgfx_shader.sh"
 void main()
 {
   vec2 halfSize = v_texcoord1.xy * 0.5;
-  if (v_texcoord1.w > 2.5) {
+  if (v_texcoord1.w > 3.5) {
+    vec2 normalized = (v_texcoord0 - halfSize) / halfSize;
+    float distanceSquared = dot(normalized, normalized);
+    if (distanceSquared > 1.0) { discard; }
+    if (distanceSquared > 0.0 && v_texcoord2.x < 6.2831855) {
+      float delta = atan(normalized.y, normalized.x) - v_texcoord1.z;
+      float relative = delta - floor(delta / 6.2831855) * 6.2831855;
+      if (relative > v_texcoord2.x) { discard; }
+    }
+  } else if (v_texcoord1.w > 2.5) {
     vec2 normalized = (v_texcoord0 - halfSize) / halfSize;
     float distanceSquared = dot(normalized, normalized);
     if (distanceSquared > 1.0 ||
@@ -200,11 +214,13 @@ void main()
 """,
     varyingDefinitions: """vec2 v_texcoord0 : TEXCOORD0;
 vec4 v_texcoord1 : TEXCOORD1;
+vec2 v_texcoord2 : TEXCOORD2;
 vec4 v_color0 : COLOR0;
 """,
     inputs: @[
       GpuShaderInterfaceEntry(slot: gsisTexCoord0, valueType: gsvtVec2),
       GpuShaderInterfaceEntry(slot: gsisTexCoord1, valueType: gsvtVec4),
+      GpuShaderInterfaceEntry(slot: gsisTexCoord2, valueType: gsvtVec2),
       GpuShaderInterfaceEntry(slot: gsisColor0, valueType: gsvtVec4)
     ])
 
