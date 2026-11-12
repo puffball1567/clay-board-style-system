@@ -2,8 +2,8 @@
 
 The opt-in `runtime/motion_scene` module keeps many visual objects in one
 retained Canvas. The CPU reference path supports rounded rectangles, ellipses,
-elliptical rings and sectors, stroked line segments, and triangles, plus affine
-transforms, opacity, z-order, viewport clipping, stable application IDs, and
+elliptical rings, sectors, annular sectors, stroked line segments, and triangles,
+plus affine transforms, opacity, z-order, viewport clipping, stable IDs, and
 inverse-transform hit testing.
 It runs without a GPU or window.
 
@@ -24,7 +24,10 @@ let initial = motionSceneSnapshot(size(320, 200), [
   motionRing(MotionObjectId(5), rect(180, 80, 50, 50),
     rgb(0.4, 0.8, 1), innerRadius = 0.55, zIndex = 4),
   motionSector(MotionObjectId(6), rect(120, 80, 50, 50),
-    rgb(1, 0.5, 0.2), 0, PI.float32 * 0.75'f32, zIndex = 5)
+    rgb(1, 0.5, 0.2), 0, PI.float32 * 0.75'f32, zIndex = 5),
+  motionAnnularSector(MotionObjectId(7), rect(60, 80, 50, 50),
+    rgb(0.8, 0.3, 0.8), 0, PI.float32 * 1.25'f32,
+    innerRadius = 0.6, zIndex = 6)
 ])
 let scene = newMotionScene(initial)
 let ui = initUiRoot()
@@ -56,8 +59,8 @@ side for rectangles; ellipses use their full bounds. `motionRing` uses elliptica
 bounds and an inner-to-outer radius ratio in `[0, 1)`; zero makes a filled
 ellipse. The ring hole is transparent and does not receive hits. `motionLine`
 takes two endpoints and a positive stroke width, with butt, square, and round
-caps; its default is round. A zero-length round or square segment produces a dot, while
-a zero-length butt segment is empty. `motionTriangle` takes three scene points
+caps; its default is round. A zero-length round or square segment produces a
+dot, while a zero-length butt segment is empty. `motionTriangle` takes three scene points
 in either winding order. A zero-area triangle retains its ID without producing
 pixels or hits. Hidden, empty, fully transparent, and singular-transform objects
 retain their identity but produce no pixels or hits.
@@ -67,6 +70,10 @@ are radians; positive sweep runs clockwise in Canvas coordinates. The sweep
 must be in `(0, 2π]`, and a full turn makes a filled ellipse. The start angle
 is normalized when the snapshot is constructed. Picking follows the same
 ellipse and angular limits.
+
+`motionAnnularSector` applies the same angular limits with an inner-to-outer
+radius ratio in `[0, 1)`. A zero ratio fills the center; a full turn forms a
+ring. Its hole remains transparent and does not receive hits.
 
 Paint order is ascending z-index, with authoring order breaking ties. Picking
 walks the same order backwards, respects rounded corners, ellipse boundaries,
@@ -108,7 +115,8 @@ the scene until released and do not retain UI nodes.
 ## GPU shape batches
 
 Import `runtime/motion_scene_gpu` explicitly to pack drawable rounded rectangles,
-ellipses, rings, sectors, lines, and triangles of a snapshot into five-vec4 GPU instance
+ellipses, rings, sectors, annular sectors, lines, and triangles of a snapshot
+into five-vec4 GPU instance
 records:
 
 ```nim
