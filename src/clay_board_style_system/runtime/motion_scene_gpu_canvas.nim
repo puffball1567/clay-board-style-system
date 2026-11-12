@@ -10,6 +10,7 @@ type GpuMotionSceneCanvas* = ref object
   sceneValue: MotionScene
   canvasValue: GpuCanvasSurface
   material: GpuMotionRectMaterial
+  imageMaterial: GpuMotionImageMaterial
   batch: GpuMotionRectBatch
   queuedRevision: uint64
   queuedFrameNumber: uint64
@@ -33,7 +34,8 @@ proc scene*(renderer: GpuMotionSceneCanvas): MotionScene =
 proc newGpuMotionSceneCanvas*(
     host: GpuHost; namespace: GpuNamespaceId; scene: MotionScene;
     config: GpuCanvasConfig;
-    vertexArtifact, fragmentArtifact: GpuShaderArtifact
+    vertexArtifact, fragmentArtifact: GpuShaderArtifact;
+    imageFragmentArtifact = GpuShaderArtifact()
 ): GpuMotionSceneCanvas =
   if scene.isNil:
     raise newException(ValueError, "Motion Scene GPU canvas requires a scene")
@@ -44,13 +46,23 @@ proc newGpuMotionSceneCanvas*(
   if config.format != gtfRgba8 or config.alphaMode != gcamPremultiplied:
     raise newException(ValueError,
       "Motion Scene GPU canvas requires premultiplied RGBA8 input")
+  if scene.snapshot.hasImageObjects() and imageFragmentArtifact.sourceHash == 0:
+    raise newException(ValueError,
+      "Motion Scene GPU images require an image shader artifact")
   result = GpuMotionSceneCanvas(host: host, namespace: namespace,
     sceneValue: scene, batch: newGpuMotionRectBatch())
   result.canvasValue = host.newGpuCanvasSurface(namespace, config)
   try:
     result.material = host.newGpuMotionRectMaterial(namespace,
       vertexArtifact, fragmentArtifact)
+    if imageFragmentArtifact.sourceHash != 0:
+      result.imageMaterial = host.newGpuMotionImageMaterial(namespace,
+        vertexArtifact, imageFragmentArtifact)
   except CatchableError:
+    if not result.imageMaterial.isNil:
+      result.imageMaterial.release()
+    if not result.material.isNil:
+      result.material.release()
     discard result.canvasValue.closeGpuCanvasSurface()
     raise
 
@@ -67,6 +79,9 @@ proc queueFrame*(renderer: GpuMotionSceneCanvas): bool {.discardable.} =
   if viewport.w != float32(config.width) or
       viewport.h != float32(config.height):
     raise newException(ValueError, "Motion Scene and GPU canvas dimensions differ")
+  if renderer.sceneValue.snapshot.hasImageObjects() and
+      renderer.imageMaterial.isClosed:
+    raise newException(ValueError, "Motion Scene GPU images require an image shader artifact")
   if renderer.queuedFrameNumber != 0:
     discard renderer.canvasValue.cancelGpuCanvasFrame(
       renderer.queuedFrameNumber)
@@ -85,7 +100,8 @@ proc queueFrame*(renderer: GpuMotionSceneCanvas): bool {.discardable.} =
     if renderer.batch.instanceBinding().instanceCount == 0:
       renderer.host.clearGpuGraphicsPass(renderer.namespace, pass)
     else:
-      discard renderer.material.submit(renderer.batch, pass)
+      discard submitMotionScene(renderer.material, renderer.imageMaterial,
+        renderer.batch, pass)
     queued = renderer.canvasValue.queueGpuCanvasFrame()
   finally:
     if renderer.host.isGpuFrameActive(frame):
@@ -112,5 +128,6 @@ proc close*(renderer: GpuMotionSceneCanvas): bool {.discardable.} =
     return false
   renderer.batch.release()
   renderer.material.release()
+  renderer.imageMaterial.release()
   renderer.closedValue = true
   true

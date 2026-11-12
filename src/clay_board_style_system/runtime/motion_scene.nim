@@ -2,7 +2,7 @@
 ## thread; immutable snapshots do not provide a cross-thread transport by themselves.
 import std/[algorithm, math, options, tables]
 
-import ../core/[color, geometry]
+import ../core/[color, geometry, raster_surface]
 import ../paint/path_geometry
 import ./canvas
 
@@ -14,7 +14,11 @@ type
 
   MotionShape* = enum
     msRoundedRect, msEllipse, msLine, msTriangle, msRing, msSector,
-    msAnnularSector
+    msAnnularSector, msImage
+
+  MotionImageAsset* = ref object
+    ## A copied RGBA8 image. The mutable RasterSurface stays private.
+    surface: RasterSurface
 
   MotionLineCap* = enum
     mlcButt, mlcSquare, mlcRound
@@ -28,6 +32,7 @@ type
     transform*: Affine2D
     opacity*, radius*: float32
     startAngle*, sweepAngle*: float32
+    image*: MotionImageAsset
     zIndex*: int32
     visible*, hitTestable*: bool
 
@@ -62,6 +67,35 @@ type
 
 proc `==`*(a, b: MotionObjectId): bool {.borrow.}
 proc `$`*(id: MotionObjectId): string {.borrow.}
+
+proc `==`*(a, b: MotionImageAsset): bool =
+  cast[pointer](a) == cast[pointer](b)
+
+proc newMotionImageAsset*(
+    width, height: int; rgbaPixels: openArray[uint8]
+): MotionImageAsset =
+  ## Copy pixels once; scene snapshots may share the resulting asset by identity.
+  let surface = newRasterSurface(width, height)
+  if rgbaPixels.len != surface.width * surface.height * RasterBytesPerPixel:
+    raise newException(ValueError, "motion image RGBA8 byte count is invalid")
+  surface.updateRegion(rasterRegion(0, 0, width, height), rgbaPixels)
+  discard surface.publish()
+  MotionImageAsset(surface: surface)
+
+proc width*(asset: MotionImageAsset): int =
+  if asset.isNil: 0 else: asset.surface.width
+
+proc height*(asset: MotionImageAsset): int =
+  if asset.isNil: 0 else: asset.surface.height
+
+proc imagePixels*(asset: MotionImageAsset): seq[uint8] =
+  ## Return a copy so callers cannot mutate a published image asset.
+  if asset.isNil:
+    raise newException(ValueError, "motion image asset cannot be nil")
+  let pixels = asset.surface.pixels
+  result = newSeq[uint8](pixels.len)
+  if pixels.len > 0:
+    copyMem(addr result[0], unsafeAddr pixels[0], pixels.len)
 
 proc finite(value: float32): bool =
   value.classify notin {fcNan, fcInf, fcNegInf}
@@ -130,6 +164,17 @@ proc motionAnnularSector*(
     transform: transform, opacity: opacity, radius: innerRadius,
     startAngle: startAngle, sweepAngle: sweepAngle, zIndex: zIndex,
     visible: visible, hitTestable: hitTestable)
+
+proc motionImage*(
+    id: MotionObjectId; bounds: Rect; image: MotionImageAsset;
+    transform = identityAffine2D(); opacity = 1.0'f32;
+    zIndex = 0'i32; visible = true; hitTestable = true
+): MotionObject =
+  ## The image is copied when its asset is created, not per scene snapshot.
+  MotionObject(id: id, shape: msImage, bounds: bounds,
+    color: rgb(1, 1, 1), transform: transform, opacity: opacity,
+    image: image, zIndex: zIndex, visible: visible,
+    hitTestable: hitTestable)
 
 proc motionLine*(
     id: MotionObjectId; startPoint, endPoint: Vec2; width: float32;
@@ -223,6 +268,12 @@ proc motionSceneSnapshot*(
     else:
       value.startAngle = 0
       value.sweepAngle = 0
+    if value.shape == msImage:
+      if value.image.isNil or value.color != rgb(1, 1, 1):
+        raise newException(ValueError,
+          "motion image requires an asset and untinted white color")
+    else:
+      value.image = nil
     for channel in [value.color.r, value.color.g, value.color.b, value.color.a]:
       if not channel.finite or channel < 0 or channel > 1:
         raise newException(ValueError, "motion scene colors must be in the unit interval")
@@ -231,7 +282,7 @@ proc motionSceneSnapshot*(
       value.transform = identityAffine2D()
     if value.shape notin {msRing, msAnnularSector}:
       value.radius = min(value.radius, min(value.bounds.w, value.bounds.h) * 0.5'f32)
-    if value.shape in {msEllipse, msTriangle, msSector}:
+    if value.shape in {msEllipse, msTriangle, msSector, msImage}:
       value.radius = 0.0'f32
     for corner in [vec2(value.bounds.x, value.bounds.y),
         vec2(value.bounds.x + value.bounds.w, value.bounds.y),
@@ -273,6 +324,14 @@ proc objectById*(snapshot: MotionSceneSnapshot; id: MotionObjectId): Option[Moti
 proc drawable(entry: MotionSceneEntry): bool =
   entry.value.visible and entry.value.opacity > 0 and entry.value.color.a > 0 and
     entry.value.bounds.w > 0 and entry.value.bounds.h > 0 and entry.inverse.isSome
+
+proc hasImageObjects*(snapshot: MotionSceneSnapshot): bool =
+  if snapshot.isNil:
+    return false
+  for entry in snapshot.entries:
+    if entry.value.shape == msImage and entry.drawable:
+      return true
+  false
 
 proc paintObjectAt*(
     snapshot: MotionSceneSnapshot; index: int
@@ -365,6 +424,9 @@ proc compile(snapshot: MotionSceneSnapshot): seq[CanvasCommand] =
       path.lineTo(vec2(value.bounds.x, value.bounds.y + value.bounds.h))
       path.closePath()
       target.fillPath(path, color)
+    of msImage:
+      target.drawRasterSurface(value.image.surface, value.bounds,
+        value.opacity)
     target.restore()
   target.popClip()
   target.commands
@@ -461,6 +523,8 @@ proc hitTest*(snapshot: MotionSceneSnapshot; position: Vec2): Option[MotionScene
       let x = (point.x.float64 - bounds.x.float64) / bounds.w.float64
       let y = (point.y.float64 - bounds.y.float64) / bounds.h.float64
       if x + y > 1.0: continue
+    of msImage:
+      discard
     return some(MotionSceneHit(id: entry.value.id,
       localPosition: vec2(point.x - bounds.x, point.y - bounds.y)))
 

@@ -11,6 +11,7 @@ type GpuMotionSceneFilterDisplay* = ref object
   sceneValue: MotionScene
   filtered: GpuFilterDisplay
   material: GpuMotionRectMaterial
+  imageMaterial: GpuMotionImageMaterial
   batch: GpuMotionRectBatch
   sourceTarget: GpuResourceHandle
   queuedRevision: uint64
@@ -42,7 +43,8 @@ proc hasUnqueuedRevision*(renderer: GpuMotionSceneFilterDisplay): bool =
 proc newGpuMotionSceneFilterDisplay*(
     host: GpuHost; namespace: GpuNamespaceId; scene: MotionScene;
     chain: GpuFilterChain; config: GpuDisplaySurfaceConfig;
-    vertexArtifact, fragmentArtifact: GpuShaderArtifact
+    vertexArtifact, fragmentArtifact: GpuShaderArtifact;
+    imageFragmentArtifact = GpuShaderArtifact()
 ): GpuMotionSceneFilterDisplay =
   if scene.isNil:
     raise newException(ValueError, "filtered Motion Scene requires a scene")
@@ -54,12 +56,18 @@ proc newGpuMotionSceneFilterDisplay*(
   if host.isNil or not chain.belongsTo(host, namespace):
     raise newException(ValueError,
       "filtered Motion Scene requires a chain on the same ready host namespace")
+  if scene.snapshot.hasImageObjects() and imageFragmentArtifact.sourceHash == 0:
+    raise newException(ValueError,
+      "Motion Scene GPU images require an image shader artifact")
   result = GpuMotionSceneFilterDisplay(host: host, namespace: namespace,
     sceneValue: scene, batch: newGpuMotionRectBatch())
   result.filtered = host.newGpuFilterDisplay(namespace, chain, config)
   try:
     result.material = host.newGpuMotionRectMaterial(namespace,
       vertexArtifact, fragmentArtifact)
+    if imageFragmentArtifact.sourceHash != 0:
+      result.imageMaterial = host.newGpuMotionImageMaterial(namespace,
+        vertexArtifact, imageFragmentArtifact)
     result.sourceTarget = host.createGpuRenderTarget(namespace,
       GpuRenderTargetDescriptor(width: config.width, height: config.height,
         format: gtfRgba8,
@@ -68,6 +76,8 @@ proc newGpuMotionSceneFilterDisplay*(
   except CatchableError:
     if not result.material.isNil:
       result.material.release()
+    if not result.imageMaterial.isNil:
+      result.imageMaterial.release()
     discard result.filtered.closeGpuFilterDisplay()
     raise
 
@@ -97,6 +107,9 @@ proc queueFrame*(renderer: GpuMotionSceneFilterDisplay): bool {.discardable.} =
       viewport.h != float32(config.height):
     raise newException(ValueError,
       "Motion Scene and filtered display dimensions differ")
+  if renderer.sceneValue.snapshot.hasImageObjects() and
+      renderer.imageMaterial.isClosed:
+    raise newException(ValueError, "Motion Scene GPU images require an image shader artifact")
   if not renderer.filtered.canQueueGpuFilterDisplayFrame():
     return false
   discard renderer.batch.sync(renderer.host, renderer.namespace,
@@ -112,7 +125,8 @@ proc queueFrame*(renderer: GpuMotionSceneFilterDisplay): bool {.discardable.} =
     if renderer.batch.instanceBinding().instanceCount == 0:
       renderer.host.clearGpuGraphicsPass(renderer.namespace, pass)
     else:
-      discard renderer.material.submit(renderer.batch, pass)
+      discard submitMotionScene(renderer.material, renderer.imageMaterial,
+        renderer.batch, pass)
     queued = renderer.filtered.queueGpuFilterDisplayFrame(
       renderer.sourceTarget, frame, gcamPremultiplied)
   finally:
@@ -140,5 +154,6 @@ proc close*(renderer: GpuMotionSceneFilterDisplay): bool {.discardable.} =
     discard renderer.host.releaseGpuResource(renderer.sourceTarget)
   renderer.batch.release()
   renderer.material.release()
+  renderer.imageMaterial.release()
   renderer.closedValue = true
   true

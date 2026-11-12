@@ -2227,6 +2227,8 @@ proc verifyMotionSceneCanvas(host: GpuHost;
     compileShader(gpuMotionRectVertexSource(), shaderc,
       shaderIncludes, workDirectory),
     compileShader(gpuMotionRectFragmentSource(), shaderc,
+      shaderIncludes, workDirectory),
+    compileShader(gpuMotionImageFragmentSource(), shaderc,
       shaderIncludes, workDirectory))
   proc drain() =
     for attempt in 0 ..< 32:
@@ -2340,6 +2342,20 @@ proc verifyMotionSceneCanvas(host: GpuHost;
     "GPU Canvas annular sector outside angle")
   annularPixels.requireRasterPixel(16, 14, 10, Pixel(),
     "GPU Canvas annular sector outside ellipse")
+  let image = newMotionImageAsset(1, 1, @[255'u8, 0, 0, 128])
+  discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), [
+    motionRect(MotionObjectId(10), rect(0, 0, 16, 16), rgb(0, 0, 1)),
+    motionImage(MotionObjectId(11), rect(2, 2, 8, 8), image),
+    motionRect(MotionObjectId(12), rect(5, 5, 3, 3), rgb(0, 1, 0))]))
+  doAssert renderer.queueFrame()
+  drain()
+  let imagePixels = renderer.canvas.rasterSurface.pixels
+  imagePixels.requireRasterPixel(16, 1, 1,
+    Pixel(blue: 255, alpha: 255), "GPU Canvas image backdrop")
+  imagePixels.requireRasterPixel(16, 3, 3,
+    Pixel(red: 128, blue: 127, alpha: 255), "GPU Canvas image alpha")
+  imagePixels.requireRasterPixel(16, 6, 6,
+    Pixel(green: 255, alpha: 255), "GPU Canvas image paint order")
   discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), []))
   doAssert renderer.queueFrame()
   drain()
