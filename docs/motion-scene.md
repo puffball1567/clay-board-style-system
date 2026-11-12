@@ -2,8 +2,9 @@
 
 The opt-in `runtime/motion_scene` module keeps many visual objects in one
 retained Canvas. The CPU reference path supports rounded rectangles, ellipses,
-stroked line segments, and triangles, plus affine transforms, opacity, z-order,
-viewport clipping, stable application IDs, and inverse-transform hit testing.
+elliptical rings, stroked line segments, and triangles, plus affine transforms,
+opacity, z-order, viewport clipping, stable application IDs, and
+inverse-transform hit testing.
 It runs without a GPU or window.
 
 ```nim
@@ -18,7 +19,9 @@ let initial = motionSceneSnapshot(size(320, 200), [
   motionLine(MotionObjectId(3), vec2(20, 100), vec2(220, 140), 6,
     rgb(0.1, 0.8, 0.4), cap = mlcRound, zIndex = 2),
   motionTriangle(MotionObjectId(4), vec2(240, 40), vec2(300, 80),
-    vec2(250, 120), rgb(1, 0.8, 0.2), zIndex = 3)
+    vec2(250, 120), rgb(1, 0.8, 0.2), zIndex = 3),
+  motionRing(MotionObjectId(5), rect(180, 80, 50, 50),
+    rgb(0.4, 0.8, 1), innerRadius = 0.55, zIndex = 4)
 ])
 let scene = newMotionScene(initial)
 let ui = initUiRoot()
@@ -46,8 +49,10 @@ application-controlled across replacement, reordering, and removal. A snapshot
 accepts at most 65,536 objects; oversized input, invalid colors, negative sizes,
 non-finite values, and overflowing transformed geometry fail before publication.
 Colors and opacity must be in `[0, 1]`. Radius is clamped to half the shortest
-side for rectangles; ellipses use their full bounds. `motionLine` takes two
-endpoints and a positive stroke width, with butt, square, and round caps; its
+side for rectangles; ellipses use their full bounds. `motionRing` uses elliptical
+bounds and an inner-to-outer radius ratio in `[0, 1)`; zero makes a filled
+ellipse. The ring hole is transparent and does not receive hits. `motionLine`
+takes two endpoints and a positive stroke width, with butt, square, and round caps; its
 default is round. A zero-length round or square segment produces a dot, while
 a zero-length butt segment is empty. `motionTriangle` takes three scene points
 in either winding order. A zero-area triangle retains its ID without producing
@@ -94,7 +99,8 @@ the scene until released and do not retain UI nodes.
 ## GPU shape batches
 
 Import `runtime/motion_scene_gpu` explicitly to pack drawable rounded rectangles,
-ellipses, lines, and triangles of a snapshot into five-vec4 GPU instance records:
+ellipses, rings, lines, and triangles of a snapshot into five-vec4 GPU instance
+records:
 
 ```nim
 import clay_board_style_system/runtime/motion_scene_gpu
