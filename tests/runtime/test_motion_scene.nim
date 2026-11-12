@@ -123,6 +123,50 @@ suite "CPU Motion Scene snapshots":
       discard snap([motionRing(MotionObjectId(3), rect(4, 2, 20, 20),
         rgb(0, 1, 0), innerRadius = -0.1)])
 
+  test "sectors paint and pick clockwise wedges with GPU angles":
+    let wedge = motionSector(MotionObjectId(2), rect(4, 2, 20, 20),
+      rgb(0, 1, 0), 0, PI.float32 * 0.5'f32,
+      transform = translationAffine2D(2, 0), zIndex = 1)
+    let scene = newMotionScene(snap([
+      item(1, rect(0, 0, 32, 24)), wedge]))
+    check scene.pixels.pixel(22, 16) == (0'u8, 255'u8, 0'u8)
+    check scene.pixels.pixel(10, 16) == (255'u8, 0'u8, 0'u8)
+    check scene.pixels.pixel(22, 8) == (255'u8, 0'u8, 0'u8)
+    check scene.hitTest(vec2(22, 16)).get.id == MotionObjectId(2)
+    check scene.hitTest(vec2(10, 16)).get.id == MotionObjectId(1)
+    check scene.hitTest(vec2(16, 12)).get.id == MotionObjectId(2)
+    let record = gpuMotionRectRecords(scene.snapshot)[1]
+    check record[0][3] == PI.float32 * 0.5'f32
+    check record[2] == [20'f32, 20, 0, 4]
+    let normalized = snap([motionSector(MotionObjectId(9),
+      rect(4, 2, 20, 20), rgb(0, 1, 0),
+      -PI.float32 * 0.5'f32, PI.float32 * 0.5'f32)])
+    check abs(normalized.objectAt(0).get.startAngle -
+      PI.float32 * 1.5'f32) < 0.0001'f32
+
+    let wrapped = motionSector(MotionObjectId(3), rect(4, 2, 20, 20),
+      rgb(0, 0, 1), PI.float32 * 1.5'f32, PI.float32)
+    discard scene.replaceSnapshot(snap([wrapped]))
+    check scene.pixels.pixel(20, 8).b == 255
+    check scene.pixels.pixel(20, 16).b == 255
+    check scene.pixels.pixel(8, 12).b == 0
+    check scene.hitTest(vec2(20, 8)).get.id == MotionObjectId(3)
+    check scene.hitTest(vec2(8, 12)).isNone
+    let full = motionSector(MotionObjectId(4), rect(4, 2, 20, 20),
+      rgb(0, 0, 1), PI.float32 * 0.25'f32, PI.float32 * 2.0'f32)
+    discard scene.replaceSnapshot(snap([full]))
+    check scene.pixels.pixel(8, 12).b == 255
+    check scene.hitTest(vec2(8, 12)).get.id == MotionObjectId(4)
+    expect ValueError:
+      discard snap([motionSector(MotionObjectId(5), rect(4, 2, 20, 20),
+        rgb(0, 1, 0), 0, 0)])
+    expect ValueError:
+      discard snap([motionSector(MotionObjectId(5), rect(4, 2, 20, 20),
+        rgb(0, 1, 0), 0, PI.float32 * 2.0'f32 + 0.01'f32)])
+    expect ValueError:
+      discard snap([motionSector(MotionObjectId(5), rect(4, 2, 20, 20),
+        rgb(0, 1, 0), NaN.float32, PI.float32)])
+
   test "line caps share CPU paint, picking, and GPU instance geometry":
     let roundLine = motionLine(MotionObjectId(1), vec2(4, 8), vec2(16, 8),
       4, rgb(0, 1, 0))

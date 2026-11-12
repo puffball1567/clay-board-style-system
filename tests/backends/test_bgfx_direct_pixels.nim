@@ -2299,6 +2299,32 @@ proc verifyMotionSceneCanvas(host: GpuHost;
     "GPU Canvas ring hole")
   ringPixels.requireRasterPixel(16, 2, 2, Pixel(),
     "GPU Canvas ring outside")
+  discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), [
+    motionSector(MotionObjectId(7), rect(2, 2, 12, 12),
+      rgba(0, 1, 0, 1), 0, PI.float32 * 0.5'f32)]))
+  doAssert renderer.queueFrame()
+  drain()
+  let sectorPixels = renderer.canvas.rasterSurface.pixels
+  sectorPixels.requireRasterPixel(16, 11, 10,
+    Pixel(green: 255, alpha: 255), "GPU Canvas sector inside")
+  sectorPixels.requireRasterPixel(16, 8, 8,
+    Pixel(green: 255, alpha: 255), "GPU Canvas sector center")
+  sectorPixels.requireRasterPixel(16, 5, 10, Pixel(),
+    "GPU Canvas sector outside angle")
+  sectorPixels.requireRasterPixel(16, 11, 5, Pixel(),
+    "GPU Canvas sector outside sweep")
+  discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), [
+    motionSector(MotionObjectId(8), rect(2, 2, 12, 12),
+      rgba(0, 0, 1, 1), PI.float32 * 1.5'f32, PI.float32)]))
+  doAssert renderer.queueFrame()
+  drain()
+  let wrappedSectorPixels = renderer.canvas.rasterSurface.pixels
+  wrappedSectorPixels.requireRasterPixel(16, 11, 5,
+    Pixel(blue: 255, alpha: 255), "GPU Canvas wrapped sector before zero")
+  wrappedSectorPixels.requireRasterPixel(16, 11, 11,
+    Pixel(blue: 255, alpha: 255), "GPU Canvas wrapped sector after zero")
+  wrappedSectorPixels.requireRasterPixel(16, 5, 8, Pixel(),
+    "GPU Canvas wrapped sector outside")
   discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), []))
   doAssert renderer.queueFrame()
   drain()

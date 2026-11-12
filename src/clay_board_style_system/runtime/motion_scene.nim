@@ -7,12 +7,13 @@ import ../paint/path_geometry
 import ./canvas
 
 const maxMotionSceneObjects* = 65_536
+const motionFullTurn = PI.float32 * 2.0'f32
 
 type
   MotionObjectId* = distinct uint64
 
   MotionShape* = enum
-    msRoundedRect, msEllipse, msLine, msTriangle, msRing
+    msRoundedRect, msEllipse, msLine, msTriangle, msRing, msSector
 
   MotionLineCap* = enum
     mlcButt, mlcSquare, mlcRound
@@ -25,6 +26,7 @@ type
     color*: Color
     transform*: Affine2D
     opacity*, radius*: float32
+    startAngle*, sweepAngle*: float32
     zIndex*: int32
     visible*, hitTestable*: bool
 
@@ -103,6 +105,18 @@ proc motionRing*(
   MotionObject(id: id, shape: msRing, bounds: bounds, color: color,
     transform: transform, opacity: opacity, radius: innerRadius,
     zIndex: zIndex, visible: visible, hitTestable: hitTestable)
+
+proc motionSector*(
+    id: MotionObjectId; bounds: Rect; color: Color;
+    startAngle, sweepAngle: float32;
+    transform = identityAffine2D(); opacity = 1.0'f32;
+    zIndex = 0'i32; visible = true; hitTestable = true
+): MotionObject =
+  ## An elliptical sector. Angles are radians, increasing clockwise in scene coordinates.
+  MotionObject(id: id, shape: msSector, bounds: bounds, color: color,
+    transform: transform, opacity: opacity, startAngle: startAngle,
+    sweepAngle: sweepAngle, zIndex: zIndex, visible: visible,
+    hitTestable: hitTestable)
 
 proc motionLine*(
     id: MotionObjectId; startPoint, endPoint: Vec2; width: float32;
@@ -185,6 +199,16 @@ proc motionSceneSnapshot*(
         value.opacity < 0 or value.opacity > 1 or not value.radius.finite or
         value.radius < 0 or (value.shape == msRing and value.radius >= 1):
       raise newException(ValueError, "invalid motion scene geometry or opacity")
+    if value.shape == msSector:
+      if not value.startAngle.finite or not value.sweepAngle.finite or
+          value.sweepAngle <= 0 or value.sweepAngle > motionFullTurn:
+        raise newException(ValueError, "invalid motion scene sector angles")
+      let turn = motionFullTurn.float64
+      let start = value.startAngle.float64
+      value.startAngle = (start - floor(start / turn) * turn).float32
+    else:
+      value.startAngle = 0
+      value.sweepAngle = 0
     for channel in [value.color.r, value.color.g, value.color.b, value.color.a]:
       if not channel.finite or channel < 0 or channel > 1:
         raise newException(ValueError, "motion scene colors must be in the unit interval")
@@ -193,7 +217,7 @@ proc motionSceneSnapshot*(
       value.transform = identityAffine2D()
     if value.shape != msRing:
       value.radius = min(value.radius, min(value.bounds.w, value.bounds.h) * 0.5'f32)
-    if value.shape in {msEllipse, msTriangle}:
+    if value.shape in {msEllipse, msTriangle, msSector}:
       value.radius = 0.0'f32
     for corner in [vec2(value.bounds.x, value.bounds.y),
         vec2(value.bounds.x + value.bounds.w, value.bounds.y),
@@ -290,6 +314,24 @@ proc compile(snapshot: MotionSceneSnapshot): seq[CanvasCommand] =
         target.fillPath(path, color, pfrEvenOdd)
       else:
         target.fillPath(path, color)
+    of msSector:
+      var path = initPath2D()
+      let center = vec2(value.bounds.x + value.bounds.w * 0.5'f32,
+        value.bounds.y + value.bounds.h * 0.5'f32)
+      if value.sweepAngle == motionFullTurn:
+        path.ellipse(center, value.bounds.w * 0.5'f32,
+          value.bounds.h * 0.5'f32, 0.0'f32,
+          0.0'f32, motionFullTurn)
+      else:
+        path.moveTo(center)
+        path.lineTo(vec2(
+          center.x + cos(value.startAngle) * value.bounds.w * 0.5'f32,
+          center.y + sin(value.startAngle) * value.bounds.h * 0.5'f32))
+        path.ellipse(center, value.bounds.w * 0.5'f32,
+          value.bounds.h * 0.5'f32, 0.0'f32,
+          value.startAngle, value.startAngle + value.sweepAngle)
+      path.closePath()
+      target.fillPath(path, color)
     of msTriangle:
       var path = initPath2D()
       path.moveTo(vec2(value.bounds.x, value.bounds.y))
@@ -382,6 +424,17 @@ proc hitTest*(snapshot: MotionSceneSnapshot; position: Vec2): Option[MotionScene
           (entry.value.shape == msRing and
            distanceSquared < entry.value.radius.float64 * entry.value.radius.float64):
         continue
+    of msSector:
+      let x = (point.x.float64 - bounds.x.float64) / bounds.w.float64 * 2.0 - 1.0
+      let y = (point.y.float64 - bounds.y.float64) / bounds.h.float64 * 2.0 - 1.0
+      let distanceSquared = x * x + y * y
+      if distanceSquared > 1.0: continue
+      if distanceSquared > 0.0 and
+          entry.value.sweepAngle < motionFullTurn:
+        let turn = motionFullTurn.float64
+        let delta = arctan2(y, x) - entry.value.startAngle.float64
+        let relative = delta - floor(delta / turn) * turn
+        if relative > entry.value.sweepAngle.float64: continue
     of msTriangle:
       let x = (point.x.float64 - bounds.x.float64) / bounds.w.float64
       let y = (point.y.float64 - bounds.y.float64) / bounds.h.float64
