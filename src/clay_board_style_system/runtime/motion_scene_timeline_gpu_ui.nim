@@ -1,10 +1,12 @@
 ## Motion Timeline deadlines and GPU Canvas completion share one UI scheduler.
 import std/[math, options]
 
-import ./[frame_scheduler, gpu_canvas, gpu_direct_surface, invalidation,
+import ./[frame_scheduler, gpu_canvas, gpu_direct_surface,
+  gpu_display_surface, invalidation,
   motion_scene_gpu_canvas,
   motion_scene_gpu_canvas_ui, motion_scene_gpu_direct,
-  motion_scene_gpu_direct_ui, motion_scene_timeline]
+  motion_scene_gpu_direct_ui, motion_scene_gpu_filter_display,
+  motion_scene_gpu_filter_display_ui, motion_scene_timeline]
 
 const gpuMotionReadbackPollSeconds* = 1.0 / 60.0
 const gpuMotionDirectPollSeconds* = 1.0 / 60.0
@@ -28,6 +30,21 @@ proc requestDirectPoll(
 ) =
   if view.renderer.surface().pendingFrameCount() > 0 or
       view.renderer.hasUnqueuedRevision():
+    let next = nowSeconds + gpuMotionDirectPollSeconds
+    scheduler.requestDeadline(
+      if next.classify in {fcInf, fcNegInf}: nowSeconds else: next)
+
+proc requestFilteredPoll(
+    view: GpuMotionSceneFilterDisplayHandle;
+    scheduler: var FrameScheduler; nowSeconds: float64
+) =
+  let display = view.renderer.displaySurface()
+  let pending =
+    (display.path in {gdspDirect, gdspHybrid} and
+      display.directSurface().pendingFrameCount() > 0) or
+    (display.path in {gdspReadback, gdspHybrid} and
+      display.readbackSurface().pendingFrameCount() > 0)
+  if pending or view.renderer.hasUnqueuedRevision():
     let next = nowSeconds + gpuMotionDirectPollSeconds
     scheduler.requestDeadline(
       if next.classify in {fcInf, fcNegInf}: nowSeconds else: next)
@@ -93,3 +110,31 @@ proc collectGpuFrame*(
   if result:
     scheduler.markDirty(ddPaint)
   view.requestDirectPoll(scheduler, nowSeconds)
+
+proc advance*(
+    timeline: MotionTimeline; view: GpuMotionSceneFilterDisplayHandle;
+    scheduler: var FrameScheduler; nowSeconds: float64
+): bool {.discardable.} =
+  if timeline.isNil or view.isNil or timeline.scene != view.renderer.scene:
+    raise newException(ValueError, "timeline and GPU view must refer to the same scene")
+  if not view.valid:
+    discard timeline.cancel()
+    return false
+  var local = initFrameScheduler()
+  discard timeline.advance(local, nowSeconds)
+  result = view.publish()
+  if local.nextDeadline.isSome:
+    scheduler.requestDeadline(local.nextDeadline.get)
+  view.requestFilteredPoll(scheduler, nowSeconds)
+
+proc collectGpuFrame*(
+    view: GpuMotionSceneFilterDisplayHandle;
+    scheduler: var FrameScheduler; nowSeconds: float64
+): bool {.discardable.} =
+  nowSeconds.requireFiniteTime()
+  if not view.valid:
+    return false
+  result = view.collectGpuFrame()
+  if result:
+    scheduler.markDirty(ddPaint)
+  view.requestFilteredPoll(scheduler, nowSeconds)
