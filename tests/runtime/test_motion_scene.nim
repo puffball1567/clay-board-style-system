@@ -201,6 +201,33 @@ suite "CPU Motion Scene snapshots":
       discard snap([motionAnnularSector(MotionObjectId(4),
         rect(4, 2, 20, 20), rgb(0, 1, 0), 0, 0)])
 
+  test "image assets copy RGBA8 pixels and paint in scene order":
+    var source = @[
+      255'u8, 0, 0, 255, 0, 255, 0, 255,
+      0'u8, 0, 255, 255, 0, 0, 0, 0
+    ]
+    let asset = newMotionImageAsset(2, 2, source)
+    source[0] = 0
+    var inspected = asset.imagePixels()
+    inspected[0] = 0
+    check asset.imagePixels()[0] == 255
+    check asset.width == 2
+    check asset.height == 2
+    let scene = newMotionScene(snap([
+      item(1, rect(0, 0, 32, 24), rgb(1, 1, 1)),
+      motionImage(MotionObjectId(2), rect(4, 4, 8, 8), asset,
+        zIndex = 1)]))
+    check scene.snapshot.hasImageObjects()
+    check scene.pixels.pixel(5, 5) == (255'u8, 0'u8, 0'u8)
+    check scene.pixels.pixel(10, 5) == (0'u8, 255'u8, 0'u8)
+    check scene.pixels.pixel(5, 10) == (0'u8, 0'u8, 255'u8)
+    check scene.pixels.pixel(10, 10) == (255'u8, 255'u8, 255'u8)
+    check scene.hitTest(vec2(10, 10)).get.id == MotionObjectId(2)
+    expect ValueError:
+      discard newMotionImageAsset(2, 2, @[0'u8])
+    expect ValueError:
+      discard snap([motionImage(MotionObjectId(3), rect(0, 0, 2, 2), nil)])
+
   test "line caps share CPU paint, picking, and GPU instance geometry":
     let roundLine = motionLine(MotionObjectId(1), vec2(4, 8), vec2(16, 8),
       4, rgb(0, 1, 0))

@@ -10,6 +10,7 @@ type GpuMotionSceneDirect* = ref object
   sceneValue: MotionScene
   surfaceValue: GpuDirectSurface
   material: GpuMotionRectMaterial
+  imageMaterial: GpuMotionImageMaterial
   batch: GpuMotionRectBatch
   targets: seq[GpuResourceHandle]
   queuedRevision: uint64
@@ -42,7 +43,8 @@ proc hasUnqueuedRevision*(renderer: GpuMotionSceneDirect): bool =
 proc newGpuMotionSceneDirect*(
     host: GpuHost; namespace: GpuNamespaceId; scene: MotionScene;
     config: GpuDirectSurfaceConfig;
-    vertexArtifact, fragmentArtifact: GpuShaderArtifact
+    vertexArtifact, fragmentArtifact: GpuShaderArtifact;
+    imageFragmentArtifact = GpuShaderArtifact()
 ): GpuMotionSceneDirect =
   if scene.isNil:
     raise newException(ValueError, "Motion Scene GPU direct surface requires a scene")
@@ -53,6 +55,9 @@ proc newGpuMotionSceneDirect*(
   if config.format != gtfRgba8 or config.alphaMode != gcamPremultiplied:
     raise newException(ValueError,
       "Motion Scene GPU direct surface requires premultiplied RGBA8 pixels")
+  if scene.snapshot.hasImageObjects() and imageFragmentArtifact.sourceHash == 0:
+    raise newException(ValueError,
+      "Motion Scene GPU images require an image shader artifact")
   if host.isNil or not host.isReady() or
       not host.backendInfo().directRenderTargetPresentationSupported:
     raise newException(GpuHostError,
@@ -63,6 +68,9 @@ proc newGpuMotionSceneDirect*(
   try:
     result.material = host.newGpuMotionRectMaterial(namespace,
       vertexArtifact, fragmentArtifact)
+    if imageFragmentArtifact.sourceHash != 0:
+      result.imageMaterial = host.newGpuMotionImageMaterial(namespace,
+        vertexArtifact, imageFragmentArtifact)
     let surfaceConfig = result.surfaceValue.config()
     for index in 0 ..< surfaceConfig.bufferCount:
       result.targets.add host.createGpuRenderTarget(namespace,
@@ -77,6 +85,8 @@ proc newGpuMotionSceneDirect*(
       discard host.releaseGpuResource(target)
     if not result.material.isNil:
       result.material.release()
+    if not result.imageMaterial.isNil:
+      result.imageMaterial.release()
     discard result.surfaceValue.closeGpuDirectSurface()
     raise
 
@@ -93,6 +103,9 @@ proc queueFrame*(renderer: GpuMotionSceneDirect): bool {.discardable.} =
   if viewport.w != float32(config.width) or
       viewport.h != float32(config.height):
     raise newException(ValueError, "Motion Scene and GPU direct surface dimensions differ")
+  if renderer.sceneValue.snapshot.hasImageObjects() and
+      renderer.imageMaterial.isClosed:
+    raise newException(ValueError, "Motion Scene GPU images require an image shader artifact")
   if renderer.hasQueuedFrame:
     discard renderer.surfaceValue.cancelGpuDirectSurfaceFrame(
       renderer.queuedTarget)
@@ -120,7 +133,8 @@ proc queueFrame*(renderer: GpuMotionSceneDirect): bool {.discardable.} =
     if renderer.batch.instanceBinding().instanceCount == 0:
       renderer.host.clearGpuGraphicsPass(renderer.namespace, pass)
     else:
-      discard renderer.material.submit(renderer.batch, pass)
+      discard submitMotionScene(renderer.material, renderer.imageMaterial,
+        renderer.batch, pass)
     queued = renderer.surfaceValue.queueGpuDirectSurfaceFrame(target, frame)
   finally:
     if renderer.host.isGpuFrameActive(frame):
@@ -147,5 +161,6 @@ proc close*(renderer: GpuMotionSceneDirect): bool {.discardable.} =
     discard renderer.host.releaseGpuResource(target)
   renderer.batch.release()
   renderer.material.release()
+  renderer.imageMaterial.release()
   renderer.closedValue = true
   true

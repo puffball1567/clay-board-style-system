@@ -2,7 +2,8 @@
 
 The opt-in `runtime/motion_scene` module keeps many visual objects in one
 retained Canvas. The CPU reference path supports rounded rectangles, ellipses,
-elliptical rings, sectors, annular sectors, stroked line segments, and triangles,
+elliptical rings, sectors, annular sectors, stroked line segments, triangles,
+and RGBA8 images,
 plus affine transforms, opacity, z-order, viewport clipping, stable IDs, and
 inverse-transform hit testing.
 It runs without a GPU or window.
@@ -75,6 +76,12 @@ ellipse and angular limits.
 radius ratio in `[0, 1)`. A zero ratio fills the center; a full turn forms a
 ring. Its hole remains transparent and does not receive hits.
 
+Create an image once with `newMotionImageAsset(width, height, rgbaPixels)` and
+place it with `motionImage(id, bounds, asset)`. Pixel input is copied; the asset
+can be shared by many snapshots and objects. `imagePixels()` returns a copy.
+Images use nearest-neighbor scaling, object opacity, transforms, and scene paint
+order. Picking uses the rectangular bounds, including transparent pixels.
+
 Paint order is ascending z-index, with authoring order breaking ties. Picking
 walks the same order backwards, respects rounded corners, ellipse boundaries,
 line caps, triangle edges, and the scene viewport. Returned coordinates are
@@ -115,7 +122,7 @@ the scene until released and do not retain UI nodes.
 ## GPU shape batches
 
 Import `runtime/motion_scene_gpu` explicitly to pack drawable rounded rectangles,
-ellipses, rings, sectors, annular sectors, lines, and triangles of a snapshot
+ellipses, rings, sectors, annular sectors, lines, triangles, and images of a snapshot
 into five-vec4 GPU instance
 records:
 
@@ -147,6 +154,17 @@ snapshot's viewport and owns its frame and render target. `submit` returns
 the application's responsibility. The same shader pair is compiled for OpenGL
 and Vulkan, and the OpenGL pixel fixture compares its output with CPU Motion
 Scene rendering.
+
+For image objects, also compile `gpuMotionImageFragmentSource()` and create a
+`GpuMotionImageMaterial` with the same vertex artifact. Call
+`submitMotionScene(shapeMaterial, imageMaterial, batch, pass)` inside the frame.
+The batch uploads one immutable texture per distinct image asset and reuses it
+across scene revisions. Consecutive objects sharing an image use one draw; all
+shape and image draws share one graphics pass in paint order. A snapshot may
+contain up to 64 distinct drawable image assets. The Canvas, direct, and
+filtered display Motion Scene renderers accept the image fragment artifact as
+an optional final constructor argument; it is required when the scene contains
+images. Release the image material after the batch.
 
 The material writes premultiplied RGBA into its target, including when
 translucent shapes overlap. Use a transparent clear for a scene layer and

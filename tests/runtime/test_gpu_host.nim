@@ -133,6 +133,7 @@ type MockGpuContext = ref object of GpuBackendContext
   lastViewId: uint16
   lastGraphicsPass: GpuGraphicsPassDescriptor
   lastDrawCommand: GpuDrawCommand
+  drawCommands: seq[GpuDrawCommand]
   lastComputeCommand: GpuComputeCommand
   lastBindings: GpuBackendBindingSet
   lastCopyRegion: GpuTextureCopyRegion
@@ -496,6 +497,7 @@ proc submitDraw(
   inc state.drawSubmits
   state.lastViewId = viewId
   state.lastDrawCommand = command
+  state.drawCommands.add command
   state.lastBindings = bindings
   state.lastSubmissionResources = @[
     pipeline.backendResourceIdValue(),
@@ -10642,6 +10644,73 @@ suite "GPU instanced draws":
     material.release()
     check material.isClosed
     material.release()
+    check host.gpuNamespaceUsage(namespace).resourceCount == 0
+    check host.closeGpuNamespace(namespace)
+    host.close()
+
+  test "Motion Scene images and shapes share one ordered GPU pass":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let namespace = host.createGpuNamespace("motion-images", GpuResourceBudget(
+      persistentBytes: 65536, workUnitsPerFrame: 8, maxResources: 16))
+    proc artifact(source: GpuShaderSource): GpuShaderArtifact =
+      GpuShaderArtifact(
+        descriptor: GpuShaderDescriptor(stage: source.stage),
+        bindingLayout: source.gpuShaderBindingLayout(),
+        bytecode: @[1'u8], sourceHash: source.gpuShaderSourceHash())
+    let vertex = artifact(gpuMotionRectVertexSource())
+    let shapes = host.newGpuMotionRectMaterial(namespace, vertex,
+      artifact(gpuMotionRectFragmentSource()))
+    let images = host.newGpuMotionImageMaterial(namespace, vertex,
+      artifact(gpuMotionImageFragmentSource()))
+    let target = host.createGpuRenderTarget(namespace,
+      renderTargetDescriptor(width = 16, height = 16))
+    let asset = newMotionImageAsset(1, 1, @[255'u8, 0, 0, 128])
+    let scene = newMotionScene(motionSceneSnapshot(size(16, 16), [
+      motionRect(MotionObjectId(1), rect(0, 0, 16, 16), rgb(0, 0, 1)),
+      motionImage(MotionObjectId(2), rect(2, 2, 4, 4), asset),
+      motionImage(MotionObjectId(3), rect(6, 2, 4, 4), asset),
+      motionRect(MotionObjectId(4), rect(4, 4, 4, 4), rgb(0, 1, 0))]))
+    let batch = newGpuMotionRectBatch()
+    check batch.sync(host, namespace, scene)
+    check context.textureCreates == 1
+    check context.lastTextureDataBytes == 4
+    check context.lastTexture.access == gtaStatic
+    let pass = graphicsPass(16, 16, target)
+    let frame = host.beginGpuFrame()
+    check submitMotionScene(shapes, images, batch, pass)
+    host.endGpuFrame(frame)
+    check context.graphicsPassBegins == 1
+    check context.drawSubmits == 3
+    check context.drawCommands[0].instances.firstInstance == 0
+    check context.drawCommands[0].instances.instanceCount == 1
+    check context.drawCommands[1].instances.firstInstance == 1
+    check context.drawCommands[1].instances.instanceCount == 2
+    check context.drawCommands[1].bindings.textures.len == 1
+    check context.drawCommands[2].bindings.textures.len == 0
+    check context.lastDrawCommand.instances.firstInstance == 3
+    check context.lastDrawCommand.instances.instanceCount == 1
+    discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), [
+      motionImage(MotionObjectId(2), rect(3, 2, 4, 4), asset)]))
+    check batch.sync(host, namespace, scene)
+    check context.textureCreates == 1
+    let second = host.beginGpuFrame()
+    check submitMotionScene(shapes, images, batch, pass)
+    host.endGpuFrame(second)
+    check context.drawSubmits == 4
+    let replacement = newMotionImageAsset(1, 1, @[0'u8, 255, 0, 255])
+    discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), [
+      motionImage(MotionObjectId(2), rect(3, 2, 4, 4), replacement)]))
+    check batch.sync(host, namespace, scene)
+    check context.textureCreates == 2
+    let third = host.beginGpuFrame()
+    check submitMotionScene(shapes, images, batch, pass)
+    host.endGpuFrame(third)
+    check context.drawSubmits == 5
+    batch.release()
+    check host.releaseGpuResource(target)
+    images.release()
+    shapes.release()
     check host.gpuNamespaceUsage(namespace).resourceCount == 0
     check host.closeGpuNamespace(namespace)
     host.close()

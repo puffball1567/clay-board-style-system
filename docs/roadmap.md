@@ -1336,19 +1336,20 @@ contract and do not duplicate the motion engine.
 
 ### CSS-Like Motion Scene
 
-Status: `CPU snapshots and typed timelines implemented; rounded-rectangle,
-ellipse, ring, sector, annular sector, line, and triangle GPU instance upload,
-UI Canvas, and timeline scheduling implemented`
+Status: `CPU snapshots and typed timelines implemented; shape and image GPU
+instance upload, UI Canvas, direct and filtered display, and timeline
+scheduling implemented`
 
 The opt-in CPU reference now stores bounded immutable rectangle, ellipse, ring,
-sector, annular sector, line, and triangle batches inside one Canvas, with stable
+sector, annular sector, line, triangle, and image batches inside one Canvas, with stable
 IDs, affine/opacity/z-order properties, viewport clipping, inverse-transform
 picking, deterministic replacement, and cancellable
 latest-request tokens. UI publication dirties only the Canvas's paint; a static
 scene requests no continuous frames. Typed numeric tracks reuse AnimationClock
 and FrameScheduler for easing, delay, finite repeats, pause/resume, and reduced
-motion. See [CPU Motion Scene](motion-scene.md) for the current API and remaining
-primitive and backend work.
+motion. The GPU path keeps image textures across revisions and submits mixed
+shapes and images in paint order. See [CPU Motion Scene](motion-scene.md) for the
+current API and remaining primitive and backend work.
 
 CBSS will provide a retained Motion Scene inside Canvas for motion graphics,
 generative design, high-density charts, particles, sprites, and other visuals
