@@ -2346,7 +2346,10 @@ proc verifyMotionSceneCanvas(host: GpuHost;
   discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), [
     motionRect(MotionObjectId(10), rect(0, 0, 16, 16), rgb(0, 0, 1)),
     motionImage(MotionObjectId(11), rect(2, 2, 8, 8), image),
-    motionRect(MotionObjectId(12), rect(5, 5, 3, 3), rgb(0, 1, 0))]))
+    motionRect(MotionObjectId(12), rect(5, 5, 3, 3), rgb(0, 1, 0)),
+    motionPolygon(MotionObjectId(13),
+      @[vec2(11, 11), vec2(15, 11), vec2(15, 15), vec2(11, 15)],
+      rgba(1, 1, 0, 0.5))]))
   doAssert renderer.queueFrame()
   drain()
   let imagePixels = renderer.canvas.rasterSurface.pixels
@@ -2356,6 +2359,9 @@ proc verifyMotionSceneCanvas(host: GpuHost;
     Pixel(red: 128, blue: 127, alpha: 255), "GPU Canvas image alpha")
   imagePixels.requireRasterPixel(16, 6, 6,
     Pixel(green: 255, alpha: 255), "GPU Canvas image paint order")
+  imagePixels.requireRasterPixel(16, 12, 12,
+    Pixel(red: 128, green: 128, blue: 127, alpha: 255),
+    "GPU Canvas convex polygon shared diagonal")
   discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), []))
   doAssert renderer.queueFrame()
   drain()

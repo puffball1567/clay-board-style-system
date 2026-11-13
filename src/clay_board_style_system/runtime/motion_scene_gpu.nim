@@ -58,6 +58,26 @@ proc gpuMotionRectRecords*(snapshot: MotionSceneSnapshot): seq[GpuMotionRectReco
     if candidate.isNone:
       continue
     let item = candidate.get
+    if item.shape == msPolygon:
+      let vertices = item.polygon.polygonVertices()
+      if result.len > maxMotionSceneObjects - (vertices.len - 2):
+        raise newException(ValueError,
+          "motion scene GPU instance limit exceeded")
+      let origin = item.transform.transformPoint(vertices[0])
+      for index in 1 ..< vertices.len - 1:
+        let second = item.transform.transformPoint(vertices[index])
+        let third = item.transform.transformPoint(vertices[index + 1])
+        result.add [
+          [second.x - origin.x, third.x - origin.x, origin.x, 0'f32],
+          [second.y - origin.y, third.y - origin.y, origin.y, 0'f32],
+          [1'f32, 1'f32, (if index > 1: 1'f32 else: 0'f32), 2'f32],
+          [item.color.r, item.color.g, item.color.b,
+            item.color.a * item.opacity],
+          [inverseWidth, inverseHeight, 0'f32, 0'f32]
+        ]
+      continue
+    if result.len >= maxMotionSceneObjects:
+      raise newException(ValueError, "motion scene GPU instance limit exceeded")
     let origin = item.transform.transformPoint(
       vec2(item.bounds.x, item.bounds.y)
     )
@@ -151,16 +171,18 @@ proc sync*(
       continue
     let item = candidate.get
     let image = if item.shape == msImage: item.image else: nil
+    let runCount = if item.shape == msPolygon:
+      uint32(item.polygon.polygonVertexCount() - 2) else: 1'u32
     if image != nil and image notin nextAssets:
       if nextAssets.len >= 64:
         raise newException(ValueError, "motion scene GPU image asset limit exceeded")
       nextAssets.add image
     if nextRuns.len > 0 and nextRuns[^1].image == image:
-      inc nextRuns[^1].count
+      nextRuns[^1].count += runCount
     else:
       nextRuns.add GpuMotionDrawRun(first: recordIndex,
-        count: 1, image: image)
-    inc recordIndex
+        count: runCount, image: image)
+    recordIndex += runCount
   var created: seq[GpuResourceHandle]
   try:
     for asset in nextAssets:
@@ -282,7 +304,8 @@ void main()
         distanceSquared < v_texcoord1.z * v_texcoord1.z) { discard; }
   } else if (v_texcoord1.w > 1.5) {
     vec2 normalized = v_texcoord0 / v_texcoord1.xy;
-    if (normalized.x + normalized.y > 1.0) { discard; }
+    if (normalized.x + normalized.y > 1.0 ||
+        (v_texcoord1.z > 0.5 && normalized.y <= 0.0)) { discard; }
   } else if (v_texcoord1.w > 0.5) {
     vec2 normalized = (v_texcoord0 - halfSize) / halfSize;
     if (dot(normalized, normalized) > 1.0) { discard; }

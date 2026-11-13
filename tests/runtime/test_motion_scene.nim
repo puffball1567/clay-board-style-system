@@ -228,6 +228,50 @@ suite "CPU Motion Scene snapshots":
     expect ValueError:
       discard snap([motionImage(MotionObjectId(3), rect(0, 0, 2, 2), nil)])
 
+  test "convex polygons paint and pick as one object with triangle GPU records":
+    var contour = @[vec2(10, 2), vec2(18, 10), vec2(10, 18), vec2(2, 10)]
+    let polygon = motionPolygon(MotionObjectId(1), contour, rgb(0, 1, 0))
+    contour[0] = vec2(0, 0)
+    check polygon.polygon.polygonVertices()[0] == vec2(10, 2)
+    var inspected = polygon.polygon.polygonVertices()
+    inspected[0] = vec2(0, 0)
+    check polygon.polygon.polygonVertices()[0] == vec2(10, 2)
+    let scene = newMotionScene(snap([polygon]))
+    check scene.pixels.pixel(10, 10) == (0'u8, 255'u8, 0'u8)
+    check scene.pixels.pixel(3, 3).g == 0
+    check scene.hitTest(vec2(10, 10)).get.id == MotionObjectId(1)
+    check scene.hitTest(vec2(3, 3)).isNone
+    let records = gpuMotionRectRecords(scene.snapshot)
+    check records.len == 2
+    check records[0][2] == [1'f32, 1, 0, 2]
+    check records[0][0] == [8'f32, 0, 10, 0]
+    check records[0][1] == [8'f32, 16, 2, 0]
+    check records[1][0] == [0'f32, -8, 10, 0]
+    check records[1][2] == [1'f32, 1, 1, 2]
+    var translated = polygon
+    translated.transform = translationAffine2D(5, 0)
+    let moved = newMotionScene(snap([translated]))
+    check moved.pixels.pixel(15, 10) == (0'u8, 255'u8, 0'u8)
+    check moved.hitTest(vec2(15, 10)).get.localPosition == vec2(8, 8)
+    check gpuMotionRectRecords(moved.snapshot)[0][0][2] == 15
+    check not scene.replaceSnapshot(snap([motionPolygon(MotionObjectId(1),
+      polygon.polygon.polygonVertices(), rgb(0, 1, 0))]))
+    expect ValueError:
+      discard motionPolygon(MotionObjectId(2),
+        @[vec2(0, 0), vec2(4, 0)], rgb(1, 0, 0))
+    expect ValueError:
+      discard motionPolygon(MotionObjectId(2),
+        @[vec2(0, 0), vec2(4, 0), vec2(2, 1), vec2(4, 4), vec2(0, 4)],
+        rgb(1, 0, 0))
+    var mismatched = polygon
+    mismatched.bounds = rect(0, 0, 100, 100)
+    expect ValueError:
+      discard snap([mismatched])
+    expect ValueError:
+      discard snap([MotionObject(id: MotionObjectId(2), shape: msPolygon,
+        bounds: rect(0, 0, 4, 4), color: rgb(1, 0, 0),
+        transform: identityAffine2D(), opacity: 1, visible: true)])
+
   test "line caps share CPU paint, picking, and GPU instance geometry":
     let roundLine = motionLine(MotionObjectId(1), vec2(4, 8), vec2(16, 8),
       4, rgb(0, 1, 0))

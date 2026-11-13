@@ -14,11 +14,15 @@ type
 
   MotionShape* = enum
     msRoundedRect, msEllipse, msLine, msTriangle, msRing, msSector,
-    msAnnularSector, msImage
+    msAnnularSector, msImage, msPolygon
 
   MotionImageAsset* = ref object
     ## A copied RGBA8 image. The mutable RasterSurface stays private.
     surface: RasterSurface
+
+  MotionPolygonAsset* = ref object
+    ## A copied strictly convex contour in local scene coordinates.
+    vertices: seq[Vec2]
 
   MotionLineCap* = enum
     mlcButt, mlcSquare, mlcRound
@@ -33,6 +37,7 @@ type
     opacity*, radius*: float32
     startAngle*, sweepAngle*: float32
     image*: MotionImageAsset
+    polygon*: MotionPolygonAsset
     zIndex*: int32
     visible*, hitTestable*: bool
 
@@ -71,6 +76,11 @@ proc `$`*(id: MotionObjectId): string {.borrow.}
 proc `==`*(a, b: MotionImageAsset): bool =
   cast[pointer](a) == cast[pointer](b)
 
+proc `==`*(a, b: MotionPolygonAsset): bool =
+  if a.isNil or b.isNil:
+    return a.isNil and b.isNil
+  a.vertices == b.vertices
+
 proc newMotionImageAsset*(
     width, height: int; rgbaPixels: openArray[uint8]
 ): MotionImageAsset =
@@ -96,6 +106,17 @@ proc imagePixels*(asset: MotionImageAsset): seq[uint8] =
   result = newSeq[uint8](pixels.len)
   if pixels.len > 0:
     copyMem(addr result[0], unsafeAddr pixels[0], pixels.len)
+
+proc polygonVertices*(asset: MotionPolygonAsset): seq[Vec2] =
+  ## Return a copy so snapshot callers cannot alter a published contour.
+  if asset.isNil:
+    raise newException(ValueError, "motion polygon asset cannot be nil")
+  result = newSeq[Vec2](asset.vertices.len)
+  for index, point in asset.vertices:
+    result[index] = point
+
+proc polygonVertexCount*(asset: MotionPolygonAsset): int =
+  if asset.isNil: 0 else: asset.vertices.len
 
 proc finite(value: float32): bool =
   value.classify notin {fcNan, fcInf, fcNegInf}
@@ -175,6 +196,54 @@ proc motionImage*(
     color: rgb(1, 1, 1), transform: transform, opacity: opacity,
     image: image, zIndex: zIndex, visible: visible,
     hitTestable: hitTestable)
+
+proc motionPolygon*(
+    id: MotionObjectId; vertices: openArray[Vec2]; color: Color;
+    transform = identityAffine2D(); opacity = 1.0'f32;
+    zIndex = 0'i32; visible = true; hitTestable = true
+): MotionObject =
+  ## Accept a strictly convex contour in either winding order.
+  if vertices.len < 3 or vertices.len > 64:
+    raise newException(ValueError, "motion polygon requires 3 to 64 vertices")
+  var points = newSeq[Vec2](vertices.len)
+  var minX = Inf
+  var minY = Inf
+  var maxX = NegInf
+  var maxY = NegInf
+  for index, point in vertices:
+    if not point.x.finite or not point.y.finite:
+      raise newException(ValueError, "motion polygon vertices must be finite")
+    points[index] = point
+    minX = min(minX, point.x.float64)
+    minY = min(minY, point.y.float64)
+    maxX = max(maxX, point.x.float64)
+    maxY = max(maxY, point.y.float64)
+  if maxX - minX <= 0 or maxY - minY <= 0 or
+      maxX - minX > high(float32).float64 or
+      maxY - minY > high(float32).float64:
+    raise newException(ValueError, "motion polygon bounds are invalid")
+  var orientation = 0
+  for edge in 0 ..< points.len:
+    let a = points[edge]
+    let b = points[(edge + 1) mod points.len]
+    for index, point in points:
+      if index == edge or index == (edge + 1) mod points.len:
+        continue
+      let cross = (b.x.float64 - a.x.float64) *
+        (point.y.float64 - a.y.float64) -
+        (b.y.float64 - a.y.float64) *
+        (point.x.float64 - a.x.float64)
+      if cross == 0 or (orientation != 0 and
+          (if cross > 0: 1 else: -1) != orientation):
+        raise newException(ValueError,
+          "motion polygon must be strictly convex and ordered")
+      orientation = if cross > 0: 1 else: -1
+  MotionObject(id: id, shape: msPolygon,
+    bounds: rect(minX.float32, minY.float32,
+      (maxX - minX).float32, (maxY - minY).float32),
+    color: color, transform: transform, opacity: opacity,
+    polygon: MotionPolygonAsset(vertices: points), zIndex: zIndex,
+    visible: visible, hitTestable: hitTestable)
 
 proc motionLine*(
     id: MotionObjectId; startPoint, endPoint: Vec2; width: float32;
@@ -274,6 +343,25 @@ proc motionSceneSnapshot*(
           "motion image requires an asset and untinted white color")
     else:
       value.image = nil
+    if value.shape == msPolygon:
+      if value.polygon.isNil or value.polygon.vertices.len < 3 or
+          value.polygon.vertices.len > 64:
+        raise newException(ValueError, "motion polygon requires a valid contour")
+      var minX = Inf
+      var minY = Inf
+      var maxX = NegInf
+      var maxY = NegInf
+      for point in value.polygon.vertices:
+        minX = min(minX, point.x.float64)
+        minY = min(minY, point.y.float64)
+        maxX = max(maxX, point.x.float64)
+        maxY = max(maxY, point.y.float64)
+      if value.bounds != rect(minX.float32, minY.float32,
+          (maxX - minX).float32, (maxY - minY).float32):
+        raise newException(ValueError,
+          "motion polygon bounds must match its contour")
+    else:
+      value.polygon = nil
     for channel in [value.color.r, value.color.g, value.color.b, value.color.a]:
       if not channel.finite or channel < 0 or channel > 1:
         raise newException(ValueError, "motion scene colors must be in the unit interval")
@@ -282,7 +370,7 @@ proc motionSceneSnapshot*(
       value.transform = identityAffine2D()
     if value.shape notin {msRing, msAnnularSector}:
       value.radius = min(value.radius, min(value.bounds.w, value.bounds.h) * 0.5'f32)
-    if value.shape in {msEllipse, msTriangle, msSector, msImage}:
+    if value.shape in {msEllipse, msTriangle, msSector, msImage, msPolygon}:
       value.radius = 0.0'f32
     for corner in [vec2(value.bounds.x, value.bounds.y),
         vec2(value.bounds.x + value.bounds.w, value.bounds.y),
@@ -427,6 +515,13 @@ proc compile(snapshot: MotionSceneSnapshot): seq[CanvasCommand] =
     of msImage:
       target.drawRasterSurface(value.image.surface, value.bounds,
         value.opacity)
+    of msPolygon:
+      var path = initPath2D()
+      path.moveTo(value.polygon.vertices[0])
+      for index in 1 ..< value.polygon.vertices.len:
+        path.lineTo(value.polygon.vertices[index])
+      path.closePath()
+      target.fillPath(path, color)
     target.restore()
   target.popClip()
   target.commands
@@ -525,6 +620,23 @@ proc hitTest*(snapshot: MotionSceneSnapshot; position: Vec2): Option[MotionScene
       if x + y > 1.0: continue
     of msImage:
       discard
+    of msPolygon:
+      let vertices = entry.value.polygon.vertices
+      var inside = true
+      var orientation = 0
+      for index, a in vertices:
+        let b = vertices[(index + 1) mod vertices.len]
+        let cross = (b.x.float64 - a.x.float64) *
+          (point.y.float64 - a.y.float64) -
+          (b.y.float64 - a.y.float64) *
+          (point.x.float64 - a.x.float64)
+        if cross == 0: continue
+        let sign = if cross > 0: 1 else: -1
+        if orientation != 0 and sign != orientation:
+          inside = false
+          break
+        orientation = sign
+      if not inside: continue
     return some(MotionSceneHit(id: entry.value.id,
       localPosition: vec2(point.x - bounds.x, point.y - bounds.y)))
 

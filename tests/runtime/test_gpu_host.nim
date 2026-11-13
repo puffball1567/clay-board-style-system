@@ -10670,7 +10670,10 @@ suite "GPU instanced draws":
       motionRect(MotionObjectId(1), rect(0, 0, 16, 16), rgb(0, 0, 1)),
       motionImage(MotionObjectId(2), rect(2, 2, 4, 4), asset),
       motionImage(MotionObjectId(3), rect(6, 2, 4, 4), asset),
-      motionRect(MotionObjectId(4), rect(4, 4, 4, 4), rgb(0, 1, 0))]))
+      motionPolygon(MotionObjectId(4),
+        @[vec2(4, 4), vec2(8, 4), vec2(8, 8), vec2(4, 8)],
+        rgb(1, 1, 0)),
+      motionRect(MotionObjectId(5), rect(4, 4, 4, 4), rgb(0, 1, 0))]))
     let batch = newGpuMotionRectBatch()
     check batch.sync(host, namespace, scene)
     check context.textureCreates == 1
@@ -10689,7 +10692,7 @@ suite "GPU instanced draws":
     check context.drawCommands[1].bindings.textures.len == 1
     check context.drawCommands[2].bindings.textures.len == 0
     check context.lastDrawCommand.instances.firstInstance == 3
-    check context.lastDrawCommand.instances.instanceCount == 1
+    check context.lastDrawCommand.instances.instanceCount == 3
     discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), [
       motionImage(MotionObjectId(2), rect(3, 2, 4, 4), asset)]))
     check batch.sync(host, namespace, scene)
