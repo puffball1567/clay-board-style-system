@@ -57,6 +57,17 @@ proc validateRegion(surface: RasterSurface; region: RasterRegion) =
 proc rasterRegion*(x, y, width, height: int): RasterRegion =
   RasterRegion(x: x, y: y, width: width, height: height)
 
+proc resolvedRasterSourceRegion*(
+    surface: RasterSurface; region = RasterRegion()
+): RasterRegion =
+  ## A zero region selects the full source; any explicit region must fit.
+  if surface.isNil:
+    raise newException(ValueError, "raster surface cannot be nil")
+  if region == RasterRegion():
+    return rasterRegion(0, 0, surface.pixelWidth, surface.pixelHeight)
+  surface.validateRegion(region)
+  region
+
 proc fullRegion(surface: RasterSurface): RasterRegion =
   RasterRegion(
     x: 0,

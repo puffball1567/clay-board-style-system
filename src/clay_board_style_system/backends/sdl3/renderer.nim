@@ -3652,10 +3652,10 @@ proc drawRasterSurfaceTexture(
     cfloat(clamp(command.rasterOpacity, 0.0'f32, 1.0'f32))
   )
   var source = SDL_FRect(
-    x: 0,
-    y: 0,
-    w: cfloat(command.rasterSurface.width),
-    h: cfloat(command.rasterSurface.height)
+    x: cfloat(command.rasterSourceRegion.x),
+    y: cfloat(command.rasterSourceRegion.y),
+    w: cfloat(command.rasterSourceRegion.width),
+    h: cfloat(command.rasterSourceRegion.height)
   )
   var destination = command.rasterRect.toSdl
   target.renderTextureClippedWith(

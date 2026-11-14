@@ -82,18 +82,23 @@ proc markRasterResourceDamage(
   if command.kind != pcDrawRasterSurface or command.rasterSurface.isNil or
       command.rasterRect.isEmpty:
     return false
-  let sourceWidth = command.rasterSurface.width
-  let sourceHeight = command.rasterSurface.height
-  if sourceWidth <= 0 or sourceHeight <= 0:
+  let source = command.rasterSourceRegion
+  if source.width <= 0 or source.height <= 0:
     return false
   for dirty in command.rasterSurface.dirtyRegions:
+    let x0 = max(dirty.x, source.x)
+    let y0 = max(dirty.y, source.y)
+    let x1 = min(dirty.x + dirty.width, source.x + source.width)
+    let y1 = min(dirty.y + dirty.height, source.y + source.height)
+    if x0 >= x1 or y0 >= y1:
+      continue
     let local = rect(
       command.rasterRect.x +
-        dirty.x.float32 / sourceWidth.float32 * command.rasterRect.w,
+        (x0 - source.x).float32 / source.width.float32 * command.rasterRect.w,
       command.rasterRect.y +
-        dirty.y.float32 / sourceHeight.float32 * command.rasterRect.h,
-      dirty.width.float32 / sourceWidth.float32 * command.rasterRect.w,
-      dirty.height.float32 / sourceHeight.float32 * command.rasterRect.h
+        (y0 - source.y).float32 / source.height.float32 * command.rasterRect.h,
+      (x1 - x0).float32 / source.width.float32 * command.rasterRect.w,
+      (y1 - y0).float32 / source.height.float32 * command.rasterRect.h
     )
     let resolved = commands.resolvedVisualBoundsFor(commandIndex, local)
     if resolved.isSome:

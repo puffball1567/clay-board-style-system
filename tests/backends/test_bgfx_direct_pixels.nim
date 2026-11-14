@@ -2342,11 +2342,14 @@ proc verifyMotionSceneCanvas(host: GpuHost;
     "GPU Canvas annular sector outside angle")
   annularPixels.requireRasterPixel(16, 14, 10, Pixel(),
     "GPU Canvas annular sector outside ellipse")
-  let image = newMotionImageAsset(1, 1, @[255'u8, 0, 0, 128])
+  let image = newMotionImageAsset(2, 1,
+    @[255'u8, 0, 0, 128, 0, 255, 0, 255])
   discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), [
     motionRect(MotionObjectId(10), rect(0, 0, 16, 16), rgb(0, 0, 1)),
     motionImage(MotionObjectId(11), rect(2, 2, 8, 8), image),
     motionRect(MotionObjectId(12), rect(5, 5, 3, 3), rgb(0, 1, 0)),
+    motionSprite(MotionObjectId(14), rect(10, 2, 4, 4), image,
+      rasterRegion(1, 0, 1, 1)),
     motionPolygon(MotionObjectId(13),
       @[vec2(11, 11), vec2(15, 11), vec2(15, 15), vec2(11, 15)],
       rgba(1, 1, 0, 0.5))]))
@@ -2359,6 +2362,8 @@ proc verifyMotionSceneCanvas(host: GpuHost;
     Pixel(red: 128, blue: 127, alpha: 255), "GPU Canvas image alpha")
   imagePixels.requireRasterPixel(16, 6, 6,
     Pixel(green: 255, alpha: 255), "GPU Canvas image paint order")
+  imagePixels.requireRasterPixel(16, 11, 3,
+    Pixel(green: 255, alpha: 255), "GPU Canvas shared atlas region")
   imagePixels.requireRasterPixel(16, 12, 12,
     Pixel(red: 128, green: 128, blue: 127, alpha: 255),
     "GPU Canvas convex polygon shared diagonal")

@@ -89,6 +89,12 @@ can be shared by many snapshots and objects. `imagePixels()` returns a copy.
 Images use nearest-neighbor scaling, object opacity, transforms, and scene paint
 order. Picking uses the rectangular bounds, including transparent pixels.
 
+`motionSprite(id, bounds, atlas, rasterRegion(x, y, width, height))` paints a
+rectangular subregion of the same image asset. Source coordinates are integer
+pixels and must remain within the atlas. CPU Canvas, SDL, and GPU rendering use
+the same source region; GPU sprites sharing an atlas reuse one texture. Updating
+an unrelated source region does not dirty a retained CPU destination.
+
 Paint order is ascending z-index, with authoring order breaking ties. Picking
 walks the same order backwards, respects rounded corners, ellipse boundaries,
 line caps, triangle edges, and the scene viewport. Returned coordinates are

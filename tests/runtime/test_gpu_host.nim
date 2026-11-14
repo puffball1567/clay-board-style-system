@@ -10665,11 +10665,13 @@ suite "GPU instanced draws":
       artifact(gpuMotionImageFragmentSource()))
     let target = host.createGpuRenderTarget(namespace,
       renderTargetDescriptor(width = 16, height = 16))
-    let asset = newMotionImageAsset(1, 1, @[255'u8, 0, 0, 128])
+    let asset = newMotionImageAsset(2, 1,
+      @[255'u8, 0, 0, 128, 0, 255, 0, 255])
     let scene = newMotionScene(motionSceneSnapshot(size(16, 16), [
       motionRect(MotionObjectId(1), rect(0, 0, 16, 16), rgb(0, 0, 1)),
       motionImage(MotionObjectId(2), rect(2, 2, 4, 4), asset),
-      motionImage(MotionObjectId(3), rect(6, 2, 4, 4), asset),
+      motionSprite(MotionObjectId(3), rect(6, 2, 4, 4), asset,
+        rasterRegion(1, 0, 1, 1)),
       motionPolygon(MotionObjectId(4),
         @[vec2(4, 4), vec2(8, 4), vec2(8, 8), vec2(4, 8)],
         rgb(1, 1, 0)),
@@ -10677,8 +10679,12 @@ suite "GPU instanced draws":
     let batch = newGpuMotionRectBatch()
     check batch.sync(host, namespace, scene)
     check context.textureCreates == 1
-    check context.lastTextureDataBytes == 4
+    check context.lastTextureDataBytes == 8
     check context.lastTexture.access == gtaStatic
+    let records = gpuMotionRectRecords(scene.snapshot)
+    check records[1][4][2] == 1'f32
+    check records[2][0][3] == 0.5'f32
+    check records[2][4][2] == 0.5'f32
     let pass = graphicsPass(16, 16, target)
     let frame = host.beginGpuFrame()
     check submitMotionScene(shapes, images, batch, pass)

@@ -223,6 +223,23 @@ suite "CPU Motion Scene snapshots":
     check scene.pixels.pixel(5, 10) == (0'u8, 0'u8, 255'u8)
     check scene.pixels.pixel(10, 10) == (255'u8, 255'u8, 255'u8)
     check scene.hitTest(vec2(10, 10)).get.id == MotionObjectId(2)
+    let sprite = motionSprite(MotionObjectId(4), rect(4, 4, 8, 8), asset,
+      rasterRegion(1, 0, 1, 1))
+    let cropped = newMotionScene(snap([
+      item(1, rect(0, 0, 32, 24), rgb(1, 1, 1)), sprite]))
+    check cropped.pixels.pixel(5, 5) == (0'u8, 255'u8, 0'u8)
+    check cropped.pixels.pixel(10, 10) == (0'u8, 255'u8, 0'u8)
+    check cropped.hitTest(vec2(5, 5)).get.id == MotionObjectId(4)
+    let spriteRecord = gpuMotionRectRecords(cropped.snapshot)[1]
+    check spriteRecord[0][3] == 0.5'f32
+    check spriteRecord[1][3] == 0'f32
+    check spriteRecord[4][2] == 0.5'f32
+    check spriteRecord[4][3] == 0.5'f32
+    check cropped.snapshot.objectById(MotionObjectId(4)).get.sourceRegion ==
+      rasterRegion(1, 0, 1, 1)
+    expect ValueError:
+      discard snap([motionSprite(MotionObjectId(5), rect(0, 0, 2, 2), asset,
+        rasterRegion(2, 0, 1, 1))])
     expect ValueError:
       discard newMotionImageAsset(2, 2, @[0'u8])
     expect ValueError:

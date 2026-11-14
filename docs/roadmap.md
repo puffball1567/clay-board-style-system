@@ -1348,8 +1348,9 @@ picking, deterministic replacement, and cancellable
 latest-request tokens. UI publication dirties only the Canvas's paint; a static
 scene requests no continuous frames. Typed numeric tracks reuse AnimationClock
 and FrameScheduler for easing, delay, finite repeats, pause/resume, and reduced
-motion. The GPU path keeps image textures across revisions and submits mixed
-shapes and images in paint order. See [CPU Motion Scene](motion-scene.md) for the
+motion. The GPU path keeps image textures across revisions, supports atlas
+regions for sprites, and submits mixed shapes and images in paint order. See
+[CPU Motion Scene](motion-scene.md) for the
 current API and remaining primitive and backend work.
 
 CBSS will provide a retained Motion Scene inside Canvas for motion graphics,

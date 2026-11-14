@@ -82,9 +82,15 @@ proc gpuMotionRectRecords*(snapshot: MotionSceneSnapshot): seq[GpuMotionRectReco
       vec2(item.bounds.x, item.bounds.y)
     )
     result.add [
-      [item.transform.m11, item.transform.m21, origin.x, item.sweepAngle],
+      [item.transform.m11, item.transform.m21, origin.x,
+        (if item.shape == msImage:
+          item.sourceRegion.x.float32 / item.image.width.float32
+         else: item.sweepAngle)],
       [item.transform.m12, item.transform.m22, origin.y,
-        (if item.shape == msAnnularSector: item.radius else: 0'f32)],
+        (if item.shape == msAnnularSector: item.radius
+         elif item.shape == msImage:
+           item.sourceRegion.y.float32 / item.image.height.float32
+         else: 0'f32)],
       [item.bounds.w, item.bounds.h,
         (if item.shape in {msSector, msAnnularSector}:
           item.startAngle else: item.radius),
@@ -97,7 +103,13 @@ proc gpuMotionRectRecords*(snapshot: MotionSceneSnapshot): seq[GpuMotionRectReco
          else: 0'f32)],
       [item.color.r, item.color.g, item.color.b,
         item.color.a * item.opacity],
-      [inverseWidth, inverseHeight, 0'f32, 0'f32]
+      [inverseWidth, inverseHeight,
+        (if item.shape == msImage:
+          item.sourceRegion.width.float32 / item.image.width.float32
+         else: 0'f32),
+        (if item.shape == msImage:
+          item.sourceRegion.height.float32 / item.image.height.float32
+         else: 0'f32)]
     ]
 
 proc gpuMotionRectBytes*(records: openArray[GpuMotionRectRecord]): seq[byte] =
@@ -276,6 +288,8 @@ proc gpuMotionRectVertexSource*(): GpuShaderSource =
   builder.setVaryingOutput(gsisTexCoord2, builder.construct(gsvtVec2, [
     builder.swizzle(rowX, "w"), builder.swizzle(rowY, "w")
   ]))
+  builder.setVaryingOutput(gsisTexCoord3,
+    builder.swizzle(viewport, "zw"))
   builder.setVaryingOutput(gsisColor0, color)
   builder.emitGpuShaderSource()
 
@@ -321,6 +335,7 @@ void main()
     varyingDefinitions: """vec2 v_texcoord0 : TEXCOORD0;
 vec4 v_texcoord1 : TEXCOORD1;
 vec2 v_texcoord2 : TEXCOORD2;
+vec2 v_texcoord3 : TEXCOORD3;
 vec4 v_color0 : COLOR0;
 """,
     inputs: @[
@@ -332,12 +347,13 @@ vec4 v_color0 : COLOR0;
 
 proc gpuMotionImageFragmentSource*(): GpuShaderSource =
   GpuShaderSource(stage: gssFragment, label: "motion-scene-image-fragment",
-    source: """$input v_texcoord0, v_texcoord1, v_color0
+    source: """$input v_texcoord0, v_texcoord1, v_texcoord2, v_texcoord3, v_color0
 #include "bgfx_shader.sh"
 SAMPLER2D(s_cbssMotionImage, 0);
 void main()
 {
-  vec2 uv = v_texcoord0 / v_texcoord1.xy;
+  vec2 uv = v_texcoord2 +
+    (v_texcoord0 / v_texcoord1.xy) * v_texcoord3;
   vec4 sampled = texture2D(s_cbssMotionImage, uv);
   float alpha = sampled.a * v_color0.a;
   gl_FragColor = vec4(sampled.rgb * alpha, alpha);
@@ -346,11 +362,14 @@ void main()
     varyingDefinitions: """vec2 v_texcoord0 : TEXCOORD0;
 vec4 v_texcoord1 : TEXCOORD1;
 vec2 v_texcoord2 : TEXCOORD2;
+vec2 v_texcoord3 : TEXCOORD3;
 vec4 v_color0 : COLOR0;
 """,
     inputs: @[
       GpuShaderInterfaceEntry(slot: gsisTexCoord0, valueType: gsvtVec2),
       GpuShaderInterfaceEntry(slot: gsisTexCoord1, valueType: gsvtVec4),
+      GpuShaderInterfaceEntry(slot: gsisTexCoord2, valueType: gsvtVec2),
+      GpuShaderInterfaceEntry(slot: gsisTexCoord3, valueType: gsvtVec2),
       GpuShaderInterfaceEntry(slot: gsisColor0, valueType: gsvtVec4)
     ])
 
