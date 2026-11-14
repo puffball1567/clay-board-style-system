@@ -3,7 +3,7 @@
 The opt-in `runtime/motion_scene` module keeps many visual objects in one
 retained Canvas. The CPU reference path supports rounded rectangles, ellipses,
 elliptical rings, sectors, annular sectors, stroked line segments, triangles,
-and RGBA8 images,
+strictly convex polygons, and RGBA8 images,
 plus affine transforms, opacity, z-order, viewport clipping, stable IDs, and
 inverse-transform hit testing.
 It runs without a GPU or window.
@@ -76,6 +76,13 @@ ellipse and angular limits.
 radius ratio in `[0, 1)`. A zero ratio fills the center; a full turn forms a
 ring. Its hole remains transparent and does not receive hits.
 
+`motionPolygon(id, vertices, color)` accepts 3 to 64 finite vertices in either
+winding order. The contour must be strictly convex and ordered; concave,
+collinear, and self-intersecting input is rejected. The points are copied so
+later edits to the source array do not change a snapshot. A polygon retains one
+scene ID and one hit target, while the GPU expands it into triangle instances.
+The total GPU instance limit remains 65,536 per snapshot.
+
 Create an image once with `newMotionImageAsset(width, height, rgbaPixels)` and
 place it with `motionImage(id, bounds, asset)`. Pixel input is copied; the asset
 can be shared by many snapshots and objects. `imagePixels()` returns a copy.
@@ -122,7 +129,8 @@ the scene until released and do not retain UI nodes.
 ## GPU shape batches
 
 Import `runtime/motion_scene_gpu` explicitly to pack drawable rounded rectangles,
-ellipses, rings, sectors, annular sectors, lines, triangles, and images of a snapshot
+ellipses, rings, sectors, annular sectors, lines, triangles, convex polygons,
+and images of a snapshot
 into five-vec4 GPU instance
 records:
 
