@@ -101,6 +101,7 @@ type
     of pcDrawRasterSurface:
       rasterSurface*: RasterSurface
       rasterRect*: Rect
+      rasterSourceRegion*: RasterRegion
       rasterOpacity*: float32
     of pcDrawGpuDirectSurface:
       gpuDirectSurface*: GpuDirectSurface
@@ -299,6 +300,7 @@ proc samePaintCommand*(first, second: PaintCommand): bool =
   of pcDrawRasterSurface:
     first.rasterSurface == second.rasterSurface and
       first.rasterRect == second.rasterRect and
+      first.rasterSourceRegion == second.rasterSourceRegion and
       first.rasterOpacity == second.rasterOpacity
   of pcDrawGpuDirectSurface:
     first.gpuDirectSurface == second.gpuDirectSurface and
@@ -548,7 +550,8 @@ proc drawRasterSurface*(
     node: NodeId;
     surface: RasterSurface;
     bounds: Rect;
-    opacity = 1.0'f32
+    opacity = 1.0'f32;
+    sourceRegion = RasterRegion()
 ): PaintCommand =
   if surface.isNil:
     raise newException(ValueError, "raster surface cannot be nil")
@@ -557,6 +560,7 @@ proc drawRasterSurface*(
     owner: some(node),
     rasterSurface: surface,
     rasterRect: bounds,
+    rasterSourceRegion: surface.resolvedRasterSourceRegion(sourceRegion),
     rasterOpacity: clamp(opacity, 0.0'f32, 1.0'f32)
   )
 

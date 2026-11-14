@@ -83,6 +83,7 @@ type
     of cckDrawRasterSurface:
       rasterSurface*: RasterSurface
       rasterRect*: Rect
+      rasterSourceRegion*: RasterRegion
       rasterOpacity*: float32
       rasterFillContent*: bool
     of cckDrawGpuDirectSurface:
@@ -523,7 +524,8 @@ proc drawRasterSurface*(
     canvas: Canvas2D;
     surface: RasterSurface;
     bounds: Rect;
-    opacity = 1.0'f32
+    opacity = 1.0'f32;
+    sourceRegion = RasterRegion()
 ) =
   if canvas.isNil:
     raise newException(ValueError, "canvas cannot be nil")
@@ -535,6 +537,7 @@ proc drawRasterSurface*(
     kind: cckDrawRasterSurface,
     rasterSurface: surface,
     rasterRect: bounds,
+    rasterSourceRegion: surface.resolvedRasterSourceRegion(sourceRegion),
     rasterOpacity: clamp(opacity, 0.0'f32, 1.0'f32),
     rasterFillContent: false
   )
@@ -543,7 +546,8 @@ proc drawRasterSurface*(
 proc drawRasterSurfaceToContent*(
     canvas: Canvas2D;
     surface: RasterSurface;
-    opacity = 1.0'f32
+    opacity = 1.0'f32;
+    sourceRegion = RasterRegion()
 ) =
   if canvas.isNil:
     raise newException(ValueError, "canvas cannot be nil")
@@ -553,6 +557,7 @@ proc drawRasterSurfaceToContent*(
     kind: cckDrawRasterSurface,
     rasterSurface: surface,
     rasterRect: rect(0, 0, 0, 0),
+    rasterSourceRegion: surface.resolvedRasterSourceRegion(sourceRegion),
     rasterOpacity: clamp(opacity, 0.0'f32, 1.0'f32),
     rasterFillContent: true
   )
@@ -757,7 +762,8 @@ proc paintCommands*(
         owner,
         command.rasterSurface,
         destination,
-        command.rasterOpacity * opacity
+        command.rasterOpacity * opacity,
+        command.rasterSourceRegion
       )
     of cckDrawGpuDirectSurface:
       let destination =

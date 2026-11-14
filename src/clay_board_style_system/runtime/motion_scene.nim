@@ -37,6 +37,7 @@ type
     opacity*, radius*: float32
     startAngle*, sweepAngle*: float32
     image*: MotionImageAsset
+    sourceRegion*: RasterRegion
     polygon*: MotionPolygonAsset
     zIndex*: int32
     visible*, hitTestable*: bool
@@ -189,13 +190,25 @@ proc motionAnnularSector*(
 proc motionImage*(
     id: MotionObjectId; bounds: Rect; image: MotionImageAsset;
     transform = identityAffine2D(); opacity = 1.0'f32;
-    zIndex = 0'i32; visible = true; hitTestable = true
+    zIndex = 0'i32; visible = true; hitTestable = true;
+    sourceRegion = RasterRegion()
 ): MotionObject =
   ## The image is copied when its asset is created, not per scene snapshot.
   MotionObject(id: id, shape: msImage, bounds: bounds,
     color: rgb(1, 1, 1), transform: transform, opacity: opacity,
-    image: image, zIndex: zIndex, visible: visible,
+    image: image, sourceRegion: sourceRegion,
+    zIndex: zIndex, visible: visible,
     hitTestable: hitTestable)
+
+proc motionSprite*(
+    id: MotionObjectId; bounds: Rect; atlas: MotionImageAsset;
+    sourceRegion: RasterRegion;
+    transform = identityAffine2D(); opacity = 1.0'f32;
+    zIndex = 0'i32; visible = true; hitTestable = true
+): MotionObject =
+  ## A region of a shared image atlas; validation occurs with the snapshot.
+  motionImage(id, bounds, atlas, transform, opacity, zIndex,
+    visible, hitTestable, sourceRegion)
 
 proc motionPolygon*(
     id: MotionObjectId; vertices: openArray[Vec2]; color: Color;
@@ -341,8 +354,11 @@ proc motionSceneSnapshot*(
       if value.image.isNil or value.color != rgb(1, 1, 1):
         raise newException(ValueError,
           "motion image requires an asset and untinted white color")
+      value.sourceRegion = value.image.surface.resolvedRasterSourceRegion(
+        value.sourceRegion)
     else:
       value.image = nil
+      value.sourceRegion = RasterRegion()
     if value.shape == msPolygon:
       if value.polygon.isNil or value.polygon.vertices.len < 3 or
           value.polygon.vertices.len > 64:
@@ -514,7 +530,7 @@ proc compile(snapshot: MotionSceneSnapshot): seq[CanvasCommand] =
       target.fillPath(path, color)
     of msImage:
       target.drawRasterSurface(value.image.surface, value.bounds,
-        value.opacity)
+        value.opacity, value.sourceRegion)
     of msPolygon:
       var path = initPath2D()
       path.moveTo(value.polygon.vertices[0])

@@ -151,6 +151,32 @@ suite "retained CPU canvas raster":
     check changed.regions == @[rect(32, 0, 16, 16)]
     check cache.image.rgbAt(34, 2)[0] > 0
 
+  test "source regions sample an atlas and ignore unrelated dirty pixels":
+    let surface = newRasterSurface(4, 1)
+    surface.updateRegion(rasterRegion(0, 0, 4, 1), @[
+      255'u8, 0, 0, 255,
+      0, 255, 0, 255,
+      0, 0, 255, 255,
+      255, 255, 0, 255])
+    check surface.publish()
+    let cache = newRetainedRasterCanvas(32, 16, tileSize = 16)
+    let command = drawRasterSurface(NodeId(1), surface, rect(0, 0, 32, 16),
+      sourceRegion = rasterRegion(1, 0, 2, 1))
+    discard cache.update(@[command])
+    check cache.image.rgbAt(4, 8) == [0'u8, 255, 0]
+    check cache.image.rgbAt(20, 8) == [0'u8, 0, 255]
+    surface.updateRegion(rasterRegion(0, 0, 1, 1),
+      @[0'u8, 0, 0, 255])
+    check surface.publish()
+    check cache.update(@[command]).dirtyTiles == 0
+    surface.updateRegion(rasterRegion(1, 0, 1, 1),
+      @[255'u8, 255, 255, 255])
+    check surface.publish()
+    let changed = cache.update(@[command])
+    check changed.dirtyTiles == 1
+    check cache.image.rgbAt(4, 8) == [255'u8, 255, 255]
+    check cache.image.rgbAt(20, 8) == [0'u8, 0, 255]
+
   test "raster dirty regions honor retained transform and clip scopes":
     let surface = newRasterSurface(4, 4)
     let cache = newRetainedRasterCanvas(128, 64, tileSize = 16)

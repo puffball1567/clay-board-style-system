@@ -548,6 +548,7 @@ proc drawRasterSurface(
     intersect(shape.bounds, clip.bounds), image.width, image.height
   )
   let opacity = clamp(command.rasterOpacity, 0.0'f32, 1.0'f32)
+  let source = command.rasterSourceRegion
   for y in bounds.y0 ..< bounds.y1:
     for x in bounds.x0 ..< bounds.x1:
       let destination = vec2(x.float32 + 0.5'f32, y.float32 + 0.5'f32)
@@ -559,10 +560,12 @@ proc drawRasterSurface(
       let u = (local.x - command.rasterRect.x) / command.rasterRect.w
       let v = (local.y - command.rasterRect.y) / command.rasterRect.h
       let sourceX = clamp(
-        floor(u * surface.width.float32).int, 0, surface.width - 1
+        source.x + floor(u * source.width.float32).int,
+        source.x, source.x + source.width - 1
       )
       let sourceY = clamp(
-        floor(v * surface.height.float32).int, 0, surface.height - 1
+        source.y + floor(v * source.height.float32).int,
+        source.y, source.y + source.height - 1
       )
       image.putPixel(x, y, surface.rasterPixelColor(sourceX, sourceY, opacity))
 
