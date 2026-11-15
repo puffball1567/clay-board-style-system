@@ -334,6 +334,27 @@ at every sampled frame. Duplicate object/property pairs and unknown IDs fail
 before any scene changes. A timeline accepts at most 65,536 tracks, 1,024 stops
 per track, and 262,144 stops in total.
 
+Sprite frames use `motionSpriteTrack` on an existing image object. Pass the
+tracks through `newMotionTimeline(..., spriteTracks = [track])`; numeric and
+sprite tracks may share one timeline:
+
+```nim
+let frames = motionSpriteTrack(MotionObjectId(8), [
+  MotionSpriteKeyframe(offset: 0,
+    sourceRegion: rasterRegion(0, 0, 16, 16)),
+  MotionSpriteKeyframe(offset: 0.5,
+    sourceRegion: rasterRegion(16, 0, 16, 16))
+])
+let spriteTimeline = newMotionTimeline(scene, [],
+  durationSeconds = 1, nowSeconds = 0, spriteTracks = [frames])
+```
+
+The first offset must be zero; later offsets increase strictly within `[0, 1]`.
+Each region must fit the target object's image atlas. Frames switch at their
+offset and hold until the next one. The same delay, easing, direction, repeat,
+fill, pause, and reduced-motion rules apply. Keyframes are copied, and an
+unchanged frame does not dirty paint or upload a new GPU texture.
+
 Timing options use the ordinary motion types: `timing`, `delaySeconds`,
 `direction`, and `fillMode`. `iterations` is a positive integer capped at
 1,000,000. The default is one forward iteration with forwards fill. With no
@@ -360,7 +381,7 @@ geometry cancels the timeline, raises `ValueError`, and preserves the last
 committed frame. The UI overload checks the scene/view pairing and cancels when
 the attachment is disposed. All timeline operations belong to the UI thread.
 
-Paths/text/images as scene objects, nested effect groups, color and arbitrary
-matrix tracks, seeking/reversing an existing timeline, and C ABI
+General paths and text as scene objects, nested effect groups, color and
+arbitrary matrix tracks, seeking an existing timeline, and C ABI
 authoring remain follow-ups. `examples/motion_scene_demo.nim` renders a
 deterministically sampled timeline to PPM for headless inspection.
