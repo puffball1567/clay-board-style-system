@@ -85,6 +85,7 @@ type
       rasterRect*: Rect
       rasterSourceRegion*: RasterRegion
       rasterOpacity*: float32
+      rasterTint*: Color
       rasterFillContent*: bool
     of cckDrawGpuDirectSurface:
       gpuDirectSurface*: GpuDirectSurface
@@ -525,7 +526,8 @@ proc drawRasterSurface*(
     surface: RasterSurface;
     bounds: Rect;
     opacity = 1.0'f32;
-    sourceRegion = RasterRegion()
+    sourceRegion = RasterRegion();
+    tint = rgb(1, 1, 1)
 ) =
   if canvas.isNil:
     raise newException(ValueError, "canvas cannot be nil")
@@ -533,12 +535,17 @@ proc drawRasterSurface*(
     raise newException(ValueError, "raster surface cannot be nil")
   if not bounds.finite or bounds.isEmpty:
     raise newException(ValueError, "raster surface bounds must be finite and positive")
+  for channel in [tint.r, tint.g, tint.b, tint.a]:
+    if channel.classify in {fcNan, fcInf, fcNegInf} or
+        channel < 0 or channel > 1:
+      raise newException(ValueError, "raster tint must be in the unit interval")
   canvas.commands.add CanvasCommand(
     kind: cckDrawRasterSurface,
     rasterSurface: surface,
     rasterRect: bounds,
     rasterSourceRegion: surface.resolvedRasterSourceRegion(sourceRegion),
     rasterOpacity: clamp(opacity, 0.0'f32, 1.0'f32),
+    rasterTint: tint,
     rasterFillContent: false
   )
   canvas.touch()
@@ -547,18 +554,24 @@ proc drawRasterSurfaceToContent*(
     canvas: Canvas2D;
     surface: RasterSurface;
     opacity = 1.0'f32;
-    sourceRegion = RasterRegion()
+    sourceRegion = RasterRegion();
+    tint = rgb(1, 1, 1)
 ) =
   if canvas.isNil:
     raise newException(ValueError, "canvas cannot be nil")
   if surface.isNil:
     raise newException(ValueError, "raster surface cannot be nil")
+  for channel in [tint.r, tint.g, tint.b, tint.a]:
+    if channel.classify in {fcNan, fcInf, fcNegInf} or
+        channel < 0 or channel > 1:
+      raise newException(ValueError, "raster tint must be in the unit interval")
   canvas.commands.add CanvasCommand(
     kind: cckDrawRasterSurface,
     rasterSurface: surface,
     rasterRect: rect(0, 0, 0, 0),
     rasterSourceRegion: surface.resolvedRasterSourceRegion(sourceRegion),
     rasterOpacity: clamp(opacity, 0.0'f32, 1.0'f32),
+    rasterTint: tint,
     rasterFillContent: true
   )
   canvas.touch()
@@ -763,7 +776,8 @@ proc paintCommands*(
         command.rasterSurface,
         destination,
         command.rasterOpacity * opacity,
-        command.rasterSourceRegion
+        command.rasterSourceRegion,
+        command.rasterTint
       )
     of cckDrawGpuDirectSurface:
       let destination =

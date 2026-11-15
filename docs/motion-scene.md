@@ -87,13 +87,16 @@ Create an image once with `newMotionImageAsset(width, height, rgbaPixels)` and
 place it with `motionImage(id, bounds, asset)`. Pixel input is copied; the asset
 can be shared by many snapshots and objects. `imagePixels()` returns a copy.
 Images use nearest-neighbor scaling, object opacity, transforms, and scene paint
-order. Picking uses the rectangular bounds, including transparent pixels.
+order. Pass `tint = rgba(r, g, b, a)` to multiply each source color channel and
+alpha; white is the default. Picking uses the rectangular bounds, including
+transparent pixels.
 
 `motionSprite(id, bounds, atlas, rasterRegion(x, y, width, height))` paints a
 rectangular subregion of the same image asset. Source coordinates are integer
-pixels and must remain within the atlas. CPU Canvas, SDL, and GPU rendering use
-the same source region; GPU sprites sharing an atlas reuse one texture. Updating
-an unrelated source region does not dirty a retained CPU destination.
+pixels and must remain within the atlas. Sprites accept the same `tint` option.
+CPU Canvas, SDL, and GPU rendering use the same source region; GPU sprites
+sharing an atlas reuse one texture. Updating an unrelated source region does
+not dirty a retained CPU destination.
 
 Paint order is ascending z-index, with authoring order breaking ties. Picking
 walks the same order backwards, respects rounded corners, ellipse boundaries,

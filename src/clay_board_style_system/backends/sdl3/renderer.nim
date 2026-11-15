@@ -3647,9 +3647,13 @@ proc drawRasterSurfaceTexture(
   let texture = target.rasterSurfaceTexture(command.rasterSurface)
   if texture.isNone or command.rasterRect.isEmpty:
     return
+  discard SDL3.setTextureColorModFloat(texture.get,
+    cfloat(command.rasterTint.r), cfloat(command.rasterTint.g),
+    cfloat(command.rasterTint.b))
   discard SDL3.setTextureAlphaModFloat(
     texture.get,
-    cfloat(clamp(command.rasterOpacity, 0.0'f32, 1.0'f32))
+    cfloat(clamp(command.rasterOpacity * command.rasterTint.a,
+      0.0'f32, 1.0'f32))
   )
   var source = SDL_FRect(
     x: cfloat(command.rasterSourceRegion.x),

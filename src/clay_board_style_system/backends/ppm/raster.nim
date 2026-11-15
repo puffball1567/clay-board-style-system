@@ -522,14 +522,15 @@ proc fillPath(
             )
           )
 
-proc rasterPixelColor(surface: RasterSurface; x, y: int; opacity: float32): Color =
+proc rasterPixelColor(surface: RasterSurface; x, y: int;
+    opacity: float32; tint: Color): Color =
   let offset = (y * surface.width + x) * RasterBytesPerPixel
   let pixels = surface.pixels
   rgba(
-    pixels[offset].float32 / 255.0'f32,
-    pixels[offset + 1].float32 / 255.0'f32,
-    pixels[offset + 2].float32 / 255.0'f32,
-    pixels[offset + 3].float32 / 255.0'f32 * opacity
+    pixels[offset].float32 / 255.0'f32 * tint.r,
+    pixels[offset + 1].float32 / 255.0'f32 * tint.g,
+    pixels[offset + 2].float32 / 255.0'f32 * tint.b,
+    pixels[offset + 3].float32 / 255.0'f32 * opacity * tint.a
   )
 
 proc drawRasterSurface(
@@ -567,7 +568,8 @@ proc drawRasterSurface(
         source.y + floor(v * source.height.float32).int,
         source.y, source.y + source.height - 1
       )
-      image.putPixel(x, y, surface.rasterPixelColor(sourceX, sourceY, opacity))
+      image.putPixel(x, y,
+        surface.rasterPixelColor(sourceX, sourceY, opacity, command.rasterTint))
 
 proc prepareLinearGradient(rect: Rect; gradient: LinearGradient): PpmLinearGradientSampler =
   let radians = (gradient.angle - 90.0'f32) * PI / 180.0'f32

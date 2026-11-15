@@ -177,6 +177,25 @@ suite "retained CPU canvas raster":
     check cache.image.rgbAt(4, 8) == [255'u8, 255, 255]
     check cache.image.rgbAt(20, 8) == [0'u8, 0, 255]
 
+  test "raster tint changes repaint the affected retained tiles":
+    let surface = newRasterSurface(1, 1)
+    surface.updateRegion(rasterRegion(0, 0, 1, 1),
+      @[255'u8, 255, 255, 255])
+    check surface.publish()
+    let cache = newRetainedRasterCanvas(32, 16, tileSize = 16)
+    let bounds = rect(1, 1, 8, 8)
+    let original = drawRasterSurface(NodeId(1), surface, bounds)
+    discard cache.update(@[original])
+    let tinted = drawRasterSurface(NodeId(1), surface, bounds,
+      tint = rgb(1, 0, 0))
+    let changed = cache.update(@[tinted])
+    check changed.dirtyTiles == 1
+    check cache.image.rgbAt(2, 2) == [255'u8, 0, 0]
+    check cache.update(@[tinted]).dirtyTiles == 0
+    expect ValueError:
+      discard drawRasterSurface(NodeId(1), surface, bounds,
+        tint = rgb(-0.1, 0, 0))
+
   test "raster dirty regions honor retained transform and clip scopes":
     let surface = newRasterSurface(4, 4)
     let cache = newRetainedRasterCanvas(128, 64, tileSize = 16)
