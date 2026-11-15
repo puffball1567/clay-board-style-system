@@ -3,6 +3,7 @@
 import std/[math, options, sets, tables]
 
 import ../core/computed_style
+import ../core/raster_surface
 import ./[animation_clock, frame_scheduler, invalidation, motion_scene]
 
 const
@@ -21,6 +22,14 @@ type
     property: MotionSceneProperty
     frames: FloatKeyframes
 
+  MotionSpriteKeyframe* = object
+    offset*: float64
+    sourceRegion*: RasterRegion
+
+  MotionSpriteTrack* = object
+    target: MotionObjectId
+    frames: seq[MotionSpriteKeyframe]
+
   MotionTimelineState* = enum
     mtsRunning, mtsPaused, mtsFinished, mtsCancelled
 
@@ -31,10 +40,15 @@ type
     index: int
     track: MotionFloatTrack
 
+  BoundSpriteTrack = object
+    index: int
+    track: MotionSpriteTrack
+
   MotionTimeline* = ref object
     target: MotionScene
     base, expected: MotionSceneSnapshot
     tracks: seq[BoundMotionTrack]
+    spriteTracks: seq[BoundSpriteTrack]
     clock: AnimationClock
     animation: AnimationId
     sample: MotionTimelineSample
@@ -67,17 +81,44 @@ proc motionTrack*(
   MotionFloatTrack(target: target, property: property,
     frames: floatKeyframes(keyframes))
 
+proc motionSpriteTrack*(
+    target: MotionObjectId; keyframes: openArray[MotionSpriteKeyframe]
+): MotionSpriteTrack =
+  ## Source regions change at their authored offsets; the last region holds.
+  if uint64(target) == 0 or keyframes.len == 0 or
+      keyframes.len > maxMotionTrackKeyframes:
+    raise newException(ValueError,
+      "motion sprite track target or keyframe count is invalid")
+  var previous = -1.0
+  for frame in keyframes:
+    if not frame.offset.finite or frame.offset < 0 or frame.offset > 1 or
+        frame.offset <= previous or
+        frame.sourceRegion.x < 0 or frame.sourceRegion.y < 0 or
+        frame.sourceRegion.width <= 0 or frame.sourceRegion.height <= 0:
+      raise newException(ValueError,
+        "motion sprite frames must have ordered offsets and positive regions")
+    previous = frame.offset
+  if keyframes[0].offset != 0:
+    raise newException(ValueError,
+      "motion sprite frames must start at offset zero")
+  result = MotionSpriteTrack(target: target,
+    frames: newSeq[MotionSpriteKeyframe](keyframes.len))
+  for index, frame in keyframes:
+    result.frames[index] = frame
+
 proc newMotionTimeline*(
     scene: MotionScene; tracks: openArray[MotionFloatTrack];
     durationSeconds, nowSeconds: float64;
     delaySeconds = 0.0; iterations = 1; direction = adNormal;
     fillMode = afForwards; timing = linearTiming();
     reducedMotion = false; essentialMotion = false;
-    targetFramesPerSecond = 60.0
+    targetFramesPerSecond = 60.0;
+    spriteTracks: openArray[MotionSpriteTrack] = []
 ): MotionTimeline =
   if scene.isNil:
     raise newException(ValueError, "motion timeline scene must not be nil")
-  if tracks.len == 0 or tracks.len > maxMotionTimelineTracks:
+  if tracks.len + spriteTracks.len == 0 or
+      tracks.len + spriteTracks.len > maxMotionTimelineTracks:
     raise newException(ValueError, "motion timeline track count is outside the limit")
   if iterations <= 0 or iterations > maxMotionTimelineIterations:
     raise newException(ValueError, "motion timeline iterations are outside the limit")
@@ -101,6 +142,8 @@ proc newMotionTimeline*(
     indices[uint64(base.objectAt(index).get.id)] = index
   var seen = initHashSet[tuple[id: uint64, property: MotionSceneProperty]]()
   var bound: seq[BoundMotionTrack]
+  var boundSprites: seq[BoundSpriteTrack]
+  var seenSprites = initHashSet[uint64]()
   var count = 0
   for track in tracks:
     let key = (id: uint64(track.target), property: track.property)
@@ -113,8 +156,33 @@ proc newMotionTimeline*(
     # Revalidate default-constructed values, and own a copy of every stop.
     let copied = motionTrack(track.target, track.property, track.frames.values)
     bound.add BoundMotionTrack(index: indices.getOrDefault(key.id), track: copied)
+  for track in spriteTracks:
+    let id = uint64(track.target)
+    if id notin indices or id in seenSprites:
+      raise newException(ValueError,
+        "motion sprite target is missing or duplicated")
+    seenSprites.incl id
+    let copied = motionSpriteTrack(track.target, track.frames)
+    count += copied.frames.len
+    if count > maxMotionTimelineKeyframes:
+      raise newException(ValueError, "motion timeline keyframe budget exceeded")
+    let index = indices.getOrDefault(id)
+    let targetObject = base.objectAt(index).get
+    if targetObject.shape != msImage or targetObject.image.isNil:
+      raise newException(ValueError,
+        "motion sprite tracks require image objects")
+    for frame in copied.frames:
+      let region = frame.sourceRegion
+      if region.width > targetObject.image.width or
+          region.height > targetObject.image.height or
+          region.x > targetObject.image.width - region.width or
+          region.y > targetObject.image.height - region.height:
+        raise newException(ValueError,
+          "motion sprite frame is outside its image atlas")
+    boundSprites.add BoundSpriteTrack(index: index, track: copied)
   result = MotionTimeline(target: scene, base: base, expected: base,
-    tracks: bound, clock: initAnimationClock(targetFramesPerSecond),
+    tracks: bound, spriteTracks: boundSprites,
+    clock: initAnimationClock(targetFramesPerSecond),
     sample: sample, fillMode: fillMode, status: mtsRunning, lastTime: nowSeconds)
   result.clock.reducedMotion = reducedMotion
   result.animation = result.clock.startAnimation(spec, nowSeconds)
@@ -157,6 +225,17 @@ proc apply(value: var MotionObject; property: MotionSceneProperty; sample: float
   of mspTranslateX: value.transform.tx = sample
   of mspTranslateY: value.transform.ty = sample
 
+proc sample(track: MotionSpriteTrack; progress: float64): RasterRegion =
+  var low = 0
+  var high = track.frames.len
+  while low + 1 < high:
+    let middle = low + (high - low) div 2
+    if track.frames[middle].offset <= progress:
+      low = middle
+    else:
+      high = middle
+  track.frames[low].sourceRegion
+
 proc sampledSnapshot(timeline: MotionTimeline; progress: float64): MotionSceneSnapshot =
   var objects = newSeq[MotionObject](timeline.base.objectCount)
   for index in 0 ..< objects.len:
@@ -164,6 +243,8 @@ proc sampledSnapshot(timeline: MotionTimeline; progress: float64): MotionSceneSn
   for bound in timeline.tracks:
     objects[bound.index].apply(bound.track.property,
       float32(bound.track.frames.sample(progress)))
+  for bound in timeline.spriteTracks:
+    objects[bound.index].sourceRegion = bound.track.sample(progress)
   motionSceneSnapshot(timeline.base.viewportSize, objects)
 
 proc advance*(

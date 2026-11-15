@@ -2,7 +2,7 @@ import std/[math, options, unittest]
 
 import clay_board_style_system
 import clay_board_style_system/runtime/[motion_scene, motion_scene_ui,
-  motion_scene_timeline, motion_scene_timeline_ui]
+  motion_scene_gpu, motion_scene_timeline, motion_scene_timeline_ui]
 
 proc initial(): MotionScene =
   newMotionScene(motionSceneSnapshot(size(200, 100), [
@@ -158,6 +158,90 @@ suite "CPU Motion Scene timelines":
     check value.color == rgb(1, 0, 0)
     check value.id == MotionObjectId(1)
     check scene.hitTest(vec2(15, 25)).get.id == MotionObjectId(1)
+
+  test "sprite tracks switch atlas regions on the shared scene clock":
+    let atlas = newMotionImageAsset(3, 1, @[
+      255'u8, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255])
+    let scene = newMotionScene(motionSceneSnapshot(size(24, 8), [
+      motionSprite(MotionObjectId(1), rect(0, 0, 8, 8), atlas,
+        rasterRegion(0, 0, 1, 1))]))
+    var frames = @[
+      MotionSpriteKeyframe(offset: 0, sourceRegion: rasterRegion(0, 0, 1, 1)),
+      MotionSpriteKeyframe(offset: 0.25, sourceRegion: rasterRegion(1, 0, 1, 1)),
+      MotionSpriteKeyframe(offset: 0.75, sourceRegion: rasterRegion(2, 0, 1, 1))]
+    let authored = motionSpriteTrack(MotionObjectId(1), frames)
+    frames[1].sourceRegion = rasterRegion(2, 0, 1, 1)
+    let timeline = newMotionTimeline(scene, [], 2, 0,
+      spriteTracks = [authored])
+    let firstRevision = scene.revision
+    var idle = timeline.tick(0.4)
+    check scene.revision == firstRevision
+    check idle.consumeDirty() == {}
+    var second = timeline.tick(0.5)
+    check second.consumeDirty() == {ddPaint}
+    check scene.value.sourceRegion == rasterRegion(1, 0, 1, 1)
+    check gpuMotionRectRecords(scene.snapshot)[0][0][3] == 1'f32 / 3'f32
+    check timeline.pause(0.75)
+    discard timeline.tick(3)
+    check scene.value.sourceRegion == rasterRegion(1, 0, 1, 1)
+    check timeline.resume(3)
+    discard timeline.tick(3.75)
+    check scene.value.sourceRegion == rasterRegion(2, 0, 1, 1)
+    discard timeline.tick(4.5)
+    check timeline.state == mtsFinished
+
+  test "sprite tracks validate atlas bounds and support reverse playback":
+    let atlas = newMotionImageAsset(2, 1,
+      @[255'u8, 0, 0, 255, 0, 255, 0, 255])
+    let scene = newMotionScene(motionSceneSnapshot(size(16, 8), [
+      motionSprite(MotionObjectId(1), rect(0, 0, 8, 8), atlas,
+        rasterRegion(0, 0, 1, 1))]))
+    let frames = [
+      MotionSpriteKeyframe(offset: 0, sourceRegion: rasterRegion(0, 0, 1, 1)),
+      MotionSpriteKeyframe(offset: 1, sourceRegion: rasterRegion(1, 0, 1, 1))]
+    let track = motionSpriteTrack(MotionObjectId(1), frames)
+    let reverse = newMotionTimeline(scene, [], 1, 0,
+      direction = adReverse, spriteTracks = [track])
+    discard reverse.tick(0)
+    check scene.value.sourceRegion == rasterRegion(1, 0, 1, 1)
+    discard reverse.tick(1)
+    check scene.value.sourceRegion == rasterRegion(0, 0, 1, 1)
+    let combinedScene = newMotionScene(motionSceneSnapshot(size(16, 8), [
+      motionSprite(MotionObjectId(1), rect(0, 0, 8, 8), atlas,
+        rasterRegion(0, 0, 1, 1))]))
+    let combined = newMotionTimeline(combinedScene,
+      [motionTrack(MotionObjectId(1), mspX, [
+        FloatKeyframe(offset: 0, value: 0),
+        FloatKeyframe(offset: 1, value: 4)])], 1, 0,
+      spriteTracks = [track])
+    discard combined.tick(0.5)
+    check combinedScene.value.bounds.x == 2
+    check combinedScene.value.sourceRegion == rasterRegion(0, 0, 1, 1)
+    discard combined.tick(1)
+    check combinedScene.value.bounds.x == 4
+    check combinedScene.value.sourceRegion == rasterRegion(1, 0, 1, 1)
+    expect ValueError:
+      discard motionSpriteTrack(MotionObjectId(1), [
+        MotionSpriteKeyframe(offset: 0.2,
+          sourceRegion: rasterRegion(0, 0, 1, 1))])
+    expect ValueError:
+      discard motionSpriteTrack(MotionObjectId(1), [
+        MotionSpriteKeyframe(offset: 0,
+          sourceRegion: rasterRegion(0, 0, 1, 1)),
+        MotionSpriteKeyframe(offset: 0,
+          sourceRegion: rasterRegion(1, 0, 1, 1))])
+    expect ValueError:
+      discard newMotionTimeline(scene, [], 1, 0,
+        spriteTracks = [track, track])
+    let outside = motionSpriteTrack(MotionObjectId(1), [
+      MotionSpriteKeyframe(offset: 0,
+        sourceRegion: rasterRegion(2, 0, 1, 1))])
+    expect ValueError:
+      discard newMotionTimeline(scene, [], 1, 0,
+        spriteTracks = [outside])
+    expect ValueError:
+      discard newMotionTimeline(initial(), [], 1, 0,
+        spriteTracks = [track])
 
   test "invalid authoring and time fail before publication":
     let scene = initial()
