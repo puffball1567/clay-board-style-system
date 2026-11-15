@@ -356,7 +356,7 @@ void main()
     (v_texcoord0 / v_texcoord1.xy) * v_texcoord3;
   vec4 sampled = texture2D(s_cbssMotionImage, uv);
   float alpha = sampled.a * v_color0.a;
-  gl_FragColor = vec4(sampled.rgb * alpha, alpha);
+  gl_FragColor = vec4(sampled.rgb * v_color0.rgb * alpha, alpha);
 }
 """,
     varyingDefinitions: """vec2 v_texcoord0 : TEXCOORD0;

@@ -237,6 +237,19 @@ suite "CPU Motion Scene snapshots":
     check spriteRecord[4][3] == 0.5'f32
     check cropped.snapshot.objectById(MotionObjectId(4)).get.sourceRegion ==
       rasterRegion(1, 0, 1, 1)
+    let tinted = motionSprite(MotionObjectId(6), rect(4, 4, 8, 8), asset,
+      rasterRegion(1, 0, 1, 1), tint = rgba(1, 0.5, 1, 0.5))
+    let tintedScene = newMotionScene(snap([
+      item(1, rect(0, 0, 32, 24), rgb(1, 1, 1)), tinted]))
+    let tintedPixel = tintedScene.pixels.pixel(5, 5)
+    check abs(int(tintedPixel.r) - 128) <= 1
+    check abs(int(tintedPixel.g) - 191) <= 1
+    check abs(int(tintedPixel.b) - 128) <= 1
+    let tintedRecord = gpuMotionRectRecords(tintedScene.snapshot)[1]
+    check tintedRecord[3] == [1'f32, 0.5'f32, 1'f32, 0.5'f32]
+    expect ValueError:
+      discard snap([motionImage(MotionObjectId(7), rect(0, 0, 2, 2),
+        asset, tint = rgba(1.1, 1, 1))])
     expect ValueError:
       discard snap([motionSprite(MotionObjectId(5), rect(0, 0, 2, 2), asset,
         rasterRegion(2, 0, 1, 1))])

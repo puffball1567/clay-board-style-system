@@ -191,11 +191,11 @@ proc motionImage*(
     id: MotionObjectId; bounds: Rect; image: MotionImageAsset;
     transform = identityAffine2D(); opacity = 1.0'f32;
     zIndex = 0'i32; visible = true; hitTestable = true;
-    sourceRegion = RasterRegion()
+    sourceRegion = RasterRegion(); tint = rgb(1, 1, 1)
 ): MotionObject =
   ## The image is copied when its asset is created, not per scene snapshot.
   MotionObject(id: id, shape: msImage, bounds: bounds,
-    color: rgb(1, 1, 1), transform: transform, opacity: opacity,
+    color: tint, transform: transform, opacity: opacity,
     image: image, sourceRegion: sourceRegion,
     zIndex: zIndex, visible: visible,
     hitTestable: hitTestable)
@@ -204,11 +204,12 @@ proc motionSprite*(
     id: MotionObjectId; bounds: Rect; atlas: MotionImageAsset;
     sourceRegion: RasterRegion;
     transform = identityAffine2D(); opacity = 1.0'f32;
-    zIndex = 0'i32; visible = true; hitTestable = true
+    zIndex = 0'i32; visible = true; hitTestable = true;
+    tint = rgb(1, 1, 1)
 ): MotionObject =
   ## A region of a shared image atlas; validation occurs with the snapshot.
   motionImage(id, bounds, atlas, transform, opacity, zIndex,
-    visible, hitTestable, sourceRegion)
+    visible, hitTestable, sourceRegion, tint)
 
 proc motionPolygon*(
     id: MotionObjectId; vertices: openArray[Vec2]; color: Color;
@@ -351,9 +352,8 @@ proc motionSceneSnapshot*(
       value.startAngle = 0
       value.sweepAngle = 0
     if value.shape == msImage:
-      if value.image.isNil or value.color != rgb(1, 1, 1):
-        raise newException(ValueError,
-          "motion image requires an asset and untinted white color")
+      if value.image.isNil:
+        raise newException(ValueError, "motion image requires an asset")
       value.sourceRegion = value.image.surface.resolvedRasterSourceRegion(
         value.sourceRegion)
     else:
@@ -530,7 +530,7 @@ proc compile(snapshot: MotionSceneSnapshot): seq[CanvasCommand] =
       target.fillPath(path, color)
     of msImage:
       target.drawRasterSurface(value.image.surface, value.bounds,
-        value.opacity, value.sourceRegion)
+        value.opacity, value.sourceRegion, value.color)
     of msPolygon:
       var path = initPath2D()
       path.moveTo(value.polygon.vertices[0])

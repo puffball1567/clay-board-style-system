@@ -103,6 +103,7 @@ type
       rasterRect*: Rect
       rasterSourceRegion*: RasterRegion
       rasterOpacity*: float32
+      rasterTint*: Color
     of pcDrawGpuDirectSurface:
       gpuDirectSurface*: GpuDirectSurface
       gpuFallbackSurface*: RasterSurface
@@ -301,7 +302,8 @@ proc samePaintCommand*(first, second: PaintCommand): bool =
     first.rasterSurface == second.rasterSurface and
       first.rasterRect == second.rasterRect and
       first.rasterSourceRegion == second.rasterSourceRegion and
-      first.rasterOpacity == second.rasterOpacity
+      first.rasterOpacity == second.rasterOpacity and
+      first.rasterTint == second.rasterTint
   of pcDrawGpuDirectSurface:
     first.gpuDirectSurface == second.gpuDirectSurface and
       first.gpuFallbackSurface == second.gpuFallbackSurface and
@@ -551,17 +553,23 @@ proc drawRasterSurface*(
     surface: RasterSurface;
     bounds: Rect;
     opacity = 1.0'f32;
-    sourceRegion = RasterRegion()
+    sourceRegion = RasterRegion();
+    tint = rgb(1, 1, 1)
 ): PaintCommand =
   if surface.isNil:
     raise newException(ValueError, "raster surface cannot be nil")
+  for channel in [tint.r, tint.g, tint.b, tint.a]:
+    if channel.classify in {fcNan, fcInf, fcNegInf} or
+        channel < 0 or channel > 1:
+      raise newException(ValueError, "raster tint must be in the unit interval")
   PaintCommand(
     kind: pcDrawRasterSurface,
     owner: some(node),
     rasterSurface: surface,
     rasterRect: bounds,
     rasterSourceRegion: surface.resolvedRasterSourceRegion(sourceRegion),
-    rasterOpacity: clamp(opacity, 0.0'f32, 1.0'f32)
+    rasterOpacity: clamp(opacity, 0.0'f32, 1.0'f32),
+    rasterTint: tint
   )
 
 proc drawGpuDirectSurface*(

@@ -10671,7 +10671,7 @@ suite "GPU instanced draws":
       motionRect(MotionObjectId(1), rect(0, 0, 16, 16), rgb(0, 0, 1)),
       motionImage(MotionObjectId(2), rect(2, 2, 4, 4), asset),
       motionSprite(MotionObjectId(3), rect(6, 2, 4, 4), asset,
-        rasterRegion(1, 0, 1, 1)),
+        rasterRegion(1, 0, 1, 1), tint = rgba(1, 0.5, 1, 0.5)),
       motionPolygon(MotionObjectId(4),
         @[vec2(4, 4), vec2(8, 4), vec2(8, 8), vec2(4, 8)],
         rgb(1, 1, 0)),
@@ -10685,6 +10685,7 @@ suite "GPU instanced draws":
     check records[1][4][2] == 1'f32
     check records[2][0][3] == 0.5'f32
     check records[2][4][2] == 0.5'f32
+    check records[2][3] == [1'f32, 0.5'f32, 1'f32, 0.5'f32]
     let pass = graphicsPass(16, 16, target)
     let frame = host.beginGpuFrame()
     check submitMotionScene(shapes, images, batch, pass)

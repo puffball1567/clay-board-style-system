@@ -2349,7 +2349,7 @@ proc verifyMotionSceneCanvas(host: GpuHost;
     motionImage(MotionObjectId(11), rect(2, 2, 8, 8), image),
     motionRect(MotionObjectId(12), rect(5, 5, 3, 3), rgb(0, 1, 0)),
     motionSprite(MotionObjectId(14), rect(10, 2, 4, 4), image,
-      rasterRegion(1, 0, 1, 1)),
+      rasterRegion(1, 0, 1, 1), tint = rgba(1, 0.5, 1, 0.5)),
     motionPolygon(MotionObjectId(13),
       @[vec2(11, 11), vec2(15, 11), vec2(15, 15), vec2(11, 15)],
       rgba(1, 1, 0, 0.5))]))
@@ -2363,7 +2363,8 @@ proc verifyMotionSceneCanvas(host: GpuHost;
   imagePixels.requireRasterPixel(16, 6, 6,
     Pixel(green: 255, alpha: 255), "GPU Canvas image paint order")
   imagePixels.requireRasterPixel(16, 11, 3,
-    Pixel(green: 255, alpha: 255), "GPU Canvas shared atlas region")
+    Pixel(green: 64, blue: 127, alpha: 255),
+    "GPU Canvas tinted shared atlas region")
   imagePixels.requireRasterPixel(16, 12, 12,
     Pixel(red: 128, green: 128, blue: 127, alpha: 255),
     "GPU Canvas convex polygon shared diagonal")
