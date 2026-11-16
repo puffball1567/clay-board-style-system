@@ -21,8 +21,9 @@ type
     surface: RasterSurface
 
   MotionPolygonAsset* = ref object
-    ## A copied strictly convex contour in local scene coordinates.
+    ## A copied simple contour and its triangulation in local scene coordinates.
     vertices: seq[Vec2]
+    triangles: seq[array[3, int]]
 
   MotionLineCap* = enum
     mlcButt, mlcSquare, mlcRound
@@ -119,6 +120,17 @@ proc polygonVertices*(asset: MotionPolygonAsset): seq[Vec2] =
 proc polygonVertexCount*(asset: MotionPolygonAsset): int =
   if asset.isNil: 0 else: asset.vertices.len
 
+proc polygonTriangleIndices*(asset: MotionPolygonAsset): seq[array[3, int]] =
+  ## Return a copy so callers cannot alter a published triangulation.
+  if asset.isNil:
+    raise newException(ValueError, "motion polygon asset cannot be nil")
+  result = newSeq[array[3, int]](asset.triangles.len)
+  for index, triangle in asset.triangles:
+    result[index] = triangle
+
+proc polygonTriangleCount*(asset: MotionPolygonAsset): int =
+  if asset.isNil: 0 else: asset.triangles.len
+
 proc finite(value: float32): bool =
   value.classify notin {fcNan, fcInf, fcNegInf}
 
@@ -211,12 +223,110 @@ proc motionSprite*(
   motionImage(id, bounds, atlas, transform, opacity, zIndex,
     visible, hitTestable, sourceRegion, tint)
 
+proc polygonCross(a, b, c: Vec2): float64 =
+  (b.x.float64 - a.x.float64) * (c.y.float64 - a.y.float64) -
+    (b.y.float64 - a.y.float64) * (c.x.float64 - a.x.float64)
+
+proc pointOnSegment(point, a, b: Vec2): bool =
+  point.x.float64 >= min(a.x.float64, b.x.float64) and
+    point.x.float64 <= max(a.x.float64, b.x.float64) and
+    point.y.float64 >= min(a.y.float64, b.y.float64) and
+    point.y.float64 <= max(a.y.float64, b.y.float64)
+
+proc polygonEdgesIntersect(a, b, c, d: Vec2): bool =
+  let abC = polygonCross(a, b, c)
+  let abD = polygonCross(a, b, d)
+  let cdA = polygonCross(c, d, a)
+  let cdB = polygonCross(c, d, b)
+  (abC == 0 and c.pointOnSegment(a, b)) or
+    (abD == 0 and d.pointOnSegment(a, b)) or
+    (cdA == 0 and a.pointOnSegment(c, d)) or
+    (cdB == 0 and b.pointOnSegment(c, d)) or
+    (((abC > 0 and abD < 0) or (abC < 0 and abD > 0)) and
+      ((cdA > 0 and cdB < 0) or (cdA < 0 and cdB > 0)))
+
+proc polygonTriangleContains(point, a, b, c: Vec2): bool =
+  let orientation = polygonCross(a, b, c)
+  let ab = polygonCross(a, b, point)
+  let bc = polygonCross(b, c, point)
+  let ca = polygonCross(c, a, point)
+  if orientation > 0:
+    ab >= 0 and bc >= 0 and ca >= 0
+  else:
+    ab <= 0 and bc <= 0 and ca <= 0
+
+proc triangulatePolygon(points: openArray[Vec2]): seq[array[3, int]] =
+  let count = points.len
+  for index in 0 ..< count:
+    let a = points[index]
+    let b = points[(index + 1) mod count]
+    let c = points[(index + 2) mod count]
+    if a == b or polygonCross(a, b, c) == 0:
+      raise newException(ValueError,
+        "motion polygon edges must be nonzero and noncollinear")
+    for other in index + 1 ..< count:
+      if other == (index + 1) mod count or
+          (index == 0 and other == count - 1):
+        continue
+      if polygonEdgesIntersect(a, b, points[other],
+          points[(other + 1) mod count]):
+        raise newException(ValueError,
+          "motion polygon edges must not intersect")
+  var twiceArea = 0.0
+  for index in 1 ..< count - 1:
+    twiceArea += polygonCross(points[0], points[index], points[index + 1])
+  if twiceArea == 0:
+    raise newException(ValueError, "motion polygon area must be nonzero")
+  let winding = if twiceArea > 0: 1.0 else: -1.0
+  var convex = true
+  for index in 0 ..< count:
+    if polygonCross(points[index], points[(index + 1) mod count],
+        points[(index + 2) mod count]) * winding < 0:
+      convex = false
+      break
+  if convex:
+    for index in 1 ..< count - 1:
+      result.add [0, index, index + 1]
+    return
+  var remaining = newSeq[int](count)
+  for index in 0 ..< count:
+    remaining[index] = index
+  while remaining.len > 3:
+    var found = false
+    for position in 0 ..< remaining.len:
+      let previous = remaining[(position + remaining.len - 1) mod remaining.len]
+      let current = remaining[position]
+      let following = remaining[(position + 1) mod remaining.len]
+      let a = points[previous]
+      let b = points[current]
+      let c = points[following]
+      if polygonCross(a, b, c) * winding <= 0:
+        continue
+      var occupied = false
+      for other in remaining:
+        if other notin [previous, current, following] and
+            polygonTriangleContains(points[other], a, b, c):
+          occupied = true
+          break
+      if occupied:
+        continue
+      result.add [previous, current, following]
+      remaining.delete(position)
+      found = true
+      break
+    if not found:
+      raise newException(ValueError, "motion polygon cannot be triangulated")
+  if polygonCross(points[remaining[0]], points[remaining[1]],
+      points[remaining[2]]) * winding <= 0:
+    raise newException(ValueError, "motion polygon cannot be triangulated")
+  result.add [remaining[0], remaining[1], remaining[2]]
+
 proc motionPolygon*(
     id: MotionObjectId; vertices: openArray[Vec2]; color: Color;
     transform = identityAffine2D(); opacity = 1.0'f32;
     zIndex = 0'i32; visible = true; hitTestable = true
 ): MotionObject =
-  ## Accept a strictly convex contour in either winding order.
+  ## Accept a simple convex or concave contour in either winding order.
   if vertices.len < 3 or vertices.len > 64:
     raise newException(ValueError, "motion polygon requires 3 to 64 vertices")
   var points = newSeq[Vec2](vertices.len)
@@ -236,27 +346,13 @@ proc motionPolygon*(
       maxX - minX > high(float32).float64 or
       maxY - minY > high(float32).float64:
     raise newException(ValueError, "motion polygon bounds are invalid")
-  var orientation = 0
-  for edge in 0 ..< points.len:
-    let a = points[edge]
-    let b = points[(edge + 1) mod points.len]
-    for index, point in points:
-      if index == edge or index == (edge + 1) mod points.len:
-        continue
-      let cross = (b.x.float64 - a.x.float64) *
-        (point.y.float64 - a.y.float64) -
-        (b.y.float64 - a.y.float64) *
-        (point.x.float64 - a.x.float64)
-      if cross == 0 or (orientation != 0 and
-          (if cross > 0: 1 else: -1) != orientation):
-        raise newException(ValueError,
-          "motion polygon must be strictly convex and ordered")
-      orientation = if cross > 0: 1 else: -1
+  let triangles = triangulatePolygon(points)
   MotionObject(id: id, shape: msPolygon,
     bounds: rect(minX.float32, minY.float32,
       (maxX - minX).float32, (maxY - minY).float32),
     color: color, transform: transform, opacity: opacity,
-    polygon: MotionPolygonAsset(vertices: points), zIndex: zIndex,
+    polygon: MotionPolygonAsset(vertices: points, triangles: triangles),
+    zIndex: zIndex,
     visible: visible, hitTestable: hitTestable)
 
 proc motionLine*(
@@ -361,7 +457,8 @@ proc motionSceneSnapshot*(
       value.sourceRegion = RasterRegion()
     if value.shape == msPolygon:
       if value.polygon.isNil or value.polygon.vertices.len < 3 or
-          value.polygon.vertices.len > 64:
+          value.polygon.vertices.len > 64 or
+          value.polygon.triangles.len != value.polygon.vertices.len - 2:
         raise newException(ValueError, "motion polygon requires a valid contour")
       var minX = Inf
       var minY = Inf
@@ -638,21 +735,14 @@ proc hitTest*(snapshot: MotionSceneSnapshot; position: Vec2): Option[MotionScene
       discard
     of msPolygon:
       let vertices = entry.value.polygon.vertices
-      var inside = true
-      var orientation = 0
-      for index, a in vertices:
-        let b = vertices[(index + 1) mod vertices.len]
-        let cross = (b.x.float64 - a.x.float64) *
-          (point.y.float64 - a.y.float64) -
-          (b.y.float64 - a.y.float64) *
-          (point.x.float64 - a.x.float64)
-        if cross == 0: continue
-        let sign = if cross > 0: 1 else: -1
-        if orientation != 0 and sign != orientation:
-          inside = false
+      var inside = false
+      for triangle in entry.value.polygon.triangles:
+        if polygonTriangleContains(point, vertices[triangle[0]],
+            vertices[triangle[1]], vertices[triangle[2]]):
+          inside = true
           break
-        orientation = sign
-      if not inside: continue
+      if not inside:
+        continue
     return some(MotionSceneHit(id: entry.value.id,
       localPosition: vec2(point.x - bounds.x, point.y - bounds.y)))
 

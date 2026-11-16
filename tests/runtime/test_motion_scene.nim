@@ -291,7 +291,7 @@ suite "CPU Motion Scene snapshots":
         @[vec2(0, 0), vec2(4, 0)], rgb(1, 0, 0))
     expect ValueError:
       discard motionPolygon(MotionObjectId(2),
-        @[vec2(0, 0), vec2(4, 0), vec2(2, 1), vec2(4, 4), vec2(0, 4)],
+        @[vec2(0, 0), vec2(4, 4), vec2(0, 4), vec2(4, 0)],
         rgb(1, 0, 0))
     var mismatched = polygon
     mismatched.bounds = rect(0, 0, 100, 100)
@@ -301,6 +301,50 @@ suite "CPU Motion Scene snapshots":
       discard snap([MotionObject(id: MotionObjectId(2), shape: msPolygon,
         bounds: rect(0, 0, 4, 4), color: rgb(1, 0, 0),
         transform: identityAffine2D(), opacity: 1, visible: true)])
+
+  test "concave polygons triangulate without filling notches or internal seams":
+    let contour = @[vec2(2, 2), vec2(14, 2), vec2(14, 6),
+      vec2(6, 6), vec2(6, 14), vec2(2, 14)]
+    let polygon = motionPolygon(MotionObjectId(1), contour,
+      rgba(0, 1, 0, 0.5))
+    check polygon.polygon.polygonTriangleCount() == contour.len - 2
+    var triangles = polygon.polygon.polygonTriangleIndices()
+    triangles[0][0] = 99
+    check polygon.polygon.polygonTriangleIndices()[0][0] != 99
+    let scene = newMotionScene(snap([polygon]))
+    for point in [(4, 4), (10, 4), (4, 10)]:
+      let sample = scene.pixels.pixel(point[0], point[1])
+      check abs(int(sample.g) - 128) <= 1
+      check scene.hitTest(vec2(point[0].float32 + 0.5,
+        point[1].float32 + 0.5)).get.id == MotionObjectId(1)
+    check scene.pixels.pixel(10, 10) == (0'u8, 0'u8, 0'u8)
+    check scene.hitTest(vec2(10.5, 10.5)).isNone
+    let records = gpuMotionRectRecords(scene.snapshot)
+    check records.len == contour.len - 2
+    check records[0][2][2] == 0
+    check records[1][2][2] == 1
+    check records[2][2][2] == 2
+    check records[3][2][2] == 4
+    let reversed = motionPolygon(MotionObjectId(1),
+      @[vec2(2, 14), vec2(6, 14), vec2(6, 6),
+        vec2(14, 6), vec2(14, 2), vec2(2, 2)],
+      rgba(0, 1, 0, 0.5))
+    let reverseScene = newMotionScene(snap([reversed]))
+    check reverseScene.pixels.pixel(4, 10) == scene.pixels.pixel(4, 10)
+    check reverseScene.hitTest(vec2(10.5, 10.5)).isNone
+    var moved = polygon
+    moved.transform = translationAffine2D(5, 0)
+    let translated = newMotionScene(snap([moved]))
+    check translated.hitTest(vec2(9, 10)).isSome
+    check translated.hitTest(vec2(15, 10)).isNone
+    expect ValueError:
+      discard motionPolygon(MotionObjectId(2),
+        @[vec2(0, 0), vec2(4, 0), vec2(8, 0), vec2(8, 8)],
+        rgb(1, 0, 0))
+    expect ValueError:
+      discard motionPolygon(MotionObjectId(2),
+        @[vec2(0, 0), vec2(8, 0), vec2(8, 8),
+          vec2(4, 0), vec2(0, 8)], rgb(1, 0, 0))
 
   test "line caps share CPU paint, picking, and GPU instance geometry":
     let roundLine = motionLine(MotionObjectId(1), vec2(4, 8), vec2(16, 8),
