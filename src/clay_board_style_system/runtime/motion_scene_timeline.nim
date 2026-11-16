@@ -15,7 +15,8 @@ const
 type
   MotionSceneProperty* = enum
     mspX, mspY, mspWidth, mspHeight, mspOpacity, mspRadius,
-    mspTranslateX, mspTranslateY
+    mspTranslateX, mspTranslateY,
+    mspColorR, mspColorG, mspColorB, mspColorA
 
   MotionFloatTrack* = object
     target: MotionObjectId
@@ -74,9 +75,10 @@ proc motionTrack*(
     of mspWidth, mspHeight, mspRadius:
       if keyframe.value < 0:
         raise newException(ValueError, "motion track dimensions must be non-negative")
-    of mspOpacity:
+    of mspOpacity, mspColorR, mspColorG, mspColorB, mspColorA:
       if keyframe.value < 0 or keyframe.value > 1:
-        raise newException(ValueError, "motion track opacity must be in the unit interval")
+        raise newException(ValueError,
+          "motion track opacity and color must be in the unit interval")
     else: discard
   MotionFloatTrack(target: target, property: property,
     frames: floatKeyframes(keyframes))
@@ -224,6 +226,10 @@ proc apply(value: var MotionObject; property: MotionSceneProperty; sample: float
   of mspRadius: value.radius = sample
   of mspTranslateX: value.transform.tx = sample
   of mspTranslateY: value.transform.ty = sample
+  of mspColorR: value.color.r = sample
+  of mspColorG: value.color.g = sample
+  of mspColorB: value.color.b = sample
+  of mspColorA: value.color.a = sample
 
 proc sample(track: MotionSpriteTrack; progress: float64): RasterRegion =
   var low = 0
