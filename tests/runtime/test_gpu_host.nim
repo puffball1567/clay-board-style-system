@@ -10700,7 +10700,13 @@ suite "GPU instanced draws":
     check context.drawCommands[2].bindings.textures.len == 0
     check context.lastDrawCommand.instances.firstInstance == 3
     check context.lastDrawCommand.instances.instanceCount == 3
-    let spriteTimeline = newMotionTimeline(scene, [], 1, 0,
+    let spriteTimeline = newMotionTimeline(scene, [
+      motionTrack(MotionObjectId(3), mspColorG, [
+        FloatKeyframe(offset: 0, value: 0.5),
+        FloatKeyframe(offset: 1, value: 1)]),
+      motionTrack(MotionObjectId(3), mspColorA, [
+        FloatKeyframe(offset: 0, value: 0.5),
+        FloatKeyframe(offset: 1, value: 1)])], 1, 0,
       spriteTracks = [motionSpriteTrack(MotionObjectId(3), [
         MotionSpriteKeyframe(offset: 0,
           sourceRegion: rasterRegion(1, 0, 1, 1)),
@@ -10708,9 +10714,17 @@ suite "GPU instanced draws":
           sourceRegion: rasterRegion(0, 0, 1, 1))])])
     var spriteScheduler = initFrameScheduler()
     let updatesBefore = context.bufferUpdates
-    check spriteTimeline.advance(spriteScheduler, 1)
+    check spriteTimeline.advance(spriteScheduler, 0.5)
+    check gpuMotionRectRecords(scene.snapshot)[2][3] ==
+      [1'f32, 0.75'f32, 1'f32, 0.75'f32]
     check batch.sync(host, namespace, scene)
     check context.bufferUpdates == updatesBefore + 1
+    check context.textureCreates == 1
+    check spriteTimeline.advance(spriteScheduler, 1)
+    check gpuMotionRectRecords(scene.snapshot)[2][3] ==
+      [1'f32, 1'f32, 1'f32, 1'f32]
+    check batch.sync(host, namespace, scene)
+    check context.bufferUpdates == updatesBefore + 2
     check context.textureCreates == 1
     discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), [
       motionImage(MotionObjectId(2), rect(3, 2, 4, 4), asset)]))

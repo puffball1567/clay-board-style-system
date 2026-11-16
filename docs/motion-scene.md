@@ -196,7 +196,7 @@ an update fails, so the next sync retries the affected records. Sync and release
 belong outside an active GPU frame. Release the batch before changing its host
 or namespace; the application still owns shader compilation, material lifetime,
 and frame submission. A material can also submit a static `GpuInstanceBinding`.
-GPU execution for paths, text, images, and other scene primitives remains a
+GPU execution for paths, text, and other scene primitives remains a
 follow-up.
 
 For an ordinary UI Canvas attachment, `motion_scene_gpu_canvas` owns the
@@ -295,6 +295,10 @@ let timeline = newMotionTimeline(scene, [
   motionTrack(MotionObjectId(1), mspX, [
     FloatKeyframe(offset: 0, value: 30),
     FloatKeyframe(offset: 1, value: 180)
+  ]),
+  motionTrack(MotionObjectId(1), mspColorG, [
+    FloatKeyframe(offset: 0, value: 0.3),
+    FloatKeyframe(offset: 1, value: 1)
   ])
 ], durationSeconds = 2, nowSeconds = 10, timing = easeInOutTiming())
 
@@ -327,12 +331,16 @@ frame is collected, it requests no further wake-up. The application still
 owns its UI loop and GPU host.
 
 Tracks address existing stable IDs and set absolute `mspX`, `mspY`, `mspWidth`,
-`mspHeight`, `mspOpacity`, `mspRadius`, `mspTranslateX`, or `mspTranslateY` values.
+`mspHeight`, `mspOpacity`, `mspRadius`, `mspTranslateX`, `mspTranslateY`, or
+`mspColorR`, `mspColorG`, `mspColorB`, or `mspColorA` values. Color tracks
+animate figure colors and image or sprite tints using the same scene clock;
+color alpha also multiplies object opacity.
 Translation tracks change the affine transform's translation components while
 preserving its linear components. Unanimated properties come from the snapshot
 captured at construction. Keyframes are copied, offsets must be ordered in
 `[0, 1]`, values must fit finite float32, dimensions must be nonnegative, and
-opacity must stay in `[0, 1]`. Scene validation and radius clamping still apply
+opacity and color channels must stay in `[0, 1]`. Scene validation and radius
+clamping still apply
 at every sampled frame. Duplicate object/property pairs and unknown IDs fail
 before any scene changes. A timeline accepts at most 65,536 tracks, 1,024 stops
 per track, and 262,144 stops in total.

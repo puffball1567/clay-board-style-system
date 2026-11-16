@@ -1,6 +1,7 @@
 import std/[math, options, unittest]
 
 import clay_board_style_system
+import clay_board_style_system/backends/ppm/raster
 import clay_board_style_system/runtime/[motion_scene, motion_scene_ui,
   motion_scene_gpu, motion_scene_timeline, motion_scene_timeline_ui]
 
@@ -21,6 +22,14 @@ proc value(scene: MotionScene; id = MotionObjectId(1)): MotionObject =
 proc tick(timeline: MotionTimeline; now: float64): FrameScheduler =
   result = initFrameScheduler()
   discard timeline.advance(result, now)
+
+proc pixels(scene: MotionScene): RasterImage =
+  render(scene.canvas.paintCommands(NodeId(0), rect(0, 0, 16, 8)),
+    16, 8, rgb(0, 0, 0))
+
+proc pixel(image: RasterImage; x, y: int): tuple[r, g, b: uint8] =
+  let offset = (y * image.width + x) * 3
+  (image.pixels[offset], image.pixels[offset + 1], image.pixels[offset + 2])
 
 suite "CPU Motion Scene timelines":
   test "batch tracks sample shared keyframes and finish without a deadline":
@@ -159,6 +168,36 @@ suite "CPU Motion Scene timelines":
     check value.id == MotionObjectId(1)
     check scene.hitTest(vec2(15, 25)).get.id == MotionObjectId(1)
 
+  test "color tracks animate shape colors and image tints":
+    let asset = newMotionImageAsset(1, 1,
+      @[255'u8, 255, 255, 255])
+    let scene = newMotionScene(motionSceneSnapshot(size(16, 8), [
+      motionRect(MotionObjectId(1), rect(0, 0, 16, 8), rgb(0, 0, 1)),
+      motionRect(MotionObjectId(2), rect(1, 1, 4, 4), rgb(1, 0, 0)),
+      motionImage(MotionObjectId(3), rect(8, 1, 4, 4), asset,
+        opacity = 0.5)]))
+    let timeline = newMotionTimeline(scene, [
+      track(mspColorG, 0, 1, MotionObjectId(2)),
+      track(mspColorB, 0, 1, MotionObjectId(2)),
+      track(mspColorR, 1, 0, MotionObjectId(3)),
+      track(mspColorG, 1, 0, MotionObjectId(3)),
+      track(mspColorA, 1, 0, MotionObjectId(3))], 1, 0)
+    var middle = timeline.tick(0.5)
+    check middle.consumeDirty() == {ddPaint}
+    check scene.value(MotionObjectId(2)).color == rgb(1, 0.5, 0.5)
+    check scene.value(MotionObjectId(3)).color == rgba(0.5, 0.5, 1, 0.5)
+    check scene.value(MotionObjectId(3)).image == asset
+    check scene.pixels.pixel(2, 2) == (255'u8, 128'u8, 128'u8)
+    let imagePixel = scene.pixels.pixel(9, 2)
+    check abs(int(imagePixel.r) - 32) <= 1
+    check abs(int(imagePixel.g) - 32) <= 1
+    check imagePixel.b == 255
+    check gpuMotionRectRecords(scene.snapshot)[2][3] ==
+      [0.5'f32, 0.5'f32, 1'f32, 0.25'f32]
+    discard timeline.tick(1)
+    check scene.value(MotionObjectId(3)).color == rgba(0, 0, 1, 0)
+    check scene.pixels.pixel(9, 2) == (0'u8, 0'u8, 255'u8)
+
   test "sprite tracks switch atlas regions on the shared scene clock":
     let atlas = newMotionImageAsset(3, 1, @[
       255'u8, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255])
@@ -248,6 +287,8 @@ suite "CPU Motion Scene timelines":
     let before = scene.snapshot
     expect ValueError: discard motionTrack(MotionObjectId(1), mspX, [])
     expect ValueError: discard track(mspOpacity, 0, 2)
+    expect ValueError: discard track(mspColorR, -0.1, 1)
+    expect ValueError: discard track(mspColorA, 0, 2)
     expect ValueError: discard track(mspWidth, -1, 10)
     expect ValueError: discard track(mspX, 0, Inf)
     expect ValueError: discard track(mspX, 0, 1e39)
