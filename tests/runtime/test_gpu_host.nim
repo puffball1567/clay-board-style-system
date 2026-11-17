@@ -10751,7 +10751,7 @@ suite "GPU instanced draws":
     check host.closeGpuNamespace(namespace)
     host.close()
 
-  test "Motion Scene sector angle tracks update one GPU instance":
+  test "Motion Scene angle and transform tracks update one GPU instance":
     let context = newContext()
     let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
     let namespace = host.createGpuNamespace("motion-sector-angles",
@@ -10778,6 +10778,20 @@ suite "GPU instanced draws":
     let record = gpuMotionRectRecords(scene.snapshot)[0]
     check abs(record[0][3] - PI.float32 * 0.75'f32) < 0.0001'f32
     check abs(record[2][2] - PI.float32 * 0.5'f32) < 0.0001'f32
+    let transformTimeline = newMotionTimeline(scene, [
+      motionTrack(MotionObjectId(1), mspRotation, [
+        FloatKeyframe(offset: 0, value: 0),
+        FloatKeyframe(offset: 1, value: PI * 0.5)]),
+      motionTrack(MotionObjectId(1), mspScaleX, [
+        FloatKeyframe(offset: 0, value: 1),
+        FloatKeyframe(offset: 1, value: 2)])], 1, 1)
+    check transformTimeline.advance(scheduler, 1.5)
+    check batch.sync(host, namespace, scene)
+    check context.bufferUpdates == 2
+    check context.bufferCreates == 1
+    let transformed = gpuMotionRectRecords(scene.snapshot)[0]
+    check abs(transformed[0][0] - cos(PI.float32 * 0.25'f32) * 1.5) <
+      0.0001'f32
     batch.release()
     host.close()
 

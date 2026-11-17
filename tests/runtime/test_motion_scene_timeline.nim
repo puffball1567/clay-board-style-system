@@ -23,9 +23,10 @@ proc tick(timeline: MotionTimeline; now: float64): FrameScheduler =
   result = initFrameScheduler()
   discard timeline.advance(result, now)
 
-proc pixels(scene: MotionScene): RasterImage =
-  render(scene.canvas.paintCommands(NodeId(0), rect(0, 0, 16, 8)),
-    16, 8, rgb(0, 0, 0))
+proc pixels(scene: MotionScene; width = 16; height = 8): RasterImage =
+  render(scene.canvas.paintCommands(NodeId(0),
+    rect(0, 0, width.float32, height.float32)),
+    width, height, rgb(0, 0, 0))
 
 proc pixel(image: RasterImage; x, y: int): tuple[r, g, b: uint8] =
   let offset = (y * image.width + x) * 3
@@ -167,6 +168,71 @@ suite "CPU Motion Scene timelines":
     check value.color == rgb(1, 0, 0)
     check value.id == MotionObjectId(1)
     check scene.hitTest(vec2(15, 25)).get.id == MotionObjectId(1)
+
+  test "rotation and scale tracks paint and pick around the bounds center":
+    let scene = newMotionScene(motionSceneSnapshot(size(20, 16), [
+      motionRect(MotionObjectId(1), rect(4, 4, 8, 4), rgb(0, 1, 0))]))
+    let timeline = newMotionTimeline(scene, [
+      track(mspRotation, 0, PI * 0.5),
+      track(mspScaleX, 1, 2)], 1, 0)
+    check scene.hitTest(vec2(8.5, 12.5)).isNone
+    var middle = timeline.tick(0.5)
+    check middle.consumeDirty() == {ddPaint}
+    let expected = translationAffine2D(8, 6) *
+      rotationAffine2D(PI.float32 * 0.25'f32) *
+      scaleAffine2D(1.5, 1) * translationAffine2D(-8, -6)
+    check scene.value.transform == expected
+    let record = gpuMotionRectRecords(scene.snapshot)[0]
+    check record[0][0] == expected.m11
+    check record[1][0] == expected.m12
+    discard timeline.tick(1)
+    check scene.pixels(20, 16).pixel(8, 12).g == 255
+    check scene.pixels(20, 16).pixel(12, 6).g == 0
+    check scene.hitTest(vec2(8.5, 12.5)).isSome
+    check scene.hitTest(vec2(12.5, 6.5)).isNone
+
+  test "transform tracks preserve base affine and ignore track order":
+    let initial = motionSceneSnapshot(size(40, 32), [
+      motionRect(MotionObjectId(1), rect(4, 4, 8, 4), rgb(0, 1, 0),
+        transform = translationAffine2D(2, 1) * scaleAffine2D(1.25, 0.75))])
+    let scene = newMotionScene(initial)
+    let reversed = newMotionScene(initial)
+    let forward = newMotionTimeline(scene, [
+      track(mspX, 4, 8), track(mspTranslateX, 2, 6),
+      track(mspRotation, 0, PI * 0.5),
+      track(mspScaleX, 1, 2), track(mspScaleY, 1, 0.5)], 1, 0)
+    let backward = newMotionTimeline(reversed, [
+      track(mspScaleY, 1, 0.5), track(mspScaleX, 1, 2),
+      track(mspRotation, 0, PI * 0.5),
+      track(mspTranslateX, 2, 6), track(mspX, 4, 8)], 1, 0)
+    discard forward.tick(0.5)
+    discard backward.tick(0.5)
+    let expected = Affine2D(m11: 1.25, m22: 0.75, tx: 4, ty: 1) *
+      translationAffine2D(10, 6) *
+      rotationAffine2D(PI.float32 * 0.25'f32) *
+      scaleAffine2D(1.5, 0.75) *
+      translationAffine2D(-10, -6)
+    check scene.value.transform == expected
+    check reversed.value.transform == expected
+    check scene.value.bounds.x == 6
+
+  test "zero and negative scale tracks retain stable scene identities":
+    let base = motionSceneSnapshot(size(16, 16), [
+      motionRect(MotionObjectId(1), rect(2, 2, 4, 4), rgb(0, 1, 0))])
+    let vanished = newMotionScene(base)
+    let vanish = newMotionTimeline(vanished,
+      [track(mspScaleX, 1, 0)], 1, 0)
+    discard vanish.tick(1)
+    check vanished.value.id == MotionObjectId(1)
+    check vanished.hitTest(vec2(3, 3)).isNone
+    check gpuMotionRectRecords(vanished.snapshot).len == 0
+    let mirrored = newMotionScene(base)
+    let mirror = newMotionTimeline(mirrored,
+      [track(mspScaleX, 1, -1)], 1, 0)
+    discard mirror.tick(1)
+    check mirrored.value.transform.determinant < 0
+    check mirrored.hitTest(vec2(3, 3)).isSome
+    check gpuMotionRectRecords(mirrored.snapshot).len == 1
 
   test "color tracks animate shape colors and image tints":
     let asset = newMotionImageAsset(1, 1,

@@ -3,6 +3,7 @@
 import std/[math, options, sets, tables]
 
 import ../core/computed_style
+import ../core/geometry
 import ../core/raster_surface
 import ./[animation_clock, frame_scheduler, invalidation, motion_scene]
 
@@ -18,7 +19,8 @@ type
     mspX, mspY, mspWidth, mspHeight, mspOpacity, mspRadius,
     mspTranslateX, mspTranslateY,
     mspColorR, mspColorG, mspColorB, mspColorA,
-    mspStartAngle, mspSweepAngle
+    mspStartAngle, mspSweepAngle,
+    mspRotation, mspScaleX, mspScaleY
 
   MotionFloatTrack* = object
     target: MotionObjectId
@@ -46,6 +48,10 @@ type
   BoundSpriteTrack = object
     index: int
     track: MotionSpriteTrack
+
+  MotionTransformSample = object
+    active: bool
+    rotation, scaleX, scaleY: float32
 
   MotionTimeline* = ref object
     target: MotionScene
@@ -244,6 +250,7 @@ proc apply(value: var MotionObject; property: MotionSceneProperty; sample: float
   of mspColorA: value.color.a = sample
   of mspStartAngle: value.startAngle = sample
   of mspSweepAngle: value.sweepAngle = sample
+  of mspRotation, mspScaleX, mspScaleY: discard
 
 proc sample(track: MotionSpriteTrack; progress: float64): RasterRegion =
   var low = 0
@@ -258,11 +265,35 @@ proc sample(track: MotionSpriteTrack; progress: float64): RasterRegion =
 
 proc sampledSnapshot(timeline: MotionTimeline; progress: float64): MotionSceneSnapshot =
   var objects = newSeq[MotionObject](timeline.base.objectCount)
+  var transforms: seq[MotionTransformSample]
   for index in 0 ..< objects.len:
     objects[index] = timeline.base.objectAt(index).get
   for bound in timeline.tracks:
-    objects[bound.index].apply(bound.track.property,
-      float32(bound.track.frames.sample(progress)))
+    let sample = float32(bound.track.frames.sample(progress))
+    if bound.track.property in {mspRotation, mspScaleX, mspScaleY}:
+      if transforms.len == 0:
+        transforms.setLen(objects.len)
+      if not transforms[bound.index].active:
+        transforms[bound.index] = MotionTransformSample(
+          active: true, scaleX: 1, scaleY: 1)
+      case bound.track.property
+      of mspRotation: transforms[bound.index].rotation = sample
+      of mspScaleX: transforms[bound.index].scaleX = sample
+      of mspScaleY: transforms[bound.index].scaleY = sample
+      else: discard
+    else:
+      objects[bound.index].apply(bound.track.property, sample)
+  for index, sampled in transforms:
+    if not sampled.active:
+      continue
+    let bounds = objects[index].bounds
+    let centerX = bounds.x + bounds.w * 0.5'f32
+    let centerY = bounds.y + bounds.h * 0.5'f32
+    let local = translationAffine2D(centerX, centerY) *
+      rotationAffine2D(sampled.rotation) *
+      scaleAffine2D(sampled.scaleX, sampled.scaleY) *
+      translationAffine2D(-centerX, -centerY)
+    objects[index].transform = objects[index].transform * local
   for bound in timeline.spriteTracks:
     objects[bound.index].sourceRegion = bound.track.sample(progress)
   motionSceneSnapshot(timeline.base.viewportSize, objects)
