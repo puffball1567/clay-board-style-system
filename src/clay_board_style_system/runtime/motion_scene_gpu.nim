@@ -42,6 +42,24 @@ type GpuMotionImageMaterial* = ref object
 static:
   doAssert sizeof(GpuMotionRectRecord) == 80
 
+proc polygonInternalEdgeMask(
+    triangles: openArray[array[3, int]]; triangleIndex: int
+): float32 =
+  ## A later triangle drops shared-edge fragments to avoid double alpha blends.
+  let triangle = triangles[triangleIndex]
+  var mask = 0
+  for edge in 0 .. 2:
+    let a = triangle[edge]
+    let b = triangle[(edge + 1) mod 3]
+    for previous in 0 ..< triangleIndex:
+      for otherEdge in 0 .. 2:
+        let other = triangles[previous]
+        let c = other[otherEdge]
+        let d = other[(otherEdge + 1) mod 3]
+        if (a == c and b == d) or (a == d and b == c):
+          mask = mask or (1 shl edge)
+  mask.float32
+
 proc gpuMotionRectRecords*(snapshot: MotionSceneSnapshot): seq[GpuMotionRectRecord] =
   ## Packs drawable shapes in CPU paint order. The five vec4 rows
   ## match gpuMotionRectVertexSource and one host instanced draw.
@@ -60,17 +78,19 @@ proc gpuMotionRectRecords*(snapshot: MotionSceneSnapshot): seq[GpuMotionRectReco
     let item = candidate.get
     if item.shape == msPolygon:
       let vertices = item.polygon.polygonVertices()
-      if result.len > maxMotionSceneObjects - (vertices.len - 2):
+      let triangles = item.polygon.polygonTriangleIndices()
+      if result.len > maxMotionSceneObjects - triangles.len:
         raise newException(ValueError,
           "motion scene GPU instance limit exceeded")
-      let origin = item.transform.transformPoint(vertices[0])
-      for index in 1 ..< vertices.len - 1:
-        let second = item.transform.transformPoint(vertices[index])
-        let third = item.transform.transformPoint(vertices[index + 1])
+      for triangleIndex, triangle in triangles:
+        let origin = item.transform.transformPoint(vertices[triangle[0]])
+        let second = item.transform.transformPoint(vertices[triangle[1]])
+        let third = item.transform.transformPoint(vertices[triangle[2]])
         result.add [
           [second.x - origin.x, third.x - origin.x, origin.x, 0'f32],
           [second.y - origin.y, third.y - origin.y, origin.y, 0'f32],
-          [1'f32, 1'f32, (if index > 1: 1'f32 else: 0'f32), 2'f32],
+          [1'f32, 1'f32,
+            polygonInternalEdgeMask(triangles, triangleIndex), 2'f32],
           [item.color.r, item.color.g, item.color.b,
             item.color.a * item.opacity],
           [inverseWidth, inverseHeight, 0'f32, 0'f32]
@@ -184,7 +204,7 @@ proc sync*(
     let item = candidate.get
     let image = if item.shape == msImage: item.image else: nil
     let runCount = if item.shape == msPolygon:
-      uint32(item.polygon.polygonVertexCount() - 2) else: 1'u32
+      uint32(item.polygon.polygonTriangleCount()) else: 1'u32
     if image != nil and image notin nextAssets:
       if nextAssets.len >= 64:
         raise newException(ValueError, "motion scene GPU image asset limit exceeded")
@@ -318,8 +338,15 @@ void main()
         distanceSquared < v_texcoord1.z * v_texcoord1.z) { discard; }
   } else if (v_texcoord1.w > 1.5) {
     vec2 normalized = v_texcoord0 / v_texcoord1.xy;
+    float edgeMask = floor(v_texcoord1.z + 0.5);
+    float firstEdge = edgeMask - 2.0 * floor(edgeMask / 2.0);
+    float secondEdge = floor(edgeMask / 2.0) -
+      2.0 * floor(edgeMask / 4.0);
     if (normalized.x + normalized.y > 1.0 ||
-        (v_texcoord1.z > 0.5 && normalized.y <= 0.0)) { discard; }
+        (firstEdge > 0.5 && normalized.y <= 0.0) ||
+        (secondEdge > 0.5 &&
+         normalized.x + normalized.y >= 1.0) ||
+        (edgeMask >= 4.0 && normalized.x <= 0.0)) { discard; }
   } else if (v_texcoord1.w > 0.5) {
     vec2 normalized = (v_texcoord0 - halfSize) / halfSize;
     if (dot(normalized, normalized) > 1.0) { discard; }

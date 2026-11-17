@@ -2368,6 +2368,21 @@ proc verifyMotionSceneCanvas(host: GpuHost;
   imagePixels.requireRasterPixel(16, 12, 12,
     Pixel(red: 128, green: 128, blue: 127, alpha: 255),
     "GPU Canvas convex polygon shared diagonal")
+  discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), [
+    motionRect(MotionObjectId(15), rect(0, 0, 16, 16), rgb(0, 0, 1)),
+    motionPolygon(MotionObjectId(16),
+      @[vec2(2, 2), vec2(14, 2), vec2(14, 6),
+        vec2(6, 6), vec2(6, 14), vec2(2, 14)],
+      rgba(0, 1, 0, 0.5))]))
+  doAssert renderer.queueFrame()
+  drain()
+  let concavePixels = renderer.canvas.rasterSurface.pixels
+  for point in [(4, 4), (9, 4), (4, 10)]:
+    concavePixels.requireRasterPixel(16, point[0], point[1],
+      Pixel(green: 128, blue: 127, alpha: 255),
+      "GPU Canvas concave polygon interior and seams")
+  concavePixels.requireRasterPixel(16, 10, 10,
+    Pixel(blue: 255, alpha: 255), "GPU Canvas concave polygon notch")
   discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), []))
   doAssert renderer.queueFrame()
   drain()

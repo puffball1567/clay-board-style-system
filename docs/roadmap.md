@@ -1341,7 +1341,7 @@ instance upload, UI Canvas, direct and filtered display, and timeline
 scheduling implemented`
 
 The opt-in CPU reference now stores bounded immutable rectangle, ellipse, ring,
-sector, annular sector, line, triangle, convex polygon, and image batches inside
+sector, annular sector, line, triangle, simple polygon, and image batches inside
 one Canvas, with stable
 IDs, affine/opacity/z-order properties, viewport clipping, inverse-transform
 picking, deterministic replacement, and cancellable
