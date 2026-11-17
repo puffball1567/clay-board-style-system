@@ -332,10 +332,14 @@ frame is collected, it requests no further wake-up. The application still
 owns its UI loop and GPU host.
 
 Tracks address existing stable IDs and set absolute `mspX`, `mspY`, `mspWidth`,
-`mspHeight`, `mspOpacity`, `mspRadius`, `mspTranslateX`, `mspTranslateY`, or
-`mspColorR`, `mspColorG`, `mspColorB`, or `mspColorA` values. Color tracks
-animate figure colors and image or sprite tints using the same scene clock;
+`mspHeight`, `mspOpacity`, `mspRadius`, `mspTranslateX`, `mspTranslateY`,
+`mspColorR`, `mspColorG`, `mspColorB`, `mspColorA`, `mspStartAngle`, or
+`mspSweepAngle` values. Color tracks animate figure colors and image or sprite
+tints using the same scene clock;
 color alpha also multiplies object opacity.
+Angle tracks target only sectors and annular sectors. Angles are interpolated
+in radians; start angles are normalized by each sampled snapshot, while authored
+sweep values must stay in `(0, 2π]`.
 Translation tracks change the affine transform's translation components while
 preserving its linear components. Unanimated properties come from the snapshot
 captured at construction. Keyframes are copied, offsets must be ordered in
