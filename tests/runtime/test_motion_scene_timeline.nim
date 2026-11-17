@@ -198,6 +198,45 @@ suite "CPU Motion Scene timelines":
     check scene.value(MotionObjectId(3)).color == rgba(0, 0, 1, 0)
     check scene.pixels.pixel(9, 2) == (0'u8, 0'u8, 255'u8)
 
+  test "sector angle tracks update CPU paint, picking, and GPU records":
+    let scene = newMotionScene(motionSceneSnapshot(size(16, 8), [
+      motionSector(MotionObjectId(1), rect(0, 0, 8, 8),
+        rgb(0, 1, 0), 0, PI.float32 * 0.5'f32),
+      motionAnnularSector(MotionObjectId(2), rect(8, 0, 8, 8),
+        rgb(0, 1, 0), 0, PI.float32 * 0.5'f32,
+        innerRadius = 0.5)]))
+    let timeline = newMotionTimeline(scene, [
+      track(mspStartAngle, 0, PI, MotionObjectId(1)),
+      track(mspSweepAngle, PI * 0.5, PI, MotionObjectId(1)),
+      track(mspStartAngle, 0, PI, MotionObjectId(2)),
+      track(mspSweepAngle, PI * 0.5, PI, MotionObjectId(2))], 1, 0)
+    check scene.hitTest(vec2(6.5, 5.5)).isSome
+    var middle = timeline.tick(0.5)
+    check middle.consumeDirty() == {ddPaint}
+    check scene.hitTest(vec2(2.5, 5.5)).get.id == MotionObjectId(1)
+    check scene.hitTest(vec2(6.5, 5.5)).isNone
+    check scene.hitTest(vec2(9.5, 5.5)).get.id == MotionObjectId(2)
+    check scene.hitTest(vec2(12, 4)).isNone
+    check scene.pixels.pixel(2, 5).g == 255
+    check scene.pixels.pixel(9, 5).g == 255
+    check scene.pixels.pixel(6, 5).g == 0
+    let records = gpuMotionRectRecords(scene.snapshot)
+    check abs(records[0][0][3] - PI.float32 * 0.75'f32) < 0.0001'f32
+    check abs(records[0][2][2] - PI.float32 * 0.5'f32) < 0.0001'f32
+    check abs(records[1][0][3] - PI.float32 * 0.75'f32) < 0.0001'f32
+    check abs(records[1][2][2] - PI.float32 * 0.5'f32) < 0.0001'f32
+    check records[1][1][3] == 0.5'f32
+    discard timeline.tick(1)
+    check timeline.state == mtsFinished
+    check scene.hitTest(vec2(2.5, 2.5)).isSome
+    check scene.hitTest(vec2(6.5, 5.5)).isNone
+    let wrapping = newMotionTimeline(scene,
+      [track(mspStartAngle, -PI * 0.5, PI * 1.5)], 1, 2)
+    discard wrapping.tick(2)
+    check abs(scene.value.startAngle - PI.float32 * 1.5'f32) < 0.0001'f32
+    discard wrapping.tick(2.5)
+    check abs(scene.value.startAngle - PI.float32 * 0.5'f32) < 0.0001'f32
+
   test "sprite tracks switch atlas regions on the shared scene clock":
     let atlas = newMotionImageAsset(3, 1, @[
       255'u8, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255])
@@ -285,10 +324,17 @@ suite "CPU Motion Scene timelines":
   test "invalid authoring and time fail before publication":
     let scene = initial()
     let before = scene.snapshot
+    discard track(mspSweepAngle, PI,
+      (PI.float32 * 2.0'f32).float64)
     expect ValueError: discard motionTrack(MotionObjectId(1), mspX, [])
     expect ValueError: discard track(mspOpacity, 0, 2)
     expect ValueError: discard track(mspColorR, -0.1, 1)
     expect ValueError: discard track(mspColorA, 0, 2)
+    expect ValueError: discard track(mspSweepAngle, 0, PI)
+    expect ValueError: discard track(mspSweepAngle, PI, PI * 2 + 0.01)
+    expect ValueError:
+      discard newMotionTimeline(scene,
+        [track(mspStartAngle, 0, PI)], 1, 0)
     expect ValueError: discard track(mspWidth, -1, 10)
     expect ValueError: discard track(mspX, 0, Inf)
     expect ValueError: discard track(mspX, 0, 1e39)

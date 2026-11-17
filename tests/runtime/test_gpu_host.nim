@@ -10751,6 +10751,36 @@ suite "GPU instanced draws":
     check host.closeGpuNamespace(namespace)
     host.close()
 
+  test "Motion Scene sector angle tracks update one GPU instance":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let namespace = host.createGpuNamespace("motion-sector-angles",
+      GpuResourceBudget(persistentBytes: 4096,
+        workUnitsPerFrame: 2, maxResources: 4))
+    let scene = newMotionScene(motionSceneSnapshot(size(32, 32), [
+      motionAnnularSector(MotionObjectId(1), rect(4, 4, 24, 24),
+        rgb(0, 1, 0), 0, PI.float32 * 0.5'f32,
+        innerRadius = 0.5)]))
+    let batch = newGpuMotionRectBatch()
+    check batch.sync(host, namespace, scene)
+    let timeline = newMotionTimeline(scene, [
+      motionTrack(MotionObjectId(1), mspStartAngle, [
+        FloatKeyframe(offset: 0, value: 0),
+        FloatKeyframe(offset: 1, value: PI)]),
+      motionTrack(MotionObjectId(1), mspSweepAngle, [
+        FloatKeyframe(offset: 0, value: PI * 0.5),
+        FloatKeyframe(offset: 1, value: PI)])], 1, 0)
+    var scheduler = initFrameScheduler()
+    check timeline.advance(scheduler, 0.5)
+    check batch.sync(host, namespace, scene)
+    check context.bufferUpdates == 1
+    check context.lastBufferUpdateBytes == sizeof(GpuMotionRectRecord)
+    let record = gpuMotionRectRecords(scene.snapshot)[0]
+    check abs(record[0][3] - PI.float32 * 0.75'f32) < 0.0001'f32
+    check abs(record[2][2] - PI.float32 * 0.5'f32) < 0.0001'f32
+    batch.release()
+    host.close()
+
   test "Motion Scene batches create, update changed spans, and resize":
     let context = newContext()
     let host = openGpuHost(context.backend, ghoOwned, presentationConfig())

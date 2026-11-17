@@ -11,12 +11,14 @@ const
   maxMotionTrackKeyframes* = 1024
   maxMotionTimelineKeyframes* = 262_144
   maxMotionTimelineIterations* = 1_000_000
+  motionTimelineFullTurn = PI.float32 * 2.0'f32
 
 type
   MotionSceneProperty* = enum
     mspX, mspY, mspWidth, mspHeight, mspOpacity, mspRadius,
     mspTranslateX, mspTranslateY,
-    mspColorR, mspColorG, mspColorB, mspColorA
+    mspColorR, mspColorG, mspColorB, mspColorA,
+    mspStartAngle, mspSweepAngle
 
   MotionFloatTrack* = object
     target: MotionObjectId
@@ -79,6 +81,11 @@ proc motionTrack*(
       if keyframe.value < 0 or keyframe.value > 1:
         raise newException(ValueError,
           "motion track opacity and color must be in the unit interval")
+    of mspSweepAngle:
+      if keyframe.value <= 0 or
+          keyframe.value > motionTimelineFullTurn.float64:
+        raise newException(ValueError,
+          "motion sector sweep track must be in (0, 2π]")
     else: discard
   MotionFloatTrack(target: target, property: property,
     frames: floatKeyframes(keyframes))
@@ -151,6 +158,11 @@ proc newMotionTimeline*(
     let key = (id: uint64(track.target), property: track.property)
     if key.id notin indices or key in seen:
       raise newException(ValueError, "motion track target is missing or property is duplicated")
+    if track.property in {mspStartAngle, mspSweepAngle} and
+        base.objectAt(indices.getOrDefault(key.id)).get.shape notin
+          {msSector, msAnnularSector}:
+      raise newException(ValueError,
+        "motion angle tracks require a sector or annular sector")
     seen.incl key
     count += track.frames.values.len
     if count > maxMotionTimelineKeyframes:
@@ -230,6 +242,8 @@ proc apply(value: var MotionObject; property: MotionSceneProperty; sample: float
   of mspColorG: value.color.g = sample
   of mspColorB: value.color.b = sample
   of mspColorA: value.color.a = sample
+  of mspStartAngle: value.startAngle = sample
+  of mspSweepAngle: value.sweepAngle = sample
 
 proc sample(track: MotionSpriteTrack; progress: float64): RasterRegion =
   var low = 0

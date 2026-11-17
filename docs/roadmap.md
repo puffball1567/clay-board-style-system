@@ -1349,8 +1349,8 @@ latest-request tokens. UI publication dirties only the Canvas's paint; a static
 scene requests no continuous frames. Typed numeric tracks reuse AnimationClock
 and FrameScheduler for easing, delay, finite repeats, pause/resume, and reduced
 motion. The GPU path keeps image textures across revisions, supports atlas
-regions, per-object color tint, color tracks, and timed sprite frames, and
-submits mixed shapes and images in paint order. See
+regions, per-object color tint, color and sector-angle tracks, and timed sprite
+frames. It submits mixed shapes and images in paint order. See
 [CPU Motion Scene](motion-scene.md) for the
 current API and remaining primitive and backend work.
 
