@@ -765,6 +765,9 @@ A production direct adapter must test all of the following together:
 
 The deterministic mock suite covers the host, cross-namespace presentation
 binding, clip/UV calculation, RenderTarget attachment resolution, and UI state
-machine under ARC and ORC. The standard shader pair is compiled with the
-official bgfx `shaderc`. Visible bgfx direct composition must still pass the
-real-renderer tests before it is advertised as a production-qualified path.
+machine under ARC and ORC. The standard shader pair is compiled with official
+bgfx `shaderc` and exercised by the Linux Mesa OpenGL pixel fixture, including
+offscreen direct composition and native-window resize. The test matrix also
+records a physical AMD OpenGL run. Mixed SDL/GPU layers and broader hardware
+coverage remain production qualification work. See the
+[GPU surface test matrix](gpu-surface-test-matrix.md).

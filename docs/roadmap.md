@@ -1038,15 +1038,28 @@ an enum-only API.
 
 ## GPU Canvas Capability
 
-Status: `Version 0.7.0 GPU foundation released on 2026-09-19; the Version 0.7
-patch line continues native SDL/GPU offscreen-layer interop, broader real-GPU
-qualification, CPU filters, and Motion Scene work`
+Status: `Version 0.7.0 GPU foundation released on 2026-09-19. Optional 2D GPU
+Canvas, batched Motion Scene, and GPU filter chains are implemented. Native SDL
+layer sharing, full UI subtree GPU filtering, and broader hardware qualification
+remain open.`
 
-CBSS will support optional GPU-backed drawing inside the standard Canvas
+CBSS supports optional GPU-backed drawing inside the standard Canvas
 element. This is a capability for game scenes, charts, visualizations, image
 processing, and other custom drawing workloads; it is not a second renderer
 for normal CBSS buttons, text, or style properties. Normal UI retains one
 canonical visual contract.
+
+**Current GPU scope**
+
+| Area | Implemented | Remaining |
+| --- | --- | --- |
+| Canvas in ordinary UI | Bounded asynchronous readback, optional same-host direct presentation, and a hybrid fallback for SDL texture layers | Zero-copy composition into an SDL renderer-owned intermediate texture |
+| Filters | Ordered GPU filter chains for Canvas, Motion Scene, and explicit raster or GPU inputs. Filtered raster output can be a Style underlay, overlay, or mask. Style filters can apply CPU RGB matrices to a whole UI subtree. | GPU filtering of the ordinary UI subtree itself |
+| Motion Scene | Batched 2D shapes, images and atlas sprites, timelines, direct and filtered display | General paths and text as scene objects and further scene composition capabilities |
+| Qualification | Linux Mesa OpenGL pixel CI under ARC and ORC, including a native window pass and resize, plus a recorded AMD Renoir OpenGL run. Mock and bgfx NOOP tests cover recovery behavior. | Physical-driver coverage for mixed layers, recovery and pressure, and a combined Motion Scene and independent compute fixture under one presentation owner |
+
+See the [GPU surface test matrix](gpu-surface-test-matrix.md) for the tested
+combinations and the remaining production qualification cases.
 
 The related ordinary-UI shader goal keeps that canonical contract: CBSS
 performs CPU-owned Style resolution, layout, text shaping, and normal paint
@@ -2468,9 +2481,9 @@ now consumes final-window contexts and retained Texture/RenderTarget sources in
 the active presentation frame, including bounded antialiased nested rounded
 clips. GPU-native renderers can provide a typed compositor-owned offscreen
 `RenderTarget`; namespace, generation, dimensions, and feedback hazards are
-validated before submission. SDL texture-backed layer interop, declarative
-filter composition, and broader real-GPU qualification remain open Version 0.7
-work. Owned bgfx hosts
+validated before submission. SDL texture-backed layers can use hybrid readback
+fallback. Zero-copy sharing into those SDL layers, GPU filters over ordinary
+UI subtrees, and broader hardware qualification remain open. Owned bgfx hosts
 now recreate the backend from their latest validated configuration after
 device loss before deterministic namespace restoration begins; borrowed hosts
 continue to require recreation by their external owner.
@@ -2507,8 +2520,10 @@ C ABI `0x00010027` now supports copied RGB matrices in retained Canvas and
 Custom Paint command-sink layers, plus a paint-command matrix accessor.
 ABI `0x00010028` connects foreign Style filter callbacks to the same complete
 visual groups, with copied matrix results, typed parameters, identity fallback,
-and generation-safe provider lifetime. Spatial filters, GPU filter composition,
-and the broader Motion Scene remain open Version 0.7 work.
+and generation-safe provider lifetime. Spatial filters and ordered composition
+are implemented for explicit GPU inputs, including GPU Canvas and Motion Scene
+outputs. Applying spatial or GPU filters to an ordinary Style-owned UI group
+remains open, as do general path and text objects in Motion Scene.
 Backend-neutral named Custom Paint
 materials now connect ordinary Style declarations to bounded underlay and
 overlay command streams without adding nodes. `GpuCanvasSurface` can use that

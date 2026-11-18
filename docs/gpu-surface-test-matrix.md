@@ -17,7 +17,7 @@ jobs and must not be replaced by a mock-only success.
 | Frame selection | ordered publication and latest-ready coalescing | incomplete frame cannot publish | thousands of monotonic revisions | Automated |
 | Lifetime | presented resources stay retained | write, destroy, namespace close, host close while retained | multiple leases and retirement after last release | Automated |
 | Shutdown | close an idle or completed surface | incomplete work and active leases block close | completed pending work closes without collect; repeated close is harmless | Automated |
-| Device loss | stale frames disappear and resources invalidate | stale generation cannot queue or acquire | loss with pending/presented resources | Automated mock; real GPU pending |
+| Device loss | stale frames disappear and resources invalidate | stale generation cannot queue or acquire | loss with pending/presented resources | Automated mock; bgfx NOOP checks recreation after marked loss; physical-driver recovery pending |
 | Direct compositor | all compositor statuses propagate; SDL normal, text and layered paths invoke the bridge; standard same-host draw accepts retained Texture and RenderTarget sources across producer/compositor namespaces; bgfx resolves both to sampled textures; nested rounded clips use the masked pipeline; typed compositor-owned offscreen RenderTargets receive direct passes | callback exception releases lease; unretained source, duplicate stage, detached host, wrong provider, mismatched resource tag, invalid attachment, malformed masks, incomplete masked materials, foreign/stale offscreen targets, dimension mismatch, and source/target feedback fail closed | no active frame returns retry; rectangular clipping crops viewport and UV; exactly eight rounded masks are accepted and the ninth fails closed; nil compositor or submit, mismatched backend API; per-frame bounded status counters | Automated |
 | Native-window data | X11, Wayland, Win32 and Cocoa map to typed bgfx platform data | missing window or required display fails before bgfx initialization | display is optional only for Win32 and Cocoa; non-Wayland systems use the default bgfx handle type | Automated portable mapping on Linux, Windows and macOS; SDL3 acquisition compiled on configured Linux backend |
 | Readback fallback | R8, RGBA8 and BGRA8 paths; cancelled readbacks drain without publishing | missing copy/readback support, unsupported float format, and insufficient combined copy/readback budget or view capacity fail before copying; cancelled destinations remain alive until backend completion | byte limit, label limit, dimension multiplication overflow; cancelled slot reuse | Automated mock; OpenGL GPU Canvas cancellation and slot reuse pixels under ARC/ORC; other hardware pending |
@@ -75,6 +75,8 @@ through 64 updates each. Eight frames are submitted between pixel readbacks so
 buffer reuse does not depend on a CPU wait every frame. The fixture verifies
 queue saturation, latest-ready selection, leased-frame retirement, fixed
 resource accounting, and surviving-source pixels after the other owner closes.
+The same fixture covers direct, filtered, and readback Motion Scene output,
+including timeline rotation, image reflection, and visibility changes.
 The Linux bgfx CI job runs this fixture under both ARC and ORC with Xvfb,
 Mesa software OpenGL, and the bundled SDL3 runtime. This exercises the actual
 OpenGL renderer and compiled shaders, not a mock or NOOP renderer. It does not

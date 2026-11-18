@@ -71,9 +71,11 @@ available. The first CBSS adapter and ownership layer are implemented behind
 `-d:cbssGpuBgfx`; portable GPU Canvas composition through `RasterSurface` is
 implemented. A GPU Canvas can now be mounted as a visual-only underlay or
 overlay of an ordinary CBSS component while that component retains layout,
-input, focus, and accessibility ownership. Shared-texture composition,
-native-window presentation qualification, and visible real-GPU release gates
-remain Version 0.7 work rather than part of the current standard profile.
+input, focus, and accessibility ownership. Same-host direct composition into
+bgfx RenderTargets and the bgfx-owned window pass has OpenGL fixture coverage,
+with a recorded physical AMD OpenGL run. Zero-copy sharing into SDL
+renderer-owned intermediate textures and broader hardware qualification
+remain open. See the [GPU surface test matrix](gpu-surface-test-matrix.md).
 
 The public `GpuHost` contract is renderer-neutral. It records an explicit
 `owned` or `borrowed` runtime, rejects incompatible adapter versions, allows
@@ -89,9 +91,9 @@ buffers, and return only a bounded final range to CPU memory. `GpuCanvasSurface`
 asynchronous readback ring and publishes the newest ordered GPU frame through
 the existing `RasterSurface`. `GpuDisplaySurface` additionally negotiates a
 backend-neutral direct Texture/RenderTarget path with the same asynchronous
-readback implementation as its deterministic fallback. The current bgfx
-adapter keeps direct capability disabled until its same-device compositor is
-qualified.
+readback implementation as its deterministic fallback. The default bgfx
+options leave direct presentation disabled. An explicitly qualified profile
+can opt in when paired with a compatible same-device compositor.
 
 The bgfx adapter uses `bgfxim` directly. Owned mode initializes and shuts down
 the bgfx runtime, retains its current host configuration, and recreates the
