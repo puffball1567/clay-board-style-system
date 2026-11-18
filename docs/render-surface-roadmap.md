@@ -399,7 +399,9 @@ The first public part of this contract is implemented as `gpuVisualLayer`.
 component owner. CBSS fixes the layer to the owner's bounds, removes it from
 pointer and accessibility targeting, preserves component-owned semantics, and
 invalidates only the visual layer when a completed GPU frame is published.
-Mask and post-process stages remain later work.
+The Style material path also supports GPU-produced alpha masks through
+readback or hybrid display and post-processing of explicit raster or GPU
+inputs. GPU filtering of the ordinary component subtree remains open.
 
 Version 0.7 visual acceptance includes multiple independent scenes rather than
 one backend probe:
@@ -495,8 +497,9 @@ policy without treating human-readable backend errors as control flow.
 
 ### Typed Shader Custom Style Painting
 
-Status: `Typed authoring and underlay/overlay/mask composition implemented;
-filter composition remains Version 0.7 work`
+Status: `Typed authoring, underlay/overlay/mask composition, and Style-owned
+CPU matrix filters are implemented. GPU filtering of ordinary UI subtrees
+remains open.`
 
 The primary intended use of shaders in ordinary CBSS UI is not to reimplement
 the layout engine, text stack, or every control on the GPU. CBSS first resolves
@@ -617,7 +620,9 @@ emits deterministic bgfx source at build time and its compiled
 artifact uses the same retained Pipeline contract as low-level GPU submission.
 A build-only wrapper invokes the official `shaderc` without shell evaluation,
 and bounded checksummed packages retain unique target variants for runtime
-selection. Retained-layer filter composition, production mapping from
+selection. CPU matrix filters already compose over Style-owned visual groups,
+and retained GPU filter chains process explicit Canvas, Motion Scene, raster,
+and GPU inputs. GPU filtering of ordinary UI subtrees, production mapping from
 typed parameters to backend bindings, visual-shape hit testing, and arbitrary
 scene picking remain later layers on the same contract. See
 [Custom Paint](custom-paint.md) for the current public API and failure rules.

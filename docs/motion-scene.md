@@ -409,7 +409,7 @@ geometry cancels the timeline, raises `ValueError`, and preserves the last
 committed frame. The UI overload checks the scene/view pairing and cancels when
 the attachment is disposed. All timeline operations belong to the UI thread.
 
-General paths and text as scene objects, nested effect groups, color and
+General paths and text as scene objects, nested effect groups,
 arbitrary matrix tracks, seeking an existing timeline, and C ABI
 authoring remain follow-ups. `examples/motion_scene_demo.nim` renders a
 deterministically sampled timeline to PPM for headless inspection.
