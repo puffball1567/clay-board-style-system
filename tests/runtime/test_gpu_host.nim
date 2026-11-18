@@ -10751,6 +10751,35 @@ suite "GPU instanced draws":
     check host.closeGpuNamespace(namespace)
     host.close()
 
+  test "Motion Scene sync detects image rebindings without uploading records":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let namespace = host.createGpuNamespace("motion-image-rebindings",
+      GpuResourceBudget(persistentBytes: 4096, maxResources: 4))
+    let red = newMotionImageAsset(1, 1, [255'u8, 0, 0, 255])
+    let blue = newMotionImageAsset(1, 1, [0'u8, 0, 255, 255])
+    proc snapshot(lastImage: MotionImageAsset; hitTestable = true):
+        MotionSceneSnapshot =
+      motionSceneSnapshot(size(16, 8), [
+        motionImage(MotionObjectId(1), rect(0, 0, 4, 4), red),
+        motionImage(MotionObjectId(2), rect(4, 0, 4, 4), blue),
+        motionImage(MotionObjectId(3), rect(8, 0, 4, 4), lastImage,
+          hitTestable = hitTestable)])
+    let scene = newMotionScene(snapshot(red))
+    let batch = newGpuMotionRectBatch()
+    check batch.sync(host, namespace, scene)
+    check scene.replaceSnapshot(snapshot(blue))
+    check batch.sync(host, namespace, scene)
+    check batch.instanceBinding.instanceCount == 3
+    check context.bufferCreates == 1
+    check context.bufferUpdates == 0
+    check context.textureCreates == 2
+    check scene.replaceSnapshot(snapshot(blue, hitTestable = false))
+    check not batch.sync(host, namespace, scene)
+    batch.release()
+    check host.closeGpuNamespace(namespace)
+    host.close()
+
   test "Motion Scene angle and transform tracks update one GPU instance":
     let context = newContext()
     let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
