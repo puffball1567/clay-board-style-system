@@ -10795,6 +10795,48 @@ suite "GPU instanced draws":
     batch.release()
     host.close()
 
+  test "Motion Scene visibility tracks reuse the GPU instance buffer":
+    let context = newContext()
+    let host = openGpuHost(context.backend, ghoOwned, presentationConfig())
+    let namespace = host.createGpuNamespace("motion-visibility",
+      GpuResourceBudget(persistentBytes: 4096,
+        workUnitsPerFrame: 2, maxResources: 4))
+    let scene = newMotionScene(motionSceneSnapshot(size(16, 8), [
+      motionRect(MotionObjectId(1), rect(0, 0, 8, 8), rgb(1, 0, 0)),
+      motionRect(MotionObjectId(2), rect(8, 0, 8, 8), rgb(0, 1, 0))]))
+    let batch = newGpuMotionRectBatch()
+    check batch.sync(host, namespace, scene)
+    check batch.instanceBinding.instanceCount == 2
+    let timeline = newMotionTimeline(scene, [], 1, 0,
+      visibilityTracks = [
+        motionVisibilityTrack(MotionObjectId(1), [
+          MotionVisibilityKeyframe(offset: 0, visible: true),
+          MotionVisibilityKeyframe(offset: 0.5, visible: false),
+          MotionVisibilityKeyframe(offset: 1, visible: true)]),
+        motionVisibilityTrack(MotionObjectId(2), [
+          MotionVisibilityKeyframe(offset: 0, visible: true),
+          MotionVisibilityKeyframe(offset: 0.75, visible: false),
+          MotionVisibilityKeyframe(offset: 1, visible: true)])])
+    var scheduler = initFrameScheduler()
+    check timeline.advance(scheduler, 0.5)
+    check batch.sync(host, namespace, scene)
+    check batch.instanceBinding.instanceCount == 1
+    check context.bufferCreates == 1
+    check context.bufferUpdates == 1
+    check timeline.advance(scheduler, 0.75)
+    check batch.sync(host, namespace, scene)
+    check batch.instanceBinding.instanceCount == 0
+    check context.bufferCreates == 1
+    check context.bufferUpdates == 1
+    check timeline.advance(scheduler, 1)
+    check batch.sync(host, namespace, scene)
+    check batch.instanceBinding.instanceCount == 2
+    check context.bufferCreates == 1
+    check context.bufferUpdates == 2
+    check context.lastBufferUpdateBytes == 2 * sizeof(GpuMotionRectRecord)
+    batch.release()
+    host.close()
+
   test "Motion Scene batches create, update changed spans, and resize":
     let context = newContext()
     let host = openGpuHost(context.backend, ghoOwned, presentationConfig())

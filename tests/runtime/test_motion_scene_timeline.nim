@@ -243,6 +243,70 @@ suite "CPU Motion Scene timelines":
     check mirrored.hitTest(vec2(3, 3)).isSome
     check gpuMotionRectRecords(mirrored.snapshot).len == 1
 
+  test "visibility tracks switch paint, picking, and GPU records":
+    let scene = newMotionScene(motionSceneSnapshot(size(16, 8), [
+      motionRect(MotionObjectId(1), rect(0, 0, 8, 8), rgb(1, 0, 0)),
+      motionRect(MotionObjectId(2), rect(8, 0, 8, 8), rgb(0, 1, 0),
+        visible = false)]))
+    var stops = @[
+      MotionVisibilityKeyframe(offset: 0, visible: true),
+      MotionVisibilityKeyframe(offset: 0.5, visible: false),
+      MotionVisibilityKeyframe(offset: 0.75, visible: true)]
+    let first = motionVisibilityTrack(MotionObjectId(1), stops)
+    stops[1].visible = true
+    let second = motionVisibilityTrack(MotionObjectId(2), [
+      MotionVisibilityKeyframe(offset: 0, visible: false),
+      MotionVisibilityKeyframe(offset: 0.5, visible: true),
+      MotionVisibilityKeyframe(offset: 0.75, visible: false)])
+    let timeline = newMotionTimeline(scene, [], 1, 0,
+      visibilityTracks = [first, second])
+    let revision = scene.revision
+    var idle = timeline.tick(0.25)
+    check idle.consumeDirty() == {}
+    check scene.revision == revision
+    var switched = timeline.tick(0.5)
+    check switched.consumeDirty() == {ddPaint}
+    check not scene.value.visible
+    check scene.value(MotionObjectId(2)).visible
+    check scene.value.id == MotionObjectId(1)
+    check scene.hitTest(vec2(2, 2)).isNone
+    check scene.hitTest(vec2(10, 2)).get.id == MotionObjectId(2)
+    check scene.pixels.pixel(2, 2) == (0'u8, 0'u8, 0'u8)
+    check scene.pixels.pixel(10, 2) == (0'u8, 255'u8, 0'u8)
+    check gpuMotionRectRecords(scene.snapshot).len == 1
+    var restored = timeline.tick(0.75)
+    check restored.consumeDirty() == {ddPaint}
+    check scene.value.visible
+    check not scene.value(MotionObjectId(2)).visible
+    check gpuMotionRectRecords(scene.snapshot).len == 1
+    discard timeline.tick(1)
+    check timeline.state == mtsFinished
+
+  test "visibility tracks validate stops and targets":
+    let scene = initial()
+    let valid = motionVisibilityTrack(MotionObjectId(1), [
+      MotionVisibilityKeyframe(offset: 0, visible: false),
+      MotionVisibilityKeyframe(offset: 1, visible: true)])
+    for invalid in [NaN, Inf, NegInf, -0.1, 1.1]:
+      expect ValueError:
+        discard motionVisibilityTrack(MotionObjectId(1), [
+          MotionVisibilityKeyframe(offset: 0, visible: true),
+          MotionVisibilityKeyframe(offset: invalid, visible: false)])
+    expect ValueError:
+      discard motionVisibilityTrack(MotionObjectId(1), [
+        MotionVisibilityKeyframe(offset: 0.5, visible: true)])
+    expect ValueError:
+      discard motionVisibilityTrack(MotionObjectId(1), [
+        MotionVisibilityKeyframe(offset: 0, visible: true),
+        MotionVisibilityKeyframe(offset: 0, visible: false)])
+    expect ValueError:
+      discard newMotionTimeline(scene, [], 1, 0,
+        visibilityTracks = [valid, valid])
+    expect ValueError:
+      discard newMotionTimeline(scene, [], 1, 0,
+        visibilityTracks = [motionVisibilityTrack(MotionObjectId(99), [
+          MotionVisibilityKeyframe(offset: 0, visible: true)])])
+
   test "color tracks animate shape colors and image tints":
     let asset = newMotionImageAsset(1, 1,
       @[255'u8, 255, 255, 255])
