@@ -331,24 +331,28 @@ invalidates its attachment node. Once the timeline finishes and its final
 frame is collected, it requests no further wake-up. The application still
 owns its UI loop and GPU host.
 
-Tracks address existing stable IDs and set absolute `mspX`, `mspY`, `mspWidth`,
+Tracks address existing stable IDs. Supported properties are `mspX`, `mspY`, `mspWidth`,
 `mspHeight`, `mspOpacity`, `mspRadius`, `mspTranslateX`, `mspTranslateY`,
-`mspColorR`, `mspColorG`, `mspColorB`, `mspColorA`, `mspStartAngle`, or
-`mspSweepAngle` values. Color tracks animate figure colors and image or sprite
-tints using the same scene clock;
+`mspColorR`, `mspColorG`, `mspColorB`, `mspColorA`, `mspStartAngle`,
+`mspSweepAngle`, `mspRotation`, `mspScaleX`, and `mspScaleY`. Color tracks
+animate figure colors and image or sprite tints using the same scene clock;
 color alpha also multiplies object opacity.
 Angle tracks target only sectors and annular sectors. Angles are interpolated
 in radians; start angles are normalized by each sampled snapshot, while authored
 sweep values must stay in `(0, 2π]`.
 Translation tracks change the affine transform's translation components while
-preserving its linear components. Unanimated properties come from the snapshot
-captured at construction. Keyframes are copied, offsets must be ordered in
-`[0, 1]`, values must fit finite float32, dimensions must be nonnegative, and
+preserving its linear components. Rotation and scale tracks apply local offsets
+around the sampled bounds center after translation, relative to the captured
+base affine transform. Zero rotation and unit scales preserve the base;
+negative scales mirror an object, and zero scale makes it non-drawable. Track
+authoring order does not affect the composed transform. Unanimated properties
+come from the snapshot captured at construction. Keyframes are copied; offsets
+must be ordered in `[0, 1]`, values must fit finite float32, dimensions must be
+nonnegative, and
 opacity and color channels must stay in `[0, 1]`. Scene validation and radius
-clamping still apply
-at every sampled frame. Duplicate object/property pairs and unknown IDs fail
-before any scene changes. A timeline accepts at most 65,536 tracks, 1,024 stops
-per track, and 262,144 stops in total.
+clamping still apply at every sampled frame. Duplicate object/property pairs
+and unknown IDs fail before any scene changes. A timeline accepts at most
+65,536 tracks, 1,024 stops per track, and 262,144 stops in total.
 
 Sprite frames use `motionSpriteTrack` on an existing image object. Pass the
 tracks through `newMotionTimeline(..., spriteTracks = [track])`; numeric and
