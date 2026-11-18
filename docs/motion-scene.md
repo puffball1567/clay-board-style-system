@@ -375,6 +375,14 @@ offset and hold until the next one. The same delay, easing, direction, repeat,
 fill, pause, and reduced-motion rules apply. Keyframes are copied, and an
 unchanged frame does not dirty paint or upload a new GPU texture.
 
+Use `motionVisibilityTrack` to switch an object's `visible` state at authored
+offsets. Visibility frames start at offset zero and hold their value until the
+next frame; they do not interpolate. Pass them through
+`newMotionTimeline(..., visibilityTracks = [track])`, alongside numeric or
+sprite tracks if needed. Hidden objects retain their IDs but do not paint,
+receive hits, or contribute GPU instances. Unchanged visibility samples do
+not publish a new scene revision.
+
 Timing options use the ordinary motion types: `timing`, `delaySeconds`,
 `direction`, and `fillMode`. `iterations` is a positive integer capped at
 1,000,000. The default is one forward iteration with forwards fill. With no

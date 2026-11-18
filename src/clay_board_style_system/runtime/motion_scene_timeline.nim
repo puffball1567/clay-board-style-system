@@ -35,6 +35,14 @@ type
     target: MotionObjectId
     frames: seq[MotionSpriteKeyframe]
 
+  MotionVisibilityKeyframe* = object
+    offset*: float64
+    visible*: bool
+
+  MotionVisibilityTrack* = object
+    target: MotionObjectId
+    frames: seq[MotionVisibilityKeyframe]
+
   MotionTimelineState* = enum
     mtsRunning, mtsPaused, mtsFinished, mtsCancelled
 
@@ -49,6 +57,10 @@ type
     index: int
     track: MotionSpriteTrack
 
+  BoundVisibilityTrack = object
+    index: int
+    track: MotionVisibilityTrack
+
   MotionTransformSample = object
     active: bool
     rotation, scaleX, scaleY: float32
@@ -58,6 +70,7 @@ type
     base, expected: MotionSceneSnapshot
     tracks: seq[BoundMotionTrack]
     spriteTracks: seq[BoundSpriteTrack]
+    visibilityTracks: seq[BoundVisibilityTrack]
     clock: AnimationClock
     animation: AnimationId
     sample: MotionTimelineSample
@@ -121,6 +134,29 @@ proc motionSpriteTrack*(
   for index, frame in keyframes:
     result.frames[index] = frame
 
+proc motionVisibilityTrack*(
+    target: MotionObjectId; keyframes: openArray[MotionVisibilityKeyframe]
+): MotionVisibilityTrack =
+  ## Visibility switches at authored offsets; the last state holds.
+  if uint64(target) == 0 or keyframes.len == 0 or
+      keyframes.len > maxMotionTrackKeyframes:
+    raise newException(ValueError,
+      "motion visibility track target or keyframe count is invalid")
+  var previous = -1.0
+  for frame in keyframes:
+    if not frame.offset.finite or frame.offset < 0 or frame.offset > 1 or
+        frame.offset <= previous:
+      raise newException(ValueError,
+        "motion visibility frames must have ordered offsets")
+    previous = frame.offset
+  if keyframes[0].offset != 0:
+    raise newException(ValueError,
+      "motion visibility frames must start at offset zero")
+  result = MotionVisibilityTrack(target: target,
+    frames: newSeq[MotionVisibilityKeyframe](keyframes.len))
+  for index, frame in keyframes:
+    result.frames[index] = frame
+
 proc newMotionTimeline*(
     scene: MotionScene; tracks: openArray[MotionFloatTrack];
     durationSeconds, nowSeconds: float64;
@@ -128,12 +164,13 @@ proc newMotionTimeline*(
     fillMode = afForwards; timing = linearTiming();
     reducedMotion = false; essentialMotion = false;
     targetFramesPerSecond = 60.0;
-    spriteTracks: openArray[MotionSpriteTrack] = []
+    spriteTracks: openArray[MotionSpriteTrack] = [];
+    visibilityTracks: openArray[MotionVisibilityTrack] = []
 ): MotionTimeline =
   if scene.isNil:
     raise newException(ValueError, "motion timeline scene must not be nil")
-  if tracks.len + spriteTracks.len == 0 or
-      tracks.len + spriteTracks.len > maxMotionTimelineTracks:
+  if tracks.len + spriteTracks.len + visibilityTracks.len == 0 or
+      tracks.len + spriteTracks.len + visibilityTracks.len > maxMotionTimelineTracks:
     raise newException(ValueError, "motion timeline track count is outside the limit")
   if iterations <= 0 or iterations > maxMotionTimelineIterations:
     raise newException(ValueError, "motion timeline iterations are outside the limit")
@@ -158,7 +195,9 @@ proc newMotionTimeline*(
   var seen = initHashSet[tuple[id: uint64, property: MotionSceneProperty]]()
   var bound: seq[BoundMotionTrack]
   var boundSprites: seq[BoundSpriteTrack]
+  var boundVisibility: seq[BoundVisibilityTrack]
   var seenSprites = initHashSet[uint64]()
+  var seenVisibility = initHashSet[uint64]()
   var count = 0
   for track in tracks:
     let key = (id: uint64(track.target), property: track.property)
@@ -200,8 +239,21 @@ proc newMotionTimeline*(
         raise newException(ValueError,
           "motion sprite frame is outside its image atlas")
     boundSprites.add BoundSpriteTrack(index: index, track: copied)
+  for track in visibilityTracks:
+    let id = uint64(track.target)
+    if id notin indices or id in seenVisibility:
+      raise newException(ValueError,
+        "motion visibility target is missing or duplicated")
+    seenVisibility.incl id
+    let copied = motionVisibilityTrack(track.target, track.frames)
+    count += copied.frames.len
+    if count > maxMotionTimelineKeyframes:
+      raise newException(ValueError, "motion timeline keyframe budget exceeded")
+    boundVisibility.add BoundVisibilityTrack(
+      index: indices.getOrDefault(id), track: copied)
   result = MotionTimeline(target: scene, base: base, expected: base,
     tracks: bound, spriteTracks: boundSprites,
+    visibilityTracks: boundVisibility,
     clock: initAnimationClock(targetFramesPerSecond),
     sample: sample, fillMode: fillMode, status: mtsRunning, lastTime: nowSeconds)
   result.clock.reducedMotion = reducedMotion
@@ -263,6 +315,17 @@ proc sample(track: MotionSpriteTrack; progress: float64): RasterRegion =
       high = middle
   track.frames[low].sourceRegion
 
+proc sample(track: MotionVisibilityTrack; progress: float64): bool =
+  var low = 0
+  var high = track.frames.len
+  while low + 1 < high:
+    let middle = low + (high - low) div 2
+    if track.frames[middle].offset <= progress:
+      low = middle
+    else:
+      high = middle
+  track.frames[low].visible
+
 proc sampledSnapshot(timeline: MotionTimeline; progress: float64): MotionSceneSnapshot =
   var objects = newSeq[MotionObject](timeline.base.objectCount)
   var transforms: seq[MotionTransformSample]
@@ -296,6 +359,8 @@ proc sampledSnapshot(timeline: MotionTimeline; progress: float64): MotionSceneSn
     objects[index].transform = objects[index].transform * local
   for bound in timeline.spriteTracks:
     objects[bound.index].sourceRegion = bound.track.sample(progress)
+  for bound in timeline.visibilityTracks:
+    objects[bound.index].visible = bound.track.sample(progress)
   motionSceneSnapshot(timeline.base.viewportSize, objects)
 
 proc advance*(
