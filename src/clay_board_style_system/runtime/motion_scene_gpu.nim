@@ -177,7 +177,7 @@ proc sync*(
     namespace: GpuNamespaceId; scene: MotionScene
 ): bool =
   ## Upload before beginning a GPU frame. Returns true when drawable records
-  ## or their count changed.
+  ## or their texture bindings changed, or a GPU resource was recreated.
   ## A failed update leaves the prior CPU record cache intact for a retry.
   if batch.isNil or host.isNil or scene.isNil:
     raise newException(ValueError, "motion scene GPU sync requires a batch, host, and scene")
@@ -236,7 +236,7 @@ proc sync*(
     for texture in created:
       discard host.releaseGpuResource(texture)
     raise
-  result = next.len != batch.records.len or
+  result = next.len != batch.records.len or nextRuns != batch.runs or
     nextAssets != batch.imageAssets or not texturesLive
   try:
     if next.len > batch.capacity or (next.len > 0 and not live):

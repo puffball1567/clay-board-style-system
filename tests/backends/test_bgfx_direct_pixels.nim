@@ -17,7 +17,8 @@ import clay_board_style_system/backends/ppm/raster
 import clay_board_style_system/runtime/canvas
 import clay_board_style_system/runtime/[gpu_canvas, motion_scene,
     gpu_display_surface, motion_scene_gpu, motion_scene_gpu_canvas,
-    motion_scene_gpu_direct, motion_scene_gpu_filter_display]
+    motion_scene_gpu_direct, motion_scene_gpu_filter_display,
+    motion_scene_timeline, frame_scheduler, animation_clock]
 import clay_board_style_system/paint/[gpu_direct_compositor,
     gpu_host_compositor, layer_color_filter, paint_command]
 import clay_board_style_system/runtime/[gpu_direct_surface, gpu_host,
@@ -590,10 +591,10 @@ proc verifyFilteredCanvasReadbackPixels(host: GpuHost;
     host.endGpuFrame(progress)
   doAssert completed
   doAssert canvas.rasterSurface.publish()
-  canvas.rasterSurface.pixels.requirePixel(0, 0,
+  canvas.rasterSurface.pixels.requireRasterPixel(2, 0, 0,
     Pixel(blue: 255, alpha: 128),
     "filtered canvas readback converts premultiplied output to straight RGBA")
-  canvas.rasterSurface.pixels.requirePixel(1, 1,
+  canvas.rasterSurface.pixels.requireRasterPixel(2, 1, 1,
     Pixel(blue: 255, alpha: 128),
     "filtered canvas keeps all pixels through a sampled target")
   doAssert canvas.closeGpuCanvasSurface()
@@ -2383,6 +2384,53 @@ proc verifyMotionSceneCanvas(host: GpuHost;
       "GPU Canvas concave polygon interior and seams")
   concavePixels.requireRasterPixel(16, 10, 10,
     Pixel(blue: 255, alpha: 255), "GPU Canvas concave polygon notch")
+  let twoTone = newMotionImageAsset(2, 1,
+    [255'u8, 0, 0, 255, 0, 0, 255, 255])
+  let shapeId = MotionObjectId(17)
+  let imageId = MotionObjectId(18)
+  discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), [
+    motionRect(shapeId, rect(2, 3, 6, 2), rgb(0, 1, 0)),
+    motionImage(imageId, rect(10, 2, 4, 2), twoTone)]))
+  doAssert renderer.queueFrame()
+  drain()
+  let beforeMotion = renderer.canvas.rasterSurface.pixels
+  beforeMotion.requireRasterPixel(16, 2, 3,
+    Pixel(green: 255, alpha: 255), "GPU Canvas shape before rotation")
+  beforeMotion.requireRasterPixel(16, 10, 2,
+    Pixel(red: 255, alpha: 255), "GPU Canvas image before reflection")
+  let visibility = [
+    MotionVisibilityKeyframe(offset: 0, visible: true),
+    MotionVisibilityKeyframe(offset: 1, visible: false)]
+  let timeline = newMotionTimeline(scene, [
+    motionTrack(shapeId, mspRotation, [
+      FloatKeyframe(offset: 0, value: 0),
+      FloatKeyframe(offset: 0.5, value: PI * 0.5),
+      FloatKeyframe(offset: 1, value: PI * 0.5)]),
+    motionTrack(imageId, mspScaleX, [
+      FloatKeyframe(offset: 0, value: 1),
+      FloatKeyframe(offset: 0.5, value: -1),
+      FloatKeyframe(offset: 1, value: -1)])], 2, 0,
+    visibilityTracks = [motionVisibilityTrack(shapeId, visibility),
+      motionVisibilityTrack(imageId, visibility)])
+  var scheduler = initFrameScheduler()
+  doAssert timeline.advance(scheduler, 1)
+  doAssert renderer.queueFrame()
+  drain()
+  let transformed = renderer.canvas.rasterSurface.pixels
+  transformed.requireRasterPixel(16, 4, 1, Pixel(green: 255, alpha: 255),
+    "GPU Canvas rotated shape")
+  transformed.requireRasterPixel(16, 2, 3, Pixel(),
+    "GPU Canvas old shape footprint cleared")
+  transformed.requireRasterPixel(16, 10, 2, Pixel(blue: 255, alpha: 255),
+    "GPU Canvas reflected image left")
+  transformed.requireRasterPixel(16, 13, 2, Pixel(red: 255, alpha: 255),
+    "GPU Canvas reflected image right")
+  doAssert timeline.advance(scheduler, 2)
+  doAssert renderer.queueFrame()
+  drain()
+  let hidden = renderer.canvas.rasterSurface.pixels
+  hidden.requireRasterPixel(16, 4, 1, Pixel(), "GPU Canvas hidden shape")
+  hidden.requireRasterPixel(16, 10, 2, Pixel(), "GPU Canvas hidden image")
   discard scene.replaceSnapshot(motionSceneSnapshot(size(16, 16), []))
   doAssert renderer.queueFrame()
   drain()
