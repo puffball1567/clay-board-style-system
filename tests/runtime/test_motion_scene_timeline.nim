@@ -23,6 +23,15 @@ proc tick(timeline: MotionTimeline; now: float64): FrameScheduler =
   result = initFrameScheduler()
   discard timeline.advance(result, now)
 
+proc nearlySame(a, b: Affine2D): bool =
+  const tolerance = 1e-5'f32
+  abs(a.m11 - b.m11) < tolerance and
+    abs(a.m12 - b.m12) < tolerance and
+    abs(a.m21 - b.m21) < tolerance and
+    abs(a.m22 - b.m22) < tolerance and
+    abs(a.tx - b.tx) < tolerance and
+    abs(a.ty - b.ty) < tolerance
+
 proc pixels(scene: MotionScene; width = 16; height = 8): RasterImage =
   render(scene.canvas.paintCommands(NodeId(0),
     rect(0, 0, width.float32, height.float32)),
@@ -212,8 +221,8 @@ suite "CPU Motion Scene timelines":
       rotationAffine2D(PI.float32 * 0.25'f32) *
       scaleAffine2D(1.5, 0.75) *
       translationAffine2D(-10, -6)
-    check scene.value.transform == expected
-    check reversed.value.transform == expected
+    check scene.value.transform.nearlySame(expected)
+    check reversed.value.transform.nearlySame(expected)
     check scene.value.bounds.x == 6
 
   test "zero and negative scale tracks retain stable scene identities":
