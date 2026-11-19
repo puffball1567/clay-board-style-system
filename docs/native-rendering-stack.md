@@ -117,6 +117,12 @@ input lifecycle. One component owns acquisition and presentation for each
 window; SDL's high-level renderer and bgfx must not independently present to
 the same swapchain.
 
+When the application owns presentation, bgfx adapters can opt into
+`BgfxHostOptions.flushWithoutPresent` with `GpuHostConfig.presentation = false`.
+The host submits offscreen frames with the bgfx flush flag. This mode leaves
+context selection, thread ordering, and presentation to the application. The
+Linux EGL sharing fixture exercises it with an SDL-owned context.
+
 The build includes only renderers appropriate to its target. A typical policy
 is D3D12 with an optional D3D11 fallback on Windows, Metal on Apple targets,
 and Vulkan with an optional OpenGL ES fallback on Linux and Android. Console

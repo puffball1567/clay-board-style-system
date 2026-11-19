@@ -32,6 +32,9 @@ when defined(cbssTestSdl3PlatformData):
   ) {.importc: "cbss_sdl3_platform_stub_configure", cdecl.}
 proc shutdownCount(): uint32 {.importc: "cbss_bgfx_stub_shutdown_count", cdecl.}
 proc frameCount(): uint32 {.importc: "cbss_bgfx_stub_frame_count", cdecl.}
+proc lastFrameFlags(): uint8 {.
+  importc: "cbss_bgfx_stub_last_frame_flags", cdecl.}
+proc touchCount(): uint32 {.importc: "cbss_bgfx_stub_touch_count", cdecl.}
 proc initCapabilities(): uint64 {.
   importc: "cbss_bgfx_stub_init_capabilities", cdecl.}
 proc resetCount(): uint32 {.importc: "cbss_bgfx_stub_reset_count", cdecl.}
@@ -229,6 +232,39 @@ proc directRequest(
   )
 
 suite "optional bgfxim adapter":
+  test "offscreen frame submission flushes without claiming presentation":
+    resetCounters()
+    var options = defaultBgfxHostOptions()
+    options.flushWithoutPresent = true
+    let backend = newBgfxBackend(options)
+    for ownership in [ghoOwned, ghoBorrowed]:
+      expect GpuHostError:
+        discard openGpuHost(backend, ownership, config())
+    check initCapabilities() == 0
+    check frameCount() == 0
+
+    var offscreenConfig = config()
+    offscreenConfig.presentation = false
+    let host = openGpuHost(backend, ghoOwned, offscreenConfig)
+    defer: host.close()
+    let ns = host.createGpuNamespace("offscreen", GpuResourceBudget(
+      persistentBytes: 64, maxResources: 1, workUnitsPerFrame: 1))
+    let target = host.createGpuRenderTarget(ns, GpuRenderTargetDescriptor(
+      width: 4, height: 4, format: gtfRgba8, usage: {gtuRenderTarget}))
+    let frame = host.beginGpuFrame()
+    var pass = GpuGraphicsPassDescriptor(
+      viewport: GpuViewport(width: 4, height: 4), clearColorEnabled: true)
+    expect GpuHostError:
+      host.clearGpuGraphicsPass(ns, pass)
+    check touchCount() == 0
+    pass.renderTarget = target
+    host.clearGpuGraphicsPass(ns, pass)
+    check touchCount() == 1
+    host.endGpuFrame(frame)
+    check host.isGpuFrameComplete(frame)
+    check frameCount() == 1
+    check lastFrameFlags() == BGFX_FRAME_FLUSH
+
   test "host options preserve bgfx capability defaults and explicit limits":
     resetCounters()
     let defaultHost = openGpuHost(
@@ -1295,6 +1331,7 @@ suite "optional bgfxim adapter":
     check bufferReadbackData.bytes[0] == byte(16 mod 251)
     check bufferReadbackData.bytes[15] == byte(31 mod 251)
     check frameCount() == 2
+    check lastFrameFlags() == BGFX_FRAME_NONE
     check submitCount() == 2
     check dispatchCount() == 2
     check viewRectCount() == 1
