@@ -142,72 +142,80 @@ proc testRendererComposition() =
   defer: renderer.close()
   let native = renderer.nativeSdl3Renderer()
   doAssert $SDL3.getRendererName(native) == "opengl"
-  doAssert SDL3.flushRenderer(native), sdlError()
-  let eglContext = SDL3.gL_GetCurrentContext()
-  doAssert not eglContext.isNil
-  doAssert BGFX.renderFrame(0) == BGFX_RENDER_FRAME_NO_CONTEXT
-  var options = defaultBgfxHostOptions()
-  options.rendererType = BGFX_RENDERER_TYPE_OPENGL
-  options.platformData = bgfxPlatformDataFromSdl3Window(SDL3.getRenderWindow(native))
-  options.platformData.platform.context = eglContext
-  options.flushWithoutPresent = true
-  options.directPresentation = newQualifiedBgfxDirectPresentationProfile(
-    {gtfRgba8}, alphaModes = {gcamStraight})
-  let host = openGpuHost(newBgfxBackend(options), ghoOwned, GpuHostConfig(
-    width: 32, height: 32, resetFlags: BGFX_RESET_FLIP_AFTER_RENDER))
-  defer: host.close()
-  let budget = GpuResourceBudget(persistentBytes: 16_384, maxResources: 24,
-    workUnitsPerFrame: 4)
-  let composition = host.createGpuNamespace("OpenGL composition", budget)
-  let producer = host.createGpuNamespace("OpenGL producer", budget)
-  let work = createTempDir("cbss-sdl-layer-shaders-", "")
-  defer: removeDir(work)
-  let compiler = gpuShaderCompilerConfig(getEnv("CBSS_SHADERC"),
-    [getEnv("CBSS_BGFX_SHADER_INCLUDE")], workDirectory = work)
-  let shaderTarget = gpuShaderCompileTarget(gsbtOpenGL, gscpLinux, "330")
-  let vertex = host.createGpuShader(composition,
-    gpuHostDirectCompositeVertexSource().compileGpuShader(shaderTarget, compiler).artifact)
-  let fragment = host.createGpuShader(composition,
-    gpuHostDirectCompositeFragmentSource().compileGpuShader(shaderTarget, compiler).artifact)
-  let layout = @[
-    GpuVertexAttribute(semantic: gvsPosition, components: 3, componentType: gvctFloat),
-    GpuVertexAttribute(semantic: gvsTexCoord0, components: 2, componentType: gvctFloat)]
-  let vertices = [
-    [-1'f32, -1, 0, 0, 1], [-1'f32, 1, 0, 0, 0],
-    [1'f32, -1, 0, 1, 1], [1'f32, 1, 0, 1, 0]]
-  var bytes = newSeq[byte](sizeof(vertices))
-  copyMem(addr bytes[0], unsafeAddr vertices[0], bytes.len)
-  let buffer = host.createGpuBuffer(composition, GpuBufferDescriptor(
-    byteSize: bytes.len.uint64, role: gbrVertex, access: gbaStatic,
-    vertexLayout: layout), move(bytes))
-  let pipeline = host.createGpuGraphicsPipeline(composition,
-    GpuGraphicsPipelineDescriptor(vertexShader: vertex, fragmentShader: fragment,
-      vertexLayout: layout, colorFormat: gtfRgba8, topology: gptTriangleStrip,
-      cullMode: gcmNone, blend: alphaGpuBlendState()))
-  let composite = host.createGpuUniform(composition, GpuUniformDescriptor(
-    name: "u_cbssComposite", uniformType: gutVec4, arrayLength: 1))
-  let uv = host.createGpuUniform(composition, GpuUniformDescriptor(
-    name: "u_cbssUvRect", uniformType: gutVec4, arrayLength: 1))
-  let sampler = host.createGpuSampler(composition, GpuSamplerDescriptor(
-    name: "s_cbssSurface", addressU: gsamClamp, addressV: gsamClamp,
-    minFilter: gsfNearest, magFilter: gsfNearest, mipFilter: gsfNearest))
-  var material = GpuHostDirectCompositeMaterial(namespace: composition,
-    vertexBuffer: buffer, compositeUniform: composite, uvRectUniform: uv,
-    sampler: sampler, vertexCount: 4)
-  material.pipelines[gcamStraight] = pipeline
-  renderer.setGpuDirectCompositor(
-    newSdl3BgfxOpenGlLayerCompositor(native, host, material))
-  defer: renderer.clearGpuDirectCompositor()
+  let shared = newSdl3BgfxOpenGlContext(native)
+  defer: shared.close()
+  var host: GpuHost
+  var surface: GpuDirectSurface
+  var composition: GpuNamespaceId
+  var material: GpuHostDirectCompositeMaterial
+  defer:
+    renderer.clearGpuDirectCompositor()
+    if not host.isNil:
+      shared.withSdl3BgfxOpenGlContext:
+        if not surface.isNil:
+          doAssert surface.closeGpuDirectSurface()
+        host.close()
 
-  let image = host.createGpuTexture(producer, GpuTextureDescriptor(
-    width: 1, height: 2, format: gtfRgba8, usage: {gtuSampled}, access: gtaStatic),
-    @[255'u8, 0, 0, 255, 0, 255, 0, 255])
-  let surface = host.newGpuDirectSurface(producer, defaultGpuDirectSurfaceConfig(1, 2))
-  defer: doAssert surface.closeGpuDirectSurface()
-  let frame = host.beginGpuFrame()
-  doAssert surface.queueGpuDirectSurfaceFrame(image, frame)
-  host.endGpuFrame(frame)
-  doAssert surface.collectGpuDirectSurfaceFrame()
+  shared.withSdl3BgfxOpenGlContext:
+    doAssert BGFX.renderFrame(0) == BGFX_RENDER_FRAME_NO_CONTEXT
+    var options = defaultBgfxHostOptions()
+    options.rendererType = BGFX_RENDERER_TYPE_OPENGL
+    options.platformData = shared.platformData()
+    options.flushWithoutPresent = true
+    options.directPresentation = newQualifiedBgfxDirectPresentationProfile(
+      {gtfRgba8}, alphaModes = {gcamStraight})
+    host = openGpuHost(newBgfxBackend(options), ghoOwned, GpuHostConfig(
+      width: 32, height: 32, resetFlags: BGFX_RESET_FLIP_AFTER_RENDER))
+    let budget = GpuResourceBudget(persistentBytes: 16_384, maxResources: 24,
+      workUnitsPerFrame: 4)
+    composition = host.createGpuNamespace("OpenGL composition", budget)
+    let producer = host.createGpuNamespace("OpenGL producer", budget)
+    let work = createTempDir("cbss-sdl-layer-shaders-", "")
+    defer: removeDir(work)
+    let compiler = gpuShaderCompilerConfig(getEnv("CBSS_SHADERC"),
+      [getEnv("CBSS_BGFX_SHADER_INCLUDE")], workDirectory = work)
+    let shaderTarget = gpuShaderCompileTarget(gsbtOpenGL, gscpLinux, "330")
+    let vertex = host.createGpuShader(composition,
+      gpuHostDirectCompositeVertexSource().compileGpuShader(shaderTarget, compiler).artifact)
+    let fragment = host.createGpuShader(composition,
+      gpuHostDirectCompositeFragmentSource().compileGpuShader(shaderTarget, compiler).artifact)
+    let layout = @[
+      GpuVertexAttribute(semantic: gvsPosition, components: 3, componentType: gvctFloat),
+      GpuVertexAttribute(semantic: gvsTexCoord0, components: 2, componentType: gvctFloat)]
+    let vertices = [
+      [-1'f32, -1, 0, 0, 1], [-1'f32, 1, 0, 0, 0],
+      [1'f32, -1, 0, 1, 1], [1'f32, 1, 0, 1, 0]]
+    var bytes = newSeq[byte](sizeof(vertices))
+    copyMem(addr bytes[0], unsafeAddr vertices[0], bytes.len)
+    let buffer = host.createGpuBuffer(composition, GpuBufferDescriptor(
+      byteSize: bytes.len.uint64, role: gbrVertex, access: gbaStatic,
+      vertexLayout: layout), move(bytes))
+    let pipeline = host.createGpuGraphicsPipeline(composition,
+      GpuGraphicsPipelineDescriptor(vertexShader: vertex, fragmentShader: fragment,
+        vertexLayout: layout, colorFormat: gtfRgba8, topology: gptTriangleStrip,
+        cullMode: gcmNone, blend: alphaGpuBlendState()))
+    let composite = host.createGpuUniform(composition, GpuUniformDescriptor(
+      name: "u_cbssComposite", uniformType: gutVec4, arrayLength: 1))
+    let uv = host.createGpuUniform(composition, GpuUniformDescriptor(
+      name: "u_cbssUvRect", uniformType: gutVec4, arrayLength: 1))
+    let sampler = host.createGpuSampler(composition, GpuSamplerDescriptor(
+      name: "s_cbssSurface", addressU: gsamClamp, addressV: gsamClamp,
+      minFilter: gsfNearest, magFilter: gsfNearest, mipFilter: gsfNearest))
+    material = GpuHostDirectCompositeMaterial(namespace: composition,
+      vertexBuffer: buffer, compositeUniform: composite, uvRectUniform: uv,
+      sampler: sampler, vertexCount: 4)
+    material.pipelines[gcamStraight] = pipeline
+    let image = host.createGpuTexture(producer, GpuTextureDescriptor(
+      width: 1, height: 2, format: gtfRgba8, usage: {gtuSampled}, access: gtaStatic),
+      @[255'u8, 0, 0, 255, 0, 255, 0, 255])
+    surface = host.newGpuDirectSurface(producer, defaultGpuDirectSurfaceConfig(1, 2))
+    let frame = host.beginGpuFrame()
+    doAssert surface.queueGpuDirectSurfaceFrame(image, frame)
+    host.endGpuFrame(frame)
+    doAssert surface.collectGpuDirectSurfaceFrame()
+
+  renderer.setGpuDirectCompositor(
+    newSdl3BgfxOpenGlLayerCompositor(shared, host, material))
 
   let fallback = newRasterSurface(1, 1)
   fallback.updateRegion(rasterRegion(0, 0, 1, 1), [0'u8, 255, 255, 255])
@@ -230,7 +238,9 @@ proc testRendererComposition() =
     proc pixel(x, y: int): array[3, uint8] =
       let i = (y * capture.width + x) * 3
       [capture.pixels[i], capture.pixels[i + 1], capture.pixels[i + 2]]
-    doAssert pixel(8, 6) == [255'u8, 0, 0], $pixel(8, 6)
+    doAssert pixel(8, 6) == [255'u8, 0, 0], $[
+      pixel(8, 6), pixel(8, 10), pixel(6, 6), pixel(8, 15),
+      pixel(9, 6), pixel(1, 1)] & " " & $renderer.gpuDirectCompositionStats()
     doAssert pixel(8, 10) == [0'u8, 255, 0], $pixel(8, 10)
     doAssert pixel(6, 6) == [0'u8, 0, 255], $pixel(6, 6)
     doAssert pixel(8, 15) == [0'u8, 0, 255], $pixel(8, 15)

@@ -1053,7 +1053,7 @@ canonical visual contract.
 
 | Area | Implemented | Remaining |
 | --- | --- | --- |
-| Canvas in ordinary UI | Bounded asynchronous readback, optional same-host direct presentation, and a hybrid fallback for SDL texture layers | Zero-copy composition into an SDL renderer-owned intermediate texture |
+| Canvas in ordinary UI | Bounded asynchronous readback, optional same-host direct presentation, opt-in zero-copy SDL EGL/OpenGL layer composition on Linux, and hybrid fallback | Mixed-layer coverage beyond the qualified OpenGL configuration |
 | Filters | Ordered GPU filter chains for Canvas, Motion Scene, and explicit raster or GPU inputs. Filtered raster output can be a Style underlay, overlay, or mask. Style filters can apply CPU RGB matrices to a whole UI subtree. | GPU filtering of the ordinary UI subtree itself |
 | Motion Scene | Batched 2D shapes, images and atlas sprites, timelines, direct and filtered display | General paths and text as scene objects and further scene composition capabilities |
 | Qualification | Linux Mesa OpenGL pixel CI under ARC and ORC, including a native window pass and resize, plus a recorded AMD Renoir OpenGL run. Mock and bgfx NOOP tests cover recovery behavior. | Physical-driver coverage for mixed layers, recovery and pressure, and a combined Motion Scene and independent compute fixture under one presentation owner |
@@ -1107,8 +1107,10 @@ rectangular clip/UV crop, bounded nested rounded-mask composition, typed
 same-host offscreen `RenderTarget` composition, and portable shader source
 contract are implemented. An opt-in hybrid direct/readback display path now
 paints SDL texture-backed layers with completed raster pixels when direct
-offscreen composition is unsupported. Native texture sharing and broader
-real-GPU pixel qualification remain Version 0.7 work. A later wgpu-native adapter
+offscreen composition is unsupported. The opt-in Linux EGL/OpenGL compositor
+draws into SDL-owned layers through shared textures and GPU fences. Mixed-layer
+coverage on physical drivers and broader GPU pixel qualification remain
+Version 0.7 work. A later wgpu-native adapter
 may implement the same CBSS-owned contract, but it is no longer the standard
 provider or a release prerequisite.
 
@@ -2481,10 +2483,10 @@ now consumes final-window contexts and retained Texture/RenderTarget sources in
 the active presentation frame, including bounded antialiased nested rounded
 clips. GPU-native renderers can provide a typed compositor-owned offscreen
 `RenderTarget`; namespace, generation, dimensions, and feedback hazards are
-validated before submission. SDL texture-backed layers can use hybrid readback
-fallback. Zero-copy sharing into those SDL layers, GPU filters over ordinary
-UI subtrees, and broader hardware qualification remain open. Owned bgfx hosts
-now recreate the backend from their latest validated configuration after
+validated before submission. SDL texture-backed layers support hybrid readback
+fallback and opt-in zero-copy composition on Linux EGL/OpenGL. GPU filters
+over ordinary UI subtrees and broader hardware qualification remain open.
+Owned bgfx hosts now recreate the backend from their latest validated configuration after
 device loss before deterministic namespace restoration begins; borrowed hosts
 continue to require recreation by their external owner.
 The CPU Canvas now fills retained concave and multi-contour `Path2D` geometry

@@ -726,24 +726,44 @@ SDL/GPU layers can also use the opt-in OpenGL compositor described below.
 
 On Linux with an SDL EGL/OpenGL renderer, the optional
 `backends/bgfx/sdl3_opengl_compositor` module connects both renderers to the
-active SDL layer. Initialize bgfx on the SDL thread with the current shared
-EGL context, an offscreen host, and `flushWithoutPresent`. Rebuild the standard
-compositor shader artifacts from the current sources. The vertex shader uses
-the third component of `u_cbssComposite` to match the SDL target's row order.
+active SDL layer. Select the SDL `opengl` render driver and set
+`SDL_VIDEO_FORCE_EGL=1` before creating the renderer. The shared context
+keeps SDL and bgfx drawing state independent while both access the same
+texture. Rebuild the standard compositor shaders from the current sources
+and use `gcmNone` for their pipelines. The vertex shader uses the third
+component of `u_cbssComposite` to match the SDL target's row order.
 
 ```nim
+let shared = newSdl3BgfxOpenGlContext(renderer.nativeSdl3Renderer())
+var host: GpuHost
+shared.withSdl3BgfxOpenGlContext:
+  # Run bgfx on the SDL thread. Call before initializing the bgfx host.
+  discard BGFX.renderFrame(0)
+  var options = defaultBgfxHostOptions()
+  options.rendererType = BGFX_RENDERER_TYPE_OPENGL
+  options.platformData = shared.platformData()
+  options.flushWithoutPresent = true
+  options.directPresentation = newQualifiedBgfxDirectPresentationProfile(
+    {gtfRgba8}, alphaModes = {gcamStraight})
+  host = openGpuHost(newBgfxBackend(options), ghoOwned,
+    GpuHostConfig(width: width, height: height, presentation: false))
+  # Create the compositor material and GPU producer resources here.
 renderer.setGpuDirectCompositor(
-  newSdl3BgfxOpenGlLayerCompositor(renderer.nativeSdl3Renderer(), host, material))
+  newSdl3BgfxOpenGlLayerCompositor(shared, host, material))
 ```
 
-Each direct command flushes earlier SDL paint, borrows the texture for one
-bgfx draw, retires the import, and restores the SDL target before later
-paint. Scoping the import to one command lets SDL reuse or destroy its
-texture as usual. This path submits a separate retirement frame per direct
-command. SDL continues to present the window. Direct commands targeting the
-window itself and unsupported targets use the command's readback fallback
-when available. Clear the compositor and close the host before closing its
-SDL renderer.
+Each direct command flushes earlier SDL paint, orders access with OpenGL
+fences, borrows the active RGBA32 texture for one bgfx draw, and retires the
+import before later SDL paint. Scoping the import to one command lets SDL
+reuse or destroy its texture as usual. The import adds a separate retirement
+frame per command. SDL continues to present the window. Direct commands
+targeting the window itself and unsupported targets use the command's
+readback fallback when available.
+
+Run GPU producer updates and host teardown within
+`shared.withSdl3BgfxOpenGlContext` on the SDL thread. Clear the renderer's GPU
+compositor before tearing down the host, close the shared context after the
+host, and then close the SDL renderer.
 
 The optional bgfx backend exposes `newBgfxDirectCompositeAdapter(backend,
 submit)` for presentation-backend authors. It binds the callback to one bgfx

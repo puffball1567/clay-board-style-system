@@ -483,8 +483,11 @@ offscreen `RenderTarget`; foreign, stale, mismatched, or feedback targets fail
 before backend submission. Rounded-mask overflow fails closed instead of
 truncating the clip stack. An opt-in hybrid display path now retains both direct
 presentation and bounded readback, so SDL texture-backed offscreen layers can
-draw the completed raster copy when direct composition is unsupported. Native
-texture sharing and visible real-GPU conformance remain release gates below.
+draw the completed raster copy when direct composition is unsupported. The
+opt-in Linux EGL/OpenGL compositor draws directly into SDL layers through a
+shared texture and GPU fences. Mesa pixel tests cover ordered paint, clipping,
+fallback, and layer reuse. Mixed-layer coverage on physical drivers remains
+part of the release gate below.
 An owned bgfx adapter now
 recreates its runtime from the latest validated host configuration before
 namespace restoration. A borrowed adapter continues to fail closed because

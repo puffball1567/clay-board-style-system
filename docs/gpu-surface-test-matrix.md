@@ -102,9 +102,13 @@ after bgfx releases the attachment and shuts down. Only the pixel assertions
 read back to the CPU. The fixture submits through `GpuHost` using the
 bgfx `flushWithoutPresent` option, and SDL owns window presentation.
 
-This qualifies imports, drawing, and release in a controlled EGL/OpenGL
-setup. The standard SDL compositor still needs to manage imports across the
-SDL layer cache and hand off drawing at the correct point in the paint stream.
+The fixture also installs the opt-in OpenGL compositor on the standard SDL3
+renderer and renders ordinary CBSS layer and clip commands. It checks source
+row order, pixels inside and outside the clip, SDL paint on both sides of the
+GPU command, final-window readback fallback, and resource accounting across
+two frames of SDL layer reuse. This uses two EGL contexts in the same share
+group, with a GPU fence at each handoff. The mixed-layer path is covered by
+Linux Mesa CI under ARC and ORC. Physical-driver coverage remains open.
 
 ## Real-GPU Release Gate
 
