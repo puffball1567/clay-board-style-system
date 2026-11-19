@@ -519,6 +519,20 @@ bgfx_frame_buffer_handle_t bgfx_create_frame_buffer(
     return handle;
 }
 
+bgfx_frame_buffer_handle_t bgfx_create_frame_buffer_from_handles(
+    uint8_t num, const bgfx_texture_handle_t* handles, bool destroy_texture)
+{
+    (void)destroy_texture;
+    bgfx_frame_buffer_handle_t handle = { UINT16_MAX };
+    if (cbss_initialized && num == 1 && handles != NULL &&
+        handles[0].idx != UINT16_MAX)
+    {
+        ++cbss_frame_buffer_create_count;
+        handle.idx = (uint16_t)(180 + cbss_frame_buffer_create_count);
+    }
+    return handle;
+}
+
 void bgfx_set_frame_buffer_name(bgfx_frame_buffer_handle_t handle,
                                 const char* name, int32_t len)
 {

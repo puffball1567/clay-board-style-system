@@ -26,6 +26,13 @@ validates the render target, viewport, clear color, view range, and frame work
 budget before asking the backend to touch the view. This also clears a Motion
 Scene canvas when its latest snapshot has no drawable objects.
 
+Adapters can implement the optional `importRenderTarget` entry in backend API
+version 21. `importGpuRenderTarget` registers the attachment as an ordinary
+generation-checked RenderTarget and charges its dimensions against the owning
+namespace. The backend-specific source describes the existing storage. Its
+external owner keeps that storage alive until the GPU attachment is released
+and the backend retires its references.
+
 Dynamic buffer and texture updates accept borrowed byte spans. CBSS validates
 the span synchronously and the backend must consume or copy it before returning;
 neither layer may retain the caller's memory. This permits a worker-produced
