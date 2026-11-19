@@ -678,7 +678,8 @@ releases the callback holder.
 For the normal one-host path, `newGpuHostDirectCompositor()` creates a typed
 compositor over the same `GpuHost` that owns the published source. The caller
 opens one host frame around the surrounding paint stream. The compositor adds
-one draw to that frame and never calls Present independently. Its pipeline,
+one draw to that frame and never calls Present independently. An offscreen
+host accepts typed RenderTargets and rejects window contexts. Its pipeline,
 vertex buffer, uniforms, and sampler remain in a compositor namespace. Only a
 sampled Texture or RenderTarget already retained by a presentation surface may
 cross from the producer namespace, so this path does not weaken ordinary
@@ -692,7 +693,7 @@ not pay the rounded-mask branch cost. They use this interface:
 
 - a full-viewport `POSITION` and `TEXCOORD0` vertex stream;
 - sampler `s_cbssSurface` at the material's configured texture stage;
-- `u_cbssComposite = (opacity, alphaMode, 0, 0)`; and
+- `u_cbssComposite = (opacity, alphaMode, offscreenTargetTopDown, 0)`; and
 - `u_cbssUvRect = (u0, v0, u1, v1)`.
 
 The masked variant additionally consumes the fixed `u_cbssClipMasks[17]`
@@ -719,7 +720,30 @@ and remains valid only for the synchronous composition call. The standard
 same-host compositor requires this typed target for offscreen drawing and
 rejects an SDL texture-backed target before acquiring a frame lease. The
 explicit readback path above can paint those SDL layers; zero-copy mixed
-SDL/GPU layer integration remains a separate real-renderer release gate.
+SDL/GPU layers can also use the opt-in OpenGL compositor described below.
+
+### SDL OpenGL Layer Composition
+
+On Linux with an SDL EGL/OpenGL renderer, the optional
+`backends/bgfx/sdl3_opengl_compositor` module connects both renderers to the
+active SDL layer. Initialize bgfx on the SDL thread with the current shared
+EGL context, an offscreen host, and `flushWithoutPresent`. Rebuild the standard
+compositor shader artifacts from the current sources. The vertex shader uses
+the third component of `u_cbssComposite` to match the SDL target's row order.
+
+```nim
+renderer.setGpuDirectCompositor(
+  newSdl3BgfxOpenGlLayerCompositor(renderer.nativeSdl3Renderer(), host, material))
+```
+
+Each direct command flushes earlier SDL paint, borrows the texture for one
+bgfx draw, retires the import, and restores the SDL target before later
+paint. Scoping the import to one command lets SDL reuse or destroy its
+texture as usual. This path submits a separate retirement frame per direct
+command. SDL continues to present the window. Direct commands targeting the
+window itself and unsupported targets use the command's readback fallback
+when available. Clear the compositor and close the host before closing its
+SDL renderer.
 
 The optional bgfx backend exposes `newBgfxDirectCompositeAdapter(backend,
 submit)` for presentation-backend authors. It binds the callback to one bgfx

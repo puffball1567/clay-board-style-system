@@ -294,6 +294,10 @@ proc cacheUsage*(target: Sdl3Renderer): Sdl3CacheUsage =
     rasterPartialUploads: target.rasterPartialUploads
   )
 
+proc nativeSdl3Renderer*(target: Sdl3Renderer): pointer =
+  ## Borrowed SDL renderer for backend integration. Valid until close().
+  target.renderer
+
 proc setGpuDirectCompositor*(
     target: var Sdl3Renderer;
     compositor: GpuDirectCompositor
@@ -1713,6 +1717,13 @@ proc gpuDirectCompositeContext(
         target.staticLayerWidth.float32 / scale,
         target.staticLayerHeight.float32 / scale
       )
+      if target.staticLayerDamageClip.isSome:
+        let damage = target.staticLayerDamageClip.get
+        let bounds = rect(damage.x.float32, damage.y.float32,
+          damage.w.float32, damage.h.float32)
+        result.clipBounds = some(
+          if result.clipBounds.isSome: bounds.intersection(result.clipBounds.get)
+          else: bounds)
 
 proc translated(command: PaintCommand; offset: Vec2): PaintCommand =
   result = command
