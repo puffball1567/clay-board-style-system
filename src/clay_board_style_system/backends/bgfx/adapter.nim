@@ -29,6 +29,9 @@ type
     depthStencilFormat*: bgfx_texture_format_t
     numBackBuffers*, maxFrameLatency*, debugTextScale*: uint8
     directPresentation*: BgfxDirectPresentationProfile
+    flushWithoutPresent*: bool
+      ## Submit offscreen frames without swapping. Requires a GpuHost
+      ## configuration with presentation disabled.
 
   BgfxAdapterContext = ref object of GpuBackendContext
     options: BgfxHostOptions
@@ -221,6 +224,8 @@ proc openOwned(
     info: var GpuBackendInfo
 ): GpuBackendStatus {.raises: [].} =
   let value = rawContext.context
+  if value.options.flushWithoutPresent and config.presentation:
+    return gbsUnsupported
   if value.claimContext(true) != gbsOk:
     return gbsFailed
   value.config = config
@@ -233,8 +238,9 @@ proc attachBorrowed(
     config: GpuHostConfig;
     info: var GpuBackendInfo
 ): GpuBackendStatus {.raises: [].} =
-  discard config
   let value = rawContext.context
+  if value.options.flushWithoutPresent and config.presentation:
+    return gbsUnsupported
   if value.claimContext(false) != gbsOk:
     return gbsFailed
   result = fillBackendInfo(value, info)
@@ -255,9 +261,13 @@ proc endFrame(
     frameNumber: uint64
 ): GpuBackendStatus {.raises: [].} =
   discard frameNumber
-  if not rawContext.context.attached:
+  let value = rawContext.context
+  if not value.attached:
     return gbsFailed
-  rawContext.context.completedFrame = BGFX.frame(BGFX_FRAME_NONE)
+  let flags =
+    if value.options.flushWithoutPresent: BGFX_FRAME_FLUSH
+    else: BGFX_FRAME_NONE
+  value.completedFrame = BGFX.frame(flags)
   gbsOk
 
 proc resize(

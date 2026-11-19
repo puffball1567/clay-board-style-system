@@ -3,7 +3,8 @@
 ## Linux OpenGL feasibility fixture. SDL owns the EGL context, texture, and
 ## window presentation. bgfx borrows the context and writes the same texture.
 import bgfx
-import clay_board_style_system/backends/bgfx/sdl3_platform_data
+import clay_board_style_system/backends/bgfx/[adapter, sdl3_platform_data]
+import clay_board_style_system/runtime/gpu_host
 import clay_board_style_system/vendor/sdl3
 
 const
@@ -63,19 +64,14 @@ proc testSharedTarget() =
     # A caller-provided context must be current on bgfx's render thread.
     # Running bgfx on this thread also orders both APIs' OpenGL commands.
     doAssert BGFX.renderFrame(0) == BGFX_RENDER_FRAME_NO_CONTEXT
-    let platformData = bgfxPlatformDataFromSdl3Window(window)
-    var init: bgfx_init_t
-    BGFX.initCtor(addr init)
-    init.type = BGFX_RENDERER_TYPE_OPENGL
-    init.platformData = platformData.platform
-    init.platformData.context = context
-    init.reset = BGFX_RESET_FLIP_AFTER_RENDER
-    init.swapChain.ndt = platformData.swapChain.ndt
-    init.swapChain.nwh = platformData.swapChain.nwh
-    init.swapChain.width = 32
-    init.swapChain.height = 32
-    doAssert BGFX.init(addr init), "bgfx could not borrow SDL's EGL context"
-    defer: BGFX.shutdown()
+    var options = defaultBgfxHostOptions()
+    options.rendererType = BGFX_RENDERER_TYPE_OPENGL
+    options.platformData = bgfxPlatformDataFromSdl3Window(window)
+    options.platformData.platform.context = context
+    options.flushWithoutPresent = true
+    let host = openGpuHost(newBgfxBackend(options), ghoOwned, GpuHostConfig(
+      width: 32, height: 32, resetFlags: BGFX_RESET_FLIP_AFTER_RENDER))
+    defer: host.close()
     doAssert BGFX.getRendererType() == BGFX_RENDERER_TYPE_OPENGL
     var sharedTexture = BGFX.createTexture2d(textureSize, textureSize, false,
       1, BGFX_TEXTURE_FORMAT_RGBA8, BGFX_TEXTURE_RT, nil, uint64(nativeTexture))
@@ -86,8 +82,9 @@ proc testSharedTarget() =
     BGFX.setViewFrameBuffer(0, framebuffer)
     BGFX.setViewRect(0, 0, 0, textureSize div 2, textureSize)
     BGFX.setViewClear(0, BGFX_CLEAR_COLOR, 0xff0000ff'u32, 1, 0)
+    let first = host.beginGpuFrame()
     BGFX.touch(0)
-    discard BGFX.frame(BGFX_FRAME_FLUSH)
+    host.endGpuFrame(first)
 
     # SDL composites the shared texture before the first test readback.
     doAssert SDL3.setRenderTarget(renderer, composed), sdlError()
@@ -103,8 +100,9 @@ proc testSharedTarget() =
     doAssert SDL3.renderFillRect(renderer, addr overlay), sdlError()
     doAssert SDL3.flushRenderer(renderer), sdlError()
     BGFX.setViewClear(0, BGFX_CLEAR_COLOR, 0xffff00ff'u32, 1, 0)
+    let second = host.beginGpuFrame()
     BGFX.touch(0)
-    discard BGFX.frame(BGFX_FRAME_FLUSH)
+    host.endGpuFrame(second)
     doAssert SDL3.setRenderTarget(renderer, composed), sdlError()
     doAssert SDL3.renderTexture(renderer, target, nil, nil), sdlError()
     renderer.expectPixel(2, 6, [255'u8, 255, 0, 255])
@@ -113,7 +111,8 @@ proc testSharedTarget() =
     BGFX.resetView(0)
     BGFX.destroyFrameBuffer(framebuffer)
     BGFX.destroyTexture(sharedTexture)
-    discard BGFX.frame(BGFX_FRAME_FLUSH)
+    let retirement = host.beginGpuFrame()
+    host.endGpuFrame(retirement)
 
   # bgfx must leave both the SDL-owned context and its texture usable.
   doAssert SDL3.setRenderTarget(renderer, nil), sdlError()

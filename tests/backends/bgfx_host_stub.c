@@ -13,6 +13,8 @@ static uint32_t cbss_last_instance_count;
 static bool cbss_initialized;
 static uint32_t cbss_shutdown_count;
 static uint32_t cbss_frame_count;
+static uint8_t cbss_last_frame_flags;
+static uint32_t cbss_touch_count;
 static uint32_t cbss_reset_count;
 static uint32_t cbss_submit_count;
 static uint32_t cbss_dispatch_count;
@@ -161,8 +163,14 @@ const bgfx_caps_t* bgfx_get_caps(void)
 
 uint32_t bgfx_frame(uint8_t flags)
 {
-    (void)flags;
+    cbss_last_frame_flags = flags;
     return ++cbss_frame_count;
+}
+
+void bgfx_touch(bgfx_view_id_t id)
+{
+    (void)id;
+    ++cbss_touch_count;
 }
 
 void bgfx_reset(uint32_t flags, const bgfx_swap_chain_t* swap_chain)
@@ -908,6 +916,8 @@ void cbss_bgfx_stub_reset_counters(void)
     cbss_last_instance_count = 0;
     cbss_shutdown_count = 0;
     cbss_frame_count = 0;
+    cbss_last_frame_flags = 0;
+    cbss_touch_count = 0;
     cbss_reset_count = 0;
     cbss_init_capabilities = 0;
     cbss_submit_count = 0;
@@ -996,6 +1006,8 @@ void cbss_bgfx_stub_reset_counters(void)
 
 uint32_t cbss_bgfx_stub_shutdown_count(void) { return cbss_shutdown_count; }
 uint32_t cbss_bgfx_stub_frame_count(void) { return cbss_frame_count; }
+uint8_t cbss_bgfx_stub_last_frame_flags(void) { return cbss_last_frame_flags; }
+uint32_t cbss_bgfx_stub_touch_count(void) { return cbss_touch_count; }
 uint32_t cbss_bgfx_stub_reset_count(void) { return cbss_reset_count; }
 uint32_t cbss_bgfx_stub_width(void) { return cbss_width; }
 uint32_t cbss_bgfx_stub_height(void) { return cbss_height; }

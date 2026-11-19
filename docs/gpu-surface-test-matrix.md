@@ -98,8 +98,8 @@ fixture alternates SDL and bgfx writes, then composites the shared texture
 into another SDL layer before checking pixels. It verifies that surrounding
 SDL pixels survive bgfx writes and that SDL can still draw into its texture
 after bgfx releases the attachment and shuts down. Only the pixel assertions
-read back to the CPU. The fixture uses explicit bgfx flush frames and SDL
-owns window presentation.
+read back to the CPU. The fixture submits through `GpuHost` using the
+bgfx `flushWithoutPresent` option, and SDL owns window presentation.
 
 This qualifies the sharing mechanism in a controlled EGL/OpenGL setup. The
 standard SDL compositor still needs a bridge that qualifies the active
