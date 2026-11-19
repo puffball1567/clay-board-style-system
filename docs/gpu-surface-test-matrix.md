@@ -91,6 +91,21 @@ Local runs default to system SDL3 through `pkg-config`. Set
 Both modes run ARC and ORC; missing prerequisites and pixel mismatches fail
 the job rather than silently skipping conformance.
 
+The same task runs a separate Linux OpenGL texture sharing fixture. SDL creates
+an EGL context and a render-target texture. bgfx borrows the current context
+on the SDL thread and attaches the SDL texture to a bgfx framebuffer. The
+fixture alternates SDL and bgfx writes, then composites the shared texture
+into another SDL layer before checking pixels. It verifies that surrounding
+SDL pixels survive bgfx writes and that SDL can still draw into its texture
+after bgfx releases the attachment and shuts down. Only the pixel assertions
+read back to the CPU. The fixture uses explicit bgfx flush frames and SDL
+owns window presentation.
+
+This qualifies the sharing mechanism in a controlled EGL/OpenGL setup. The
+standard SDL compositor still needs a bridge that qualifies the active
+context, keeps the imported attachment valid for the SDL layer's lifetime,
+and hands off drawing at the correct point in the paint stream.
+
 ## Real-GPU Release Gate
 
 The same-host draw path is implemented, but the production direct compositor is

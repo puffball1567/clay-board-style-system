@@ -93,7 +93,8 @@ echo "Building the CBSS bgfx OpenGL pixel-conformance fixture..."
 
 "$cxx" -std=c++20 -O2 -fPIC -pthread $simd_flag \
   -DBX_CONFIG_DEBUG=0 -DASTCENC_F16C=0 -DASTCENC_NEON=0 \
-  -I"$bimg_dir/include" -I"$bimg_dir/3rdparty/astc-encoder/include" \
+  -I"$bx_dir/include" -I"$bimg_dir/include" \
+  -I"$bimg_dir/3rdparty/astc-encoder/include" \
   -I"$bx_dir/include" -I"$bx_dir/3rdparty" \
   -c "$bimg_dir/src/image.cpp" -o "$build_dir/bimg.o"
 
@@ -109,15 +110,18 @@ done
   "$build_dir"/astcenc_*.o
 
 for memory_model in arc orc; do
-nim c -r --mm:"$memory_model" -d:release -d:cbssGpuBgfx \
-  -d:cbssGpuCompositorDiagnostics \
-  -d:cbssSdl3LinkMode="$sdl_mode" --path:src --path:"$bgfxim_dir" \
-  -d:cbssRuntimeRoot="$PWD/vendor/sdl3" \
-  --nimcache:"$build_dir/nim-$memory_model" \
-  --out:"$build_dir/cbss-bgfx-pixels-$memory_model" \
-  --passC:"-I$bgfx_dir/include" --passC:"-I$bx_dir/include" \
-  --passL:"$build_dir/bgfx.o" --passL:"$build_dir/libbimg.a" \
-  --passL:"$build_dir/bx.o" --passL:-lstdc++ --passL:-pthread \
-  --passL:-ldl --passL:-lm "$@" \
-  tests/backends/test_bgfx_direct_pixels.nim
+  # Run in separate processes. The sharing fixture uses bgfx on the SDL thread.
+  for fixture in test_bgfx_sdl_gl_sharing test_bgfx_direct_pixels; do
+    nim c -r --mm:"$memory_model" -d:release -d:cbssGpuBgfx \
+      -d:cbssGpuCompositorDiagnostics \
+      -d:cbssSdl3LinkMode="$sdl_mode" --path:src --path:"$bgfxim_dir" \
+      -d:cbssRuntimeRoot="$PWD/vendor/sdl3" \
+      --nimcache:"$build_dir/nim-$memory_model" \
+      --out:"$build_dir/$fixture-$memory_model" \
+      --passC:"-I$bgfx_dir/include" --passC:"-I$bx_dir/include" \
+      --passL:"$build_dir/bgfx.o" --passL:"$build_dir/libbimg.a" \
+      --passL:"$build_dir/bx.o" --passL:-lstdc++ --passL:-pthread \
+      --passL:-ldl --passL:-lm "$@" \
+      "tests/backends/$fixture.nim"
+  done
 done
