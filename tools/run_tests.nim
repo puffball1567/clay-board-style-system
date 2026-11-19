@@ -4,6 +4,7 @@ const excludedTests = [
   "tests/backends/test_bgfx_adapter_compile.nim",
   "tests/backends/test_bgfx_direct_pixels.nim",
   "tests/backends/test_bgfx_host_noop.nim",
+  "tests/backends/test_bgfx_sdl_gl_sharing.nim",
   "tests/backends/test_shaderc_integration.nim",
   "tests/integration/atspi_linux_fixture.nim",
   "tests/integration/test_sdl3_large_paste.nim",
