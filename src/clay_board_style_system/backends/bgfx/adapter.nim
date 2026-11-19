@@ -42,6 +42,10 @@ type
     swapChain: bgfx_swap_chain_t
     completedFrame: uint32
 
+  BgfxOpenGlRenderTargetSource = ref object of GpuBackendRenderTargetSource
+    context: pointer
+    texture: uint32
+
   BgfxDirectCompositeSubmission* = object
     ## Backend-authoring view valid only while BgfxDirectSubmitProc is running.
     ## Do not retain the texture handle beyond that callback.
@@ -891,6 +895,55 @@ proc createRenderTarget(
   resource = packBackendResource(brtFrameBuffer, handle.idx)
   gbsOk
 
+proc importRenderTarget(
+    rawContext: GpuBackendContext;
+    descriptor: GpuRenderTargetDescriptor;
+    source: GpuBackendRenderTargetSource;
+    resource: var GpuBackendResourceId
+): GpuBackendStatus {.raises: [].} =
+  let value = rawContext.context
+  if not value.attached or not value.owned or not value.options.flushWithoutPresent or
+      BGFX.getRendererType() != BGFX_RENDERER_TYPE_OPENGL or
+      not (source of BgfxOpenGlRenderTargetSource):
+    return gbsUnsupported
+  let image = BgfxOpenGlRenderTargetSource(source)
+  if image.context.isNil or image.context != value.options.platformData.platform.context or
+      image.texture == 0 or descriptor.format != gtfRgba8 or
+      descriptor.usage != {gtuRenderTarget} or
+      descriptor.width == 0 or descriptor.height == 0 or
+      descriptor.width > uint32(high(uint16)) or descriptor.height > uint32(high(uint16)):
+    return gbsInvalidConfiguration
+
+  var texture = BGFX.createTexture2d(
+    descriptor.width.uint16, descriptor.height.uint16, false, 1,
+    BGFX_TEXTURE_FORMAT_RGBA8, BGFX_TEXTURE_RT, nil, image.texture.uint64
+  )
+  if not BGFX_HANDLE_IS_VALID(texture):
+    return gbsFailed
+  # The framebuffer owns the bgfx attachment. The OpenGL import leaves the
+  # external texture name owned by the provider of the storage.
+  let framebuffer = BGFX.createFrameBufferFromHandles(1, addr texture, true)
+  if not BGFX_HANDLE_IS_VALID(framebuffer):
+    BGFX.destroyTexture(texture)
+    return gbsFailed
+  if descriptor.label.len > 0:
+    BGFX.setFrameBufferName(framebuffer, descriptor.label.cstring,
+      int32(descriptor.label.len))
+  resource = packBackendResource(brtFrameBuffer, framebuffer.idx)
+  gbsOk
+
+proc importBgfxOpenGlRenderTarget*(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    descriptor: GpuRenderTargetDescriptor;
+    currentContext: pointer;
+    nativeTexture: uint32
+): GpuResourceHandle =
+  ## Backend integration entry point. The owner supplies a live RGBA8
+  ## GL_TEXTURE_2D in the current context of the offscreen bgfx host.
+  host.importGpuRenderTarget(namespace, descriptor, BgfxOpenGlRenderTargetSource(
+    context: currentContext, texture: nativeTexture))
+
 proc createShader(
     rawContext: GpuBackendContext;
     descriptor: GpuShaderDescriptor;
@@ -1593,6 +1646,7 @@ proc newBgfxBackend*(
     createBuffer: createBuffer,
     updateBuffer: updateBuffer,
     createRenderTarget: createRenderTarget,
+    importRenderTarget: importRenderTarget,
     createShader: createShader,
     createUniform: createUniform,
     createSampler: createSampler,

@@ -3,7 +3,8 @@
 ## Linux OpenGL feasibility fixture. SDL owns the EGL context, texture, and
 ## window presentation. bgfx borrows the context and writes the same texture.
 import bgfx
-import clay_board_style_system/backends/bgfx/[adapter, sdl3_platform_data]
+import clay_board_style_system/backends/bgfx/[
+  adapter, sdl3_opengl_target, sdl3_platform_data]
 import clay_board_style_system/runtime/gpu_host
 import clay_board_style_system/vendor/sdl3
 
@@ -12,9 +13,6 @@ const
   sdlInitVideo = SDL_InitFlags(0x20)
   sdlWindowOpenGl = SDL_WindowFlags(0x02)
   sdlWindowHidden = SDL_WindowFlags(0x08)
-  sdlGlTextureName = "SDL.texture.opengl.texture"
-  sdlGlTextureTarget = "SDL.texture.opengl.target"
-  glTexture2d = 0x0DE1
 
 proc sdlError(): string =
   $SDL3.getError()
@@ -53,10 +51,6 @@ proc testSharedTarget() =
   doAssert SDL3.renderClear(renderer), sdlError()
   doAssert SDL3.flushRenderer(renderer), sdlError()
 
-  let props = SDL3.getTextureProperties(target)
-  let nativeTexture = SDL3.getNumberProperty(props, sdlGlTextureName, 0)
-  doAssert nativeTexture > 0 and nativeTexture <= high(uint32).int64
-  doAssert SDL3.getNumberProperty(props, sdlGlTextureTarget, 0) == glTexture2d
   let context = SDL3.gL_GetCurrentContext()
   doAssert not context.isNil
 
@@ -73,17 +67,24 @@ proc testSharedTarget() =
       width: 32, height: 32, resetFlags: BGFX_RESET_FLIP_AFTER_RENDER))
     defer: host.close()
     doAssert BGFX.getRendererType() == BGFX_RENDERER_TYPE_OPENGL
-    var sharedTexture = BGFX.createTexture2d(textureSize, textureSize, false,
-      1, BGFX_TEXTURE_FORMAT_RGBA8, BGFX_TEXTURE_RT, nil, uint64(nativeTexture))
-    doAssert sharedTexture.idx != high(uint16)
-    let framebuffer = BGFX.createFrameBufferFromHandles(1,
-      addr sharedTexture, false)
-    doAssert framebuffer.idx != high(uint16)
-    BGFX.setViewFrameBuffer(0, framebuffer)
-    BGFX.setViewRect(0, 0, 0, textureSize div 2, textureSize)
-    BGFX.setViewClear(0, BGFX_CLEAR_COLOR, 0xff0000ff'u32, 1, 0)
+    let ns = host.createGpuNamespace("SDL layer", GpuResourceBudget(
+      maxResources: 1, persistentBytes: textureSize * textureSize * 4,
+      workUnitsPerFrame: 1))
+    doAssert SDL3.setRenderTarget(renderer, nil), sdlError()
+    try:
+      discard host.importSdl3BgfxOpenGlRenderTarget(ns, renderer)
+      doAssert false, "window backbuffer must not be imported as a layer"
+    except GpuHostError:
+      doAssert host.gpuNamespaceUsage(ns).resourceCount == 0
+    doAssert SDL3.setRenderTarget(renderer, target), sdlError()
+    let layer = host.importSdl3BgfxOpenGlRenderTarget(ns, renderer)
+    doAssert host.gpuNamespaceUsage(ns).resourceCount == 1
+    var pass = GpuGraphicsPassDescriptor(
+      viewport: GpuViewport(width: textureSize div 2, height: textureSize),
+      clearColorEnabled: true, clearColor: GpuClearColor(red: 1, alpha: 1),
+      renderTarget: layer)
     let first = host.beginGpuFrame()
-    BGFX.touch(0)
+    host.clearGpuGraphicsPass(ns, pass)
     host.endGpuFrame(first)
 
     # SDL composites the shared texture before the first test readback.
@@ -99,20 +100,21 @@ proc testSharedTarget() =
     var overlay = SDL_FRect(x: 6, y: 0, w: 2, h: textureSize)
     doAssert SDL3.renderFillRect(renderer, addr overlay), sdlError()
     doAssert SDL3.flushRenderer(renderer), sdlError()
-    BGFX.setViewClear(0, BGFX_CLEAR_COLOR, 0xffff00ff'u32, 1, 0)
+    pass.clearColor.green = 1
     let second = host.beginGpuFrame()
-    BGFX.touch(0)
+    host.clearGpuGraphicsPass(ns, pass)
     host.endGpuFrame(second)
     doAssert SDL3.setRenderTarget(renderer, composed), sdlError()
     doAssert SDL3.renderTexture(renderer, target, nil, nil), sdlError()
     renderer.expectPixel(2, 6, [255'u8, 255, 0, 255])
     renderer.expectPixel(14, 6, [0'u8, 255, 0, 255])
     doAssert SDL3.flushRenderer(renderer), sdlError()
-    BGFX.resetView(0)
-    BGFX.destroyFrameBuffer(framebuffer)
-    BGFX.destroyTexture(sharedTexture)
+    doAssert host.releaseGpuResource(layer)
+    doAssert not host.isGpuResourceLive(layer)
+    doAssert host.gpuNamespaceUsage(ns).persistentBytes == 0
     let retirement = host.beginGpuFrame()
     host.endGpuFrame(retirement)
+    doAssert host.closeGpuNamespace(ns)
 
   # bgfx must leave both the SDL-owned context and its texture usable.
   doAssert SDL3.setRenderTarget(renderer, nil), sdlError()

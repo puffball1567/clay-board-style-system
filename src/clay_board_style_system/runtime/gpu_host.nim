@@ -1,7 +1,7 @@
 import std/[algorithm, hashes, math, tables]
 
 const
-  gpuHostApiVersion* = 20'u32
+  gpuHostApiVersion* = 21'u32
   maxGpuInstanceVec4Count* = 5'u8
   maxGpuInstancesPerDraw* = 65_536'u32
   maxGpuNamespaceNameBytes* = 128
@@ -517,6 +517,8 @@ type
   ): GpuNamespaceRestoreStatus {.closure, raises: [].}
 
   GpuBackendContext* = ref object of RootObj
+  GpuBackendRenderTargetSource* = ref object of RootObj
+    ## Backend-specific description of externally owned image storage.
 
   GpuBackendOpenProc* = proc(
     context: GpuBackendContext;
@@ -578,6 +580,13 @@ type
   GpuBackendCreateRenderTargetProc* = proc(
     context: GpuBackendContext;
     descriptor: GpuRenderTargetDescriptor;
+    resource: var GpuBackendResourceId
+  ): GpuBackendStatus {.nimcall, raises: [].}
+
+  GpuBackendImportRenderTargetProc* = proc(
+    context: GpuBackendContext;
+    descriptor: GpuRenderTargetDescriptor;
+    source: GpuBackendRenderTargetSource;
     resource: var GpuBackendResourceId
   ): GpuBackendStatus {.nimcall, raises: [].}
 
@@ -717,6 +726,7 @@ type
     createBuffer*: GpuBackendCreateBufferProc
     updateBuffer*: GpuBackendUpdateBufferProc
     createRenderTarget*: GpuBackendCreateRenderTargetProc
+    importRenderTarget*: GpuBackendImportRenderTargetProc
     createShader*: GpuBackendCreateShaderProc
     createUniform*: GpuBackendCreateUniformProc
     createSampler*: GpuBackendCreateSamplerProc
@@ -1706,10 +1716,11 @@ proc createGpuBuffer*(
     descriptor
   )
 
-proc createGpuRenderTarget*(
+proc registerGpuRenderTarget(
     host: GpuHost;
     namespace: GpuNamespaceId;
-    descriptor: GpuRenderTargetDescriptor
+    descriptor: GpuRenderTargetDescriptor;
+    source: GpuBackendRenderTargetSource
 ): GpuResourceHandle =
   host.requireHost()
   if host.stateValue != ghsReady:
@@ -1737,16 +1748,18 @@ proc createGpuRenderTarget*(
     raise newException(GpuHostError, "GPU resource label is too long")
   let bytes = descriptor.renderTargetBytes()
   host.namespaces[namespace].ensureResourceCapacity(bytes)
-  if host.backend.createRenderTarget.isNil or
-      host.backend.destroyResource.isNil:
-    raise newException(GpuHostError, "GPU backend does not support render targets")
-
   var backendResource: GpuBackendResourceId
-  let status = host.backend.createRenderTarget(
-    host.backend.context,
-    descriptor,
-    backendResource
-  )
+  var status: GpuBackendStatus
+  if source.isNil:
+    if host.backend.createRenderTarget.isNil or host.backend.destroyResource.isNil:
+      raise newException(GpuHostError, "GPU backend does not support render targets")
+    status = host.backend.createRenderTarget(host.backend.context,
+      descriptor, backendResource)
+  else:
+    if host.backend.importRenderTarget.isNil or host.backend.destroyResource.isNil:
+      raise newException(GpuHostError, "GPU backend does not support imported render targets")
+    status = host.backend.importRenderTarget(host.backend.context,
+      descriptor, source, backendResource)
   if status == gbsDeviceLost:
     host.enterDeviceLost()
   raiseForStatus(status)
@@ -1760,6 +1773,25 @@ proc createGpuRenderTarget*(
     renderTargetDescriptor = descriptor,
     rowsBottomUp = host.infoValue.originBottomLeft
   )
+
+proc createGpuRenderTarget*(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    descriptor: GpuRenderTargetDescriptor
+): GpuResourceHandle =
+  host.registerGpuRenderTarget(namespace, descriptor, nil)
+
+proc importGpuRenderTarget*(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    descriptor: GpuRenderTargetDescriptor;
+    source: GpuBackendRenderTargetSource
+): GpuResourceHandle =
+  ## Register externally owned storage through the selected backend. Its
+  ## owner must keep that storage alive through backend retirement.
+  if source.isNil:
+    raise newException(GpuHostError, "GPU render target import source is missing")
+  host.registerGpuRenderTarget(namespace, descriptor, source)
 
 proc createGpuShader*(
     host: GpuHost;
