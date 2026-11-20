@@ -429,14 +429,21 @@ jobs:
           c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include -fsyntax-only tests/drivers/cpp_reference.cpp
           c++ -std=c++14 -Wall -Wextra -Werror -Iinclude -Idrivers/cpp/include -fsyntax-only tests/drivers/cpp_reference_application.cpp
 
-      - name: Check C and C++ public headers (MSVC-compatible)
+      - name: Check C and C++ public headers (MSVC)
         if: matrix.shard_index == 0 && runner.os == 'Windows'
-        shell: cmd
+        shell: pwsh
         run: |
-          clang-cl /nologo /W4 /WX /c /TC /Iinclude tests\c_api\header_consumer.c /Fo"${{ runner.temp }}\cbss_header_c.obj"
-          clang-cl /nologo /W4 /WX /EHsc /c /TP /std:c++14 /Iinclude /Idrivers\cpp\include tests\c_api\header_consumer.cpp /Fo"${{ runner.temp }}\cbss_header_cpp.obj"
-          clang-cl /nologo /W4 /WX /EHsc /c /TP /std:c++14 /Iinclude /Idrivers\cpp\include tests\drivers\cpp_reference.cpp /Fo"${{ runner.temp }}\cbss_cpp_driver.obj"
-          clang-cl /nologo /W4 /WX /EHsc /c /TP /std:c++14 /Iinclude /Idrivers\cpp\include tests\drivers\cpp_reference_application.cpp /Fo"${{ runner.temp }}\cbss_cpp_reference_application.obj"
+          $PSNativeCommandUseErrorActionPreference = $true
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $install = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $install) {
+            throw "Visual Studio C++ toolchain was not found"
+          }
+          & "$install\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -SkipAutomaticLocation
+          cl.exe /nologo /W4 /WX /utf-8 /c /TC /std:c11 /Iinclude tests\c_api\header_consumer.c "/Fo$env:RUNNER_TEMP\cbss_header_c.obj"
+          cl.exe /nologo /W4 /WX /utf-8 /EHsc /c /TP /std:c++14 /Iinclude /Idrivers\cpp\include tests\c_api\header_consumer.cpp "/Fo$env:RUNNER_TEMP\cbss_header_cpp.obj"
+          cl.exe /nologo /W4 /WX /utf-8 /EHsc /c /TP /std:c++14 /Iinclude /Idrivers\cpp\include tests\drivers\cpp_reference.cpp "/Fo$env:RUNNER_TEMP\cbss_cpp_driver.obj"
+          cl.exe /nologo /W4 /WX /utf-8 /EHsc /c /TP /std:c++14 /Iinclude /Idrivers\cpp\include tests\drivers\cpp_reference_application.cpp "/Fo$env:RUNNER_TEMP\cbss_cpp_reference_application.obj"
 
       - name: Check portable Rust Craft Driver
         if: matrix.shard_index == 0
