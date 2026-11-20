@@ -353,9 +353,9 @@ class Command {
     for (auto position = core_->queued.begin(); position != core_->queued.end();
          ++position) {
       if (position->ticket.id_ == ticket.id_) {
-        const CommandTicket cancelled = position->ticket;
+        const CommandTicket queued_ticket = position->ticket;
         core_->queued.erase(position);
-        core_->markCancelled(cancelled, true);
+        core_->markCancelled(queued_ticket, true);
         return true;
       }
     }
@@ -378,9 +378,9 @@ class Command {
     if (!callback) {
       throw std::invalid_argument("Command run observer cannot be empty");
     }
-    const CommandStatus current = ticket.status();
-    if (current != CommandStatus::queued && current != CommandStatus::running) {
-      callback(ticket, current);
+    const CommandStatus status = ticket.status();
+    if (status != CommandStatus::queued && status != CommandStatus::running) {
+      callback(ticket, status);
       return CommandRunSubscription();
     }
     const std::uint64_t id = core.next_observer_id++;
