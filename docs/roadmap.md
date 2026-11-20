@@ -1039,9 +1039,9 @@ an enum-only API.
 ## GPU Canvas Capability
 
 Status: `Version 0.7.0 GPU foundation released on 2026-09-19. Optional 2D GPU
-Canvas, batched Motion Scene, and GPU filter chains are implemented. Native SDL
-layer sharing, full UI subtree GPU filtering, and broader hardware qualification
-remain open.`
+Canvas, batched Motion Scene, GPU filter chains, and opt-in SDL layer composition
+and Style RGB matrix filtering on Linux EGL/OpenGL are implemented. Spatial
+filters on ordinary UI layers and broader hardware qualification remain open.`
 
 CBSS supports optional GPU-backed drawing inside the standard Canvas
 element. This is a capability for game scenes, charts, visualizations, image
@@ -1054,7 +1054,7 @@ canonical visual contract.
 | Area | Implemented | Remaining |
 | --- | --- | --- |
 | Canvas in ordinary UI | Bounded asynchronous readback, optional same-host direct presentation, opt-in zero-copy SDL EGL/OpenGL layer composition on Linux, and hybrid fallback | Mixed-layer coverage beyond the qualified OpenGL configuration |
-| Filters | Ordered GPU filter chains for Canvas, Motion Scene, and explicit raster or GPU inputs. Filtered raster output can be a Style underlay, overlay, or mask. Style filters can apply CPU RGB matrices to a whole UI subtree. | GPU filtering of the ordinary UI subtree itself |
+| Filters | Ordered GPU filter chains for Canvas, Motion Scene, and explicit raster or GPU inputs. Style RGB matrices apply to whole UI subtrees on the CPU or, with opt-in Linux EGL/OpenGL sharing, on the GPU. | Spatial and authored shader filters over ordinary UI subtrees |
 | Motion Scene | Batched 2D shapes, images and atlas sprites, timelines, direct and filtered display | General paths and text as scene objects and further scene composition capabilities |
 | Qualification | Linux Mesa OpenGL pixel CI under ARC and ORC, including a native window pass and resize, plus a recorded AMD Renoir OpenGL run. Mock and bgfx NOOP tests cover recovery behavior. | Physical-driver coverage for mixed layers, recovery and pressure, and a combined Motion Scene and independent compute fixture under one presentation owner |
 
@@ -2484,9 +2484,11 @@ the active presentation frame, including bounded antialiased nested rounded
 clips. GPU-native renderers can provide a typed compositor-owned offscreen
 `RenderTarget`; namespace, generation, dimensions, and feedback hazards are
 validated before submission. SDL texture-backed layers support hybrid readback
-fallback and opt-in zero-copy composition on Linux EGL/OpenGL. GPU filters
-over ordinary UI subtrees and broader hardware qualification remain open.
-Owned bgfx hosts now recreate the backend from their latest validated configuration after
+fallback and opt-in zero-copy composition on Linux EGL/OpenGL. The same shared
+contexts can apply a Style RGB matrix to a whole UI subtree with CPU fallback.
+Spatial and authored shader filters over ordinary UI, along with broader
+hardware qualification, remain open. Owned bgfx hosts now recreate the backend
+from their latest validated configuration after
 device loss before deterministic namespace restoration begins; borrowed hosts
 continue to require recreation by their external owner.
 The CPU Canvas now fills retained concave and multi-contour `Path2D` geometry

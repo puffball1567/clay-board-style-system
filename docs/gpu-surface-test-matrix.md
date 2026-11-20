@@ -110,6 +110,13 @@ two frames of SDL layer reuse. This uses two EGL contexts in the same share
 group, with a GPU fence at each handoff. The mixed-layer path is covered by
 Linux Mesa CI under ARC and ORC. Physical-driver coverage remains open.
 
+The fixture also applies the Style RGB matrix to an ordinary SDL UI layer
+containing SDL and GPU paint. It compares the entire window capture with the
+CPU filter to within one 8-bit channel value and checks row order, clip,
+transparency, and group opacity. A constrained namespace rejects the second
+texture import. The fixture verifies CPU fallback and checks that the first
+import was released, including across another frame of layer reuse.
+
 ## Real-GPU Release Gate
 
 The same-host draw path is implemented, but the production direct compositor is

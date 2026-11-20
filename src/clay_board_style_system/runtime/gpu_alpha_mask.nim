@@ -41,7 +41,7 @@ proc gpuAlphaMaskCrop*(
   gpuSurfaceCrop(x, y, width, height)
 
 proc gpuAlphaMaskVertexSource*(): GpuShaderSource =
-  gpuHostDirectCompositeVertexSource()
+  gpuFullscreenQuadVertexSource()
 
 proc gpuAlphaMaskFragmentSource*(): GpuShaderSource =
   GpuShaderSource(

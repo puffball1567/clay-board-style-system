@@ -118,7 +118,9 @@ opacity 1 and the owner's content starts at opacity 1 inside the isolated group;
 descendants still apply their own opacity. Alpha and transparent coverage are
 preserved by the RGB matrix.
 The PPM reference and SDL3 use the same retained layer filter contract described
-in [Render Surfaces](render-surfaces.md#layer-color-filters).
+in [Render Surfaces](render-surfaces.md#layer-color-filters). The SDL3 renderer
+can also run the matrix through the opt-in
+[shared OpenGL filter](gpu-direct-surfaces.md#sdl-opengl-style-color-filters).
 
 A Box with a filter declaration establishes a local paint-order boundary.
 Positive-z descendants are sorted and drawn inside that boundary, including

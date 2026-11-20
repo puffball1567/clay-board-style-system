@@ -105,6 +105,13 @@ type
   Sdl3GpuDirectCompositionStats* = object
     noFrame*, presented*, retry*, unsupported*, failed*: uint32
 
+  Sdl3LayerColorFilterProc* = proc(
+    renderer, destination: pointer; filter: LayerColorFilter
+  ): bool {.closure.}
+    ## Filter the active SDL target into a separate, same-size SDL texture.
+    ## Both textures use premultiplied RGBA. Return false to use the CPU filter.
+    ## Restore the active target before returning and do not retain the textures.
+
   Sdl3RetainedLayerStats* = object
     ## Cumulative retained-texture counters plus the most recent update size.
     fullRepaints*, partialRepaints*, skippedRepaints*: uint64
@@ -276,6 +283,7 @@ type
     activeCursor: CursorKind
     gpuDirectCompositor: GpuDirectCompositor
     gpuDirectCompositionStats: Sdl3GpuDirectCompositionStats
+    gpuLayerColorFilter: Sdl3LayerColorFilterProc
 
 const DefaultWheelStepPixels* = 54.0'f32
 
@@ -326,6 +334,12 @@ proc setGpuDirectCompositor*(
 
 proc clearGpuDirectCompositor*(target: var Sdl3Renderer) =
   target.gpuDirectCompositor = GpuDirectCompositor()
+
+proc setGpuLayerColorFilter*(
+    target: var Sdl3Renderer; filter: Sdl3LayerColorFilterProc
+) =
+  ## Install a filter while rendering is idle. Pass nil to use the CPU path.
+  target.gpuLayerColorFilter = filter
 
 proc gpuDirectCompositionStats*(
     target: Sdl3Renderer
@@ -730,6 +744,7 @@ proc cancelNativeMouseCapture(target: var Sdl3Renderer) =
 
 proc close*(target: var Sdl3Renderer) =
   target.clearGpuDirectCompositor()
+  target.gpuLayerColorFilter = nil
   target.cancelNativeMouseCapture()
   target.destroyCursorCache()
   target.destroyTextCache()
@@ -2322,6 +2337,21 @@ proc filteredLayerTexture(
     return nil
   discard SDL3.setTextureScaleMode(result, SDL_SCALEMODE_LINEAR)
 
+proc gpuFilteredLayerTexture(
+    target: var Sdl3Renderer; layer: Sdl3TransformLayer
+): tuple[texture: pointer, index: int] =
+  result = (nil, -1)
+  if target.gpuLayerColorFilter.isNil:
+    return
+  let destination = target.acquireTransformTexture(layer.pixelWidth, layer.pixelHeight)
+  if destination.texture.isNil:
+    return
+  defer:
+    if result.texture.isNil:
+      target.releaseTransformTexture(destination.index)
+  if target.gpuLayerColorFilter(target.renderer, destination.texture, layer.colorFilter):
+    result = destination
+
 proc endTransformLayer(
     target: var Sdl3Renderer;
     layers: var seq[Sdl3TransformLayer]
@@ -2332,16 +2362,23 @@ proc endTransformLayer(
   if not layer.valid:
     return
 
-  let filtered =
-    if layer.colorFilter.isNil: nil
-    else: target.filteredLayerTexture(layer)
+  var filtered: pointer
+  var filteredCacheIndex = -1
   defer:
-    if not filtered.isNil:
+    if filteredCacheIndex >= 0:
+      target.releaseTransformTexture(filteredCacheIndex)
+    elif not filtered.isNil:
       SDL3.destroyTexture(filtered)
     target.releaseTransformTexture(layer.textureCacheIndex)
-  discard SDL3.setRenderTarget(target.renderer, layer.previousTarget)
-  target.clipStack = layer.previousClips
-  target.renderer.setClip(target.effectiveClipBounds())
+  try:
+    if not layer.colorFilter.isNil:
+      (filtered, filteredCacheIndex) = target.gpuFilteredLayerTexture(layer)
+      if filtered.isNil:
+        filtered = target.filteredLayerTexture(layer)
+  finally:
+    discard SDL3.setRenderTarget(target.renderer, layer.previousTarget)
+    target.clipStack = layer.previousClips
+    target.renderer.setClip(target.effectiveClipBounds())
   if not layer.colorFilter.isNil and filtered.isNil:
     return
   if layer.hasContent or layer.compositeMode in {lcmCopy, lcmDestinationIn}:

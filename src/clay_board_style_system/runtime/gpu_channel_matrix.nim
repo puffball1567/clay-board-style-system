@@ -40,7 +40,7 @@ proc identityGpuChannelMatrix*(): GpuChannelMatrix =
   ])
 
 proc gpuChannelMatrixVertexSource*(): GpuShaderSource =
-  gpuHostDirectCompositeVertexSource()
+  gpuFullscreenQuadVertexSource()
 
 proc gpuChannelMatrixFragmentSource*(): GpuShaderSource =
   GpuShaderSource(

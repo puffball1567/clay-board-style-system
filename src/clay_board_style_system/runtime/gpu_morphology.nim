@@ -21,7 +21,7 @@ type
     paramsUniform, uvUniform, sampler: GpuResourceHandle
 
 proc gpuMorphologyVertexSource*(): GpuShaderSource =
-  gpuHostDirectCompositeVertexSource()
+  gpuFullscreenQuadVertexSource()
 
 proc gpuMorphologyFragmentSource*(): GpuShaderSource =
   var source = """$input v_texcoord0

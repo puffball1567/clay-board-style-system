@@ -19,7 +19,7 @@ type
     sampler: GpuResourceHandle
 
 proc gpuColorMatrixVertexSource*(): GpuShaderSource =
-  gpuHostDirectCompositeVertexSource()
+  gpuFullscreenQuadVertexSource()
 
 proc gpuColorMatrixFragmentSource*(): GpuShaderSource =
   GpuShaderSource(
@@ -172,8 +172,11 @@ proc submit*(
   var rows = newSeq[float32](coefficients.len)
   for index, value in coefficients:
     rows[index] = value
+  # The quad is oriented for the backend's native target. Imported storage
+  # can put the first logical row at the opposite edge.
+  let flipTarget = targetInfo.rowsBottomUp != host.backendInfo().originBottomLeft
   let uv =
-    if sourceInfo.rowsBottomUp: @[0'f32, 1, 1, 0]
+    if sourceInfo.rowsBottomUp != flipTarget: @[0'f32, 1, 1, 0]
     else: @[0'f32, 0, 1, 1]
   host.submitGpuDraw(material.namespace,
     GpuGraphicsPassDescriptor(
