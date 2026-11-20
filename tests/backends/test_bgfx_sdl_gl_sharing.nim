@@ -10,8 +10,8 @@ import clay_board_style_system/backends/bgfx/[
 import clay_board_style_system/backends/sdl3/renderer
 import clay_board_style_system/build/gpu_shader_compiler
 import clay_board_style_system/core/[color, geometry, node, raster_surface]
-import clay_board_style_system/paint/[gpu_host_compositor, layer_color_filter, paint_command]
-import clay_board_style_system/runtime/[gpu_color_matrix, gpu_direct_surface, gpu_host,
+import clay_board_style_system/paint/[gpu_host_compositor, layer_blur, layer_color_filter, paint_command]
+import clay_board_style_system/runtime/[gpu_color_matrix, gpu_gaussian_blur, gpu_direct_surface, gpu_host,
   gpu_shader_builder, gpu_shader_package]
 import clay_board_style_system/vendor/sdl3
 
@@ -140,6 +140,13 @@ proc pixel(capture: Sdl3CapturedFrame; x, y: int): array[3, uint8] =
   let i = (y * capture.width + x) * 3
   [capture.pixels[i], capture.pixels[i + 1], capture.pixels[i + 2]]
 
+proc expectCapture(actual, expected: Sdl3CapturedFrame; tolerance: int) =
+  doAssert actual.width == expected.width and actual.height == expected.height
+  for index, value in actual.pixels:
+    doAssert abs(value.int - expected.pixels[index].int) <= tolerance,
+      "filtered pixel " & $(index div 3) & ": " & $value &
+        " != " & $expected.pixels[index]
+
 proc testRendererComposition() =
   doAssert SDL3.setHint("SDL_VIDEO_FORCE_EGL", "1"), sdlError()
   doAssert SDL3.setHint("SDL_RENDER_DRIVER", "opengl"), sdlError()
@@ -152,17 +159,22 @@ proc testRendererComposition() =
   var host: GpuHost
   var surface: GpuDirectSurface
   var composition, filterNamespace, limitedNamespace: GpuNamespaceId
+  var blurNamespace, limitedBlurNamespace: GpuNamespaceId
   var material: GpuHostDirectCompositeMaterial
   var matrix, limitedMatrix: GpuColorMatrixMaterial
+  var blur, limitedBlur: GpuGaussianBlurMaterial
   defer:
     renderer.clearGpuDirectCompositor()
     renderer.setGpuLayerColorFilter(nil)
+    renderer.setGpuLayerBlur(nil)
     if not host.isNil:
       shared.withSdl3BgfxOpenGlContext:
         if not surface.isNil:
           doAssert surface.closeGpuDirectSurface()
         matrix.release()
         limitedMatrix.release()
+        blur.release()
+        limitedBlur.release()
         host.close()
 
   shared.withSdl3BgfxOpenGlContext:
@@ -193,6 +205,16 @@ proc testRendererComposition() =
     limitedBudget.maxResources = host.gpuNamespaceUsage(filterNamespace).resourceCount + 1
     limitedNamespace = host.createGpuNamespace("OpenGL limited layer filter", limitedBudget)
     limitedMatrix = newGpuColorMatrixMaterial(host, limitedNamespace, matrixVertex, matrixFragment)
+    let blurVertex = gpuGaussianBlurVertexSource().compileGpuShader(shaderTarget, compiler).artifact
+    let blurFragment = gpuGaussianBlurFragmentSource().compileGpuShader(shaderTarget, compiler).artifact
+    var blurBudget = budget
+    blurBudget.persistentBytes = 128 * 1024
+    blurNamespace = host.createGpuNamespace("OpenGL layer blur", blurBudget)
+    blur = newGpuGaussianBlurMaterial(host, blurNamespace, blurVertex, blurFragment)
+    # Both SDL wrappers fit, but the intermediate blur target does not.
+    blurBudget.maxResources = host.gpuNamespaceUsage(blurNamespace).resourceCount + 2
+    limitedBlurNamespace = host.createGpuNamespace("OpenGL limited layer blur", blurBudget)
+    limitedBlur = newGpuGaussianBlurMaterial(host, limitedBlurNamespace, blurVertex, blurFragment)
     let vertex = host.createGpuShader(composition,
       gpuHostDirectCompositeVertexSource().compileGpuShader(shaderTarget, compiler).artifact)
     let fragment = host.createGpuShader(composition,
@@ -300,17 +322,50 @@ proc testRendererComposition() =
     for repeat in 0 ..< 2:
       renderer.requestFrameCapture()
       renderer.render(filteredCommands, rgb(0, 0, 0))
-      let actual = renderer.capturedFrame().get
-      doAssert actual.width == expected.width and actual.height == expected.height
-      for index, value in actual.pixels:
-        doAssert abs(value.int - expected.pixels[index].int) <= 1,
-          "filtered pixel " & $(index div 3) & ": " & $value &
-            " != " & $expected.pixels[index]
+      renderer.capturedFrame().get.expectCapture(expected, 1)
       doAssert calls == repeat + 1
       doAssert renderer.gpuDirectCompositionStats().presented == 1
       doAssert host.gpuNamespaceUsage(namespace).resourceCount == filterUsage.resourceCount
       doAssert host.gpuNamespaceUsage(namespace).persistentBytes == filterUsage.persistentBytes
     renderer.setGpuLayerColorFilter(nil)
+
+  for radius in [LayerBlurRadius(2), MaxLayerBlurRadius.LayerBlurRadius]:
+    let commands = [
+      pushClip(rect(5, 5, 20, 19)),
+      pushBlurLayer(rect(4, 4, 24, 24), radius, opacity = 0.5),
+      fillRect(rect(6, 6, 5, 4), rgba(1, 0, 0, 0.5)),
+      fillRect(rect(19, 17, 4, 4), rgb(0, 0, 1)),
+      drawGpuDirectSurface(NodeId(4), surface, rect(12, 12, 3, 4)),
+      popLayer(), popClip(),
+      fillRect(rect(28, 28, 3, 3), rgb(1, 1, 0))]
+    renderer.requestFrameCapture()
+    renderer.render(commands, rgb(0, 0, 0))
+    let cpu = renderer.capturedFrame().get
+    doAssert cpu.pixel(5, 7)[0] > 0
+    doAssert cpu.pixel(4, 7) == [0'u8, 0, 0]
+    doAssert cpu.pixel(20, 18)[2] > 0
+    doAssert cpu.pixel(29, 29) == [255'u8, 255, 0]
+    for useGpu in [true, false]:
+      let namespace = if useGpu: blurNamespace else: limitedBlurNamespace
+      let callback = newSdl3BgfxOpenGlLayerBlur(shared, host, namespace,
+        if useGpu: blur else: limitedBlur)
+      var calls = 0
+      renderer.setGpuLayerBlur(
+        proc(renderer, destination: pointer; filterRadius: LayerBlurRadius): bool =
+          inc calls
+          doAssert filterRadius == radius
+          result = callback(renderer, destination, filterRadius)
+          doAssert result == useGpu)
+      let usage = host.gpuNamespaceUsage(namespace)
+      for repeat in 0 ..< 2:
+        renderer.requestFrameCapture()
+        renderer.render(commands, rgb(0, 0, 0))
+        renderer.capturedFrame().get.expectCapture(cpu, 2)
+        doAssert calls == repeat + 1
+        doAssert renderer.gpuDirectCompositionStats().presented == 1
+        doAssert host.gpuNamespaceUsage(namespace).resourceCount == usage.resourceCount
+        doAssert host.gpuNamespaceUsage(namespace).persistentBytes == usage.persistentBytes
+      renderer.setGpuLayerBlur(nil)
 
 testSharedTarget()
 testRendererComposition()

@@ -3,6 +3,7 @@ import ../core/[color, computed_style, geometry, node, raster_surface]
 import ../runtime/gpu_direct_surface
 import ./path_geometry
 import ./layer_color_filter
+import ./layer_blur
 
 type
   LayerCompositeMode* = enum
@@ -42,6 +43,7 @@ type
       layerOpacity*: float32
       layerCompositeMode*: LayerCompositeMode
       layerColorFilter*: LayerColorFilter
+      layerBlurRadius*: LayerBlurRadius
     of pcPopLayer:
       discard
     of pcPushClip:
@@ -135,6 +137,16 @@ proc pushLayer*(
 
 proc popLayer*(): PaintCommand =
   PaintCommand(kind: pcPopLayer)
+
+proc pushBlurLayer*(
+    bounds: Rect;
+    radius: LayerBlurRadius;
+    opacity = 1.0'f32;
+    compositeMode = lcmSourceOver
+): PaintCommand =
+  ## Blur the completed layer before composition. Radius is in layer pixels.
+  result = pushLayer(bounds, opacity, compositeMode)
+  result.layerBlurRadius = radius
 
 type TransformBoundsFrame = object
   commandIndex: int
@@ -247,6 +259,7 @@ proc samePaintCommand*(first, second: PaintCommand): bool =
     first.layerBounds == second.layerBounds and
       first.layerOpacity == second.layerOpacity and
       first.layerCompositeMode == second.layerCompositeMode and
+      first.layerBlurRadius == second.layerBlurRadius and
       sameLayerColorFilter(first.layerColorFilter, second.layerColorFilter)
   of pcPushClip:
     first.clipRect == second.clipRect and first.clipRadius == second.clipRadius
@@ -317,7 +330,8 @@ proc resolvedVisualBounds*(commands: openArray[PaintCommand]): seq[Option[Rect]]
   result = newSeq[Option[Rect]](commands.len)
   var transforms = @[identityAffine2D()]
   var clips: seq[Rect]
-  var layerClipDepths: seq[int]
+  var layerScopes: seq[tuple[clipDepth: int, blurBounds: Option[Rect]]]
+  var blurBounds: Option[Rect]
   for index, command in commands:
     case command.kind
     of pcPushTransform:
@@ -334,20 +348,25 @@ proc resolvedVisualBounds*(commands: openArray[PaintCommand]): seq[Option[Rect]]
       if clips.len > 0:
         discard clips.pop()
     of pcPushLayer:
-      layerClipDepths.add clips.len
+      layerScopes.add (clips.len, blurBounds)
       var transformed = transforms[^1].transformedBounds(command.layerBounds)
       if clips.len > 0:
         transformed = transformed.intersection(clips[^1])
       clips.add transformed
+      if command.layerBlurRadius != 0 and blurBounds.isNone:
+        blurBounds = some(transformed)
     of pcPopLayer:
-      if layerClipDepths.len > 0:
-        clips.setLen(layerClipDepths.pop())
+      if layerScopes.len > 0:
+        let scope = layerScopes.pop()
+        clips.setLen(scope.clipDepth)
+        blurBounds = scope.blurBounds
     else:
       let local = command.visualBounds()
       if local.isSome:
         var bounds = transforms[^1].transformedBounds(local.get)
         if clips.len > 0:
           bounds = bounds.intersection(clips[^1])
+        bounds = blurBounds.get(bounds)
         if not bounds.isEmpty:
           result[index] = some(bounds)
 
@@ -363,13 +382,15 @@ proc resolvedVisualBoundsFor*(
     return none(Rect)
   var transforms = @[identityAffine2D()]
   var clips: seq[Rect]
-  var layerClipDepths: seq[int]
+  var layerScopes: seq[tuple[clipDepth: int, blurBounds: Option[Rect]]]
+  var blurBounds: Option[Rect]
   for index in 0 .. commandIndex:
     let command = commands[index]
     if index == commandIndex:
       var bounds = transforms[^1].transformedBounds(localBounds)
       if clips.len > 0:
         bounds = bounds.intersection(clips[^1])
+      bounds = blurBounds.get(bounds)
       if not bounds.isEmpty:
         return some(bounds)
       return none(Rect)
@@ -388,14 +409,18 @@ proc resolvedVisualBoundsFor*(
       if clips.len > 0:
         discard clips.pop()
     of pcPushLayer:
-      layerClipDepths.add clips.len
+      layerScopes.add (clips.len, blurBounds)
       var transformed = transforms[^1].transformedBounds(command.layerBounds)
       if clips.len > 0:
         transformed = transformed.intersection(clips[^1])
       clips.add transformed
+      if command.layerBlurRadius != 0 and blurBounds.isNone:
+        blurBounds = some(transformed)
     of pcPopLayer:
-      if layerClipDepths.len > 0:
-        clips.setLen(layerClipDepths.pop())
+      if layerScopes.len > 0:
+        let scope = layerScopes.pop()
+        clips.setLen(scope.clipDepth)
+        blurBounds = scope.blurBounds
     else:
       discard
 

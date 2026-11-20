@@ -4,7 +4,7 @@ import ../../assets/asset_resolver
 import ../../core/[color, computed_style, geometry, gradient_sampling, node,
     raster_surface]
 import ../../input/events
-import ../../paint/[dirty_tiles, gpu_direct_compositor, layer_color_filter, paint_command,
+import ../../paint/[dirty_tiles, gpu_direct_compositor, layer_blur, layer_color_filter, paint_command,
     path_geometry, retained_damage]
 import ../../text/[cosmic_text_engine, font_registry, text_engine]
 import ../../vendor/sdl3
@@ -38,7 +38,6 @@ const
   defaultShadowTextureCacheBytes = 128'u64 * 1024 * 1024
   defaultTransformTextureCacheBytes = 128'u64 * 1024 * 1024
   maxSoftwareLayerFallbackBytes = 64'u64 * 1024 * 1024
-  maxLayerColorFilterBytes = 64'u64 * 1024 * 1024
   sdl3StreamWakeEventCode = 0x43425353'i32
   maxRetainedDamagePasses = 8
 
@@ -112,6 +111,11 @@ type
     ## Both textures use premultiplied RGBA. Return false to use the CPU filter.
     ## Restore the active target before returning and do not retain the textures.
 
+  Sdl3LayerBlurProc* = proc(
+    renderer, destination: pointer; radius: LayerBlurRadius
+  ): bool {.closure.}
+    ## Same target and lifetime contract as Sdl3LayerColorFilterProc.
+
   Sdl3RetainedLayerStats* = object
     ## Cumulative retained-texture counters plus the most recent update size.
     fullRepaints*, partialRepaints*, skippedRepaints*: uint64
@@ -139,6 +143,7 @@ type
     opacity: float32
     compositeMode: LayerCompositeMode
     colorFilter: LayerColorFilter
+    blurRadius: LayerBlurRadius
     valid: bool
     hasContent: bool
 
@@ -284,6 +289,7 @@ type
     gpuDirectCompositor: GpuDirectCompositor
     gpuDirectCompositionStats: Sdl3GpuDirectCompositionStats
     gpuLayerColorFilter: Sdl3LayerColorFilterProc
+    gpuLayerBlur: Sdl3LayerBlurProc
 
 const DefaultWheelStepPixels* = 54.0'f32
 
@@ -340,6 +346,10 @@ proc setGpuLayerColorFilter*(
 ) =
   ## Install a filter while rendering is idle. Pass nil to use the CPU path.
   target.gpuLayerColorFilter = filter
+
+proc setGpuLayerBlur*(target: var Sdl3Renderer; filter: Sdl3LayerBlurProc) =
+  ## Install a blur implementation while rendering is idle. Nil selects CPU blur.
+  target.gpuLayerBlur = filter
 
 proc gpuDirectCompositionStats*(
     target: Sdl3Renderer
@@ -745,6 +755,7 @@ proc cancelNativeMouseCapture(target: var Sdl3Renderer) =
 proc close*(target: var Sdl3Renderer) =
   target.clearGpuDirectCompositor()
   target.gpuLayerColorFilter = nil
+  target.gpuLayerBlur = nil
   target.cancelNativeMouseCapture()
   target.destroyCursorCache()
   target.destroyTextCache()
@@ -1929,7 +1940,7 @@ proc beginCompositeLayer(
     command: PaintCommand;
     layers: var seq[Sdl3TransformLayer]
 ) =
-  if not command.layerColorFilter.isNil:
+  if command.layerBlurRadius != 0 or not command.layerColorFilter.isNil:
     let scale = target.pixelScale().float64
     let width = (ceil(command.layerBounds.x.float64 + command.layerBounds.w.float64) -
       floor(command.layerBounds.x.float64)) * scale
@@ -1940,7 +1951,7 @@ proc beginCompositeLayer(
     let bytes = ceil(width) * ceil(height) * 16.0
     if width <= 0 or height <= 0 or
         bytes.classify in {fcNan, fcInf, fcNegInf} or
-        bytes > maxLayerColorFilterBytes.float64:
+        bytes > MaxFilteredLayerBytes.float64:
       layers.add Sdl3TransformLayer(valid: false)
       return
   target.beginOffscreenLayer(
@@ -1952,6 +1963,7 @@ proc beginCompositeLayer(
     layers
   )
   layers[^1].colorFilter = command.layerColorFilter
+  layers[^1].blurRadius = command.layerBlurRadius
 
 proc markTransformContent(layers: var seq[Sdl3TransformLayer]) =
   for index in countdown(layers.high, 0):
@@ -2302,30 +2314,33 @@ proc filteredLayerTexture(
     layer: Sdl3TransformLayer
 ): pointer =
   # Called while the isolated layer is still the current render target.
-  let surface = SDL3.renderReadPixels(target.renderer, nil)
-  if surface.isNil:
-    return nil
-  defer: SDL3.destroySurface(surface)
   var pixels = newSeq[uint8](layer.pixelWidth * layer.pixelHeight * 4)
-  for y in 0 ..< layer.pixelHeight:
-    for x in 0 ..< layer.pixelWidth:
-      var red, green, blue, alpha: uint8
-      if not SDL3.readSurfacePixel(
-          surface, cint(x), cint(y), addr red, addr green, addr blue, addr alpha):
-        return nil
-      # Render-target RGB is premultiplied. Convert to straight sRGB for the
-      # shared matrix, then use the encoding expected by the layer compositor.
-      let divisor = max(1.0'f32, alpha.float32)
+  block:
+    let surface = SDL3.renderReadPixels(target.renderer, nil)
+    if surface.isNil:
+      return nil
+    defer: SDL3.destroySurface(surface)
+    for y in 0 ..< layer.pixelHeight:
+      for x in 0 ..< layer.pixelWidth:
+        let offset = (y * layer.pixelWidth + x) * 4
+        if not SDL3.readSurfacePixel(surface, cint(x), cint(y),
+            addr pixels[offset], addr pixels[offset + 1],
+            addr pixels[offset + 2], addr pixels[offset + 3]):
+          return nil
+  if layer.blurRadius != 0:
+    pixels.blurPremultipliedRgba8(layer.pixelWidth, layer.pixelHeight, layer.blurRadius)
+  else:
+    for offset in countup(0, pixels.high, 4):
+      # The matrix consumes straight sRGB. Restore premultiplied RGB before
+      # composing the result with the parent.
+      let alpha = pixels[offset + 3].float32
+      let divisor = max(1.0'f32, alpha)
       let filtered = layer.colorFilter.applyLayerColorFilter(rgba(
-        red.float32 / divisor, green.float32 / divisor, blue.float32 / divisor,
-        alpha.float32 / 255.0'f32
-      ))
-      let multiplier = alpha.float32
-      let offset = (y * layer.pixelWidth + x) * 4
-      pixels[offset] = uint8(clamp(round(filtered.r * multiplier).int, 0, 255))
-      pixels[offset + 1] = uint8(clamp(round(filtered.g * multiplier).int, 0, 255))
-      pixels[offset + 2] = uint8(clamp(round(filtered.b * multiplier).int, 0, 255))
-      pixels[offset + 3] = alpha
+        pixels[offset].float32 / divisor, pixels[offset + 1].float32 / divisor,
+        pixels[offset + 2].float32 / divisor, alpha / 255.0'f32))
+      pixels[offset] = uint8(clamp(round(filtered.r * alpha).int, 0, 255))
+      pixels[offset + 1] = uint8(clamp(round(filtered.g * alpha).int, 0, 255))
+      pixels[offset + 2] = uint8(clamp(round(filtered.b * alpha).int, 0, 255))
   result = SDL3.createTexture(
     target.renderer, SDL_PIXELFORMAT_RGBA32, sdlTextureAccessTarget,
     cint(layer.pixelWidth), cint(layer.pixelHeight)
@@ -2341,7 +2356,9 @@ proc gpuFilteredLayerTexture(
     target: var Sdl3Renderer; layer: Sdl3TransformLayer
 ): tuple[texture: pointer, index: int] =
   result = (nil, -1)
-  if target.gpuLayerColorFilter.isNil:
+  let blur = layer.blurRadius != 0
+  if (blur and target.gpuLayerBlur.isNil) or
+      (not blur and target.gpuLayerColorFilter.isNil):
     return
   let destination = target.acquireTransformTexture(layer.pixelWidth, layer.pixelHeight)
   if destination.texture.isNil:
@@ -2349,7 +2366,10 @@ proc gpuFilteredLayerTexture(
   defer:
     if result.texture.isNil:
       target.releaseTransformTexture(destination.index)
-  if target.gpuLayerColorFilter(target.renderer, destination.texture, layer.colorFilter):
+  let applied =
+    if blur: target.gpuLayerBlur(target.renderer, destination.texture, layer.blurRadius)
+    else: target.gpuLayerColorFilter(target.renderer, destination.texture, layer.colorFilter)
+  if applied:
     result = destination
 
 proc endTransformLayer(
@@ -2364,6 +2384,7 @@ proc endTransformLayer(
 
   var filtered: pointer
   var filteredCacheIndex = -1
+  let needsFilter = layer.blurRadius != 0 or not layer.colorFilter.isNil
   defer:
     if filteredCacheIndex >= 0:
       target.releaseTransformTexture(filteredCacheIndex)
@@ -2371,7 +2392,7 @@ proc endTransformLayer(
       SDL3.destroyTexture(filtered)
     target.releaseTransformTexture(layer.textureCacheIndex)
   try:
-    if not layer.colorFilter.isNil:
+    if needsFilter:
       (filtered, filteredCacheIndex) = target.gpuFilteredLayerTexture(layer)
       if filtered.isNil:
         filtered = target.filteredLayerTexture(layer)
@@ -2379,7 +2400,7 @@ proc endTransformLayer(
     discard SDL3.setRenderTarget(target.renderer, layer.previousTarget)
     target.clipStack = layer.previousClips
     target.renderer.setClip(target.effectiveClipBounds())
-  if not layer.colorFilter.isNil and filtered.isNil:
+  if needsFilter and filtered.isNil:
     return
   if layer.hasContent or layer.compositeMode in {lcmCopy, lcmDestinationIn}:
     let destinationOffset = layers.activeTransformOffset()

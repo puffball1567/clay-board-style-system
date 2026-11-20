@@ -11,6 +11,7 @@ import ../layout/scroll_state
 import ../paint/paint
 import ../paint/paint_command
 import ../paint/custom_paint_registry
+import ../paint/layer_blur
 import ../text/[font_registry, text_engine]
 import ./animation_clock
 import ./canvas
@@ -1526,6 +1527,27 @@ proc registerCustomPaintFilter*(
     replace = false
 ): bool {.discardable.} =
   root.registerCustomPaintFilterTracked(material, callback, replace).isSome
+
+proc registerCustomPaintBlurTracked*(
+    root: UiRoot;
+    material: string;
+    radius: LayerBlurRadius;
+    replace = false
+): Option[CustomPaintRegistration] =
+  if root.isNil:
+    raise newException(ValueError, "custom paint UiRoot cannot be nil")
+  result = root.customPaints.registerCustomPaintBlurTracked(material, radius, replace)
+  if result.isSome:
+    discard root.invalidateCustomPaintMaterial(material)
+
+proc registerCustomPaintBlur*(
+    root: UiRoot;
+    material: string;
+    radius: LayerBlurRadius;
+    replace = false
+): bool {.discardable.} =
+  ## Register a bounded Gaussian blur for an existing Style filter declaration.
+  root.registerCustomPaintBlurTracked(material, radius, replace).isSome
 
 proc unregisterCustomPaintMaterial*(
     root: UiRoot;

@@ -4,6 +4,18 @@ import clay_board_style_system/core/[color, geometry]
 import clay_board_style_system/paint/[paint_command, retained_damage]
 
 suite "retained damage planning":
+  test "changes inside a blur invalidate the whole enclosing layer":
+    var tracker = initRetainedDamageTracker(64, 16, tileSize = 16)
+    var commands = @[
+      pushBlurLayer(rect(0, 0, 48, 16), 2),
+      fillRect(rect(15, 4, 1, 1), rgb(1, 0, 0)), popLayer()]
+    discard tracker.plan(commands)
+    commands[1] = fillRect(rect(15, 4, 1, 1), rgb(0, 1, 0))
+    let change = tracker.plan(commands)
+    check not change.fullRepaint
+    check change.regions == @[rect(0, 0, 48, 16)]
+    check tracker.plan(commands).dirtyTiles == 0
+
   test "bounded changes and explicit full invalidation are distinct":
     var tracker = initRetainedDamageTracker(128, 64, tileSize = 32)
     let initial = @[fillRect(rect(4, 4, 12, 12), rgb(1, 0, 0))]

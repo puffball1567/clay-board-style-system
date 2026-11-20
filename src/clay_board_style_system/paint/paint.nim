@@ -495,12 +495,16 @@ proc paintNode(
       )
     else:
       none(CustomPaintResolution)
-  let appliesFilter = filterResolution.isSome and
-    filterResolution.get.status == cprsResolved and
-    not filterResolution.get.colorFilter.isNil
+  let layerFilter = filterResolution.get(CustomPaintResolution(status: cprsMissingMaterial))
+  let appliesBlur = layerFilter.status == cprsResolved and layerFilter.blurRadius != 0
+  let appliesFilter = appliesBlur or
+    (layerFilter.status == cprsResolved and not layerFilter.colorFilter.isNil)
   if appliesFilter:
-    output.add pushLayer(nodeRect, opacity = opacity,
-      colorFilter = filterResolution.get.colorFilter)
+    if appliesBlur:
+      output.add pushClip(nodeRect, style.box.borderRadius)
+      output.add pushBlurLayer(nodeRect, layerFilter.blurRadius, opacity)
+    else:
+      output.add pushLayer(nodeRect, opacity = opacity, colorFilter = layerFilter.colorFilter)
     output.add pushClip(nodeRect, style.box.borderRadius)
     # The completed visual group receives the owner's inherited opacity once.
     opacity = 1.0'f32
@@ -695,6 +699,8 @@ proc paintNode(
   if appliesFilter:
     output.add popClip()
     output.add popLayer()
+    if appliesBlur:
+      output.add popClip()
 
   if visualClip.isSome:
     output.add popClip()

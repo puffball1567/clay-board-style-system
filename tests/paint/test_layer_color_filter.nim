@@ -12,6 +12,21 @@ proc swapRedGreen(): LayerColorFilter =
   colorMatrixFilter([0.0'f32, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0])
 
 suite "retained layer color filters":
+  test "blur samples across a partial repaint while preserving the outside":
+    let commands = [
+      pushBlurLayer(rect(1, 1, 5, 5), 1, opacity = 0.5),
+      fillRect(rect(3, 3, 1, 1), rgb(1, 0, 0)), popLayer()]
+    let transparent = rgba(0, 0, 0, 0)
+    let full = render(commands, 7, 7, transparent)
+    check full.pixel(3, 3) == [255'u8, 0, 0, 32]
+    check full.pixel(4, 3) == [255'u8, 0, 0, 16]
+    check full.pixel(4, 4) == [255'u8, 0, 0, 8]
+    check full.pixel(5, 4) == [0'u8, 0, 0, 0]
+    var partial = initRasterImage(7, 7, rgb(0, 0, 1))
+    partial.renderInto(commands, rect(4, 3, 1, 1), transparent)
+    check partial.pixel(4, 3) == full.pixel(4, 3)
+    check partial.pixel(3, 3) == [0'u8, 0, 255, 255]
+
   test "named color filters preserve alpha and share the matrix contract":
     let input = rgba(0.25, 0.5, 0.75, 0.4)
     for identity in [

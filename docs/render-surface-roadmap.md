@@ -401,8 +401,8 @@ pointer and accessibility targeting, preserves component-owned semantics, and
 invalidates only the visual layer when a completed GPU frame is published.
 The Style material path also supports GPU-produced alpha masks through
 readback or hybrid display and post-processing of explicit raster or GPU
-inputs. The opt-in SDL EGL/OpenGL path also applies a Style RGB matrix to an
-ordinary component subtree through shared textures.
+inputs. The opt-in SDL EGL/OpenGL path also applies a Style RGB matrix or
+Gaussian blur to an ordinary component subtree through shared textures.
 
 Version 0.7 visual acceptance includes multiple independent scenes rather than
 one backend probe:
@@ -502,9 +502,9 @@ policy without treating human-readable backend errors as control flow.
 ### Typed Shader Custom Style Painting
 
 Status: `Typed authoring, underlay/overlay/mask composition, and Style-owned
-RGB matrix filters are implemented. SDL EGL/OpenGL can run those matrices on
-the GPU. Spatial and authored shader filters on ordinary UI subtrees remain
-open.`
+RGB matrix and Gaussian blur filters are implemented. SDL EGL/OpenGL can run
+them on the GPU. Additional spatial and authored shader filters on ordinary UI
+subtrees remain open.`
 
 The primary intended use of shaders in ordinary CBSS UI is not to reimplement
 the layout engine, text stack, or every control on the GPU. CBSS first resolves
@@ -625,9 +625,9 @@ emits deterministic bgfx source at build time and its compiled
 artifact uses the same retained Pipeline contract as low-level GPU submission.
 A build-only wrapper invokes the official `shaderc` without shell evaluation,
 and bounded checksummed packages retain unique target variants for runtime
-selection. RGB matrix filters compose over Style-owned visual groups on the CPU
-or through opt-in SDL EGL/OpenGL texture sharing. Retained GPU filter chains
-process explicit Canvas, Motion Scene, raster, and GPU inputs. Spatial and
+selection. RGB matrix and Gaussian blur filters compose over Style-owned visual
+groups on the CPU or through opt-in SDL EGL/OpenGL texture sharing. Retained GPU
+filter chains process explicit Canvas, Motion Scene, raster, and GPU inputs. Additional spatial and
 authored shader filters over ordinary UI, production mapping from typed
 parameters to backend bindings, visual-shape hit testing, and arbitrary scene
 picking remain later layers on the same contract. See

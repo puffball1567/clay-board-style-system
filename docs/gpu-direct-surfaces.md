@@ -794,6 +794,27 @@ cannot reserve the required resources. Before tearing down the host, call
 `renderer.setGpuLayerColorFilter(nil)` and release the material inside the
 shared context.
 
+### SDL OpenGL Style Gaussian Blur
+
+Use the same shared host for Style blur. Compile
+`gpuGaussianBlurVertexSource()` and `gpuGaussianBlurFragmentSource()` for
+OpenGL, then install the material from `backends/bgfx/sdl3_opengl_layer_filter`.
+
+```nim
+var blur: GpuGaussianBlurMaterial
+shared.withSdl3BgfxOpenGlContext:
+  blur = newGpuGaussianBlurMaterial(host, filterNamespace, vertex, fragment)
+renderer.setGpuLayerBlur(
+  newSdl3BgfxOpenGlLayerBlur(shared, host, filterNamespace, blur))
+```
+
+The filter namespace needs room for two imported SDL targets, one same-size
+RGBA8 scratch target, and two work units. The host uses one draw view for
+each axis and retires the temporary resources before SDL composites the output.
+If those resources are unavailable, SDL uses its CPU blur. Clear
+the hook with `renderer.setGpuLayerBlur(nil)` before releasing the material
+inside the shared context. [Style registration](custom-paint.md#style-gaussian-blur)
+
 ### bgfx Presentation Adapter
 
 The optional bgfx backend exposes `newBgfxDirectCompositeAdapter(backend,

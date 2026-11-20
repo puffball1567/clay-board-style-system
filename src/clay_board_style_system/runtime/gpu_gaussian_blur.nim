@@ -1,22 +1,11 @@
 ## Bounded separable Gaussian blur for same-host GPU surfaces.
 ## The two-pass result is premultiplied RGBA8; import explicitly.
-import ../paint/gpu_host_compositor
+import ../paint/[gpu_host_compositor, layer_blur]
 import ./[gpu_host, gpu_shader_builder]
 
 const
-  MaxGpuBlurRadius* = 16
+  MaxGpuBlurRadius* = MaxLayerBlurRadius
   GpuBlurWeightVec4Count = (MaxGpuBlurRadius + 4) div 4
-
-proc blurWeights(radius: int): array[MaxGpuBlurRadius + 1, float32] =
-  ## Normalized row of Pascal's triangle for a radius-wide binomial kernel.
-  let n = radius * 2
-  let divisor = float64(1'u64 shl n)
-  var coefficient = 1'u64
-  for position in 0 .. n:
-    if position >= radius:
-      result[position - radius] = float32(float64(coefficient) / divisor)
-    if position < n:
-      coefficient = coefficient * uint64(n - position) div uint64(position + 1)
 
 type
   GpuBlurVertex = object
@@ -227,8 +216,10 @@ proc submitPass(
   var packedWeights = newSeq[float32](GpuBlurWeightVec4Count * 4)
   for index, weight in weights:
     packedWeights[index] = weight
+  let targetInfo = material.host.gpuPresentableResourceInfo(target)
+  let flipTarget = targetInfo.rowsBottomUp != material.host.backendInfo().originBottomLeft
   let uv =
-    if sourceInfo.rowsBottomUp: @[0'f32, 1, 1, 0]
+    if sourceInfo.rowsBottomUp != flipTarget: @[0'f32, 1, 1, 0]
     else: @[0'f32, 0, 1, 1]
   material.host.submitGpuDraw(material.namespace,
     GpuGraphicsPassDescriptor(
@@ -296,7 +287,7 @@ proc submit*(
         "GPU blur cannot overwrite a presentation-retained target")
   material.host.validateGpuFrameWork(material.namespace, workUnits = 2)
   material.host.validateGpuViewCapacity(2)
-  let weights = blurWeights(radius)
+  let weights = layerBlurWeights(LayerBlurRadius(radius))
   material.submitPass(source, scratch, sourceInfo,
     1'f32 / float32(sourceInfo.width), 0'f32, sourceAlphaMode,
     radius, weights)

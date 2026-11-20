@@ -1016,6 +1016,8 @@ proc paintSnapshot*(driver: CbssTestDriver): string =
         " composite=" & $command.layerCompositeMode
       if not command.layerColorFilter.isNil:
         lines[^1].add " color-matrix=" & $command.layerColorFilter.colorMatrixCoefficients()
+      if command.layerBlurRadius != 0:
+        lines[^1].add " blur-radius=" & $command.layerBlurRadius
     of pcPopLayer:
       lines.add "pop-layer"
     of pcPushClip:
@@ -1166,6 +1168,8 @@ proc structuredSnapshotJson*(driver: CbssTestDriver): JsonNode =
       entry["compositeMode"] = %($command.layerCompositeMode)
       if not command.layerColorFilter.isNil:
         entry["colorMatrix"] = %command.layerColorFilter.colorMatrixCoefficients()
+      if command.layerBlurRadius != 0:
+        entry["blurRadius"] = %command.layerBlurRadius.int
     of pcPopLayer:
       discard
     of pcPushClip:
