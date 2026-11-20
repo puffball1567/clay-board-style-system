@@ -34,7 +34,7 @@ proc identityGpuConvolutionKernel*(): GpuConvolutionKernel =
   gpuConvolutionKernel([0'f32, 0, 0, 0, 1, 0, 0, 0, 0])
 
 proc gpuConvolutionVertexSource*(): GpuShaderSource =
-  gpuHostDirectCompositeVertexSource()
+  gpuFullscreenQuadVertexSource()
 
 proc gpuConvolutionFragmentSource*(): GpuShaderSource =
   GpuShaderSource(

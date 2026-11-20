@@ -909,7 +909,7 @@ proc importRenderTarget(
   let image = BgfxOpenGlRenderTargetSource(source)
   if image.context.isNil or image.context != value.options.platformData.platform.context or
       image.texture == 0 or descriptor.format != gtfRgba8 or
-      descriptor.usage != {gtuRenderTarget} or
+      descriptor.usage notin [{gtuRenderTarget}, {gtuRenderTarget, gtuSampled}] or
       descriptor.width == 0 or descriptor.height == 0 or
       descriptor.width > uint32(high(uint16)) or descriptor.height > uint32(high(uint16)):
     return gbsInvalidConfiguration
@@ -937,12 +937,13 @@ proc importBgfxOpenGlRenderTarget*(
     namespace: GpuNamespaceId;
     descriptor: GpuRenderTargetDescriptor;
     currentContext: pointer;
-    nativeTexture: uint32
+    nativeTexture: uint32;
+    rowsTopDown = false
 ): GpuResourceHandle =
   ## Backend integration entry point. The owner supplies a live RGBA8
   ## GL_TEXTURE_2D in the current context of the offscreen bgfx host.
   host.importGpuRenderTarget(namespace, descriptor, BgfxOpenGlRenderTargetSource(
-    context: currentContext, texture: nativeTexture))
+    context: currentContext, texture: nativeTexture, rowsTopDown: rowsTopDown))
 
 proc createShader(
     rawContext: GpuBackendContext;

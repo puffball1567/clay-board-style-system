@@ -25,7 +25,7 @@ proc validGpuDisplacementScale*(scale: float32): bool =
     abs(scale) <= MaxGpuDisplacementPixels
 
 proc gpuDisplacementVertexSource*(): GpuShaderSource =
-  gpuHostDirectCompositeVertexSource()
+  gpuFullscreenQuadVertexSource()
 
 proc gpuDisplacementFragmentSource*(): GpuShaderSource =
   GpuShaderSource(

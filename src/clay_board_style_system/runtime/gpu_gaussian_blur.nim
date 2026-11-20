@@ -31,7 +31,7 @@ type
     paramsUniform, weightsUniform, uvUniform, sampler: GpuResourceHandle
 
 proc gpuGaussianBlurVertexSource*(): GpuShaderSource =
-  gpuHostDirectCompositeVertexSource()
+  gpuFullscreenQuadVertexSource()
 
 proc gpuGaussianBlurFragmentSource*(): GpuShaderSource =
   GpuShaderSource(

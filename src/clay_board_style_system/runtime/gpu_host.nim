@@ -519,6 +519,8 @@ type
   GpuBackendContext* = ref object of RootObj
   GpuBackendRenderTargetSource* = ref object of RootObj
     ## Backend-specific description of externally owned image storage.
+    rowsTopDown*: bool
+      ## Overrides the backend's native framebuffer row order when true.
 
   GpuBackendOpenProc* = proc(
     context: GpuBackendContext;
@@ -1771,7 +1773,8 @@ proc registerGpuRenderTarget(
     bytes,
     backendResource,
     renderTargetDescriptor = descriptor,
-    rowsBottomUp = host.infoValue.originBottomLeft
+    rowsBottomUp = host.infoValue.originBottomLeft and
+      (source.isNil or not source.rowsTopDown)
   )
 
 proc createGpuRenderTarget*(

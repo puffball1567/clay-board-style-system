@@ -21,7 +21,7 @@ type
     sourceSampler, blurSampler: GpuResourceHandle
 
 proc gpuDropShadowVertexSource*(): GpuShaderSource =
-  gpuHostDirectCompositeVertexSource()
+  gpuFullscreenQuadVertexSource()
 
 proc gpuDropShadowFragmentSource*(): GpuShaderSource =
   GpuShaderSource(

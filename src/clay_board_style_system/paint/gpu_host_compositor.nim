@@ -50,11 +50,22 @@ type
     textureStage*: uint8
     vertexCount*: uint32
 
-proc gpuHostDirectCompositeVertexSource*(): GpuShaderSource =
+proc gpuFullscreenQuadVertexSource*(): GpuShaderSource =
+  ## Fixed orientation for effects that submit the complete target.
   GpuShaderSource(
     stage: gssVertex,
     label: "cbss-direct-composite-vertex",
-    source: gpuHostDirectCompositeVertexShader,
+    source: """$input a_position, a_texcoord0
+$output v_texcoord0
+
+#include "bgfx_shader.sh"
+
+void main()
+{
+  gl_Position = vec4(a_position, 1.0);
+  v_texcoord0 = a_texcoord0;
+}
+""",
     varyingDefinitions: gpuHostDirectCompositeVaryingDefinitions,
     inputs: @[
       GpuShaderInterfaceEntry(slot: gsisPosition, valueType: gsvtVec3),
@@ -62,9 +73,13 @@ proc gpuHostDirectCompositeVertexSource*(): GpuShaderSource =
     ],
     outputs: @[
       GpuShaderInterfaceEntry(slot: gsisTexCoord0, valueType: gsvtVec2)
-    ],
-    uniforms: @[GpuShaderUniformEntry(name: "u_cbssComposite", valueType: gsvtVec4)]
+    ]
   )
+
+proc gpuHostDirectCompositeVertexSource*(): GpuShaderSource =
+  result = gpuFullscreenQuadVertexSource()
+  result.source = gpuHostDirectCompositeVertexShader
+  result.uniforms = @[GpuShaderUniformEntry(name: "u_cbssComposite", valueType: gsvtVec4)]
 
 proc gpuHostDirectCompositeFragmentSource*(
     textureStage = 0'u8

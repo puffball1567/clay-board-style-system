@@ -71,9 +71,9 @@ host.endGpuFrame(frame)
 
 The pass evaluates the matrix in encoded sRGB, preserves source alpha, and
 stores premultiplied output. Configure the receiving display surface with
-`gcamPremultiplied`. An identity filter is represented by `nil`. This pass
-filters a GPU-owned surface; Style filters that include ordinary UI descendants
-still use their existing CPU layer path.
+`gcamPremultiplied`. An identity filter is represented by `nil`. The opt-in
+[SDL OpenGL Style filter](#sdl-opengl-style-color-filters) uses the same
+material for ordinary UI subtrees.
 The shared `brightnessColorFilter`, `contrastColorFilter`,
 `saturationColorFilter`, `grayscaleColorFilter`, `invertColorFilter`,
 `sepiaColorFilter`, and `hueRotateColorFilter` constructors can be passed
@@ -764,6 +764,37 @@ Run GPU producer updates and host teardown within
 `shared.withSdl3BgfxOpenGlContext` on the SDL thread. Clear the renderer's GPU
 compositor before tearing down the host, close the shared context after the
 host, and then close the SDL renderer.
+
+### SDL OpenGL Style Color Filters
+
+Import `backends/bgfx/sdl3_opengl_layer_filter` to use the shared EGL context
+for existing Style RGB matrix filters. Compile the artifacts from
+`gpuColorMatrixVertexSource()` and `gpuColorMatrixFragmentSource()`.
+Create the material in a namespace on the offscreen bgfx host.
+
+```nim
+var matrix: GpuColorMatrixMaterial
+shared.withSdl3BgfxOpenGlContext:
+  matrix = newGpuColorMatrixMaterial(host, filterNamespace, vertex, fragment)
+renderer.setGpuLayerColorFilter(
+  newSdl3BgfxOpenGlLayerColorFilter(shared, host, filterNamespace, matrix))
+```
+
+The renderer runs the matrix after painting the complete isolated group. The
+pass samples the RGBA32 layer and replaces every pixel in a separate SDL-owned
+target. It preserves premultiplied alpha. SDL applies the group's opacity,
+clip, and composition mode while painting the result. A separate retirement
+frame releases the two imported wrappers so SDL can reuse either texture.
+
+This path runs on the same Linux EGL/OpenGL configuration as shared layer
+composition. It can be enabled independently of the direct compositor. Allow
+space for two same-size RGBA8 imports in the filter namespace. The renderer
+uses its CPU filter if the host or import is unavailable or the namespace
+cannot reserve the required resources. Before tearing down the host, call
+`renderer.setGpuLayerColorFilter(nil)` and release the material inside the
+shared context.
+
+### bgfx Presentation Adapter
 
 The optional bgfx backend exposes `newBgfxDirectCompositeAdapter(backend,
 submit)` for presentation-backend authors. It binds the callback to one bgfx

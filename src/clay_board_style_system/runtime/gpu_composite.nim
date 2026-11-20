@@ -56,7 +56,7 @@ proc gpuCompositeCrop*(
   gpuSurfaceCrop(x, y, width, height)
 
 proc gpuCompositeVertexSource*(): GpuShaderSource =
-  gpuHostDirectCompositeVertexSource()
+  gpuFullscreenQuadVertexSource()
 
 proc gpuCompositeFragmentSource*(): GpuShaderSource =
   GpuShaderSource(

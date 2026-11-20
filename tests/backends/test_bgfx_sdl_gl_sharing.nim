@@ -1,16 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
 
-## Linux OpenGL feasibility fixture. SDL owns the EGL context, texture, and
-## window presentation. bgfx borrows the context and writes the same texture.
+## SDL-owned presentation with OpenGL texture sharing for composition and
+## Style color filtering.
 import std/[options, os, tempfiles]
 import bgfx
 import clay_board_style_system/backends/bgfx/[
-  adapter, sdl3_opengl_compositor, sdl3_opengl_target, sdl3_platform_data]
+  adapter, sdl3_opengl_compositor, sdl3_opengl_layer_filter,
+  sdl3_opengl_target, sdl3_platform_data]
 import clay_board_style_system/backends/sdl3/renderer
 import clay_board_style_system/build/gpu_shader_compiler
 import clay_board_style_system/core/[color, geometry, node, raster_surface]
-import clay_board_style_system/paint/[gpu_host_compositor, paint_command]
-import clay_board_style_system/runtime/[gpu_direct_surface, gpu_host,
+import clay_board_style_system/paint/[gpu_host_compositor, layer_color_filter, paint_command]
+import clay_board_style_system/runtime/[gpu_color_matrix, gpu_direct_surface, gpu_host,
   gpu_shader_builder, gpu_shader_package]
 import clay_board_style_system/vendor/sdl3
 
@@ -135,6 +136,10 @@ proc testSharedTarget() =
   doAssert SDL3.renderTexture(renderer, target, nil, nil), sdlError()
   doAssert SDL3.renderPresent(renderer), sdlError()
 
+proc pixel(capture: Sdl3CapturedFrame; x, y: int): array[3, uint8] =
+  let i = (y * capture.width + x) * 3
+  [capture.pixels[i], capture.pixels[i + 1], capture.pixels[i + 2]]
+
 proc testRendererComposition() =
   doAssert SDL3.setHint("SDL_VIDEO_FORCE_EGL", "1"), sdlError()
   doAssert SDL3.setHint("SDL_RENDER_DRIVER", "opengl"), sdlError()
@@ -146,14 +151,18 @@ proc testRendererComposition() =
   defer: shared.close()
   var host: GpuHost
   var surface: GpuDirectSurface
-  var composition: GpuNamespaceId
+  var composition, filterNamespace, limitedNamespace: GpuNamespaceId
   var material: GpuHostDirectCompositeMaterial
+  var matrix, limitedMatrix: GpuColorMatrixMaterial
   defer:
     renderer.clearGpuDirectCompositor()
+    renderer.setGpuLayerColorFilter(nil)
     if not host.isNil:
       shared.withSdl3BgfxOpenGlContext:
         if not surface.isNil:
           doAssert surface.closeGpuDirectSurface()
+        matrix.release()
+        limitedMatrix.release()
         host.close()
 
   shared.withSdl3BgfxOpenGlContext:
@@ -175,6 +184,15 @@ proc testRendererComposition() =
     let compiler = gpuShaderCompilerConfig(getEnv("CBSS_SHADERC"),
       [getEnv("CBSS_BGFX_SHADER_INCLUDE")], workDirectory = work)
     let shaderTarget = gpuShaderCompileTarget(gsbtOpenGL, gscpLinux, "330")
+    let matrixVertex = gpuColorMatrixVertexSource().compileGpuShader(shaderTarget, compiler).artifact
+    let matrixFragment = gpuColorMatrixFragmentSource().compileGpuShader(shaderTarget, compiler).artifact
+    filterNamespace = host.createGpuNamespace("OpenGL layer filter", budget)
+    matrix = newGpuColorMatrixMaterial(host, filterNamespace, matrixVertex, matrixFragment)
+    # Leave room for the source import only, so fallback must retire it.
+    var limitedBudget = budget
+    limitedBudget.maxResources = host.gpuNamespaceUsage(filterNamespace).resourceCount + 1
+    limitedNamespace = host.createGpuNamespace("OpenGL limited layer filter", limitedBudget)
+    limitedMatrix = newGpuColorMatrixMaterial(host, limitedNamespace, matrixVertex, matrixFragment)
     let vertex = host.createGpuShader(composition,
       gpuHostDirectCompositeVertexSource().compileGpuShader(shaderTarget, compiler).artifact)
     let fragment = host.createGpuShader(composition,
@@ -235,22 +253,65 @@ proc testRendererComposition() =
     renderer.requestFrameCapture()
     renderer.render(commands, rgb(0, 0, 0))
     let capture = renderer.capturedFrame().get
-    proc pixel(x, y: int): array[3, uint8] =
-      let i = (y * capture.width + x) * 3
-      [capture.pixels[i], capture.pixels[i + 1], capture.pixels[i + 2]]
-    doAssert pixel(8, 6) == [255'u8, 0, 0], $[
-      pixel(8, 6), pixel(8, 10), pixel(6, 6), pixel(8, 15),
-      pixel(9, 6), pixel(1, 1)] & " " & $renderer.gpuDirectCompositionStats()
-    doAssert pixel(8, 10) == [0'u8, 255, 0], $pixel(8, 10)
-    doAssert pixel(6, 6) == [0'u8, 0, 255], $pixel(6, 6)
-    doAssert pixel(8, 15) == [0'u8, 0, 255], $pixel(8, 15)
-    doAssert pixel(9, 6) == [255'u8, 255, 0], $pixel(9, 6)
-    doAssert pixel(1, 1) == [0'u8, 255, 255], $pixel(1, 1)
+    doAssert capture.pixel(8, 6) == [255'u8, 0, 0], $[
+      capture.pixel(8, 6), capture.pixel(8, 10), capture.pixel(6, 6),
+      capture.pixel(8, 15), capture.pixel(9, 6), capture.pixel(1, 1)] &
+      " " & $renderer.gpuDirectCompositionStats()
+    doAssert capture.pixel(8, 10) == [0'u8, 255, 0], $capture.pixel(8, 10)
+    doAssert capture.pixel(6, 6) == [0'u8, 0, 255], $capture.pixel(6, 6)
+    doAssert capture.pixel(8, 15) == [0'u8, 0, 255], $capture.pixel(8, 15)
+    doAssert capture.pixel(9, 6) == [255'u8, 255, 0], $capture.pixel(9, 6)
+    doAssert capture.pixel(1, 1) == [0'u8, 255, 255], $capture.pixel(1, 1)
     doAssert renderer.gpuDirectCompositionStats().presented == 1
     doAssert renderer.gpuDirectCompositionStats().unsupported == 1
     doAssert host.gpuNamespaceUsage(composition).resourceCount == usage.resourceCount
     doAssert host.gpuNamespaceUsage(composition).persistentBytes == usage.persistentBytes
 
+  let filteredCommands = [
+    pushClip(rect(5, 5, 20, 19)),
+    pushLayer(rect(4, 4, 24, 24), opacity = 0.5'f32,
+      colorFilter = colorMatrixFilter([0'f32, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0])),
+    fillRect(rect(4, 4, 24, 8), rgba(1, 0, 0, 0.5)),
+    fillRect(rect(4, 16, 24, 8), rgb(0, 0, 1)),
+    drawGpuDirectSurface(NodeId(3), surface, rect(12, 12, 3, 4)),
+    popLayer(), popClip(),
+    fillRect(rect(28, 28, 3, 3), rgb(1, 1, 0))]
+  renderer.requestFrameCapture()
+  renderer.render(filteredCommands, rgb(0, 0, 0))
+  let expected = renderer.capturedFrame().get
+  doAssert expected.pixel(6, 6)[2] in 63'u8 .. 65'u8
+  doAssert expected.pixel(6, 18)[0] in 127'u8 .. 129'u8
+  doAssert expected.pixel(13, 15)[1] in 127'u8 .. 129'u8
+  doAssert expected.pixel(4, 6) == [0'u8, 0, 0]
+  doAssert expected.pixel(6, 14) == [0'u8, 0, 0]
+  doAssert expected.pixel(29, 29) == [255'u8, 255, 0]
+
+  for useGpu in [true, false]:
+    let namespace = if useGpu: filterNamespace else: limitedNamespace
+    let callback = newSdl3BgfxOpenGlLayerColorFilter(shared, host, namespace,
+      if useGpu: matrix else: limitedMatrix)
+    var calls = 0
+    renderer.setGpuLayerColorFilter(
+      proc(renderer, destination: pointer; filter: LayerColorFilter): bool =
+        inc calls
+        result = callback(renderer, destination, filter)
+        doAssert result == useGpu)
+    let filterUsage = host.gpuNamespaceUsage(namespace)
+    for repeat in 0 ..< 2:
+      renderer.requestFrameCapture()
+      renderer.render(filteredCommands, rgb(0, 0, 0))
+      let actual = renderer.capturedFrame().get
+      doAssert actual.width == expected.width and actual.height == expected.height
+      for index, value in actual.pixels:
+        doAssert abs(value.int - expected.pixels[index].int) <= 1,
+          "filtered pixel " & $(index div 3) & ": " & $value &
+            " != " & $expected.pixels[index]
+      doAssert calls == repeat + 1
+      doAssert renderer.gpuDirectCompositionStats().presented == 1
+      doAssert host.gpuNamespaceUsage(namespace).resourceCount == filterUsage.resourceCount
+      doAssert host.gpuNamespaceUsage(namespace).persistentBytes == filterUsage.persistentBytes
+    renderer.setGpuLayerColorFilter(nil)
+
 testSharedTarget()
 testRendererComposition()
-echo "SDL3 and bgfx share an OpenGL render target with SDL-owned presentation"
+echo "SDL3 and bgfx share OpenGL render targets for composition and Style filtering"
