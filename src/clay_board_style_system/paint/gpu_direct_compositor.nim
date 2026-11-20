@@ -37,6 +37,8 @@ type
     ## CBSS resource handle, never a backend handle, and is consumed only by
     ## the synchronous composition callback.
     offscreenTarget*: GpuResourceHandle
+    offscreenTargetTopDown*: bool
+      ## The target's first physical row represents its logical top edge.
     clipBounds*: Option[Rect]
     requiresClipMask*: bool
     clipMaskCount*: uint8
@@ -204,7 +206,7 @@ proc supports*(
     return false
   case context.targetKind
   of gdctUnspecified, gdctWindow:
-    if not context.offscreenTarget.isEmptyGpuHandle():
+    if not context.offscreenTarget.isEmptyGpuHandle() or context.offscreenTargetTopDown:
       return false
   of gdctOffscreen:
     if capabilities.typedOffscreenTargetRequired and

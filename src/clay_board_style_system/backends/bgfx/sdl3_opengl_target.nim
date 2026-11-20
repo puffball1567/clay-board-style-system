@@ -1,4 +1,4 @@
-## Optional bridge for an SDL renderer sharing the bgfx host's OpenGL context.
+## Optional bridge for an SDL renderer sharing OpenGL textures with bgfx.
 import ../../runtime/gpu_host
 import ../../vendor/sdl3
 import ../sdl3/config
@@ -12,18 +12,12 @@ const
   sdlTextureFormat = "SDL.texture.format"
   glTexture2d = 0x0DE1
 
-proc importSdl3BgfxOpenGlRenderTarget*(
-    host: GpuHost;
-    namespace: GpuNamespaceId;
+proc describeActiveSdl3OpenGlTarget*(
     renderer: pointer
-): GpuResourceHandle =
-  ## Import the active RGBA32 SDL layer between GPU frames on the SDL thread.
-  ## Keep the SDL texture alive until the handle is released and its bgfx
-  ## retirement frame is submitted on the shared context.
+): tuple[descriptor: GpuRenderTargetDescriptor, name: uint32] =
+  ## Inspect the active RGBA32 SDL layer on the SDL thread.
   if renderer.isNil:
     raise newException(GpuHostError, "SDL renderer is missing")
-  if not host.isReady() or host.hasActiveGpuFrame():
-    raise newException(GpuHostError, "SDL layer import requires an idle GPU host")
   let rendererName = SDL3.getRendererName(renderer)
   if rendererName.isNil or $rendererName != "opengl":
     raise newException(GpuHostError, "SDL layer import requires the OpenGL renderer")
@@ -42,9 +36,22 @@ proc importSdl3BgfxOpenGlRenderTarget*(
       not (width >= 1 and width <= high(uint16).cfloat and
            height >= 1 and height <= high(uint16).cfloat):
     raise newException(GpuHostError, "SDL layer dimensions exceed OpenGL import limits")
-  if not SDL3.flushRenderer(renderer):
-    raise newException(GpuHostError, "SDL renderer could not flush its layer")
-  host.importBgfxOpenGlRenderTarget(namespace, GpuRenderTargetDescriptor(
+  (GpuRenderTargetDescriptor(
     width: width.uint32, height: height.uint32, format: gtfRgba8,
     usage: {gtuRenderTarget}, label: "SDL OpenGL layer"
-  ), SDL3.gL_GetCurrentContext(), nativeTexture.uint32)
+  ), nativeTexture.uint32)
+
+proc importSdl3BgfxOpenGlRenderTarget*(
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    renderer: pointer
+): GpuResourceHandle =
+  ## Import on the current SDL context. The caller keeps the SDL texture
+  ## alive until the import is released and a retirement frame is submitted.
+  if not host.isReady() or host.hasActiveGpuFrame():
+    raise newException(GpuHostError, "SDL layer import requires an idle GPU host")
+  let source = describeActiveSdl3OpenGlTarget(renderer)
+  if not SDL3.flushRenderer(renderer):
+    raise newException(GpuHostError, "SDL renderer could not flush its layer")
+  host.importBgfxOpenGlRenderTarget(namespace, source.descriptor,
+    SDL3.gL_GetCurrentContext(), source.name)

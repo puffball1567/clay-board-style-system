@@ -21,9 +21,12 @@ $output v_texcoord0
 
 #include "bgfx_shader.sh"
 
+uniform vec4 u_cbssComposite;
+
 void main()
 {
-  gl_Position = vec4(a_position, 1.0);
+  float y = mix(a_position.y, -a_position.y, u_cbssComposite.z);
+  gl_Position = vec4(a_position.x, y, a_position.z, 1.0);
   v_texcoord0 = a_texcoord0;
 }
 """
@@ -32,7 +35,7 @@ type
   GpuHostDirectCompositeMaterial* = object
     ## Resources are retained by their owner and must outlive the compositor.
     ## The shaders consume a full-viewport position/UV vertex stream,
-    ## u_cbssComposite = (opacity, alphaMode, 0, 0), and
+    ## u_cbssComposite = (opacity, alphaMode, offscreenTargetTopDown, 0), and
     ## u_cbssUvRect = (u0, v0, u1, v1). Masked pipelines additionally consume
     ## the fixed-size u_cbssClipMasks array. The sampler must clamp U and V:
     ## pixel-rounded viewport edges can extend past the source rectangle.
@@ -59,7 +62,8 @@ proc gpuHostDirectCompositeVertexSource*(): GpuShaderSource =
     ],
     outputs: @[
       GpuShaderInterfaceEntry(slot: gsisTexCoord0, valueType: gsvtVec2)
-    ]
+    ],
+    uniforms: @[GpuShaderUniformEntry(name: "u_cbssComposite", valueType: gsvtVec4)]
   )
 
 proc gpuHostDirectCompositeFragmentSource*(
@@ -372,8 +376,6 @@ proc newGpuHostDirectCompositor*(
   ## stream; this callback never presents independently.
   if host.isNil or not host.isReady():
     raise newException(ValueError, "GPU compositor requires a ready host")
-  if not host.config().presentation:
-    raise newException(ValueError, "GPU compositor requires a presentation host")
   let info = host.backendInfo()
   var sourceKinds: set[GpuResourceKind]
   if info.directTexturePresentationSupported:
@@ -389,7 +391,8 @@ proc newGpuHostDirectCompositor*(
   let supportsClipMasks = material.clipMasksUniform.handlePresent
 
   let capabilities = gpuDirectCompositeCapabilities(
-    {gdctWindow, gdctOffscreen},
+    (if host.config().presentation: {gdctWindow, gdctOffscreen}
+     else: {gdctOffscreen}),
     clipBoundsSupported = clipBoundsSupported,
     clipMaskSupported = supportsClipMasks,
     sourceProviders = {host.provider()},
@@ -510,7 +513,7 @@ proc newGpuHostDirectCompositor*(
           values: @[
             request.opacity,
             float32(ord(request.frame.alphaMode)),
-            0.0'f32,
+            (if request.context.offscreenTargetTopDown: 1.0'f32 else: 0.0'f32),
             0.0'f32
           ]
         ),
@@ -527,10 +530,13 @@ proc newGpuHostDirectCompositor*(
           values: request.context.clipMaskUniformValues(sampled)
         )
       try:
+        var viewport = bounds.viewport
+        if request.context.offscreenTargetTopDown:
+          viewport.y = targetPixelHeight - viewport.y - viewport.height
         host.submitGpuPresentationDraw(
           material.namespace,
           GpuGraphicsPassDescriptor(
-            viewport: bounds.viewport,
+            viewport: viewport,
             renderTarget: passTarget
           ),
           GpuDrawCommand(

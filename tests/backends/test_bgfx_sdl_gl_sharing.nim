@@ -2,10 +2,16 @@
 
 ## Linux OpenGL feasibility fixture. SDL owns the EGL context, texture, and
 ## window presentation. bgfx borrows the context and writes the same texture.
+import std/[options, os, tempfiles]
 import bgfx
 import clay_board_style_system/backends/bgfx/[
-  adapter, sdl3_opengl_target, sdl3_platform_data]
-import clay_board_style_system/runtime/gpu_host
+  adapter, sdl3_opengl_compositor, sdl3_opengl_target, sdl3_platform_data]
+import clay_board_style_system/backends/sdl3/renderer
+import clay_board_style_system/build/gpu_shader_compiler
+import clay_board_style_system/core/[color, geometry, node, raster_surface]
+import clay_board_style_system/paint/[gpu_host_compositor, paint_command]
+import clay_board_style_system/runtime/[gpu_direct_surface, gpu_host,
+  gpu_shader_builder, gpu_shader_package]
 import clay_board_style_system/vendor/sdl3
 
 const
@@ -129,5 +135,122 @@ proc testSharedTarget() =
   doAssert SDL3.renderTexture(renderer, target, nil, nil), sdlError()
   doAssert SDL3.renderPresent(renderer), sdlError()
 
+proc testRendererComposition() =
+  doAssert SDL3.setHint("SDL_VIDEO_FORCE_EGL", "1"), sdlError()
+  doAssert SDL3.setHint("SDL_RENDER_DRIVER", "opengl"), sdlError()
+  var renderer = initSdl3Renderer("CBSS OpenGL compositor", 32, 32)
+  defer: renderer.close()
+  let native = renderer.nativeSdl3Renderer()
+  doAssert $SDL3.getRendererName(native) == "opengl"
+  let shared = newSdl3BgfxOpenGlContext(native)
+  defer: shared.close()
+  var host: GpuHost
+  var surface: GpuDirectSurface
+  var composition: GpuNamespaceId
+  var material: GpuHostDirectCompositeMaterial
+  defer:
+    renderer.clearGpuDirectCompositor()
+    if not host.isNil:
+      shared.withSdl3BgfxOpenGlContext:
+        if not surface.isNil:
+          doAssert surface.closeGpuDirectSurface()
+        host.close()
+
+  shared.withSdl3BgfxOpenGlContext:
+    doAssert BGFX.renderFrame(0) == BGFX_RENDER_FRAME_NO_CONTEXT
+    var options = defaultBgfxHostOptions()
+    options.rendererType = BGFX_RENDERER_TYPE_OPENGL
+    options.platformData = shared.platformData()
+    options.flushWithoutPresent = true
+    options.directPresentation = newQualifiedBgfxDirectPresentationProfile(
+      {gtfRgba8}, alphaModes = {gcamStraight})
+    host = openGpuHost(newBgfxBackend(options), ghoOwned, GpuHostConfig(
+      width: 32, height: 32, resetFlags: BGFX_RESET_FLIP_AFTER_RENDER))
+    let budget = GpuResourceBudget(persistentBytes: 16_384, maxResources: 24,
+      workUnitsPerFrame: 4)
+    composition = host.createGpuNamespace("OpenGL composition", budget)
+    let producer = host.createGpuNamespace("OpenGL producer", budget)
+    let work = createTempDir("cbss-sdl-layer-shaders-", "")
+    defer: removeDir(work)
+    let compiler = gpuShaderCompilerConfig(getEnv("CBSS_SHADERC"),
+      [getEnv("CBSS_BGFX_SHADER_INCLUDE")], workDirectory = work)
+    let shaderTarget = gpuShaderCompileTarget(gsbtOpenGL, gscpLinux, "330")
+    let vertex = host.createGpuShader(composition,
+      gpuHostDirectCompositeVertexSource().compileGpuShader(shaderTarget, compiler).artifact)
+    let fragment = host.createGpuShader(composition,
+      gpuHostDirectCompositeFragmentSource().compileGpuShader(shaderTarget, compiler).artifact)
+    let layout = @[
+      GpuVertexAttribute(semantic: gvsPosition, components: 3, componentType: gvctFloat),
+      GpuVertexAttribute(semantic: gvsTexCoord0, components: 2, componentType: gvctFloat)]
+    let vertices = [
+      [-1'f32, -1, 0, 0, 1], [-1'f32, 1, 0, 0, 0],
+      [1'f32, -1, 0, 1, 1], [1'f32, 1, 0, 1, 0]]
+    var bytes = newSeq[byte](sizeof(vertices))
+    copyMem(addr bytes[0], unsafeAddr vertices[0], bytes.len)
+    let buffer = host.createGpuBuffer(composition, GpuBufferDescriptor(
+      byteSize: bytes.len.uint64, role: gbrVertex, access: gbaStatic,
+      vertexLayout: layout), move(bytes))
+    let pipeline = host.createGpuGraphicsPipeline(composition,
+      GpuGraphicsPipelineDescriptor(vertexShader: vertex, fragmentShader: fragment,
+        vertexLayout: layout, colorFormat: gtfRgba8, topology: gptTriangleStrip,
+        cullMode: gcmNone, blend: alphaGpuBlendState()))
+    let composite = host.createGpuUniform(composition, GpuUniformDescriptor(
+      name: "u_cbssComposite", uniformType: gutVec4, arrayLength: 1))
+    let uv = host.createGpuUniform(composition, GpuUniformDescriptor(
+      name: "u_cbssUvRect", uniformType: gutVec4, arrayLength: 1))
+    let sampler = host.createGpuSampler(composition, GpuSamplerDescriptor(
+      name: "s_cbssSurface", addressU: gsamClamp, addressV: gsamClamp,
+      minFilter: gsfNearest, magFilter: gsfNearest, mipFilter: gsfNearest))
+    material = GpuHostDirectCompositeMaterial(namespace: composition,
+      vertexBuffer: buffer, compositeUniform: composite, uvRectUniform: uv,
+      sampler: sampler, vertexCount: 4)
+    material.pipelines[gcamStraight] = pipeline
+    let image = host.createGpuTexture(producer, GpuTextureDescriptor(
+      width: 1, height: 2, format: gtfRgba8, usage: {gtuSampled}, access: gtaStatic),
+      @[255'u8, 0, 0, 255, 0, 255, 0, 255])
+    surface = host.newGpuDirectSurface(producer, defaultGpuDirectSurfaceConfig(1, 2))
+    let frame = host.beginGpuFrame()
+    doAssert surface.queueGpuDirectSurfaceFrame(image, frame)
+    host.endGpuFrame(frame)
+    doAssert surface.collectGpuDirectSurfaceFrame()
+
+  renderer.setGpuDirectCompositor(
+    newSdl3BgfxOpenGlLayerCompositor(shared, host, material))
+
+  let fallback = newRasterSurface(1, 1)
+  fallback.updateRegion(rasterRegion(0, 0, 1, 1), [0'u8, 255, 255, 255])
+  doAssert fallback.publish()
+  let commands = [
+    pushLayer(rect(4, 4, 20, 20)),
+    fillRect(rect(4, 4, 20, 20), rgb(0, 0, 1)),
+    pushClip(rect(7, 5, 9, 7)),
+    drawGpuDirectSurface(NodeId(1), surface, rect(6, 4, 12, 10)),
+    fillRect(rect(9, 6, 2, 2), rgb(1, 1, 0)),
+    popClip(),
+    popLayer(),
+    drawGpuDirectSurface(NodeId(2), surface, rect(0, 0, 2, 2),
+      fallback = fallback)]
+  let usage = host.gpuNamespaceUsage(composition)
+  for repeat in 0 ..< 2:
+    renderer.requestFrameCapture()
+    renderer.render(commands, rgb(0, 0, 0))
+    let capture = renderer.capturedFrame().get
+    proc pixel(x, y: int): array[3, uint8] =
+      let i = (y * capture.width + x) * 3
+      [capture.pixels[i], capture.pixels[i + 1], capture.pixels[i + 2]]
+    doAssert pixel(8, 6) == [255'u8, 0, 0], $[
+      pixel(8, 6), pixel(8, 10), pixel(6, 6), pixel(8, 15),
+      pixel(9, 6), pixel(1, 1)] & " " & $renderer.gpuDirectCompositionStats()
+    doAssert pixel(8, 10) == [0'u8, 255, 0], $pixel(8, 10)
+    doAssert pixel(6, 6) == [0'u8, 0, 255], $pixel(6, 6)
+    doAssert pixel(8, 15) == [0'u8, 0, 255], $pixel(8, 15)
+    doAssert pixel(9, 6) == [255'u8, 255, 0], $pixel(9, 6)
+    doAssert pixel(1, 1) == [0'u8, 255, 255], $pixel(1, 1)
+    doAssert renderer.gpuDirectCompositionStats().presented == 1
+    doAssert renderer.gpuDirectCompositionStats().unsupported == 1
+    doAssert host.gpuNamespaceUsage(composition).resourceCount == usage.resourceCount
+    doAssert host.gpuNamespaceUsage(composition).persistentBytes == usage.persistentBytes
+
 testSharedTarget()
+testRendererComposition()
 echo "SDL3 and bgfx share an OpenGL render target with SDL-owned presentation"
