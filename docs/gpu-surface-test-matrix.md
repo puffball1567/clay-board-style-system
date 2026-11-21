@@ -123,6 +123,12 @@ content, transparency, clipping, and GPU paint inside the layer. It verifies fal
 but the scratch target cannot be allocated. Portable tests cover rounded Style
 owners and retained replay across the blur's neighboring pixels.
 
+A packaged authored filter samples the same SDL layer with asymmetric content.
+The fixture checks typed uniform overrides and defaults, row order,
+premultiplied alpha, CPU fallback for missing materials and invalid parameters,
+and bounded wrapper retirement. SDL integration tests check that switching
+the shader hook on or off repaints a retained layer.
+
 ## Real-GPU Release Gate
 
 The same-host draw path is implemented, but the production direct compositor is

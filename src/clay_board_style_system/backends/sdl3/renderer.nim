@@ -116,6 +116,11 @@ type
   ): bool {.closure.}
     ## Same target and lifetime contract as Sdl3LayerColorFilterProc.
 
+  Sdl3LayerShaderFilterProc* = proc(
+    renderer, destination: pointer; shader: LayerShaderFilter
+  ): bool {.closure.}
+    ## Return false to use the layer's CPU fallback.
+
   Sdl3RetainedLayerStats* = object
     ## Cumulative retained-texture counters plus the most recent update size.
     fullRepaints*, partialRepaints*, skippedRepaints*: uint64
@@ -144,6 +149,7 @@ type
     compositeMode: LayerCompositeMode
     colorFilter: LayerColorFilter
     blurRadius: LayerBlurRadius
+    shaderFilter: LayerShaderFilter
     valid: bool
     hasContent: bool
 
@@ -290,6 +296,7 @@ type
     gpuDirectCompositionStats: Sdl3GpuDirectCompositionStats
     gpuLayerColorFilter: Sdl3LayerColorFilterProc
     gpuLayerBlur: Sdl3LayerBlurProc
+    gpuLayerShaderFilter: Sdl3LayerShaderFilterProc
 
 const DefaultWheelStepPixels* = 54.0'f32
 
@@ -350,6 +357,12 @@ proc setGpuLayerColorFilter*(
 proc setGpuLayerBlur*(target: var Sdl3Renderer; filter: Sdl3LayerBlurProc) =
   ## Install a blur implementation while rendering is idle. Nil selects CPU blur.
   target.gpuLayerBlur = filter
+
+proc setGpuLayerShaderFilter*(target: var Sdl3Renderer; filter: Sdl3LayerShaderFilterProc) =
+  ## Set or clear the renderer's shader materials while rendering is idle.
+  target.gpuLayerShaderFilter = filter
+  if not target.staticLayerTexture.isNil:
+    target.staticLayerDamage.reset(target.staticLayerWidth, target.staticLayerHeight)
 
 proc gpuDirectCompositionStats*(
     target: Sdl3Renderer
@@ -756,6 +769,7 @@ proc close*(target: var Sdl3Renderer) =
   target.clearGpuDirectCompositor()
   target.gpuLayerColorFilter = nil
   target.gpuLayerBlur = nil
+  target.gpuLayerShaderFilter = nil
   target.cancelNativeMouseCapture()
   target.destroyCursorCache()
   target.destroyTextCache()
@@ -1940,7 +1954,8 @@ proc beginCompositeLayer(
     command: PaintCommand;
     layers: var seq[Sdl3TransformLayer]
 ) =
-  if command.layerBlurRadius != 0 or not command.layerColorFilter.isNil:
+  if command.layerBlurRadius != 0 or not command.layerColorFilter.isNil or
+      command.layerShaderFilter.material.len != 0:
     let scale = target.pixelScale().float64
     let width = (ceil(command.layerBounds.x.float64 + command.layerBounds.w.float64) -
       floor(command.layerBounds.x.float64)) * scale
@@ -1964,6 +1979,7 @@ proc beginCompositeLayer(
   )
   layers[^1].colorFilter = command.layerColorFilter
   layers[^1].blurRadius = command.layerBlurRadius
+  layers[^1].shaderFilter = command.layerShaderFilter
 
 proc markTransformContent(layers: var seq[Sdl3TransformLayer]) =
   for index in countdown(layers.high, 0):
@@ -2357,8 +2373,10 @@ proc gpuFilteredLayerTexture(
 ): tuple[texture: pointer, index: int] =
   result = (nil, -1)
   let blur = layer.blurRadius != 0
-  if (blur and target.gpuLayerBlur.isNil) or
-      (not blur and target.gpuLayerColorFilter.isNil):
+  let shader = layer.shaderFilter.material.len != 0
+  if (shader and target.gpuLayerShaderFilter.isNil) or
+      (not shader and blur and target.gpuLayerBlur.isNil) or
+      (not shader and not blur and target.gpuLayerColorFilter.isNil):
     return
   let destination = target.acquireTransformTexture(layer.pixelWidth, layer.pixelHeight)
   if destination.texture.isNil:
@@ -2367,7 +2385,8 @@ proc gpuFilteredLayerTexture(
     if result.texture.isNil:
       target.releaseTransformTexture(destination.index)
   let applied =
-    if blur: target.gpuLayerBlur(target.renderer, destination.texture, layer.blurRadius)
+    if shader: target.gpuLayerShaderFilter(target.renderer, destination.texture, layer.shaderFilter)
+    elif blur: target.gpuLayerBlur(target.renderer, destination.texture, layer.blurRadius)
     else: target.gpuLayerColorFilter(target.renderer, destination.texture, layer.colorFilter)
   if applied:
     result = destination
@@ -2384,7 +2403,9 @@ proc endTransformLayer(
 
   var filtered: pointer
   var filteredCacheIndex = -1
-  let needsFilter = layer.blurRadius != 0 or not layer.colorFilter.isNil
+  let cpuFilter = layer.blurRadius != 0 or not layer.colorFilter.isNil
+  let usesShader = layer.shaderFilter.material.len != 0
+  let paintsLayer = layer.hasContent or layer.compositeMode in {lcmCopy, lcmDestinationIn}
   defer:
     if filteredCacheIndex >= 0:
       target.releaseTransformTexture(filteredCacheIndex)
@@ -2392,17 +2413,17 @@ proc endTransformLayer(
       SDL3.destroyTexture(filtered)
     target.releaseTransformTexture(layer.textureCacheIndex)
   try:
-    if needsFilter:
+    if paintsLayer and (cpuFilter or usesShader):
       (filtered, filteredCacheIndex) = target.gpuFilteredLayerTexture(layer)
-      if filtered.isNil:
+      if filtered.isNil and cpuFilter:
         filtered = target.filteredLayerTexture(layer)
   finally:
     discard SDL3.setRenderTarget(target.renderer, layer.previousTarget)
     target.clipStack = layer.previousClips
     target.renderer.setClip(target.effectiveClipBounds())
-  if needsFilter and filtered.isNil:
+  if cpuFilter and filtered.isNil:
     return
-  if layer.hasContent or layer.compositeMode in {lcmCopy, lcmDestinationIn}:
+  if paintsLayer:
     let destinationOffset = layers.activeTransformOffset()
     let topLeft = layer.transform.transformPoint(
       vec2(layer.sourceBounds.x, layer.sourceBounds.y)

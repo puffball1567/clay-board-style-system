@@ -815,6 +815,36 @@ If those resources are unavailable, SDL uses its CPU blur. Clear
 the hook with `renderer.setGpuLayerBlur(nil)` before releasing the material
 inside the shared context. [Style registration](custom-paint.md#style-gaussian-blur)
 
+### SDL OpenGL Style Shader Filters
+
+Import `runtime/gpu_layer_shader` and `backends/bgfx/sdl3_opengl_layer_filter`.
+Load the vertex and fragment packages for the same OpenGL target. Create the
+material on the shared host and install it by the name used in Style.
+
+```nim
+var material: GpuLayerShaderMaterial
+shared.withSdl3BgfxOpenGlContext:
+  material = newGpuLayerShaderMaterial(host, filterNamespace,
+    vertexPackage, fragmentPackage, gsbtOpenGL,
+    defaults = customPaintParameters([customPaintFloat("u_gain", 1)]))
+renderer.setGpuLayerShaderFilter(newSdl3BgfxOpenGlLayerShaderFilter(
+  shared, host, filterNamespace, [("layer-tint", material)]))
+```
+
+Each authored uniform has one typed default. Style values can override those
+defaults by exact name and parameter kind. Scalars occupy `x`, booleans use
+0 or 1, and integers must fit exactly in the supported float32 range of
+−16,777,216 to 16,777,216. Vec2 occupies `xy`, and vec4 and color occupy all four
+components. The remaining components are zero. Extra parameters and type
+mismatches select the Style fallback.
+
+The pass uses a single draw and two SDL RGBA32 texture imports, which retire
+before SDL composites the output. This setup targets Linux SDL EGL/OpenGL.
+Clear the renderer hook with `renderer.setGpuLayerShaderFilter(nil)` before
+releasing the materials in the shared context.
+[Shader authoring](gpu-shaders.md#layer-filter-authoring) ·
+[Style registration](custom-paint.md#style-shader-filters)
+
 ### bgfx Presentation Adapter
 
 The optional bgfx backend exposes `newBgfxDirectCompositeAdapter(backend,

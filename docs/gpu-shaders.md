@@ -20,9 +20,9 @@ variants selected by the application build.
 Shader-backed Custom Paint declarations use the backend-neutral typed material
 parameters documented in [Custom Paint](custom-paint.md). Parameters are
 validated and retained during style resolution, then delivered without
-per-frame text parsing. Mapping those values to a concrete bgfx uniform or
-storage binding remains the provider's responsibility until the production
-shader-material compositor is complete.
+per-frame text parsing. The Style layer filter maps configured parameters
+to `vec4` uniforms by name.
+[Style filter setup](gpu-direct-surfaces.md#sdl-opengl-style-shader-filters)
 
 ## Build-Time Compilation
 
@@ -115,6 +115,29 @@ Encoding always writes version 3. This distinction also represents a typed
 shader that intentionally declares no resources: it rejects accidental
 bindings, while raw bytecode continues to use the explicit low-level escape
 hatch.
+
+## Layer Filter Authoring
+
+Use `sampleLayer` in a Fragment graph with one `TEXCOORD0` vec2 input and
+color output 0. Coordinates are normalized and start at the top left. Samples
+are clamped to the isolated layer. Both the sampled color and the output must
+use premultiplied RGBA.
+
+```nim
+import clay_board_style_system/runtime/[gpu_host, gpu_layer_shader, gpu_shader_builder]
+
+let builder = newGpuShaderBuilder(gssFragment, "layer-tint")
+let uv = builder.varyingInput(gsisTexCoord0, gsvtVec2)
+let pixel = builder.sampleLayer(uv)
+let gain = builder.swizzle(builder.uniform("u_gain", gsvtVec4), "x")
+builder.setColorOutput(pixel * gain)
+let fragment = builder.emitGpuShaderSource()
+let vertex = gpuLayerShaderVertexSource()
+```
+
+Compile and package both stages as above. The layer pipeline supplies the
+source sampler and its row mapping. At runtime, resolve the matching target
+variant and supply a default value for every authored `vec4` uniform.
 
 ## Compute Authoring
 

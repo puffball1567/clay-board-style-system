@@ -609,6 +609,35 @@ suite "SDL3 transform rendering":
     check renderer.gpuDirectCompositionStats() ==
       Sdl3GpuDirectCompositionStats()
 
+  test "changing the Style shader hook invalidates a retained layer":
+    let previousDriver = getEnv("SDL_VIDEODRIVER")
+    putEnv("SDL_VIDEODRIVER", "dummy")
+    defer:
+      if previousDriver.len > 0: putEnv("SDL_VIDEODRIVER", previousDriver)
+      else: delEnv("SDL_VIDEODRIVER")
+    var renderer = initSdl3Renderer("CBSS retained shader test", 16, 12, false)
+    defer: renderer.close()
+    let fonts = initFontRegistry()
+    let cosmic = CosmicTextEngine()
+    let commands = [
+      pushShaderFilterLayer(rect(0, 0, 16, 12), LayerShaderFilter(material: "tint")),
+      fillRect(rect(0, 0, 16, 12), rgb(1, 0, 0)),
+      popLayer()]
+    renderer.renderLayered(commands, cosmic, fonts, rebuildStatic = false)
+    var calls = 0
+    renderer.setGpuLayerShaderFilter(
+      proc(renderer, destination: pointer; shader: LayerShaderFilter): bool =
+        inc calls
+        check shader.material == "tint"
+        false)
+    renderer.renderLayered(commands, cosmic, fonts, rebuildStatic = false)
+    check renderer.retainedLayerStats().fullRepaints == 2
+    check calls == 1
+    renderer.setGpuLayerShaderFilter(nil)
+    renderer.renderLayered(commands, cosmic, fonts, rebuildStatic = false)
+    check renderer.retainedLayerStats().fullRepaints == 3
+    check calls == 1
+
   test "layered rendering updates only damaged retained tiles":
     let previousDriver = getEnv("SDL_VIDEODRIVER")
     putEnv("SDL_VIDEODRIVER", "dummy")

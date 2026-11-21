@@ -503,6 +503,28 @@ suite "declarative custom paint":
     check childDraws == 1
     check ui.takeCustomPaintDiagnostics().len == 0
 
+  test "Style shader retains typed parameters and the portable matrix fallback":
+    let ui = initUiRoot()
+    let panel = ui.box(uiStyle([
+      width(12), height(12), decl("background-color", colorValue(rgb(1, 0, 0))),
+      customPaint("layer-tint", cpsFilter,
+        parameters = [customPaintFloat("u_gain", 0.25)])
+    ]))
+    let resolved = ui.resolvedUi()
+    discard ui.buildPaintCommands(resolved.styles, resolved.layout)
+    discard ui.consumeInvalidation()
+    let token = ui.registerCustomPaintShaderFilterTracked("layer-tint",
+      invertColorFilter(1)).get
+    check ui.consumeInvalidation().roots == @[panel.id]
+    let commands = ui.buildPaintCommands(resolved.styles, resolved.layout)
+    let filter = commands.filterIt(it.kind == pcPushLayer and
+      it.layerShaderFilter.material == "layer-tint")
+    check filter.len == 1
+    check filter[0].layerShaderFilter.parameters[0].floatValue == 0.25
+    check render(commands, 14, 14, rgb(0, 0, 0)).rasterPixel(5, 5) == rgb(0, 1, 1)
+    check ui.unregisterCustomPaintMaterial(token)
+    check ui.consumeInvalidation().domains == {ddPaint}
+
   test "Style blur applies to descendants and stays inside the rounded owner":
     let ui = initUiRoot()
     let panel = ui.box(uiStyle([

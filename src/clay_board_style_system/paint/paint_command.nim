@@ -1,5 +1,5 @@
 import std/[math, options, strutils, unicode]
-import ../core/[color, computed_style, geometry, node, raster_surface]
+import ../core/[color, computed_style, custom_paint_parameter, geometry, node, raster_surface]
 import ../runtime/gpu_direct_surface
 import ./path_geometry
 import ./layer_color_filter
@@ -11,6 +11,11 @@ type
     lcmCopy,
     lcmAdditive,
     lcmDestinationIn
+
+  LayerShaderFilter* = object
+    ## A backend-neutral material reference. An empty name disables the shader.
+    material*: string
+    parameters*: CustomPaintParameters
 
   PaintCommandKind* = enum
     pcPushTransform,
@@ -44,6 +49,7 @@ type
       layerCompositeMode*: LayerCompositeMode
       layerColorFilter*: LayerColorFilter
       layerBlurRadius*: LayerBlurRadius
+      layerShaderFilter*: LayerShaderFilter
     of pcPopLayer:
       discard
     of pcPushClip:
@@ -147,6 +153,19 @@ proc pushBlurLayer*(
   ## Blur the completed layer before composition. Radius is in layer pixels.
   result = pushLayer(bounds, opacity, compositeMode)
   result.layerBlurRadius = radius
+
+proc pushShaderFilterLayer*(
+    bounds: Rect;
+    shader: LayerShaderFilter;
+    opacity = 1.0'f32;
+    fallback: LayerColorFilter = nil
+): PaintCommand =
+  ## Apply a shader to a completed layer. The matrix is its CPU fallback.
+  result = pushLayer(bounds, opacity = opacity, colorFilter = fallback)
+  result.layerShaderFilter = shader
+
+proc hasSpatialLayerFilter(command: PaintCommand): bool =
+  command.layerBlurRadius != 0 or command.layerShaderFilter.material.len != 0
 
 type TransformBoundsFrame = object
   commandIndex: int
@@ -260,6 +279,9 @@ proc samePaintCommand*(first, second: PaintCommand): bool =
       first.layerOpacity == second.layerOpacity and
       first.layerCompositeMode == second.layerCompositeMode and
       first.layerBlurRadius == second.layerBlurRadius and
+      first.layerShaderFilter.material == second.layerShaderFilter.material and
+      sameCustomPaintParameters(first.layerShaderFilter.parameters,
+        second.layerShaderFilter.parameters) and
       sameLayerColorFilter(first.layerColorFilter, second.layerColorFilter)
   of pcPushClip:
     first.clipRect == second.clipRect and first.clipRadius == second.clipRadius
@@ -330,8 +352,8 @@ proc resolvedVisualBounds*(commands: openArray[PaintCommand]): seq[Option[Rect]]
   result = newSeq[Option[Rect]](commands.len)
   var transforms = @[identityAffine2D()]
   var clips: seq[Rect]
-  var layerScopes: seq[tuple[clipDepth: int, blurBounds: Option[Rect]]]
-  var blurBounds: Option[Rect]
+  var layerScopes: seq[tuple[clipDepth: int, filterBounds: Option[Rect]]]
+  var filterBounds: Option[Rect]
   for index, command in commands:
     case command.kind
     of pcPushTransform:
@@ -348,25 +370,25 @@ proc resolvedVisualBounds*(commands: openArray[PaintCommand]): seq[Option[Rect]]
       if clips.len > 0:
         discard clips.pop()
     of pcPushLayer:
-      layerScopes.add (clips.len, blurBounds)
+      layerScopes.add (clips.len, filterBounds)
       var transformed = transforms[^1].transformedBounds(command.layerBounds)
       if clips.len > 0:
         transformed = transformed.intersection(clips[^1])
       clips.add transformed
-      if command.layerBlurRadius != 0 and blurBounds.isNone:
-        blurBounds = some(transformed)
+      if command.hasSpatialLayerFilter and filterBounds.isNone:
+        filterBounds = some(transformed)
     of pcPopLayer:
       if layerScopes.len > 0:
         let scope = layerScopes.pop()
         clips.setLen(scope.clipDepth)
-        blurBounds = scope.blurBounds
+        filterBounds = scope.filterBounds
     else:
       let local = command.visualBounds()
       if local.isSome:
         var bounds = transforms[^1].transformedBounds(local.get)
         if clips.len > 0:
           bounds = bounds.intersection(clips[^1])
-        bounds = blurBounds.get(bounds)
+        bounds = filterBounds.get(bounds)
         if not bounds.isEmpty:
           result[index] = some(bounds)
 
@@ -382,15 +404,15 @@ proc resolvedVisualBoundsFor*(
     return none(Rect)
   var transforms = @[identityAffine2D()]
   var clips: seq[Rect]
-  var layerScopes: seq[tuple[clipDepth: int, blurBounds: Option[Rect]]]
-  var blurBounds: Option[Rect]
+  var layerScopes: seq[tuple[clipDepth: int, filterBounds: Option[Rect]]]
+  var filterBounds: Option[Rect]
   for index in 0 .. commandIndex:
     let command = commands[index]
     if index == commandIndex:
       var bounds = transforms[^1].transformedBounds(localBounds)
       if clips.len > 0:
         bounds = bounds.intersection(clips[^1])
-      bounds = blurBounds.get(bounds)
+      bounds = filterBounds.get(bounds)
       if not bounds.isEmpty:
         return some(bounds)
       return none(Rect)
@@ -409,18 +431,18 @@ proc resolvedVisualBoundsFor*(
       if clips.len > 0:
         discard clips.pop()
     of pcPushLayer:
-      layerScopes.add (clips.len, blurBounds)
+      layerScopes.add (clips.len, filterBounds)
       var transformed = transforms[^1].transformedBounds(command.layerBounds)
       if clips.len > 0:
         transformed = transformed.intersection(clips[^1])
       clips.add transformed
-      if command.layerBlurRadius != 0 and blurBounds.isNone:
-        blurBounds = some(transformed)
+      if command.hasSpatialLayerFilter and filterBounds.isNone:
+        filterBounds = some(transformed)
     of pcPopLayer:
       if layerScopes.len > 0:
         let scope = layerScopes.pop()
         clips.setLen(scope.clipDepth)
-        blurBounds = scope.blurBounds
+        filterBounds = scope.filterBounds
     else:
       discard
 
