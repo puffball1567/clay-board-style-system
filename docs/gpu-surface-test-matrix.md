@@ -117,6 +117,12 @@ transparency, and group opacity. A constrained namespace rejects the second
 texture import. The fixture verifies CPU fallback and checks that the first
 import was released, including across another frame of layer reuse.
 
+The same fixture compares separable Style blur with the SDL CPU implementation
+at radii 2 and 16 to within two 8-bit levels per channel. It covers asymmetric
+content, transparency, clipping, and GPU paint inside the layer. It verifies fallback when both imports fit
+but the scratch target cannot be allocated. Portable tests cover rounded Style
+owners and retained replay across the blur's neighboring pixels.
+
 ## Real-GPU Release Gate
 
 The same-host draw path is implemented, but the production direct compositor is

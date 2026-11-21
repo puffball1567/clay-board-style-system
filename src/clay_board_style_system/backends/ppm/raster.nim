@@ -1,7 +1,7 @@
 import std/[math, options, sequtils]
 import ../../core/[color, computed_style, geometry, gradient_sampling,
     raster_surface]
-import ../../paint/[layer_color_filter, paint_command, path_geometry]
+import ../../paint/[layer_blur, layer_color_filter, paint_command, path_geometry]
 
 type
   RasterImage* = object
@@ -27,6 +27,7 @@ type
     opacity: float32
     compositeMode: LayerCompositeMode
     colorFilter: LayerColorFilter
+    blurRadius: LayerBlurRadius
     clipDepth: int
 
 proc clampByte(value: float32): uint8 =
@@ -87,13 +88,12 @@ proc putPixel(image: var RasterImage; x, y: int; color: Color) =
 
 proc compositePixel(
     destination: var RasterImage;
-    source: RasterImage;
+    color: Color;
     x, y: int;
     opacity: float32;
-    compositeMode: LayerCompositeMode;
-    colorFilter: LayerColorFilter
+    compositeMode: LayerCompositeMode
 ) =
-  var sourceColor = colorFilter.applyLayerColorFilter(source.pixelColor(x, y))
+  var sourceColor = color
   sourceColor.a *= opacity
   let destinationColor = destination.pixelColor(x, y)
   case compositeMode
@@ -131,13 +131,39 @@ proc compositeLayer(
   let bounds = intBounds(
     intersect(layer.bounds, clip.bounds), destination.width, destination.height
   )
+  if bounds.x0 >= bounds.x1 or bounds.y0 >= bounds.y1:
+    return
+  let layerPixels = intBounds(layer.bounds, source.width, source.height)
+  let width = layerPixels.x1 - layerPixels.x0
+  let height = layerPixels.y1 - layerPixels.y0
+  var blurred: seq[uint8]
+  if layer.blurRadius != 0:
+    if uint64(width) * uint64(height) * 16 > MaxFilteredLayerBytes:
+      return
+    blurred = newSeq[uint8](width * height * 4)
+    for y in 0 ..< height:
+      for x in 0 ..< width:
+        let color = source.pixelColor(x + layerPixels.x0, y + layerPixels.y0)
+        let offset = (y * width + x) * 4
+        blurred[offset] = clampByte(color.r * color.a)
+        blurred[offset + 1] = clampByte(color.g * color.a)
+        blurred[offset + 2] = clampByte(color.b * color.a)
+        blurred[offset + 3] = clampByte(color.a)
+    blurred.blurPremultipliedRgba8(width, height, layer.blurRadius)
   for y in bounds.y0 ..< bounds.y1:
     for x in bounds.x0 ..< bounds.x1:
       let sample = vec2(x.float32 + 0.5'f32, y.float32 + 0.5'f32)
       if clip.contains(sample):
-        destination.compositePixel(
-          source, x, y, layer.opacity, layer.compositeMode, layer.colorFilter
-        )
+        let color =
+          if blurred.len == 0:
+            layer.colorFilter.applyLayerColorFilter(source.pixelColor(x, y))
+          else:
+            let offset = ((y - layerPixels.y0) * width + x - layerPixels.x0) * 4
+            let alpha = blurred[offset + 3].float32
+            let divisor = max(1.0'f32, alpha)
+            rgba(blurred[offset].float32 / divisor, blurred[offset + 1].float32 / divisor,
+              blurred[offset + 2].float32 / divisor, alpha / 255.0'f32)
+        destination.compositePixel(color, x, y, layer.opacity, layer.compositeMode)
 
 proc intBounds(rect: Rect; width, height: int): tuple[x0, y0, x1, y1: int] =
   result.x0 = clamp(floor(rect.x).int, 0, width)
@@ -698,12 +724,19 @@ proc renderInto*(
         opacity: command.layerOpacity,
         compositeMode: command.layerCompositeMode,
         colorFilter: command.layerColorFilter,
+        blurRadius: command.layerBlurRadius,
         clipDepth: clipStack.len
       )
       targets.add initRasterImage(
         image.width, image.height, rgba(0, 0, 0, 0)
       )
-      clipStack.add clipStack[^1].withShape(
+      # A partial replay still needs neighbors outside its damage rectangle
+      # for convolution. The previous clip applies when composing the result.
+      let inputClip =
+        if command.layerBlurRadius != 0:
+          PpmClip(bounds: rect(0, 0, image.width.float32, image.height.float32))
+        else: clipStack[^1]
+      clipStack.add inputClip.withShape(
         transformedRect(command.layerBounds, transformStack[^1])
       )
     of pcPopLayer:

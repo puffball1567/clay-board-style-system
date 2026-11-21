@@ -3,6 +3,7 @@ import std/[algorithm, options, sets, tables]
 import ../core/[custom_paint, custom_paint_parameter, geometry, node]
 import ./paint_command
 import ./layer_color_filter
+import ./layer_blur
 
 const
   maxCustomPaintDiagnostics* = 256
@@ -35,6 +36,7 @@ type
     status*: CustomPaintResolutionStatus
     commands*: seq[PaintCommand]
     colorFilter*: LayerColorFilter
+    blurRadius*: LayerBlurRadius
 
   CustomPaintMaterialProc* = proc(
     request: CustomPaintRequest
@@ -51,6 +53,7 @@ type
   CustomPaintMaterialEntry = object
     callback: CustomPaintMaterialProc
     filterCallback: CustomPaintFilterProc
+    blurRadius: LayerBlurRadius
     stages: set[CustomPaintStage]
     generation: uint64
 
@@ -153,6 +156,15 @@ proc registerCustomPaintFilter*(
     replace = false
 ): bool {.discardable.} =
   registry.registerCustomPaintFilterTracked(material, callback, replace).isSome
+
+proc registerCustomPaintBlurTracked*(
+    registry: CustomPaintRegistry;
+    material: string;
+    radius: LayerBlurRadius;
+    replace = false
+): Option[CustomPaintRegistration] =
+  registry.registerEntry(material,
+    CustomPaintMaterialEntry(blurRadius: radius, stages: {cpsFilter}), replace)
 
 proc registerCustomPaintMaterial*(
     registry: CustomPaintRegistry;
@@ -307,9 +319,9 @@ proc resolveCustomPaint*(
     return CustomPaintResolution(status: cprsUnsupportedStage)
 
   if request.stage == cpsFilter:
-    return CustomPaintResolution(
-      status: cprsResolved, colorFilter: entry.filterCallback(request)
-    )
+    if entry.filterCallback.isNil:
+      return CustomPaintResolution(status: cprsResolved, blurRadius: entry.blurRadius)
+    return CustomPaintResolution(status: cprsResolved, colorFilter: entry.filterCallback(request))
   let commands = entry.callback(request)
   if commands.len > maxCustomPaintCommands:
     registry.addDiagnostic(

@@ -145,8 +145,30 @@ a drawing command callback from being mistaken for a filter.
 C ABI `0x00010028` also supports Style RGB filter registration, as described
 below. Foreign command-sink providers can author filtered layers with
 `cbss_custom_paint_sink_begin_layer_color_matrix` from ABI `0x00010027`.
-`GpuCanvasSurface` materials continue to support drawing and masks; spatial
-filters and shader post-processing remain follow-ups.
+
+### Style Gaussian Blur
+
+Register a blur from Nim and select it with the existing filter stage.
+
+```nim
+discard ui.registerCustomPaintBlur("soften-panel", radius = 4)
+let panel = ui.box(uiStyle([
+  width(240), height(160), customPaint("soften-panel", cpsFilter)
+]))
+```
+
+The radius is an integer from 0 to 16 in pixels of the isolated layer. Zero
+keeps the group's paint ordering and skips the filter. Blur runs on the complete
+group, including descendants and masks, before the group is clipped to the
+owner's rounded bounds and composited at its opacity. Color and alpha spread
+together using premultiplied pixels. Multiple effects can be nested by placing
+one filter on a parent and another on its child.
+
+Registrations share replacement, unregistration, and paint-only invalidation
+with other materials. Use `registerCustomPaintBlurTracked` for a generation-safe
+token. PPM and SDL3 have CPU implementations. Linux SDL EGL/OpenGL also
+supports an opt-in shared GPU pass with CPU fallback.
+[GPU setup](gpu-direct-surfaces.md#sdl-opengl-style-gaussian-blur)
 
 ## Foreign Provider Boundary
 

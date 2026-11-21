@@ -186,17 +186,15 @@ the identity matrix adds no filtering work. `colorMatrixCoefficients` returns
 a value copy for inspection, and retained caches compare coefficient values
 rather than allocation identity.
 
-PPM evaluates the shared matrix during layer composition. SDL3 reads only the
-bounded isolated target, transforms its pixels, and uploads a temporary texture;
-this is a CPU filter path even on accelerated SDL renderers. The target,
+PPM evaluates the shared matrix during layer composition. SDL3's CPU path reads only
+the bounded isolated target, transforms its pixels, and uploads a temporary texture.
+Linux EGL/OpenGL applications can opt in to a shared GPU color matrix. The target,
 readback, editable pixels, and upload are budgeted at 64 MiB per filtered layer.
 Oversized or unavailable filtered targets suppress that scope. Unchanged
 retained layers reuse their cached pixels; a changed matrix invalidates the
 layer's retained command scope.
 
-This establishes RGB matrix filters for Nim Canvas and paint commands. Spatial
-filters such as blur, alpha-changing matrices, and GPU shader filtering remain
-separate follow-up capabilities. C ABI
+The RGB matrix is available to Nim Canvas and paint commands. C ABI
 `0x00010027` exposes copied matrices through Canvas and Custom Paint layer
 functions, with a matching paint-command accessor. ABI `0x00010028` also
 connects foreign RGB filter providers to ordinary Style declarations. Existing
@@ -206,6 +204,13 @@ C layer entry points retain their signatures and create unfiltered layers; see
 Ordinary Style declarations can use these matrices through typed
 [Custom Paint filter providers](custom-paint.md#style-color-filters), with
 bounded subtree isolation and paint-only invalidation.
+
+Low-level Nim paint can also use `pushBlurLayer(bounds, radius)` and
+`popLayer()`. The blur uses a separable binomial Gaussian with clamped edges.
+The integer radius is measured in isolated layer pixels and ranges from 0 to
+16. Blur spreads premultiplied color and alpha together inside the layer.
+A change within the blur invalidates the enclosing blur
+layer so retained redraws include neighboring pixels. [Style blur](custom-paint.md#style-gaussian-blur)
 
 Every effective mutation increments the Canvas revision. A frame callback may
 replace only the Canvas commands without rebuilding or resolving the

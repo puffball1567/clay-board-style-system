@@ -1,4 +1,4 @@
-import std/[options, strutils, unittest]
+import std/[options, sequtils, strutils, unittest]
 
 import clay_board_style_system
 import clay_board_style_system/generated/default_properties
@@ -502,6 +502,31 @@ suite "declarative custom paint":
         inc childDraws
     check childDraws == 1
     check ui.takeCustomPaintDiagnostics().len == 0
+
+  test "Style blur applies to descendants and stays inside the rounded owner":
+    let ui = initUiRoot()
+    let panel = ui.box(uiStyle([
+      width(12), height(12), decl("border-radius", px(4)),
+      customPaint("soften", cpsFilter)
+    ]))
+    discard ui.box(uiStyle([
+      width(3), height(3), decl("position", keyword("absolute")),
+      decl("left", px(4)), decl("top", px(4)),
+      decl("background-color", colorValue(rgb(1, 0, 0)))
+    ]), parent = some(panel))
+    let resolved = ui.resolvedUi()
+    discard ui.buildPaintCommands(resolved.styles, resolved.layout)
+    discard ui.consumeInvalidation()
+    let token = ui.registerCustomPaintBlurTracked("soften", 4).get
+    check ui.consumeInvalidation().domains == {ddPaint}
+    let commands = ui.buildPaintCommands(resolved.styles, resolved.layout)
+    check commands.anyIt(it.kind == pcPushLayer and it.layerBlurRadius == 4)
+    let blurred = render(commands, 14, 14, rgb(0, 0, 0))
+    check blurred.rasterPixel(3, 5).r > 0.1
+    check blurred.rasterPixel(5, 5).r < 1
+    check blurred.rasterPixel(0, 0).r == 0
+    check ui.unregisterCustomPaintMaterial(token)
+    check ui.consumeInvalidation().domains == {ddPaint}
 
   test "filters preserve rounded owner clips and masks":
     let ui = initUiRoot()
