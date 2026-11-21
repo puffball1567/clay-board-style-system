@@ -497,11 +497,16 @@ proc paintNode(
       none(CustomPaintResolution)
   let layerFilter = filterResolution.get(CustomPaintResolution(status: cprsMissingMaterial))
   let appliesBlur = layerFilter.status == cprsResolved and layerFilter.blurRadius != 0
-  let appliesFilter = appliesBlur or
+  let appliesShader = layerFilter.status == cprsResolved and layerFilter.shaderFilter.material.len != 0
+  let appliesFilter = appliesBlur or appliesShader or
     (layerFilter.status == cprsResolved and not layerFilter.colorFilter.isNil)
   if appliesFilter:
-    if appliesBlur:
+    if appliesBlur or appliesShader:
       output.add pushClip(nodeRect, style.box.borderRadius)
+    if appliesShader:
+      output.add pushShaderFilterLayer(nodeRect, layerFilter.shaderFilter, opacity,
+        fallback = layerFilter.colorFilter)
+    elif appliesBlur:
       output.add pushBlurLayer(nodeRect, layerFilter.blurRadius, opacity)
     else:
       output.add pushLayer(nodeRect, opacity = opacity, colorFilter = layerFilter.colorFilter)
@@ -699,7 +704,7 @@ proc paintNode(
   if appliesFilter:
     output.add popClip()
     output.add popLayer()
-    if appliesBlur:
+    if appliesBlur or appliesShader:
       output.add popClip()
 
   if visualClip.isSome:

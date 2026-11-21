@@ -1018,6 +1018,8 @@ proc paintSnapshot*(driver: CbssTestDriver): string =
         lines[^1].add " color-matrix=" & $command.layerColorFilter.colorMatrixCoefficients()
       if command.layerBlurRadius != 0:
         lines[^1].add " blur-radius=" & $command.layerBlurRadius
+      if command.layerShaderFilter.material.len != 0:
+        lines[^1].add " shader=" & command.layerShaderFilter.material
     of pcPopLayer:
       lines.add "pop-layer"
     of pcPushClip:
@@ -1170,6 +1172,8 @@ proc structuredSnapshotJson*(driver: CbssTestDriver): JsonNode =
         entry["colorMatrix"] = %command.layerColorFilter.colorMatrixCoefficients()
       if command.layerBlurRadius != 0:
         entry["blurRadius"] = %command.layerBlurRadius.int
+      if command.layerShaderFilter.material.len != 0:
+        entry["shader"] = %command.layerShaderFilter.material
     of pcPopLayer:
       discard
     of pcPushClip:

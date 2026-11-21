@@ -12,6 +12,7 @@ import ../paint/paint
 import ../paint/paint_command
 import ../paint/custom_paint_registry
 import ../paint/layer_blur
+import ../paint/layer_color_filter
 import ../text/[font_registry, text_engine]
 import ./animation_clock
 import ./canvas
@@ -1548,6 +1549,27 @@ proc registerCustomPaintBlur*(
 ): bool {.discardable.} =
   ## Register a bounded Gaussian blur for an existing Style filter declaration.
   root.registerCustomPaintBlurTracked(material, radius, replace).isSome
+
+proc registerCustomPaintShaderFilterTracked*(
+    root: UiRoot;
+    material: string;
+    fallback: LayerColorFilter = nil;
+    replace = false
+): Option[CustomPaintRegistration] =
+  if root.isNil:
+    raise newException(ValueError, "custom paint UiRoot cannot be nil")
+  result = root.customPaints.registerCustomPaintShaderFilterTracked(material, fallback, replace)
+  if result.isSome:
+    discard root.invalidateCustomPaintMaterial(material)
+
+proc registerCustomPaintShaderFilter*(
+    root: UiRoot;
+    material: string;
+    fallback: LayerColorFilter = nil;
+    replace = false
+): bool {.discardable.} =
+  ## Refer to a renderer-registered shader with a CPU matrix or identity fallback.
+  root.registerCustomPaintShaderFilterTracked(material, fallback, replace).isSome
 
 proc unregisterCustomPaintMaterial*(
     root: UiRoot;

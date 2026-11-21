@@ -1,6 +1,9 @@
 ## Filter SDL layers through shared OpenGL storage.
+import std/tables
+import ../../core/custom_paint
 import ../../paint/[layer_blur, layer_color_filter]
-import ../../runtime/[gpu_color_matrix, gpu_gaussian_blur, gpu_host]
+import ../../paint/paint_command
+import ../../runtime/[gpu_color_matrix, gpu_gaussian_blur, gpu_host, gpu_layer_shader]
 import ../sdl3/renderer
 import ./[sdl3_opengl_context, sdl3_opengl_target]
 
@@ -78,3 +81,26 @@ proc newSdl3BgfxOpenGlLayerBlur*(
     context.filterSharedLayer(host, namespace, renderer, destination, true,
       proc(source, scratch, output: GpuResourceHandle): bool =
         material.submit(source, scratch, output, gcamPremultiplied, radius.int))
+
+proc newSdl3BgfxOpenGlLayerShaderFilter*(
+    context: Sdl3BgfxOpenGlContext;
+    host: GpuHost;
+    namespace: GpuNamespaceId;
+    shaders: openArray[tuple[name: string, material: GpuLayerShaderMaterial]]
+): Sdl3LayerShaderFilterProc =
+  ## Resolve named Style materials on this renderer. SDL owns presentation.
+  if not context.supportsLayerFilters(host):
+    raise newException(ValueError, "SDL OpenGL layer shaders require an offscreen bgfx host")
+  var byName = initTable[string, GpuLayerShaderMaterial]()
+  for shader in shaders:
+    if not shader.name.validCustomPaintMaterial or shader.name in byName or
+        not shader.material.belongsTo(host, namespace):
+      raise newException(ValueError, "invalid or duplicate SDL OpenGL layer shader")
+    byName[shader.name] = shader.material
+  result = proc(renderer, destination: pointer; shader: LayerShaderFilter): bool =
+    let material = byName.getOrDefault(shader.material)
+    if not material.belongsTo(host, namespace):
+      return false
+    context.filterSharedLayer(host, namespace, renderer, destination, false,
+      proc(source, scratch, output: GpuResourceHandle): bool =
+        material.submit(source, output, shader.parameters))

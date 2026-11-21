@@ -206,3 +206,24 @@ proc findCustomPaintParameter*(
     if parameter.parameterName == name:
       return some(parameter)
   none(CustomPaintParameter)
+
+proc sameCustomPaintParameters*(first, second: CustomPaintParameters): bool =
+  if first == second:
+    return true
+  if first.len != second.len:
+    return false
+  for index in 0 ..< first.len:
+    let left = first[index]
+    let right = second[index]
+    if left.name != right.name or left.kind != right.kind:
+      return false
+    let same = case left.kind
+      of cppkFloat: left.floatValue == right.floatValue
+      of cppkInteger: left.integerValue == right.integerValue
+      of cppkBoolean: left.booleanValue == right.booleanValue
+      of cppkVec2: left.vec2Value == right.vec2Value
+      of cppkVec4: left.vec4Value == right.vec4Value
+      of cppkColor: left.colorValue == right.colorValue
+    if not same:
+      return false
+  true

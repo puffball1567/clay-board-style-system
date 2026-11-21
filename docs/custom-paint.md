@@ -170,6 +170,32 @@ token. PPM and SDL3 have CPU implementations. Linux SDL EGL/OpenGL also
 supports an opt-in shared GPU pass with CPU fallback.
 [GPU setup](gpu-direct-surfaces.md#sdl-opengl-style-gaussian-blur)
 
+### Style Shader Filters
+
+Register a named shader filter in Nim and select it with the existing Style
+filter stage. The renderer resolves the same name to a packaged material.
+
+```nim
+discard ui.registerCustomPaintShaderFilter("layer-tint",
+  fallback = brightnessColorFilter(0.75))
+let panel = ui.box(uiStyle([
+  width(240), height(160),
+  customPaint("layer-tint", cpsFilter,
+    parameters = [customPaintFloat("u_gain", 0.75)])
+]))
+```
+
+The shader samples the completed group and replaces its pixels within the
+owner's clip. CBSS applies group opacity at final composition. A change in
+source paint damages the entire filtered layer so offset samples remain
+correct. The same registration token and paint invalidation rules apply as
+for other Style filters.
+
+Use a CPU RGB matrix fallback, or omit it to keep the completed layer's
+original pixels. The fallback handles unavailable materials, unsupported
+parameter values, and GPU resource limits. PPM always uses the fallback.
+[GPU setup](gpu-direct-surfaces.md#sdl-opengl-style-shader-filters)
+
 ## Foreign Provider Boundary
 
 Foreign-language Craft Drivers can install a material with

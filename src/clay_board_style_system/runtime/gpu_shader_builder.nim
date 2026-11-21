@@ -17,6 +17,8 @@ const
   maxGpuComputeWorkGroupX* = 1024'u32
   maxGpuComputeWorkGroupY* = 1024'u32
   maxGpuComputeWorkGroupZ* = 64'u32
+  gpuLayerSourceSampler* = "s_cbssLayer"
+  gpuLayerSourceUvUniform* = "u_cbssLayerUvRect"
 
 type
   GpuShaderBuildError* = object of CatchableError
@@ -114,6 +116,7 @@ type
     gsnVertexInput,
     gsnVaryingInput,
     gsnUniform,
+    gsnLayerSample,
     gsnConstruct,
     gsnConvert,
     gsnBitCast,
@@ -814,7 +817,7 @@ proc uniform*(
   if not name.startsWith("u_") or name in ["u_viewRect", "u_viewTexel",
       "u_view", "u_invView", "u_proj", "u_invProj", "u_viewProj",
       "u_invViewProj", "u_model", "u_modelView", "u_modelViewProj",
-      "u_alphaRef"]:
+      "u_alphaRef", gpuLayerSourceUvUniform]:
     raise newException(
       GpuShaderBuildError,
       "portable GPU uniform names must use a non-reserved u_ prefix"
@@ -836,6 +839,19 @@ proc uniform*(
     valueType: valueType,
     name: name
   ))
+
+proc sampleLayer*(
+    builder: GpuShaderBuilder;
+    uv: GpuShaderExpression
+): GpuShaderExpression =
+  ## Sample the current UI layer in normalized, top-left-origin coordinates.
+  ## The returned RGBA color is premultiplied.
+  builder.requireOpen()
+  builder.requireMainBody("GPU layer sampling")
+  if builder.stageValue != gssFragment or builder.requireExpression(uv).valueType != gsvtVec2:
+    raise newException(GpuShaderBuildError, "GPU layer sampling requires fragment vec2 coordinates")
+  builder.addNode(GpuShaderNode(kind: gsnLayerSample, valueType: gsvtVec4,
+    operands: [uv.nodeIndex, 0, 0, 0], operandCount: 1))
 
 proc setComputeWorkGroupSize*(
     builder: GpuShaderBuilder;
@@ -2236,6 +2252,10 @@ proc nodeExpression(builder: GpuShaderBuilder; index: int): string =
     let storage = builder.storageImages[node.storageImageIndex]
     result = "imageLoad(" & storage.name & ", " &
       builder.nodeReference(node.operands[0]) & ")"
+  of gsnLayerSample:
+    result = "texture2D(" & gpuLayerSourceSampler & ", mix(" &
+      gpuLayerSourceUvUniform & ".xy, " & gpuLayerSourceUvUniform & ".zw, " &
+      builder.nodeReference(node.operands[0]) & "))"
   of gsnStorageStore, gsnStorageImageStore, gsnLocalDeclare, gsnLocalStore,
       gsnLocalArrayDeclare, gsnLocalArrayStore, gsnFunctionReturn:
     result = ""
@@ -2394,6 +2414,7 @@ proc emitGpuShaderSource*(builder: GpuShaderBuilder): GpuShaderSource =
   var uniforms = initOrderedTable[string, GpuShaderValueType]()
   var inputNames: seq[string]
   var outputNames: seq[string]
+  var samplesLayer = false
   for node in builder.nodes:
     case node.kind
     of gsnVertexInput:
@@ -2415,8 +2436,19 @@ proc emitGpuShaderSource*(builder: GpuShaderBuilder): GpuShaderSource =
           "GPU shader uniform has conflicting declarations"
         )
       uniforms[node.name] = node.valueType
+    of gsnLayerSample:
+      samplesLayer = true
     else:
       discard
+
+  if samplesLayer:
+    if result.inputs != @[GpuShaderInterfaceEntry(slot: gsisTexCoord0, valueType: gsvtVec2)] or
+        builder.colorOutputs[0] < 0:
+      raise newException(GpuShaderBuildError, "GPU layer filters require TEXCOORD0 vec2 and color output 0")
+    for index in 1 ..< builder.colorOutputs.len:
+      if builder.colorOutputs[index] >= 0:
+        raise newException(GpuShaderBuildError, "GPU layer filters write one color target")
+    uniforms[gpuLayerSourceUvUniform] = gsvtVec4
 
   if builder.stageValue == gssVertex:
     for item in builder.varyingOutputs:
@@ -2442,6 +2474,8 @@ proc emitGpuShaderSource*(builder: GpuShaderBuilder): GpuShaderSource =
       result.source.add "\n"
   else:
     result.source.add "#include <bgfx_shader.sh>\n\n"
+    if samplesLayer:
+      result.source.add "SAMPLER2D(" & gpuLayerSourceSampler & ", 0);\n"
   for name, valueType in uniforms.pairs:
     result.uniforms.add GpuShaderUniformEntry(
       name: name,

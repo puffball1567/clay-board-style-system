@@ -10,9 +10,10 @@ import clay_board_style_system/backends/bgfx/[
 import clay_board_style_system/backends/sdl3/renderer
 import clay_board_style_system/build/gpu_shader_compiler
 import clay_board_style_system/core/[color, geometry, node, raster_surface]
+import clay_board_style_system/core/custom_paint_parameter
 import clay_board_style_system/paint/[gpu_host_compositor, layer_blur, layer_color_filter, paint_command]
 import clay_board_style_system/runtime/[gpu_color_matrix, gpu_gaussian_blur, gpu_direct_surface, gpu_host,
-  gpu_shader_builder, gpu_shader_package]
+  gpu_layer_shader, gpu_shader_builder, gpu_shader_package]
 import clay_board_style_system/vendor/sdl3
 
 const
@@ -160,13 +161,16 @@ proc testRendererComposition() =
   var surface: GpuDirectSurface
   var composition, filterNamespace, limitedNamespace: GpuNamespaceId
   var blurNamespace, limitedBlurNamespace: GpuNamespaceId
+  var shaderNamespace: GpuNamespaceId
   var material: GpuHostDirectCompositeMaterial
   var matrix, limitedMatrix: GpuColorMatrixMaterial
   var blur, limitedBlur: GpuGaussianBlurMaterial
+  var shader: GpuLayerShaderMaterial
   defer:
     renderer.clearGpuDirectCompositor()
     renderer.setGpuLayerColorFilter(nil)
     renderer.setGpuLayerBlur(nil)
+    renderer.setGpuLayerShaderFilter(nil)
     if not host.isNil:
       shared.withSdl3BgfxOpenGlContext:
         if not surface.isNil:
@@ -175,6 +179,7 @@ proc testRendererComposition() =
         limitedMatrix.release()
         blur.release()
         limitedBlur.release()
+        shader.release()
         host.close()
 
   shared.withSdl3BgfxOpenGlContext:
@@ -196,6 +201,27 @@ proc testRendererComposition() =
     let compiler = gpuShaderCompilerConfig(getEnv("CBSS_SHADERC"),
       [getEnv("CBSS_BGFX_SHADER_INCLUDE")], workDirectory = work)
     let shaderTarget = gpuShaderCompileTarget(gsbtOpenGL, gscpLinux, "330")
+    let layerVertex = gpuLayerShaderVertexSource()
+    let builder = newGpuShaderBuilder(gssFragment, "test-layer-filter")
+    let shaderUv = builder.varyingInput(gsisTexCoord0, gsvtVec2)
+    let source = builder.sampleLayer(shaderUv)
+    let gain = builder.swizzle(builder.uniform("u_gain", gsvtVec4), "x")
+    builder.setColorOutput(builder.swizzle(source, "bgra") * gain)
+    let layerFragment = builder.emitGpuShaderSource()
+    validateGpuShaderInterface(layerVertex, layerFragment)
+    var vertexPackage = gpuShaderPackage(layerVertex)
+    var fragmentPackage = gpuShaderPackage(layerFragment)
+    discard vertexPackage.compileAndAddVariant(layerVertex, shaderTarget, compiler)
+    discard fragmentPackage.compileAndAddVariant(layerFragment, shaderTarget, compiler)
+    shaderNamespace = host.createGpuNamespace("OpenGL authored layer shader", budget)
+    let packaged = decodeGpuShaderPackage(fragmentPackage.encodeGpuShaderPackageData())
+    doAssertRaises(ValueError):
+      discard newGpuLayerShaderMaterial(host, shaderNamespace,
+        vertexPackage, packaged, gsbtOpenGL)
+    doAssert host.gpuNamespaceUsage(shaderNamespace).resourceCount == 0
+    shader = newGpuLayerShaderMaterial(host, shaderNamespace,
+      vertexPackage, packaged, gsbtOpenGL,
+      customPaintParameters([customPaintFloat("u_gain", 1)]))
     let matrixVertex = gpuColorMatrixVertexSource().compileGpuShader(shaderTarget, compiler).artifact
     let matrixFragment = gpuColorMatrixFragmentSource().compileGpuShader(shaderTarget, compiler).artifact
     filterNamespace = host.createGpuNamespace("OpenGL layer filter", budget)
@@ -366,6 +392,55 @@ proc testRendererComposition() =
         doAssert host.gpuNamespaceUsage(namespace).resourceCount == usage.resourceCount
         doAssert host.gpuNamespaceUsage(namespace).persistentBytes == usage.persistentBytes
       renderer.setGpuLayerBlur(nil)
+
+  proc shaderCommands(parameters: CustomPaintParameters;
+      material = "layer-swizzle"): seq[PaintCommand] =
+    let fallback = colorMatrixFilter([0'f32, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0])
+    @[
+      pushClip(rect(5, 5, 20, 19)),
+      pushShaderFilterLayer(rect(4, 4, 24, 24), LayerShaderFilter(
+        material: material, parameters: parameters), fallback = fallback),
+      fillRect(rect(6, 6, 5, 4), rgba(1, 0, 0, 0.5)),
+      fillRect(rect(19, 17, 4, 4), rgb(0, 0, 1)),
+      popLayer(), popClip()]
+
+  let background = rgb(0, 0, 0)
+  let tinted = shaderCommands(customPaintParameters([customPaintFloat("u_gain", 0.5)]))
+  renderer.requestFrameCapture()
+  renderer.render(tinted, background)
+  let fallbackFrame = renderer.capturedFrame().get
+  doAssert fallbackFrame.pixel(7, 7)[1] in 127'u8 .. 129'u8
+  doAssert fallbackFrame.pixel(20, 18) == [0'u8, 0, 255]
+
+  let filter = newSdl3BgfxOpenGlLayerShaderFilter(shared, host, shaderNamespace,
+    [("layer-swizzle", shader)])
+  renderer.setGpuLayerShaderFilter(filter)
+  let shaderUsage = host.gpuNamespaceUsage(shaderNamespace)
+  for repeat in 0 ..< 2:
+    renderer.requestFrameCapture()
+    renderer.render(tinted, background)
+    let frame = renderer.capturedFrame().get
+    doAssert frame.pixel(7, 7)[2] in 63'u8 .. 65'u8, $frame.pixel(7, 7)
+    doAssert frame.pixel(20, 18)[0] in 127'u8 .. 129'u8, $frame.pixel(20, 18)
+    doAssert frame.pixel(7, 17) == [0'u8, 0, 0]
+    doAssert host.gpuNamespaceUsage(shaderNamespace).resourceCount == shaderUsage.resourceCount
+    doAssert host.gpuNamespaceUsage(shaderNamespace).persistentBytes == shaderUsage.persistentBytes
+
+  renderer.requestFrameCapture()
+  renderer.render(shaderCommands(nil), background)
+  doAssert renderer.capturedFrame().get.pixel(20, 18) == [255'u8, 0, 0]
+  for commands in [
+      shaderCommands(customPaintParameters([customPaintInteger("u_gain", 1)])),
+      shaderCommands(customPaintParameters([customPaintFloat("u_unknown", 1)])),
+      shaderCommands(nil, material = "missing")]:
+    renderer.requestFrameCapture()
+    renderer.render(commands, background)
+    renderer.capturedFrame().get.expectCapture(fallbackFrame, 1)
+    doAssert host.gpuNamespaceUsage(shaderNamespace).resourceCount == shaderUsage.resourceCount
+  renderer.setGpuLayerShaderFilter(nil)
+  renderer.requestFrameCapture()
+  renderer.render(tinted, background)
+  renderer.capturedFrame().get.expectCapture(fallbackFrame, 1)
 
 testSharedTarget()
 testRendererComposition()

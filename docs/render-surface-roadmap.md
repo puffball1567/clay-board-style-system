@@ -401,8 +401,9 @@ pointer and accessibility targeting, preserves component-owned semantics, and
 invalidates only the visual layer when a completed GPU frame is published.
 The Style material path also supports GPU-produced alpha masks through
 readback or hybrid display and post-processing of explicit raster or GPU
-inputs. The opt-in SDL EGL/OpenGL path also applies a Style RGB matrix or
-Gaussian blur to an ordinary component subtree through shared textures.
+inputs. The opt-in SDL EGL/OpenGL path also applies an RGB matrix, Gaussian
+blur, or a packaged fragment shader to an ordinary Style subtree through
+shared textures.
 
 Version 0.7 visual acceptance includes multiple independent scenes rather than
 one backend probe:
@@ -502,9 +503,9 @@ policy without treating human-readable backend errors as control flow.
 ### Typed Shader Custom Style Painting
 
 Status: `Typed authoring, underlay/overlay/mask composition, and Style-owned
-RGB matrix and Gaussian blur filters are implemented. SDL EGL/OpenGL can run
-them on the GPU. Additional spatial and authored shader filters on ordinary UI
-subtrees remain open.`
+RGB matrix and Gaussian blur filters are implemented. SDL EGL/OpenGL can also
+run packaged fragment filters over ordinary UI subtrees. Additional inputs,
+effect outsets, and automatic shader animation remain open.`
 
 The primary intended use of shaders in ordinary CBSS UI is not to reimplement
 the layout engine, text stack, or every control on the GPU. CBSS first resolves
@@ -626,11 +627,12 @@ artifact uses the same retained Pipeline contract as low-level GPU submission.
 A build-only wrapper invokes the official `shaderc` without shell evaluation,
 and bounded checksummed packages retain unique target variants for runtime
 selection. RGB matrix and Gaussian blur filters compose over Style-owned visual
-groups on the CPU or through opt-in SDL EGL/OpenGL texture sharing. Retained GPU
-filter chains process explicit Canvas, Motion Scene, raster, and GPU inputs. Additional spatial and
-authored shader filters over ordinary UI, production mapping from typed
-parameters to backend bindings, visual-shape hit testing, and arbitrary scene
-picking remain later layers on the same contract. See
+groups on the CPU or through opt-in SDL EGL/OpenGL texture sharing. The same
+shared-texture path runs packaged Fragment filters over a single layer input and
+maps typed Style parameters to its vec4 uniforms. Retained GPU filter chains
+process explicit Canvas, Motion Scene, raster, and GPU inputs. Additional
+shader inputs, effect outsets, automatic frame scheduling, visual-shape hit
+testing, and arbitrary scene picking remain later layers on the same contract. See
 [Custom Paint](custom-paint.md) for the current public API and failure rules.
 
 This bounded Custom Style path is the scope of the design above. It ends at

@@ -37,6 +37,7 @@ type
     commands*: seq[PaintCommand]
     colorFilter*: LayerColorFilter
     blurRadius*: LayerBlurRadius
+    shaderFilter*: LayerShaderFilter
 
   CustomPaintMaterialProc* = proc(
     request: CustomPaintRequest
@@ -54,6 +55,8 @@ type
     callback: CustomPaintMaterialProc
     filterCallback: CustomPaintFilterProc
     blurRadius: LayerBlurRadius
+    shaderFilter: bool
+    shaderFallback: LayerColorFilter
     stages: set[CustomPaintStage]
     generation: uint64
 
@@ -165,6 +168,15 @@ proc registerCustomPaintBlurTracked*(
 ): Option[CustomPaintRegistration] =
   registry.registerEntry(material,
     CustomPaintMaterialEntry(blurRadius: radius, stages: {cpsFilter}), replace)
+
+proc registerCustomPaintShaderFilterTracked*(
+    registry: CustomPaintRegistry;
+    material: string;
+    fallback: LayerColorFilter = nil;
+    replace = false
+): Option[CustomPaintRegistration] =
+  registry.registerEntry(material, CustomPaintMaterialEntry(
+    shaderFilter: true, shaderFallback: fallback, stages: {cpsFilter}), replace)
 
 proc registerCustomPaintMaterial*(
     registry: CustomPaintRegistry;
@@ -319,6 +331,10 @@ proc resolveCustomPaint*(
     return CustomPaintResolution(status: cprsUnsupportedStage)
 
   if request.stage == cpsFilter:
+    if entry.shaderFilter:
+      return CustomPaintResolution(status: cprsResolved,
+        colorFilter: entry.shaderFallback,
+        shaderFilter: LayerShaderFilter(material: request.material, parameters: request.parameters))
     if entry.filterCallback.isNil:
       return CustomPaintResolution(status: cprsResolved, blurRadius: entry.blurRadius)
     return CustomPaintResolution(status: cprsResolved, colorFilter: entry.filterCallback(request))

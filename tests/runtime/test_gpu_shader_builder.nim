@@ -106,6 +106,33 @@ proc buildStorageImageShader(
   builder.emitGpuShaderSource()
 
 suite "typed GPU shader authoring":
+  test "layer samples emit one sampler and typed UV mapping":
+    let fragment = newGpuShaderBuilder(gssFragment, "layer-shader")
+    let uv = fragment.varyingInput(gsisTexCoord0, gsvtVec2)
+    let first = fragment.sampleLayer(uv)
+    let second = fragment.sampleLayer(uv)
+    fragment.setColorOutput(first + second)
+    let source = fragment.emitGpuShaderSource()
+    check source.source.count("SAMPLER2D(s_cbssLayer, 0)") == 1
+    check source.source.count("texture2D(s_cbssLayer") == 2
+    check source.uniforms == @[GpuShaderUniformEntry(
+      name: gpuLayerSourceUvUniform, valueType: gsvtVec4)]
+    validateGpuShaderInterface(buildVertexShader(), source)
+
+  test "invalid layer sample stages, coordinates and interfaces are rejected":
+    let fragment = newGpuShaderBuilder(gssFragment, "invalid-layer")
+    expect GpuShaderBuildError:
+      discard fragment.sampleLayer(fragment.vector([0'f32, 0, 0]))
+    expect GpuShaderBuildError:
+      discard fragment.uniform(gpuLayerSourceUvUniform, gsvtVec4)
+    let vertex = newGpuShaderBuilder(gssVertex, "invalid-layer-vertex")
+    expect GpuShaderBuildError:
+      discard vertex.sampleLayer(vertex.vector([0'f32, 0]))
+    let sampled = fragment.sampleLayer(fragment.vector([0'f32, 0]))
+    fragment.setColorOutput(sampled)
+    expect GpuShaderBuildError:
+      discard fragment.emitGpuShaderSource()
+
   test "emits deterministic vertex and fragment source":
     let vertex = buildVertexShader()
     let fragment = buildFragmentShader()
