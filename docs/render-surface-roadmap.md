@@ -504,8 +504,9 @@ policy without treating human-readable backend errors as control flow.
 
 Status: `Typed authoring, underlay/overlay/mask composition, and Style-owned
 RGB matrix and Gaussian blur filters are implemented. SDL EGL/OpenGL can also
-run packaged fragment filters over ordinary UI subtrees. Additional inputs,
-effect outsets, and automatic shader animation remain open.`
+run packaged fragment filters over ordinary UI subtrees, including up to four
+additional sampled inputs. Effect outsets and automatic shader animation
+remain open.`
 
 The primary intended use of shaders in ordinary CBSS UI is not to reimplement
 the layout engine, text stack, or every control on the GPU. CBSS first resolves
@@ -628,10 +629,10 @@ A build-only wrapper invokes the official `shaderc` without shell evaluation,
 and bounded checksummed packages retain unique target variants for runtime
 selection. RGB matrix and Gaussian blur filters compose over Style-owned visual
 groups on the CPU or through opt-in SDL EGL/OpenGL texture sharing. The same
-shared-texture path runs packaged Fragment filters over a single layer input and
-maps typed Style parameters to its vec4 uniforms. Retained GPU filter chains
-process explicit Canvas, Motion Scene, raster, and GPU inputs. Additional
-shader inputs, effect outsets, automatic frame scheduling, visual-shape hit
+shared-texture path runs packaged Fragment filters over the layer and up to
+four registered material textures, and maps typed Style parameters to its
+vec4 uniforms. Retained GPU filter chains process explicit Canvas, Motion Scene,
+raster, and GPU inputs. Effect outsets, automatic frame scheduling, visual-shape hit
 testing, and arbitrary scene picking remain later layers on the same contract. See
 [Custom Paint](custom-paint.md) for the current public API and failure rules.
 

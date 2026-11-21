@@ -1054,7 +1054,7 @@ canonical visual contract.
 | Area | Implemented | Remaining |
 | --- | --- | --- |
 | Canvas in ordinary UI | Bounded asynchronous readback, optional same-host direct presentation, opt-in zero-copy SDL EGL/OpenGL layer composition on Linux, and hybrid fallback | Mixed-layer coverage beyond the qualified OpenGL configuration |
-| Filters | Ordered GPU filter chains for Canvas, Motion Scene, and explicit raster or GPU inputs. Style subtrees support RGB matrices, bounded Gaussian blur, and packaged fragment shaders with typed parameters and CPU fallback on Linux EGL/OpenGL. | Shader filters with additional texture inputs, animated uniforms, or effect outsets |
+| Filters | Ordered GPU filter chains for Canvas, Motion Scene, and explicit raster or GPU inputs. Style subtrees support RGB matrices, bounded Gaussian blur, and packaged fragment shaders with typed parameters, up to four additional textures, and CPU fallback on Linux EGL/OpenGL. | Animated uniforms and effect outsets |
 | Motion Scene | Batched 2D shapes, images and atlas sprites, timelines, direct and filtered display | General paths and text as scene objects and further scene composition capabilities |
 | Qualification | Linux Mesa OpenGL pixel CI under ARC and ORC, including a native window pass and resize, plus a recorded AMD Renoir OpenGL run. Mock and bgfx NOOP tests cover recovery behavior. | Physical-driver coverage for mixed layers, recovery and pressure, and a combined Motion Scene and independent compute fixture under one presentation owner |
 
@@ -2486,8 +2486,9 @@ clips. GPU-native renderers can provide a typed compositor-owned offscreen
 validated before submission. SDL texture-backed layers support hybrid readback
 fallback and opt-in zero-copy composition on Linux EGL/OpenGL. The same shared
 contexts can apply an RGB matrix, Gaussian blur, or a packaged typed fragment
-shader to a whole Style UI subtree with CPU fallback. Additional shader inputs,
-automatically animated uniforms, and broader hardware qualification remain open.
+shader to a whole Style UI subtree with CPU fallback. Authored shaders can
+sample registered image textures and completed render targets. Automatic
+uniform animation and broader hardware qualification remain open.
 Owned bgfx hosts now recreate the backend
 from their latest validated configuration after
 device loss before deterministic namespace restoration begins; borrowed hosts

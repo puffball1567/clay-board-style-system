@@ -19,9 +19,13 @@ const
   maxGpuComputeWorkGroupZ* = 64'u32
   gpuLayerSourceSampler* = "s_cbssLayer"
   gpuLayerSourceUvUniform* = "u_cbssLayerUvRect"
+  MaxGpuLayerShaderInputs* = 4
+  gpuLayerInputUvPrefix* = "u_cbssLayerInputUv"
 
 type
   GpuShaderBuildError* = object of CatchableError
+  GpuLayerShaderInputSlot* = range[1 .. MaxGpuLayerShaderInputs]
+  GpuLayerTextureStage = range[0 .. MaxGpuLayerShaderInputs]
 
   GpuShaderValueType* = enum
     gsvtBool,
@@ -162,6 +166,7 @@ type
     operandCount: uint8
     storageBufferIndex: int
     storageImageIndex: int
+    layerStage: GpuLayerTextureStage
     swizzle: string
     unary: GpuShaderUnaryOperation
     binary: GpuShaderBinaryOperation
@@ -817,7 +822,7 @@ proc uniform*(
   if not name.startsWith("u_") or name in ["u_viewRect", "u_viewTexel",
       "u_view", "u_invView", "u_proj", "u_invProj", "u_viewProj",
       "u_invViewProj", "u_model", "u_modelView", "u_modelViewProj",
-      "u_alphaRef", gpuLayerSourceUvUniform]:
+      "u_alphaRef", gpuLayerSourceUvUniform] or name.startsWith(gpuLayerInputUvPrefix):
     raise newException(
       GpuShaderBuildError,
       "portable GPU uniform names must use a non-reserved u_ prefix"
@@ -840,18 +845,47 @@ proc uniform*(
     name: name
   ))
 
-proc sampleLayer*(
+proc gpuLayerInputSampler*(slot: GpuLayerShaderInputSlot): string =
+  "s_cbssLayerInput" & $slot
+
+proc gpuLayerInputUvUniform*(slot: GpuLayerShaderInputSlot): string =
+  gpuLayerInputUvPrefix & $slot
+
+proc layerSampler(stage: GpuLayerTextureStage): string =
+  if stage == 0: gpuLayerSourceSampler
+  else: gpuLayerInputSampler(GpuLayerShaderInputSlot(stage))
+
+proc layerUvUniform(stage: GpuLayerTextureStage): string =
+  if stage == 0: gpuLayerSourceUvUniform
+  else: gpuLayerInputUvUniform(GpuLayerShaderInputSlot(stage))
+
+proc sampleLayerTexture(
     builder: GpuShaderBuilder;
+    stage: GpuLayerTextureStage;
     uv: GpuShaderExpression
 ): GpuShaderExpression =
-  ## Sample the current UI layer in normalized, top-left-origin coordinates.
-  ## The returned RGBA color is premultiplied.
   builder.requireOpen()
   builder.requireMainBody("GPU layer sampling")
   if builder.stageValue != gssFragment or builder.requireExpression(uv).valueType != gsvtVec2:
     raise newException(GpuShaderBuildError, "GPU layer sampling requires fragment vec2 coordinates")
   builder.addNode(GpuShaderNode(kind: gsnLayerSample, valueType: gsvtVec4,
-    operands: [uv.nodeIndex, 0, 0, 0], operandCount: 1))
+    operands: [uv.nodeIndex, 0, 0, 0], operandCount: 1, layerStage: stage))
+
+proc sampleLayer*(
+    builder: GpuShaderBuilder; uv: GpuShaderExpression
+): GpuShaderExpression =
+  ## Sample the current UI layer in normalized, top-left-origin coordinates.
+  ## The returned RGBA color is premultiplied.
+  builder.sampleLayerTexture(0, uv)
+
+proc sampleLayerInput*(
+    builder: GpuShaderBuilder;
+    slot: GpuLayerShaderInputSlot;
+    uv: GpuShaderExpression
+): GpuShaderExpression =
+  ## Sample a material texture in normalized, top-left-origin coordinates.
+  ## Return its raw RGBA channels, including alpha for masks.
+  builder.sampleLayerTexture(GpuLayerTextureStage(slot), uv)
 
 proc setComputeWorkGroupSize*(
     builder: GpuShaderBuilder;
@@ -2253,8 +2287,9 @@ proc nodeExpression(builder: GpuShaderBuilder; index: int): string =
     result = "imageLoad(" & storage.name & ", " &
       builder.nodeReference(node.operands[0]) & ")"
   of gsnLayerSample:
-    result = "texture2D(" & gpuLayerSourceSampler & ", mix(" &
-      gpuLayerSourceUvUniform & ".xy, " & gpuLayerSourceUvUniform & ".zw, " &
+    let uvUniform = node.layerStage.layerUvUniform()
+    result = "texture2D(" & node.layerStage.layerSampler() & ", mix(" &
+      uvUniform & ".xy, " & uvUniform & ".zw, " &
       builder.nodeReference(node.operands[0]) & "))"
   of gsnStorageStore, gsnStorageImageStore, gsnLocalDeclare, gsnLocalStore,
       gsnLocalArrayDeclare, gsnLocalArrayStore, gsnFunctionReturn:
@@ -2414,7 +2449,7 @@ proc emitGpuShaderSource*(builder: GpuShaderBuilder): GpuShaderSource =
   var uniforms = initOrderedTable[string, GpuShaderValueType]()
   var inputNames: seq[string]
   var outputNames: seq[string]
-  var samplesLayer = false
+  var layerStages: set[GpuLayerTextureStage]
   for node in builder.nodes:
     case node.kind
     of gsnVertexInput:
@@ -2437,18 +2472,21 @@ proc emitGpuShaderSource*(builder: GpuShaderBuilder): GpuShaderSource =
         )
       uniforms[node.name] = node.valueType
     of gsnLayerSample:
-      samplesLayer = true
+      layerStages.incl node.layerStage
     else:
       discard
 
-  if samplesLayer:
+  if layerStages != {}:
+    if 0 notin layerStages:
+      raise newException(GpuShaderBuildError, "additional layer inputs require sampling the UI layer")
     if result.inputs != @[GpuShaderInterfaceEntry(slot: gsisTexCoord0, valueType: gsvtVec2)] or
         builder.colorOutputs[0] < 0:
       raise newException(GpuShaderBuildError, "GPU layer filters require TEXCOORD0 vec2 and color output 0")
     for index in 1 ..< builder.colorOutputs.len:
       if builder.colorOutputs[index] >= 0:
         raise newException(GpuShaderBuildError, "GPU layer filters write one color target")
-    uniforms[gpuLayerSourceUvUniform] = gsvtVec4
+    for stage in layerStages:
+      uniforms[stage.layerUvUniform()] = gsvtVec4
 
   if builder.stageValue == gssVertex:
     for item in builder.varyingOutputs:
@@ -2474,8 +2512,8 @@ proc emitGpuShaderSource*(builder: GpuShaderBuilder): GpuShaderSource =
       result.source.add "\n"
   else:
     result.source.add "#include <bgfx_shader.sh>\n\n"
-    if samplesLayer:
-      result.source.add "SAMPLER2D(" & gpuLayerSourceSampler & ", 0);\n"
+    for stage in layerStages:
+      result.source.add "SAMPLER2D(" & stage.layerSampler() & ", " & $stage & ");\n"
   for name, valueType in uniforms.pairs:
     result.uniforms.add GpuShaderUniformEntry(
       name: name,

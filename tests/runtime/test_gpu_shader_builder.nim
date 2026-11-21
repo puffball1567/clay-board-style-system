@@ -119,12 +119,32 @@ suite "typed GPU shader authoring":
       name: gpuLayerSourceUvUniform, valueType: gsvtVec4)]
     validateGpuShaderInterface(buildVertexShader(), source)
 
+  test "a layer material emits only its used additional sampler slots":
+    let fragment = newGpuShaderBuilder(gssFragment, "layer-mask")
+    let uv = fragment.varyingInput(gsisTexCoord0, gsvtVec2)
+    let layer = fragment.sampleLayer(uv)
+    let mask = fragment.sampleLayerInput(4, uv)
+    let maskAgain = fragment.sampleLayerInput(4, uv)
+    let detail = fragment.sampleLayerInput(1, uv)
+    fragment.setColorOutput(layer * mask * maskAgain * detail)
+    let source = fragment.emitGpuShaderSource()
+    check source.source.count("SAMPLER2D(s_cbssLayerInput4, 4)") == 1
+    check "SAMPLER2D(s_cbssLayerInput1, 1)" in source.source
+    check "s_cbssLayerInput2" notin source.source
+    check source.uniforms == @[
+      GpuShaderUniformEntry(name: gpuLayerSourceUvUniform, valueType: gsvtVec4),
+      GpuShaderUniformEntry(name: "u_cbssLayerInputUv1", valueType: gsvtVec4),
+      GpuShaderUniformEntry(name: "u_cbssLayerInputUv4", valueType: gsvtVec4)]
+    validateGpuShaderInterface(buildVertexShader(), source)
+
   test "invalid layer sample stages, coordinates and interfaces are rejected":
     let fragment = newGpuShaderBuilder(gssFragment, "invalid-layer")
     expect GpuShaderBuildError:
       discard fragment.sampleLayer(fragment.vector([0'f32, 0, 0]))
     expect GpuShaderBuildError:
       discard fragment.uniform(gpuLayerSourceUvUniform, gsvtVec4)
+    expect GpuShaderBuildError:
+      discard fragment.uniform("u_cbssLayerInputUv1", gsvtVec4)
     let vertex = newGpuShaderBuilder(gssVertex, "invalid-layer-vertex")
     expect GpuShaderBuildError:
       discard vertex.sampleLayer(vertex.vector([0'f32, 0]))
@@ -132,6 +152,11 @@ suite "typed GPU shader authoring":
     fragment.setColorOutput(sampled)
     expect GpuShaderBuildError:
       discard fragment.emitGpuShaderSource()
+    let auxiliaryOnly = newGpuShaderBuilder(gssFragment, "layer-input-without-source")
+    let uv = auxiliaryOnly.varyingInput(gsisTexCoord0, gsvtVec2)
+    auxiliaryOnly.setColorOutput(auxiliaryOnly.sampleLayerInput(1, uv))
+    expect GpuShaderBuildError:
+      discard auxiliaryOnly.emitGpuShaderSource()
 
   test "emits deterministic vertex and fragment source":
     let vertex = buildVertexShader()

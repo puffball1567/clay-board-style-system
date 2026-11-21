@@ -165,7 +165,8 @@ proc testRendererComposition() =
   var material: GpuHostDirectCompositeMaterial
   var matrix, limitedMatrix: GpuColorMatrixMaterial
   var blur, limitedBlur: GpuGaussianBlurMaterial
-  var shader: GpuLayerShaderMaterial
+  var shader, maskedShader: GpuLayerShaderMaterial
+  var verticalMask, horizontalMask: GpuResourceHandle
   defer:
     renderer.clearGpuDirectCompositor()
     renderer.setGpuLayerColorFilter(nil)
@@ -180,6 +181,7 @@ proc testRendererComposition() =
         blur.release()
         limitedBlur.release()
         shader.release()
+        maskedShader.release()
         host.close()
 
   shared.withSdl3BgfxOpenGlContext:
@@ -224,6 +226,77 @@ proc testRendererComposition() =
       customPaintParameters([customPaintFloat("u_gain", 1)]))
     let matrixVertex = gpuColorMatrixVertexSource().compileGpuShader(shaderTarget, compiler).artifact
     let matrixFragment = gpuColorMatrixFragmentSource().compileGpuShader(shaderTarget, compiler).artifact
+    verticalMask = host.createGpuTexture(shaderNamespace, GpuTextureDescriptor(
+      width: 1, height: 2, format: gtfRgba8, usage: {gtuSampled}, access: gtaStatic),
+      @[255'u8, 255, 255, 255, 0, 0, 0, 0])
+    horizontalMask = host.createGpuRenderTarget(shaderNamespace, GpuRenderTargetDescriptor(
+      width: 2, height: 2, format: gtfRgba8, usage: {gtuSampled, gtuRenderTarget}))
+    block:
+      # A native OpenGL RenderTarget has a different row order from an upload.
+      let maskUpload = host.createGpuTexture(shaderNamespace, GpuTextureDescriptor(
+        width: 2, height: 2, format: gtfRgba8, usage: {gtuSampled}, access: gtaStatic),
+        @[255'u8, 255, 255, 128, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0])
+      let copyMaterial = newGpuColorMatrixMaterial(host, shaderNamespace, matrixVertex, matrixFragment)
+      let copyFrame = host.beginGpuFrame()
+      doAssert copyMaterial.submit(maskUpload, horizontalMask, nil)
+      host.endGpuFrame(copyFrame)
+      copyMaterial.release()
+      doAssert host.releaseGpuResource(maskUpload)
+      doAssert host.gpuPresentableResourceInfo(horizontalMask).rowsBottomUp
+    let maskBuilder = newGpuShaderBuilder(gssFragment, "test-extra-layer-inputs")
+    let maskUv = maskBuilder.varyingInput(gsisTexCoord0, gsvtVec2)
+    let maskTop = maskBuilder.swizzle(maskBuilder.sampleLayerInput(4, maskUv), "a")
+    let maskLeft = maskBuilder.swizzle(maskBuilder.sampleLayerInput(1, maskUv), "a")
+    maskBuilder.setColorOutput(maskBuilder.sampleLayer(maskUv) * maskTop * maskLeft)
+    let maskFragment = maskBuilder.emitGpuShaderSource()
+    var maskPackage = gpuShaderPackage(maskFragment)
+    discard maskPackage.compileAndAddVariant(maskFragment, shaderTarget, compiler)
+    let packagedMask = decodeGpuShaderPackage(maskPackage.encodeGpuShaderPackageData())
+    let input4 = GpuLayerShaderInput(slot: 4, texture: verticalMask)
+    let input1 = GpuLayerShaderInput(slot: 1, texture: horizontalMask)
+    let beforeMasks = host.gpuNamespaceUsage(shaderNamespace)
+    doAssertRaises(ValueError):
+      discard newGpuLayerShaderMaterial(host, shaderNamespace, vertexPackage,
+        packagedMask, gsbtOpenGL, inputs = [input1])
+    doAssertRaises(ValueError):
+      discard newGpuLayerShaderMaterial(host, shaderNamespace, vertexPackage,
+        packagedMask, gsbtOpenGL, inputs = [input1, input1])
+    doAssertRaises(ValueError):
+      discard newGpuLayerShaderMaterial(host, shaderNamespace, vertexPackage,
+        packagedMask, gsbtOpenGL, inputs = [input1, GpuLayerShaderInput(slot: 0,
+          texture: verticalMask)])
+    doAssertRaises(ValueError):
+      discard newGpuLayerShaderMaterial(host, shaderNamespace, vertexPackage,
+        packagedMask, gsbtOpenGL, inputs = [input4, GpuLayerShaderInput(slot: 2,
+          texture: horizontalMask)])
+    doAssert host.gpuNamespaceUsage(shaderNamespace).resourceCount == beforeMasks.resourceCount
+    doAssert not host.isGpuResourcePresentationRetained(horizontalMask)
+    maskedShader = newGpuLayerShaderMaterial(host, shaderNamespace, vertexPackage,
+      packagedMask, gsbtOpenGL, inputs = [input4, input1])
+    doAssertRaises(GpuHostError):
+      discard host.releaseGpuResource(verticalMask)
+
+    block:
+      var rollbackBudget = budget
+      rollbackBudget.maxResources =
+        host.gpuNamespaceUsage(shaderNamespace).resourceCount - beforeMasks.resourceCount
+      let rollbackNamespace = host.createGpuNamespace("Layer input rollback", rollbackBudget)
+      let rollbackTexture = host.createGpuTexture(rollbackNamespace, GpuTextureDescriptor(
+        width: 1, height: 1, format: gtfRgba8, usage: {gtuSampled}, access: gtaStatic),
+        @[255'u8, 255, 255, 255])
+      doAssertRaises(ValueError):
+        discard newGpuLayerShaderMaterial(host, shaderNamespace, vertexPackage,
+          packagedMask, gsbtOpenGL, inputs = [input1,
+            GpuLayerShaderInput(slot: 4, texture: rollbackTexture)])
+      doAssertRaises(GpuHostError):
+        discard newGpuLayerShaderMaterial(host, rollbackNamespace, vertexPackage,
+          packagedMask, gsbtOpenGL, inputs = [
+            GpuLayerShaderInput(slot: 1, texture: rollbackTexture),
+            GpuLayerShaderInput(slot: 4, texture: rollbackTexture)])
+      doAssert host.gpuNamespaceUsage(rollbackNamespace).resourceCount == 1
+      doAssert host.releaseGpuResource(rollbackTexture)
+      doAssert host.closeGpuNamespace(rollbackNamespace)
+
     filterNamespace = host.createGpuNamespace("OpenGL layer filter", budget)
     matrix = newGpuColorMatrixMaterial(host, filterNamespace, matrixVertex, matrixFragment)
     # Leave room for the source import only, so fallback must retire it.
@@ -413,7 +486,7 @@ proc testRendererComposition() =
   doAssert fallbackFrame.pixel(20, 18) == [0'u8, 0, 255]
 
   let filter = newSdl3BgfxOpenGlLayerShaderFilter(shared, host, shaderNamespace,
-    [("layer-swizzle", shader)])
+    [("layer-swizzle", shader), ("layer-mask", maskedShader)])
   renderer.setGpuLayerShaderFilter(filter)
   let shaderUsage = host.gpuNamespaceUsage(shaderNamespace)
   for repeat in 0 ..< 2:
@@ -437,7 +510,28 @@ proc testRendererComposition() =
     renderer.render(commands, background)
     renderer.capturedFrame().get.expectCapture(fallbackFrame, 1)
     doAssert host.gpuNamespaceUsage(shaderNamespace).resourceCount == shaderUsage.resourceCount
+
+  let maskedCommands = [
+    pushShaderFilterLayer(rect(4, 4, 24, 24), LayerShaderFilter(material: "layer-mask")),
+    fillRect(rect(6, 6, 5, 4), rgba(1, 0, 0, 0.5)),
+    fillRect(rect(19, 6, 4, 4), rgb(0, 1, 0)),
+    fillRect(rect(19, 17, 4, 7), rgb(0, 0, 1)),
+    popLayer()]
+  for repeat in 0 ..< 2:
+    renderer.requestFrameCapture()
+    renderer.render(maskedCommands, background)
+    let frame = renderer.capturedFrame().get
+    doAssert frame.pixel(7, 7)[0] in 63'u8 .. 65'u8, $frame.pixel(7, 7)
+    doAssert frame.pixel(20, 7)[1] in 238'u8 .. 240'u8, $frame.pixel(20, 7)
+    doAssert frame.pixel(22, 7) == [0'u8, 255, 0], $frame.pixel(22, 7)
+    doAssert frame.pixel(20, 22) == [0'u8, 0, 0], $frame.pixel(20, 22)
+    doAssert host.gpuNamespaceUsage(shaderNamespace).resourceCount == shaderUsage.resourceCount
+
   renderer.setGpuLayerShaderFilter(nil)
+  shared.withSdl3BgfxOpenGlContext:
+    maskedShader.release()
+    doAssert host.releaseGpuResource(horizontalMask)
+    doAssert host.releaseGpuResource(verticalMask)
   renderer.requestFrameCapture()
   renderer.render(tinted, background)
   renderer.capturedFrame().get.expectCapture(fallbackFrame, 1)
