@@ -838,6 +838,20 @@ defaults by exact name and parameter kind. Scalars occupy `x`, booleans use
 components. The remaining components are zero. Extra parameters and type
 mismatches select the Style fallback.
 
+A fragment that uses `sampleLayerInput` also needs matching texture bindings
+when creating its material. For example, pass
+`inputs = [GpuLayerShaderInput(slot: 1, texture: maskTexture)]`. Supply each
+referenced slot exactly once. Sampled RGBA8 and BGRA8 textures and render
+targets in the material namespace can have any supported dimensions. The
+sampler uses linear filtering and clamps to the input bounds. The host maps
+native row order so each input uses top-left coordinates in the shader.
+
+The material retains its inputs read-only. Allocate and populate them before
+creating the material. To replace an input, create a replacement material and
+reinstall the renderer hook. Reinstalling the hook also invalidates cached
+pixels. Release the previous material in the shared context so the host can
+update or destroy its inputs.
+
 The pass uses a single draw and two SDL RGBA32 texture imports, which retire
 before SDL composites the output. This setup targets Linux SDL EGL/OpenGL.
 Clear the renderer hook with `renderer.setGpuLayerShaderFilter(nil)` before

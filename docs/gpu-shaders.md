@@ -139,6 +139,25 @@ Compile and package both stages as above. The layer pipeline supplies the
 source sampler and its row mapping. At runtime, resolve the matching target
 variant and supply a default value for every authored `vec4` uniform.
 
+Use `sampleLayerInput(slot, uv)` for application-provided images, masks, or
+completed render targets. Slots 1 through 4 use the same normalized
+top-left coordinates. Each sample returns the texture's RGBA channels. For a
+premultiplied alpha mask, multiply the full layer color by the mask's alpha.
+
+```nim
+let builder = newGpuShaderBuilder(gssFragment, "layer-mask")
+let uv = builder.varyingInput(gsisTexCoord0, gsvtVec2)
+let pixel = builder.sampleLayer(uv)
+let coverage = builder.swizzle(builder.sampleLayerInput(1, uv), "a")
+builder.setColorOutput(pixel * coverage)
+let fragment = builder.emitGpuShaderSource()
+```
+
+The graph emits fixed sampler stages and a generated vec4 row-mapping
+uniform for each referenced slot. The existing version 3 package carries
+those uniform declarations, and the material checks the supplied slots
+against them. [Texture binding](gpu-direct-surfaces.md#sdl-opengl-style-shader-filters)
+
 ## Compute Authoring
 
 Version 0.7 authoring emits typed Vertex, Fragment, and Compute source. Compute

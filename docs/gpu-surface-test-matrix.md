@@ -129,6 +129,12 @@ premultiplied alpha, CPU fallback for missing materials and invalid parameters,
 and bounded wrapper retirement. SDL integration tests check that switching
 the shader hook on or off repaints a retained layer.
 
+An additional filter samples a texture upload and a native OpenGL RenderTarget
+on two distinct slots. The fixture checks their row order, interpolation,
+and premultiplied masking. It also checks missing, duplicate, wrong-slot, and
+foreign-namespace bindings, and verifies that a failed allocation releases
+partially created bindings and retained inputs.
+
 ## Real-GPU Release Gate
 
 The same-host draw path is implemented, but the production direct compositor is

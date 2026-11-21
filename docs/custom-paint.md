@@ -190,6 +190,9 @@ owner's clip. CBSS applies group opacity at final composition. A change in
 source paint damages the entire filtered layer so offset samples remain
 correct. The same registration token and paint invalidation rules apply as
 for other Style filters.
+The renderer's material can supply up to four sampled textures, such as an
+image mask. Style continues to reference the named material and its scalar
+or vector parameters.
 
 Use a CPU RGB matrix fallback, or omit it to keep the completed layer's
 original pixels. The fallback handles unavailable materials, unsupported
