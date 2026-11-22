@@ -638,6 +638,49 @@ suite "SDL3 transform rendering":
     check renderer.retainedLayerStats().fullRepaints == 3
     check calls == 1
 
+  test "Style shader source reuse follows paint and layer bounds":
+    let previousDriver = getEnv("SDL_VIDEODRIVER")
+    putEnv("SDL_VIDEODRIVER", "dummy")
+    defer:
+      if previousDriver.len > 0: putEnv("SDL_VIDEODRIVER", previousDriver)
+      else: delEnv("SDL_VIDEODRIVER")
+    var renderer = initSdl3Renderer("CBSS shader source test", 16, 12, false)
+    defer: renderer.close()
+    var calls = 0
+    renderer.setGpuLayerShaderFilter(
+      proc(renderer, destination: pointer; shader: LayerShaderFilter): bool =
+        inc calls
+        false)
+    let fonts = initFontRegistry()
+    let cosmic = CosmicTextEngine()
+    var commands = [
+      pushShaderFilterLayer(rect(0, 0, 12, 12), LayerShaderFilter(material: "first")),
+      fillRect(rect(0, 0, 12, 12), rgb(1, 0, 0)),
+      popLayer()]
+    renderer.renderLayered(commands, cosmic, fonts)
+    check renderer.cacheUsage().shaderSourceBuilds == 1
+
+    commands[0].layerShaderFilter.material = "second"
+    renderer.renderLayered(commands, cosmic, fonts)
+    check calls == 2
+    check renderer.cacheUsage().shaderSourceHits == 1
+
+    commands[1].color = rgb(0, 1, 0)
+    renderer.requestFrameCapture()
+    renderer.renderLayered(commands, cosmic, fonts)
+    check renderer.capturedFrame().get.pixel(6, 6) == (0'u8, 255'u8, 0'u8)
+    check renderer.cacheUsage().shaderSourceBuilds == 2
+
+    commands[0].layerBounds = rect(0, 0, 4, 12)
+    renderer.requestFrameCapture()
+    renderer.renderLayered(commands, cosmic, fonts)
+    let frame = renderer.capturedFrame().get
+    check frame.pixel(2, 6) == (0'u8, 255'u8, 0'u8)
+    check frame.pixel(6, 6) == (255'u8, 255'u8, 255'u8)
+    check calls == 4
+    check renderer.cacheUsage().shaderSourceBuilds == 3
+    check renderer.cacheUsage().shaderSourceHits == 1
+
   test "layered rendering updates only damaged retained tiles":
     let previousDriver = getEnv("SDL_VIDEODRIVER")
     putEnv("SDL_VIDEODRIVER", "dummy")

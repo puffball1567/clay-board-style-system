@@ -10,6 +10,7 @@ import ../../text/[cosmic_text_engine, font_registry, text_engine]
 import ../../vendor/sdl3
 import ./config
 import ./image_loader
+import ./shader_source_cache
 import ./text_debug
 
 when sdl3CompileFlags.len > 0:
@@ -37,6 +38,7 @@ const
   defaultRoundedTextureCacheBytes = 128'u64 * 1024 * 1024
   defaultShadowTextureCacheBytes = 128'u64 * 1024 * 1024
   defaultTransformTextureCacheBytes = 128'u64 * 1024 * 1024
+  maxTransformTextures = 64
   maxSoftwareLayerFallbackBytes = 64'u64 * 1024 * 1024
   sdl3StreamWakeEventCode = 0x43425353'i32
   maxRetainedDamagePasses = 8
@@ -89,6 +91,7 @@ type
     width, height: int
     lastUsed: uint64
     inUse: bool
+    shaderSource: Sdl3ShaderSourceSnapshot
 
   Sdl3CapturedFrame* = object
     width*: int
@@ -100,6 +103,7 @@ type
     roundedTextureBytes*, shadowTextureBytes*: uint64
     transformTextureBytes*: uint64
     rasterFullUploads*, rasterPartialUploads*: uint64
+    shaderSourceHits*, shaderSourceBuilds*: uint64
 
   Sdl3GpuDirectCompositionStats* = object
     noFrame*, presented*, retry*, unsupported*, failed*: uint32
@@ -152,6 +156,8 @@ type
     shaderFilter: LayerShaderFilter
     valid: bool
     hasContent: bool
+    reusedShaderSource: bool
+    pendingShaderSource: Sdl3ShaderSourceSnapshot
 
   Sdl3ImageEventKind* = enum
     sieLoadStart,
@@ -249,6 +255,11 @@ type
     shadowTextureCache: seq[Sdl3ShadowTextureCacheEntry]
     shadowTextureCacheIndex: Table[Hash, seq[int]]
     transformTextureCache: seq[Sdl3TransformTextureCacheEntry]
+    shaderSourceFontEngine: pointer
+    shaderSourceFonts: FontRegistry
+    shaderSourceDebugText: bool
+    shaderSourceHits, shaderSourceBuilds: uint64
+    imageCacheGeneration: uint64
 
     staticLayerTexture: pointer
     staticLayerWidth, staticLayerHeight: int
@@ -312,7 +323,9 @@ proc cacheUsage*(target: Sdl3Renderer): Sdl3CacheUsage =
     shadowTextureBytes: target.shadowTextureCacheBytes,
     transformTextureBytes: target.transformTextureCacheBytes,
     rasterFullUploads: target.rasterFullUploads,
-    rasterPartialUploads: target.rasterPartialUploads
+    rasterPartialUploads: target.rasterPartialUploads,
+    shaderSourceHits: target.shaderSourceHits,
+    shaderSourceBuilds: target.shaderSourceBuilds
   )
 
 proc nativeSdl3Renderer*(target: Sdl3Renderer): pointer =
@@ -358,9 +371,17 @@ proc setGpuLayerBlur*(target: var Sdl3Renderer; filter: Sdl3LayerBlurProc) =
   ## Install a blur implementation while rendering is idle. Nil selects CPU blur.
   target.gpuLayerBlur = filter
 
+proc invalidateShaderSources(target: var Sdl3Renderer) =
+  for entry in target.transformTextureCache.mitems:
+    entry.shaderSource = nil
+
 proc setGpuLayerShaderFilter*(target: var Sdl3Renderer; filter: Sdl3LayerShaderFilterProc) =
   ## Set or clear the renderer's shader materials while rendering is idle.
   target.gpuLayerShaderFilter = filter
+  target.invalidateShaderSources()
+  if filter.isNil:
+    target.shaderSourceFonts = FontRegistry()
+    target.shaderSourceFontEngine = nil
   if not target.staticLayerTexture.isNil:
     target.staticLayerDamage.reset(target.staticLayerWidth, target.staticLayerHeight)
 
@@ -606,6 +627,7 @@ proc destroyTransientTextTextures(target: var Sdl3Renderer) =
   target.transientTextTextures.setLen(0)
 
 proc destroyImageCache(target: var Sdl3Renderer) =
+  inc target.imageCacheGeneration
   for entry in target.imageCache:
     if not entry.texture.isNil:
       SDL3.destroyTexture(entry.texture)
@@ -644,6 +666,8 @@ proc destroyTransformTextureCache(target: var Sdl3Renderer) =
       SDL3.destroyTexture(entry.texture)
   target.transformTextureCache.setLen(0)
   target.transformTextureCacheBytes = 0
+  target.shaderSourceFonts = FontRegistry()
+  target.shaderSourceFontEngine = nil
 
 proc destroyStaticLayer(target: var Sdl3Renderer) =
   if not target.staticLayerTexture.isNil:
@@ -1151,6 +1175,12 @@ proc pollEventFromRaw(
     of SDL_EVENT_QUIT, SDL_EVENT_WINDOW_CLOSE_REQUESTED:
       event = Sdl3Event(kind: sekQuit, timestamp: raw.common.timestamp)
       return true
+    of SDL_EVENT_RENDER_TARGETS_RESET, SDL_EVENT_RENDER_DEVICE_RESET:
+      target.invalidateShaderSources()
+      if not target.staticLayerTexture.isNil:
+        target.staticLayerDamage.reset(target.staticLayerWidth, target.staticLayerHeight)
+      event = Sdl3Event(kind: sekExpose, timestamp: raw.common.timestamp)
+      return true
     of SDL_EVENT_WINDOW_EXPOSED:
       event = Sdl3Event(kind: sekExpose, timestamp: raw.window.timestamp)
       return true
@@ -1606,6 +1636,8 @@ proc scaleTextStyle(style: ComputedTextStyle; scale: float32): ComputedTextStyle
 proc clearImageCache*(target: var Sdl3Renderer) =
   target.destroyImageCache()
   target.destroyRoundedTextureCache()
+  if not target.staticLayerTexture.isNil:
+    target.staticLayerDamage.reset(target.staticLayerWidth, target.staticLayerHeight)
 
 proc assetRoots*(target: Sdl3Renderer): seq[string] =
   target.assetResolver.roots
@@ -1826,13 +1858,26 @@ proc acquireTransformTexture(
     target: var Sdl3Renderer;
     width, height: int
 ): tuple[texture: pointer, index: int] =
+  var oldestSource = -1
   for index in 0 ..< target.transformTextureCache.len:
-    if not target.transformTextureCache[index].inUse and
-        target.transformTextureCache[index].width == width and
-        target.transformTextureCache[index].height == height:
-      target.transformTextureCache[index].inUse = true
-      target.transformTextureCache[index].lastUsed = target.frameId
-      return (target.transformTextureCache[index].texture, index)
+    let entry = target.transformTextureCache[index]
+    if entry.inUse or entry.width != width or entry.height != height:
+      continue
+    if entry.shaderSource.isNil:
+      oldestSource = index
+      break
+    if oldestSource < 0 or entry.lastUsed < target.transformTextureCache[oldestSource].lastUsed:
+      oldestSource = index
+
+  if oldestSource >= 0 and
+      (target.transformTextureCache[oldestSource].shaderSource.isNil or
+       target.transformTextureCache.len >= maxTransformTextures or
+       target.transformTextureCacheBytes + textureBytes(width, height) >
+         target.transformTextureCacheByteLimit):
+    target.transformTextureCache[oldestSource].shaderSource = nil
+    target.transformTextureCache[oldestSource].inUse = true
+    target.transformTextureCache[oldestSource].lastUsed = target.frameId
+    return (target.transformTextureCache[oldestSource].texture, oldestSource)
 
   let texture = SDL3.createTexture(
     target.renderer,
@@ -1860,7 +1905,7 @@ proc releaseTransformTexture(target: var Sdl3Renderer; index: int) =
     target.transformTextureCache[index].inUse = false
 
 proc evictTransformTextureCacheIfNeeded(target: var Sdl3Renderer) =
-  while target.transformTextureCache.len > 64 or
+  while target.transformTextureCache.len > maxTransformTextures or
       (target.transformTextureCache.len > 1 and
         target.transformTextureCacheBytes > target.transformTextureCacheByteLimit):
     var victim = -1
@@ -1887,7 +1932,8 @@ proc beginOffscreenLayer(
     opacity: float32;
     compositeMode: LayerCompositeMode;
     padding: float32;
-    layers: var seq[Sdl3TransformLayer]
+    layers: var seq[Sdl3TransformLayer];
+    sourceCommands: openArray[PaintCommand] = []
 ) =
   for existing in layers:
     if not existing.valid:
@@ -1906,7 +1952,22 @@ proc beginOffscreenLayer(
   let scale = target.pixelScale()
   let width = max(1, int(ceil(sourceBounds.w * scale)))
   let height = max(1, int(ceil(sourceBounds.h * scale)))
-  let acquired = target.acquireTransformTexture(width, height)
+  var sourceIndex = -1
+  if sourceCommands.len > 0:
+    for index, entry in target.transformTextureCache:
+      if not entry.inUse and entry.width == width and entry.height == height and
+          entry.shaderSource.matches(sourceCommands, sourceBounds, scale,
+            target.imageCacheGeneration):
+        sourceIndex = index
+        break
+  let reused = sourceIndex >= 0
+  let acquired =
+    if reused:
+      target.transformTextureCache[sourceIndex].inUse = true
+      target.transformTextureCache[sourceIndex].lastUsed = target.frameId
+      (texture: target.transformTextureCache[sourceIndex].texture, index: sourceIndex)
+    else:
+      target.acquireTransformTexture(width, height)
   let texture = acquired.texture
   var layer = Sdl3TransformLayer(
     texture: texture,
@@ -1919,21 +1980,34 @@ proc beginOffscreenLayer(
     textureCacheIndex: acquired.index,
     opacity: clamp(opacity, 0.0'f32, 1.0'f32),
     compositeMode: compositeMode,
-    valid: not texture.isNil
+    valid: not texture.isNil,
+    hasContent: reused,
+    reusedShaderSource: reused
   )
-  layers.add layer
-  if texture.isNil:
+  if not layer.valid or not SDL3.setRenderTarget(target.renderer, texture):
+    if acquired.index >= 0:
+      target.transformTextureCache[acquired.index].shaderSource = nil
+    target.releaseTransformTexture(acquired.index)
+    for existing in layers.mitems:
+      existing.pendingShaderSource = nil
+    layers.add Sdl3TransformLayer(valid: false)
     return
 
-  discard SDL3.setRenderTarget(target.renderer, texture)
-  discard SDL3.setRenderLogicalPresentation(
+  let logicalSet = SDL3.setRenderLogicalPresentation(
     target.renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED
   )
-  discard SDL3.setRenderScale(target.renderer, cfloat(scale), cfloat(scale))
+  let scaleSet = SDL3.setRenderScale(target.renderer, cfloat(scale), cfloat(scale))
   target.clipStack.setLen(0)
   target.renderer.setClip(none(SDL_Rect))
-  discard SDL3.setRenderDrawColor(target.renderer, 0, 0, 0, 0)
-  discard SDL3.renderClear(target.renderer)
+  if reused:
+    inc target.shaderSourceHits
+  else:
+    discard SDL3.setRenderDrawColor(target.renderer, 0, 0, 0, 0)
+    if SDL3.renderClear(target.renderer) and logicalSet and scaleSet and
+        sourceCommands.len > 0:
+      layer.pendingShaderSource = shaderSourceSnapshot(
+        sourceCommands, sourceBounds, scale, target.imageCacheGeneration)
+  layers.add layer
 
 proc beginTransformLayer(
     target: var Sdl3Renderer;
@@ -1952,7 +2026,8 @@ proc beginTransformLayer(
 proc beginCompositeLayer(
     target: var Sdl3Renderer;
     command: PaintCommand;
-    layers: var seq[Sdl3TransformLayer]
+    layers: var seq[Sdl3TransformLayer];
+    sourceCommands: openArray[PaintCommand] = []
 ) =
   if command.layerBlurRadius != 0 or not command.layerColorFilter.isNil or
       command.layerShaderFilter.material.len != 0:
@@ -1975,7 +2050,8 @@ proc beginCompositeLayer(
     command.layerOpacity,
     command.layerCompositeMode,
     0.0'f32,
-    layers
+    layers,
+    sourceCommands
   )
   layers[^1].colorFilter = command.layerColorFilter
   layers[^1].blurRadius = command.layerBlurRadius
@@ -2391,6 +2467,36 @@ proc gpuFilteredLayerTexture(
   if applied:
     result = destination
 
+proc shaderSourceResourcesReady(
+    target: Sdl3Renderer; snapshot: Sdl3ShaderSourceSnapshot
+): bool =
+  if snapshot.usesImages and snapshot.imageGeneration != target.imageCacheGeneration:
+    return false
+  for index, command in snapshot.commands:
+    case command.kind
+    of pcDrawImage:
+      var ready = false
+      for index in target.imageCacheIndex.getOrDefault(hash(command.imageSource)):
+        if target.imageCache[index].source == command.imageSource:
+          ready = true
+          break
+      if not ready:
+        return false
+    of pcDrawRasterSurface:
+      let raster = snapshot.rasters[index]
+      if raster.id == 0:
+        continue
+      var ready = false
+      for entry in target.rasterSurfaceCache:
+        if entry.surfaceId == raster.id and entry.revision == raster.revision:
+          ready = true
+          break
+      if not ready:
+        return false
+    else:
+      discard
+  true
+
 proc endTransformLayer(
     target: var Sdl3Renderer;
     layers: var seq[Sdl3TransformLayer]
@@ -2400,6 +2506,12 @@ proc endTransformLayer(
   let layer = layers.pop()
   if not layer.valid:
     return
+  if layer.hasContent and not layer.pendingShaderSource.isNil and
+      SDL3.getRenderTarget(target.renderer) == layer.texture and
+      target.shaderSourceResourcesReady(layer.pendingShaderSource):
+    target.transformTextureCache[layer.textureCacheIndex].shaderSource =
+      layer.pendingShaderSource
+    inc target.shaderSourceBuilds
 
   var filtered: pointer
   var filteredCacheIndex = -1
@@ -3806,7 +3918,19 @@ proc evictImageCacheIfNeeded(target: var Sdl3Renderer) =
       int(target.imageCache[victim].height)
     )
     target.imageCache.delete(victim)
+    inc target.imageCacheGeneration
     target.rebuildImageCacheIndex()
+
+proc renderCommandPass(
+    target: var Sdl3Renderer;
+    commands: openArray[PaintCommand];
+    cosmic: CosmicTextEngine;
+    fonts: FontRegistry;
+    dynamicOnly = false;
+    skipDynamic = false;
+    dynamicNodes: openArray[NodeId] = [];
+    debugText: static bool = false
+)
 
 proc render*(target: var Sdl3Renderer; commands: openArray[PaintCommand]; clearColor = rgb(1, 1, 1)) =
   inc target.frameId
@@ -3814,76 +3938,7 @@ proc render*(target: var Sdl3Renderer; commands: openArray[PaintCommand]; clearC
   target.updateLogicalPresentation()
   target.renderer.setColor(clearColor)
   discard SDL3.renderClear(target.renderer)
-  target.clipStack.setLen(0)
-  target.renderer.setClip(none(SDL_Rect))
-
-  var transformLayers: seq[Sdl3TransformLayer]
-  for sourcePrepared in prepareRenderPlan(commands):
-    let sourceCommand = sourcePrepared.command
-    if sourceCommand.kind == pcPushTransform:
-      target.beginTransformLayer(sourceCommand, transformLayers)
-      continue
-    if sourceCommand.kind == pcPushLayer:
-      target.beginCompositeLayer(sourceCommand, transformLayers)
-      continue
-    if sourceCommand.kind == pcPopTransform:
-      target.endTransformLayer(transformLayers)
-      continue
-    if sourceCommand.kind == pcPopLayer:
-      target.endTransformLayer(transformLayers)
-      continue
-    if transformLayers.renderingSuppressed():
-      continue
-    let prepared = sourcePrepared.localPreparedCommand(transformLayers)
-    let command = prepared.command
-    case command.kind
-    of pcPushTransform, pcPopTransform, pcPushLayer, pcPopLayer:
-      discard # Handled before localization.
-    of pcPushClip:
-      target.clipStack.add command.clipRegion()
-      target.renderer.setClip(target.effectiveClipBounds())
-    of pcPopClip:
-      if target.clipStack.len > 0:
-        target.clipStack.setLen(target.clipStack.len - 1)
-      target.renderer.setClip(target.effectiveClipBounds())
-    of pcBoxShadow:
-      transformLayers.markTransformContent()
-      target.renderBoxShadow(command)
-    of pcFillRect:
-      transformLayers.markTransformContent()
-      target.fillRoundedRect(command.rect, command.radius, command.color)
-    of pcFillLinearGradient:
-      transformLayers.markTransformContent()
-      target.fillLinearGradientPattern(
-        command.gradientRect, command.gradientPaintRect,
-        command.gradientClipRect,
-        command.gradient, command.gradientRepeat, command.gradientRadius
-      )
-    of pcStrokeRect:
-      transformLayers.markTransformContent()
-      target.strokeRoundedRect(command.strokeRect, command.strokeRadius, command.strokeWidth, command.strokeColor)
-    of pcFillPath:
-      transformLayers.markTransformContent()
-      target.renderFillPath(command)
-    of pcStrokePath:
-      transformLayers.markTransformContent()
-      target.renderStrokePath(command)
-    of pcDrawText:
-      transformLayers.markTransformContent()
-      target.renderer.drawDebugText(command)
-    of pcDrawImage:
-      transformLayers.markTransformContent()
-      target.drawImageTexture(command, prepared.roundedImageClipStack)
-      target.evictImageCacheIfNeeded()
-    of pcDrawRasterSurface:
-      transformLayers.markTransformContent()
-      target.drawRasterSurfaceTexture(command, prepared.roundedImageClipStack)
-    of pcDrawGpuDirectSurface:
-      if target.renderGpuDirectSurface(command, transformLayers):
-        transformLayers.markTransformContent()
-
-  target.closeTransformLayers(transformLayers)
-
+  target.renderCommandPass(commands, CosmicTextEngine(), FontRegistry(), debugText = true)
   target.captureCurrentFrame()
   discard SDL3.renderPresent(target.renderer)
   target.destroyTransientTextTextures()
@@ -4026,76 +4081,7 @@ proc render*(
   target.updateLogicalPresentation()
   target.renderer.setColor(clearColor)
   discard SDL3.renderClear(target.renderer)
-  target.clipStack.setLen(0)
-  target.renderer.setClip(none(SDL_Rect))
-
-  var transformLayers: seq[Sdl3TransformLayer]
-  for sourcePrepared in prepareRenderPlan(commands):
-    let sourceCommand = sourcePrepared.command
-    if sourceCommand.kind == pcPushTransform:
-      target.beginTransformLayer(sourceCommand, transformLayers)
-      continue
-    if sourceCommand.kind == pcPushLayer:
-      target.beginCompositeLayer(sourceCommand, transformLayers)
-      continue
-    if sourceCommand.kind == pcPopTransform:
-      target.endTransformLayer(transformLayers)
-      continue
-    if sourceCommand.kind == pcPopLayer:
-      target.endTransformLayer(transformLayers)
-      continue
-    if transformLayers.renderingSuppressed():
-      continue
-    let prepared = sourcePrepared.localPreparedCommand(transformLayers)
-    let command = prepared.command
-    case command.kind
-    of pcPushTransform, pcPopTransform, pcPushLayer, pcPopLayer:
-      discard # Handled before localization.
-    of pcPushClip:
-      target.clipStack.add command.clipRegion()
-      target.renderer.setClip(target.effectiveClipBounds())
-    of pcPopClip:
-      if target.clipStack.len > 0:
-        target.clipStack.setLen(target.clipStack.len - 1)
-      target.renderer.setClip(target.effectiveClipBounds())
-    of pcBoxShadow:
-      transformLayers.markTransformContent()
-      target.renderBoxShadow(command)
-    of pcFillRect:
-      transformLayers.markTransformContent()
-      target.fillRoundedRect(command.rect, command.radius, command.color)
-    of pcFillLinearGradient:
-      transformLayers.markTransformContent()
-      target.fillLinearGradientPattern(
-        command.gradientRect, command.gradientPaintRect,
-        command.gradientClipRect,
-        command.gradient, command.gradientRepeat, command.gradientRadius
-      )
-    of pcStrokeRect:
-      transformLayers.markTransformContent()
-      target.strokeRoundedRect(command.strokeRect, command.strokeRadius, command.strokeWidth, command.strokeColor)
-    of pcFillPath:
-      transformLayers.markTransformContent()
-      target.renderFillPath(command)
-    of pcStrokePath:
-      transformLayers.markTransformContent()
-      target.renderStrokePath(command)
-    of pcDrawText:
-      transformLayers.markTransformContent()
-      target.drawCosmicText(command, cosmic, fonts)
-    of pcDrawImage:
-      transformLayers.markTransformContent()
-      target.drawImageTexture(command, prepared.roundedImageClipStack)
-      target.evictImageCacheIfNeeded()
-    of pcDrawRasterSurface:
-      transformLayers.markTransformContent()
-      target.drawRasterSurfaceTexture(command, prepared.roundedImageClipStack)
-    of pcDrawGpuDirectSurface:
-      if target.renderGpuDirectSurface(command, transformLayers):
-        transformLayers.markTransformContent()
-
-  target.closeTransformLayers(transformLayers)
-
+  target.renderCommandPass(commands, cosmic, fonts)
   target.captureCurrentFrame()
   discard SDL3.renderPresent(target.renderer)
   target.destroyTransientTextTextures()
@@ -4108,14 +4094,12 @@ proc renderPreparedCommand(
     dynamicOnly: bool;
     skipDynamic: bool;
     dynamicNodeMask: openArray[bool];
-    transformLayers: var seq[Sdl3TransformLayer]
+    transformLayers: var seq[Sdl3TransformLayer];
+    debugText: static bool
 ) =
   let sourceCommand = prepared.command
   if sourceCommand.kind == pcPushTransform:
     target.beginTransformLayer(sourceCommand, transformLayers)
-    return
-  if sourceCommand.kind == pcPushLayer:
-    target.beginCompositeLayer(sourceCommand, transformLayers)
     return
   if sourceCommand.kind == pcPopTransform:
     target.endTransformLayer(transformLayers)
@@ -4177,7 +4161,10 @@ proc renderPreparedCommand(
   of pcDrawText:
     if drawCommand:
       transformLayers.markTransformContent()
-      target.drawCosmicText(command, cosmic, fonts)
+      when debugText:
+        target.renderer.drawDebugText(command)
+      else:
+        target.drawCosmicText(command, cosmic, fonts)
   of pcDrawImage:
     if drawCommand:
       transformLayers.markTransformContent()
@@ -4198,9 +4185,9 @@ proc renderCommandPass(
     commands: openArray[PaintCommand];
     cosmic: CosmicTextEngine;
     fonts: FontRegistry;
-    dynamicOnly = false;
-    skipDynamic = false;
-    dynamicNodes: openArray[NodeId] = []
+    dynamicOnly, skipDynamic: bool;
+    dynamicNodes: openArray[NodeId];
+    debugText: static bool
 ) =
   target.clipStack.setLen(0)
   target.renderer.setClip(target.effectiveClipBounds())
@@ -4211,12 +4198,42 @@ proc renderCommandPass(
   for node in dynamicNodes:
     if node.nodeIndex >= 0:
       dynamicNodeMask[node.nodeIndex] = true
+
+  # A partitioned replay may contain only a subset of a group's source paint.
+  let canReuseShaderSources = not target.gpuLayerShaderFilter.isNil and
+    not dynamicOnly and (not skipDynamic or dynamicNodes.len == 0)
+  if canReuseShaderSources and
+      (target.shaderSourceFontEngine != cosmic.handle or
+       target.shaderSourceFonts != fonts or target.shaderSourceDebugText != debugText):
+    target.invalidateShaderSources()
+    target.shaderSourceFontEngine = cosmic.handle
+    target.shaderSourceFonts = fonts
+    target.shaderSourceDebugText = debugText
+
+  let prepared = prepareRenderPlan(commands)
   var transformLayers: seq[Sdl3TransformLayer]
-  for prepared in prepareRenderPlan(commands):
-    target.renderPreparedCommand(
-      prepared, cosmic, fonts, dynamicOnly, skipDynamic, dynamicNodeMask,
-      transformLayers
-    )
+  var index = 0
+  while index < prepared.len:
+    let command = prepared[index].command
+    if command.kind == pcPushLayer:
+      let closeIndex =
+        if canReuseShaderSources and command.layerShaderFilter.material.len != 0 and
+            not transformLayers.renderingSuppressed():
+          shaderSourceEnd(commands, index + 1)
+        else: -1
+      if closeIndex >= 0:
+        target.beginCompositeLayer(command, transformLayers,
+          commands.toOpenArray(index + 1, closeIndex - 1))
+        if transformLayers[^1].reusedShaderSource:
+          # The closing command still filters and composites the cached input.
+          index = closeIndex
+          continue
+      else:
+        target.beginCompositeLayer(command, transformLayers)
+    else:
+      target.renderPreparedCommand(prepared[index], cosmic, fonts, dynamicOnly,
+        skipDynamic, dynamicNodeMask, transformLayers, debugText)
+    inc index
   target.closeTransformLayers(transformLayers)
 
 proc ensureStaticLayer(target: var Sdl3Renderer): bool =

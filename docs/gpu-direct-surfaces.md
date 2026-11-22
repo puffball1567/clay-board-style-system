@@ -854,6 +854,14 @@ update or destroy its inputs.
 
 The pass uses a single draw and two SDL RGBA32 texture imports, which retire
 before SDL composites the output. This setup targets Linux SDL EGL/OpenGL.
+When only uniforms change, SDL can reuse the unfiltered texture and run the
+filter again. Reuse requires matching source paint, bounds, pixel scale,
+published raster revisions, and image and font inputs. The renderer stores
+these textures within its offscreen texture cache budget. Live GPU producers,
+nested filters, file images with rounded clipping, and paint split across
+static and dynamic passes use the normal paint path, as do scopes with more
+than 512 source commands.
+
 Clear the renderer hook with `renderer.setGpuLayerShaderFilter(nil)` before
 releasing the materials in the shared context.
 [Shader authoring](gpu-shaders.md#layer-filter-authoring) ·
