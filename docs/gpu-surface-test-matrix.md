@@ -135,6 +135,11 @@ and premultiplied masking. It also checks missing, duplicate, wrong-slot, and
 foreign-namespace bindings, and verifies that a failed allocation releases
 partially created bindings and retained inputs.
 
+The GPU pixel fixture also checks start, midpoint, and end colors of a Style
+float animation using the same resolved layout. Portable tests cover
+per-node isolation, reduced motion, replacement, disposal, and the return
+to an idle scheduler.
+
 ## Real-GPU Release Gate
 
 The same-host draw path is implemented, but the production direct compositor is

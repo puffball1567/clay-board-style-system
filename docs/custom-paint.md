@@ -199,6 +199,33 @@ original pixels. The fallback handles unavailable materials, unsupported
 parameter values, and GPU resource limits. PPM always uses the fallback.
 [GPU setup](gpu-direct-surfaces.md#sdl-opengl-style-shader-filters)
 
+#### Animating a float uniform
+
+Start an owned animation with the node and the token returned by
+`registerCustomPaintShaderFilterTracked`. The shader material declares a
+matching float parameter, and each animation updates just that node's value.
+
+```nim
+let animation = ui.animateCustomPaintShaderFloat(panel, registration,
+  "u_gain", fromValue = 0.25, toValue = 1,
+  durationSeconds = 0.4, nowSeconds = now)
+```
+
+Use the same time source as the existing frame loop. Hosts call
+`tickOwnedAnimations` to sample tracks and `scheduleOwnedAnimations` when
+preparing to wait for events. Samples mark paint dirty so the host can
+rebuild paint commands from its current resolved styles and layout.
+The clock applies the specified timing curve with progress bounded to
+`0..1` and respects reduced motion unless `essentialMotion` is enabled.
+
+Completion retains the final value and stops requesting frames. Calling
+`cancelOwnedAnimation(animation)` keeps the last sample.
+`clearCustomPaintShaderFloat(panel, registration, "u_gain")` restores the
+Style or material default. Starting another track for the same node,
+registration, and uniform replaces its previous track. Disposing the node
+clears its track and overrides. Removing or replacing the material
+registration clears its overrides and the next clock tick cancels its tracks.
+
 ## Foreign Provider Boundary
 
 Foreign-language Craft Drivers can install a material with

@@ -550,6 +550,76 @@ suite "declarative custom paint":
     check ui.unregisterCustomPaintMaterial(token)
     check ui.consumeInvalidation().domains == {ddPaint}
 
+  test "shader float animations change only the selected node and finish idle":
+    let ui = initUiRoot()
+    let token = ui.registerCustomPaintShaderFilterTracked("pulse").get
+    let style = uiStyle([width(12), height(12), customPaint("pulse", cpsFilter,
+      parameters = [customPaintFloat("u_gain", 0.25)])])
+    let container = ui.box(uiStyle([width(24), height(48)]))
+    let panel = ui.box(style, parent = some(container))
+    discard ui.box(style, parent = some(container))
+    let resolved = ui.resolvedUi()
+    discard ui.consumeInvalidation()
+    proc gains(): seq[float32] =
+      for command in ui.buildPaintCommands(resolved.styles, resolved.layout):
+        if command.kind == pcPushLayer and command.layerShaderFilter.material == "pulse":
+          result.add command.layerShaderFilter.parameters[0].floatValue
+    check gains() == @[0.25'f32, 0.25'f32]
+    discard ui.animateCustomPaintShaderFloat(panel, token, "u_gain",
+      0, 1, durationSeconds = 2, nowSeconds = 10)
+    check ui.consumeInvalidation().domains == {ddPaint}
+    check gains() == @[0'f32, 0.25'f32]
+    let initial = ui.buildPaintCommands(resolved.styles, resolved.layout).filterIt(
+      it.kind == pcPushLayer and it.layerShaderFilter.material == "pulse")
+    var scheduler = initFrameScheduler()
+    ui.scheduleOwnedAnimations(scheduler, 10)
+    check scheduler.nextDeadline.isSome
+    scheduler.clearDeadline()
+    check ui.tickOwnedAnimations(scheduler, 11) == 1
+    check scheduler.consumeDirty() == {ddPaint}
+    check gains() == @[0.5'f32, 0.25'f32]
+    check initial[0].layerShaderFilter.parameters[0].floatValue == 0
+    scheduler.clearDeadline()
+    check ui.tickOwnedAnimations(scheduler, 12) == 1
+    check gains() == @[1'f32, 0.25'f32]
+    ui.scheduleOwnedAnimations(scheduler, 12)
+    check scheduler.nextDeadline.isNone
+    check ui.clearCustomPaintShaderFloat(panel, token, "u_gain")
+    check gains() == @[0.25'f32, 0.25'f32]
+
+  test "shader animation replacement, reduced motion, and unregistration":
+    let ui = initUiRoot()
+    let token = ui.registerCustomPaintShaderFilterTracked("pulse").get
+    let panel = ui.box(uiStyle([width(12), height(12), customPaint("pulse", cpsFilter)]))
+    let resolved = ui.resolvedUi()
+    let first = ui.animateCustomPaintShaderFloat(panel, token, "u_gain", 0, 0.5, 10, 0)
+    let second = ui.animateCustomPaintShaderFloat(panel, token, "u_gain", 0.5, 1, 10, 0)
+    check not ui.cancelOwnedAnimation(first)
+    var scheduler = initFrameScheduler()
+    ui.setReducedMotion(true)
+    check ui.tickOwnedAnimations(scheduler, 1) == 1
+    check not ui.cancelOwnedAnimation(second)
+    check scheduler.nextDeadline.isNone
+    let commands = ui.buildPaintCommands(resolved.styles, resolved.layout)
+    let filters = commands.filterIt(it.kind == pcPushLayer and
+      it.layerShaderFilter.material == "pulse")
+    check filters[0].layerShaderFilter.parameters[0].floatValue == 1
+    ui.setReducedMotion(false)
+    discard ui.animateCustomPaintShaderFloat(panel, token, "u_gain", 1, 0, 10, 2)
+    check ui.unregisterCustomPaintMaterial(token)
+    let replacement = ui.registerCustomPaintShaderFilterTracked("pulse").get
+    check ui.tickOwnedAnimations(scheduler, 3) == 0
+    check ui.activeAnimationOwners().len == 0
+    expect ValueError:
+      discard ui.animateCustomPaintShaderFloat(panel, token, "u_gain", 0, 1, 1, 3)
+    check not ui.clearCustomPaintShaderFloat(panel, replacement, "u_gain")
+    discard ui.animateCustomPaintShaderFloat(panel, replacement, "u_gain", 0, 1, 10, 4)
+    var interaction: InteractionState
+    check ui.disposeSubtree(panel, interaction)
+    check ui.tickOwnedAnimations(scheduler, 5) == 0
+    ui.scheduleOwnedAnimations(scheduler, 5)
+    check scheduler.nextDeadline.isNone
+
   test "filters preserve rounded owner clips and masks":
     let ui = initUiRoot()
     discard ui.box(uiStyle([

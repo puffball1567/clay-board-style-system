@@ -1,8 +1,8 @@
-import std/[algorithm, hashes, math, options, sets, tables]
+import std/[algorithm, hashes, math, options, sets, strutils, tables]
 
 import ../craft/[pack, style, style_slots]
 import ../core/[color, declaration, geometry, node, raster_surface, rule,
-    selector, style_value, custom_paint]
+    selector, style_value, custom_paint, custom_paint_parameter]
 import ../core/style_resolver
 import ../input/events
 import ../layout/layout
@@ -24,6 +24,11 @@ import ./motion_lifecycle
 import ./render_surface
 
 type
+  ShaderParameterAnimation = object
+    registration: CustomPaintRegistration
+    owner: NodeId
+    name: string
+
   DisabledSetter* = proc(disabled: bool) {.closure.}
   FieldsetRegister* = proc(setter: DisabledSetter) {.closure.}
   ClipboardTextProvider* = proc(): string {.closure.}
@@ -102,6 +107,7 @@ type
     keyframes: DeclarativeKeyframeRuntime
     transitions: DeclarativeTransitionRuntime
     animationOwners: Table[AnimationId, NodeId]
+    shaderAnimations: Table[AnimationId, ShaderParameterAnimation]
     pendingInvalidation: InvalidationState
     pendingInvalidationRoots: seq[NodeId]
     eventActionPool: seq[EventActionQueue]
@@ -167,6 +173,7 @@ proc initUiRoot*(): UiRoot =
     keyframes: initDeclarativeKeyframeRuntime(),
     transitions: initDeclarativeTransitionRuntime(),
     animationOwners: initTable[AnimationId, NodeId](),
+    shaderAnimations: initTable[AnimationId, ShaderParameterAnimation](),
     pendingInvalidation: initInvalidationState(),
     pendingInvalidationRoots: @[],
     eventActionPool: @[],
@@ -474,6 +481,7 @@ proc startOwnedAnimation*(
 
 proc cancelOwnedAnimation*(root: UiRoot; id: AnimationId): bool {.discardable.} =
   root.animationOwners.del(id)
+  root.shaderAnimations.del(id)
   root.animations.cancelAnimation(id)
 
 proc tickOwnedAnimations*(
@@ -483,7 +491,9 @@ proc tickOwnedAnimations*(
 ): int {.discardable.} =
   var stale: seq[AnimationId]
   for id, owner in root.animationOwners.pairs:
-    if not root.tree.isValid(owner):
+    if not root.tree.isValid(owner) or (id in root.shaderAnimations and
+        not root.customPaints.hasCustomPaintShaderFilterRegistration(
+          root.shaderAnimations.getOrDefault(id).registration)):
       stale.add id
   for id in stale:
     discard root.cancelOwnedAnimation(id)
@@ -495,6 +505,7 @@ proc tickOwnedAnimations*(
       completed.add id
   for id in completed:
     root.animationOwners.del(id)
+    root.shaderAnimations.del(id)
 
 proc scheduleOwnedAnimations*(
     root: UiRoot;
@@ -1570,6 +1581,72 @@ proc registerCustomPaintShaderFilter*(
 ): bool {.discardable.} =
   ## Refer to a renderer-registered shader with a CPU matrix or identity fallback.
   root.registerCustomPaintShaderFilterTracked(material, fallback, replace).isSome
+
+proc shaderAnimation(
+    root: UiRoot;
+    owner: NodeId;
+    registration: CustomPaintRegistration;
+    name: string
+): Option[AnimationId] =
+  for id, track in root.shaderAnimations.pairs:
+    if track.owner == owner and track.registration == registration and track.name == name:
+      return some(id)
+
+proc animateCustomPaintShaderFloat*(
+    root: UiRoot;
+    owner: NodeHandle;
+    registration: CustomPaintRegistration;
+    name: string;
+    fromValue, toValue: float32;
+    durationSeconds, nowSeconds: float64;
+    timing = linearTiming();
+    essentialMotion = false
+): AnimationId =
+  ## Animate a float uniform on one Style shader consumer using the owned clock.
+  ## The final value remains until cleared. Cancellation keeps the last sample.
+  if root.isNil or owner.root != root or not root.tree.isValid(owner.id):
+    raise newException(ValueError, "shader animation owner is not active in this UiRoot")
+  let registry = root.customPaints
+  if not registry.hasCustomPaintShaderFilterRegistration(registration):
+    raise newException(ValueError, "shader animation requires an active shader filter registration")
+  if not name.startsWith("u_"):
+    raise newException(ValueError, "shader animation requires a uniform name starting with u_")
+  let initial = customPaintFloat(name, fromValue)
+  discard customPaintFloat(name, toValue)
+  let previous = root.shaderAnimation(owner.id, registration, name)
+  let ownerId = owner.id
+  let spec = animationSpec(durationSeconds, timing = timing,
+    dirtyDomains = {ddPaint}, essentialMotion = essentialMotion,
+    onSample = proc(sample: AnimationSample) =
+      let progress = clamp(sample.progress, 0.0, 1.0)
+      let value = fromValue.float64 + (toValue.float64 - fromValue.float64) * progress
+      discard registry.setCustomPaintShaderParameter(registration, ownerId,
+        customPaintFloat(name, value)))
+  result = root.startOwnedAnimation(owner, spec, nowSeconds)
+  if not registry.setCustomPaintShaderParameter(registration, ownerId, initial):
+    discard root.cancelOwnedAnimation(result)
+    raise newException(ValueError, "shader animation parameter limit exceeded")
+  if previous.isSome:
+    discard root.cancelOwnedAnimation(previous.get)
+  root.shaderAnimations[result] = ShaderParameterAnimation(
+    registration: registration, owner: ownerId, name: name)
+  root.invalidate(ddPaint)
+
+proc clearCustomPaintShaderFloat*(
+    root: UiRoot;
+    owner: NodeHandle;
+    registration: CustomPaintRegistration;
+    name: string
+): bool {.discardable.} =
+  ## Stop this uniform animation and restore its authored Style or default value.
+  if root.isNil or owner.root != root or not root.tree.isValid(owner.id):
+    return false
+  let current = root.shaderAnimation(owner.id, registration, name)
+  if current.isSome:
+    discard root.cancelOwnedAnimation(current.get)
+  result = root.customPaints.clearCustomPaintShaderParameter(registration, owner.id, name)
+  if result:
+    root.invalidate(ddPaint)
 
 proc unregisterCustomPaintMaterial*(
     root: UiRoot;

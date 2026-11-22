@@ -9,11 +9,15 @@ import clay_board_style_system/backends/bgfx/[
   sdl3_opengl_target, sdl3_platform_data]
 import clay_board_style_system/backends/sdl3/renderer
 import clay_board_style_system/build/gpu_shader_compiler
-import clay_board_style_system/core/[color, geometry, node, raster_surface]
+import clay_board_style_system/core/[color, custom_paint, declaration, diagnostics, geometry, node,
+  raster_surface, style_resolver, style_value]
 import clay_board_style_system/core/custom_paint_parameter
+import clay_board_style_system/generated/default_properties
+import clay_board_style_system/layout/layout
 import clay_board_style_system/paint/[gpu_host_compositor, layer_blur, layer_color_filter, paint_command]
 import clay_board_style_system/runtime/[gpu_color_matrix, gpu_gaussian_blur, gpu_direct_surface, gpu_host,
-  gpu_layer_shader, gpu_shader_builder, gpu_shader_package]
+  gpu_layer_shader, gpu_shader_builder, gpu_shader_package, frame_scheduler,
+  invalidation, ui_root]
 import clay_board_style_system/vendor/sdl3
 
 const
@@ -526,6 +530,33 @@ proc testRendererComposition() =
     doAssert frame.pixel(22, 7) == [0'u8, 255, 0], $frame.pixel(22, 7)
     doAssert frame.pixel(20, 22) == [0'u8, 0, 0], $frame.pixel(20, 22)
     doAssert host.gpuNamespaceUsage(shaderNamespace).resourceCount == shaderUsage.resourceCount
+
+  block:
+    let ui = initUiRoot()
+    let registration = ui.registerCustomPaintShaderFilterTracked("layer-swizzle").get
+    let panel = ui.box(uiStyle([
+      decl("width", px(16)), decl("height", px(16)),
+      decl("background-color", colorValue(rgb(1, 0, 0))),
+      customPaint("layer-swizzle", cpsFilter,
+        parameters = [customPaintFloat("u_gain", 0.25)])]))
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(ui.tree, ui.styleSheets(), defaultProperties(), diagnostics)
+    doAssert not diagnostics.hasErrors
+    let layout = computeLayout(ui.tree, styles, size(32, 32))
+    discard ui.consumeInvalidation()
+    discard ui.animateCustomPaintShaderFloat(panel, registration, "u_gain",
+      0.25, 1, durationSeconds = 2, nowSeconds = 20)
+    var scheduler = initFrameScheduler()
+    for step in 0 .. 2:
+      scheduler.clearDeadline()
+      doAssert ui.tickOwnedAnimations(scheduler, 20 + step.float64) == 1
+      doAssert scheduler.consumeDirty() == {ddPaint}
+      renderer.requestFrameCapture()
+      renderer.render(ui.buildPaintCommands(styles, layout), background)
+      let actual = renderer.capturedFrame().get.pixel(7, 7)
+      doAssert actual[0] == 0 and actual[1] == 0, $actual
+      doAssert abs(actual[2].int - [64, 159, 255][step]) <= 1, $actual
+    doAssert scheduler.nextDeadline.isNone
 
   renderer.setGpuLayerShaderFilter(nil)
   shared.withSdl3BgfxOpenGlContext:
