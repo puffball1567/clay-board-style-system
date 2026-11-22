@@ -166,7 +166,11 @@ times object opacity. Compile
 `gpuMotionRectVertexSource()` and `gpuMotionRectFragmentSource()` into the
 `vertexArtifact` and `fragmentArtifact` for the selected backend. The material
 owns those shaders, its instanced pipeline, and a four-corner unit quad. The
-application supplies a graphics `pass` with viewport and scissor set to the
+shape and image fragment shaders declare the same vertex outputs so bgfx can
+link either pipeline. Recompile a previously saved shape fragment artifact
+after upgrading to the matching declarations.
+
+The application supplies a graphics `pass` with viewport and scissor set to the
 snapshot's viewport and owns its frame and render target. `submit` returns
 `false` for an empty batch and submits no pass, so clearing an empty scene is
 the application's responsibility. The same shader pair is compiled for OpenGL

@@ -17,7 +17,7 @@ import clay_board_style_system/layout/layout
 import clay_board_style_system/paint/[gpu_host_compositor, layer_blur, layer_color_filter, paint_command]
 import clay_board_style_system/runtime/[gpu_color_matrix, gpu_gaussian_blur, gpu_direct_surface, gpu_host,
   gpu_layer_shader, gpu_shader_builder, gpu_shader_package, frame_scheduler,
-  invalidation, ui_root]
+  invalidation, motion_scene, motion_scene_gpu, motion_scene_gpu_direct, ui_root]
 import clay_board_style_system/vendor/sdl3
 
 const
@@ -152,6 +152,118 @@ proc expectCapture(actual, expected: Sdl3CapturedFrame; tolerance: int) =
       "filtered pixel " & $(index div 3) & ": " & $value &
         " != " & $expected.pixels[index]
 
+proc verifyMotionAndCompute(
+    renderer: var Sdl3Renderer;
+    shared: Sdl3BgfxOpenGlContext;
+    host: GpuHost;
+    compiler: GpuShaderCompilerConfig
+) =
+  let graphicsTarget = gpuShaderCompileTarget(gsbtOpenGL, gscpLinux, "330")
+  let computeTarget = gpuShaderCompileTarget(gsbtOpenGL, gscpLinux, "430")
+  let builder = newGpuShaderBuilder(gssCompute, "test-direct-compute")
+  builder.setComputeWorkGroupSize(8, 8, 1)
+  let output = builder.storageImage("i_output", 0, gtfRgba8, gsaWrite)
+  let coordinates = builder.convertValue(gsvtIVec2,
+    builder.swizzle(builder.globalInvocationId(), "xy"))
+  builder.storeStorageImage(output, coordinates, builder.uniform("u_fill", gsvtVec4))
+  let computeArtifact = builder.emitGpuShaderSource().compileGpuShader(
+    computeTarget, compiler).artifact
+  let motionVertex = gpuMotionRectVertexSource().compileGpuShader(graphicsTarget, compiler).artifact
+  let motionFragment = gpuMotionRectFragmentSource().compileGpuShader(graphicsTarget, compiler).artifact
+  let viewport = size(8, 8)
+  let scene = newMotionScene(motionSceneSnapshot(viewport, [
+    motionRect(MotionObjectId(1), rect(0, 0, 4, 4), rgba(1, 0, 0, 0.5))]))
+
+  var motion: GpuMotionSceneDirect
+  var compute: GpuDirectSurface
+  var motionNamespace, computeNamespace: GpuNamespaceId
+  var pipeline, fillUniform: GpuResourceHandle
+  var outputs: array[2, GpuResourceHandle]
+  let budget = GpuResourceBudget(maxResources: 16, persistentBytes: 64 * 1024,
+    workUnitsPerFrame: 4)
+  defer:
+    shared.withSdl3BgfxOpenGlContext:
+      if not compute.isClosed:
+        discard compute.closeGpuDirectSurface()
+      if not motion.isClosed:
+        discard motion.close()
+      for namespace in [motionNamespace, computeNamespace]:
+        if host.hasGpuNamespace(namespace):
+          discard host.closeGpuNamespace(namespace)
+  shared.withSdl3BgfxOpenGlContext:
+    doAssert host.backendInfo().computeSupported, "OpenGL compute is required"
+    motionNamespace = host.createGpuNamespace("Motion producer", budget)
+    computeNamespace = host.createGpuNamespace("Compute producer", budget)
+    motion = host.newGpuMotionSceneDirect(motionNamespace, scene,
+      defaultGpuMotionSceneDirectConfig(8, 8), motionVertex, motionFragment)
+    doAssert motion.queueFrame()
+    doAssert motion.collectFrame()
+    var config = defaultGpuDirectSurfaceConfig(8, 8)
+    config.acceptComputeOutput = true
+    compute = host.newGpuDirectSurface(computeNamespace, config)
+    let shader = host.createGpuShader(computeNamespace, computeArtifact)
+    pipeline = host.createGpuComputePipeline(computeNamespace,
+      GpuComputePipelineDescriptor(computeShader: shader))
+    fillUniform = host.createGpuUniform(computeNamespace,
+      GpuUniformDescriptor(name: "u_fill", uniformType: gutVec4, arrayLength: 1))
+    for texture in outputs.mitems:
+      texture = host.createGpuTexture(computeNamespace,
+        GpuTextureDescriptor(width: 8, height: 8, format: gtfRgba8,
+          usage: {gtuSampled, gtuStorage}, access: gtaStatic))
+
+  let motionCommand = drawGpuDirectSurface(NodeId(1), motion.surface(), rect(2, 2, 12, 12))
+  let computeCommand = drawGpuDirectSurface(NodeId(2), compute, rect(12, 10, 14, 14))
+  let bounds = rect(0, 0, 32, 32)
+  let background = rgb(0, 0, 1)
+  let backdrop = fillRect(bounds, background)
+  let motionRevision = motion.surface().presentedRevision()
+  for index, color in [[0'f32, 1, 0, 1], [1'f32, 0, 1, 1]]:
+    shared.withSdl3BgfxOpenGlContext:
+      let frame = host.beginGpuFrame()
+      try:
+        host.dispatchGpuCompute(computeNamespace, GpuComputeCommand(
+          pipeline: pipeline, groupsX: 1, groupsY: 1, groupsZ: 1,
+          bindings: GpuBindingSet(
+            uniforms: @[GpuUniformBinding(uniform: fillUniform, values: @color)],
+            storageImages: @[GpuStorageImageBinding(stage: 0,
+              texture: outputs[index], access: gsaWrite)])))
+        doAssert compute.queueGpuDirectSurfaceFrame(outputs[index], frame)
+      finally:
+        host.endGpuFrame(frame)
+      doAssert compute.collectGpuDirectSurfaceFrame()
+      doAssert compute.presentedRevision() == uint64(index + 1)
+      doAssert motion.surface().presentedRevision() == motionRevision
+
+    renderer.requestFrameCapture()
+    renderer.render([pushLayer(bounds), backdrop, motionCommand,
+      pushClip(rect(12, 12, 8, 8)), computeCommand, popClip(),
+      fillRect(rect(16, 16, 2, 2), rgb(1, 1, 0)), popLayer()], rgb(0, 0, 0))
+    let pixels = renderer.capturedFrame().get
+    doAssert renderer.gpuDirectCompositionStats().presented == 2
+    doAssert pixels.pixel(4, 4) == [128'u8, 0, 127],
+      $[pixels.pixel(4, 4), pixels.pixel(4, 11), pixels.pixel(14, 14)]
+    doAssert pixels.pixel(10, 4) == [0'u8, 0, 255]
+    let expected = if index == 0: [0'u8, 255, 0] else: [255'u8, 0, 255]
+    doAssert pixels.pixel(14, 14) == expected, $pixels.pixel(14, 14)
+    doAssert pixels.pixel(14, 10) == [0'u8, 0, 255]
+    doAssert pixels.pixel(16, 16) == [255'u8, 255, 0]
+
+  shared.withSdl3BgfxOpenGlContext:
+    doAssert compute.closeGpuDirectSurface()
+    doAssert host.closeGpuNamespace(computeNamespace)
+    discard scene.replaceSnapshot(motionSceneSnapshot(viewport, [
+      motionRect(MotionObjectId(1), rect(0, 0, 4, 4), rgb(0, 1, 1))]))
+    doAssert motion.queueFrame()
+    doAssert motion.collectFrame()
+
+  renderer.requestFrameCapture()
+  renderer.render([pushLayer(bounds), backdrop, motionCommand, popLayer()], rgb(0, 0, 0))
+  doAssert renderer.gpuDirectCompositionStats().presented == 1
+  doAssert renderer.capturedFrame().get.pixel(4, 4) == [0'u8, 255, 255]
+  shared.withSdl3BgfxOpenGlContext:
+    doAssert motion.close()
+    doAssert host.closeGpuNamespace(motionNamespace)
+
 proc testRendererComposition() =
   doAssert SDL3.setHint("SDL_VIDEO_FORCE_EGL", "1"), sdlError()
   doAssert SDL3.setHint("SDL_RENDER_DRIVER", "opengl"), sdlError()
@@ -171,6 +283,10 @@ proc testRendererComposition() =
   var blur, limitedBlur: GpuGaussianBlurMaterial
   var shader, maskedShader: GpuLayerShaderMaterial
   var verticalMask, horizontalMask: GpuResourceHandle
+  let work = createTempDir("cbss-sdl-layer-shaders-", "")
+  defer: removeDir(work)
+  let compiler = gpuShaderCompilerConfig(getEnv("CBSS_SHADERC"),
+    [getEnv("CBSS_BGFX_SHADER_INCLUDE")], workDirectory = work)
   defer:
     renderer.clearGpuDirectCompositor()
     renderer.setGpuLayerColorFilter(nil)
@@ -195,17 +311,14 @@ proc testRendererComposition() =
     options.platformData = shared.platformData()
     options.flushWithoutPresent = true
     options.directPresentation = newQualifiedBgfxDirectPresentationProfile(
-      {gtfRgba8}, alphaModes = {gcamStraight})
+      {gtfRgba8}, computeOutputSupported = true,
+      alphaModes = {gcamStraight, gcamPremultiplied})
     host = openGpuHost(newBgfxBackend(options), ghoOwned, GpuHostConfig(
       width: 32, height: 32, resetFlags: BGFX_RESET_FLIP_AFTER_RENDER))
     let budget = GpuResourceBudget(persistentBytes: 16_384, maxResources: 24,
       workUnitsPerFrame: 4)
     composition = host.createGpuNamespace("OpenGL composition", budget)
     let producer = host.createGpuNamespace("OpenGL producer", budget)
-    let work = createTempDir("cbss-sdl-layer-shaders-", "")
-    defer: removeDir(work)
-    let compiler = gpuShaderCompilerConfig(getEnv("CBSS_SHADERC"),
-      [getEnv("CBSS_BGFX_SHADER_INCLUDE")], workDirectory = work)
     let shaderTarget = gpuShaderCompileTarget(gsbtOpenGL, gscpLinux, "330")
     let layerVertex = gpuLayerShaderVertexSource()
     let builder = newGpuShaderBuilder(gssFragment, "test-layer-filter")
@@ -335,10 +448,9 @@ proc testRendererComposition() =
     let buffer = host.createGpuBuffer(composition, GpuBufferDescriptor(
       byteSize: bytes.len.uint64, role: gbrVertex, access: gbaStatic,
       vertexLayout: layout), move(bytes))
-    let pipeline = host.createGpuGraphicsPipeline(composition,
-      GpuGraphicsPipelineDescriptor(vertexShader: vertex, fragmentShader: fragment,
-        vertexLayout: layout, colorFormat: gtfRgba8, topology: gptTriangleStrip,
-        cullMode: gcmNone, blend: alphaGpuBlendState()))
+    var pipeline = GpuGraphicsPipelineDescriptor(vertexShader: vertex,
+      fragmentShader: fragment, vertexLayout: layout, colorFormat: gtfRgba8,
+      topology: gptTriangleStrip, cullMode: gcmNone, blend: alphaGpuBlendState())
     let composite = host.createGpuUniform(composition, GpuUniformDescriptor(
       name: "u_cbssComposite", uniformType: gutVec4, arrayLength: 1))
     let uv = host.createGpuUniform(composition, GpuUniformDescriptor(
@@ -349,7 +461,9 @@ proc testRendererComposition() =
     material = GpuHostDirectCompositeMaterial(namespace: composition,
       vertexBuffer: buffer, compositeUniform: composite, uvRectUniform: uv,
       sampler: sampler, vertexCount: 4)
-    material.pipelines[gcamStraight] = pipeline
+    material.pipelines[gcamStraight] = host.createGpuGraphicsPipeline(composition, pipeline)
+    pipeline.blend = premultipliedAlphaGpuBlendState()
+    material.pipelines[gcamPremultiplied] = host.createGpuGraphicsPipeline(composition, pipeline)
     let image = host.createGpuTexture(producer, GpuTextureDescriptor(
       width: 1, height: 2, format: gtfRgba8, usage: {gtuSampled}, access: gtaStatic),
       @[255'u8, 0, 0, 255, 0, 255, 0, 255])
@@ -613,6 +727,8 @@ proc testRendererComposition() =
   renderer.requestFrameCapture()
   renderer.render(tinted, background)
   renderer.capturedFrame().get.expectCapture(fallbackFrame, 1)
+
+  renderer.verifyMotionAndCompute(shared, host, compiler)
 
 testSharedTarget()
 testRendererComposition()

@@ -41,6 +41,7 @@ jobs and must not be replaced by a mock-only success.
 | GPU raster filter display | published raster revisions upload, filter, and queue a bounded direct or readback output; same-size source replacement forces one full upload; filter-chain replacement and external-input refresh reprocess without upload | wrong alpha/shape configuration, mismatched replacement size or chain namespace, unchanged revisions, retained-output pressure, and full readback slots avoid unsafe drawing; refresh requests survive backpressure; insufficient combined upload, filter, and readback budget fails before upload or draw and retries next frame | initial, dirty-region, replacement raster, changed-filter, and updated-mask pixels survive GPU filtering and CPU display readback; cropped masks and foregrounds stay inside their atlas tiles with linear sampling | Automated host contract and OpenGL pixel fixture under ARC/ORC |
 | GPU filtered Style material | registered underlay/overlay emits direct or raster commands; readback/hybrid mask draws completed raster into the destination-in layer; each material name observes shared completion and invalidates only its consumers | duplicate names, filter stage, and direct-only masks reject registration; hybrid masks wait for readback pixels | command order preserves ordinary component text and semantics without another node | Automated host and UI contract under ARC/ORC |
 | Real compositor | direct Texture and RenderTarget through the same-host offscreen compositor; ordinary graphics pass sampling a previous RenderTarget; rectangular UV crop, straight/premultiplied/opaque alpha, opacity, rounded mask pixels, latest-ready coalescing, top-left row orientation, logical target origins, two-times pixel scale, fractional-position texel alignment, ordered surface composition, a window pass and offscreen pixels after a native-window resize | unsupported adapter falls back or fails closed | transform and final-window pixel stacking | Linux Mesa OpenGL pixel CI under ARC and ORC; broader qualification pending |
+| Motion Scene and independent compute | a premultiplied Motion Scene RenderTarget and a compute-written RGBA8 texture compose with SDL paint under one window owner | a compute view starts without the previous graphics view's clear or framebuffer | compute revisions leave the Motion Scene pixels intact; Motion Scene updates after the compute namespace closes; the SDL clip and overlay preserve paint order | Linux Mesa OpenGL pixel CI under ARC and ORC |
 | Partial texture upload pixels | tight and padded updates preserve row colors and untouched columns | malformed spans are rejected in the adapter contract matrix | unaligned 7-byte pitch; pitches 65534, 65535, 65536; a single row with UINT32_MAX stride | Linux Mesa OpenGL pixel CI under ARC and ORC |
 | Bounded producer pressure | 64 update/composition cycles each with double and triple buffering; two independent producer namespaces; buffer reuse across eight frames between readbacks | a saturated queue rejects the extra resource without retaining it; an outstanding lease prevents close | latest-ready coalescing, retirement after lease release, fixed resource/byte accounting, every pixel at batch boundaries, surviving producer after peer teardown | Linux Mesa OpenGL pixel CI under ARC and ORC |
 | Hardware stress | sustained physical-device presentation | device loss, cancellation, teardown races | GPU-memory pressure and physical-driver qualification | Pending real-GPU CI |
@@ -109,6 +110,16 @@ GPU command, final-window readback fallback, and resource accounting across
 two frames of SDL layer reuse. This uses two EGL contexts in the same share
 group, with a GPU fence at each handoff. The mixed-layer path is covered by
 Linux Mesa CI under ARC and ORC. Physical-driver coverage remains open.
+
+The sharing fixture also composites a Motion Scene render target and an
+independent compute shader's storage texture into the same SDL layer. The two
+producers have separate namespaces on one GPU host. The fixture checks
+premultiplied alpha, clip and overlay pixels, compute updates without changing
+the scene, and a scene update after the compute namespace closes. The first
+dispatch reuses the previous Motion Scene view ID and verifies that the
+compute pass leaves the retained framebuffer intact. The direct pixel fixture
+also checks that shape and image pipelines draw in submission order within a
+Motion Scene pass.
 
 The fixture also applies the Style RGB matrix to an ordinary SDL UI layer
 containing SDL and GPU paint. It compares the entire window capture with the
