@@ -135,10 +135,14 @@ and premultiplied masking. It also checks missing, duplicate, wrong-slot, and
 foreign-namespace bindings, and verifies that a failed allocation releases
 partially created bindings and retained inputs.
 
-The GPU pixel fixture also checks start, midpoint, and end colors of a Style
-float animation using the same resolved layout. Portable tests cover
-per-node isolation, reduced motion, replacement, disposal, and the return
-to an idle scheduler.
+The GPU pixel fixture checks start, midpoint, and end colors of a Style float
+animation using the same resolved layout. It verifies that the renderer builds
+the source texture once and reuses it for the next two frames. The fixture also
+publishes new pixels to the same raster surface and checks that the filter uses
+the updated pixels. SDL software rendering covers source paint and layer
+bounds changes on the retained rendering path. Portable tests cover per-node
+isolation, reduced motion, replacement, disposal, and the return to an idle
+scheduler.
 
 ## Real-GPU Release Gate
 

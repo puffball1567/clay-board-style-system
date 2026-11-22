@@ -547,6 +547,7 @@ proc testRendererComposition() =
     discard ui.animateCustomPaintShaderFloat(panel, registration, "u_gain",
       0.25, 1, durationSeconds = 2, nowSeconds = 20)
     var scheduler = initFrameScheduler()
+    let before = renderer.cacheUsage()
     for step in 0 .. 2:
       scheduler.clearDeadline()
       doAssert ui.tickOwnedAnimations(scheduler, 20 + step.float64) == 1
@@ -557,6 +558,26 @@ proc testRendererComposition() =
       doAssert actual[0] == 0 and actual[1] == 0, $actual
       doAssert abs(actual[2].int - [64, 159, 255][step]) <= 1, $actual
     doAssert scheduler.nextDeadline.isNone
+    doAssert renderer.cacheUsage().shaderSourceBuilds == before.shaderSourceBuilds + 1
+    doAssert renderer.cacheUsage().shaderSourceHits == before.shaderSourceHits + 2
+
+  block:
+    let surface = newRasterSurface(1, 1, [255'u8, 0, 0, 255])
+    let bounds = rect(0, 0, 12, 12)
+    let commands = [
+      pushShaderFilterLayer(bounds, LayerShaderFilter(material: "layer-swizzle")),
+      drawRasterSurface(NodeId(1), surface, bounds),
+      popLayer()]
+    let before = renderer.cacheUsage()
+    for expected in [[0'u8, 0, 255], [0'u8, 0, 255], [255'u8, 0, 0]]:
+      if expected[0] == 255:
+        surface.updateRegion(rasterRegion(0, 0, 1, 1), [0'u8, 0, 255, 255])
+        doAssert surface.publish()
+      renderer.requestFrameCapture()
+      renderer.render(commands, background)
+      doAssert renderer.capturedFrame().get.pixel(6, 6) == expected
+    doAssert renderer.cacheUsage().shaderSourceBuilds == before.shaderSourceBuilds + 2
+    doAssert renderer.cacheUsage().shaderSourceHits == before.shaderSourceHits + 1
 
   renderer.setGpuLayerShaderFilter(nil)
   shared.withSdl3BgfxOpenGlContext:
