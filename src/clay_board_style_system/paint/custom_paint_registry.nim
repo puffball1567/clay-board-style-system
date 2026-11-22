@@ -38,6 +38,7 @@ type
     colorFilter*: LayerColorFilter
     blurRadius*: LayerBlurRadius
     shaderFilter*: LayerShaderFilter
+    shaderEffectOutset*: float32
 
   CustomPaintMaterialProc* = proc(
     request: CustomPaintRequest
@@ -57,6 +58,7 @@ type
     blurRadius: LayerBlurRadius
     shaderFilter: bool
     shaderFallback: LayerColorFilter
+    shaderEffectOutset: float32
     shaderParameters: ref Table[NodeId, CustomPaintParameters]
     stages: set[CustomPaintStage]
     generation: uint64
@@ -174,10 +176,13 @@ proc registerCustomPaintShaderFilterTracked*(
     registry: CustomPaintRegistry;
     material: string;
     fallback: LayerColorFilter = nil;
-    replace = false
+    replace = false;
+    effectOutset = 0.0'f32
 ): Option[CustomPaintRegistration] =
+  validateLayerShaderEffectOutset(effectOutset)
   registry.registerEntry(material, CustomPaintMaterialEntry(
-    shaderFilter: true, shaderFallback: fallback, stages: {cpsFilter}), replace)
+    shaderFilter: true, shaderFallback: fallback, shaderEffectOutset: effectOutset,
+    stages: {cpsFilter}), replace)
 
 proc registerCustomPaintMaterial*(
     registry: CustomPaintRegistry;
@@ -394,6 +399,7 @@ proc resolveCustomPaint*(
         return CustomPaintResolution(status: cprsResolved, colorFilter: entry.shaderFallback)
       return CustomPaintResolution(status: cprsResolved,
         colorFilter: entry.shaderFallback,
+        shaderEffectOutset: entry.shaderEffectOutset,
         shaderFilter: LayerShaderFilter(material: request.material, parameters: merged.parameters))
     if entry.filterCallback.isNil:
       return CustomPaintResolution(status: cprsResolved, blurRadius: entry.blurRadius)

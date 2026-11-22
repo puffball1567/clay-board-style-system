@@ -185,11 +185,24 @@ let panel = ui.box(uiStyle([
 ]))
 ```
 
-The shader samples the completed group and replaces its pixels within the
-owner's clip. CBSS applies group opacity at final composition. A change in
-source paint damages the entire filtered layer so offset samples remain
-correct. The same registration token and paint invalidation rules apply as
-for other Style filters.
+The shader samples the completed group. By default, its output stays within
+the owner's rounded bounds. For an effect that extends past the owner, use
+`effectOutset` when registering the material.
+
+```nim
+discard ui.registerCustomPaintShaderFilter("panel-halo", effectOutset = 8)
+```
+
+The outset adds transparent padding on each side of the shader input and
+expands the output by the same amount. It accepts 0 to 256 logical pixels,
+including fractional values. The source keeps the owner's rounded clip, and
+the output respects the owner's explicit clip path and its ancestors' clips.
+Group opacity applies at final composition. An outset affects paint bounds
+only. Layout and hit testing still use the element's geometry.
+
+A change in source paint damages the entire filtered layer so offset samples
+remain correct. The same registration token and paint invalidation rules
+apply as for other Style filters.
 The renderer's material can supply up to four sampled textures, such as an
 image mask. Style continues to reference the named material and its scalar
 or vector parameters.

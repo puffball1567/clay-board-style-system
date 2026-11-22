@@ -1565,11 +1565,13 @@ proc registerCustomPaintShaderFilterTracked*(
     root: UiRoot;
     material: string;
     fallback: LayerColorFilter = nil;
-    replace = false
+    replace = false;
+    effectOutset = 0.0'f32
 ): Option[CustomPaintRegistration] =
   if root.isNil:
     raise newException(ValueError, "custom paint UiRoot cannot be nil")
-  result = root.customPaints.registerCustomPaintShaderFilterTracked(material, fallback, replace)
+  result = root.customPaints.registerCustomPaintShaderFilterTracked(
+    material, fallback, replace, effectOutset)
   if result.isSome:
     discard root.invalidateCustomPaintMaterial(material)
 
@@ -1577,10 +1579,12 @@ proc registerCustomPaintShaderFilter*(
     root: UiRoot;
     material: string;
     fallback: LayerColorFilter = nil;
-    replace = false
+    replace = false;
+    effectOutset = 0.0'f32
 ): bool {.discardable.} =
   ## Refer to a renderer-registered shader with a CPU matrix or identity fallback.
-  root.registerCustomPaintShaderFilterTracked(material, fallback, replace).isSome
+  ## The optional outset expands the effect on every side in logical pixels.
+  root.registerCustomPaintShaderFilterTracked(material, fallback, replace, effectOutset).isSome
 
 proc shaderAnimation(
     root: UiRoot;

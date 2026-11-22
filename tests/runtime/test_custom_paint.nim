@@ -550,6 +550,38 @@ suite "declarative custom paint":
     check ui.unregisterCustomPaintMaterial(token)
     check ui.consumeInvalidation().domains == {ddPaint}
 
+  test "shader effect outset expands output bounds and preserves the source clip":
+    let ui = initUiRoot()
+    let panel = ui.box(uiStyle([
+      width(12), height(12), decl("background-color", colorValue(rgb(1, 0, 0))),
+      customPaint("extended", cpsFilter)
+    ]))
+    discard ui.box(uiStyle([
+      width(8), height(3), decl("position", keyword("absolute")),
+      decl("left", px(10)), decl("top", px(4)),
+      decl("background-color", colorValue(rgb(0, 1, 0)))
+    ]), parent = some(panel))
+    let resolved = ui.resolvedUi()
+    discard ui.buildPaintCommands(resolved.styles, resolved.layout)
+    discard ui.consumeInvalidation()
+    check ui.registerCustomPaintShaderFilter("extended", invertColorFilter(1),
+      effectOutset = 4)
+    check ui.consumeInvalidation().roots == @[panel.id]
+    for invalid in [-1.0'f32, MaxLayerShaderEffectOutset + 1, NaN.float32, Inf.float32]:
+      expect ValueError:
+        discard ui.registerCustomPaintShaderFilterTracked("extended", replace = true,
+          effectOutset = invalid)
+
+    let commands = ui.buildPaintCommands(resolved.styles, resolved.layout)
+    let filters = commands.filterIt(it.kind == pcPushLayer and
+      it.layerShaderFilter.material == "extended")
+    require filters.len == 1
+    check filters[0].layerBounds == rect(-4, -4, 20, 20)
+    let frame = render(commands, 20, 16, rgb(0, 0, 0))
+    check frame.rasterPixel(5, 5) == rgb(0, 1, 1)
+    check frame.rasterPixel(11, 5) == rgb(1, 0, 1)
+    check frame.rasterPixel(13, 5) == rgb(0, 0, 0)
+
   test "shader float animations change only the selected node and finish idle":
     let ui = initUiRoot()
     let token = ui.registerCustomPaintShaderFilterTracked("pulse").get

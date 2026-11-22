@@ -500,12 +500,13 @@ proc paintNode(
   let appliesShader = layerFilter.status == cprsResolved and layerFilter.shaderFilter.material.len != 0
   let appliesFilter = appliesBlur or appliesShader or
     (layerFilter.status == cprsResolved and not layerFilter.colorFilter.isNil)
+  let clipsFilterOutput = appliesBlur or (appliesShader and layerFilter.shaderEffectOutset == 0)
   if appliesFilter:
-    if appliesBlur or appliesShader:
+    if clipsFilterOutput:
       output.add pushClip(nodeRect, style.box.borderRadius)
     if appliesShader:
       output.add pushShaderFilterLayer(nodeRect, layerFilter.shaderFilter, opacity,
-        fallback = layerFilter.colorFilter)
+        fallback = layerFilter.colorFilter, effectOutset = layerFilter.shaderEffectOutset)
     elif appliesBlur:
       output.add pushBlurLayer(nodeRect, layerFilter.blurRadius, opacity)
     else:
@@ -704,7 +705,7 @@ proc paintNode(
   if appliesFilter:
     output.add popClip()
     output.add popLayer()
-    if appliesBlur or appliesShader:
+    if clipsFilterOutput:
       output.add popClip()
 
   if visualClip.isSome:

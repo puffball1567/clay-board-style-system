@@ -5,6 +5,8 @@ import ./path_geometry
 import ./layer_color_filter
 import ./layer_blur
 
+const MaxLayerShaderEffectOutset* = 256.0'f32
+
 type
   LayerCompositeMode* = enum
     lcmSourceOver,
@@ -154,16 +156,6 @@ proc pushBlurLayer*(
   result = pushLayer(bounds, opacity, compositeMode)
   result.layerBlurRadius = radius
 
-proc pushShaderFilterLayer*(
-    bounds: Rect;
-    shader: LayerShaderFilter;
-    opacity = 1.0'f32;
-    fallback: LayerColorFilter = nil
-): PaintCommand =
-  ## Apply a shader to a completed layer. The matrix is its CPU fallback.
-  result = pushLayer(bounds, opacity = opacity, colorFilter = fallback)
-  result.layerShaderFilter = shader
-
 proc hasSpatialLayerFilter(command: PaintCommand): bool =
   command.layerBlurRadius != 0 or command.layerShaderFilter.material.len != 0
 
@@ -178,6 +170,29 @@ proc expanded(bounds: Rect; amount: float32): Rect =
     max(0.0'f32, bounds.w + amount * 2.0'f32),
     max(0.0'f32, bounds.h + amount * 2.0'f32)
   )
+
+proc validateLayerShaderEffectOutset*(outset: float32) =
+  if outset.classify in {fcNan, fcInf, fcNegInf} or
+      outset < 0 or outset > MaxLayerShaderEffectOutset:
+    raise newException(ValueError, "shader effect outset must be between 0 and " &
+      $MaxLayerShaderEffectOutset & " logical pixels")
+
+proc pushShaderFilterLayer*(
+    bounds: Rect;
+    shader: LayerShaderFilter;
+    opacity = 1.0'f32;
+    fallback: LayerColorFilter = nil;
+    effectOutset = 0.0'f32
+): PaintCommand =
+  ## Apply a shader to a completed layer. The outset expands its texture and
+  ## output bounds in local logical pixels. Paint inside the layer sets any
+  ## source clip. The matrix is the CPU fallback.
+  validateLayerShaderEffectOutset(effectOutset)
+  let layerBounds =
+    if effectOutset > 0 and not bounds.isEmpty: bounds.expanded(effectOutset)
+    else: bounds
+  result = pushLayer(layerBounds, opacity = opacity, colorFilter = fallback)
+  result.layerShaderFilter = shader
 
 proc includeBounds(bounds: var Option[Rect]; value: Rect) =
   if value.isEmpty:
