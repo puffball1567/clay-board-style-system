@@ -857,7 +857,8 @@ before SDL composites the output. This setup targets Linux SDL EGL/OpenGL.
 Clear the renderer hook with `renderer.setGpuLayerShaderFilter(nil)` before
 releasing the materials in the shared context.
 [Shader authoring](gpu-shaders.md#layer-filter-authoring) ·
-[Style registration](custom-paint.md#style-shader-filters)
+[Style registration](custom-paint.md#style-shader-filters) ·
+[Float animation](custom-paint.md#animating-a-float-uniform)
 
 ### bgfx Presentation Adapter
 

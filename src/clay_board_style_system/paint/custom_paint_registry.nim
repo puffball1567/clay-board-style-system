@@ -57,6 +57,7 @@ type
     blurRadius: LayerBlurRadius
     shaderFilter: bool
     shaderFallback: LayerColorFilter
+    shaderParameters: ref Table[NodeId, CustomPaintParameters]
     stages: set[CustomPaintStage]
     generation: uint64
 
@@ -225,6 +226,53 @@ proc hasCustomPaintRegistration*(
   registry.materials.getOrDefault(registration.material).generation ==
     registration.generation
 
+proc hasCustomPaintShaderFilterRegistration*(
+    registry: CustomPaintRegistry; registration: CustomPaintRegistration
+): bool =
+  if not registry.hasCustomPaintRegistration(registration):
+    return false
+  registry.materials.getOrDefault(registration.material).shaderFilter
+
+proc setCustomPaintShaderParameter*(
+    registry: CustomPaintRegistry;
+    registration: CustomPaintRegistration;
+    owner: NodeId;
+    parameter: CustomPaintParameter
+): bool =
+  if not registry.hasCustomPaintShaderFilterRegistration(registration):
+    return false
+  registry.materials.withValue(registration.material, entry):
+    if entry[].shaderParameters.isNil:
+      new(entry[].shaderParameters)
+    let previous = entry[].shaderParameters[].getOrDefault(owner)
+    let updated = overlayCustomPaintParameters(previous, customPaintParameters([parameter]))
+    if updated.ok:
+      entry[].shaderParameters[][owner] = updated.parameters
+      return true
+  false
+
+proc clearCustomPaintShaderParameter*(
+    registry: CustomPaintRegistry;
+    registration: CustomPaintRegistration;
+    owner: NodeId;
+    name: string
+): bool =
+  if not registry.hasCustomPaintShaderFilterRegistration(registration):
+    return false
+  registry.materials.withValue(registration.material, entry):
+    if entry[].shaderParameters.isNil:
+      return false
+    let previous = entry[].shaderParameters[].getOrDefault(owner)
+    let updated = previous.withoutCustomPaintParameter(name)
+    if previous == updated:
+      return false
+    if updated.isNil:
+      entry[].shaderParameters[].del(owner)
+    else:
+      entry[].shaderParameters[][owner] = updated
+    return true
+  false
+
 proc noteConsumer(registry: CustomPaintRegistry; material: string; owner: NodeId) =
   if registry.isNil:
     return
@@ -260,6 +308,10 @@ proc removeCustomPaintConsumers*(
 ) =
   if registry.isNil or removed.len == 0:
     return
+  for entry in registry.materials.mvalues:
+    if not entry.shaderParameters.isNil:
+      for owner in removed:
+        entry.shaderParameters[].del(owner)
   var emptyMaterials: seq[string]
   for material, owners in registry.consumers.mpairs:
     if owners.isNil:
@@ -332,9 +384,17 @@ proc resolveCustomPaint*(
 
   if request.stage == cpsFilter:
     if entry.shaderFilter:
+      let overrides =
+        if entry.shaderParameters.isNil: nil
+        else: entry.shaderParameters[].getOrDefault(request.owner)
+      let merged = overlayCustomPaintParameters(request.parameters,
+        overrides)
+      if not merged.ok:
+        registry.addDiagnostic(request, cprsInvalidRequest, "custom paint shader parameter limit exceeded")
+        return CustomPaintResolution(status: cprsResolved, colorFilter: entry.shaderFallback)
       return CustomPaintResolution(status: cprsResolved,
         colorFilter: entry.shaderFallback,
-        shaderFilter: LayerShaderFilter(material: request.material, parameters: request.parameters))
+        shaderFilter: LayerShaderFilter(material: request.material, parameters: merged.parameters))
     if entry.filterCallback.isNil:
       return CustomPaintResolution(status: cprsResolved, blurRadius: entry.blurRadius)
     return CustomPaintResolution(status: cprsResolved, colorFilter: entry.filterCallback(request))

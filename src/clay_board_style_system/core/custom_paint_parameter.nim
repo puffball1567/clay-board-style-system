@@ -227,3 +227,35 @@ proc sameCustomPaintParameters*(first, second: CustomPaintParameters): bool =
     if not same:
       return false
   true
+
+proc overlayCustomPaintParameters*(
+    base, overrides: CustomPaintParameters
+): tuple[ok: bool, parameters: CustomPaintParameters] =
+  ## Preserve the original ordering when replacing values by name.
+  if overrides.isNil:
+    return (true, base)
+  if base.isNil:
+    return (true, overrides)
+  var values = newSeqOfCap[CustomPaintParameter](min(
+    maxCustomPaintParameters, base.len + overrides.len))
+  for parameter in base:
+    values.add overrides.findCustomPaintParameter(parameter.name).get(parameter)
+  for parameter in overrides:
+    if base.findCustomPaintParameter(parameter.name).isNone:
+      if values.len == maxCustomPaintParameters:
+        return (false, nil)
+      values.add parameter
+  (true, CustomPaintParameters(values: move(values)))
+
+proc withoutCustomPaintParameter*(
+    parameters: CustomPaintParameters; name: string
+): CustomPaintParameters =
+  if parameters.findCustomPaintParameter(name).isNone:
+    return parameters
+  if parameters.len == 1:
+    return nil
+  var values = newSeqOfCap[CustomPaintParameter](parameters.len - 1)
+  for parameter in parameters:
+    if parameter.name != name:
+      values.add parameter
+  CustomPaintParameters(values: move(values))
