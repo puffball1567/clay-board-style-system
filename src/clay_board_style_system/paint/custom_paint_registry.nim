@@ -246,8 +246,8 @@ proc setCustomPaintShaderParameter*(
       new(entry[].shaderParameters)
     let previous = entry[].shaderParameters[].getOrDefault(owner)
     let updated = overlayCustomPaintParameters(previous, customPaintParameters([parameter]))
-    if updated.isSome:
-      entry[].shaderParameters[][owner] = updated.get
+    if updated.ok:
+      entry[].shaderParameters[][owner] = updated.parameters
       return true
   false
 
@@ -387,14 +387,14 @@ proc resolveCustomPaint*(
       let overrides =
         if entry.shaderParameters.isNil: nil
         else: entry.shaderParameters[].getOrDefault(request.owner)
-      let parameters = overlayCustomPaintParameters(request.parameters,
+      let merged = overlayCustomPaintParameters(request.parameters,
         overrides)
-      if parameters.isNone:
+      if not merged.ok:
         registry.addDiagnostic(request, cprsInvalidRequest, "custom paint shader parameter limit exceeded")
         return CustomPaintResolution(status: cprsResolved, colorFilter: entry.shaderFallback)
       return CustomPaintResolution(status: cprsResolved,
         colorFilter: entry.shaderFallback,
-        shaderFilter: LayerShaderFilter(material: request.material, parameters: parameters.get))
+        shaderFilter: LayerShaderFilter(material: request.material, parameters: merged.parameters))
     if entry.filterCallback.isNil:
       return CustomPaintResolution(status: cprsResolved, blurRadius: entry.blurRadius)
     return CustomPaintResolution(status: cprsResolved, colorFilter: entry.filterCallback(request))

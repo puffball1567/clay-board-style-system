@@ -592,6 +592,10 @@ suite "declarative custom paint":
     let token = ui.registerCustomPaintShaderFilterTracked("pulse").get
     let panel = ui.box(uiStyle([width(12), height(12), customPaint("pulse", cpsFilter)]))
     let resolved = ui.resolvedUi()
+    let initial = ui.buildPaintCommands(resolved.styles, resolved.layout).filterIt(
+      it.kind == pcPushLayer and it.layerShaderFilter.material == "pulse")
+    check initial.len == 1
+    check initial[0].layerShaderFilter.parameters.isNil
     let first = ui.animateCustomPaintShaderFloat(panel, token, "u_gain", 0, 0.5, 10, 0)
     let second = ui.animateCustomPaintShaderFloat(panel, token, "u_gain", 0.5, 1, 10, 0)
     check not ui.cancelOwnedAnimation(first)
@@ -613,6 +617,9 @@ suite "declarative custom paint":
     expect ValueError:
       discard ui.animateCustomPaintShaderFloat(panel, token, "u_gain", 0, 1, 1, 3)
     check not ui.clearCustomPaintShaderFloat(panel, replacement, "u_gain")
+    let restored = ui.buildPaintCommands(resolved.styles, resolved.layout).filterIt(
+      it.kind == pcPushLayer and it.layerShaderFilter.material == "pulse")
+    check restored[0].layerShaderFilter.parameters.isNil
     discard ui.animateCustomPaintShaderFloat(panel, replacement, "u_gain", 0, 1, 10, 4)
     var interaction: InteractionState
     check ui.disposeSubtree(panel, interaction)
