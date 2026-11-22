@@ -18,6 +18,24 @@ suite "retained damage planning":
     commands[1] = fillRect(rect(15, 4, 1, 1), rgb(0, 1, 0))
     check tracker.plan(commands).regions == @[rect(0, 0, 48, 16)]
 
+  test "shader source damage covers its transformed outset within an ancestor clip":
+    var tracker = initRetainedDamageTracker(96, 64, tileSize = 8)
+    var commands = @[
+      pushClip(rect(0, 0, 48, 64)),
+      pushTransform(translationAffine2D(32, 8)),
+      pushShaderFilterLayer(rect(8, 16, 8, 8), LayerShaderFilter(material: "halo"),
+        effectOutset = 8),
+      pushClip(rect(8, 16, 8, 8)),
+      fillRect(rect(10, 18, 1, 1), rgb(1, 0, 0)),
+      popClip(), popLayer(), popTransform(), popClip()]
+    commands.resolveTransformBounds()
+    check commands[1].transformBounds == rect(0, 8, 24, 24)
+    discard tracker.plan(commands)
+    commands[4].color = rgb(0, 1, 0)
+    let change = tracker.plan(commands)
+    check not change.fullRepaint
+    check change.regions == @[rect(32, 16, 16, 24)]
+
   test "changes inside a blur invalidate the whole enclosing layer":
     var tracker = initRetainedDamageTracker(64, 16, tileSize = 16)
     var commands = @[

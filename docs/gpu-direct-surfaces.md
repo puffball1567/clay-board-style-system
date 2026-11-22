@@ -854,6 +854,11 @@ update or destroy its inputs.
 
 The pass uses a single draw and two SDL RGBA32 texture imports, which retire
 before SDL composites the output. This setup targets Linux SDL EGL/OpenGL.
+For materials registered with an `effectOutset`, both textures cover the padded
+layer, and the shader's layer UVs span that full area. The outer padding
+starts transparent. SDL applies its filtered-layer allocation limit to the
+expanded size at the current pixel scale.
+
 When only uniforms change, SDL can reuse the unfiltered texture and run the
 filter again. Reuse requires matching source paint, bounds, pixel scale,
 published raster revisions, and image and font inputs. The renderer stores

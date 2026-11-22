@@ -210,7 +210,8 @@ proc testRendererComposition() =
     let layerVertex = gpuLayerShaderVertexSource()
     let builder = newGpuShaderBuilder(gssFragment, "test-layer-filter")
     let shaderUv = builder.varyingInput(gsisTexCoord0, gsvtVec2)
-    let source = builder.sampleLayer(shaderUv)
+    let shift = builder.swizzle(builder.uniform("u_shift", gsvtVec4), "xy")
+    let source = builder.sampleLayer(shaderUv - shift)
     let gain = builder.swizzle(builder.uniform("u_gain", gsvtVec4), "x")
     builder.setColorOutput(builder.swizzle(source, "bgra") * gain)
     let layerFragment = builder.emitGpuShaderSource()
@@ -227,7 +228,8 @@ proc testRendererComposition() =
     doAssert host.gpuNamespaceUsage(shaderNamespace).resourceCount == 0
     shader = newGpuLayerShaderMaterial(host, shaderNamespace,
       vertexPackage, packaged, gsbtOpenGL,
-      customPaintParameters([customPaintFloat("u_gain", 1)]))
+      customPaintParameters([customPaintFloat("u_gain", 1),
+        customPaintVec2("u_shift", 0, 0)]))
     let matrixVertex = gpuColorMatrixVertexSource().compileGpuShader(shaderTarget, compiler).artifact
     let matrixFragment = gpuColorMatrixFragmentSource().compileGpuShader(shaderTarget, compiler).artifact
     verticalMask = host.createGpuTexture(shaderNamespace, GpuTextureDescriptor(
@@ -578,6 +580,30 @@ proc testRendererComposition() =
       doAssert renderer.capturedFrame().get.pixel(6, 6) == expected
     doAssert renderer.cacheUsage().shaderSourceBuilds == before.shaderSourceBuilds + 2
     doAssert renderer.cacheUsage().shaderSourceHits == before.shaderSourceHits + 1
+
+  block:
+    let ui = initUiRoot()
+    let viewport = ui.box(uiStyle([
+      decl("width", px(18)), decl("height", px(32)),
+      decl("overflow", keyword("hidden"))]))
+    discard ui.box(uiStyle([
+      decl("width", px(8)), decl("height", px(8)),
+      decl("position", keyword("absolute")), decl("left", px(8)), decl("top", px(8)),
+      decl("background-color", colorValue(rgb(1, 0, 0))),
+      customPaint("layer-swizzle", cpsFilter,
+        parameters = [customPaintVec2("u_shift", 0.25, 0)])]), parent = some(viewport))
+    var diagnostics: Diagnostics
+    let styles = resolveTreeStyles(ui.tree, ui.styleSheets(), defaultProperties(), diagnostics)
+    doAssert not diagnostics.hasErrors
+    let layout = computeLayout(ui.tree, styles, size(32, 32))
+    doAssert ui.registerCustomPaintShaderFilter("layer-swizzle", effectOutset = 4)
+    let commands = ui.buildPaintCommands(styles, layout)
+    renderer.requestFrameCapture()
+    renderer.render(commands, background)
+    let frame = renderer.capturedFrame().get
+    doAssert frame.pixel(16, 10) == [0'u8, 0, 255]
+    doAssert frame.pixel(18, 10) == [0'u8, 0, 0]
+    doAssert frame.pixel(8, 10) == [0'u8, 0, 0]
 
   renderer.setGpuLayerShaderFilter(nil)
   shared.withSdl3BgfxOpenGlContext:

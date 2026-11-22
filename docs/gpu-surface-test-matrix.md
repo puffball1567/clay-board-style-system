@@ -144,6 +144,11 @@ bounds changes on the retained rendering path. Portable tests cover per-node
 isolation, reduced motion, replacement, disposal, and the return to an idle
 scheduler.
 
+The OpenGL fixture shifts shader output outside the owner using a declared
+outset and checks that the parent clip still cuts off the effect. Portable
+tests check the original source clip and CPU fallback pixels, rejected outset
+values, and damage bounds under a transform and ancestor clip.
+
 ## Real-GPU Release Gate
 
 The same-host draw path is implemented, but the production direct compositor is
