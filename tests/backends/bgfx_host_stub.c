@@ -19,6 +19,8 @@ static uint32_t cbss_reset_count;
 static uint32_t cbss_submit_count;
 static uint32_t cbss_dispatch_count;
 static uint32_t cbss_view_rect_count;
+static uint32_t cbss_sequential_view_count;
+static uint32_t cbss_reset_view_count;
 static uint32_t cbss_view_scissor_count;
 static uint32_t cbss_view_clear_count;
 static uint32_t cbss_view_frame_buffer_count;
@@ -717,6 +719,21 @@ void bgfx_set_view_rect(bgfx_view_id_t id, int16_t x, int16_t y,
     ++cbss_view_rect_count;
 }
 
+void bgfx_set_view_mode(bgfx_view_id_t id, bgfx_view_mode_t mode)
+{
+    (void)id;
+    if (BGFX_VIEW_MODE_SEQUENTIAL == mode)
+    {
+        ++cbss_sequential_view_count;
+    }
+}
+
+void bgfx_reset_view(bgfx_view_id_t id)
+{
+    (void)id;
+    ++cbss_reset_view_count;
+}
+
 void bgfx_set_view_scissor(bgfx_view_id_t id, uint16_t x, uint16_t y,
                            uint16_t width, uint16_t height)
 {
@@ -937,6 +954,8 @@ void cbss_bgfx_stub_reset_counters(void)
     cbss_submit_count = 0;
     cbss_dispatch_count = 0;
     cbss_view_rect_count = 0;
+    cbss_sequential_view_count = 0;
+    cbss_reset_view_count = 0;
     cbss_view_scissor_count = 0;
     cbss_view_clear_count = 0;
     cbss_view_frame_buffer_count = 0;
@@ -1028,6 +1047,11 @@ uint32_t cbss_bgfx_stub_height(void) { return cbss_height; }
 uint32_t cbss_bgfx_stub_submit_count(void) { return cbss_submit_count; }
 uint32_t cbss_bgfx_stub_dispatch_count(void) { return cbss_dispatch_count; }
 uint32_t cbss_bgfx_stub_view_rect_count(void) { return cbss_view_rect_count; }
+uint32_t cbss_bgfx_stub_sequential_view_count(void)
+{
+    return cbss_sequential_view_count;
+}
+uint32_t cbss_bgfx_stub_reset_view_count(void) { return cbss_reset_view_count; }
 uint32_t cbss_bgfx_stub_view_scissor_count(void)
 {
     return cbss_view_scissor_count;

@@ -329,7 +329,7 @@ void main()
         (v_texcoord1.w > 4.5 &&
          distanceSquared < v_texcoord2.y * v_texcoord2.y)) { discard; }
     if (distanceSquared > 0.0 && v_texcoord2.x < 6.2831855) {
-      float delta = atan(normalized.y, normalized.x) - v_texcoord1.z;
+      float delta = atan2(normalized.y, normalized.x) - v_texcoord1.z;
       float relative = delta - floor(delta / 6.2831855) * 6.2831855;
       if (relative > v_texcoord2.x) { discard; }
     }

@@ -44,6 +44,10 @@ proc submitCount(): uint32 {.importc: "cbss_bgfx_stub_submit_count", cdecl.}
 proc dispatchCount(): uint32 {.importc: "cbss_bgfx_stub_dispatch_count", cdecl.}
 proc viewRectCount(): uint32 {.
   importc: "cbss_bgfx_stub_view_rect_count", cdecl.}
+proc sequentialViewCount(): uint32 {.
+  importc: "cbss_bgfx_stub_sequential_view_count", cdecl.}
+proc resetViewCount(): uint32 {.
+  importc: "cbss_bgfx_stub_reset_view_count", cdecl.}
 proc viewScissorCount(): uint32 {.
   importc: "cbss_bgfx_stub_view_scissor_count", cdecl.}
 proc viewClearCount(): uint32 {.
@@ -1335,6 +1339,8 @@ suite "optional bgfxim adapter":
     check submitCount() == 2
     check dispatchCount() == 2
     check viewRectCount() == 1
+    check sequentialViewCount() == 1
+    check resetViewCount() == 2
     check viewScissorCount() == 1
     check viewClearCount() == 1
     check viewFrameBufferCount() == 1
