@@ -115,6 +115,9 @@ SDL software-renderer tests verify that publishing into the same fallback
 raster updates its retained destination tile and that installing or clearing
 the compositor refreshes the retained layer. The mock host test checks
 damage when a direct frame becomes stale before the compositor acquires it.
+The SDL test also holds the same published GPU frame through two transient
+compositor retries. It checks fallback pixels, the one-tile repaint, and
+recovery to direct pixels when using the retained static layer.
 
 The sharing fixture also composites a Motion Scene render target and an
 independent compute shader's storage texture into the same SDL layer. The two
