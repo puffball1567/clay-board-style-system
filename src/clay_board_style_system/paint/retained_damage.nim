@@ -5,6 +5,8 @@ import ../runtime/gpu_direct_surface
 import ./[dirty_tiles, paint_command]
 
 type
+  PaintResourceRevisions = tuple[primary, fallback: uint64]
+
   RetainedDamagePlan* = object
     ## Backend-neutral result for one retained paint comparison.
     dirtyTiles*, totalTiles*: int
@@ -17,7 +19,7 @@ type
     grid: DirtyTileGrid
     previousCommands: seq[PaintCommand]
     previousBounds: seq[Option[Rect]]
-    previousResourceRevisions: seq[uint64]
+    previousResourceRevisions: seq[PaintResourceRevisions]
     initialized: bool
 
 proc initRetainedDamageTracker*(
@@ -47,20 +49,19 @@ proc reset*(
   ## Drops the retained snapshot after a target size or tile-policy change.
   tracker = initRetainedDamageTracker(width, height, tileSize)
 
-proc resourceRevision(command: PaintCommand): uint64 =
-  case command.kind
-  of pcDrawRasterSurface:
-    if command.rasterSurface.isNil: 0'u64
-    else: command.rasterSurface.revision
-  of pcDrawGpuDirectSurface:
-    command.gpuDirectSurface.presentedRevision
-  else:
-    0'u64
-
-proc resourceRevisions(commands: openArray[PaintCommand]): seq[uint64] =
-  result = newSeq[uint64](commands.len)
+proc resourceRevisions(commands: openArray[PaintCommand]): seq[PaintResourceRevisions] =
+  result = newSeq[PaintResourceRevisions](commands.len)
   for index, command in commands:
-    result[index] = command.resourceRevision
+    case command.kind
+    of pcDrawRasterSurface:
+      result[index].primary = command.rasterSurface.revision
+    of pcDrawGpuDirectSurface:
+      # The readback can complete on a different frame than direct publication.
+      result[index].fallback = command.gpuFallbackSurface.revision
+      if not command.gpuDirectSurface.isStale:
+        result[index].primary = command.gpuDirectSurface.presentedRevision
+    else:
+      discard
 
 proc markCommandDamage(
     grid: var DirtyTileGrid;

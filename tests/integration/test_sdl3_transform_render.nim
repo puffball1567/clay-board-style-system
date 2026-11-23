@@ -123,7 +123,7 @@ suite "SDL3 transform rendering":
       popTransform()
     ]
     commands.resolveTransformBounds()
-    var renderer = initSdl3Renderer("CBSS hybrid GPU layer test", 32, 32, false)
+    var renderer = initSdl3Renderer("CBSS hybrid GPU layer test", 64, 32, false)
     defer: renderer.close()
     renderer.requestFrameCapture()
     renderer.render(commands, rgb(0, 0, 0))
@@ -138,6 +138,23 @@ suite "SDL3 transform rendering":
       rgb(0, 0, 0))
     check renderer.capturedFrame().isSome
     check renderer.capturedFrame().get.pixel(14, 12).g > 220
+
+    surface.updateRegion(rasterRegion(0, 0, 2, 2), [
+      0'u8, 0, 255, 255, 0, 0, 255, 255,
+      0, 0, 255, 255, 0, 0, 255, 255])
+    check surface.publish()
+    renderer.requestFrameCapture()
+    renderer.renderLayered(commands, CosmicTextEngine(), initFontRegistry(),
+      rgb(0, 0, 0))
+    let updated = renderer.capturedFrame().get
+    check updated.pixel(14, 12) == (0'u8, 0'u8, 255'u8)
+    check updated.pixel(4, 4) == (0'u8, 0'u8, 0'u8)
+    check renderer.retainedLayerStats().partialRepaints == 1
+    check renderer.retainedLayerStats().lastDirtyTiles == 1
+
+    renderer.renderLayered(commands, CosmicTextEngine(), initFontRegistry(),
+      rgb(0, 0, 0))
+    check renderer.retainedLayerStats().skippedRepaints == 1
 
   test "layered rendering preserves affine transform scopes":
     let previousDriver = getEnv("SDL_VIDEODRIVER")
@@ -608,6 +625,36 @@ suite "SDL3 transform rendering":
     renderer.render([fillRect(rect(0, 0, 1, 1), rgb(1, 0, 0))])
     check renderer.gpuDirectCompositionStats() ==
       Sdl3GpuDirectCompositionStats()
+
+  test "installing or clearing the GPU compositor refreshes a retained layer":
+    let previousDriver = getEnv("SDL_VIDEODRIVER")
+    putEnv("SDL_VIDEODRIVER", "dummy")
+    defer:
+      if previousDriver.len > 0: putEnv("SDL_VIDEODRIVER", previousDriver)
+      else: delEnv("SDL_VIDEODRIVER")
+    var renderer = initSdl3Renderer("CBSS retained GPU compositor test", 32, 32, false)
+    defer: renderer.close()
+    let fonts = initFontRegistry()
+    let cosmic = CosmicTextEngine()
+    let fallback = newRasterSurface(1, 1, [0'u8, 255, 0, 255])
+    let commands = [PaintCommand(kind: pcDrawGpuDirectSurface,
+      owner: some(NodeId(1)), gpuFallbackSurface: fallback,
+      gpuSurfaceRect: rect(0, 0, 8, 8), gpuSurfaceOpacity: 1)]
+    renderer.renderLayered(commands, cosmic, fonts, rebuildStatic = false)
+    check renderer.gpuDirectCompositionStats().unsupported == 1
+
+    renderer.setGpuDirectCompositor(newGpuDirectCompositor(
+      gpuDirectCompositeCapabilities({gdctOffscreen}, clipBoundsSupported = true),
+      proc(request: GpuDirectCompositeRequest): GpuDirectCompositeStatus =
+        gdcsPresented))
+    renderer.renderLayered(commands, cosmic, fonts, rebuildStatic = false)
+    check renderer.gpuDirectCompositionStats().noFrame == 1
+    check renderer.retainedLayerStats().fullRepaints == 2
+
+    renderer.clearGpuDirectCompositor()
+    renderer.renderLayered(commands, cosmic, fonts, rebuildStatic = false)
+    check renderer.gpuDirectCompositionStats().unsupported == 1
+    check renderer.retainedLayerStats().fullRepaints == 3
 
   test "changing the Style shader hook invalidates a retained layer":
     let previousDriver = getEnv("SDL_VIDEODRIVER")

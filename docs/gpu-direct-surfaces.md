@@ -675,6 +675,12 @@ unbounded diagnostic queue. With no compositor installed, direct commands are
 reported as unsupported instead of being silently ignored. Closing the renderer
 releases the callback holder.
 
+When planning damage for an SDL retained layer, the renderer tracks both the
+direct publication and the readback revision. A new readback or a direct
+frame invalidated by device loss damages the surface's destination. Installing
+or clearing the compositor refreshes the retained layer on the next frame,
+including a call to `renderLayered` with `rebuildStatic = false`.
+
 For the normal one-host path, `newGpuHostDirectCompositor()` creates a typed
 compositor over the same `GpuHost` that owns the published source. The caller
 opens one host frame around the surrounding paint stream. The compositor adds

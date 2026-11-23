@@ -18,6 +18,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Fixed
 
+- Retained SDL layers now repaint when a GPU surface's readback fallback
+  publishes new pixels, when a direct frame becomes stale after device loss,
+  or when the renderer's direct compositor changes.
+
 - GPU Canvas readback now checks copy and readback budgets together before
   copying a frame, avoiding an unused copy when readback work or view capacity
   is exhausted.
