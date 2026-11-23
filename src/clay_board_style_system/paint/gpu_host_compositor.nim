@@ -298,22 +298,22 @@ proc validateMaterial(
 proc physicalBounds(
     logical: Rect;
     target: Rect;
-    scale: float32;
+    scaleX, scaleY: float64;
     width, height: uint32
 ): tuple[viewport: GpuViewport, empty: bool] =
   let left = floorToInt64Saturated(
-    (float64(logical.x) - float64(target.x)) * float64(scale)
+    (float64(logical.x) - float64(target.x)) * scaleX
   )
   let top = floorToInt64Saturated(
-    (float64(logical.y) - float64(target.y)) * float64(scale)
+    (float64(logical.y) - float64(target.y)) * scaleY
   )
   let right = ceilToInt64Saturated(
     (float64(logical.x) + float64(logical.w) - float64(target.x)) *
-      float64(scale)
+      scaleX
   )
   let bottom = ceilToInt64Saturated(
     (float64(logical.y) + float64(logical.h) - float64(target.y)) *
-      float64(scale)
+      scaleY
   )
   let clippedLeft = clamp(left, 0'i64, int64(width))
   let clippedTop = clamp(top, 0'i64, int64(height))
@@ -350,15 +350,15 @@ proc uvRect(
 proc sampledLogicalBounds(
     viewport: GpuViewport;
     target: Rect;
-    scale: float32
+    scaleX, scaleY: float64
 ): Rect =
   ## The full pixel-aligned viewport is rasterized, even when its edges extend
   ## past the requested logical rectangle. UVs and masks must use those edges.
   rect(
-    target.x + viewport.x.float32 / scale,
-    target.y + viewport.y.float32 / scale,
-    viewport.width.float32 / scale,
-    viewport.height.float32 / scale
+    target.x + float32(viewport.x.float64 / scaleX),
+    target.y + float32(viewport.y.float64 / scaleY),
+    float32(viewport.width.float64 / scaleX),
+    float32(viewport.height.float64 / scaleY)
   )
 
 proc clipMaskUniformValues(
@@ -457,17 +457,6 @@ proc newGpuHostDirectCompositor*(
         let currentConfig = host.config()
         targetPixelWidth = currentConfig.width
         targetPixelHeight = currentConfig.height
-        if not matchesPhysicalExtent(
-              request.context.targetBounds.w,
-              request.context.pixelScale,
-              targetPixelWidth
-            ) or
-            not matchesPhysicalExtent(
-              request.context.targetBounds.h,
-              request.context.pixelScale,
-              targetPixelHeight
-            ):
-          return gdcsUnsupported
       of gdctOffscreen:
         passTarget = request.context.offscreenTarget
         if passTarget.isEmptyGpuHandle() or
@@ -485,36 +474,38 @@ proc newGpuHostDirectCompositor*(
           return gdcsUnsupported
         targetPixelWidth = targetInfo.width
         targetPixelHeight = targetInfo.height
-        if not matchesPhysicalExtent(
-              request.context.targetBounds.w,
-              request.context.pixelScale,
-              targetPixelWidth
-            ) or
-            not matchesPhysicalExtent(
-              request.context.targetBounds.h,
-              request.context.pixelScale,
-              targetPixelHeight
-            ):
-          return gdcsUnsupported
       of gdctUnspecified:
         return gdcsUnsupported
 
-      var visible = request.destination.intersection(request.context.targetBounds)
+      let targetBounds = request.context.targetBounds
+      var scaleX = request.context.pixelScale.float64
+      var scaleY = scaleX
+      if request.context.targetPixelWidth != 0:
+        if request.context.targetPixelWidth != targetPixelWidth or
+            request.context.targetPixelHeight != targetPixelHeight:
+          return gdcsUnsupported
+        scaleX = targetPixelWidth.float64 / targetBounds.w.float64
+        scaleY = targetPixelHeight.float64 / targetBounds.h.float64
+      elif not matchesPhysicalExtent(targetBounds.w, request.context.pixelScale, targetPixelWidth) or
+          not matchesPhysicalExtent(targetBounds.h, request.context.pixelScale, targetPixelHeight):
+        return gdcsUnsupported
+
+      var visible = request.destination.intersection(targetBounds)
       if request.context.clipBounds.isSome:
         visible = visible.intersection(request.context.clipBounds.get)
       if visible.isEmpty:
         return gdcsPresented
       let bounds = physicalBounds(
         visible,
-        request.context.targetBounds,
-        request.context.pixelScale,
+        targetBounds,
+        scaleX, scaleY,
         targetPixelWidth,
         targetPixelHeight
       )
       if bounds.empty:
         return gdcsPresented
       let sampled = bounds.viewport.sampledLogicalBounds(
-        request.context.targetBounds, request.context.pixelScale
+        targetBounds, scaleX, scaleY
       )
 
       let pipeline =

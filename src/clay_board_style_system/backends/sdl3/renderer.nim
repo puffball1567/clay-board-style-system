@@ -1,4 +1,4 @@
-import std/[hashes, math, options, os, strutils, tables]
+import std/[hashes, math, options, os, sequtils, strutils, tables]
 
 import ../../assets/asset_resolver
 import ../../core/[color, computed_style, geometry, gradient_sampling, node,
@@ -263,6 +263,7 @@ type
 
     staticLayerTexture: pointer
     staticLayerWidth, staticLayerHeight: int
+    staticLayerPixelWidth, staticLayerPixelHeight: int
     staticLayerDamage: RetainedDamageTracker
     staticLayerDamageClip: Option[SDL_Rect]
     staticLayerRetryRegions: seq[Rect]
@@ -682,6 +683,8 @@ proc destroyStaticLayer(target: var Sdl3Renderer) =
     target.staticLayerTexture = nil
   target.staticLayerWidth = 0
   target.staticLayerHeight = 0
+  target.staticLayerPixelWidth = 0
+  target.staticLayerPixelHeight = 0
   target.staticLayerDamage = RetainedDamageTracker()
   target.staticLayerDamageClip = none(SDL_Rect)
   target.staticLayerRetryRegions.setLen(0)
@@ -1188,7 +1191,7 @@ proc pollEventFromRaw(
       target.invalidateStaticLayer()
       event = Sdl3Event(kind: sekExpose, timestamp: raw.common.timestamp)
       return true
-    of SDL_EVENT_WINDOW_EXPOSED:
+    of SDL_EVENT_WINDOW_EXPOSED, SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
       event = Sdl3Event(kind: sekExpose, timestamp: raw.window.timestamp)
       return true
     of SDL_EVENT_WINDOW_RESIZED, SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
@@ -1751,30 +1754,18 @@ proc effectiveLogicalClip(target: Sdl3Renderer): Option[Rect] =
   for index in 1 ..< target.clipStack.len:
     result = some(result.get.intersection(target.clipStack[index].rect))
 
-proc activeLayerBounds(
-    layers: openArray[Sdl3TransformLayer];
-    scale: float32
-): Option[Rect] =
-  for index in countdown(layers.high, 0):
-    if layers[index].valid:
-      return some(rect(
-        0,
-        0,
-        layers[index].pixelWidth.float32 / scale,
-        layers[index].pixelHeight.float32 / scale
-      ))
-
 proc gpuDirectCompositeContext(
     target: Sdl3Renderer;
     layers: openArray[Sdl3TransformLayer]
 ): GpuDirectCompositeContext =
   let scale = max(target.pixelScale(), 0.001'f32)
   let renderTarget = SDL3.getRenderTarget(target.renderer)
+  let viewport = target.windowSize()
   result = GpuDirectCompositeContext(
     targetKind:
       if renderTarget.isNil: gdctWindow
       else: gdctOffscreen,
-    targetBounds: rect(0, 0, target.windowSize().w, target.windowSize().h),
+    targetBounds: rect(0, 0, viewport.w, viewport.h),
     clipBounds: target.effectiveLogicalClip(),
     pixelScale: scale
   )
@@ -1784,24 +1775,32 @@ proc gpuDirectCompositeContext(
         bounds: clip.rect,
         radius: clip.radius
       ))
-  if not renderTarget.isNil:
-    let layerBounds = layers.activeLayerBounds(scale)
-    if layerBounds.isSome:
-      result.targetBounds = layerBounds.get
-    elif renderTarget == target.staticLayerTexture:
-      result.targetBounds = rect(
-        0,
-        0,
-        target.staticLayerWidth.float32 / scale,
-        target.staticLayerHeight.float32 / scale
-      )
-      if target.staticLayerDamageClip.isSome:
-        let damage = target.staticLayerDamageClip.get
-        let bounds = rect(damage.x.float32, damage.y.float32,
-          damage.w.float32, damage.h.float32)
-        result.clipBounds = some(
-          if result.clipBounds.isSome: bounds.intersection(result.clipBounds.get)
-          else: bounds)
+  if renderTarget.isNil:
+    let output = target.renderOutputSize()
+    if output.w > 0 and output.h > 0:
+      result.targetPixelWidth = output.w.uint32
+      result.targetPixelHeight = output.h.uint32
+  elif renderTarget == target.staticLayerTexture:
+    result.targetBounds = rect(0, 0, target.staticLayerWidth.float32,
+      target.staticLayerHeight.float32)
+    result.targetPixelWidth = target.staticLayerPixelWidth.uint32
+    result.targetPixelHeight = target.staticLayerPixelHeight.uint32
+    if target.staticLayerDamageClip.isSome:
+      let damage = target.staticLayerDamageClip.get
+      let bounds = rect(damage.x.float32, damage.y.float32,
+        damage.w.float32, damage.h.float32)
+      result.clipBounds = some(
+        if result.clipBounds.isSome: bounds.intersection(result.clipBounds.get)
+        else: bounds)
+  else:
+    for index in countdown(layers.high, 0):
+      let layer = layers[index]
+      if layer.valid:
+        result.targetBounds = rect(0, 0,
+          layer.pixelWidth.float32 / scale, layer.pixelHeight.float32 / scale)
+        result.targetPixelWidth = layer.pixelWidth.uint32
+        result.targetPixelHeight = layer.pixelHeight.uint32
+        break
 
 proc translated(command: PaintCommand; offset: Vec2): PaintCommand =
   result = command
@@ -4243,12 +4242,19 @@ proc renderCommandPass(
   target.closeTransformLayers(transformLayers)
 
 proc ensureStaticLayer(target: var Sdl3Renderer): bool =
-  let output = target.windowSize()
-  let width = int(max(1.0'f32, round(output.w)))
-  let height = int(max(1.0'f32, round(output.h)))
+  let viewport = target.windowSize()
+  let output = target.renderOutputSize()
+  if viewport.w <= 0 or viewport.h <= 0 or output.w <= 0 or output.h <= 0:
+    return false
+  let width = int(viewport.w)
+  let height = int(viewport.h)
+  let pixelWidth = int(output.w)
+  let pixelHeight = int(output.h)
   if not target.staticLayerTexture.isNil and
       target.staticLayerWidth == width and
-      target.staticLayerHeight == height:
+      target.staticLayerHeight == height and
+      target.staticLayerPixelWidth == pixelWidth and
+      target.staticLayerPixelHeight == pixelHeight:
     return true
 
   target.destroyStaticLayer()
@@ -4256,14 +4262,16 @@ proc ensureStaticLayer(target: var Sdl3Renderer): bool =
     target.renderer,
     SDL_PIXELFORMAT_RGBA32,
     sdlTextureAccessTarget,
-    cint(width),
-    cint(height)
+    cint(pixelWidth),
+    cint(pixelHeight)
   )
   if target.staticLayerTexture.isNil:
     return false
   discard SDL3.setTextureBlendMode(target.staticLayerTexture, sdlBlendModeBlend)
   target.staticLayerWidth = width
   target.staticLayerHeight = height
+  target.staticLayerPixelWidth = pixelWidth
+  target.staticLayerPixelHeight = pixelHeight
   target.staticLayerDamage = initRetainedDamageTracker(
     width, height, DefaultDirtyTileSize
   )
@@ -4325,6 +4333,14 @@ proc boundedDamageRegions(
     bottom = max(bottom, regions[index].y + regions[index].h)
   @[rect(left, top, right - left, bottom - top)]
 
+proc staticRegionPixelAligned(target: Sdl3Renderer; region: Rect): bool =
+  proc aligned(edge: float32; logicalExtent, pixelExtent: int): bool =
+    (edge.int64 * pixelExtent.int64) mod logicalExtent.int64 == 0
+  aligned(region.x, target.staticLayerWidth, target.staticLayerPixelWidth) and
+    aligned(region.x + region.w, target.staticLayerWidth, target.staticLayerPixelWidth) and
+    aligned(region.y, target.staticLayerHeight, target.staticLayerPixelHeight) and
+    aligned(region.y + region.h, target.staticLayerHeight, target.staticLayerPixelHeight)
+
 proc updateStaticLayer(
     target: var Sdl3Renderer;
     commands: openArray[PaintCommand];
@@ -4337,12 +4353,21 @@ proc updateStaticLayer(
   let backgroundChanged =
     target.staticLayerBackgroundInitialized and
       target.staticLayerBackground != clearColor
-  let damage = target.staticLayerDamage.plan(
+  var damage = target.staticLayerDamage.plan(
     retainedCommands,
     forceFullRepaint = backgroundChanged,
     repaintRegions = target.staticLayerRetryRegions
   )
   target.staticLayerRetryRegions.setLen(0)
+  # SDL scissors round clip origins and sizes separately. Replay the whole
+  # target when a tile edge falls between pixels to keep SDL and GPU paint
+  # from clearing or compositing different pixels at a damage boundary.
+  if not damage.fullRepaint and
+      damage.regions.anyIt(not target.staticRegionPixelAligned(it)):
+    damage.fullRepaint = true
+    damage.dirtyTiles = damage.totalTiles
+    damage.regions = @[rect(0, 0,
+      target.staticLayerWidth.float32, target.staticLayerHeight.float32)]
   target.retainedLayerStatsValue.lastDirtyTiles = damage.dirtyTiles
   target.retainedLayerStatsValue.totalTiles = damage.totalTiles
   if damage.regions.len == 0:
@@ -4361,6 +4386,7 @@ proc updateStaticLayer(
 
   let previousTarget = SDL3.getRenderTarget(target.renderer)
   discard SDL3.setRenderTarget(target.renderer, target.staticLayerTexture)
+  target.updateLogicalPresentation()
   defer:
     target.staticLayerDamageClip = none(SDL_Rect)
     target.renderer.setClip(none(SDL_Rect))
@@ -4415,15 +4441,9 @@ proc renderLayered*(
 
   target.renderer.setColor(clearColor)
   discard SDL3.renderClear(target.renderer)
-  var src = SDL_FRect(
-    x: 0,
-    y: 0,
-    w: cfloat(target.staticLayerWidth),
-    h: cfloat(target.staticLayerHeight)
-  )
-  let logical = target.windowSize()
-  var dst = SDL_FRect(x: 0, y: 0, w: cfloat(logical.w), h: cfloat(logical.h))
-  discard SDL3.renderTexture(target.renderer, target.staticLayerTexture, addr src, addr dst)
+  var dst = SDL_FRect(x: 0, y: 0, w: cfloat(target.staticLayerWidth),
+    h: cfloat(target.staticLayerHeight))
+  discard SDL3.renderTexture(target.renderer, target.staticLayerTexture, nil, addr dst)
   if dynamicCommands.len > 0:
     target.renderCommandPass(dynamicCommands, cosmic, fonts)
   else:

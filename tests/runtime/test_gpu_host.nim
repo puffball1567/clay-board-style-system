@@ -9657,6 +9657,33 @@ suite "GPU host direct compositor":
       ((313.0'f32 / 1.25'f32 - 50.2'f32) / 200.0'f32)) < 0.000001'f32
     host.endGpuFrame(token)
 
+    host.resizeGpuHost(162, 101)
+    let fractionalExtent = GpuDirectCompositeContext(
+      targetKind: gdctWindow,
+      targetBounds: rect(10, 20, 129, 80),
+      targetPixelWidth: 162,
+      targetPixelHeight: 101,
+      clipBounds: some(rect(30, 60, 43, 17)),
+      pixelScale: 1.25'f32
+    )
+    let sizedDraw = drawGpuDirectSurface(NodeId(0), surface, rect(20, 40, 100, 60))
+    token = host.beginGpuFrame()
+    check sizedDraw.compositeGpuDirectSurface(
+      fractionalExtent, compositor
+    ) == gdcsPresented
+    check context.lastGraphicsPass.viewport == GpuViewport(
+      x: 25, y: 50, width: 55, height: 22
+    )
+    let sizedUv = context.lastBindings.uniforms[1].values
+    check abs(sizedUv[0] - ((10 + 25'f32 * 129 / 162 - 20) / 100)) < 0.000001'f32
+    check abs(sizedUv[1] - ((20 + 50'f32 * 80 / 101 - 40) / 60)) < 0.000001'f32
+    var staleExtent = fractionalExtent
+    staleExtent.targetPixelWidth = 161
+    check sizedDraw.compositeGpuDirectSurface(staleExtent, compositor) == gdcsUnsupported
+    staleExtent.targetPixelHeight = 0
+    check not compositor.capabilities.supports(staleExtent)
+    host.endGpuFrame(token)
+
     check surface.closeGpuDirectSurface()
     host.close()
 

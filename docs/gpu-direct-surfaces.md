@@ -651,6 +651,10 @@ The standard same-host compositor also checks that the context's logical target
 size and pixel scale match the current physical window or offscreen target.
 After a window resize or DPI change, a stale context returns `gdcsUnsupported`
 instead of drawing with the old coordinate mapping.
+When the renderer supplies both `targetPixelWidth` and `targetPixelHeight`,
+the compositor checks them against the live GPU target and derives each axis
+from that physical extent and the logical bounds. This handles pixel rounding
+at fractional display scales.
 
 New integrations should wrap their callback with `newGpuDirectCompositor()` and
 declare `GpuDirectCompositeCapabilities`. Target kinds, rectangular clipping,
@@ -680,6 +684,12 @@ direct publication and the readback revision. A new readback or a direct
 frame invalidated by device loss damages the surface's destination. Installing
 or clearing the compositor refreshes the retained layer on the next frame,
 including a call to `renderLayered` with `rebuildStatic = false`.
+
+SDL allocates the retained texture at the window's physical output size and
+keeps damage in logical coordinates. A logical or physical resize recreates
+the texture. At fractional scales, damage regions with edges between
+physical pixels replay the entire retained layer to keep SDL and GPU paint
+aligned at the damage boundaries.
 
 When the compositor reports `gdcsRetry` during a retained repaint, SDL can
 display a raster fallback for that frame and keeps the affected repaint
@@ -772,6 +782,8 @@ reuse or destroy its texture as usual. The import adds a separate retirement
 frame per command. SDL continues to present the window. Direct commands
 targeting the window itself and unsupported targets use the command's
 readback fallback when available.
+Reserve space in the compositor namespace for the largest imported RGBA32
+layer at its physical pixel size, including high-density output.
 
 Run GPU producer updates and host teardown within
 `shared.withSdl3BgfxOpenGlContext` on the SDL thread. Clear the renderer's GPU

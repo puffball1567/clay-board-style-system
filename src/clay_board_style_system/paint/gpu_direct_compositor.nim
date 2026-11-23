@@ -33,6 +33,9 @@ type
     ## these composition constraints.
     targetKind*: GpuDirectCompositeTargetKind
     targetBounds*: Rect
+    targetPixelWidth*, targetPixelHeight*: uint32
+      ## Exact target extent when both dimensions are supplied. Otherwise
+      ## pixelScale maps both axes from logical coordinates.
     ## Optional typed destination for GPU-native offscreen renderers. It is a
     ## CBSS resource handle, never a backend handle, and is consumed only by
     ## the synchronous composition callback.
@@ -203,6 +206,9 @@ proc supports*(
     return false
   if context.targetKind != gdctUnspecified and
       not context.targetBounds.isValidBounds(false):
+    return false
+  if (context.targetPixelWidth == 0) != (context.targetPixelHeight == 0) or
+      (context.targetKind == gdctUnspecified and context.targetPixelWidth != 0):
     return false
   case context.targetKind
   of gdctUnspecified, gdctWindow:
