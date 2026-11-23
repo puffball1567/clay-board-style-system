@@ -1683,7 +1683,8 @@ proc renderTextureClippedWith(
     target: Sdl3Renderer;
     texture: pointer;
     src, dst: SDL_FRect;
-    clips: openArray[Sdl3ClipRegion]
+    clips: openArray[Sdl3ClipRegion];
+    rowsPerUnit = 1.0'f32
 )
 
 proc clipRegion(command: PaintCommand): Sdl3ClipRegion =
@@ -3547,7 +3548,8 @@ proc renderTextureClippedWith(
     target: Sdl3Renderer;
     texture: pointer;
     src, dst: SDL_FRect;
-    clips: openArray[Sdl3ClipRegion]
+    clips: openArray[Sdl3ClipRegion];
+    rowsPerUnit: float32
 ) =
   if dst.w <= 0 or dst.h <= 0 or src.w <= 0 or src.h <= 0:
     return
@@ -3557,12 +3559,12 @@ proc renderTextureClippedWith(
     discard SDL3.renderTexture(target.renderer, texture, addr srcRect, addr dstRect)
     return
 
-  let yStart = int(floor(dst.y.float32))
-  let yEnd = int(ceil(dst.y.float32 + dst.h.float32)) - 1
+  let yStart = int(floor(dst.y.float32 * rowsPerUnit))
+  let yEnd = int(ceil((dst.y.float32 + dst.h.float32) * rowsPerUnit)) - 1
   for y in yStart .. yEnd:
-    let top = y.float32
-    let bottom = top + 1.0'f32
-    let centerY = top + 0.5'f32
+    let top = y.float32 / rowsPerUnit
+    let bottom = (y + 1).float32 / rowsPerUnit
+    let centerY = (top + bottom) * 0.5'f32
     var left = dst.x.float32
     var right = dst.x.float32 + dst.w.float32
     if not clips.clippedHorizontalSpan(centerY, left, right):
@@ -3621,10 +3623,22 @@ proc createRoundedImageTexture(
     sourceTexture: pointer;
     src, dst: SDL_FRect;
     clips: openArray[Sdl3ClipRegion];
+    scale: float32;
     scaleMode: SDL_ScaleMode
 ): Option[Sdl3RoundedTextureCacheEntry] =
-  let width = max(1, int(ceil(dst.w.float32)))
-  let height = max(1, int(ceil(dst.h.float32)))
+  let pixelWidth = ceil(dst.w.float64 * scale.float64)
+  let pixelHeight = ceil(dst.h.float64 * scale.float64)
+  if not (pixelWidth >= 1 and pixelWidth <= high(cint).float64 and
+      pixelHeight >= 1 and pixelHeight <= high(cint).float64):
+    return none(Sdl3RoundedTextureCacheEntry)
+  let width = int(pixelWidth)
+  let height = int(pixelHeight)
+  if textureBytes(width, height) > target.roundedTextureCacheByteLimit:
+    return none(Sdl3RoundedTextureCacheEntry)
+  let scaleX = width.float32 / dst.w.float32
+  let scaleY = height.float32 / dst.h.float32
+  if scaleX.classify == fcInf or scaleY.classify == fcInf:
+    return none(Sdl3RoundedTextureCacheEntry)
   let texture = SDL3.createTexture(
     target.renderer,
     SDL_PIXELFORMAT_RGBA32,
@@ -3639,25 +3653,26 @@ proc createRoundedImageTexture(
   discard SDL3.setTextureScaleMode(texture, scaleMode)
 
   let previousTarget = SDL3.getRenderTarget(target.renderer)
-  discard SDL3.setRenderTarget(target.renderer, texture)
-  discard SDL3.setRenderLogicalPresentation(
-    target.renderer,
-    cint(width),
-    cint(height),
-    SDL_LOGICAL_PRESENTATION_STRETCH
-  )
-  target.renderer.setClip(none(SDL_Rect))
-  discard SDL3.setRenderDrawColor(target.renderer, 0, 0, 0, 0)
-  discard SDL3.renderClear(target.renderer)
-
-  discard SDL3.setTextureAlphaModFloat(sourceTexture, 1.0)
-  let localClips = localClipStack(clips, dst)
-  var localDst = SDL_FRect(x: 0, y: 0, w: cfloat(dst.w.float32), h: cfloat(dst.h.float32))
-  target.renderTextureClippedWith(sourceTexture, src, localDst, localClips)
-
-  discard SDL3.setRenderTarget(target.renderer, previousTarget)
-  target.updateLogicalPresentation()
+  let prepared = SDL3.setRenderTarget(target.renderer, texture) and
+    SDL3.setRenderScale(target.renderer, cfloat(scaleX), cfloat(scaleY)) and
+    SDL3.setRenderClipRect(target.renderer, nil) and
+    SDL3.setRenderDrawColor(target.renderer, 0, 0, 0, 0) and
+    SDL3.renderClear(target.renderer) and
+    SDL3.setTextureAlphaModFloat(sourceTexture, 1.0) and
+    SDL3.setTextureBlendMode(sourceTexture, sdlBlendModeNone)
+  if prepared:
+    # Each scanline copies straight RGBA into the cache. Apply alpha only
+    # when compositing the finished image onto its parent target.
+    let localClips = localClipStack(clips, dst)
+    let localDst = SDL_FRect(w: dst.w, h: dst.h)
+    target.renderTextureClippedWith(sourceTexture, src, localDst, localClips, scaleY)
+    discard SDL3.setTextureBlendMode(sourceTexture, sdlBlendModeBlend)
+  # SDL restores the previous target's scale and logical presentation.
+  let restored = SDL3.setRenderTarget(target.renderer, previousTarget)
   target.renderer.setClip(target.effectiveClipBounds())
+  if not prepared or not restored:
+    SDL3.destroyTexture(texture)
+    return none(Sdl3RoundedTextureCacheEntry)
 
   let entry = Sdl3RoundedTextureCacheEntry(
     key: key,
@@ -3698,15 +3713,15 @@ proc drawImageTexture(
   let scaleMode = sdlImageScaleMode(command.imageStyle.imageRendering)
   discard SDL3.setTextureScaleMode(texture, scaleMode)
   let alpha = max(0.0'f32, min(1.0'f32, command.imageOpacity))
-  discard SDL3.setTextureAlphaModFloat(texture, cfloat(alpha))
   var rects = command.imageFitRects(entry.get.width, entry.get.height)
   if rects.src.w <= 0 or rects.src.h <= 0 or rects.dst.w <= 0 or rects.dst.h <= 0:
     return
 
   if roundedImageClips.hasRoundedClip():
+    let scale = target.pixelScale()
     let key = roundedTextureCacheKey(
       command.imageSource, rects.src, rects.dst, roundedImageClips,
-      target.pixelScale(), scaleMode
+      scale, scaleMode
     )
     let cached = target.findRoundedTextureCache(key)
     let rounded =
@@ -3714,7 +3729,7 @@ proc drawImageTexture(
         cached
       else:
         target.createRoundedImageTexture(
-          key, texture, rects.src, rects.dst, roundedImageClips, scaleMode
+          key, texture, rects.src, rects.dst, roundedImageClips, scale, scaleMode
         )
     if rounded.isSome:
       let roundedEntry = rounded.get
@@ -3724,6 +3739,7 @@ proc drawImageTexture(
       discard SDL3.renderTexture(target.renderer, roundedEntry.texture, nil, addr dst)
       return
 
+  discard SDL3.setTextureAlphaModFloat(texture, cfloat(alpha))
   target.renderTextureClipped(texture, rects.src, rects.dst)
 
 proc evictRasterSurfaceCacheIfNeeded(target: var Sdl3Renderer) =
