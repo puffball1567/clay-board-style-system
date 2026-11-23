@@ -332,13 +332,19 @@ proc nativeSdl3Renderer*(target: Sdl3Renderer): pointer =
   ## Borrowed SDL renderer for backend integration. Valid until close().
   target.renderer
 
+proc invalidateStaticLayer(target: var Sdl3Renderer) =
+  if not target.staticLayerTexture.isNil:
+    target.staticLayerDamage.reset(target.staticLayerWidth, target.staticLayerHeight)
+
 proc setGpuDirectCompositor*(
     target: var Sdl3Renderer;
     compositor: GpuDirectCompositor
 ) =
   ## Installs the backend-specific bridge used by pcDrawGpuDirectSurface.
+  ## The next layered frame repaints pixels produced by the prior compositor.
   ## The callback is invoked while the command's SDL clip and layer are active.
   target.gpuDirectCompositor = compositor
+  target.invalidateStaticLayer()
 
 proc setGpuDirectCompositor*(
     target: var Sdl3Renderer;
@@ -347,19 +353,19 @@ proc setGpuDirectCompositor*(
   ## Compatibility overload. Typed compositors should declare narrower
   ## capabilities with newGpuDirectCompositor().
   if compositor.isNil:
-    target.gpuDirectCompositor = GpuDirectCompositor()
+    target.setGpuDirectCompositor(GpuDirectCompositor())
     return
-  target.gpuDirectCompositor = newGpuDirectCompositor(
+  target.setGpuDirectCompositor(newGpuDirectCompositor(
     gpuDirectCompositeCapabilities(
       {gdctUnspecified, gdctWindow, gdctOffscreen},
       clipBoundsSupported = true,
       clipMaskSupported = true
     ),
     compositor
-  )
+  ))
 
 proc clearGpuDirectCompositor*(target: var Sdl3Renderer) =
-  target.gpuDirectCompositor = GpuDirectCompositor()
+  target.setGpuDirectCompositor(GpuDirectCompositor())
 
 proc setGpuLayerColorFilter*(
     target: var Sdl3Renderer; filter: Sdl3LayerColorFilterProc
@@ -382,8 +388,7 @@ proc setGpuLayerShaderFilter*(target: var Sdl3Renderer; filter: Sdl3LayerShaderF
   if filter.isNil:
     target.shaderSourceFonts = FontRegistry()
     target.shaderSourceFontEngine = nil
-  if not target.staticLayerTexture.isNil:
-    target.staticLayerDamage.reset(target.staticLayerWidth, target.staticLayerHeight)
+  target.invalidateStaticLayer()
 
 proc gpuDirectCompositionStats*(
     target: Sdl3Renderer
@@ -1177,8 +1182,7 @@ proc pollEventFromRaw(
       return true
     of SDL_EVENT_RENDER_TARGETS_RESET, SDL_EVENT_RENDER_DEVICE_RESET:
       target.invalidateShaderSources()
-      if not target.staticLayerTexture.isNil:
-        target.staticLayerDamage.reset(target.staticLayerWidth, target.staticLayerHeight)
+      target.invalidateStaticLayer()
       event = Sdl3Event(kind: sekExpose, timestamp: raw.common.timestamp)
       return true
     of SDL_EVENT_WINDOW_EXPOSED:
@@ -1636,8 +1640,7 @@ proc scaleTextStyle(style: ComputedTextStyle; scale: float32): ComputedTextStyle
 proc clearImageCache*(target: var Sdl3Renderer) =
   target.destroyImageCache()
   target.destroyRoundedTextureCache()
-  if not target.staticLayerTexture.isNil:
-    target.staticLayerDamage.reset(target.staticLayerWidth, target.staticLayerHeight)
+  target.invalidateStaticLayer()
 
 proc assetRoots*(target: Sdl3Renderer): seq[string] =
   target.assetResolver.roots

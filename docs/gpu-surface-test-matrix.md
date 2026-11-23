@@ -111,6 +111,11 @@ two frames of SDL layer reuse. This uses two EGL contexts in the same share
 group, with a GPU fence at each handoff. The mixed-layer path is covered by
 Linux Mesa CI under ARC and ORC. Physical-driver coverage remains open.
 
+SDL software-renderer tests verify that publishing into the same fallback
+raster updates its retained destination tile and that installing or clearing
+the compositor refreshes the retained layer. The mock host test checks
+damage when a direct frame becomes stale before the compositor acquires it.
+
 The sharing fixture also composites a Motion Scene render target and an
 independent compute shader's storage texture into the same SDL layer. The two
 producers have separate namespaces on one GPU host. The fixture checks

@@ -6,7 +6,7 @@ import clay_board_style_system/backends/ppm/raster
 import clay_board_style_system/generated/default_properties
 import clay_board_style_system/hit/hit_test
 import clay_board_style_system/layout/layout
-import clay_board_style_system/paint/[paint, paint_command]
+import clay_board_style_system/paint/[paint, paint_command, retained_damage]
 import clay_board_style_system/paint/layer_color_filter
 import clay_board_style_system/paint/gpu_direct_compositor
 import clay_board_style_system/paint/gpu_host_compositor
@@ -6570,8 +6570,13 @@ suite "GPU direct surface lifecycle":
       host.copyGpuTexture(namespace, source, destination)
     host.endGpuFrame(token)
     check surface.collectGpuDirectSurfaceFrame()
+    let commands = [drawGpuDirectSurface(NodeId(1), surface, rect(2, 2, 4, 4))]
+    var damage = initRetainedDamageTracker(32, 16, tileSize = 8)
+    discard damage.plan(commands)
+    check damage.plan(commands).dirtyTiles == 0
     check host.markGpuDeviceLost()
     check surface.isStale
+    check damage.plan(commands).regions == @[rect(0, 0, 8, 8)]
     check not surface.acquireGpuDirectSurfaceFrame().isSome
     check surface.closeGpuDirectSurface()
     check not host.isGpuResourceLive(source)
