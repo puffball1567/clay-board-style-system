@@ -14,6 +14,7 @@ import clay_board_style_system/runtime/motion_scene
 import clay_board_style_system/runtime/[motion_scene_timeline, frame_scheduler, animation_clock]
 import clay_board_style_system/runtime/canvas
 import clay_board_style_system/text/[cosmic_text_engine, font_registry]
+import clay_board_style_system/vendor/sdl3
 
 proc pixel(frame: Sdl3CapturedFrame; x, y: int): tuple[r, g, b: uint8] =
   let offset = (y * frame.width + x) * 3
@@ -655,6 +656,88 @@ suite "SDL3 transform rendering":
     renderer.renderLayered(commands, cosmic, fonts, rebuildStatic = false)
     check renderer.gpuDirectCompositionStats().unsupported == 1
     check renderer.retainedLayerStats().fullRepaints == 3
+
+  test "retained GPU composition retries its damaged tile until presented":
+    let previousDriver = getEnv("SDL_VIDEODRIVER")
+    putEnv("SDL_VIDEODRIVER", "dummy")
+    defer:
+      if previousDriver.len > 0: putEnv("SDL_VIDEODRIVER", previousDriver)
+      else: delEnv("SDL_VIDEODRIVER")
+    var renderer = initSdl3Renderer("CBSS retained GPU retry test", 128, 64, false)
+    defer: renderer.close()
+
+    # Publish a real surface lease without needing a GPU for the retry policy.
+    let backend = GpuBackendVTable(apiVersion: gpuHostApiVersion,
+      context: GpuBackendContext(),
+      openOwned: proc(context: GpuBackendContext; config: GpuHostConfig;
+          info: var GpuBackendInfo): GpuBackendStatus =
+        info = GpuBackendInfo(directTexturePresentationSupported: true,
+          directPresentationFormats: {gtfRgba8},
+          directPresentationAlphaModes: {gcamStraight},
+          maxDirectPresentationBuffers: 2)
+        gbsOk,
+      createTexture: proc(context: GpuBackendContext; descriptor: GpuTextureDescriptor;
+          initialData: seq[byte]; resource: var GpuBackendResourceId): GpuBackendStatus =
+        resource = GpuBackendResourceId(1)
+        gbsOk,
+      destroyResource: proc(context: GpuBackendContext; resource: GpuBackendResourceId;
+          kind: GpuResourceKind) = discard)
+    let host = openGpuHost(backend, ghoOwned)
+    defer: host.close()
+    let namespace = host.createGpuNamespace("Retry fixture",
+      GpuResourceBudget(maxResources: 1, persistentBytes: 4))
+    let texture = host.createGpuTexture(namespace, GpuTextureDescriptor(
+      width: 1, height: 1, format: gtfRgba8, usage: {gtuSampled}, access: gtaStatic),
+      @[255'u8, 0, 0, 255])
+    var config = defaultGpuDirectSurfaceConfig(1, 1)
+    config.bufferCount = 2
+    let surface = host.newGpuDirectSurface(namespace, config)
+    defer: check surface.closeGpuDirectSurface()
+    let frame = host.beginGpuFrame()
+    check surface.queueGpuDirectSurfaceFrame(texture, frame)
+    host.endGpuFrame(frame)
+    check surface.collectGpuDirectSurfaceFrame()
+
+    var busyFrames = 0
+    let native = renderer.nativeSdl3Renderer()
+    renderer.setGpuDirectCompositor(
+      proc(request: GpuDirectCompositeRequest): GpuDirectCompositeStatus =
+        if busyFrames > 0:
+          dec busyFrames
+          return gdcsRetry
+        let bounds = request.destination
+        var pixels = SDL_FRect(x: bounds.x, y: bounds.y, w: bounds.w, h: bounds.h)
+        if SDL3.setRenderDrawColor(native, 255, 0, 0, 255) and
+            SDL3.renderFillRect(native, addr pixels):
+          gdcsPresented
+        else:
+          gdcsFailed)
+    let fallback = newRasterSurface(1, 1, [0'u8, 255, 0, 255])
+    let fonts = initFontRegistry()
+    let cosmic = CosmicTextEngine()
+    let background = rgb(0, 0, 0)
+    var commands = [fillRect(rect(104, 4, 8, 8), rgb(0, 0, 1)),
+      drawGpuDirectSurface(NodeId(1), surface, rect(80, 4, 8, 8), fallback = fallback)]
+    renderer.renderLayered(commands, cosmic, fonts, background)
+    check renderer.gpuDirectCompositionStats().presented == 1
+
+    busyFrames = 2
+    commands[0].color = rgb(1, 1, 0)
+    for step in 0 .. 1:
+      renderer.requestFrameCapture()
+      renderer.renderLayered(commands, cosmic, fonts, background, rebuildStatic = step == 0)
+      check renderer.gpuDirectCompositionStats().retry == 1
+      check renderer.capturedFrame().get.pixel(82, 6) == (0'u8, 255'u8, 0'u8)
+      check renderer.retainedLayerStats().lastDirtyTiles == 1
+
+    renderer.requestFrameCapture()
+    renderer.renderLayered(commands, cosmic, fonts, background, rebuildStatic = false)
+    check renderer.gpuDirectCompositionStats().presented == 1
+    check renderer.capturedFrame().get.pixel(82, 6) == (255'u8, 0'u8, 0'u8)
+    check renderer.retainedLayerStats().lastDirtyTiles == 1
+    renderer.renderLayered(commands, cosmic, fonts, background)
+    check renderer.retainedLayerStats().lastDirtyTiles == 0
+    check renderer.gpuDirectCompositionStats() == Sdl3GpuDirectCompositionStats()
 
   test "changing the Style shader hook invalidates a retained layer":
     let previousDriver = getEnv("SDL_VIDEODRIVER")

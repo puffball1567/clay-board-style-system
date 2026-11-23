@@ -18,6 +18,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Fixed
 
+- Retained SDL layers now retry direct GPU composition on the next frame
+  after a transient compositor failure. Only the affected repaint regions
+  stay dirty, and retries stop once direct composition succeeds.
+
 - Retained SDL layers now repaint when a GPU surface's readback fallback
   publishes new pixels, when a direct frame becomes stale after device loss,
   or when the renderer's direct compositor changes.

@@ -109,9 +109,11 @@ proc markRasterResourceDamage(
 proc plan*(
     tracker: var RetainedDamageTracker;
     commands: openArray[PaintCommand];
-    forceFullRepaint = false
+    forceFullRepaint: bool;
+    repaintRegions: openArray[Rect]
 ): RetainedDamagePlan =
   ## Compares and retains `commands`, returning regions that must be replayed.
+  ## Merges explicitly requested repaint regions with changes in the snapshot.
   ## Unbounded changes conservatively mark the complete target.
   if tracker.grid.width <= 0 or tracker.grid.height <= 0:
     raise newException(ValueError, "retained damage tracker is not initialized")
@@ -158,6 +160,9 @@ proc plan*(
   if fullRepaint:
     tracker.grid.clear()
     tracker.grid.markAll()
+  else:
+    for region in repaintRegions:
+      discard tracker.grid.markDirty(region)
 
   result = RetainedDamagePlan(
     dirtyTiles: tracker.grid.dirtyTileCount,
@@ -169,3 +174,11 @@ proc plan*(
   tracker.previousBounds = move(currentBounds)
   tracker.previousResourceRevisions = move(currentResourceRevisions)
   tracker.initialized = true
+
+proc plan*(
+    tracker: var RetainedDamageTracker;
+    commands: openArray[PaintCommand];
+    forceFullRepaint = false
+): RetainedDamagePlan =
+  ## Returns the damage caused by changes to the retained paint snapshot.
+  tracker.plan(commands, forceFullRepaint, [])

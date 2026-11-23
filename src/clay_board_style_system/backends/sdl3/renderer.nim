@@ -265,6 +265,7 @@ type
     staticLayerWidth, staticLayerHeight: int
     staticLayerDamage: RetainedDamageTracker
     staticLayerDamageClip: Option[SDL_Rect]
+    staticLayerRetryRegions: seq[Rect]
     staticLayerBackground: Color
     staticLayerBackgroundInitialized: bool
     retainedLayerStatsValue: Sdl3RetainedLayerStats
@@ -333,6 +334,7 @@ proc nativeSdl3Renderer*(target: Sdl3Renderer): pointer =
   target.renderer
 
 proc invalidateStaticLayer(target: var Sdl3Renderer) =
+  target.staticLayerRetryRegions.setLen(0)
   if not target.staticLayerTexture.isNil:
     target.staticLayerDamage.reset(target.staticLayerWidth, target.staticLayerHeight)
 
@@ -682,6 +684,7 @@ proc destroyStaticLayer(target: var Sdl3Renderer) =
   target.staticLayerHeight = 0
   target.staticLayerDamage = RetainedDamageTracker()
   target.staticLayerDamageClip = none(SDL_Rect)
+  target.staticLayerRetryRegions.setLen(0)
   target.staticLayerBackgroundInitialized = false
 
 proc destroyCursorCache(target: var Sdl3Renderer) =
@@ -4336,8 +4339,10 @@ proc updateStaticLayer(
       target.staticLayerBackground != clearColor
   let damage = target.staticLayerDamage.plan(
     retainedCommands,
-    forceFullRepaint = backgroundChanged
+    forceFullRepaint = backgroundChanged,
+    repaintRegions = target.staticLayerRetryRegions
   )
+  target.staticLayerRetryRegions.setLen(0)
   target.retainedLayerStatsValue.lastDirtyTiles = damage.dirtyTiles
   target.retainedLayerStatsValue.totalTiles = damage.totalTiles
   if damage.regions.len == 0:
@@ -4363,6 +4368,7 @@ proc updateStaticLayer(
 
   for region in regions:
     target.clearStaticDamageRegion(region, clearColor)
+    let previousRetries = target.gpuDirectCompositionStats.retry
     target.renderCommandPass(
       commands,
       cosmic,
@@ -4371,6 +4377,8 @@ proc updateStaticLayer(
       skipDynamic = true,
       dynamicNodes = dynamicNodes
     )
+    if target.gpuDirectCompositionStats.retry != previousRetries:
+      target.staticLayerRetryRegions.add region
   target.staticLayerBackground = clearColor
   target.staticLayerBackgroundInitialized = true
 
@@ -4384,6 +4392,8 @@ proc renderLayered*(
     dynamicNodes: openArray[NodeId] = [];
     dynamicCommands: openArray[PaintCommand] = []
 ) =
+  ## A transient compositor retry leaves the affected retained regions dirty
+  ## for the next call, including when `rebuildStatic` is false.
   if not target.ensureStaticLayer():
     target.render(commands, cosmic, fonts, clearColor)
     return
@@ -4392,7 +4402,8 @@ proc renderLayered*(
   target.resetGpuDirectCompositionStats()
   target.updateLogicalPresentation()
 
-  if rebuildStatic or not target.staticLayerDamage.isInitialized or
+  if rebuildStatic or target.staticLayerRetryRegions.len > 0 or
+      not target.staticLayerDamage.isInitialized or
       not target.staticLayerBackgroundInitialized or
       target.staticLayerBackground != clearColor:
     target.updateStaticLayer(

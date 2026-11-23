@@ -681,6 +681,13 @@ frame invalidated by device loss damages the surface's destination. Installing
 or clearing the compositor refreshes the retained layer on the next frame,
 including a call to `renderLayered` with `rebuildStatic = false`.
 
+When the compositor reports `gdcsRetry` during a retained repaint, SDL can
+display a raster fallback for that frame and keeps the affected repaint
+region dirty. The next call to `renderLayered` replays that region even if
+the paint commands and surface revisions are unchanged. In an event-driven
+loop, use `gpuDirectCompositionStats().retry` to request another frame when
+the compositor can make progress.
+
 For the normal one-host path, `newGpuHostDirectCompositor()` creates a typed
 compositor over the same `GpuHost` that owns the published source. The caller
 opens one host frame around the surrounding paint stream. The compositor adds
