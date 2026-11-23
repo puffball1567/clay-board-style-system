@@ -1056,7 +1056,7 @@ canonical visual contract.
 | Canvas in ordinary UI | Bounded asynchronous readback, optional same-host direct presentation, opt-in zero-copy SDL EGL/OpenGL layer composition on Linux, and hybrid fallback | Mixed-layer coverage beyond the qualified OpenGL configuration |
 | Filters | Ordered GPU filter chains for Canvas, Motion Scene, and explicit raster or GPU inputs. Style subtrees support RGB matrices, bounded Gaussian blur, and packaged fragment shaders with typed parameters, up to four additional textures, owned float animations, bounded effect outsets, and CPU fallback on Linux EGL/OpenGL. SDL reuses eligible source textures across uniform-only frames. | Broader hardware qualification |
 | Motion Scene | Batched 2D shapes, images and atlas sprites, timelines, direct and filtered display | General paths and text as scene objects and further scene composition capabilities |
-| Qualification | Linux Mesa OpenGL pixel CI under ARC and ORC, including a native window pass and resize, plus a recorded AMD Renoir OpenGL run. Mock and bgfx NOOP tests cover recovery behavior. | Physical-driver coverage for mixed layers, recovery and pressure, and a combined Motion Scene and independent compute fixture under one presentation owner |
+| Qualification | Linux Mesa OpenGL pixel CI under ARC and ORC, including a native window pass and resize and a combined Motion Scene and independent compute fixture under one SDL presentation owner. A recorded AMD Renoir OpenGL run covers the direct pixel fixture. Mock and bgfx NOOP tests cover recovery behavior. | Physical-driver coverage for mixed layers, recovery, and pressure |
 
 See the [GPU surface test matrix](gpu-surface-test-matrix.md) for the tested
 combinations and the remaining production qualification cases.

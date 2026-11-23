@@ -1262,6 +1262,8 @@ proc beginGraphicsPass(
     uint16(pass.viewport.width),
     uint16(pass.viewport.height)
   )
+  # Batches can mix pipelines with transparency. Preserve their paint order.
+  BGFX.setViewMode(viewId, BGFX_VIEW_MODE_SEQUENTIAL)
   if pass.scissorEnabled:
     BGFX.setViewScissor(
       viewId,
@@ -1399,6 +1401,9 @@ proc dispatch(
   let bindingStatus = bindings.applyBindings()
   if bindingStatus != gbsOk:
     return bindingStatus
+  # bgfx keeps view state across frames and can clear a previous framebuffer
+  # before a compute dispatch. This view has no graphics state.
+  BGFX.resetView(viewId)
   BGFX.dispatch(
     viewId,
     bgfx_program_handle_t(idx: program.handleIndex),

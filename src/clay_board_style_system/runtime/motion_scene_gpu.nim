@@ -314,8 +314,10 @@ proc gpuMotionRectVertexSource*(): GpuShaderSource =
   builder.emitGpuShaderSource()
 
 proc gpuMotionRectFragmentSource*(): GpuShaderSource =
+  # Both Motion fragment shaders link against the same vertex shader. bgfx
+  # compares the full varying list, including the image-only UV scale.
   GpuShaderSource(stage: gssFragment, label: "motion-scene-rect-fragment",
-    source: """$input v_texcoord0, v_texcoord1, v_texcoord2, v_color0
+    source: """$input v_texcoord0, v_texcoord1, v_texcoord2, v_texcoord3, v_color0
 #include "bgfx_shader.sh"
 void main()
 {
@@ -327,7 +329,7 @@ void main()
         (v_texcoord1.w > 4.5 &&
          distanceSquared < v_texcoord2.y * v_texcoord2.y)) { discard; }
     if (distanceSquared > 0.0 && v_texcoord2.x < 6.2831855) {
-      float delta = atan(normalized.y, normalized.x) - v_texcoord1.z;
+      float delta = atan2(normalized.y, normalized.x) - v_texcoord1.z;
       float relative = delta - floor(delta / 6.2831855) * 6.2831855;
       if (relative > v_texcoord2.x) { discard; }
     }
@@ -369,6 +371,7 @@ vec4 v_color0 : COLOR0;
       GpuShaderInterfaceEntry(slot: gsisTexCoord0, valueType: gsvtVec2),
       GpuShaderInterfaceEntry(slot: gsisTexCoord1, valueType: gsvtVec4),
       GpuShaderInterfaceEntry(slot: gsisTexCoord2, valueType: gsvtVec2),
+      GpuShaderInterfaceEntry(slot: gsisTexCoord3, valueType: gsvtVec2),
       GpuShaderInterfaceEntry(slot: gsisColor0, valueType: gsvtVec4)
     ])
 
