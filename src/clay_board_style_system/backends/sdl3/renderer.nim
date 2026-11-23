@@ -1683,8 +1683,7 @@ proc renderTextureClippedWith(
     target: Sdl3Renderer;
     texture: pointer;
     src, dst: SDL_FRect;
-    clips: openArray[Sdl3ClipRegion];
-    rowsPerUnit = 1.0'f32
+    clips: openArray[Sdl3ClipRegion]
 )
 
 proc clipRegion(command: PaintCommand): Sdl3ClipRegion =
@@ -3530,26 +3529,11 @@ proc roundedTextureCacheKey(
     result.add ","
     result.add roundedCacheFloat(clip.radius)
 
-proc localClipStack(clips: openArray[Sdl3ClipRegion]; dst: SDL_FRect): seq[Sdl3ClipRegion] =
-  for clip in clips:
-    let localRect = Rect(
-      x: clip.rect.x - dst.x.float32,
-      y: clip.rect.y - dst.y.float32,
-      w: clip.rect.w,
-      h: clip.rect.h
-    )
-    result.add Sdl3ClipRegion(
-      rect: localRect,
-      radius: clip.radius,
-      bounds: localRect.toSdlClip
-    )
-
 proc renderTextureClippedWith(
     target: Sdl3Renderer;
     texture: pointer;
     src, dst: SDL_FRect;
-    clips: openArray[Sdl3ClipRegion];
-    rowsPerUnit: float32
+    clips: openArray[Sdl3ClipRegion]
 ) =
   if dst.w <= 0 or dst.h <= 0 or src.w <= 0 or src.h <= 0:
     return
@@ -3559,12 +3543,12 @@ proc renderTextureClippedWith(
     discard SDL3.renderTexture(target.renderer, texture, addr srcRect, addr dstRect)
     return
 
-  let yStart = int(floor(dst.y.float32 * rowsPerUnit))
-  let yEnd = int(ceil((dst.y.float32 + dst.h.float32) * rowsPerUnit)) - 1
+  let yStart = int(floor(dst.y.float32))
+  let yEnd = int(ceil(dst.y.float32 + dst.h.float32)) - 1
   for y in yStart .. yEnd:
-    let top = y.float32 / rowsPerUnit
-    let bottom = (y + 1).float32 / rowsPerUnit
-    let centerY = (top + bottom) * 0.5'f32
+    let top = y.float32
+    let bottom = top + 1.0'f32
+    let centerY = top + 0.5'f32
     var left = dst.x.float32
     var right = dst.x.float32 + dst.w.float32
     if not clips.clippedHorizontalSpan(centerY, left, right):
@@ -3617,6 +3601,41 @@ proc evictRoundedTextureCacheIfNeeded(target: var Sdl3Renderer) =
     target.roundedTextureCache.delete(victim)
     target.rebuildRoundedTextureCacheIndex()
 
+proc maskRoundedImageTexture(
+    renderer: pointer;
+    dst: SDL_FRect;
+    clips: openArray[Sdl3ClipRegion];
+    width, height: int
+): bool =
+  var previousBlendMode: SDL_BlendMode
+  if not SDL3.getRenderDrawBlendMode(renderer, addr previousBlendMode) or
+      not SDL3.setRenderDrawColor(renderer, 0, 0, 0, 0) or
+      not SDL3.setRenderDrawBlendMode(renderer, sdlBlendModeNone):
+    return false
+  defer: discard SDL3.setRenderDrawBlendMode(renderer, previousBlendMode)
+  for row in 0 ..< height:
+    let centerY = dst.y.float32 +
+      ((row.float32 + 0.5'f32) / height.float32) * dst.h.float32
+    var left = dst.x.float32
+    var right = left + dst.w.float32
+    var spans: array[2, SDL_FRect]
+    var count = 0
+    if clips.clippedHorizontalSpan(centerY, left, right):
+      let first = ceil(((left - dst.x) / dst.w) * width.float32 - 0.5'f32).float32
+      let last = ceil(((right - dst.x) / dst.w) * width.float32 - 0.5'f32).float32
+      if first > 0:
+        spans[count] = SDL_FRect(y: row.cfloat, w: first, h: 1)
+        inc count
+      if last < width.float32:
+        spans[count] = SDL_FRect(x: last, y: row.cfloat, w: width.float32 - last, h: 1)
+        inc count
+    else:
+      spans[0] = SDL_FRect(y: row.cfloat, w: width.cfloat, h: 1)
+      count = 1
+    if count > 0 and not SDL3.renderFillRects(renderer, addr spans[0], count.cint):
+      return false
+  true
+
 proc createRoundedImageTexture(
     target: var Sdl3Renderer;
     key: string;
@@ -3635,10 +3654,6 @@ proc createRoundedImageTexture(
   let height = int(pixelHeight)
   if textureBytes(width, height) > target.roundedTextureCacheByteLimit:
     return none(Sdl3RoundedTextureCacheEntry)
-  let scaleX = width.float32 / dst.w.float32
-  let scaleY = height.float32 / dst.h.float32
-  if scaleX.classify == fcInf or scaleY.classify == fcInf:
-    return none(Sdl3RoundedTextureCacheEntry)
   let texture = SDL3.createTexture(
     target.renderer,
     SDL_PIXELFORMAT_RGBA32,
@@ -3654,23 +3669,20 @@ proc createRoundedImageTexture(
 
   let previousTarget = SDL3.getRenderTarget(target.renderer)
   let prepared = SDL3.setRenderTarget(target.renderer, texture) and
-    SDL3.setRenderScale(target.renderer, cfloat(scaleX), cfloat(scaleY)) and
-    SDL3.setRenderClipRect(target.renderer, nil) and
-    SDL3.setRenderDrawColor(target.renderer, 0, 0, 0, 0) and
-    SDL3.renderClear(target.renderer) and
     SDL3.setTextureAlphaModFloat(sourceTexture, 1.0) and
     SDL3.setTextureBlendMode(sourceTexture, sdlBlendModeNone)
+  var painted = false
   if prepared:
-    # Each scanline copies straight RGBA into the cache. Apply alpha only
-    # when compositing the finished image onto its parent target.
-    let localClips = localClipStack(clips, dst)
-    let localDst = SDL_FRect(w: dst.w, h: dst.h)
-    target.renderTextureClippedWith(sourceTexture, src, localDst, localClips, scaleY)
+    # Copy straight RGBA once, then erase outside the mask in whole pixels.
+    # Fractional source and destination slices can round differently per row.
+    var source = src
+    painted = SDL3.renderTexture(target.renderer, sourceTexture, addr source, nil) and
+      target.renderer.maskRoundedImageTexture(dst, clips, width, height)
     discard SDL3.setTextureBlendMode(sourceTexture, sdlBlendModeBlend)
   # SDL restores the previous target's scale and logical presentation.
   let restored = SDL3.setRenderTarget(target.renderer, previousTarget)
   target.renderer.setClip(target.effectiveClipBounds())
-  if not prepared or not restored:
+  if not painted or not restored:
     SDL3.destroyTexture(texture)
     return none(Sdl3RoundedTextureCacheEntry)
 

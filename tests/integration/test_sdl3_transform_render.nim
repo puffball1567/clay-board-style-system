@@ -145,10 +145,13 @@ suite "SDL3 transform rendering":
     writeFile(source, "P7\nWIDTH 1\nHEIGHT 1\nDEPTH 4\nMAXVAL 255\n" &
       "TUPLTYPE RGB_ALPHA\nENDHDR\n\xFF\x00\x00\x80")
 
-    const densities = when defined(linux): [1, 2] else: [1]
+    const densities = when defined(linux): [1.0'f32, 1.25, 1.30, 2.0] else: [1.0'f32]
     for density in densities:
+      proc outputPixel(position: int): int =
+        int(round(position.float32 * density))
+
       var renderer = initSdl3Renderer("CBSS rounded image layer test",
-        96 * density, 64 * density, false)
+        outputPixel(96), outputPixel(64), false)
       defer: renderer.close()
       when defined(linux):
         scaledWindow = renderer.window
@@ -159,7 +162,7 @@ suite "SDL3 transform rendering":
       let style = ComputedImageStyle(imageRendering: irCrispEdges)
       var commands = @[
         pushTransform(translationAffine2D(20, 12)),
-        pushClip(rect(4, 4, 16, 16), radius = 6),
+        pushClip(rect(4, 4, 16, 16), radius = 8),
         drawImage(NodeId(1), source, rect(4, 4, 16, 16), 1, style),
         popClip(),
         fillRect(rect(28, 4, 6, 6), rgb(0, 1, 0)),
@@ -170,18 +173,18 @@ suite "SDL3 transform rendering":
       renderer.requestFrameCapture()
       renderer.render(commands, background)
       let cold = renderer.capturedFrame().get
-      let center = cold.pixel(32 * density, 24 * density)
+      let center = cold.pixel(outputPixel(32), outputPixel(24))
       check center.r in 127'u8 .. 129'u8
       check center.g == 0
       check center.b in 126'u8 .. 128'u8
-      check cold.pixel(24 * density, 16 * density) == (0'u8, 0'u8, 255'u8)
-      check cold.pixel(50 * density, 18 * density) == (0'u8, 255'u8, 0'u8)
-      let unrounded = cold.pixel(70 * density, 22 * density)
+      check cold.pixel(outputPixel(24), outputPixel(16)) == (0'u8, 0'u8, 255'u8)
+      check cold.pixel(outputPixel(50), outputPixel(18)) == (0'u8, 255'u8, 0'u8)
+      let unrounded = cold.pixel(outputPixel(70), outputPixel(22))
       check unrounded.r in 63'u8 .. 65'u8
       check unrounded.g == 0
       check unrounded.b in 190'u8 .. 192'u8
-      check renderer.cacheUsage().roundedTextureBytes ==
-        uint64(16 * 16 * 4 * density * density)
+      let textureExtent = ceil(16.0'f32 * density).uint64
+      check renderer.cacheUsage().roundedTextureBytes == 4 * textureExtent * textureExtent
       renderer.requestFrameCapture()
       renderer.render(commands, background)
       let warm = renderer.capturedFrame().get
