@@ -18,6 +18,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Fixed
 
+- Retained SDL layers render at the window's output pixel size. Direct GPU
+  composition follows both axes of the output size through resize and
+  fractional display scaling.
+
 - Retained SDL layers now retry direct GPU composition on the next frame
   after a transient compositor failure. Only the affected repaint regions
   stay dirty, and retries stop once direct composition succeeds.

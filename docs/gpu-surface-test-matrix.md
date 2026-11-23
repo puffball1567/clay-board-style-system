@@ -118,6 +118,10 @@ damage when a direct frame becomes stale before the compositor acquires it.
 The SDL test also holds the same published GPU frame through two transient
 compositor retries. It checks fallback pixels, the one-tile repaint, and
 recovery to direct pixels when using the retained static layer.
+SDL software-renderer tests simulate density changes with a fixed logical
+size and compare retained and immediate output pixels. GPU host tests check
+unequal fractional scale ratios, clipped viewport and UV alignment, and
+rejection of stale physical dimensions.
 
 The sharing fixture also composites a Motion Scene render target and an
 independent compute shader's storage texture into the same SDL layer. The two

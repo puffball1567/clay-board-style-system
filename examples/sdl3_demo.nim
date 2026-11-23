@@ -3145,6 +3145,8 @@ proc main() =
           if ui.tree.root.isSome:
             discard ui.events.emit(ui.tree, ui.tree.root.get, InputEvent(kind: iekResize))
           needsFrame = true
+        else:
+          frameDirty = true
       of sekFocus:
         staticLayerDirty = true
         if ui.tree.root.isSome:

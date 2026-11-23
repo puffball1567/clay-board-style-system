@@ -16,6 +16,23 @@ import clay_board_style_system/runtime/canvas
 import clay_board_style_system/text/[cosmic_text_engine, font_registry]
 import clay_board_style_system/vendor/sdl3
 
+when defined(linux):
+  # Give CBSS a logical size independent of the SDL dummy driver's pixel size.
+  {.passL: "-Wl,--wrap=SDL_GetWindowSize".}
+  var scaledWindow: pointer
+  var scaledWidth, scaledHeight: cint
+
+  proc realWindowSize(window: pointer; width, height: ptr cint): bool {.
+    importc: "__real_SDL_GetWindowSize", cdecl.}
+
+  proc wrappedWindowSize(window: pointer; width, height: ptr cint): bool {.
+    exportc: "__wrap_SDL_GetWindowSize", cdecl.} =
+    if scaledWindow.isNil or window != scaledWindow:
+      return realWindowSize(window, width, height)
+    if not width.isNil: width[] = scaledWidth
+    if not height.isNil: height[] = scaledHeight
+    true
+
 proc pixel(frame: Sdl3CapturedFrame; x, y: int): tuple[r, g, b: uint8] =
   let offset = (y * frame.width + x) * 3
   (frame.pixels[offset], frame.pixels[offset + 1], frame.pixels[offset + 2])
@@ -56,6 +73,65 @@ proc expectRotatedRedRect(frame: Sdl3CapturedFrame) =
   check emptyCorner.b < 25
 
 suite "SDL3 transform rendering":
+  when defined(linux):
+    test "retained SDL rendering uses output pixels across density changes":
+      let previousDriver = getEnv("SDL_VIDEODRIVER")
+      putEnv("SDL_VIDEODRIVER", "dummy")
+      defer:
+        if previousDriver.len > 0: putEnv("SDL_VIDEODRIVER", previousDriver)
+        else: delEnv("SDL_VIDEODRIVER")
+      var renderer = initSdl3Renderer("CBSS retained density test", 160, 80)
+      defer: renderer.close()
+      scaledWindow = renderer.window
+      scaledWidth = 128
+      scaledHeight = 64
+      defer: scaledWindow = nil
+
+      let fonts = initFontRegistry()
+      let cosmic = CosmicTextEngine()
+      let background = rgb(0, 0, 0)
+      var commands = [
+        fillRect(rect(2, 2, 1, 24), rgb(1, 1, 1)),
+        fillRect(rect(106, 51, 6, 8), rgb(0, 1, 0))]
+      for step, dimensions in [[160, 80], [256, 128], [161, 81]]:
+        if step > 0:
+          require SDL3.setWindowSize(renderer.window, cint(dimensions[0]), cint(dimensions[1]))
+        check renderer.windowSize() == size(128, 64)
+        renderer.requestFrameCapture()
+        renderer.render(commands, cosmic, fonts, background)
+        let reference = renderer.capturedFrame().get
+        check reference.width == dimensions[0]
+        check reference.height == dimensions[1]
+
+        renderer.requestFrameCapture()
+        renderer.renderLayered(commands, cosmic, fonts, background, rebuildStatic = false)
+        let retained = renderer.capturedFrame().get
+        check retained.pixels == reference.pixels
+        check renderer.retainedLayerStats().fullRepaints == uint64(step + 1)
+
+        if step == 1:
+          continue
+        commands[1].color = if step == 0: rgb(1, 0, 0) else: rgb(0, 1, 0)
+        renderer.requestFrameCapture()
+        renderer.renderLayered(commands, cosmic, fonts, background)
+        let repainted = renderer.capturedFrame().get
+        renderer.requestFrameCapture()
+        renderer.render(commands, cosmic, fonts, background)
+        check repainted.pixels == renderer.capturedFrame().get.pixels
+        check renderer.retainedLayerStats().lastDirtyTiles == (if step == 0: 1 else: 2)
+
+      renderer.renderLayered(commands, cosmic, fonts, background)
+      check renderer.retainedLayerStats().lastDirtyTiles == 0
+
+      var event: Sdl3Event
+      while renderer.pollEvent(event): discard
+      var scaleChange: SDL_Event
+      scaleChange.window = SDL_WindowEvent(
+        `type`: SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED, windowID: SDL3.getWindowID(renderer.window))
+      require SDL3.pushEvent(addr scaleChange)
+      require renderer.pollEvent(event)
+      check event.kind == sekExpose
+
   test "affine transform composites a bounded offscreen surface":
     let previousDriver = getEnv("SDL_VIDEODRIVER")
     putEnv("SDL_VIDEODRIVER", "dummy")
