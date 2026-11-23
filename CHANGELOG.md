@@ -18,6 +18,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Fixed
 
+- Rounded file images retain the parent layer's coordinates and preserve
+  image alpha when building the cache. Their cached clips follow integer
+  and fractional display scaling.
+
 - Retained SDL layers render at the window's output pixel size. Direct GPU
   composition follows both axes of the output size through resize and
   fractional display scaling.

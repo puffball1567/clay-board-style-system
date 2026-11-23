@@ -1,4 +1,4 @@
-import std/[math, options, os, unittest]
+import std/[math, options, os, tempfiles, unittest]
 
 import clay_board_style_system
 import clay_board_style_system/generated/default_properties
@@ -131,6 +131,65 @@ suite "SDL3 transform rendering":
       require SDL3.pushEvent(addr scaleChange)
       require renderer.pollEvent(event)
       check event.kind == sekExpose
+
+  test "rounded file images preserve layer coordinates and alpha across cache reuse":
+    let previousDriver = getEnv("SDL_VIDEODRIVER")
+    putEnv("SDL_VIDEODRIVER", "dummy")
+    defer:
+      if previousDriver.len > 0: putEnv("SDL_VIDEODRIVER", previousDriver)
+      else: delEnv("SDL_VIDEODRIVER")
+    let tempDir = createTempDir("cbss-rounded-image-", "")
+    defer: removeDir(tempDir)
+    let source = tempDir / "translucent.pam"
+    # A straight RGBA source with half-alpha red.
+    writeFile(source, "P7\nWIDTH 1\nHEIGHT 1\nDEPTH 4\nMAXVAL 255\n" &
+      "TUPLTYPE RGB_ALPHA\nENDHDR\n\xFF\x00\x00\x80")
+
+    const densities = when defined(linux): [1.0'f32, 1.25, 1.30, 2.0] else: [1.0'f32]
+    for density in densities:
+      proc outputPixel(position: int): int =
+        int(round(position.float32 * density))
+
+      var renderer = initSdl3Renderer("CBSS rounded image layer test",
+        outputPixel(96), outputPixel(64), false)
+      defer: renderer.close()
+      when defined(linux):
+        scaledWindow = renderer.window
+        scaledWidth = 96
+        scaledHeight = 64
+        defer: scaledWindow = nil
+
+      let style = ComputedImageStyle(imageRendering: irCrispEdges)
+      var commands = @[
+        pushTransform(translationAffine2D(20, 12)),
+        pushClip(rect(4, 4, 16, 16), radius = 8),
+        drawImage(NodeId(1), source, rect(4, 4, 16, 16), 1, style),
+        popClip(),
+        fillRect(rect(28, 4, 6, 6), rgb(0, 1, 0)),
+        popTransform(),
+        drawImage(NodeId(2), source, rect(64, 16, 16, 16), 0.5, style)]
+      commands.resolveTransformBounds()
+      let background = rgb(0, 0, 1)
+      renderer.requestFrameCapture()
+      renderer.render(commands, background)
+      let cold = renderer.capturedFrame().get
+      let center = cold.pixel(outputPixel(32), outputPixel(24))
+      check center.r in 127'u8 .. 129'u8
+      check center.g == 0
+      check center.b in 126'u8 .. 128'u8
+      check cold.pixel(outputPixel(24), outputPixel(16)) == (0'u8, 0'u8, 255'u8)
+      check cold.pixel(outputPixel(50), outputPixel(18)) == (0'u8, 255'u8, 0'u8)
+      let unrounded = cold.pixel(outputPixel(70), outputPixel(22))
+      check unrounded.r in 63'u8 .. 65'u8
+      check unrounded.g == 0
+      check unrounded.b in 190'u8 .. 192'u8
+      let textureExtent = ceil(16.0'f32 * density).uint64
+      check renderer.cacheUsage().roundedTextureBytes == 4 * textureExtent * textureExtent
+      renderer.requestFrameCapture()
+      renderer.render(commands, background)
+      let warm = renderer.capturedFrame().get
+      let samePixels = cold.pixels == warm.pixels
+      check samePixels
 
   test "affine transform composites a bounded offscreen surface":
     let previousDriver = getEnv("SDL_VIDEODRIVER")
