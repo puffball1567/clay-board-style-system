@@ -1678,13 +1678,10 @@ proc takeImageEvents*(target: var Sdl3Renderer): seq[Sdl3ImageEvent] =
   target.imageEvents.setLen(0)
 
 proc roundedSpan(rect: Rect; radius, centerY: float32; x1, x2: var float32): bool
+proc clippedHorizontalSpan(
+    clips: openArray[Sdl3ClipRegion]; centerY: float32; x1, x2: var float32
+): bool
 proc renderTextureClipped(target: Sdl3Renderer; texture: pointer; src, dst: SDL_FRect)
-proc renderTextureClippedWith(
-    target: Sdl3Renderer;
-    texture: pointer;
-    src, dst: SDL_FRect;
-    clips: openArray[Sdl3ClipRegion]
-)
 
 proc clipRegion(command: PaintCommand): Sdl3ClipRegion =
   Sdl3ClipRegion(
@@ -2150,6 +2147,11 @@ proc readTargetScale(renderer: pointer; view: var Sdl3TargetScale): bool =
     view.y *= view.outputHeight.float32 / view.logicalHeight.float32
   view.x > 0 and view.y > 0
 
+proc pixelScissor(bounds: SDL_Rect; view: Sdl3TargetScale): SDL_Rect =
+  # SDL rounds the clip rectangle's origin and size separately.
+  rect(bounds.x.float32 * view.x, bounds.y.float32 * view.y,
+    bounds.w.float32 * view.x, bounds.h.float32 * view.y).toSdlClip
+
 proc applySoftwareLayerComposite(
     target: var Sdl3Renderer;
     texture: pointer;
@@ -2187,11 +2189,7 @@ proc applySoftwareLayerComposite(
   )
   let clip = target.effectiveClipBounds()
   if clip.isSome:
-    let bounds = clip.get
-    # Match SDL's pixel scissor, including a retained damage boundary.
-    let pixelClip = rect(bounds.x.float32 * sx, bounds.y.float32 * sy,
-      bounds.w.float32 * sx, bounds.h.float32 * sy).toSdlClip
-    destinationRect = intersect(destinationRect, pixelClip)
+    destinationRect = intersect(destinationRect, clip.get.pixelScissor(view))
   let width = destinationRect.w.int
   let height = destinationRect.h.int
   if width <= 0 or height <= 0:
@@ -2326,6 +2324,70 @@ proc applySoftwareLayerComposite(
     w: width.cfloat, h: height.cfloat)
   result = SDL3.renderTexture(target.renderer, combined, nil, addr destination)
 
+proc renderRoundedAffineTexture(
+    target: Sdl3Renderer;
+    texture: pointer;
+    source: var SDL_FRect;
+    origin, right, down: Vec2
+) =
+  let renderer = target.renderer
+  var view: Sdl3TargetScale
+  if not renderer.readTargetScale(view):
+    return
+  let clip = target.effectiveClipBounds()
+  var limit = SDL_Rect(w: view.outputWidth, h: view.outputHeight)
+  if clip.isSome:
+    limit = intersect(limit, clip.get.pixelScissor(view))
+  if limit.w <= 0 or limit.h <= 0:
+    return
+
+  let lastY = right.y + down.y - origin.y
+  let minimumY = min(min(origin.y, right.y), min(down.y, lastY))
+  let maximumY = max(max(origin.y, right.y), max(down.y, lastY))
+  let firstRow = clamp(floor(minimumY * view.y), limit.y.float32,
+    (limit.y + limit.h).float32).cint
+  let endRow = clamp(ceil(maximumY * view.y), limit.y.float32,
+    (limit.y + limit.h).float32).cint
+  if endRow <= firstRow:
+    return
+
+  let scaled = view.x != 1.0'f32 or view.y != 1.0'f32
+  defer:
+    if scaled:
+      discard SDL3.setRenderLogicalPresentation(
+        renderer, view.logicalWidth, view.logicalHeight, view.presentation)
+      discard SDL3.setRenderScale(renderer, view.drawX, view.drawY)
+    renderer.setClip(clip)
+  if scaled and (
+      not SDL3.setRenderLogicalPresentation(
+        renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED) or
+      not SDL3.setRenderScale(renderer, 1, 1)):
+    return
+
+  var pixelOrigin = SDL_FPoint(x: cfloat(origin.x * view.x), y: cfloat(origin.y * view.y))
+  var pixelRight = SDL_FPoint(x: cfloat(right.x * view.x), y: cfloat(right.y * view.y))
+  var pixelDown = SDL_FPoint(x: cfloat(down.x * view.x), y: cfloat(down.y * view.y))
+  # Keep the original affine quad and sampling. Coalesce consecutive rows
+  # with the same pixel clip so the flat middle is drawn in one operation.
+  var band: SDL_Rect
+  for row in firstRow .. endRow:
+    var left = limit.x.float32 / view.x
+    var right = (limit.x + limit.w).float32 / view.x
+    var next = SDL_Rect(y: row, h: 1)
+    let centerY = (row.float32 + 0.5'f32) / view.y
+    if row < endRow and target.clipStack.clippedHorizontalSpan(centerY, left, right):
+      next.x = ceil(left * view.x - 0.5'f32).cint
+      next.w = ceil(right * view.x - 0.5'f32).cint - next.x
+    if band.h > 0 and band.x == next.x and band.w == next.w:
+      inc band.h
+      continue
+    if band.w > 0 and (
+        not SDL3.setRenderClipRect(renderer, addr band) or
+        not SDL3.renderTextureAffine(renderer, texture, addr source,
+          addr pixelOrigin, addr pixelRight, addr pixelDown)):
+      return
+    band = next
+
 proc renderAffineLayer(
     target: var Sdl3Renderer;
     texture: pointer;
@@ -2340,109 +2402,22 @@ proc renderAffineLayer(
       texture, source, origin, right, down, opacity, compositeMode
     )
     return
-  if not target.hasRoundedClip():
-    var sdlOrigin = SDL_FPoint(x: cfloat(origin.x), y: cfloat(origin.y))
-    var sdlRight = SDL_FPoint(x: cfloat(right.x), y: cfloat(right.y))
-    var sdlDown = SDL_FPoint(x: cfloat(down.x), y: cfloat(down.y))
-    let configured = texture.configureLayerTexture(
-      opacity, compositeMode, premultiplied
-    )
-    if configured:
-      discard SDL3.renderTextureAffine(
-        target.renderer, texture, addr source,
-        addr sdlOrigin, addr sdlRight, addr sdlDown
-      )
-    elif compositeMode == lcmDestinationIn:
+
+  defer: texture.resetLayerTexture()
+  if not texture.configureLayerTexture(opacity, compositeMode, premultiplied):
+    if compositeMode == lcmDestinationIn:
       discard target.applySoftwareLayerComposite(
         texture, source, origin, right, down, opacity, compositeMode
       )
-    texture.resetLayerTexture()
     return
-
-  let fourth = vec2(right.x + down.x - origin.x, right.y + down.y - origin.y)
-  let left = floor(min(min(origin.x, right.x), min(down.x, fourth.x))) - 1.0'f32
-  let top = floor(min(min(origin.y, right.y), min(down.y, fourth.y))) - 1.0'f32
-  let bounds = rect(
-    left,
-    top,
-    ceil(max(max(origin.x, right.x), max(down.x, fourth.x))) - left + 1.0'f32,
-    ceil(max(max(origin.y, right.y), max(down.y, fourth.y))) - top + 1.0'f32
-  )
-  let scale = target.pixelScale()
-  let width = max(1, int(ceil(bounds.w * scale)))
-  let height = max(1, int(ceil(bounds.h * scale)))
-  let clipped = target.acquireTransformTexture(width, height)
-  let clippedTexture = clipped.texture
-  if clippedTexture.isNil:
+  if target.hasRoundedClip():
+    target.renderRoundedAffineTexture(texture, source, origin, right, down)
+  else:
     var sdlOrigin = SDL_FPoint(x: cfloat(origin.x), y: cfloat(origin.y))
     var sdlRight = SDL_FPoint(x: cfloat(right.x), y: cfloat(right.y))
     var sdlDown = SDL_FPoint(x: cfloat(down.x), y: cfloat(down.y))
-    let configured = texture.configureLayerTexture(
-      opacity, compositeMode, premultiplied
-    )
-    if configured:
-      discard SDL3.renderTextureAffine(
-        target.renderer, texture, addr source,
-        addr sdlOrigin, addr sdlRight, addr sdlDown
-      )
-    elif compositeMode == lcmDestinationIn:
-      discard target.applySoftwareLayerComposite(
-        texture, source, origin, right, down, opacity, compositeMode
-      )
-    texture.resetLayerTexture()
-    return
-
-  let previousTarget = SDL3.getRenderTarget(target.renderer)
-  discard SDL3.setRenderTarget(target.renderer, clippedTexture)
-  discard SDL3.setRenderLogicalPresentation(
-    target.renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED
-  )
-  discard SDL3.setRenderScale(target.renderer, cfloat(scale), cfloat(scale))
-  target.renderer.setClip(none(SDL_Rect))
-  discard SDL3.setRenderDrawColor(target.renderer, 0, 0, 0, 0)
-  discard SDL3.renderClear(target.renderer)
-
-  var localOrigin = SDL_FPoint(
-    x: cfloat(origin.x - bounds.x), y: cfloat(origin.y - bounds.y)
-  )
-  var localRight = SDL_FPoint(
-    x: cfloat(right.x - bounds.x), y: cfloat(right.y - bounds.y)
-  )
-  var localDown = SDL_FPoint(
-    x: cfloat(down.x - bounds.x), y: cfloat(down.y - bounds.y)
-  )
-  discard texture.configureLayerTexture(
-    1.0'f32, lcmSourceOver, premultiplied
-  )
-  discard SDL3.renderTextureAffine(
-    target.renderer, texture, addr source,
-    addr localOrigin, addr localRight, addr localDown
-  )
-  texture.resetLayerTexture()
-
-  discard SDL3.setRenderTarget(target.renderer, previousTarget)
-  target.renderer.setClip(target.effectiveClipBounds())
-  var clippedSource = SDL_FRect(
-    x: 0, y: 0, w: cfloat(width), h: cfloat(height)
-  )
-  var destination = bounds.toSdl
-  let configured = clippedTexture.configureLayerTexture(
-    opacity, compositeMode, premultiplied
-  )
-  if configured:
-    target.renderTextureClippedWith(
-      clippedTexture, clippedSource, destination, target.clipStack
-    )
-  elif compositeMode == lcmDestinationIn:
-    discard target.applySoftwareLayerComposite(
-      clippedTexture, clippedSource,
-      vec2(bounds.x, bounds.y),
-      vec2(bounds.x + bounds.w, bounds.y),
-      vec2(bounds.x, bounds.y + bounds.h),
-      opacity, compositeMode
-    )
-  clippedTexture.resetLayerTexture()
-  target.releaseTransformTexture(clipped.index)
+    discard SDL3.renderTextureAffine(target.renderer, texture, addr source,
+      addr sdlOrigin, addr sdlRight, addr sdlDown)
 
 proc filteredLayerTexture(
     target: var Sdl3Renderer;

@@ -429,6 +429,80 @@ suite "SDL3 transform rendering":
     check roundedCorner.g < 25
     check roundedCorner.b < 25
 
+  test "rounded affine clips preserve sampling and composition bounds":
+    let previousDriver = getEnv("SDL_VIDEODRIVER")
+    when defined(cbssTestSdlOpenGl):
+      putEnv("SDL_VIDEODRIVER", "x11")
+    else:
+      putEnv("SDL_VIDEODRIVER", "dummy")
+    defer:
+      if previousDriver.len > 0: putEnv("SDL_VIDEODRIVER", previousDriver)
+      else: delEnv("SDL_VIDEODRIVER")
+
+    const outputSizes =
+      when defined(linux): [[128, 64], [166, 86], [256, 128]]
+      else: [[128, 64]]
+    let bounds = rect(24, 16, 72, 32)
+    let clip = rect(20, 12, 88, 40)
+    let radius = 14.0'f32
+    let background = rgb(0, 0, 1)
+    let marker = fillRect(rect(114, 4, 8, 8), rgb(1, 1, 0))
+    let transform = translationAffine2D(60.25, 32.75) *
+      rotationAffine2D(PI.float32 / 12.0'f32) *
+      translationAffine2D(-60, -32)
+    for dimensions in outputSizes:
+      var renderer = initSdl3Renderer("CBSS affine rounded clip test",
+        dimensions[0], dimensions[1], false)
+      defer: renderer.close()
+      when defined(cbssTestSdlOpenGl):
+        require $SDL3.getRendererName(renderer.renderer) == "opengl"
+      when defined(linux):
+        scaledWindow = renderer.window
+        scaledWidth = 128
+        scaledHeight = 64
+        defer: scaledWindow = nil
+      let sx = dimensions[0].float32 / 128.0'f32
+      let sy = dimensions[1].float32 / 64.0'f32
+      for mode in LayerCompositeMode:
+        var commands = @[pushClip(clip)]
+        if mode == lcmSourceOver:
+          commands.add pushTransform(transform)
+          commands.add fillRect(rect(24, 16, 23, 32), rgba(1, 0, 0, 0.5))
+          commands.add fillRect(rect(47, 16, 49, 32), rgba(0, 1, 0, 0.75))
+          commands.add popTransform()
+        else:
+          commands.add pushLayer(bounds, opacity = 0.75, compositeMode = mode)
+          commands.add fillRect(bounds, rgb(1, 0, 0))
+          commands.add popLayer()
+        commands.add popClip()
+        commands.add marker
+        commands.resolveTransformBounds()
+
+        renderer.requestFrameCapture()
+        renderer.render(commands, background)
+        let reference = renderer.capturedFrame().get
+        commands[0].clipRadius = radius
+        renderer.requestFrameCapture()
+        renderer.render(commands, background)
+        let clipped = renderer.capturedFrame().get
+
+        var mismatchedPixels = 0
+        for y in floor(clip.y * sy).int ..< ceil((clip.y + clip.h) * sy).int:
+          for x in floor(clip.x * sx).int ..< ceil((clip.x + clip.w) * sx).int:
+            let px = (x.float32 + 0.5'f32) / sx
+            let py = (y.float32 + 0.5'f32) / sy
+            let dx = px - clamp(px, clip.x + radius, clip.x + clip.w - radius)
+            let dy = py - clamp(py, clip.y + radius, clip.y + clip.h - radius)
+            let expected =
+              if dx * dx + dy * dy <= radius * radius: reference.pixel(x, y)
+              else: (0'u8, 0'u8, 255'u8)
+            if clipped.pixel(x, y) != expected:
+              inc mismatchedPixels
+        checkpoint("composite mode " & $mode & " at " & $dimensions)
+        check mismatchedPixels == 0
+        check clipped.pixel((118.0'f32 * sx).int, (8.0'f32 * sy).int) ==
+          (255'u8, 255'u8, 0'u8)
+
   test "nested affine scopes compose without losing local coordinates":
     let previousDriver = getEnv("SDL_VIDEODRIVER")
     putEnv("SDL_VIDEODRIVER", "dummy")
