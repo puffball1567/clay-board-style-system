@@ -510,6 +510,85 @@ suite "SDL3 transform rendering":
     check frame.pixel(20, 20).r < 25
     check frame.pixel(2, 2).r < 25
 
+  test "rounded raster surfaces and GPU fallbacks preserve scaled source rows":
+    let previousDriver = getEnv("SDL_VIDEODRIVER")
+    putEnv("SDL_VIDEODRIVER", "dummy")
+    defer:
+      if previousDriver.len > 0: putEnv("SDL_VIDEODRIVER", previousDriver)
+      else: delEnv("SDL_VIDEODRIVER")
+
+    const outputSizes = when defined(linux): [[128, 64], [160, 88], [166, 86], [256, 128]]
+      else: [[128, 64]]
+    let cosmic = CosmicTextEngine()
+    let fonts = initFontRegistry()
+    let background = rgb(0, 0, 1)
+    let rasterBounds = rect(8, 8, 32, 32)
+    let fallbackBounds = rect(72, 8, 32, 32)
+    for dimensions in outputSizes:
+      var renderer = initSdl3Renderer("CBSS rounded raster test",
+        dimensions[0], dimensions[1], false)
+      defer: renderer.close()
+      when defined(linux):
+        scaledWindow = renderer.window
+        scaledWidth = 128
+        scaledHeight = 64
+        defer: scaledWindow = nil
+      proc at(frame: Sdl3CapturedFrame; x, y: int): tuple[r, g, b: uint8] =
+        frame.pixel(x * dimensions[0] div 128, y * dimensions[1] div 64)
+
+      let surface = newRasterSurface(2, 2, [255'u8, 255, 0, 255])
+      surface.updateRegion(rasterRegion(1, 0, 1, 2),
+        [255'u8, 0, 0, 128, 0, 255, 0, 128])
+      require surface.publish()
+      let fallback = newRasterSurface(1, 2, [0'u8, 0, 0, 0])
+      fallback.updateRegion(rasterRegion(0, 0, 1, 2),
+        [255'u8, 0, 0, 128, 0, 255, 0, 128])
+      require fallback.publish()
+      let commands = @[
+        drawRasterSurface(NodeId(1), surface, rect(44, 8, 8, 8), 0.25,
+          tint = rgb(0, 0, 1)),
+        pushClip(rasterBounds, radius = 10),
+        drawRasterSurface(NodeId(2), surface, rasterBounds, 0.5,
+          sourceRegion = rasterRegion(1, 0, 1, 2), tint = rgb(0.5, 1, 1)),
+        popClip(),
+        pushClip(fallbackBounds, radius = 10),
+        PaintCommand(kind: pcDrawGpuDirectSurface, owner: some(NodeId(3)),
+          gpuFallbackSurface: fallback, gpuSurfaceRect: fallbackBounds, gpuSurfaceOpacity: 0.5),
+        popClip(),
+        fillRect(rect(112, 16, 8, 8), rgb(1, 1, 0))]
+      var rectangular = commands
+      rectangular[1].clipRadius = 0
+      rectangular[4].clipRadius = 0
+      renderer.requestFrameCapture()
+      renderer.render(rectangular, cosmic, fonts, background)
+      let reference = renderer.capturedFrame().get
+
+      renderer.requestFrameCapture()
+      renderer.renderLayered(commands, cosmic, fonts, background)
+      let rounded = renderer.capturedFrame().get
+      check renderer.gpuDirectCompositionStats().unsupported == 1
+      check rounded.at(8, 8) == (0'u8, 0'u8, 255'u8)
+      check rounded.at(72, 8) == (0'u8, 0'u8, 255'u8)
+      check rounded.at(24, 12).r in 31'u8 .. 33'u8
+      check rounded.at(24, 36).g in 63'u8 .. 65'u8
+      check rounded.at(88, 12).r in 63'u8 .. 65'u8
+      check rounded.at(88, 36).g in 63'u8 .. 65'u8
+      for y in 12 .. 36:
+        check rounded.at(24, y) == reference.at(24, y)
+        check rounded.at(88, y) == reference.at(88, y)
+
+      surface.updateRegion(rasterRegion(1, 1, 1, 1), [255'u8, 255, 255, 255])
+      require surface.publish()
+      renderer.requestFrameCapture()
+      renderer.renderLayered(commands, cosmic, fonts, background)
+      let updated = renderer.capturedFrame().get
+      check updated.at(24, 36).g in 127'u8 .. 128'u8
+      check updated.at(88, 36) == rounded.at(88, 36)
+      check updated.at(116, 20) == (255'u8, 255'u8, 0'u8)
+      check renderer.retainedLayerStats().lastDirtyTiles == 1
+      check renderer.cacheUsage().rasterFullUploads == 2
+      check renderer.cacheUsage().rasterPartialUploads == 1
+
   test "raster surfaces use partial uploads for consecutive revisions":
     let previousDriver = getEnv("SDL_VIDEODRIVER")
     putEnv("SDL_VIDEODRIVER", "dummy")

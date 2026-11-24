@@ -2127,6 +2127,29 @@ proc resetLayerTexture(texture: pointer) =
   discard SDL3.setTextureAlphaModFloat(texture, 1)
   discard SDL3.setTextureBlendMode(texture, sdlBlendModeBlend)
 
+type Sdl3TargetScale = object
+  x, y: float32
+  drawX, drawY: cfloat
+  outputWidth, outputHeight, logicalWidth, logicalHeight: cint
+  presentation: SDL_RendererLogicalPresentation
+
+proc readTargetScale(renderer: pointer; view: var Sdl3TargetScale): bool =
+  if not SDL3.getRenderScale(renderer, addr view.drawX, addr view.drawY) or
+      not SDL3.getCurrentRenderOutputSize(renderer, addr view.outputWidth, addr view.outputHeight) or
+      not SDL3.getRenderLogicalPresentation(
+        renderer, addr view.logicalWidth, addr view.logicalHeight, addr view.presentation):
+    return false
+  view.x = view.drawX.float32
+  view.y = view.drawY.float32
+  # SDL's scale getter excludes logical presentation. CBSS uses stretch
+  # presentation on window-sized targets and explicit scale on nested layers.
+  if view.presentation != SDL_LOGICAL_PRESENTATION_DISABLED:
+    if view.logicalWidth <= 0 or view.logicalHeight <= 0:
+      return false
+    view.x *= view.outputWidth.float32 / view.logicalWidth.float32
+    view.y *= view.outputHeight.float32 / view.logicalHeight.float32
+  view.x > 0 and view.y > 0
+
 proc applySoftwareLayerComposite(
     target: var Sdl3Renderer;
     texture: pointer;
@@ -2149,32 +2172,16 @@ proc applySoftwareLayerComposite(
   let logicalTop = floor(min(min(origin.y, right.y), min(down.y, fourth.y)))
   let logicalRight = ceil(max(max(origin.x, right.x), max(down.x, fourth.x)))
   let logicalBottom = ceil(max(max(origin.y, right.y), max(down.y, fourth.y)))
-  var scaleX = 1.0.cfloat
-  var scaleY = 1.0.cfloat
-  var outputWidth, outputHeight: cint
-  var logicalWidth, logicalHeight: cint
-  var presentation: SDL_RendererLogicalPresentation
-  if not SDL3.getRenderScale(target.renderer, addr scaleX, addr scaleY) or
-      not SDL3.getCurrentRenderOutputSize(target.renderer, addr outputWidth, addr outputHeight) or
-      not SDL3.getRenderLogicalPresentation(
-        target.renderer, addr logicalWidth, addr logicalHeight, addr presentation):
+  var view: Sdl3TargetScale
+  if not target.renderer.readTargetScale(view):
     return false
-  var sx = scaleX.float32
-  var sy = scaleY.float32
-  # SDL's scale getter excludes logical presentation. CBSS uses stretch
-  # presentation on window-sized targets and explicit scale on nested layers.
-  if presentation != SDL_LOGICAL_PRESENTATION_DISABLED:
-    if logicalWidth <= 0 or logicalHeight <= 0:
-      return false
-    sx *= outputWidth.float32 / logicalWidth.float32
-    sy *= outputHeight.float32 / logicalHeight.float32
-  if not (sx > 0 and sy > 0):
-    return false
+  let sx = view.x
+  let sy = view.y
 
-  let x0 = clamp(floor(logicalLeft * sx), 0'f32, outputWidth.float32)
-  let y0 = clamp(floor(logicalTop * sy), 0'f32, outputHeight.float32)
-  let x1 = clamp(ceil(logicalRight * sx), 0'f32, outputWidth.float32)
-  let y1 = clamp(ceil(logicalBottom * sy), 0'f32, outputHeight.float32)
+  let x0 = clamp(floor(logicalLeft * sx), 0'f32, view.outputWidth.float32)
+  let y0 = clamp(floor(logicalTop * sy), 0'f32, view.outputHeight.float32)
+  let x1 = clamp(ceil(logicalRight * sx), 0'f32, view.outputWidth.float32)
+  let y1 = clamp(ceil(logicalBottom * sy), 0'f32, view.outputHeight.float32)
   var destinationRect = SDL_Rect(
     x: cint(x0), y: cint(y0), w: cint(x1 - x0), h: cint(y1 - y0)
   )
@@ -2306,8 +2313,8 @@ proc applySoftwareLayerComposite(
   defer:
     if scaled:
       discard SDL3.setRenderLogicalPresentation(
-        target.renderer, logicalWidth, logicalHeight, presentation)
-      discard SDL3.setRenderScale(target.renderer, scaleX, scaleY)
+        target.renderer, view.logicalWidth, view.logicalHeight, view.presentation)
+      discard SDL3.setRenderScale(target.renderer, view.drawX, view.drawY)
       target.renderer.setClip(clip)
   if scaled and (
       not SDL3.setRenderLogicalPresentation(
@@ -3632,7 +3639,7 @@ proc evictRoundedTextureCacheIfNeeded(target: var Sdl3Renderer) =
     target.roundedTextureCache.delete(victim)
     target.rebuildRoundedTextureCacheIndex()
 
-proc maskRoundedImageTexture(
+proc maskRoundedTexture(
     renderer: pointer;
     dst: SDL_FRect;
     clips: openArray[Sdl3ClipRegion];
@@ -3667,6 +3674,42 @@ proc maskRoundedImageTexture(
       return false
   true
 
+proc checkedTextureSize(width, height: float64): tuple[width, height: int] =
+  if width >= 1 and width <= high(cint).float64 and
+      height >= 1 and height <= high(cint).float64:
+    result = (int(width), int(height))
+
+proc paintRoundedTexture(
+    target: Sdl3Renderer;
+    texture, sourceTexture: pointer;
+    src, dst: SDL_FRect;
+    clips: openArray[Sdl3ClipRegion];
+    width, height: int;
+    sampleArea: ptr SDL_FRect = nil
+): bool =
+  let renderer = target.renderer
+  let previousTarget = SDL3.getRenderTarget(renderer)
+  let prepared = SDL3.setRenderTarget(renderer, texture) and
+    SDL3.setRenderLogicalPresentation(renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED) and
+    SDL3.setRenderScale(renderer, 1, 1) and
+    SDL3.setRenderClipRect(renderer, nil) and
+    (sampleArea.isNil or (SDL3.setRenderDrawColor(renderer, 0, 0, 0, 0) and
+      SDL3.renderClear(renderer))) and
+    SDL3.setTextureColorModFloat(sourceTexture, 1, 1, 1) and
+    SDL3.setTextureAlphaModFloat(sourceTexture, 1) and
+    SDL3.setTextureBlendMode(sourceTexture, sdlBlendModeNone)
+  var painted = false
+  if prepared:
+    # Scale straight RGBA once, then erase outside the mask in whole pixels.
+    # Fractional source and destination slices can round differently per row.
+    var source = src
+    painted = SDL3.renderTexture(renderer, sourceTexture, addr source, sampleArea) and
+      renderer.maskRoundedTexture(dst, clips, width, height)
+    discard SDL3.setTextureBlendMode(sourceTexture, sdlBlendModeBlend)
+  let restored = SDL3.setRenderTarget(renderer, previousTarget)
+  target.renderer.setClip(target.effectiveClipBounds())
+  painted and restored
+
 proc createRoundedImageTexture(
     target: var Sdl3Renderer;
     key: string;
@@ -3676,14 +3719,9 @@ proc createRoundedImageTexture(
     scale: float32;
     scaleMode: SDL_ScaleMode
 ): Option[Sdl3RoundedTextureCacheEntry] =
-  let pixelWidth = ceil(dst.w.float64 * scale.float64)
-  let pixelHeight = ceil(dst.h.float64 * scale.float64)
-  if not (pixelWidth >= 1 and pixelWidth <= high(cint).float64 and
-      pixelHeight >= 1 and pixelHeight <= high(cint).float64):
-    return none(Sdl3RoundedTextureCacheEntry)
-  let width = int(pixelWidth)
-  let height = int(pixelHeight)
-  if textureBytes(width, height) > target.roundedTextureCacheByteLimit:
+  let (width, height) = checkedTextureSize(
+    ceil(dst.w.float64 * scale.float64), ceil(dst.h.float64 * scale.float64))
+  if width == 0 or textureBytes(width, height) > target.roundedTextureCacheByteLimit:
     return none(Sdl3RoundedTextureCacheEntry)
   let texture = SDL3.createTexture(
     target.renderer,
@@ -3698,22 +3736,7 @@ proc createRoundedImageTexture(
   discard SDL3.setTextureBlendMode(texture, sdlBlendModeBlend)
   discard SDL3.setTextureScaleMode(texture, scaleMode)
 
-  let previousTarget = SDL3.getRenderTarget(target.renderer)
-  let prepared = SDL3.setRenderTarget(target.renderer, texture) and
-    SDL3.setTextureAlphaModFloat(sourceTexture, 1.0) and
-    SDL3.setTextureBlendMode(sourceTexture, sdlBlendModeNone)
-  var painted = false
-  if prepared:
-    # Copy straight RGBA once, then erase outside the mask in whole pixels.
-    # Fractional source and destination slices can round differently per row.
-    var source = src
-    painted = SDL3.renderTexture(target.renderer, sourceTexture, addr source, nil) and
-      target.renderer.maskRoundedImageTexture(dst, clips, width, height)
-    discard SDL3.setTextureBlendMode(sourceTexture, sdlBlendModeBlend)
-  # SDL restores the previous target's scale and logical presentation.
-  let restored = SDL3.setRenderTarget(target.renderer, previousTarget)
-  target.renderer.setClip(target.effectiveClipBounds())
-  if not painted or not restored:
+  if not target.paintRoundedTexture(texture, sourceTexture, src, dst, clips, width, height):
     SDL3.destroyTexture(texture)
     return none(Sdl3RoundedTextureCacheEntry)
 
@@ -3905,6 +3928,61 @@ proc rasterSurfaceTexture(
   target.evictRasterSurfaceCacheIfNeeded()
   some(texture)
 
+proc modulateRasterTexture(texture: pointer; command: PaintCommand) =
+  discard SDL3.setTextureColorModFloat(texture,
+    cfloat(command.rasterTint.r), cfloat(command.rasterTint.g),
+    cfloat(command.rasterTint.b))
+  discard SDL3.setTextureAlphaModFloat(
+    texture,
+    cfloat(clamp(command.rasterOpacity * command.rasterTint.a,
+      0.0'f32, 1.0'f32))
+  )
+
+proc drawRoundedRasterTexture(
+    target: var Sdl3Renderer;
+    texture: pointer;
+    src, dst: SDL_FRect;
+    clips: openArray[Sdl3ClipRegion];
+    command: PaintCommand
+): bool =
+  var view: Sdl3TargetScale
+  if not target.renderer.readTargetScale(view):
+    return false
+  let pixelX = dst.x.float32 * view.x
+  let pixelY = dst.y.float32 * view.y
+  let pixelW = dst.w.float32 * view.x
+  let pixelH = dst.h.float32 * view.y
+  # Match SDL's software blit, which truncates the position and size.
+  # Hardware draws at fractional coordinates within the enclosing pixel box.
+  let software = not target.supportsPremultipliedBlend()
+  let left = if software: trunc(pixelX) else: floor(pixelX)
+  let top = if software: trunc(pixelY) else: floor(pixelY)
+  let (width, height) =
+    if software:
+      checkedTextureSize(floor(pixelW).float64, floor(pixelH).float64)
+    else:
+      checkedTextureSize((ceil(pixelX + pixelW) - left).float64,
+        (ceil(pixelY + pixelH) - top).float64)
+  if width == 0 or textureBytes(width, height) > target.transformTextureCacheByteLimit:
+    return false
+  let scratch = target.acquireTransformTexture(width, height)
+  if scratch.texture.isNil:
+    return false
+  defer: target.releaseTransformTexture(scratch.index)
+  let logicalBounds = SDL_FRect(x: cfloat(left / view.x), y: cfloat(top / view.y),
+    w: cfloat(width.float32 / view.x), h: cfloat(height.float32 / view.y))
+  var sampleArea = SDL_FRect(x: cfloat(pixelX - left), y: cfloat(pixelY - top),
+    w: pixelW.cfloat, h: pixelH.cfloat)
+  let sample = if software or (sampleArea.x == 0 and sampleArea.y == 0 and
+      pixelW == width.float32 and pixelH == height.float32): nil else: addr sampleArea
+  if not target.paintRoundedTexture(scratch.texture, texture, src, logicalBounds,
+      clips, width, height, sample):
+    return false
+  scratch.texture.modulateRasterTexture(command)
+  defer: scratch.texture.resetLayerTexture()
+  var destination = if software: dst else: logicalBounds
+  SDL3.renderTexture(target.renderer, scratch.texture, nil, addr destination)
+
 proc drawRasterSurfaceTexture(
     target: var Sdl3Renderer;
     command: PaintCommand;
@@ -3913,26 +3991,23 @@ proc drawRasterSurfaceTexture(
   let texture = target.rasterSurfaceTexture(command.rasterSurface)
   if texture.isNone or command.rasterRect.isEmpty:
     return
-  discard SDL3.setTextureColorModFloat(texture.get,
-    cfloat(command.rasterTint.r), cfloat(command.rasterTint.g),
-    cfloat(command.rasterTint.b))
-  discard SDL3.setTextureAlphaModFloat(
-    texture.get,
-    cfloat(clamp(command.rasterOpacity * command.rasterTint.a,
-      0.0'f32, 1.0'f32))
-  )
-  var source = SDL_FRect(
+  defer: target.evictRasterSurfaceCacheIfNeeded()
+  let source = SDL_FRect(
     x: cfloat(command.rasterSourceRegion.x),
     y: cfloat(command.rasterSourceRegion.y),
     w: cfloat(command.rasterSourceRegion.width),
     h: cfloat(command.rasterSourceRegion.height)
   )
-  var destination = command.rasterRect.toSdl
-  target.renderTextureClippedWith(
-    texture.get, source, destination,
-    if roundedClips.len > 0: roundedClips else: target.clipStack
-  )
-  target.evictRasterSurfaceCacheIfNeeded()
+  let destination = command.rasterRect.toSdl
+  if roundedClips.len > 0:
+    if target.drawRoundedRasterTexture(texture.get, source, destination, roundedClips, command):
+      return
+  elif target.hasRoundedClip():
+    if target.drawRoundedRasterTexture(texture.get, source, destination, target.clipStack, command):
+      return
+  texture.get.modulateRasterTexture(command)
+  target.renderTextureClippedWith(texture.get, source, destination,
+    if roundedClips.len > 0: roundedClips else: target.clipStack)
 
 proc drawGpuFallbackSurface(
     target: var Sdl3Renderer;
