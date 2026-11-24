@@ -52,6 +52,7 @@ case "$sdl_mode" in
       echo "bundled SDL3 runtime is missing" >&2
       exit 2
     }
+    cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml
     ;;
   *)
     echo "CBSS_GPU_PIXEL_SDL_MODE must be system or bundled" >&2
