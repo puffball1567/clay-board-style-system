@@ -53,6 +53,8 @@ case "$sdl_mode" in
       exit 2
     }
     cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml
+    cargo build --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml
+    export LD_LIBRARY_PATH="$PWD/native/cosmic_text_bridge/target/release${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     ;;
   *)
     echo "CBSS_GPU_PIXEL_SDL_MODE must be system or bundled" >&2
