@@ -2151,25 +2151,44 @@ proc applySoftwareLayerComposite(
   let logicalBottom = ceil(max(max(origin.y, right.y), max(down.y, fourth.y)))
   var scaleX = 1.0.cfloat
   var scaleY = 1.0.cfloat
-  discard SDL3.getRenderScale(target.renderer, addr scaleX, addr scaleY)
-  let sx = max(0.001'f32, scaleX.float32)
-  let sy = max(0.001'f32, scaleY.float32)
   var outputWidth, outputHeight: cint
-  if not SDL3.getCurrentRenderOutputSize(
-      target.renderer, addr outputWidth, addr outputHeight):
+  var logicalWidth, logicalHeight: cint
+  var presentation: SDL_RendererLogicalPresentation
+  if not SDL3.getRenderScale(target.renderer, addr scaleX, addr scaleY) or
+      not SDL3.getCurrentRenderOutputSize(target.renderer, addr outputWidth, addr outputHeight) or
+      not SDL3.getRenderLogicalPresentation(
+        target.renderer, addr logicalWidth, addr logicalHeight, addr presentation):
     return false
-  let x0 = clamp(floor(logicalLeft * sx).int, 0, outputWidth.int)
-  let y0 = clamp(floor(logicalTop * sy).int, 0, outputHeight.int)
-  let x1 = clamp(ceil(logicalRight * sx).int, 0, outputWidth.int)
-  let y1 = clamp(ceil(logicalBottom * sy).int, 0, outputHeight.int)
-  if x1 <= x0 or y1 <= y0:
-    return true
+  var sx = scaleX.float32
+  var sy = scaleY.float32
+  # SDL's scale getter excludes logical presentation. CBSS uses stretch
+  # presentation on window-sized targets and explicit scale on nested layers.
+  if presentation != SDL_LOGICAL_PRESENTATION_DISABLED:
+    if logicalWidth <= 0 or logicalHeight <= 0:
+      return false
+    sx *= outputWidth.float32 / logicalWidth.float32
+    sy *= outputHeight.float32 / logicalHeight.float32
+  if not (sx > 0 and sy > 0):
+    return false
 
+  let x0 = clamp(floor(logicalLeft * sx), 0'f32, outputWidth.float32)
+  let y0 = clamp(floor(logicalTop * sy), 0'f32, outputHeight.float32)
+  let x1 = clamp(ceil(logicalRight * sx), 0'f32, outputWidth.float32)
+  let y1 = clamp(ceil(logicalBottom * sy), 0'f32, outputHeight.float32)
   var destinationRect = SDL_Rect(
     x: cint(x0), y: cint(y0), w: cint(x1 - x0), h: cint(y1 - y0)
   )
-  let width = x1 - x0
-  let height = y1 - y0
+  let clip = target.effectiveClipBounds()
+  if clip.isSome:
+    let bounds = clip.get
+    # Match SDL's pixel scissor, including a retained damage boundary.
+    let pixelClip = rect(bounds.x.float32 * sx, bounds.y.float32 * sy,
+      bounds.w.float32 * sx, bounds.h.float32 * sy).toSdlClip
+    destinationRect = intersect(destinationRect, pixelClip)
+  let width = destinationRect.w.int
+  let height = destinationRect.h.int
+  if width <= 0 or height <= 0:
+    return true
   var textureWidth, textureHeight: cfloat
   if not SDL3.getTextureSize(
       texture, addr textureWidth, addr textureHeight):
@@ -2191,12 +2210,13 @@ proc applySoftwareLayerComposite(
   if not SDL3.setRenderTarget(target.renderer, texture):
     return false
   let sourceSurface = SDL3.renderReadPixels(target.renderer, nil)
-  discard SDL3.setRenderTarget(target.renderer, destinationTarget)
-  target.renderer.setClip(target.effectiveClipBounds())
+  let restored = SDL3.setRenderTarget(target.renderer, destinationTarget)
   if sourceSurface.isNil:
     return false
   defer:
     SDL3.destroySurface(sourceSurface)
+  if not restored:
+    return false
 
   let destinationSurface = SDL3.renderReadPixels(
     target.renderer, addr destinationRect
@@ -2222,8 +2242,8 @@ proc applySoftwareLayerComposite(
       pixels[pixelIndex + 3] = alpha
 
       let point = vec2(
-        (x0.float32 + x.float32 + 0.5'f32) / sx,
-        (y0.float32 + y.float32 + 0.5'f32) / sy
+        (destinationRect.x.float32 + x.float32 + 0.5'f32) / sx,
+        (destinationRect.y.float32 + y.float32 + 0.5'f32) / sy
       )
       var clipped = false
       for clip in target.clipStack:
@@ -2279,13 +2299,24 @@ proc applySoftwareLayerComposite(
   if not SDL3.updateTexture(
       combined, nil, unsafeAddr pixels[0], cint(width * 4)):
     return false
-  discard SDL3.setTextureBlendMode(combined, sdlBlendModeNone)
-  var destination = SDL_FRect(
-    x: cfloat(x0.float32 / sx),
-    y: cfloat(y0.float32 / sy),
-    w: cfloat(width.float32 / sx),
-    h: cfloat(height.float32 / sy)
-  )
+  if not SDL3.setTextureBlendMode(combined, sdlBlendModeNone):
+    return false
+  # Upload to the identical pixel region; scaling a readback would resample it.
+  let scaled = sx != 1.0'f32 or sy != 1.0'f32
+  defer:
+    if scaled:
+      discard SDL3.setRenderLogicalPresentation(
+        target.renderer, logicalWidth, logicalHeight, presentation)
+      discard SDL3.setRenderScale(target.renderer, scaleX, scaleY)
+      target.renderer.setClip(clip)
+  if scaled and (
+      not SDL3.setRenderLogicalPresentation(
+        target.renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED) or
+      not SDL3.setRenderScale(target.renderer, 1, 1) or
+      not SDL3.setRenderClipRect(target.renderer, nil)):
+    return false
+  var destination = SDL_FRect(x: destinationRect.x.cfloat, y: destinationRect.y.cfloat,
+    w: width.cfloat, h: height.cfloat)
   result = SDL3.renderTexture(target.renderer, combined, nil, addr destination)
 
 proc renderAffineLayer(

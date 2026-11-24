@@ -18,6 +18,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Fixed
 
+- SDL software layer compositing reads and writes the same output pixels
+  under display scaling. Translucent layers preserve the background and the
+  boundaries of retained partial repaints.
+
 - Rounded file images retain the parent layer's coordinates and preserve
   image alpha when building the cache. Their cached clips follow integer
   and fractional display scaling.
