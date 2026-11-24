@@ -122,6 +122,10 @@ SDL software-renderer tests simulate density changes with a fixed logical
 size and compare retained and immediate output pixels. GPU host tests check
 unequal fractional scale ratios, clipped viewport and UV alignment, and
 rejection of stale physical dimensions.
+Software composition tests also compare immediate rendering with a retained
+repaint of one tile across a translucent layer spanning two tiles. They
+verify distinct background colors and rounded clips under unequal fractional
+and doubled output scales.
 Rounded file-image tests compare cold and cached pixels inside a transformed
 layer. They cover half-alpha images, sibling paint, and cache allocation at
 integer and fractional output densities.

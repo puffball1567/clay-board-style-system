@@ -132,6 +132,86 @@ suite "SDL3 transform rendering":
       require renderer.pollEvent(event)
       check event.kind == sekExpose
 
+    test "software layer composition reads and writes native output pixels":
+      let previousDriver = getEnv("SDL_VIDEODRIVER")
+      putEnv("SDL_VIDEODRIVER", "dummy")
+      defer:
+        if previousDriver.len > 0: putEnv("SDL_VIDEODRIVER", previousDriver)
+        else: delEnv("SDL_VIDEODRIVER")
+
+      let cosmic = CosmicTextEngine()
+      let fonts = initFontRegistry()
+      let background = rgb(0, 0, 0)
+      let bounds = rect(24, 16, 64, 24)
+      let leftBounds = rect(24, 16, 32, 24)
+      var commands = @[
+        fillRect(rect(24, 16, 16, 24), rgb(0, 1, 0)),
+        fillRect(rect(40, 16, 48, 24), rgb(0, 0, 1)),
+        pushClip(bounds, radius = 8),
+        pushLayer(bounds, opacity = 0.5),
+        pushLayer(leftBounds),
+        fillRect(leftBounds, rgb(1, 0, 0)),
+        popLayer(),
+        fillRect(rect(56, 16, 32, 24), rgb(1, 0, 0)),
+        popLayer(),
+        fillRect(rect(18, 30, 10, 4), rgb(1, 1, 1)),
+        popClip(),
+        fillRect(rect(104, 48, 8, 8), rgb(1, 1, 0))]
+
+      for dimensions in [[128, 64], [160, 88], [256, 128]]:
+        var renderer = initSdl3Renderer("CBSS software layer density test",
+          dimensions[0], dimensions[1], false)
+        defer: renderer.close()
+        require $SDL3.getRendererName(renderer.renderer) == "software"
+        scaledWindow = renderer.window
+        scaledWidth = 128
+        scaledHeight = 64
+        defer: scaledWindow = nil
+
+        proc at(frame: Sdl3CapturedFrame; x, y: int): tuple[r, g, b: uint8] =
+          frame.pixel(x * dimensions[0] div 128, y * dimensions[1] div 64)
+
+        commands[5].color = rgb(1, 0, 0)
+        renderer.requestFrameCapture()
+        renderer.render(commands, background)
+        let immediate = renderer.capturedFrame().get
+        let greenHalf = immediate.at(32, 24)
+        check greenHalf.r in 127'u8 .. 128'u8
+        check greenHalf.g in 127'u8 .. 128'u8
+        check greenHalf.b == 0
+        let blueHalf = immediate.at(48, 24)
+        check blueHalf.r in 127'u8 .. 128'u8
+        check blueHalf.g == 0
+        check blueHalf.b in 127'u8 .. 128'u8
+        check immediate.at(24, 16) == (0'u8, 255'u8, 0'u8)
+        check immediate.at(23, 24) == (0'u8, 0'u8, 0'u8)
+        check immediate.at(88, 24) == (0'u8, 0'u8, 0'u8)
+        check immediate.at(21, 31) == (0'u8, 0'u8, 0'u8)
+        check immediate.at(26, 31) == (255'u8, 255'u8, 255'u8)
+        check immediate.at(108, 52) == (255'u8, 255'u8, 0'u8)
+
+        renderer.requestFrameCapture()
+        renderer.renderLayered(commands, cosmic, fonts, background)
+        let retainedMatches = renderer.capturedFrame().get.pixels == immediate.pixels
+        check retainedMatches
+
+        commands[5].color = rgb(0, 1, 0)
+        renderer.requestFrameCapture()
+        renderer.renderLayered(commands, cosmic, fonts, background)
+        let repainted = renderer.capturedFrame().get
+        check renderer.retainedLayerStats().lastDirtyTiles == 1
+        check renderer.retainedLayerStats().partialRepaints == 1
+        renderer.requestFrameCapture()
+        renderer.render(commands, background)
+        let partialMatches = renderer.capturedFrame().get.pixels == repainted.pixels
+        check partialMatches
+        let updated = repainted.at(48, 24)
+        check updated.r == 0
+        check updated.g in 127'u8 .. 128'u8
+        check updated.b in 127'u8 .. 128'u8
+        check repainted.at(76, 24) == immediate.at(76, 24)
+        check repainted.at(108, 52) == (255'u8, 255'u8, 0'u8)
+
   test "rounded file images preserve layer coordinates and alpha across cache reuse":
     let previousDriver = getEnv("SDL_VIDEODRIVER")
     putEnv("SDL_VIDEODRIVER", "dummy")
