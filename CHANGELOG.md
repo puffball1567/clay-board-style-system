@@ -18,6 +18,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Fixed
 
+- Rounded clips preserve filtered sampling, tint, and transparency for
+  scaled RasterSurface draws and GPU readback fallbacks. Published raster
+  updates continue to support partial uploads.
+
 - SDL software layer compositing reads and writes the same output pixels
   under display scaling. Translucent layers preserve the background and the
   boundaries of retained partial repaints.

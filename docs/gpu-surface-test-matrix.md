@@ -129,6 +129,10 @@ and doubled output scales.
 Rounded file-image tests compare cold and cached pixels inside a transformed
 layer. They cover half-alpha images, sibling paint, and cache allocation at
 integer and fractional output densities.
+Rounded raster tests compare interior rows with rectangular clips for a
+cropped and tinted RasterSurface and a GPU fallback. They check independent
+axis scales, fractional output positions and sizes, and a retained one-tile
+repaint after a partial raster upload.
 
 The sharing fixture also composites a Motion Scene render target and an
 independent compute shader's storage texture into the same SDL layer. The two
