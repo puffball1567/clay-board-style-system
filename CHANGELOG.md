@@ -18,6 +18,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Fixed
 
+- SDL3 accelerated layers preserve their original affine sampling under
+  rounded clips at fractional display scales. Copy composition keeps
+  pixels outside the layer intact.
+
 - Rounded clips preserve filtered sampling, tint, and transparency for
   scaled RasterSurface draws and GPU readback fallbacks. Published raster
   updates continue to support partial uploads.

@@ -133,6 +133,10 @@ Rounded raster tests compare interior rows with rectangular clips for a
 cropped and tinted RasterSurface and a GPU fallback. They check independent
 axis scales, fractional output positions and sizes, and a retained one-tile
 repaint after a partial raster upload.
+The Mesa OpenGL and SDL software affine fixtures compare rounded clips
+against rectangular references at unit, fractional, and doubled output
+scales. They check the layer interior, clipped corners, and the surrounding
+background for source-over, copy, additive, and destination-in composition.
 
 The sharing fixture also composites a Motion Scene render target and an
 independent compute shader's storage texture into the same SDL layer. The two

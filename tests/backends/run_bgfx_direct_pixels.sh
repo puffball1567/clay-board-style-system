@@ -52,6 +52,9 @@ case "$sdl_mode" in
       echo "bundled SDL3 runtime is missing" >&2
       exit 2
     }
+    cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml
+    cargo build --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml
+    export LD_LIBRARY_PATH="$PWD/native/cosmic_text_bridge/target/release${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     ;;
   *)
     echo "CBSS_GPU_PIXEL_SDL_MODE must be system or bundled" >&2
@@ -110,6 +113,14 @@ done
   "$build_dir"/astcenc_*.o
 
 for memory_model in arc orc; do
+  SDL_RENDER_DRIVER=opengl SDL_VIDEO_FORCE_EGL=1 \
+    nim c -r --mm:"$memory_model" -d:release -d:cbssTestSdlOpenGl \
+    -d:cbssSdl3LinkMode="$sdl_mode" -d:cbssRuntimeRoot="$PWD/vendor/sdl3" \
+    --path:src --nimcache:"$build_dir/nim-sdl-$memory_model" \
+    --out:"$build_dir/sdl-affine-$memory_model" "$@" \
+    tests/integration/test_sdl3_transform_render.nim \
+    "rounded affine clips preserve sampling and composition bounds"
+
   # Run in separate processes. The sharing fixture uses bgfx on the SDL thread.
   for fixture in test_bgfx_sdl_gl_sharing test_bgfx_direct_pixels; do
     nim c -r --mm:"$memory_model" -d:release -d:cbssGpuBgfx \

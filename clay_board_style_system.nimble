@@ -94,7 +94,7 @@ task checkBgfxAdapter, "Run the optional bgfxim GPU adapter contract":
   mkDir(taskRoot)
   let sdl3PlatformTest =
     when defined(linux):
-      " -d:cbssTestSdl3PlatformData"
+      " -d:cbssTestSdl3PlatformData --passC:-Ivendor/sdl3/include/SDL3"
     else:
       ""
   for memoryModel in ["arc", "orc"]:
