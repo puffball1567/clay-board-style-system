@@ -2324,6 +2324,49 @@ proc applySoftwareLayerComposite(
     w: width.cfloat, h: height.cfloat)
   result = SDL3.renderTexture(target.renderer, combined, nil, addr destination)
 
+iterator roundedPixelScissors(
+    clips: openArray[Sdl3ClipRegion];
+    clip: Option[SDL_Rect];
+    view: Sdl3TargetScale;
+    minimumY, maximumY: float32
+): SDL_Rect =
+  var limit = SDL_Rect(w: view.outputWidth, h: view.outputHeight)
+  if clip.isSome:
+    limit = intersect(limit, clip.get.pixelScissor(view))
+  if limit.w > 0 and limit.h > 0:
+    let firstRow = clamp(floor(minimumY * view.y), limit.y.float32,
+      (limit.y + limit.h).float32).cint
+    let endRow = clamp(ceil(maximumY * view.y), limit.y.float32,
+      (limit.y + limit.h).float32).cint
+    # Coalesce rows with the same pixel clip, including the flat middle.
+    var band: SDL_Rect
+    for row in firstRow .. endRow:
+      var left = limit.x.float32 / view.x
+      var right = (limit.x + limit.w).float32 / view.x
+      var next = SDL_Rect(y: row, h: 1)
+      let centerY = (row.float32 + 0.5'f32) / view.y
+      if row < endRow and clips.clippedHorizontalSpan(centerY, left, right):
+        next.x = ceil(left * view.x - 0.5'f32).cint
+        next.w = ceil(right * view.x - 0.5'f32).cint - next.x
+      if band.h > 0 and band.x == next.x and band.w == next.w:
+        inc band.h
+        continue
+      if band.w > 0:
+        yield band
+      band = next
+
+proc usePixelCoordinates(renderer: pointer; view: Sdl3TargetScale): bool =
+  (view.x == 1.0'f32 and view.y == 1.0'f32) or (
+    SDL3.setRenderLogicalPresentation(renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED) and
+    SDL3.setRenderScale(renderer, 1, 1))
+
+proc restoreDrawCoordinates(renderer: pointer; view: Sdl3TargetScale; clip: Option[SDL_Rect]) =
+  if view.x != 1.0'f32 or view.y != 1.0'f32:
+    discard SDL3.setRenderLogicalPresentation(
+      renderer, view.logicalWidth, view.logicalHeight, view.presentation)
+    discard SDL3.setRenderScale(renderer, view.drawX, view.drawY)
+  renderer.setClip(clip)
+
 proc renderRoundedAffineTexture(
     target: Sdl3Renderer;
     texture: pointer;
@@ -2335,58 +2378,21 @@ proc renderRoundedAffineTexture(
   if not renderer.readTargetScale(view):
     return
   let clip = target.effectiveClipBounds()
-  var limit = SDL_Rect(w: view.outputWidth, h: view.outputHeight)
-  if clip.isSome:
-    limit = intersect(limit, clip.get.pixelScissor(view))
-  if limit.w <= 0 or limit.h <= 0:
+  defer: renderer.restoreDrawCoordinates(view, clip)
+  if not renderer.usePixelCoordinates(view):
     return
-
   let lastY = right.y + down.y - origin.y
   let minimumY = min(min(origin.y, right.y), min(down.y, lastY))
   let maximumY = max(max(origin.y, right.y), max(down.y, lastY))
-  let firstRow = clamp(floor(minimumY * view.y), limit.y.float32,
-    (limit.y + limit.h).float32).cint
-  let endRow = clamp(ceil(maximumY * view.y), limit.y.float32,
-    (limit.y + limit.h).float32).cint
-  if endRow <= firstRow:
-    return
-
-  let scaled = view.x != 1.0'f32 or view.y != 1.0'f32
-  defer:
-    if scaled:
-      discard SDL3.setRenderLogicalPresentation(
-        renderer, view.logicalWidth, view.logicalHeight, view.presentation)
-      discard SDL3.setRenderScale(renderer, view.drawX, view.drawY)
-    renderer.setClip(clip)
-  if scaled and (
-      not SDL3.setRenderLogicalPresentation(
-        renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED) or
-      not SDL3.setRenderScale(renderer, 1, 1)):
-    return
-
   var pixelOrigin = SDL_FPoint(x: cfloat(origin.x * view.x), y: cfloat(origin.y * view.y))
   var pixelRight = SDL_FPoint(x: cfloat(right.x * view.x), y: cfloat(right.y * view.y))
   var pixelDown = SDL_FPoint(x: cfloat(down.x * view.x), y: cfloat(down.y * view.y))
-  # Keep the original affine quad and sampling. Coalesce consecutive rows
-  # with the same pixel clip so the flat middle is drawn in one operation.
-  var band: SDL_Rect
-  for row in firstRow .. endRow:
-    var left = limit.x.float32 / view.x
-    var right = (limit.x + limit.w).float32 / view.x
-    var next = SDL_Rect(y: row, h: 1)
-    let centerY = (row.float32 + 0.5'f32) / view.y
-    if row < endRow and target.clipStack.clippedHorizontalSpan(centerY, left, right):
-      next.x = ceil(left * view.x - 0.5'f32).cint
-      next.w = ceil(right * view.x - 0.5'f32).cint - next.x
-    if band.h > 0 and band.x == next.x and band.w == next.w:
-      inc band.h
-      continue
-    if band.w > 0 and (
-        not SDL3.setRenderClipRect(renderer, addr band) or
+  for scissor in roundedPixelScissors(target.clipStack, clip, view, minimumY, maximumY):
+    var band = scissor
+    if not SDL3.setRenderClipRect(renderer, addr band) or
         not SDL3.renderTextureAffine(renderer, texture, addr source,
-          addr pixelOrigin, addr pixelRight, addr pixelDown)):
+          addr pixelOrigin, addr pixelRight, addr pixelDown):
       return
-    band = next
 
 proc renderAffineLayer(
     target: var Sdl3Renderer;
@@ -3542,6 +3548,35 @@ proc roundedTextureCacheKey(
     result.add ","
     result.add roundedCacheFloat(clip.radius)
 
+proc renderRoundedTexture(
+    renderer, texture: pointer;
+    src, dst: SDL_FRect;
+    clips: openArray[Sdl3ClipRegion]
+) =
+  var view: Sdl3TargetScale
+  if not renderer.readTargetScale(view):
+    return
+  var clip = none(SDL_Rect)
+  if SDL3.renderClipEnabled(renderer):
+    var bounds: SDL_Rect
+    if not SDL3.getRenderClipRect(renderer, addr bounds):
+      return
+    clip = some(bounds)
+  defer: renderer.restoreDrawCoordinates(view, clip)
+  if not renderer.usePixelCoordinates(view):
+    return
+
+  # Draw the original texture mapping inside each scissor. Cropping source
+  # rows separately changes interpolation and can leave gaps at fractional scales.
+  var source = src
+  var destination = SDL_FRect(x: cfloat(dst.x * view.x), y: cfloat(dst.y * view.y),
+    w: cfloat(dst.w * view.x), h: cfloat(dst.h * view.y))
+  for scissor in roundedPixelScissors(clips, clip, view, dst.y, dst.y + dst.h):
+    var band = scissor
+    if not SDL3.setRenderClipRect(renderer, addr band) or
+        not SDL3.renderTexture(renderer, texture, addr source, addr destination):
+      return
+
 proc renderTextureClippedWith(
     target: Sdl3Renderer;
     texture: pointer;
@@ -3554,6 +3589,9 @@ proc renderTextureClippedWith(
     var srcRect = src
     var dstRect = dst
     discard SDL3.renderTexture(target.renderer, texture, addr srcRect, addr dstRect)
+    return
+  if target.supportsPremultipliedBlend():
+    target.renderer.renderRoundedTexture(texture, src, dst, clips)
     return
 
   let yStart = int(floor(dst.y.float32))

@@ -137,6 +137,9 @@ The Mesa OpenGL and SDL software affine fixtures compare rounded clips
 against rectangular references at unit, fractional, and doubled output
 scales. They check the layer interior, clipped corners, and the surrounding
 background for source-over, copy, additive, and destination-in composition.
+The Mesa OpenGL fixture also checks rounded clips on text, non-repeating
+gradients, and shadows against rectangular references. It verifies fractional
+texture placement, text width clipping, and a one-tile gradient repaint.
 
 The sharing fixture also composites a Motion Scene render target and an
 independent compute shader's storage texture into the same SDL layer. The two

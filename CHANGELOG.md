@@ -18,6 +18,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Fixed
 
+- SDL3 accelerated rendering keeps the original texture samples for text,
+  non-repeating gradients, and shadows under rounded clips. Text also
+  retains its maximum-width scissor during the rounded draw.
+
 - SDL3 accelerated layers preserve their original affine sampling under
   rounded clips at fractional display scales. Copy composition keeps
   pixels outside the layer intact.
