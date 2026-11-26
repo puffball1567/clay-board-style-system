@@ -2929,6 +2929,142 @@ proc firstRepeatedTile(anchor, extent, visibleStart: float32): float32 =
 proc repeatedGradientCoordinate(value, start, extent: float32): float32 =
   start + (value - start) - floor((value - start) / extent) * extent
 
+proc drawWrappedGradientTiles(
+    target: Sdl3Renderer;
+    texture: pointer;
+    source, destination: SDL_FRect;
+    tileScale: cfloat;
+    view: Sdl3TargetScale;
+    clip: Option[SDL_Rect]
+): bool =
+  let renderer = target.renderer
+  let pixelLeft = destination.x * view.x
+  let pixelTop = destination.y * view.y
+  let pixelRight = (destination.x + destination.w) * view.x
+  let pixelBottom = (destination.y + destination.h) * view.y
+  if pixelRight <= pixelLeft or pixelBottom <= pixelTop:
+    return true
+  # Use the same half-open coverage on the window and texture targets. A
+  # fractional edge through a pixel center can rasterize differently when
+  # OpenGL flips the target. Adjust UVs to keep the original sample phase.
+  let left = ceil(pixelLeft - 0.5'f32)
+  let top = ceil(pixelTop - 0.5'f32)
+  let right = ceil(pixelRight - 0.5'f32)
+  let bottom = ceil(pixelBottom - 0.5'f32)
+  if right <= left or bottom <= top:
+    return true
+  let u = destination.w / (source.w * tileScale)
+  let v = destination.h / (source.h * tileScale)
+  let u0 = ((left - pixelLeft) / (pixelRight - pixelLeft)) * u
+  let u1 = ((right - pixelLeft) / (pixelRight - pixelLeft)) * u
+  let v0 = ((top - pixelTop) / (pixelBottom - pixelTop)) * v
+  let v1 = ((bottom - pixelTop) / (pixelBottom - pixelTop)) * v
+
+  var previousU, previousV: SDL_TextureAddressMode
+  if not SDL3.getRenderTextureAddressMode(renderer, addr previousU, addr previousV):
+    return false
+  defer:
+    discard SDL3.setRenderTextureAddressMode(renderer, previousU, previousV)
+    renderer.restoreDrawCoordinates(view, clip)
+  if not renderer.usePixelCoordinates(view) or
+      not SDL3.setRenderTextureAddressMode(
+        renderer, SDL_TEXTURE_ADDRESS_WRAP, SDL_TEXTURE_ADDRESS_WRAP):
+    return false
+
+  # Match SDL_RenderTextureTiled's full-texture wrap. Every band uses the
+  # same quad and UVs so the filter and tile origin survive clipping.
+  var xy = [left, top, right, top, right, bottom, left, bottom]
+  var uv = [u0, v0, u1, v0, u1, v1, u0, v1]
+  var color = SDL_FColor(r: 1, g: 1, b: 1, a: 1)
+  var indices = [0.cint, 1, 2, 0, 2, 3]
+  let stride = cint(2 * sizeof(cfloat))
+  template drawQuad(): bool =
+    SDL3.renderGeometryRaw(renderer, texture, addr xy[0], stride,
+      addr color, 0, addr uv[0], stride, 4, addr indices[0], 6, cint(sizeof(cint)))
+  if not target.hasRoundedClip():
+    renderer.setClip(if clip.isSome: some(clip.get.pixelScissor(view)) else: clip)
+    return drawQuad()
+
+  for scissor in roundedPixelScissors(target.clipStack, clip, view,
+      destination.y, destination.y + destination.h):
+    var band = scissor
+    if not SDL3.setRenderClipRect(renderer, addr band) or not drawQuad():
+      return result
+    result = true
+  return true
+
+proc drawGradientTiles(
+    target: var Sdl3Renderer;
+    texture: pointer;
+    source, destination: var SDL_FRect;
+    tileScale: cfloat
+): bool =
+  let renderer = target.renderer
+  var view: Sdl3TargetScale
+  if not renderer.readTargetScale(view):
+    return false
+  let clip = target.effectiveClipBounds()
+  if target.supportsPremultipliedBlend() and SDL3.getBooleanProperty(
+      SDL3.getRendererProperties(renderer), "SDL.renderer.texture_wrapping", false) and
+      target.drawWrappedGradientTiles(texture, source, destination, tileScale, view, clip):
+    return true
+  if not target.hasRoundedClip():
+    return SDL3.renderTextureTiled(renderer, texture, addr source, tileScale, addr destination)
+  var limit = SDL_Rect(w: view.outputWidth, h: view.outputHeight)
+  if clip.isSome:
+    limit = intersect(limit, clip.get.pixelScissor(view))
+  if limit.w <= 0 or limit.h <= 0:
+    return true
+
+  # Keep the destination origin and scale used by SDL's regular tiled draw.
+  # The scratch target only needs to reach the visible clip's far edge.
+  let width = int(limit.x + limit.w)
+  let height = int(limit.y + limit.h)
+  if textureBytes(width, height) > target.transformTextureCacheByteLimit:
+    return false
+  let scratch = target.acquireTransformTexture(width, height)
+  if scratch.texture.isNil:
+    return false
+  defer: target.releaseTransformTexture(scratch.index)
+
+  var drawColor: SDL_FColor
+  if not SDL3.getRenderDrawColorFloat(renderer, addr drawColor.r,
+      addr drawColor.g, addr drawColor.b, addr drawColor.a):
+    return false
+  defer: discard SDL3.setRenderDrawColorFloat(
+    renderer, drawColor.r, drawColor.g, drawColor.b, drawColor.a)
+  let previousTarget = SDL3.getRenderTarget(renderer)
+  let prepared = SDL3.setRenderTarget(renderer, scratch.texture) and
+    SDL3.setRenderLogicalPresentation(renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED) and
+    SDL3.setRenderScale(renderer, view.x.cfloat, view.y.cfloat) and
+    SDL3.setRenderDrawColor(renderer, 0, 0, 0, 0) and
+    SDL3.renderClear(renderer) and
+    SDL3.setTextureBlendMode(texture, sdlBlendModeNone)
+  var painted = false
+  if prepared:
+    renderer.setClip(clip)
+    painted = SDL3.renderTextureTiled(renderer, texture, addr source,
+      tileScale, addr destination)
+    discard SDL3.setTextureBlendMode(texture, sdlBlendModeBlend)
+  if not SDL3.setRenderTarget(renderer, previousTarget):
+    return true
+  if not painted:
+    return false
+
+  # Copy each output pixel once with its original alpha. The saved scissor
+  # includes retained damage as well as the logical clip stack.
+  defer: renderer.restoreDrawCoordinates(view, clip)
+  if not renderer.usePixelCoordinates(view) or not SDL3.setRenderClipRect(renderer, nil):
+    return false
+  for band in roundedPixelScissors(target.clipStack, clip, view,
+      destination.y, destination.y + destination.h):
+    var pixels = SDL_FRect(x: band.x.cfloat, y: band.y.cfloat,
+      w: band.w.cfloat, h: band.h.cfloat)
+    if not SDL3.renderTexture(renderer, scratch.texture, addr pixels, addr pixels):
+      return result
+    result = true
+  return true
+
 proc fillLinearGradientPatternPixels(
     target: Sdl3Renderer;
     tileRect, paintRect: Rect;
@@ -3039,11 +3175,12 @@ proc fillLinearGradientPattern(
     bounds: clipRect.toSdlClip
   )
   target.renderer.setClip(target.effectiveClipBounds())
+  defer:
+    target.clipStack.setLen(clipDepth)
+    target.renderer.setClip(target.effectiveClipBounds())
 
   if gradient.stops.len == 1:
     target.fillRoundedRect(paintRect, 0, gradient.stops[0].color)
-    target.clipStack.setLen(clipDepth)
-    target.renderer.setClip(target.effectiveClipBounds())
     return
 
   if repeat != bgNoRepeat:
@@ -3068,36 +3205,10 @@ proc fillLinearGradientPattern(
         w: cfloat(paintRect.x + paintRect.w - firstX),
         h: cfloat(paintRect.y + paintRect.h - firstY)
       )
-      if target.hasRoundedClip():
-        let yStart = int(floor(paintRect.y))
-        let yEnd = int(ceil(paintRect.y + paintRect.h)) - 1
-        for row in yStart .. yEnd:
-          let centerY = row.float32 + 0.5'f32
-          var left = paintRect.x
-          var right = paintRect.x + paintRect.w
-          if not target.clippedHorizontalSpan(centerY, left, right):
-            continue
-          target.renderer.setClip(some(rect(
-            left, row.float32, max(0.0'f32, right - left), 1
-          ).toSdlClip))
-          discard SDL3.renderTextureTiled(
-            target.renderer,
-            textureEntry.get.texture,
-            addr source,
-            cfloat(1.0'f32 / max(0.001'f32, scale)),
-            addr destination
-          )
-      else:
-        discard SDL3.renderTextureTiled(
-          target.renderer,
-          textureEntry.get.texture,
-          addr source,
-          cfloat(1.0'f32 / max(0.001'f32, scale)),
-          addr destination
-        )
-      target.clipStack.setLen(clipDepth)
-      target.renderer.setClip(target.effectiveClipBounds())
-      return
+      let tileScale = cfloat(1.0'f32 / max(0.001'f32, scale))
+      if target.drawGradientTiles(textureEntry.get.texture,
+          source, destination, tileScale):
+        return
 
   if repeat == bgNoRepeat:
     target.fillLinearGradient(tileRect, gradient, 0)
@@ -3105,9 +3216,6 @@ proc fillLinearGradientPattern(
     target.fillLinearGradientPatternPixels(
       tileRect, paintRect, gradient, repeat
     )
-
-  target.clipStack.setLen(clipDepth)
-  target.renderer.setClip(target.effectiveClipBounds())
 
 proc strokeRoundedRect(target: Sdl3Renderer; rect: Rect; radius, width: float32; color: Color) =
   if rect.w <= 0 or rect.h <= 0:

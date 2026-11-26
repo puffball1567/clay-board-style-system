@@ -18,6 +18,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Fixed
 
+- Repeated SDL3 gradients keep their tile placement and opacity under
+  rounded clips at fractional display scales. Retained partial repaints
+  preserve surrounding pixels.
+
 - SDL3 accelerated rendering keeps the original texture samples for text,
   non-repeating gradients, and shadows under rounded clips. Text also
   retains its maximum-width scissor during the rounded draw.
