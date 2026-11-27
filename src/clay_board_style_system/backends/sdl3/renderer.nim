@@ -2670,10 +2670,13 @@ proc roundedSpan(rect: Rect; radius, centerY: float32; x1, x2: var float32): boo
   x2 = rect.x + rect.w - inset
   x2 > x1
 
-proc fillHorizontal(target: Sdl3Renderer; x1, x2, y: float32; color: Color) =
-  var left = x1
-  var right = x2
-  if not target.clippedHorizontalSpan(y + 0.5'f32, left, right):
+proc fillHorizontalSpan(
+    renderer: pointer;
+    left, right, y: float32;
+    color: Color;
+    height = 1.0'f32
+) =
+  if right <= left:
     return
   let startPixel = int(floor(left))
   let endPixel = int(floor(right))
@@ -2683,44 +2686,95 @@ proc fillHorizontal(target: Sdl3Renderer; x1, x2, y: float32; color: Color) =
   if startPixel == endPixel:
     let coverage = min(1.0'f32, max(0.0'f32, right - left))
     if coverage > 0.001'f32:
-      target.renderer.setColor(color, coverage)
-      var edge = SDL_FRect(x: cfloat(startPixel.float32), y: cfloat(y), w: cfloat(1.0'f32), h: cfloat(1.0'f32))
-      discard SDL3.renderFillRect(target.renderer, addr edge)
+      renderer.setColor(color, coverage)
+      var edge = SDL_FRect(x: cfloat(startPixel.float32), y: cfloat(y), w: cfloat(1.0'f32), h: height)
+      discard SDL3.renderFillRect(renderer, addr edge)
     return
 
   if mainRight > mainLeft:
-    target.renderer.setColor(color)
-    var line = SDL_FRect(x: cfloat(mainLeft), y: cfloat(y), w: cfloat(mainRight - mainLeft), h: cfloat(1.0'f32))
-    discard SDL3.renderFillRect(target.renderer, addr line)
+    renderer.setColor(color)
+    var line = SDL_FRect(x: cfloat(mainLeft), y: cfloat(y), w: cfloat(mainRight - mainLeft), h: height)
+    discard SDL3.renderFillRect(renderer, addr line)
 
   let leftCoverage = min(1.0'f32, max(0.0'f32, ceil(left) - left))
   if leftCoverage > 0.001'f32:
-    target.renderer.setColor(color, leftCoverage)
-    var edge = SDL_FRect(x: cfloat(startPixel.float32), y: cfloat(y), w: cfloat(1.0'f32), h: cfloat(1.0'f32))
-    discard SDL3.renderFillRect(target.renderer, addr edge)
+    renderer.setColor(color, leftCoverage)
+    var edge = SDL_FRect(x: cfloat(startPixel.float32), y: cfloat(y), w: cfloat(1.0'f32), h: height)
+    discard SDL3.renderFillRect(renderer, addr edge)
 
   let rightCoverage = min(1.0'f32, max(0.0'f32, right - floor(right)))
   if rightCoverage > 0.001'f32 and endPixel != startPixel:
-    target.renderer.setColor(color, rightCoverage)
-    var edge = SDL_FRect(x: cfloat(endPixel.float32), y: cfloat(y), w: cfloat(1.0'f32), h: cfloat(1.0'f32))
-    discard SDL3.renderFillRect(target.renderer, addr edge)
+    renderer.setColor(color, rightCoverage)
+    var edge = SDL_FRect(x: cfloat(endPixel.float32), y: cfloat(y), w: cfloat(1.0'f32), h: height)
+    discard SDL3.renderFillRect(renderer, addr edge)
+
+proc fillHorizontal(target: Sdl3Renderer; x1, x2, y: float32; color: Color) =
+  var left = x1
+  var right = x2
+  if target.clippedHorizontalSpan(y + 0.5'f32, left, right):
+    target.renderer.fillHorizontalSpan(left, right, y, color)
 
 proc fillRoundedRect(target: Sdl3Renderer; rect: Rect; radius: float32; color: Color) =
   if rect.w <= 0 or rect.h <= 0:
     return
+  let renderer = target.renderer
   let r = rect.clampedRadius(radius)
   if r <= 0.001'f32 and not target.hasRoundedClip():
-    target.renderer.setColor(color)
+    renderer.setColor(color)
     var sdlRect = rect.toSdl
-    discard SDL3.renderFillRect(target.renderer, addr sdlRect)
+    discard SDL3.renderFillRect(renderer, addr sdlRect)
     return
-  let yStart = int(floor(rect.y))
-  let yEnd = int(ceil(rect.y + rect.h)) - 1
-  for y in yStart .. yEnd:
-    let centerY = y.float32 + 0.5'f32
-    var x1, x2: float32
-    if roundedSpan(rect, r, centerY, x1, x2):
-      target.fillHorizontal(x1, x2, y.float32, color)
+
+  var view: Sdl3TargetScale
+  if not renderer.readTargetScale(view):
+    return
+  let clip = target.effectiveClipBounds()
+  defer: renderer.restoreDrawCoordinates(view, clip)
+  if not renderer.usePixelCoordinates(view):
+    return
+
+  if r <= 0.001'f32:
+    # Preserve SDL's software rectangle rounding. Accelerated targets use
+    # half-open pixel coverage so flipping a texture target cannot add a row.
+    renderer.setColor(color)
+    var destination = SDL_FRect(x: cfloat(rect.x * view.x), y: cfloat(rect.y * view.y),
+      w: cfloat(rect.w * view.x), h: cfloat(rect.h * view.y))
+    if target.supportsPremultipliedBlend():
+      let right = ceil((rect.x + rect.w) * view.x - 0.5'f32)
+      let bottom = ceil((rect.y + rect.h) * view.y - 0.5'f32)
+      destination.x = ceil(destination.x - 0.5'f32)
+      destination.y = ceil(destination.y - 0.5'f32)
+      destination.w = right - destination.x
+      destination.h = bottom - destination.y
+      if destination.w <= 0 or destination.h <= 0:
+        return
+    for scissor in roundedPixelScissors(target.clipStack, clip, view, rect.y, rect.y + rect.h):
+      var band = scissor
+      if not SDL3.setRenderClipRect(renderer, addr band) or
+          not SDL3.renderFillRect(renderer, addr destination):
+        return
+    return
+
+  # Apply the inherited clip in physical pixels and keep coverage on the
+  # shape's own curved edges. Paint the constant middle of a band at once.
+  if not SDL3.setRenderClipRect(renderer, nil):
+    return
+  let middleStart = ceil((rect.y + r) * view.y - 0.5'f32)
+  let middleEnd = ceil((rect.y + rect.h - r) * view.y - 0.5'f32)
+  for band in roundedPixelScissors(target.clipStack, clip, view, rect.y, rect.y + rect.h):
+    let bottom = band.y + band.h
+    var row = band.y
+    while row < bottom:
+      let centerY = (row.float32 + 0.5'f32) / view.y
+      var x1, x2: float32
+      var height = 1.cint
+      if roundedSpan(rect, r, centerY, x1, x2):
+        if row.float32 >= middleStart and row.float32 < middleEnd:
+          height = min(bottom.float32, middleEnd).cint - row
+        let left = max(x1 * view.x, band.x.float32)
+        let right = min(x2 * view.x, (band.x + band.w).float32)
+        renderer.fillHorizontalSpan(left, right, row.float32, color, height.float32)
+      row += height
 
 proc cacheFloat(value: float32): string =
   $(round(value * 100.0'f32) / 100.0'f32)
