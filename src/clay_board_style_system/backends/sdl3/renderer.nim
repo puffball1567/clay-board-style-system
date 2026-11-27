@@ -1681,7 +1681,7 @@ proc roundedSpan(rect: Rect; radius, centerY: float32; x1, x2: var float32): boo
 proc clippedHorizontalSpan(
     clips: openArray[Sdl3ClipRegion]; centerY: float32; x1, x2: var float32
 ): bool
-proc renderTextureClipped(target: Sdl3Renderer; texture: pointer; src, dst: SDL_FRect)
+proc renderTextureClipped(target: var Sdl3Renderer; texture: pointer; src, dst: SDL_FRect)
 
 proc clipRegion(command: PaintCommand): Sdl3ClipRegion =
   Sdl3ClipRegion(
@@ -2604,7 +2604,7 @@ proc clippedHorizontalSpan(clips: openArray[Sdl3ClipRegion]; centerY: float32; x
 proc clippedHorizontalSpan(target: Sdl3Renderer; centerY: float32; x1, x2: var float32): bool =
   target.clipStack.clippedHorizontalSpan(centerY, x1, x2)
 
-proc drawTextTexture(target: Sdl3Renderer; command: PaintCommand; entry: Sdl3TextCacheEntry) =
+proc drawTextTexture(target: var Sdl3Renderer; command: PaintCommand; entry: Sdl3TextCacheEntry) =
   let scale =
     if entry.scale > 0: entry.scale
     else: 1.0'f32
@@ -3656,20 +3656,18 @@ proc roundedTextureCacheKey(
     result.add ","
     result.add roundedCacheFloat(clip.radius)
 
+proc checkedTextureSize(width, height: float64): tuple[width, height: int] =
+  if width >= 1 and width <= high(cint).float64 and
+      height >= 1 and height <= high(cint).float64:
+    result = (int(width), int(height))
+
 proc renderRoundedTexture(
     renderer, texture: pointer;
     src, dst: SDL_FRect;
-    clips: openArray[Sdl3ClipRegion]
+    clips: openArray[Sdl3ClipRegion];
+    view: Sdl3TargetScale;
+    clip: Option[SDL_Rect]
 ) =
-  var view: Sdl3TargetScale
-  if not renderer.readTargetScale(view):
-    return
-  var clip = none(SDL_Rect)
-  if SDL3.renderClipEnabled(renderer):
-    var bounds: SDL_Rect
-    if not SDL3.getRenderClipRect(renderer, addr bounds):
-      return
-    clip = some(bounds)
   defer: renderer.restoreDrawCoordinates(view, clip)
   if not renderer.usePixelCoordinates(view):
     return
@@ -3685,8 +3683,85 @@ proc renderRoundedTexture(
         not SDL3.renderTexture(renderer, texture, addr source, addr destination):
       return
 
+proc renderScaledSoftwareRoundedTexture(
+    target: var Sdl3Renderer;
+    texture: pointer;
+    src, dst: SDL_FRect;
+    clips: openArray[Sdl3ClipRegion];
+    view: Sdl3TargetScale;
+    clip: Option[SDL_Rect]
+): bool =
+  let renderer = target.renderer
+  # SDL's software copy truncates the destination origin and size separately.
+  let (width, height) = checkedTextureSize(
+    trunc(dst.w * view.x).float64, trunc(dst.h * view.y).float64)
+  if width == 0 or textureBytes(width, height) > target.transformTextureCacheByteLimit:
+    return false
+  let left = trunc(dst.x * view.x)
+  let top = trunc(dst.y * view.y)
+  if left >= view.outputWidth.float32 or left + width.float32 <= 0 or
+      top >= view.outputHeight.float32 or top + height.float32 <= 0:
+    return true
+
+  var sourceWidth, sourceHeight: cfloat
+  var color: SDL_FColor
+  var blend: SDL_BlendMode
+  if not SDL3.getTextureSize(texture, addr sourceWidth, addr sourceHeight) or
+      src.x < 0 or src.y < 0 or src.x + src.w > sourceWidth or src.y + src.h > sourceHeight or
+      not SDL3.getTextureColorModFloat(texture, addr color.r, addr color.g, addr color.b) or
+      not SDL3.getTextureAlphaModFloat(texture, addr color.a) or
+      not SDL3.getTextureBlendMode(texture, addr blend):
+    return false
+  let scratch = target.acquireTransformTexture(width, height)
+  if scratch.texture.isNil:
+    return false
+  defer: target.releaseTransformTexture(scratch.index)
+
+  let originalTarget = SDL3.getRenderTarget(renderer)
+  var source = src
+  let sampled = SDL3.setRenderTarget(renderer, scratch.texture) and
+    SDL3.setRenderLogicalPresentation(renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED) and
+    SDL3.setRenderScale(renderer, 1, 1) and
+    SDL3.setRenderClipRect(renderer, nil) and
+    SDL3.setTextureColorModFloat(texture, 1, 1, 1) and
+    SDL3.setTextureAlphaModFloat(texture, 1) and
+    SDL3.setTextureBlendMode(texture, sdlBlendModeNone) and
+    SDL3.renderTexture(renderer, texture, addr source, nil)
+  discard SDL3.setTextureBlendMode(texture, blend)
+  discard SDL3.setTextureColorModFloat(texture, color.r, color.g, color.b)
+  discard SDL3.setTextureAlphaModFloat(texture, color.a)
+  if not SDL3.setRenderTarget(renderer, originalTarget):
+    return true
+  if not sampled:
+    return false
+
+  defer:
+    scratch.texture.resetLayerTexture()
+    renderer.restoreDrawCoordinates(view, clip)
+  if not SDL3.setTextureBlendMode(scratch.texture, blend) or
+      not SDL3.setTextureColorModFloat(scratch.texture, color.r, color.g, color.b) or
+      not SDL3.setTextureAlphaModFloat(scratch.texture, color.a) or
+      not renderer.usePixelCoordinates(view) or not SDL3.setRenderClipRect(renderer, nil):
+    return false
+
+  # Copy disjoint bands at 1:1, preserving both the saved scissor and alpha.
+  let destination = SDL_Rect(x: left.cint, y: top.cint, w: width.cint, h: height.cint)
+  for scissor in roundedPixelScissors(clips, clip, view, dst.y, dst.y + dst.h):
+    let band = intersect(scissor, destination)
+    if band.w <= 0 or band.h <= 0:
+      continue
+    var destBand = SDL_FRect(x: band.x.cfloat, y: band.y.cfloat,
+      w: band.w.cfloat, h: band.h.cfloat)
+    var sourceBand = destBand
+    sourceBand.x -= left
+    sourceBand.y -= top
+    if not SDL3.renderTexture(renderer, scratch.texture, addr sourceBand, addr destBand):
+      return result
+    result = true
+  return true
+
 proc renderTextureClippedWith(
-    target: Sdl3Renderer;
+    target: var Sdl3Renderer;
     texture: pointer;
     src, dst: SDL_FRect;
     clips: openArray[Sdl3ClipRegion]
@@ -3698,8 +3773,21 @@ proc renderTextureClippedWith(
     var dstRect = dst
     discard SDL3.renderTexture(target.renderer, texture, addr srcRect, addr dstRect)
     return
-  if target.supportsPremultipliedBlend():
-    target.renderer.renderRoundedTexture(texture, src, dst, clips)
+  let renderer = target.renderer
+  var view: Sdl3TargetScale
+  if not renderer.readTargetScale(view):
+    return
+  var clip = none(SDL_Rect)
+  if SDL3.renderClipEnabled(renderer):
+    var bounds: SDL_Rect
+    if not SDL3.getRenderClipRect(renderer, addr bounds):
+      return
+    clip = some(bounds)
+  if target.supportsPremultipliedBlend() or (
+      trunc(src.w) == trunc(dst.w * view.x) and trunc(src.h) == trunc(dst.h * view.y)):
+    renderer.renderRoundedTexture(texture, src, dst, clips, view, clip)
+    return
+  if target.renderScaledSoftwareRoundedTexture(texture, src, dst, clips, view, clip):
     return
 
   let yStart = int(floor(dst.y.float32))
@@ -3724,7 +3812,7 @@ proc renderTextureClippedWith(
     var dstSlice = SDL_FRect(x: cfloat(left), y: cfloat(visibleTop), w: cfloat(right - left), h: cfloat(visibleBottom - visibleTop))
     discard SDL3.renderTexture(target.renderer, texture, addr srcSlice, addr dstSlice)
 
-proc renderTextureClipped(target: Sdl3Renderer; texture: pointer; src, dst: SDL_FRect) =
+proc renderTextureClipped(target: var Sdl3Renderer; texture: pointer; src, dst: SDL_FRect) =
   target.renderTextureClippedWith(texture, src, dst, target.clipStack)
 
 proc findRoundedTextureCache(
@@ -3794,11 +3882,6 @@ proc maskRoundedTexture(
     if count > 0 and not SDL3.renderFillRects(renderer, addr spans[0], count.cint):
       return false
   true
-
-proc checkedTextureSize(width, height: float64): tuple[width, height: int] =
-  if width >= 1 and width <= high(cint).float64 and
-      height >= 1 and height <= high(cint).float64:
-    result = (int(width), int(height))
 
 proc paintRoundedTexture(
     target: Sdl3Renderer;

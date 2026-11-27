@@ -18,6 +18,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Fixed
 
+- SDL3 software rendering preserves text, gradient, and shadow samples
+  under rounded clips at fractional display scales. The text width and
+  retained repaint scissors stay active.
+
 - Repeated SDL3 gradients keep their tile placement and opacity under
   rounded clips at fractional display scales. Retained partial repaints
   preserve surrounding pixels.

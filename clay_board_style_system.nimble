@@ -55,6 +55,7 @@ task test, "Run the test suite":
   exec "nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_property_support_nimcache --out:/tmp/clay_board_style_system_property_support tools/check_property_support.nim"
   exec "nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_event_generator_nimcache --out:/tmp/clay_board_style_system_event_generator tools/generate_events.nim --check"
   exec "nim c -r --mm:arc --path:src --nimcache:/tmp/clay_board_style_system_driver_contract_generator_nimcache --out:/tmp/clay_board_style_system_driver_contract_generator tools/generate_driver_contract.nim --check"
+  exec "cargo build --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml"
   exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
   exec "nim c -r --mm:arc --nimcache:/tmp/clay_board_style_system_test_runner_nimcache --out:/tmp/clay_board_style_system_test_runner tools/run_tests.nim"
 
@@ -218,6 +219,7 @@ task checkExplicitEventOutcomes, "Reject implicit boolean outcomes in first-part
   exec "nim check --mm:arc -d:cbssStrictEventOutcomes --path:src --nimcache:/tmp/clay_board_style_system_strict_events_widget_lifecycle tests/memory/widget_lifecycle.nim"
 
 task testOrc, "Run the test suite under ORC":
+  exec "cargo build --locked --release --manifest-path native/cosmic_text_bridge/Cargo.toml"
   exec "cargo build --locked --release --manifest-path native/image_bridge/Cargo.toml"
   exec "nim c -r --mm:orc --nimcache:/tmp/clay_board_style_system_orc_test_runner_nimcache --out:/tmp/clay_board_style_system_orc_test_runner tools/run_tests.nim --memory:orc"
 
