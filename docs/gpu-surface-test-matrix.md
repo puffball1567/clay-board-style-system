@@ -140,6 +140,9 @@ background for source-over, copy, additive, and destination-in composition.
 The Mesa OpenGL fixture also checks rounded clips on text, non-repeating
 gradients, and shadows against rectangular references. It verifies fractional
 texture placement, text width clipping, and a one-tile gradient repaint.
+SDL software and Mesa OpenGL tests cover rounded repeated gradients with
+each repeat axis, fractional tile placement, and an unchanged neighboring
+tile after partial repaint.
 
 The sharing fixture also composites a Motion Scene render target and an
 independent compute shader's storage texture into the same SDL layer. The two
