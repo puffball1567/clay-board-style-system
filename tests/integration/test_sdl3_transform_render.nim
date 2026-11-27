@@ -503,93 +503,109 @@ suite "SDL3 transform rendering":
         check clipped.pixel((118.0'f32 * sx).int, (8.0'f32 * sy).int) ==
           (255'u8, 255'u8, 0'u8)
 
-  when defined(cbssTestSdlOpenGl):
-    test "rounded texture clips preserve text gradient and shadow sampling":
-      let previousDriver = getEnv("SDL_VIDEODRIVER")
+  test "rounded texture clips preserve text gradient and shadow sampling":
+    let previousDriver = getEnv("SDL_VIDEODRIVER")
+    when defined(cbssTestSdlOpenGl):
       putEnv("SDL_VIDEODRIVER", "x11")
-      defer:
-        if previousDriver.len > 0: putEnv("SDL_VIDEODRIVER", previousDriver)
-        else: delEnv("SDL_VIDEODRIVER")
+    else:
+      putEnv("SDL_VIDEODRIVER", "dummy")
+    defer:
+      if previousDriver.len > 0: putEnv("SDL_VIDEODRIVER", previousDriver)
+      else: delEnv("SDL_VIDEODRIVER")
 
-      let fonts = initFontRegistry()
-      var cosmic = initCosmicTextEngine(fonts)
-      defer: cosmic.close()
-      let clip = rect(16, 12, 96, 40)
-      let radius = 14.0'f32
-      let black = rgb(0, 0, 0)
-      let decorationBounds = rect(10.25, 8.75, 106.5, 48.5)
-      let fixtures = [
-        drawText(NodeId(1), "MMMMMMMMMM", vec2(16, 0), rgb(1, 1, 1),
-          ComputedTextStyle(fontSize: some(32.0'f32),
-            fontFamilies: @["sans-serif"], whiteSpace: some(wsNoWrap)),
-          some(70.0'f32)),
-        fillLinearGradient(decorationBounds, LinearGradient(angle: 0, stops: @[
-          GradientStop(color: rgba(1, 0, 0, 0.5), offset: 0),
-          GradientStop(color: rgba(0, 1, 0, 0.75), offset: 100)])),
-        drawBoxShadow(rect(22.25, 18.5, 84.5, 29), rgba(1, 0.5, 0, 0.75),
-          offsetX = 0, offsetY = 0, blur = 10, spread = 0)]
+    let fonts = initFontRegistry()
+    var cosmic = initCosmicTextEngine(fonts)
+    defer: cosmic.close()
+    let clip = rect(16, 12, 96, 40)
+    let radius = 14.0'f32
+    let black = rgb(0, 0, 0)
+    let decorationBounds = rect(10.25, 8.75, 106.5, 48.5)
+    let fixtures = [
+      drawText(NodeId(1), "MMMMMMMMMM", vec2(16, 0), rgb(1, 1, 1),
+        ComputedTextStyle(fontSize: some(32.0'f32),
+          fontFamilies: @["sans-serif"], whiteSpace: some(wsNoWrap)),
+        some(70.0'f32)),
+      fillLinearGradient(decorationBounds, LinearGradient(angle: 0, stops: @[
+        GradientStop(color: rgba(1, 0, 0, 0.5), offset: 0),
+        GradientStop(color: rgba(0, 1, 0, 0.75), offset: 100)])),
+      drawBoxShadow(rect(22.25, 18.5, 84.5, 29), rgba(1, 0.5, 0, 0.75),
+        offsetX = 0, offsetY = 0, blur = 10, spread = 0)]
 
-      for dimensions in [[128, 64], [166, 86], [256, 128]]:
-        var renderer = initSdl3Renderer("CBSS rounded texture clip test",
-          dimensions[0], dimensions[1], false)
-        defer: renderer.close()
+    const outputSizes =
+      when defined(linux): [[128, 64], [166, 86], [256, 128]]
+      else: [[128, 64]]
+    for dimensions in outputSizes:
+      var renderer = initSdl3Renderer("CBSS rounded texture clip test",
+        dimensions[0], dimensions[1], false)
+      defer: renderer.close()
+      when defined(cbssTestSdlOpenGl):
         require $SDL3.getRendererName(renderer.renderer) == "opengl"
+      else:
+        require $SDL3.getRendererName(renderer.renderer) == "software"
+      when defined(linux):
         scaledWindow = renderer.window
         scaledWidth = 128
         scaledHeight = 64
         defer: scaledWindow = nil
-        let sx = dimensions[0].float32 / 128.0'f32
-        let sy = dimensions[1].float32 / 64.0'f32
-        for fixture in fixtures:
-          var commands = @[pushClip(clip), fixture, popClip(),
-            fillRect(rect(116, 4, 8, 8), rgb(1, 1, 0))]
-          renderer.requestFrameCapture()
-          renderer.render(commands, cosmic, fonts, black)
-          let reference = renderer.capturedFrame().get
-          commands[0].clipRadius = radius
-          renderer.requestFrameCapture()
-          renderer.render(commands, cosmic, fonts, black)
-          let clipped = renderer.capturedFrame().get
-          var mismatches, visiblePixels, clippedPixels, leakedTextPixels: int
-          let textRight = floor(16.0'f32 * sx).int + ceil(70.0'f32 * sx).int
-          for y in floor(clip.y * sy).int ..< ceil((clip.y + clip.h) * sy).int:
-            for x in floor(clip.x * sx).int ..< ceil((clip.x + clip.w) * sx).int:
-              let px = (x.float32 + 0.5'f32) / sx
-              let py = (y.float32 + 0.5'f32) / sy
-              let dx = px - clamp(px, clip.x + radius, clip.x + clip.w - radius)
-              let dy = py - clamp(py, clip.y + radius, clip.y + clip.h - radius)
-              let referencePixel = reference.pixel(x, y)
-              let inside = dx * dx + dy * dy <= radius * radius
-              if referencePixel != (0'u8, 0'u8, 0'u8):
-                if inside: inc visiblePixels
-                else: inc clippedPixels
-              let expected = if inside: referencePixel else: (0'u8, 0'u8, 0'u8)
-              let actual = clipped.pixel(x, y)
-              if actual != expected:
-                inc mismatches
-              if fixture.kind == pcDrawText and x >= textRight and
-                  actual != (0'u8, 0'u8, 0'u8):
-                inc leakedTextPixels
-          checkpoint($fixture.kind & " at " & $dimensions)
-          check visiblePixels > 0
-          check clippedPixels > 0
-          check mismatches == 0
-          check leakedTextPixels == 0
-          check clipped.pixel((120.0'f32 * sx).int, (8.0'f32 * sy).int) ==
-            (255'u8, 255'u8, 0'u8)
+      let sx = dimensions[0].float32 / 128.0'f32
+      let sy = dimensions[1].float32 / 64.0'f32
+      for fixture in fixtures:
+        var commands = @[pushClip(clip), fixture, popClip(),
+          fillRect(rect(116, 4, 8, 8), rgb(1, 1, 0))]
+        renderer.requestFrameCapture()
+        renderer.render(commands, cosmic, fonts, black)
+        let reference = renderer.capturedFrame().get
+        commands[0].clipRadius = radius
+        renderer.requestFrameCapture()
+        renderer.render(commands, cosmic, fonts, black)
+        let clipped = renderer.capturedFrame().get
+        var maxInteriorError, leakedPixels, visiblePixels, clippedPixels, leakedTextPixels: int
+        let textRight = floor(16.0'f32 * sx).int + ceil(70.0'f32 * sx).int
+        for y in floor(clip.y * sy).int ..< ceil((clip.y + clip.h) * sy).int:
+          for x in floor(clip.x * sx).int ..< ceil((clip.x + clip.w) * sx).int:
+            let px = (x.float32 + 0.5'f32) / sx
+            let py = (y.float32 + 0.5'f32) / sy
+            let dx = px - clamp(px, clip.x + radius, clip.x + clip.w - radius)
+            let dy = py - clamp(py, clip.y + radius, clip.y + clip.h - radius)
+            let referencePixel = reference.pixel(x, y)
+            let inside = dx * dx + dy * dy <= radius * radius
+            if referencePixel != (0'u8, 0'u8, 0'u8):
+              if inside: inc visiblePixels
+              else: inc clippedPixels
+            let actual = clipped.pixel(x, y)
+            if inside:
+              maxInteriorError = max(maxInteriorError, max(
+                abs(actual.r.int - referencePixel.r.int), max(
+                abs(actual.g.int - referencePixel.g.int), abs(actual.b.int - referencePixel.b.int))))
+            elif actual != (0'u8, 0'u8, 0'u8):
+              inc leakedPixels
+            if fixture.kind == pcDrawText and x >= textRight and
+                actual != (0'u8, 0'u8, 0'u8):
+              inc leakedTextPixels
+        checkpoint($fixture.kind & " at " & $dimensions)
+        check visiblePixels > 0
+        check clippedPixels > 0
+        when defined(cbssTestSdlOpenGl):
+          check maxInteriorError == 0
+        else:
+          check maxInteriorError <= 1
+        check leakedPixels == 0
+        check leakedTextPixels == 0
+        check clipped.pixel((120.0'f32 * sx).int, (8.0'f32 * sy).int) ==
+          (255'u8, 255'u8, 0'u8)
 
-          if fixture.kind == pcFillLinearGradient:
-            commands.insert(fillRect(rect(24, 20, 12, 12), rgb(0, 0, 1)), 0)
-            renderer.renderLayered(commands, cosmic, fonts, black)
-            commands[0].color = rgb(1, 0, 1)
-            renderer.requestFrameCapture()
-            renderer.renderLayered(commands, cosmic, fonts, black)
-            let repainted = renderer.capturedFrame().get
-            check renderer.retainedLayerStats().lastDirtyTiles == 1
-            renderer.requestFrameCapture()
-            renderer.render(commands, cosmic, fonts, black)
-            let matches = repainted.pixels == renderer.capturedFrame().get.pixels
-            check matches
+        if fixture.kind == pcFillLinearGradient:
+          commands.insert(fillRect(rect(24, 20, 12, 12), rgb(0, 0, 1)), 0)
+          renderer.renderLayered(commands, cosmic, fonts, black)
+          commands[0].color = rgb(1, 0, 1)
+          renderer.requestFrameCapture()
+          renderer.renderLayered(commands, cosmic, fonts, black)
+          let repainted = renderer.capturedFrame().get
+          check renderer.retainedLayerStats().lastDirtyTiles == 1
+          renderer.requestFrameCapture()
+          renderer.render(commands, cosmic, fonts, black)
+          let matches = repainted.pixels == renderer.capturedFrame().get.pixels
+          check matches
 
   test "rounded gradient repeats match rectangular sampling and retained damage":
     let previousDriver = getEnv("SDL_VIDEODRIVER")
