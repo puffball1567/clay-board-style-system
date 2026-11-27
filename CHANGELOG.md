@@ -18,6 +18,10 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Fixed
 
+- SDL3 solid fills under rounded clips stay uniform at fractional display
+  scales. Rounded backgrounds use output-pixel coverage for their edges
+  and preserve retained repaint boundaries.
+
 - SDL3 software rendering preserves text, gradient, and shadow samples
   under rounded clips at fractional display scales. The text width and
   retained repaint scissors stay active.

@@ -702,6 +702,106 @@ suite "SDL3 transform rendering":
         let matches = repainted.pixels == renderer.capturedFrame().get.pixels
         check matches
 
+  test "rounded solid backgrounds blend once per output pixel":
+    let previousDriver = getEnv("SDL_VIDEODRIVER")
+    when defined(cbssTestSdlOpenGl):
+      putEnv("SDL_VIDEODRIVER", "x11")
+    else:
+      putEnv("SDL_VIDEODRIVER", "dummy")
+    defer:
+      if previousDriver.len > 0: putEnv("SDL_VIDEODRIVER", previousDriver)
+      else: delEnv("SDL_VIDEODRIVER")
+
+    const outputSizes =
+      when defined(linux): [[128, 64], [166, 86], [256, 128]]
+      else: [[128, 64]]
+    let clip = rect(16, 12, 96, 40)
+    let bounds = rect(8, 8, 112, 48)
+    let halfPixelBounds = rect(8.25, 18.25, 112, 28)
+    let radius = 14.0'f32
+    let background = rgb(0, 0, 1)
+    let tinted = rgba(1, 0, 0, 0.5)
+    let fonts = initFontRegistry()
+    let cosmic = CosmicTextEngine()
+    let fixtures = [
+      fillRect(bounds, tinted),
+      fillRect(bounds, tinted, radius = 16),
+      fillLinearGradient(bounds, LinearGradient(stops: @[
+        GradientStop(color: tinted, offset: 0)]), repeat = bgRepeat),
+      fillRect(halfPixelBounds, tinted)]
+
+    for dimensions in outputSizes:
+      var renderer = initSdl3Renderer("CBSS rounded background test",
+        dimensions[0], dimensions[1], false)
+      defer: renderer.close()
+      when defined(cbssTestSdlOpenGl):
+        require $SDL3.getRendererName(renderer.renderer) == "opengl"
+      when defined(linux):
+        scaledWindow = renderer.window
+        scaledWidth = 128
+        scaledHeight = 64
+        defer: scaledWindow = nil
+      let sx = dimensions[0].float32 / 128.0'f32
+      let sy = dimensions[1].float32 / 64.0'f32
+      for index, command in fixtures:
+        var commands = @[pushClip(clip), command, popClip(),
+          fillRect(rect(116, 4, 8, 8), rgb(1, 1, 0))]
+        renderer.requestFrameCapture()
+        renderer.render(commands, background)
+        let reference = renderer.capturedFrame().get
+        commands[0].clipRadius = radius
+        renderer.requestFrameCapture()
+        renderer.render(commands, background)
+        let rounded = renderer.capturedFrame().get
+
+        var errors, insidePixels, clippedPixels: int
+        let center = reference.pixel((64.0'f32 * sx).int, (32.0'f32 * sy).int)
+        for y in floor(clip.y * sy).int ..< ceil((clip.y + clip.h) * sy).int:
+          for x in floor(clip.x * sx).int ..< ceil((clip.x + clip.w) * sx).int:
+            let px = (x.float32 + 0.5'f32) / sx
+            let py = (y.float32 + 0.5'f32) / sy
+            let dx = px - clamp(px, clip.x + radius, clip.x + clip.w - radius)
+            let dy = py - clamp(py, clip.y + radius, clip.y + clip.h - radius)
+            let inside = dx * dx + dy * dy <= radius * radius
+            let expected =
+              if not inside: (0'u8, 0'u8, 255'u8)
+              elif defined(cbssTestSdlOpenGl) and index == fixtures.high:
+                if py >= halfPixelBounds.y and py < halfPixelBounds.y + halfPixelBounds.h:
+                  center
+                else:
+                  (0'u8, 0'u8, 255'u8)
+              else:
+                reference.pixel(x, y)
+            if rounded.pixel(x, y) != expected:
+              inc errors
+            if reference.pixel(x, y) != (0'u8, 0'u8, 255'u8):
+              if inside: inc insidePixels
+              else: inc clippedPixels
+        checkpoint("solid fill " & $index & " at " & $dimensions)
+        check insidePixels > 0
+        check clippedPixels > 0
+        check errors == 0
+        let middle = rounded.pixel((64.0'f32 * sx).int, (32.0'f32 * sy).int)
+        check middle.r in 127'u8 .. 128'u8
+        check middle.g == 0
+        check middle.b in 126'u8 .. 128'u8
+        for row in (20.0'f32 * sy).int .. (44.0'f32 * sy).int:
+          check rounded.pixel((64.0'f32 * sx).int, row) == middle
+        check rounded.pixel((120.0'f32 * sx).int, (8.0'f32 * sy).int) ==
+          (255'u8, 255'u8, 0'u8)
+
+        commands.insert(fillRect(rect(24, 20, 12, 12), rgb(0, 1, 0)), 0)
+        renderer.renderLayered(commands, cosmic, fonts, background)
+        commands[0].color = rgb(1, 0, 1)
+        renderer.requestFrameCapture()
+        renderer.renderLayered(commands, cosmic, fonts, background)
+        let repainted = renderer.capturedFrame().get
+        check renderer.retainedLayerStats().lastDirtyTiles == 1
+        renderer.requestFrameCapture()
+        renderer.render(commands, background)
+        let matches = repainted.pixels == renderer.capturedFrame().get.pixels
+        check matches
+
   test "nested affine scopes compose without losing local coordinates":
     let previousDriver = getEnv("SDL_VIDEODRIVER")
     putEnv("SDL_VIDEODRIVER", "dummy")

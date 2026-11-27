@@ -121,7 +121,8 @@ for memory_model in arc orc; do
     tests/integration/test_sdl3_transform_render.nim \
     "rounded affine clips preserve sampling and composition bounds" \
     "rounded texture clips preserve text gradient and shadow sampling" \
-    "rounded gradient repeats match rectangular sampling and retained damage"
+    "rounded gradient repeats match rectangular sampling and retained damage" \
+    "rounded solid backgrounds blend once per output pixel"
 
   # Run in separate processes. The sharing fixture uses bgfx on the SDL thread.
   for fixture in test_bgfx_sdl_gl_sharing test_bgfx_direct_pixels; do

@@ -144,6 +144,9 @@ gradient repaint.
 SDL software and Mesa OpenGL tests cover rounded repeated gradients with
 each repeat axis, fractional tile placement, and an unchanged neighboring
 tile after partial repaint.
+The same backends compare translucent solid fills and single-stop gradients
+under rounded clips at unit, fractional, and doubled scales. They verify
+uniform interior alpha and a one-tile repaint against full redraw.
 
 The sharing fixture also composites a Motion Scene render target and an
 independent compute shader's storage texture into the same SDL layer. The two
