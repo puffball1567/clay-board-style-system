@@ -223,13 +223,13 @@ closes bounded backend pixel work rather than the later indexed `O(dirty)`
 authoring goal.
 
 At unit, uneven fractional, and doubled output scales, SDL3 uses output-pixel
-coverage for solid backgrounds and Canvas path fills and strokes. Rounded
-clips preserve texture sampling for affine layers, text, gradients, and
-shadows. The gradient, solid background, and path tests compare a one-tile
-repaint with a full redraw. The five focused SDL3 OpenGL tests pass under
-ARC and ORC in Linux Mesa CI and on an AMD Renoir integrated GPU. See the
+coverage for solid backgrounds, borders and outlines, and Canvas path
+fills and strokes. Rounded clips preserve texture sampling for affine layers,
+text, gradients, and shadows. The gradient, solid background, border, and path
+tests compare a one-tile repaint with a full redraw. The focused SDL3 OpenGL
+tests run under ARC and ORC in Linux Mesa CI. See the
 [GPU surface test matrix](gpu-surface-test-matrix.md) for the tested cases and
-the separate mixed-layer qualification.
+the AMD Renoir results.
 
 No rasterizer-internal type or owning object crosses the C ABI. Foreign callers
 select CBSS capabilities and policies through CBSS-owned versioned API, while

@@ -2708,12 +2708,6 @@ proc fillHorizontalSpan(
     var edge = SDL_FRect(x: cfloat(endPixel.float32), y: cfloat(y), w: cfloat(1.0'f32), h: height)
     discard SDL3.renderFillRect(renderer, addr edge)
 
-proc fillHorizontal(target: Sdl3Renderer; x1, x2, y: float32; color: Color) =
-  var left = x1
-  var right = x2
-  if target.clippedHorizontalSpan(y + 0.5'f32, left, right):
-    target.renderer.fillHorizontalSpan(left, right, y, color)
-
 proc fillRoundedRect(target: Sdl3Renderer; rect: Rect; radius: float32; color: Color) =
   if rect.w <= 0 or rect.h <= 0:
     return
@@ -3271,24 +3265,35 @@ proc fillLinearGradientPattern(
       tileRect, paintRect, gradient, repeat
     )
 
+proc fillBorderSpan(
+    renderer: pointer;
+    left, right, holeLeft, holeRight, y, height: float32;
+    color: Color
+) =
+  let gapLeft = max(left, holeLeft)
+  let gapRight = min(right, holeRight)
+  if gapRight <= gapLeft:
+    renderer.fillHorizontalSpan(left, right, y, color, height)
+    return
+
+  let gapPixel = floor(gapLeft)
+  if gapPixel == floor(gapRight):
+    # Both sides of a subpixel hole can touch the same pixel. Sum their
+    # coverage before blending so the border applies source-over once.
+    let coverage = min(right, gapPixel + 1.0'f32) - max(left, gapPixel) -
+      (gapRight - gapLeft)
+    renderer.fillHorizontalSpan(left, gapPixel, y, color, height)
+    renderer.fillHorizontalSpan(gapPixel, gapPixel + coverage, y, color, height)
+    renderer.fillHorizontalSpan(gapPixel + 1.0'f32, right, y, color, height)
+  else:
+    renderer.fillHorizontalSpan(left, gapLeft, y, color, height)
+    renderer.fillHorizontalSpan(gapRight, right, y, color, height)
+
 proc strokeRoundedRect(target: Sdl3Renderer; rect: Rect; radius, width: float32; color: Color) =
   if rect.w <= 0 or rect.h <= 0:
     return
   let strokeWidth = max(1.0'f32, width)
   let outerRadius = rect.clampedRadius(radius)
-  if outerRadius <= 0.001'f32 and not target.hasRoundedClip():
-    target.renderer.setColor(color)
-    let lines = max(1, int(round(strokeWidth)))
-    for offset in 0 ..< lines:
-      var sdlRect = Rect(
-        x: rect.x + offset.float32,
-        y: rect.y + offset.float32,
-        w: max(0.0'f32, rect.w - offset.float32 * 2.0'f32),
-        h: max(0.0'f32, rect.h - offset.float32 * 2.0'f32)
-      ).toSdl
-      discard SDL3.renderRect(target.renderer, addr sdlRect)
-    return
-
   let inner = Rect(
     x: rect.x + strokeWidth,
     y: rect.y + strokeWidth,
@@ -3299,20 +3304,40 @@ proc strokeRoundedRect(target: Sdl3Renderer; rect: Rect; radius, width: float32;
     target.fillRoundedRect(rect, outerRadius, color)
     return
 
+  let renderer = target.renderer
+  var view: Sdl3TargetScale
+  if not renderer.readTargetScale(view):
+    return
+  let clip = target.effectiveClipBounds()
+  defer: renderer.restoreDrawCoordinates(view, clip)
+  if not renderer.usePixelCoordinates(view) or
+      not SDL3.setRenderClipRect(renderer, nil):
+    return
+
   let innerRadius = max(0.0'f32, outerRadius - strokeWidth)
-  let yStart = int(floor(rect.y))
-  let yEnd = int(ceil(rect.y + rect.h)) - 1
-  for y in yStart .. yEnd:
-    let centerY = y.float32 + 0.5'f32
-    var ox1, ox2: float32
-    if not roundedSpan(rect, outerRadius, centerY, ox1, ox2):
-      continue
-    var ix1, ix2: float32
-    if roundedSpan(inner, innerRadius, centerY, ix1, ix2):
-      target.fillHorizontal(ox1, min(ix1, ox2), y.float32, color)
-      target.fillHorizontal(max(ix2, ox1), ox2, y.float32, color)
-    else:
-      target.fillHorizontal(ox1, ox2, y.float32, color)
+  let middleTop = max(rect.y + outerRadius, inner.y + innerRadius)
+  let middleBottom = min(rect.y + rect.h - outerRadius, inner.y + inner.h - innerRadius)
+  let middleStart = ceil(middleTop * view.y - 0.5'f32)
+  let middleEnd = ceil(middleBottom * view.y - 0.5'f32)
+  for band in roundedPixelScissors(target.clipStack, clip, view, rect.y, rect.y + rect.h):
+    let bottom = band.y + band.h
+    var row = band.y
+    while row < bottom:
+      let centerY = (row.float32 + 0.5'f32) / view.y
+      var outerLeft, outerRight: float32
+      var height = 1.cint
+      if roundedSpan(rect, outerRadius, centerY, outerLeft, outerRight):
+        let left = max(outerLeft * view.x, band.x.float32)
+        let right = min(outerRight * view.x, (band.x + band.w).float32)
+        var innerLeft, innerRight: float32
+        if roundedSpan(inner, innerRadius, centerY, innerLeft, innerRight):
+          if row.float32 >= middleStart and row.float32 < middleEnd:
+            height = min(bottom.float32, middleEnd).cint - row
+          renderer.fillBorderSpan(left, right, innerLeft * view.x, innerRight * view.x,
+            row.float32, height.float32, color)
+        else:
+          renderer.fillHorizontalSpan(left, right, row.float32, color)
+      row += height
 
 proc renderFillPath(target: Sdl3Renderer; command: PaintCommand)
 

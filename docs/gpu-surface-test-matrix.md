@@ -158,6 +158,11 @@ software OpenGL coverage and remains open for physical-driver validation.
 and [CI results](https://github.com/puffball1567/clay-board-style-system/actions/runs/46110559324)
 record the results.
 
+An additional SDL software and Mesa OpenGL test compares translucent square
+and rounded borders with per-pixel coverage at the same scales. It checks
+rounded ancestor clips, a hole smaller than one pixel, a stroke that fills the
+whole shape, and one-tile repaint parity.
+
 The sharing fixture also composites a Motion Scene render target and an
 independent compute shader's storage texture into the same SDL layer. The two
 producers have separate namespaces on one GPU host. The fixture checks
