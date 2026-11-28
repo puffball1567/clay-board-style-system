@@ -883,6 +883,101 @@ suite "SDL3 transform rendering":
     check frame.pixel(20, 20).r < 25
     check frame.pixel(2, 2).r < 25
 
+  test "filled and stroked paths sample output pixels under rounded clips":
+    let previousDriver = getEnv("SDL_VIDEODRIVER")
+    when defined(cbssTestSdlOpenGl):
+      putEnv("SDL_VIDEODRIVER", "x11")
+    else:
+      putEnv("SDL_VIDEODRIVER", "dummy")
+    defer:
+      if previousDriver.len > 0: putEnv("SDL_VIDEODRIVER", previousDriver)
+      else: delEnv("SDL_VIDEODRIVER")
+
+    const outputSizes =
+      when defined(linux): [[128, 64], [166, 86], [256, 128]]
+      else: [[128, 64]]
+    let clip = rect(16, 12, 96, 40)
+    let radius = 14.0'f32
+    let background = rgb(0, 0, 1)
+    let translucent = rgba(1, 0, 0, 0.5)
+    let fonts = initFontRegistry()
+    let cosmic = CosmicTextEngine()
+    var path = path2D([vec2(8, 8), vec2(120, 8), vec2(120, 56), vec2(8, 56)],
+      closed = true)
+    path.moveTo(vec2(47.5, 23.5))
+    path.lineTo(vec2(83.25, 28.75))
+    path.lineTo(vec2(59.75, 43.25))
+    path.closePath()
+    let fixtures = [fillPath(path, translucent, pfrEvenOdd),
+      strokePath([vec2(10.25, 17), vec2(64, 40.5), vec2(117.75, 19)],
+        translucent, width = 11, lineJoin = sljRound)]
+
+    for dimensions in outputSizes:
+      var renderer = initSdl3Renderer("CBSS scaled path test",
+        dimensions[0], dimensions[1], false)
+      defer: renderer.close()
+      when defined(cbssTestSdlOpenGl):
+        require $SDL3.getRendererName(renderer.renderer) == "opengl"
+      when defined(linux):
+        scaledWindow = renderer.window
+        scaledWidth = 128
+        scaledHeight = 64
+        defer: scaledWindow = nil
+      let sx = dimensions[0].float32 / 128.0'f32
+      let sy = dimensions[1].float32 / 64.0'f32
+      for command in fixtures:
+        let (shape, rule) =
+          if command.kind == pcFillPath: (command.fillPathValue, pfrEvenOdd)
+          else: (command.pathOutline, pfrNonZero)
+        let contours = shape.transformed(scaleAffine2D(sx, sy)).flattened()
+        var commands = @[pushClip(clip, radius), command, popClip(),
+          fillRect(rect(116, 4, 8, 8), rgb(1, 1, 0))]
+        renderer.requestFrameCapture()
+        renderer.render(commands, background)
+        let full = renderer.capturedFrame().get
+
+        var mismatches, solidPixels, edgePixels, maskedPixels: int
+        for y in floor((clip.y - 1) * sy).int ..< ceil((clip.y + clip.h + 1) * sy).int:
+          for x in floor((clip.x - 1) * sx).int ..< ceil((clip.x + clip.w + 1) * sx).int:
+            let px = (x.float32 + 0.5'f32) / sx
+            let py = (y.float32 + 0.5'f32) / sy
+            let dx = px - clamp(px, clip.x + radius, clip.x + clip.w - radius)
+            let dy = py - clamp(py, clip.y + radius, clip.y + clip.h - radius)
+            let insideClip = dx * dx + dy * dy <= radius * radius
+            var samples = 0
+            for offsetY in [0.25'f32, 0.75'f32]:
+              for offsetX in [0.25'f32, 0.75'f32]:
+                if contours.contains(vec2(x.float32 + offsetX, y.float32 + offsetY), rule):
+                  inc samples
+            if not insideClip and samples > 0:
+              inc maskedPixels
+              samples = 0
+            if samples == 4: inc solidPixels
+            elif samples > 0: inc edgePixels
+            let actual = full.pixel(x, y)
+            let red = round(127.5'f32 * samples.float32 / 4.0'f32).int
+            if abs(actual.r.int - red) > 2 or actual.g != 0 or
+                abs(actual.b.int - (255 - red)) > 2:
+              inc mismatches
+        checkpoint($command.kind & " at " & $dimensions)
+        check solidPixels > 0
+        check edgePixels > 0
+        check maskedPixels > 0
+        check mismatches == 0
+        check full.pixel((120.0'f32 * sx).int, (8.0'f32 * sy).int) ==
+          (255'u8, 255'u8, 0'u8)
+
+        commands.insert(fillRect(rect(24, 20, 12, 12), rgb(0, 1, 0)), 0)
+        renderer.renderLayered(commands, cosmic, fonts, background)
+        commands[0].color = rgb(1, 0, 1)
+        renderer.requestFrameCapture()
+        renderer.renderLayered(commands, cosmic, fonts, background)
+        let repainted = renderer.capturedFrame().get
+        check renderer.retainedLayerStats().lastDirtyTiles == 1
+        renderer.requestFrameCapture()
+        renderer.render(commands, background)
+        check repainted.pixels == renderer.capturedFrame().get.pixels
+
   test "rounded raster surfaces and GPU fallbacks preserve scaled source rows":
     let previousDriver = getEnv("SDL_VIDEODRIVER")
     putEnv("SDL_VIDEODRIVER", "dummy")

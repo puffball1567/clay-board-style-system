@@ -18,6 +18,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Fixed
 
+- SDL3 Canvas path fills and strokes sample antialias coverage at the output
+  resolution. Rounded clips keep the same pixels in full and partial repaints.
+
 - SDL3 solid fills under rounded clips stay uniform at fractional display
   scales. Rounded backgrounds use output-pixel coverage for their edges
   and preserve retained repaint boundaries.

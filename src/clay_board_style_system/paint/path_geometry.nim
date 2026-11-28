@@ -813,10 +813,10 @@ proc pathCoverageCount*(coverageMask: uint8): int {.inline.} =
   ]
   sampleCounts[int(coverageMask and 0x0F'u8)].int
 
-proc bounds*(path: Path2D; tolerance = 0.25'f32): Rect =
+proc bounds*(contours: openArray[FlattenedPathContour]): Rect =
   var initialized = false
   var left, top, right, bottom: float32
-  for contour in path.flattened(tolerance):
+  for contour in contours:
     for point in contour.points:
       if not initialized:
         left = point.x
@@ -833,3 +833,6 @@ proc bounds*(path: Path2D; tolerance = 0.25'f32): Rect =
     rect(left, top, right - left, bottom - top)
   else:
     rect(0, 0, 0, 0)
+
+proc bounds*(path: Path2D; tolerance = 0.25'f32): Rect =
+  path.flattened(tolerance).bounds()

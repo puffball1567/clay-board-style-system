@@ -3326,44 +3326,58 @@ proc renderStrokePath(target: Sdl3Renderer; command: PaintCommand) =
   ))
 
 proc renderFillPath(target: Sdl3Renderer; command: PaintCommand) =
-  let tolerance = 0.25'f32 / max(1.0'f32, target.pixelScale())
-  let contours = command.fillPathValue.flattened(tolerance)
+  let renderer = target.renderer
+  var view: Sdl3TargetScale
+  if not renderer.readTargetScale(view):
+    return
+  # Flatten and sample the path in the pixels that receive coverage.
+  let contours =
+    if view.x == 1.0'f32 and view.y == 1.0'f32:
+      command.fillPathValue.flattened()
+    else:
+      command.fillPathValue.transformed(scaleAffine2D(view.x, view.y)).flattened()
   if contours.len == 0:
     return
-  var bounds = command.fillPathValue.bounds(tolerance)
-  let clip = target.effectiveLogicalClip()
-  if clip.isSome:
-    bounds = bounds.intersection(clip.get)
-  let xStart = int(floor(bounds.x))
-  let xEnd = int(ceil(bounds.x + bounds.w))
-  let yStart = int(floor(bounds.y))
-  let yEnd = int(ceil(bounds.y + bounds.h))
+  let bounds = contours.bounds()
+  let clip = target.effectiveClipBounds()
+  defer: renderer.restoreDrawCoordinates(view, clip)
+  if not renderer.usePixelCoordinates(view) or
+      not SDL3.setRenderClipRect(renderer, nil):
+    return
+
+  let left = floor(bounds.x)
+  let right = ceil(bounds.x + bounds.w)
   var rowCoverage: seq[uint8]
   var fillScratch: PathFillScratch
-  for y in yStart ..< yEnd:
-    contours.fillPathCoverageRow(
-      y, xStart, xEnd, command.fillPathRule, rowCoverage, fillScratch
-    )
-    var runStart = xStart
-    var runCoverage = 0
-    for x in xStart .. xEnd:
-      let coverage =
-        if x < xEnd: pathCoverageCount(rowCoverage[x - xStart])
-        else: 0
-      if coverage != runCoverage:
-        if runCoverage > 0 and x > runStart:
-          let alpha = command.fillPathColor.a * runCoverage.float32 * 0.25'f32
-          target.fillHorizontal(
-            runStart.float32, x.float32, y.float32 + 0.5'f32,
-            rgba(
-              command.fillPathColor.r,
-              command.fillPathColor.g,
-              command.fillPathColor.b,
-              alpha
-            )
-          )
-        runStart = x
-        runCoverage = coverage
+  for band in roundedPixelScissors(target.clipStack, clip, view,
+      bounds.y / view.y, (bounds.y + bounds.h) / view.y):
+    let bandLeft = band.x.float32
+    let bandRight = (band.x + band.w).float32
+    let xStart = max(left, bandLeft)
+    let xEnd = min(right, bandRight)
+    if xStart >= xEnd:
+      continue
+    let first = xStart.int
+    let limit = xEnd.int
+    for y in band.y.int ..< (band.y + band.h).int:
+      contours.fillPathCoverageRow(
+        y, first, limit, command.fillPathRule, rowCoverage, fillScratch
+      )
+      var runStart = first
+      var runCoverage = 0
+      for x in first .. limit:
+        let coverage =
+          if x < limit: pathCoverageCount(rowCoverage[x - first])
+          else: 0
+        if coverage != runCoverage:
+          if runCoverage > 0:
+            renderer.setColor(command.fillPathColor, runCoverage.float32 * 0.25'f32)
+            var span = SDL_FRect(x: runStart.cfloat, y: y.cfloat,
+              w: (x - runStart).cfloat, h: 1)
+            if not SDL3.renderFillRect(renderer, addr span):
+              return
+          runStart = x
+          runCoverage = coverage
 
 proc shadowRect(command: PaintCommand; grow: float32): Rect =
   Rect(
