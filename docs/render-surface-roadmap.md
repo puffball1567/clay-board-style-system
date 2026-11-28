@@ -497,8 +497,8 @@ presentation and bounded readback, so SDL texture-backed offscreen layers can
 draw the completed raster copy when direct composition is unsupported. The
 opt-in Linux EGL/OpenGL compositor draws directly into SDL layers through a
 shared texture and GPU fences. Mesa pixel tests cover ordered paint, clipping,
-fallback, and layer reuse. Mixed-layer coverage on physical drivers remains
-part of the release gate below.
+fallback, and layer reuse. The mixed-layer fixture also passed on AMD Renoir
+under ARC and ORC. The release gate still requires broader driver coverage.
 An owned bgfx adapter now
 recreates its runtime from the latest validated host configuration before
 namespace restoration. A borrowed adapter continues to fail closed because

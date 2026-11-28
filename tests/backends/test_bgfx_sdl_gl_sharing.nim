@@ -18,7 +18,24 @@ import clay_board_style_system/paint/[gpu_host_compositor, layer_blur, layer_col
 import clay_board_style_system/runtime/[gpu_color_matrix, gpu_gaussian_blur, gpu_direct_surface, gpu_host,
   gpu_layer_shader, gpu_shader_builder, gpu_shader_package, frame_scheduler,
   invalidation, motion_scene, motion_scene_gpu, motion_scene_gpu_direct, ui_root]
+import clay_board_style_system/text/[cosmic_text_engine, font_registry]
 import clay_board_style_system/vendor/sdl3
+
+when defined(linux):
+  {.passL: "-Wl,--wrap=SDL_GetWindowSize".}
+  var scaledWindow: pointer
+  var scaledWidth, scaledHeight: cint
+
+  proc realWindowSize(window: pointer; width, height: ptr cint): bool {.
+    importc: "__real_SDL_GetWindowSize", cdecl.}
+
+  proc wrappedWindowSize(window: pointer; width, height: ptr cint): bool {.
+    exportc: "__wrap_SDL_GetWindowSize", cdecl.} =
+    if scaledWindow.isNil or window != scaledWindow:
+      return realWindowSize(window, width, height)
+    if not width.isNil: width[] = scaledWidth
+    if not height.isNil: height[] = scaledHeight
+    true
 
 const
   textureSize = 8
@@ -151,6 +168,56 @@ proc expectCapture(actual, expected: Sdl3CapturedFrame; tolerance: int) =
     doAssert abs(value.int - expected.pixels[index].int) <= tolerance,
       "filtered pixel " & $(index div 3) & ": " & $value &
         " != " & $expected.pixels[index]
+
+proc verifyFractionalClip(renderer: var Sdl3Renderer; surface: GpuDirectSurface) =
+  const logicalSizes =
+    when defined(linux): [[32, 32], [24, 21]]
+    else: [[32, 32]]
+  let background = rgb(0, 0, 1)
+  let clip = rect(7.75, 5.25, 9, 7)
+  let destination = rect(0, 0, 32, 32)
+  let hit = [255'u8, 0, 0]
+  let miss = [0'u8, 0, 255]
+  let fonts = initFontRegistry()
+  let cosmic = CosmicTextEngine()
+  when defined(linux):
+    defer: scaledWindow = nil
+
+  for dimensions in logicalSizes:
+    when defined(linux):
+      scaledWindow = renderer.window
+      scaledWidth = dimensions[0].cint
+      scaledHeight = dimensions[1].cint
+    for isolated in [true, false]:
+      var commands: seq[PaintCommand]
+      if isolated:
+        commands.add pushLayer(rect(4, 4, 20, 20))
+      commands.add pushClip(clip)
+      let paintIndex = commands.len
+      # The clipped region samples only the top, solid red texel.
+      commands.add fillRect(destination, rgb(1, 0, 0))
+      commands.add popClip()
+      if isolated:
+        commands.add popLayer()
+
+      template capture(): Sdl3CapturedFrame =
+        renderer.requestFrameCapture()
+        if isolated:
+          renderer.render(commands, background)
+        else:
+          renderer.renderLayered(commands, cosmic, fonts, background)
+        renderer.capturedFrame().get
+
+      let reference = capture()
+      doAssert reference.pixel(12, 9) == hit
+      doAssert reference.pixel(30, 30) == miss
+      commands[paintIndex] = drawGpuDirectSurface(NodeId(9), surface, destination)
+      let direct = capture()
+      doAssert renderer.gpuDirectCompositionStats().presented == 1,
+        $renderer.gpuDirectCompositionStats()
+      doAssert direct.pixels == reference.pixels,
+        "SDL and bgfx clip coverage differs at " & $dimensions &
+          " (isolated layer: " & $isolated & ")"
 
 proc verifyMotionAndCompute(
     renderer: var Sdl3Renderer;
@@ -507,6 +574,8 @@ proc testRendererComposition() =
     doAssert renderer.gpuDirectCompositionStats().unsupported == 1
     doAssert host.gpuNamespaceUsage(composition).resourceCount == usage.resourceCount
     doAssert host.gpuNamespaceUsage(composition).persistentBytes == usage.persistentBytes
+
+  renderer.verifyFractionalClip(surface)
 
   let filteredCommands = [
     pushClip(rect(5, 5, 20, 19)),

@@ -6,6 +6,7 @@ import ../../core/[color, computed_style, geometry, gradient_sampling, node,
 import ../../input/events
 import ../../paint/[dirty_tiles, gpu_direct_compositor, layer_blur, layer_color_filter, paint_command,
     path_geometry, retained_damage]
+from ../../runtime/gpu_host import GpuViewport
 import ../../text/[cosmic_text_engine, font_registry, text_engine]
 import ../../vendor/sdl3
 import ./config
@@ -1751,6 +1752,8 @@ proc effectiveLogicalClip(target: Sdl3Renderer): Option[Rect] =
   for index in 1 ..< target.clipStack.len:
     result = some(result.get.intersection(target.clipStack[index].rect))
 
+proc gpuDirectPixelClip(renderer: pointer; clip: SDL_Rect): Option[GpuViewport]
+
 proc gpuDirectCompositeContext(
     target: Sdl3Renderer;
     layers: openArray[Sdl3TransformLayer]
@@ -1798,6 +1801,10 @@ proc gpuDirectCompositeContext(
         result.targetPixelWidth = layer.pixelWidth.uint32
         result.targetPixelHeight = layer.pixelHeight.uint32
         break
+  if result.clipBounds.isSome and result.targetPixelWidth != 0:
+    let clip = target.effectiveClipBounds()
+    if clip.isSome:
+      result.clipPixelBounds = target.renderer.gpuDirectPixelClip(clip.get)
 
 proc translated(command: PaintCommand; offset: Vec2): PaintCommand =
   result = command
@@ -2151,6 +2158,17 @@ proc pixelScissor(bounds: SDL_Rect; view: Sdl3TargetScale): SDL_Rect =
   # SDL rounds the clip rectangle's origin and size separately.
   rect(bounds.x.float32 * view.x, bounds.y.float32 * view.y,
     bounds.w.float32 * view.x, bounds.h.float32 * view.y).toSdlClip
+
+proc gpuDirectPixelClip(renderer: pointer; clip: SDL_Rect): Option[GpuViewport] =
+  var view: Sdl3TargetScale
+  if not renderer.readTargetScale(view):
+    return none(GpuViewport)
+  let pixels = intersect(clip.pixelScissor(view),
+    SDL_Rect(w: view.outputWidth, h: view.outputHeight))
+  if pixels.w <= 0 or pixels.h <= 0:
+    return some(GpuViewport())
+  some(GpuViewport(x: pixels.x.uint32, y: pixels.y.uint32,
+    width: pixels.w.uint32, height: pixels.h.uint32))
 
 proc applySoftwareLayerComposite(
     target: var Sdl3Renderer;

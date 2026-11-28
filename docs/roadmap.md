@@ -1057,7 +1057,7 @@ canonical visual contract.
 | Filters | Ordered GPU filter chains for Canvas, Motion Scene, and explicit raster or GPU inputs. Style subtrees support RGB matrices, bounded Gaussian blur, and packaged fragment shaders with typed parameters, up to four additional textures, owned float animations, bounded effect outsets, and CPU fallback on Linux EGL/OpenGL. SDL reuses eligible source textures across uniform-only frames. | Broader hardware qualification |
 | Motion Scene | Batched 2D shapes, images and atlas sprites, timelines, direct and filtered display | General paths and text as scene objects and further scene composition capabilities |
 | SDL3 drawing | Output-pixel coverage for solid backgrounds, borders and outlines, and Canvas path fills and strokes. Rounded affine layers, texture sampling, gradient repeats, solid fills, borders, and paths have pixel regression coverage at unit, uneven fractional, and doubled scales. | Wider desktop GPU and driver coverage |
-| Qualification | Linux Mesa OpenGL pixel CI under ARC and ORC covers direct presentation, native-window resize, and a mixed SDL layer with Motion Scene and independent compute. Separate AMD Renoir OpenGL runs cover bgfx direct presentation and SDL3 drawing. Mock and bgfx NOOP tests cover recovery behavior. | Physical-driver validation of mixed SDL/bgfx layers, device-loss recovery, and sustained GPU-memory pressure |
+| Qualification | Linux Mesa OpenGL pixel CI under ARC and ORC covers direct presentation, native-window resize, and a mixed SDL layer with Motion Scene and independent compute. Separate AMD Renoir OpenGL runs cover bgfx direct presentation, mixed SDL/bgfx layers, and SDL3 drawing. Mock and bgfx NOOP tests cover recovery behavior. | Additional GPU and driver coverage, physical device-loss recovery, and sustained GPU-memory pressure |
 
 See the [GPU surface test matrix](gpu-surface-test-matrix.md) for the tested
 combinations and the remaining production qualification cases.
@@ -1110,8 +1110,8 @@ contract are implemented. An opt-in hybrid direct/readback display path now
 paints SDL texture-backed layers with completed raster pixels when direct
 offscreen composition is unsupported. The opt-in Linux EGL/OpenGL compositor
 draws into SDL-owned layers through shared textures and GPU fences. Linux Mesa
-CI exercises this mixed-layer path. Physical-driver coverage of mixed layers
-and broader GPU pixel qualification remain open. A later wgpu-native adapter
+CI and an AMD Renoir run cover this mixed-layer path. Broader GPU pixel
+qualification remains open. A later wgpu-native adapter
 may implement the same CBSS-owned contract, but it is no longer the standard
 provider or a release prerequisite.
 

@@ -9677,6 +9677,23 @@ suite "GPU host direct compositor":
     let sizedUv = context.lastBindings.uniforms[1].values
     check abs(sizedUv[0] - ((10 + 25'f32 * 129 / 162 - 20) / 100)) < 0.000001'f32
     check abs(sizedUv[1] - ((20 + 50'f32 * 80 / 101 - 40) / 60)) < 0.000001'f32
+
+    var pixelClipped = fractionalExtent
+    let pixelClip = GpuViewport(x: 24, y: 52, width: 52, height: 17)
+    pixelClipped.clipPixelBounds = some(pixelClip)
+    check sizedDraw.compositeGpuDirectSurface(pixelClipped, compositor) == gdcsPresented
+    check context.lastGraphicsPass.viewport == pixelClip
+    let clippedUv = context.lastBindings.uniforms[1].values
+    check abs(clippedUv[0] - ((10 + 24'f32 * 129 / 162 - 20) / 100)) < 0.000001'f32
+    check abs(clippedUv[3] - ((20 + 69'f32 * 80 / 101 - 40) / 60)) < 0.000001'f32
+    let submitted = context.drawSubmits
+    pixelClipped.clipPixelBounds = some(GpuViewport())
+    check sizedDraw.compositeGpuDirectSurface(pixelClipped, compositor) == gdcsPresented
+    check context.drawSubmits == submitted
+    pixelClipped.clipPixelBounds = some(GpuViewport(x: 161, width: 2, height: 1))
+    check sizedDraw.compositeGpuDirectSurface(pixelClipped, compositor) == gdcsUnsupported
+    check context.drawSubmits == submitted
+
     var staleExtent = fractionalExtent
     staleExtent.targetPixelWidth = 161
     check sizedDraw.compositeGpuDirectSurface(staleExtent, compositor) == gdcsUnsupported

@@ -361,6 +361,14 @@ proc sampledLogicalBounds(
     float32(viewport.height.float64 / scaleY)
   )
 
+proc intersectPixels(bounds, clip: GpuViewport): GpuViewport =
+  let left = max(bounds.x, clip.x)
+  let top = max(bounds.y, clip.y)
+  let right = min(bounds.x + bounds.width, clip.x + clip.width)
+  let bottom = min(bounds.y + bounds.height, clip.y + clip.height)
+  if right > left and bottom > top:
+    result = GpuViewport(x: left, y: top, width: right - left, height: bottom - top)
+
 proc clipMaskUniformValues(
     context: GpuDirectCompositeContext;
     sampled: Rect
@@ -491,7 +499,8 @@ proc newGpuHostDirectCompositor*(
         return gdcsUnsupported
 
       var visible = request.destination.intersection(targetBounds)
-      if request.context.clipBounds.isSome:
+      let pixelClip = request.context.clipPixelBounds
+      if pixelClip.isNone and request.context.clipBounds.isSome:
         visible = visible.intersection(request.context.clipBounds.get)
       if visible.isEmpty:
         return gdcsPresented
@@ -504,7 +513,12 @@ proc newGpuHostDirectCompositor*(
       )
       if bounds.empty:
         return gdcsPresented
-      let sampled = bounds.viewport.sampledLogicalBounds(
+      var viewport = bounds.viewport
+      if pixelClip.isSome:
+        viewport = viewport.intersectPixels(pixelClip.get)
+        if viewport.width == 0 or viewport.height == 0:
+          return gdcsPresented
+      let sampled = viewport.sampledLogicalBounds(
         targetBounds, scaleX, scaleY
       )
 
@@ -536,7 +550,6 @@ proc newGpuHostDirectCompositor*(
           values: request.context.clipMaskUniformValues(sampled)
         )
       try:
-        var viewport = bounds.viewport
         if request.context.offscreenTargetTopDown:
           viewport.y = targetPixelHeight - viewport.y - viewport.height
         host.submitGpuPresentationDraw(

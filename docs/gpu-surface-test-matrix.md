@@ -1,8 +1,8 @@
 # GPU Surface Quality Matrix
 
 Status: `Linux Mesa OpenGL pixel CI runs under ARC and ORC. AMD Renoir OpenGL
-runs cover bgfx direct presentation and SDL3 drawing. Broader hardware
-qualification remains open.`
+runs cover bgfx direct presentation, mixed SDL/bgfx layers, and SDL3 drawing.
+Broader hardware qualification remains open.`
 
 This matrix is the release-quality contract for `GpuDirectSurface` and
 `GpuDisplaySurface`. A row is complete only when its normal, failure, and edge
@@ -107,8 +107,16 @@ renderer and renders ordinary CBSS layer and clip commands. It checks source
 row order, pixels inside and outside the clip, SDL paint on both sides of the
 GPU command, final-window readback fallback, and resource accounting across
 two frames of SDL layer reuse. This uses two EGL contexts in the same share
-group, with a GPU fence at each handoff. The mixed-layer path is covered by
-Linux Mesa CI under ARC and ORC. Physical-driver coverage remains open.
+group, with a GPU fence at each handoff. Linux Mesa CI covers this path under
+ARC and ORC.
+The mixed-layer fixture also compares direct bgfx pixels with SDL paint under
+a fractional rectangular clip. It checks both an isolated layer and the
+retained target at unit and unequal fractional output scales.
+
+On 2026-11-29, the texture sharing and mixed-layer fixture passed on AMD
+Renoir with Mesa's RadeonSI EGL/OpenGL driver under ARC and ORC. The run also
+covered fractional clips, mixed Style filters, and Motion Scene composition
+with independent compute. Broader driver coverage remains open.
 
 SDL software-renderer tests verify that publishing into the same fallback
 raster updates its retained destination tile and that installing or clearing
@@ -152,8 +160,7 @@ antialiased edges and full versus one-tile repaint at the same scales.
 
 On 2026-11-28 these five focused SDL3 OpenGL tests passed on the AMD Renoir
 integrated GPU with Mesa's RadeonSI driver, under ARC and ORC. Each test
-checks SDL3 output pixels. The mixed SDL/bgfx layer fixture has Linux Mesa
-software OpenGL coverage and remains open for physical-driver validation.
+checks SDL3 output pixels.
 [PR #345](https://github.com/puffball1567/clay-board-style-system/pull/345)
 and [CI results](https://github.com/puffball1567/clay-board-style-system/actions/runs/46110559324)
 record the results.
@@ -215,8 +222,9 @@ values, and damage bounds under a transform and ancestor clip.
 ## Real-GPU Release Gate
 
 The same-host draw path is implemented. The remaining production
-qualification focuses on more physical GPU drivers, mixed SDL/bgfx layers,
-device-loss recovery, and sustained presentation under GPU-memory pressure.
+qualification focuses on more physical GPU drivers for direct presentation
+and mixed SDL/bgfx layers, device-loss recovery, and sustained presentation
+under GPU-memory pressure.
 Qualified Linux GPU runs need to demonstrate all of the following:
 
 - one SDL window, one GPU device/queue, and one presentation owner;

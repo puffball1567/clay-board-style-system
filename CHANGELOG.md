@@ -18,6 +18,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Fixed
 
+- Direct bgfx drawing into SDL3 layers uses SDL3's output-pixel clip, preserving
+  the clip edge and texture sampling at fractional coordinates and scales.
+
 - SDL3 borders and outlines use output-pixel coverage at fractional scales.
   Translucent borders blend once per pixel, including around subpixel holes.
 

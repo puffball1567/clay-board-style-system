@@ -43,6 +43,9 @@ type
     offscreenTargetTopDown*: bool
       ## The target's first physical row represents its logical top edge.
     clipBounds*: Option[Rect]
+    clipPixelBounds*: Option[GpuViewport]
+      ## Optional output-pixel form of clipBounds in top-left target coordinates.
+      ## Zero width or height clips out the entire draw.
     requiresClipMask*: bool
     clipMaskCount*: uint8
     clipMaskOverflow*: bool
@@ -224,6 +227,13 @@ proc supports*(
   if context.clipBounds.isSome:
     if not capabilities.clipBoundsSupported or
         not context.clipBounds.get.isValidBounds(true):
+      return false
+  if context.clipPixelBounds.isSome:
+    let clip = context.clipPixelBounds.get
+    if context.clipBounds.isNone or context.targetPixelWidth == 0 or
+        clip.x > context.targetPixelWidth or clip.y > context.targetPixelHeight or
+        clip.width > context.targetPixelWidth - clip.x or
+        clip.height > context.targetPixelHeight - clip.y:
       return false
   let maskCount = int(context.clipMaskCount)
   if maskCount > maxGpuDirectClipMasks or context.clipMaskOverflow:
