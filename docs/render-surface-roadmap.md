@@ -222,6 +222,15 @@ sets. Command comparison still scans the retained command sequence, so this
 closes bounded backend pixel work rather than the later indexed `O(dirty)`
 authoring goal.
 
+At unit, uneven fractional, and doubled output scales, SDL3 uses output-pixel
+coverage for solid backgrounds and Canvas path fills and strokes. Rounded
+clips preserve texture sampling for affine layers, text, gradients, and
+shadows. The gradient, solid background, and path tests compare a one-tile
+repaint with a full redraw. The five focused SDL3 OpenGL tests pass under
+ARC and ORC in Linux Mesa CI and on an AMD Renoir integrated GPU. See the
+[GPU surface test matrix](gpu-surface-test-matrix.md) for the tested cases and
+the separate mixed-layer qualification.
+
 No rasterizer-internal type or owning object crosses the C ABI. Foreign callers
 select CBSS capabilities and policies through CBSS-owned versioned API, while
 the implementation remains private.
