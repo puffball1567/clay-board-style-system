@@ -18,6 +18,9 @@ release. Before 1.0, minor releases may contain public API changes.
 
 ### Fixed
 
+- SDL3 borders and outlines use output-pixel coverage at fractional scales.
+  Translucent borders blend once per pixel, including around subpixel holes.
+
 - SDL3 Canvas path fills and strokes sample antialias coverage at the output
   resolution. Rounded clips keep the same pixels in full and partial repaints.
 

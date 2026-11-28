@@ -123,6 +123,7 @@ for memory_model in arc orc; do
     "rounded texture clips preserve text gradient and shadow sampling" \
     "rounded gradient repeats match rectangular sampling and retained damage" \
     "rounded solid backgrounds blend once per output pixel" \
+    "translucent borders keep output pixel coverage and retained damage" \
     "filled and stroked paths sample output pixels under rounded clips"
 
   # Run in separate processes. The sharing fixture uses bgfx on the SDL thread.

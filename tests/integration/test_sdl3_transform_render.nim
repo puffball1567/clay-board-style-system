@@ -802,6 +802,106 @@ suite "SDL3 transform rendering":
         let matches = repainted.pixels == renderer.capturedFrame().get.pixels
         check matches
 
+  test "translucent borders keep output pixel coverage and retained damage":
+    let previousDriver = getEnv("SDL_VIDEODRIVER")
+    when defined(cbssTestSdlOpenGl):
+      putEnv("SDL_VIDEODRIVER", "x11")
+    else:
+      putEnv("SDL_VIDEODRIVER", "dummy")
+    defer:
+      if previousDriver.len > 0: putEnv("SDL_VIDEODRIVER", previousDriver)
+      else: delEnv("SDL_VIDEODRIVER")
+
+    proc coveredWidth(box: Rect; radius, y, left, right: float32): float32 =
+      if box.w <= 0 or box.h <= 0 or y < box.y or y >= box.y + box.h:
+        return 0
+      let dy = y - clamp(y, box.y + radius, box.y + box.h - radius)
+      let halfChord = sqrt(max(0.0'f32, radius * radius - dy * dy))
+      let start = box.x + radius - halfChord
+      let stop = box.x + box.w - radius + halfChord
+      max(0.0'f32, min(right, stop) - max(left, start))
+
+    const outputSizes =
+      when defined(linux): [[128, 64], [166, 86], [256, 128]]
+      else: [[128, 64]]
+    let bounds = rect(12.25, 10.25, 103.5, 43.5)
+    let clip = rect(16, 12, 96, 40)
+    let clipRadius = 12.0'f32
+    let background = rgb(0, 0, 1)
+    let translucent = rgba(1, 0, 0, 0.5)
+    let fonts = initFontRegistry()
+    let cosmic = CosmicTextEngine()
+    let fixtures = [
+      strokeRect(bounds, translucent, width = 6.125),
+      strokeRect(bounds, translucent, width = 6.125),
+      strokeRect(bounds, translucent, width = 6.25, radius = 16),
+      strokeRect(rect(61.25, 26.25, 4.5, 12), translucent, width = 2),
+      strokeRect(rect(54, 28, 20, 8), translucent, width = 6, radius = 4)]
+
+    for dimensions in outputSizes:
+      var renderer = initSdl3Renderer("CBSS scaled border test",
+        dimensions[0], dimensions[1], false)
+      defer: renderer.close()
+      when defined(cbssTestSdlOpenGl):
+        require $SDL3.getRendererName(renderer.renderer) == "opengl"
+      when defined(linux):
+        scaledWindow = renderer.window
+        scaledWidth = 128
+        scaledHeight = 64
+        defer: scaledWindow = nil
+      let sx = dimensions[0].float32 / 128.0'f32
+      let sy = dimensions[1].float32 / 64.0'f32
+      for index, command in fixtures:
+        let outer = command.strokeRect
+        let width = command.strokeWidth
+        let inner = rect(outer.x + width, outer.y + width,
+          outer.w - 2 * width, outer.h - 2 * width)
+        let innerRadius = max(0.0'f32, command.strokeRadius - width)
+        var commands =
+          if index == 0: @[command]
+          else: @[pushClip(clip, clipRadius), command, popClip()]
+        commands.add fillRect(rect(116, 2, 8, 4), rgb(1, 1, 0))
+        renderer.requestFrameCapture()
+        renderer.render(commands, background)
+        let frame = renderer.capturedFrame().get
+
+        var mismatches, paintedPixels, edgePixels: int
+        for y in floor(8 * sy).int ..< ceil(58 * sy).int:
+          let py = (y.float32 + 0.5'f32) / sy
+          for x in 0 ..< dimensions[0]:
+            let px = (x.float32 + 0.5'f32) / sx
+            let dx = px - clamp(px, clip.x + clipRadius, clip.x + clip.w - clipRadius)
+            let dy = py - clamp(py, clip.y + clipRadius, clip.y + clip.h - clipRadius)
+            var coverage = 0.0'f32
+            if index == 0 or dx * dx + dy * dy <= clipRadius * clipRadius:
+              let left = x.float32 / sx
+              let right = (x.float32 + 1) / sx
+              coverage = (coveredWidth(outer, command.strokeRadius, py, left, right) -
+                coveredWidth(inner, innerRadius, py, left, right)) * sx
+            if coverage > 0.99'f32: inc paintedPixels
+            elif coverage > 0.02'f32: inc edgePixels
+            let expected = round(clamp(coverage, 0.0'f32, 1.0'f32) * 127.5'f32).int
+            let actual = frame.pixel(x, y)
+            if abs(actual.r.int - expected) > 2 or actual.g != 0 or
+                abs(actual.b.int - (255 - expected)) > 2:
+              inc mismatches
+        checkpoint("border " & $index & " at " & $dimensions)
+        check paintedPixels > 0
+        check edgePixels > 0
+        check mismatches == 0
+        check frame.pixel((120 * sx).int, (4 * sy).int) == (255'u8, 255'u8, 0'u8)
+
+        commands.insert(fillRect(rect(20, 24, 43, 9), rgb(0, 1, 0)), 0)
+        renderer.renderLayered(commands, cosmic, fonts, background)
+        commands[0].color = rgb(1, 0, 1)
+        renderer.requestFrameCapture()
+        renderer.renderLayered(commands, cosmic, fonts, background)
+        let repainted = renderer.capturedFrame().get
+        check renderer.retainedLayerStats().lastDirtyTiles == 1
+        renderer.requestFrameCapture()
+        renderer.render(commands, background)
+        check repainted.pixels == renderer.capturedFrame().get.pixels
+
   test "nested affine scopes compose without losing local coordinates":
     let previousDriver = getEnv("SDL_VIDEODRIVER")
     putEnv("SDL_VIDEODRIVER", "dummy")
