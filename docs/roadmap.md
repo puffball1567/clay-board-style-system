@@ -1056,7 +1056,8 @@ canonical visual contract.
 | Canvas in ordinary UI | Bounded asynchronous readback, optional same-host direct presentation, opt-in zero-copy SDL EGL/OpenGL layer composition on Linux, and hybrid fallback | Mixed-layer coverage beyond the qualified OpenGL configuration |
 | Filters | Ordered GPU filter chains for Canvas, Motion Scene, and explicit raster or GPU inputs. Style subtrees support RGB matrices, bounded Gaussian blur, and packaged fragment shaders with typed parameters, up to four additional textures, owned float animations, bounded effect outsets, and CPU fallback on Linux EGL/OpenGL. SDL reuses eligible source textures across uniform-only frames. | Broader hardware qualification |
 | Motion Scene | Batched 2D shapes, images and atlas sprites, timelines, direct and filtered display | General paths and text as scene objects and further scene composition capabilities |
-| Qualification | Linux Mesa OpenGL pixel CI under ARC and ORC, including a native window pass and resize and a combined Motion Scene and independent compute fixture under one SDL presentation owner. A recorded AMD Renoir OpenGL run covers the direct pixel fixture. Mock and bgfx NOOP tests cover recovery behavior. | Physical-driver coverage for mixed layers, recovery, and pressure |
+| SDL3 drawing | Output-pixel coverage for solid backgrounds and Canvas path fills and strokes. Rounded affine layers, texture sampling, gradient repeats, solid fills, and paths have pixel regression coverage at unit, uneven fractional, and doubled scales. | Wider desktop GPU and driver coverage |
+| Qualification | Linux Mesa OpenGL pixel CI under ARC and ORC covers direct presentation, native-window resize, and a mixed SDL layer with Motion Scene and independent compute. Separate AMD Renoir OpenGL runs cover bgfx direct presentation and SDL3 drawing. Mock and bgfx NOOP tests cover recovery behavior. | Physical-driver validation of mixed SDL/bgfx layers, device-loss recovery, and sustained GPU-memory pressure |
 
 See the [GPU surface test matrix](gpu-surface-test-matrix.md) for the tested
 combinations and the remaining production qualification cases.
@@ -1087,7 +1088,7 @@ Texture/RenderTarget path and this deterministic fallback without changing the
 upper Canvas contract. A backend may advertise the direct path only when its
 paint compositor shares the producer's device and ordered queue.
 
-The planned standard GPU adapter is bgfx, with explicit resource, swapchain,
+The standard optional GPU adapter is bgfx, with explicit resource, swapchain,
 shader, synchronization, resize, device-loss, and presentation ownership.
 SDL3 continues to own windows, native handles, input, event integration, and
 the canonical CPU presentation path. The independent low-level bgfx Nim C99
@@ -1108,9 +1109,9 @@ same-host offscreen `RenderTarget` composition, and portable shader source
 contract are implemented. An opt-in hybrid direct/readback display path now
 paints SDL texture-backed layers with completed raster pixels when direct
 offscreen composition is unsupported. The opt-in Linux EGL/OpenGL compositor
-draws into SDL-owned layers through shared textures and GPU fences. Mixed-layer
-coverage on physical drivers and broader GPU pixel qualification remain
-Version 0.7 work. A later wgpu-native adapter
+draws into SDL-owned layers through shared textures and GPU fences. Linux Mesa
+CI exercises this mixed-layer path. Physical-driver coverage of mixed layers
+and broader GPU pixel qualification remain open. A later wgpu-native adapter
 may implement the same CBSS-owned contract, but it is no longer the standard
 provider or a release prerequisite.
 

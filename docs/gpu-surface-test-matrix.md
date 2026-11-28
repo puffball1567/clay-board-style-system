@@ -1,7 +1,8 @@
 # GPU Surface Quality Matrix
 
-Status: `Deterministic contract coverage implemented; Linux Mesa OpenGL pixel
-fixture runs in CI under ARC and ORC; broader hardware qualification pending`
+Status: `Linux Mesa OpenGL pixel CI runs under ARC and ORC. AMD Renoir OpenGL
+runs cover bgfx direct presentation and SDL3 drawing. Broader hardware
+qualification remains open.`
 
 This matrix is the release-quality contract for `GpuDirectSurface` and
 `GpuDisplaySurface`. A row is complete only when its normal, failure, and edge
@@ -78,14 +79,12 @@ queue saturation, latest-ready selection, leased-frame retirement, fixed
 resource accounting, and surviving-source pixels after the other owner closes.
 The same fixture covers direct, filtered, and readback Motion Scene output,
 including timeline rotation, image reflection, and visibility changes.
-The Linux bgfx CI job runs this fixture under both ARC and ORC with Xvfb,
-Mesa software OpenGL, and the bundled SDL3 runtime. This exercises the actual
-OpenGL renderer and compiled shaders, not a mock or NOOP renderer. It does not
-qualify physical GPU drivers, other graphics APIs, or mixed SDL/GPU layers.
+The Linux bgfx CI job runs this direct presentation fixture under both ARC
+and ORC with Xvfb, Mesa software OpenGL, the bundled SDL3 runtime, and compiled
+shaders. The texture sharing fixture below covers mixed SDL/GPU layers.
 
-A local AMD Renoir OpenGL run on 2026-11-03 passed the same direct pixel fixture
-under ARC and ORC with bundled SDL3 3.4.18. This establishes one hardware
-result; the broader multi-driver release gate below remains open.
+On 2026-11-03 the direct presentation fixture passed on AMD Renoir OpenGL
+under ARC and ORC with bundled SDL3 3.4.18.
 
 Local runs default to system SDL3 through `pkg-config`. Set
 `CBSS_GPU_PIXEL_SDL_MODE=bundled` to use the repository runtime instead.
@@ -151,6 +150,14 @@ Canvas path tests check even-odd holes and translucent stroke outlines
 against four-sample output-pixel coverage and a rounded clip. They verify
 antialiased edges and full versus one-tile repaint at the same scales.
 
+On 2026-11-28 these five focused SDL3 OpenGL tests passed on the AMD Renoir
+integrated GPU with Mesa's RadeonSI driver, under ARC and ORC. Each test
+checks SDL3 output pixels. The mixed SDL/bgfx layer fixture has Linux Mesa
+software OpenGL coverage and remains open for physical-driver validation.
+[PR #345](https://github.com/puffball1567/clay-board-style-system/pull/345)
+and [CI results](https://github.com/puffball1567/clay-board-style-system/actions/runs/46110559324)
+record the results.
+
 The sharing fixture also composites a Motion Scene render target and an
 independent compute shader's storage texture into the same SDL layer. The two
 producers have separate namespaces on one GPU host. The fixture checks
@@ -202,8 +209,10 @@ values, and damage bounds under a transform and ancestor clip.
 
 ## Real-GPU Release Gate
 
-The same-host draw path is implemented, but the production direct compositor is
-not complete until a qualified Linux GPU fixture proves all of the following:
+The same-host draw path is implemented. The remaining production
+qualification focuses on more physical GPU drivers, mixed SDL/bgfx layers,
+device-loss recovery, and sustained presentation under GPU-memory pressure.
+Qualified Linux GPU runs need to demonstrate all of the following:
 
 - one SDL window, one GPU device/queue, and one presentation owner;
 - direct Texture and RenderTarget output without CPU readback;
