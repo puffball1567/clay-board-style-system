@@ -147,6 +147,9 @@ tile after partial repaint.
 The same backends compare translucent solid fills and single-stop gradients
 under rounded clips at unit, fractional, and doubled scales. They verify
 uniform interior alpha and a one-tile repaint against full redraw.
+Canvas path tests check even-odd holes and translucent stroke outlines
+against four-sample output-pixel coverage and a rounded clip. They verify
+antialiased edges and full versus one-tile repaint at the same scales.
 
 The sharing fixture also composites a Motion Scene render target and an
 independent compute shader's storage texture into the same SDL layer. The two
